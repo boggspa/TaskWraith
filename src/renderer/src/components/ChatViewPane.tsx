@@ -19,6 +19,7 @@ import {
   type WorkspaceGitSnapshotStore,
   useWorkspaceGitSnapshot
 } from '../lib/workspaceGitSnapshotStore'
+import { type WorkspacePrCiStore, useWorkspacePrCi } from '../lib/workspacePrCiStore'
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
@@ -58,6 +59,8 @@ export interface ChatViewPaneProps extends Omit<
   /** Path-scoped live Git state; only this pane subscribes to its workspace. */
   gitSnapshotStore?: WorkspaceGitSnapshotStore
   gitSnapshotPath?: string | null
+  /** Path-keyed PR/CI rollup; shares `gitSnapshotPath` as its partition key. */
+  gitPrCiStore?: WorkspacePrCiStore
   /** appearance.composerStyle / interface style for the `interface-*` class. */
   interfaceStyle: ComposerStyle
   /** Provider (or Ollama brand) class for the `provider-*` tint. */
@@ -301,6 +304,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.composerProps === b.composerProps &&
     a.gitSnapshotStore === b.gitSnapshotStore &&
     a.gitSnapshotPath === b.gitSnapshotPath &&
+    a.gitPrCiStore === b.gitPrCiStore &&
     a.onFocusPane === b.onFocusPane &&
     a.ariaLabel === b.ariaLabel
   )
@@ -482,6 +486,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
   const chatId = props.chat?.appChatId ?? ''
   const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)
+  const panePrCi = useWorkspacePrCi(props.gitPrCiStore, props.gitSnapshotPath)
   const effectiveComposerProps = useMemo<ComposerProps | undefined>(() => {
     if (!props.composerProps || !props.gitSnapshotStore || !props.gitSnapshotPath) {
       return props.composerProps
@@ -495,9 +500,21 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
             additions: paneGitSnapshot.lineStats?.additions ?? 0,
             deletions: paneGitSnapshot.lineStats?.deletions ?? 0
           }
-        : { filesChanged: 0, additions: 0, deletions: 0 }
+        : { filesChanged: 0, additions: 0, deletions: 0 },
+      // Live path-keyed PR/CI overlay: the ctx seed App builds is a sync read,
+      // so a rollup landing after that build must still reach this pane.
+      ...(props.gitPrCiStore
+        ? { primaryPr: panePrCi?.pr ?? null, primaryCi: panePrCi?.ci ?? null }
+        : {})
     }
-  }, [paneGitSnapshot, props.composerProps, props.gitSnapshotPath, props.gitSnapshotStore])
+  }, [
+    paneGitSnapshot,
+    panePrCi,
+    props.composerProps,
+    props.gitPrCiStore,
+    props.gitSnapshotPath,
+    props.gitSnapshotStore
+  ])
   const hasComposerProps = Boolean(effectiveComposerProps)
   const paneScrollState = useTranscriptScrollState({
     chatId: chatId || null,

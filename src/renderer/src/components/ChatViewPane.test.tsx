@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { GitRepositorySnapshot } from '../../../main/services/GitService'
+import type {
+  GitCiStatusSummary,
+  GitPrSummary,
+  GitRepositorySnapshot
+} from '../../../main/services/GitService'
 import {
   ChatViewPane,
   chatViewPaneCanOpenWorkspacePopout,
@@ -12,6 +16,7 @@ import {
 } from './ChatViewPane'
 import { createMultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { WorkspaceGitSnapshotStore } from '../lib/workspaceGitSnapshotStore'
+import { WorkspacePrCiStore } from '../lib/workspacePrCiStore'
 
 const paneSource = readFileSync(new URL('./ChatViewPane.tsx', import.meta.url), 'utf8')
 
@@ -28,6 +33,8 @@ vi.mock('./Composer', () => ({
     showWelcomeNotifications?: boolean
     primaryGitSnapshot?: { branch?: string }
     workspaceDiffStats?: { filesChanged: number; additions: number; deletions: number }
+    primaryPr?: { number?: number }
+    primaryCi?: { status?: string }
   }) => (
     <div
       data-testid="pane-composer-stub"
@@ -35,6 +42,8 @@ vi.mock('./Composer', () => ({
       data-show-welcome-notifications={String(props.showWelcomeNotifications)}
       data-git-branch={props.primaryGitSnapshot?.branch || ''}
       data-git-changed={String(props.workspaceDiffStats?.filesChanged ?? 0)}
+      data-pr-number={String(props.primaryPr?.number ?? '')}
+      data-ci-status={props.primaryCi?.status || ''}
     >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
 }))
@@ -159,6 +168,15 @@ describe('chatViewPanePropsEqual', () => {
       chatViewPanePropsEqual(
         makeProps({ gitSnapshotStore: store, gitSnapshotPath: '/one' }),
         makeProps({ gitSnapshotStore: store, gitSnapshotPath: '/two' })
+      )
+    ).toBe(false)
+  })
+
+  it('re-renders when its path-keyed PR/CI store identity changes', () => {
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ gitPrCiStore: new WorkspacePrCiStore() }),
+        makeProps({ gitPrCiStore: new WorkspacePrCiStore() })
       )
     ).toBe(false)
   })
@@ -338,6 +356,27 @@ describe('ChatViewPane shared composer', () => {
 
     expect(html).toContain('data-git-branch="pane-branch"')
     expect(html).toContain('data-git-changed="3"')
+  })
+
+  it("overlays the pane's path-keyed PR/CI rollup from the store", () => {
+    const prCiStore = new WorkspacePrCiStore()
+    prCiStore.setPr('/repo', { number: 41, state: 'OPEN' } as GitPrSummary)
+    prCiStore.setCi('/repo', { status: 'pending' } as unknown as GitCiStatusSummary)
+
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          composerProps: stubComposerProps(),
+          gitSnapshotStore: new WorkspaceGitSnapshotStore(),
+          gitSnapshotPath: '/repo',
+          gitPrCiStore: prCiStore
+        })}
+      />
+    )
+
+    expect(html).toContain('data-pr-number="41"')
+    expect(html).toContain('data-ci-status="pending"')
   })
 
   it('mounts SubThreadStatusTicker above the transcript for a parent with a running child', () => {

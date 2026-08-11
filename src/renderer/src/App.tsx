@@ -267,6 +267,13 @@ import {
   useWorkspaceGitSnapshot
 } from './lib/workspaceGitSnapshotStore'
 import {
+  WorkspacePrCiRefresher,
+  WorkspacePrCiStore,
+  gitPrStatusRefreshKey,
+  useWorkspacePrCi,
+  type WorkspacePrCiApi
+} from './lib/workspacePrCiStore'
+import {
   SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY,
   SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY,
   SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY,
@@ -1373,17 +1380,6 @@ interface OllamaModelInstallPrompt {
   error?: string
 }
 
-function gitPrStatusRefreshKey(snapshot: GitRepositorySnapshot | null | undefined): string | null {
-  if (!snapshot?.remoteUrl) return null
-  return [
-    snapshot.repoRoot,
-    snapshot.remoteUrl,
-    snapshot.branch || '',
-    snapshot.upstream || '',
-    snapshot.commit || ''
-  ].join('\u0000')
-}
-
 function hasGitSnapshotSubscriptionApi(): boolean {
   return typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
 }
@@ -2381,6 +2377,23 @@ function App(): React.JSX.Element {
     multiviewGitSnapshotStoreRef.current = new WorkspaceGitSnapshotStore()
   }
   const multiviewGitSnapshotStore = multiviewGitSnapshotStoreRef.current
+  // Path-keyed PR/CI rollups for visible Multiview panes — the counterpart to
+  // the scalar `primaryPr`/`primaryCi` singletons. The API accessor is lazy so
+  // the engine reads `window.api` at refresh time, never at construction.
+  const multiviewPrCiStoreRef = useRef<WorkspacePrCiStore | null>(null)
+  if (!multiviewPrCiStoreRef.current) {
+    multiviewPrCiStoreRef.current = new WorkspacePrCiStore()
+  }
+  const multiviewPrCiStore = multiviewPrCiStoreRef.current
+  const multiviewPrCiRefresherRef = useRef<WorkspacePrCiRefresher | null>(null)
+  if (!multiviewPrCiRefresherRef.current) {
+    multiviewPrCiRefresherRef.current = new WorkspacePrCiRefresher(
+      multiviewPrCiStore,
+      (path) => multiviewGitSnapshotStore.getSnapshot(path),
+      () => window.api as unknown as WorkspacePrCiApi
+    )
+  }
+  const multiviewPrCiRefresher = multiviewPrCiRefresherRef.current
   const currentChatWorkspace = resolvePaneWorkspace({
     chat: currentChat,
     isGlobalChat: Boolean(currentChat && isGlobalChat(currentChat)),
@@ -3168,6 +3181,10 @@ function App(): React.JSX.Element {
   const isMultiviewSplit = multiview.paneChatIds.length > 1
   const focusedMultiviewGitSnapshot = useWorkspaceGitSnapshot(
     multiviewGitSnapshotStore,
+    isMultiviewSplit ? currentGitPresentationPath : null
+  )
+  const focusedMultiviewPrCi = useWorkspacePrCi(
+    multiviewPrCiStore,
     isMultiviewSplit ? currentGitPresentationPath : null
   )
 
@@ -22700,6 +22717,37 @@ function App(): React.JSX.Element {
     }
   }, [multiviewGitSnapshotStore, multiviewPaneWorkspacePathsKey])
 
+  // Multiview — path-keyed PR/CI rollup for every visible pane's workspace,
+  // the counterpart the scalar suppression below waited for. PR refreshes ride
+  // each path's snapshot updates; run completion and window focus force a CI
+  // refetch because checks move without the snapshot changing. Paths are the
+  // deduped visible set, so four panes on one repo cost one fetch — and there
+  // is deliberately no standing per-pane CI poll.
+  useEffect(() => {
+    const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
+    multiviewPrCiRefresher.retain(paths)
+    if (paths.length === 0) return undefined
+    paths.forEach((path) => multiviewPrCiRefresher.refresh(path, { forceCi: true }))
+    const unsubscribers = paths.map((path) =>
+      multiviewGitSnapshotStore.subscribe(path, () => multiviewPrCiRefresher.refresh(path))
+    )
+    const onFocus = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        paths.forEach((path) => multiviewPrCiRefresher.refresh(path, { forceCi: true }))
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe())
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [
+    multiviewGitSnapshotStore,
+    multiviewPrCiRefresher,
+    multiviewPaneWorkspacePathsKey,
+    runCompleteNotice?.timestamp
+  ])
+
   useEffect(() => {
     const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
     if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
@@ -22767,19 +22815,19 @@ function App(): React.JSX.Element {
     },
     [currentGitPresentationPath, isMultiviewSplit, multiviewGitSnapshotStore]
   )
-  // PR/CI rollups are still scalar single-pane state. Suppress them in split
-  // mode until their path-keyed counterparts are plumbed, so a late response
-  // from the previously focused pane can never decorate the next pane.
-  const focusedPrimaryPr =
-    !isMultiviewSplit &&
-    normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') ===
-      normalizeWorkspacePath(currentGitPresentationPath || '')
+  // PR/CI rollups: single-pane keeps the owner-guarded scalar singletons;
+  // split mode reads the path-keyed store, so a late response from a
+  // previously focused pane can never decorate the next pane.
+  const focusedPrimaryPr = isMultiviewSplit
+    ? (focusedMultiviewPrCi?.pr ?? null)
+    : normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') ===
+        normalizeWorkspacePath(currentGitPresentationPath || '')
       ? primaryPr
       : null
-  const focusedPrimaryCi =
-    !isMultiviewSplit &&
-    normalizeWorkspacePath(primaryCiOwnerPathRef.current || '') ===
-      normalizeWorkspacePath(currentGitPresentationPath || '')
+  const focusedPrimaryCi = isMultiviewSplit
+    ? (focusedMultiviewPrCi?.ci ?? null)
+    : normalizeWorkspacePath(primaryCiOwnerPathRef.current || '') ===
+        normalizeWorkspacePath(currentGitPresentationPath || '')
       ? primaryCi
       : null
   const readWatchedPrCachedChat = useCallback(
@@ -28360,6 +28408,7 @@ function App(): React.JSX.Element {
         composerProps={effectivePaneComposerCtx}
         gitSnapshotStore={multiviewGitSnapshotStore}
         gitSnapshotPath={viewerGitPresentationPath}
+        gitPrCiStore={multiviewPrCiStore}
         refs={multiview.paneRefs[viewerPaneIndex]}
         chat={viewerChat}
         messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
@@ -29594,9 +29643,16 @@ function App(): React.JSX.Element {
         diffActionMenuOpen: paneDiffActionMenuOpen,
         setDiffActionMenuOpen: (next: boolean | ((open: boolean) => boolean)) =>
           setDiffActionMenuOpenForChat(viewerChatId, next),
-        // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
-        primaryPr: null,
-        primaryCi: null,
+        // Pane PR/CI rollup: sync seed from the path-keyed store (ChatViewPane
+        // overlays the live value via useWorkspacePrCi). Watch/notify remain
+        // focused-surface concerns, neutralized per pane.
+        primaryPr: multiviewPrCiStore.get(viewerGitPresentationPath)?.pr ?? null,
+        primaryCi: multiviewPrCiStore.get(viewerGitPresentationPath)?.ci ?? null,
+        isWatchingPr: false,
+        onToggleWatchPr: undefined,
+        watchPrDisabledReason: undefined,
+        watchPrStatusMessage: undefined,
+        onNotifyThreadOfCi: undefined,
         pendingPlanImport: null,
         planImportExecutionEstimate: null,
         planImportGroundingBusy: false,
@@ -29684,6 +29740,7 @@ function App(): React.JSX.Element {
       workflowDefinitions,
       workflowDraft,
       multiviewGitSnapshotStore,
+      multiviewPrCiStore,
       multiview.layout,
       updateChatById
     ]
