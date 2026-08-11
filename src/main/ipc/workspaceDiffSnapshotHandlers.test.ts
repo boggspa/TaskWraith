@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { captureWorkspaceSnapshot, getWorkspaceDiff } from '../DiffService'
+import { captureWorkspaceSnapshot, getCommitFilePreview, getWorkspaceDiff } from '../DiffService'
 import { registerWorkspaceDiffSnapshotHandlers } from './workspaceDiffSnapshotHandlers'
 
 vi.mock('electron', () => ({
@@ -11,16 +11,19 @@ vi.mock('electron', () => ({
 
 vi.mock('../DiffService', () => ({
   getWorkspaceDiff: vi.fn(),
+  getCommitFilePreview: vi.fn(),
   captureWorkspaceSnapshot: vi.fn()
 }))
 
 const mockedHandle = vi.mocked(ipcMain.handle)
 const mockedGetWorkspaceDiff = vi.mocked(getWorkspaceDiff)
+const mockedGetCommitFilePreview = vi.mocked(getCommitFilePreview)
 const mockedCaptureWorkspaceSnapshot = vi.mocked(captureWorkspaceSnapshot)
 
 beforeEach(() => {
   mockedHandle.mockReset()
   mockedGetWorkspaceDiff.mockReset()
+  mockedGetCommitFilePreview.mockReset()
   mockedCaptureWorkspaceSnapshot.mockReset()
 })
 
@@ -79,6 +82,29 @@ describe('registerWorkspaceDiffSnapshotHandlers', () => {
       { capability: 'workspace-diff', workspacePath: '/repo/real' }
     )
     expect(mockedCaptureWorkspaceSnapshot).toHaveBeenCalledWith('/repo/real')
+  })
+
+  it('loads historical commit files through the same read-scoped workspace boundary', async () => {
+    const preview = {
+      ok: true as const,
+      files: [{ path: 'src/app.ts', additions: 4, deletions: 1 }],
+      totalFiles: 1
+    }
+    mockedGetCommitFilePreview.mockResolvedValue(preview)
+    const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const assertSenderScope = vi.fn()
+
+    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace, assertSenderScope })
+
+    const input = { workspacePath: '/repo', chatId: 'chat-1', commitHash: 'abc1234' }
+    await expect(handlerFor('get-diff')({} as any, input)).resolves.toBe(preview)
+    expect(assertSenderScope).toHaveBeenCalledWith(expect.anything(), {
+      capability: 'workspace-diff',
+      chatId: 'chat-1',
+      workspacePath: '/repo/real'
+    })
+    expect(mockedGetCommitFilePreview).toHaveBeenCalledWith('/repo/real', 'abc1234')
+    expect(mockedGetWorkspaceDiff).not.toHaveBeenCalled()
   })
 
   it('resolves a chat-scoped external repository before loading its diff', async () => {

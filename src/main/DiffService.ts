@@ -26,6 +26,7 @@ const MAX_GIT_DIFF_PREVIEW_LINES = 5000
 const MAX_GIT_DIFF_PREVIEW_LINE_CHARS = 1200
 const GIT_DIFF_PREVIEW_CONTEXT_LINES = 8
 const GIT_DIFF_PREVIEW_MAX_BUFFER = MAX_GIT_DIFF_PREVIEW_BYTES + 64 * 1024
+const COMMIT_FILE_PREVIEW_MAX_FILES = 30
 
 function isNoiseFile(filePath: string): boolean {
   const basename = path.basename(filePath)
@@ -187,6 +188,79 @@ async function resolveGitWorkspaceScope(
 
 function workspacePathspec(workspacePrefix: string): string[] {
   return workspacePrefix ? ['--', workspacePrefix] : []
+}
+
+export interface CommitFilePreviewEntry {
+  path: string
+  additions?: number
+  deletions?: number
+}
+
+export type CommitFilePreviewResult =
+  | { ok: true; files: CommitFilePreviewEntry[]; totalFiles: number }
+  | { ok: false; error: string }
+
+/**
+ * Resolve a bounded, read-only file list for a historical commit. Task Complete
+ * tombstones created before per-file receipt capture only retain the hash, so
+ * the renderer uses this path lazily on hover instead of inflating every stored
+ * close-out message. The hash is deliberately restricted to a Git object id;
+ * argv remains separated and the workspace pathspec prevents ancestor-repo
+ * widening for workspaces registered below the repository root.
+ */
+export async function getCommitFilePreview(
+  workspace: string,
+  commitHash: string
+): Promise<CommitFilePreviewResult> {
+  const hash = commitHash.trim()
+  if (!/^[0-9a-f]{7,40}$/i.test(hash)) {
+    return { ok: false, error: 'Commit hash must be a 7–40 character hexadecimal object id.' }
+  }
+
+  try {
+    const scope = await resolveGitWorkspaceScope(workspace)
+    if (!scope) return { ok: false, error: 'This workspace is not a Git repository.' }
+    const result = await spawnGit(scope.repoRoot, [
+      'diff-tree',
+      '--root',
+      '--no-commit-id',
+      '--numstat',
+      '--no-renames',
+      '-r',
+      '-z',
+      hash,
+      ...workspacePathspec(scope.workspacePrefix)
+    ])
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        error: result.stderr.trim() || result.stdout.trim() || 'Commit files could not be read.'
+      }
+    }
+
+    const files: CommitFilePreviewEntry[] = []
+    let totalFiles = 0
+    for (const record of result.stdout.split('\0')) {
+      if (!record) continue
+      const [rawAdditions, rawDeletions, ...pathParts] = record.split('\t')
+      const repoPath = pathParts.join('\t')
+      if (!repoPath) continue
+      const workspacePath = repoPathToWorkspacePath(repoPath, scope.workspacePrefix)
+      if (workspacePath === null || !workspacePath) continue
+      totalFiles += 1
+      if (files.length >= COMMIT_FILE_PREVIEW_MAX_FILES) continue
+      const additions = Number(rawAdditions)
+      const deletions = Number(rawDeletions)
+      files.push({
+        path: workspacePath,
+        ...(Number.isFinite(additions) ? { additions } : {}),
+        ...(Number.isFinite(deletions) ? { deletions } : {})
+      })
+    }
+    return { ok: true, files, totalFiles }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 function repoPathToWorkspacePath(repoPath: string, workspacePrefix: string): string | null {

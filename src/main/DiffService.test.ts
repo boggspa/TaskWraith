@@ -7,6 +7,7 @@ import {
   parseGitStatusZ,
   classifyStatus,
   generateSyntheticNewFileDiff,
+  getCommitFilePreview,
   getWorkspaceDiff,
   captureWorkspaceSnapshot,
   buildBoundedWorkspaceDiff,
@@ -16,6 +17,12 @@ import {
 function runGit(cwd: string, args: string[]): void {
   const result = spawnSync('git', args, { cwd, encoding: 'utf-8' })
   expect(result.status, result.stderr || result.stdout).toBe(0)
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf-8' })
+  expect(result.status, result.stderr || result.stdout).toBe(0)
+  return result.stdout.trim()
 }
 
 function makeGitRepo(): { baseDir: string; repoDir: string } {
@@ -29,6 +36,44 @@ function makeGitRepo(): { baseDir: string; repoDir: string } {
 }
 
 describe('DiffService', () => {
+  describe('getCommitFilePreview', () => {
+    it('loads historical commit files lazily, scopes paths, and caps the payload at thirty', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      const workspaceDir = path.join(repoDir, 'workspace')
+      fs.mkdirSync(workspaceDir)
+      for (let index = 0; index < 35; index += 1) {
+        fs.writeFileSync(
+          path.join(workspaceDir, `file-${String(index).padStart(2, '0')}.txt`),
+          'x\n'
+        )
+      }
+      fs.writeFileSync(path.join(repoDir, 'outside.txt'), 'outside\n')
+      runGit(repoDir, ['add', '--', 'workspace', 'outside.txt'])
+      runGit(repoDir, ['commit', '-m', 'fixture commit'])
+      const hash = gitOutput(repoDir, ['rev-parse', 'HEAD'])
+
+      try {
+        const result = await getCommitFilePreview(workspaceDir, hash)
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        expect(result.totalFiles).toBe(35)
+        expect(result.files).toHaveLength(30)
+        expect(result.files[0]).toEqual({ path: 'file-00.txt', additions: 1, deletions: 0 })
+        expect(result.files.some((file) => file.path === 'outside.txt')).toBe(false)
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('rejects option-like and malformed commit revisions', async () => {
+      await expect(getCommitFilePreview('/repo', '--all')).resolves.toEqual({
+        ok: false,
+        error: 'Commit hash must be a 7–40 character hexadecimal object id.'
+      })
+    })
+  })
+
   describe('parseGitStatusZ', () => {
     it('parses modified file', () => {
       const input = ' M README.md\0'

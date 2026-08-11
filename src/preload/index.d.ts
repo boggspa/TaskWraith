@@ -229,6 +229,7 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
+import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
   SimulatorCapabilityStatus,
@@ -814,6 +815,12 @@ declare global {
         worktreePath?: string
         chatId?: string
       }) => Promise<GitResult<GitWorkspaceStats>>
+      getCommitFilePreview: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+        commitHash: string
+      }) => Promise<CommitFilePreviewResult>
       gitWorkProvenance: (payload: {
         workspacePath?: string
         repoPath?: string

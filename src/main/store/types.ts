@@ -3518,6 +3518,12 @@ export interface ChatMessage {
       stats?: string
       seatLink?: SeatChangeLink
       participantId?: string
+      files?: Array<{
+        path: string
+        additions?: number
+        deletions?: number
+        hunks?: string
+      }>
     }>
     /**
      * Slim File Changes rows for the Task-complete epic stack.

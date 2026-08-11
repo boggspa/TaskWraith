@@ -1,10 +1,21 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { captureWorkspaceSnapshot, getWorkspaceDiff } from '../DiffService'
+import {
+  captureWorkspaceSnapshot,
+  getCommitFilePreview,
+  getWorkspaceDiff
+} from '../DiffService'
+
+export type WorkspaceDiffRequest = {
+  workspacePath?: string
+  repoPath?: string
+  chatId?: string
+  commitHash?: string
+}
 
 export interface WorkspaceDiffSnapshotHandlerDeps {
   requireRegisteredWorkspace: (workspacePath: string, label?: string) => string
   resolveWorkspaceDiffPath?: (
-    input: string | { workspacePath?: string; repoPath?: string; chatId?: string }
+    input: string | WorkspaceDiffRequest
   ) => string
   assertSenderScope: (
     event: IpcMainInvokeEvent,
@@ -19,7 +30,7 @@ export function registerWorkspaceDiffSnapshotHandlers(
     'get-diff',
     async (
       event,
-      workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }
+      workspace: string | WorkspaceDiffRequest
     ) => {
       const resolved = deps.resolveWorkspaceDiffPath
         ? deps.resolveWorkspaceDiffPath(workspace)
@@ -34,6 +45,9 @@ export function registerWorkspaceDiffSnapshotHandlers(
         ...(chatId ? { chatId } : {}),
         workspacePath: resolved
       })
+      if (typeof workspace !== 'string' && typeof workspace.commitHash === 'string') {
+        return getCommitFilePreview(resolved, workspace.commitHash)
+      }
       return getWorkspaceDiff(resolved)
     }
   )

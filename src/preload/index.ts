@@ -41,6 +41,7 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
+import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
   GitSnapshotChangedPayload,
@@ -732,6 +733,13 @@ const api = {
     worktreePath?: string
     chatId?: string
   }) => ipcRenderer.invoke('git:workspace-stats', payload) as Promise<GitResult<GitWorkspaceStats>>,
+  getCommitFilePreview: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    commitHash: string
+  }) =>
+    ipcRenderer.invoke('get-diff', payload) as Promise<CommitFilePreviewResult>,
   gitWorkProvenance: (payload: {
     workspacePath?: string
     repoPath?: string
