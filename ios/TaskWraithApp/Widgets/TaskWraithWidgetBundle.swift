@@ -1,8 +1,5 @@
-// Widget extension entry point.
-//
-// Live Activities only for now — no home-screen widgets. The bundle exists so
-// the Live Activity has a target to live in; adding a home-screen widget later
-// means adding it to `body` here.
+// Widget extension entry point: the Live Activity plus the home-screen
+// glance widget (running/last-run status board).
 
 import SwiftUI
 import WidgetKit
@@ -10,6 +7,7 @@ import WidgetKit
 @main
 struct TaskWraithWidgetBundle: WidgetBundle {
     var body: some Widget {
+        TWGlanceWidget()
         // iOS 16.1 is where ActivityConfiguration appears. The app's floor is
         // 17.0 so this is always satisfied, but the availability annotation on
         // the widget itself still has to be honoured here.

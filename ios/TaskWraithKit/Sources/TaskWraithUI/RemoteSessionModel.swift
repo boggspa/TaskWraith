@@ -9,6 +9,10 @@ import Foundation
 import CryptoKit
 import Network
 import TaskWraithKit
+
+#if canImport(WidgetKit)
+    import WidgetKit
+#endif
 #if canImport(UIKit)
     import UIKit
     import UserNotifications
@@ -1028,8 +1032,52 @@ public final class RemoteSessionModel: ObservableObject {
                 ensembles: ensembleStates,
                 gitSnapshots: gitSnapshots,
                 isDemo: isDemo)
+            syncGlanceWidgetSnapshot()
         #endif
     }
+
+    #if os(iOS)
+        /// Write the home-screen glance widget's snapshot into the App Group.
+        /// Colours resolve HERE (TWTheme is app-side only — the widget links
+        /// TaskWraithKit alone and renders whatever hex it is handed).
+        /// Running rows lead, then the most recent terminals, capped by the
+        /// snapshot itself.
+        private func syncGlanceWidgetSnapshot() {
+            guard !isDemo else { return }
+            func tintHex(_ card: RemoteTaskCard) -> UInt32 {
+                switch card.status {
+                case "running":
+                    return TWTheme.providerAccentHex(card.provider)
+                case "failed", "error":
+                    return TWTheme.diffStatDelHex
+                default:
+                    return TWTheme.diffStatAddHex
+                }
+            }
+            func row(_ card: RemoteTaskCard) -> TWWidgetSnapshot.Row {
+                TWWidgetSnapshot.Row(
+                    threadId: card.threadId ?? card.id,
+                    title: card.title?.isEmpty == false ? (card.title ?? "Task") : "Task",
+                    status: card.status == "running"
+                        ? "running"
+                        : (card.status == "failed" || card.status == "error")
+                            ? "failed" : "completed",
+                    providerLabel: card.provider.map { TWTheme.providerLabel($0) },
+                    tintHex: tintHex(card),
+                    updatedAt: nil)
+            }
+            let running = taskCards.filter { $0.status == "running" }
+            let settled = taskCards.filter { $0.status != "running" }
+            let snapshot = TWWidgetSnapshot(
+                generatedAt: Int64(Date().timeIntervalSince1970 * 1000),
+                hostName: pairedHosts.first?.macDisplayName,
+                rows: (running + settled).map(row))
+            snapshot.save(suiteName: TWPushKeyAccess.appGroup)
+            #if canImport(WidgetKit)
+                WidgetCenter.shared.reloadTimelines(ofKind: "TWGlanceWidget")
+            #endif
+        }
+    #endif
 
     #if canImport(UIKit)
         /// SINGLE RENDER PATH: this defers to `CompletionBannerRenderer`, the same

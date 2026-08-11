@@ -27,6 +27,7 @@
 		A32F328BF2D56E18A73A7C2B /* provider-logo-deepseek.png in Resources */ = {isa = PBXBuildFile; fileRef = 92F4982ACD01C6FD7493C206 /* provider-logo-deepseek.png */; };
 		A4DCD2CE78DEEEB16D3B82C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */; };
 		B3FB6A651C315C1ABCEAA4BB /* provider-logo-gemini.png in Resources */ = {isa = PBXBuildFile; fileRef = DCAEF1E2913532E7372E49E9 /* provider-logo-gemini.png */; };
+		B8EBAD1E010C4A884AF5F361 /* TWGlanceWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E60D6A60561F60ECCFCA5BC2 /* TWGlanceWidget.swift */; };
 		BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */; };
 		BD9FB315B47912A00DBAD964 /* provider-logo-pi-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = F0D1B2EFD879E8AD1C78903E /* provider-logo-pi-on-dark.png */; };
 		CE7101A9804142C180B58774 /* TaskWraithUI in Frameworks */ = {isa = PBXBuildFile; productRef = AF7441603810B23EE879F5FE /* TaskWraithUI */; };
@@ -109,6 +110,7 @@
 		CDC22EF041D30DC6BBBFB99E /* provider-logo-cerebras-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-cerebras-on-dark.png"; sourceTree = "<group>"; };
 		CDDF9CE2EA2908102BB2355C /* TWRunActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TWRunActivityWidget.swift; sourceTree = "<group>"; };
 		DCAEF1E2913532E7372E49E9 /* provider-logo-gemini.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-gemini.png"; sourceTree = "<group>"; };
+		E60D6A60561F60ECCFCA5BC2 /* TWGlanceWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TWGlanceWidget.swift; sourceTree = "<group>"; };
 		EC686CDBC90A3E52328C5DBA /* TaskWraithWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TaskWraithWidgets.entitlements; sourceTree = "<group>"; };
 		EE8CDB2A8A295B8926BFD2B2 /* TaskWraithWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithWidgetBundle.swift; sourceTree = "<group>"; };
 		EF415D323FEA48F243CF2532 /* provider-logo-cursor-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-cursor-on-dark.png"; sourceTree = "<group>"; };
@@ -199,6 +201,7 @@
 				78BF908D657E6E232AEF0972 /* Info.plist */,
 				EE8CDB2A8A295B8926BFD2B2 /* TaskWraithWidgetBundle.swift */,
 				EC686CDBC90A3E52328C5DBA /* TaskWraithWidgets.entitlements */,
+				E60D6A60561F60ECCFCA5BC2 /* TWGlanceWidget.swift */,
 				CDDF9CE2EA2908102BB2355C /* TWRunActivityWidget.swift */,
 			);
 			path = Widgets;
@@ -483,6 +486,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B8EBAD1E010C4A884AF5F361 /* TWGlanceWidget.swift in Sources */,
 				F127F9C53C22A51EE33F9BD4 /* TWRunActivityWidget.swift in Sources */,
 				752E552999FC62154FDF7C52 /* TaskWraithWidgetBundle.swift in Sources */,
 			);
