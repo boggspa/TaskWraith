@@ -1600,11 +1600,22 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('file-change-stat-divider')
     expect(html).toContain('file-change-stat file-change-stat-add composer-diff-add')
     expect(html).toContain('file-change-stat file-change-stat-delete composer-diff-del')
-    expect(html).toContain(
-      'class="file-change-summary-item file-change-summary-item-interactive has-workbench-link"'
-    )
+    // Hover previews fetch the diff on demand, so the stats-only row (no
+    // inline diffText) renders the same preview shape instead of a
+    // Workbench-link-only fallback.
+    expect(
+      (
+        html.match(
+          /class="file-change-summary-item file-change-summary-item-interactive has-diff-preview"/g
+        ) || []
+      ).length
+    ).toBe(2)
+    expect(html).not.toContain('has-workbench-link')
     expect(html).toContain(
       'aria-label="Open Workbench diff for /Users/example/project/src/components/stats-only.ts"'
+    )
+    expect(html).toContain(
+      'aria-label="Preview diff for /Users/example/project/src/components/stats-only.ts"'
     )
   })
 
@@ -1673,7 +1684,13 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(bravoAt).toBeGreaterThan(sessionHeaderAt)
     // Round-touched paths are deduped out of the remaining section: three
     // session files with one already in the round section → three rows.
-    expect((html.match(/class="file-change-summary-item"/g) || []).length).toBe(3)
+    expect(
+      (
+        html.match(
+          /class="file-change-summary-item file-change-summary-item-interactive has-diff-preview"/g
+        ) || []
+      ).length
+    ).toBe(3)
     // The round header carries ROUND-scoped totals.
     expect(html).toContain('+7')
     expect(html).toContain('-2')
