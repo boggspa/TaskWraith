@@ -1567,6 +1567,39 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitized.advancedFx).toMatchObject({ agentAura: false, refraction: false })
   })
 
+  it('persists workspace edit-consent acknowledgements and strips malformed rows', () => {
+    // Regression: the renderer recorded this workspace-only acknowledgement,
+    // but SETTINGS_PATCH_KEYS silently dropped it. It therefore worked only
+    // until the next settings reload and every resumed/new chat asked again.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    const sanitized = sanitizeSettingsPatch({
+      approvalModeElevationAcknowledgements: {
+        '/work/alpha': true,
+        '/work/alpha|codex': true,
+        '/work/disabled': false,
+        '': true,
+        '/work/malformed': 'yes'
+      } as unknown as Record<string, boolean>
+    })
+
+    expect(sanitized.approvalModeElevationAcknowledgements).toEqual({
+      '/work/alpha': true,
+      '/work/alpha|codex': true,
+      '/work/disabled': false
+    })
+    expect(
+      'approvalModeElevationAcknowledgements' in
+        sanitizeSettingsPatch({
+          approvalModeElevationAcknowledgements: 'not-a-record' as unknown as Record<
+            string,
+            boolean
+          >
+        })
+    ).toBe(false)
+  })
+
   it('persists agenticWorkspaceGrants through SettingsService patches (tool-grant enablement)', () => {
     // Regression: agenticWorkspaceGrants was missing from SETTINGS_PATCH_KEYS, so
     // PermissionService.upsertWorkspaceGrant → SettingsService.updateSettings

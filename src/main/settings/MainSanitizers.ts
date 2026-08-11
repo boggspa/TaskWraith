@@ -205,6 +205,10 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // dropped. Renderer `update-settings` still rejects the key (IpcValidation);
   // only the dedicated grant IPCs + main-side PermissionService write it.
   'agenticWorkspaceGrants',
+  // The main renderer records the one-per-workspace Accept Edits notice here.
+  // Omitting this key makes the acknowledgement renderer-local: it appears to
+  // work, then vanishes on the next settings reload/resumed chat.
+  'approvalModeElevationAcknowledgements',
   'nativeSubAgentRequests',
   'promptCache',
   'geminiApiRuntime',
@@ -1862,6 +1866,17 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const grants = sanitizeAgenticWorkspaceGrants(sanitized.agenticWorkspaceGrants)
       if (grants) sanitized.agenticWorkspaceGrants = grants
       else delete sanitized.agenticWorkspaceGrants
+    }
+    if ('approvalModeElevationAcknowledgements' in sanitized) {
+      if (!isRecord(sanitized.approvalModeElevationAcknowledgements)) {
+        delete sanitized.approvalModeElevationAcknowledgements
+      } else {
+        sanitized.approvalModeElevationAcknowledgements = Object.fromEntries(
+          Object.entries(sanitized.approvalModeElevationAcknowledgements).filter(
+            ([key, value]) => key.length > 0 && typeof value === 'boolean'
+          )
+        )
+      }
     }
     if ('currency' in sanitized) {
       const value = sanitized.currency
