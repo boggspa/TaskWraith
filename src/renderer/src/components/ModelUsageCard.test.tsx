@@ -485,7 +485,11 @@ describe('ModelUsageCard', () => {
       quotaEntry({ provider: 'claude', windows: [] }),
       quotaEntry({ provider: 'kimi', windows: [] }),
       quotaEntry({ provider: 'cursor', windows: [] }),
-      quotaEntry({ provider: 'antigravity', windows: [] }),
+      // AGY is the one lane admitted on data-or-reason rather than on mere
+      // presence, so `quotaConfigured` is load-bearing here: without it this
+      // entry contributes NO column, the grid renders 8 and the legend the
+      // assertions below deny stays on.
+      quotaEntry({ provider: 'antigravity', windows: [], quotaConfigured: true }),
       quotaEntry({ provider: 'deepseek', windows: [] }),
       quotaEntry({ provider: 'cerebras', windows: [] }),
       quotaEntry({ provider: 'meta', windows: [] })
@@ -503,6 +507,13 @@ describe('ModelUsageCard', () => {
     )
 
     expect(html).toContain('model-usage-compact-grid')
+    // Asserted first, and by count: the legend hides at >8, so a fixture that
+    // quietly renders only 8 columns fails every assertion below for a reason
+    // that has nothing to do with the legend rule under test. Counts PROVIDER
+    // headers, not every `<th scope="col">` — the corner cell rides the legend
+    // it gates, so the bare total reads 9 whether the fixture produced 8
+    // providers + corner or the 9 providers this test means.
+    expect(html.split('<th scope="col" class="provider-').length - 1).toBe(9)
     expect(html).not.toContain('>5H</th>')
     expect(html).not.toContain('>WK</th>')
     expect(html).not.toContain('>X1</th>')
@@ -515,7 +526,9 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('Kimi')
     expect(html).toContain('Cursor')
     expect(html).toContain('Grok')
-    expect(html).toContain('AntiGravity')
+    // The compact strip labels this lane 'AGY', not 'AntiGravity' — the column
+    // header is width-constrained (COMPACT_USAGE_PROVIDER_LABELS).
+    expect(html).toContain('>AGY</th>')
     expect(html).toContain('DeepSeek')
     expect(html).toContain('Cerebras')
     expect(html).toContain('Meta')
@@ -843,13 +856,19 @@ describe('ModelUsageCard', () => {
       <CompactModelUsageGrid
         quotaEntries={[]}
         mistralQuota={{ snapshot: mistralSnapshot(13.51, 'estimated', 0.13), loading: false }}
+        // Pinned, because the cell runs through Intl.NumberFormat and an
+        // omitted locale means the RUNNER'S locale: USD renders "$13.51" under
+        // en-US but "US$13.51" under en-GB, so the prefix these assertions
+        // carry is a property of the machine, not of the truncation. en-US is
+        // also the only locale a small-ICU build is guaranteed to have.
+        locale="en-US"
       />
     )
 
     // Cell value truncated to 1 decimal
-    expect(html).toContain('>US$13.5</td>')
+    expect(html).toContain('>$13.5</td>')
     // Title preserves full precision (from formatMistralAccumulatedSpend)
-    expect(html).toContain('~US$13.51 of')
+    expect(html).toContain('~$13.51 of')
   })
 })
 
