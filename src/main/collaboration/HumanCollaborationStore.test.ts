@@ -115,6 +115,20 @@ describe('HumanCollaborationStore', () => {
     expect(store.getShare(ordinary.share.shareId)).toMatchObject({ enabled: true })
   })
 
+  it('fails closed when an existing store file is unreadable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'taskwraith-people-store-'))
+    try {
+      const path = join(dir, 'human-collaboration.json')
+      writeFileSync(path, '{ definitely not json', { mode: 0o600 })
+      expect(() => new HumanCollaborationStore(path)).toThrow(/unreadable/)
+
+      rmSync(path)
+      expect(new HumanCollaborationStore(path).listShares()).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('settles a global history clear after terminal quiescence', () => {
     const emptyGate = new PeopleToChannelMigrationLegacyWriteGate()
     const emptyStore = new HumanCollaborationStore(undefined, { legacyWriteGate: emptyGate })

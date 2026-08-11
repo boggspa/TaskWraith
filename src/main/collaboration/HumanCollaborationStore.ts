@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from 'fs'
 import { dirname } from 'path'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import {
@@ -847,11 +856,15 @@ export class HumanCollaborationStore {
 
   private load(): HumanCollaborationSnapshot {
     if (!this.storagePath || !existsSync(this.storagePath)) return { shares: [] }
+    // Fail closed: an existing-but-unreadable store must never present the
+    // user's shares as an empty set — the migration would classify the empty
+    // view as already retired and product writes would silently orphan the
+    // original records.
     try {
       const parsed = JSON.parse(readFileSync(this.storagePath, 'utf8')) as HumanCollaborationSnapshot
       return normalizeSnapshot(parsed)
     } catch {
-      return { shares: [] }
+      throw new HumanCollaborationStoreUnreadableError()
     }
   }
 
@@ -859,8 +872,27 @@ export class HumanCollaborationStore {
     if (!this.storagePath) return
     mkdirSync(dirname(this.storagePath), { recursive: true })
     const tmp = `${this.storagePath}.tmp`
-    writeFileSync(tmp, JSON.stringify(normalizeSnapshot(this.memory), null, 2))
+    const fd = openSync(tmp, 'w', 0o600)
+    try {
+      writeFileSync(fd, JSON.stringify(normalizeSnapshot(this.memory), null, 2))
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
     renameSync(tmp, this.storagePath)
+    const dir = openSync(dirname(this.storagePath), 'r')
+    try {
+      fsyncSync(dir)
+    } finally {
+      closeSync(dir)
+    }
+  }
+}
+
+export class HumanCollaborationStoreUnreadableError extends Error {
+  constructor() {
+    super('People collaboration store is unreadable; refusing to serve an empty view')
+    this.name = 'HumanCollaborationStoreUnreadableError'
   }
 }
 
