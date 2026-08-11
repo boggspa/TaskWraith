@@ -402,7 +402,9 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     if (sessionLog.sessionLogPath) {
       attachMainSessionLog(sessionLog.sessionLogPath)
       await flushSessionLogs(sessionLog.sessionLogPath)
-      meter = usageReducer?.snapshot() ?? unavailableMuseMeterSnapshot(sessionId)
+      meter =
+        (usageReducer as MuseUsageReducer | null)?.snapshot() ??
+        unavailableMuseMeterSnapshot(sessionId)
     } else if (sessionLog.source === 'missing') {
       warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
       meter = unavailableMuseMeterSnapshot(sessionId)

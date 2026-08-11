@@ -259,7 +259,9 @@ describe('runMuseProviderFromIpc', () => {
   it('mints a UUID --session-id instead of using TaskWraith appRunId', async () => {
     // Regression: Muse CLI rejects non-UUID --session-id with exit 2 and empty
     // JSONL (~100ms). Bridge used to pass createAppRunId()-shaped appRunId.
-    const runMuseProvider = vi.fn(async () => successOutcome())
+    const runMuseProvider = vi.fn<NonNullable<MuseIpcBridgeDeps['runMuseProvider']>>(async () =>
+      successOutcome()
+    )
     const appRunId = `${Date.now()}-0o0k5nn6qpef`
 
     await runMuseProviderFromIpc(event, basePayload({ appRunId, providerSessionId: null }), {
