@@ -105,7 +105,8 @@ approval records, and workspace Tool Grants; Cursor-native tools and
 account/project MCP remain provider-owned and sandbox-bounded. Treat that native
 sandbox as an honest partial backstop — not a full egress or
 workspace-under-`$HOME` seal. See `SECURITY_ENGINEERING_LEDGER.md`
-(TW-SEC-2026-003) for the transport details.
+(TW-SEC-2026-003) for the transport details; it is local-only, intentionally
+gitignored, and not published.
 
 ## Capability Matrix
 
