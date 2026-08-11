@@ -43182,6 +43182,115 @@ if (isGeminiMcpBridgeProcess) {
         // Queue state is in the task card; thread + task deltas make the full snapshot redundant.
         pushRemoteTaskCardDelta(chat.appChatId)
       }
+      // Live mid-turn steer from a paired device — the phone twin of the
+      // desktop composer's Steer button, performed wholly main-side because
+      // the phone cannot run the renderer's preparation. Sequence mirrors
+      // handleSteer exactly: (1) mint the sealed solo-steer transcript
+      // barrier through RunQueueService.requestJob (the ONLY minting path —
+      // the repository promote cannot set the preparation kind), (2) persist
+      // the exact transcript row hasExactSoloSteerTranscriptRow demands,
+      // (3) register with the mid-run steering registry and hand the barrier
+      // to the live steering coordinator. Every refusal or terminal event
+      // releases that exact job to queued, so a phone steer can never strand
+      // or duplicate its user row — the same invariant the desktop path
+      // carries. Solo only: ensembles already have the absorb-capable
+      // runEnsembleRound mode:'steer' path via the ensembleSteer action.
+      const steerRemoteThreadLive = async (action: {
+        workspaceId: string
+        threadId: string
+        text: string
+      }): Promise<{ ok: boolean; delivery?: string; reason?: string }> => {
+        const chat = AppStore.getChat(action.threadId)
+        if (!chat) return { ok: false, reason: 'Thread not found' }
+        if (chat.ensemble) {
+          return { ok: false, reason: 'Use ensembleSteer for Ensemble chats' }
+        }
+        if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
+          return { ok: false, reason: 'Thread does not belong to the requested workspace' }
+        }
+        const text = action.text.trim()
+        if (!text) return { ok: false, reason: 'Steer text is empty' }
+        if (!runQueueServiceRef) {
+          return { ok: false, reason: 'Run queue is not available' }
+        }
+        const provider = (chat.provider as ProviderId) || DEFAULT_PROVIDER
+        const session = runManager.resolve(provider, { appChatId: chat.appChatId })
+        if (!session || !isActiveRunSessionStatus(session.status)) {
+          // No live turn to steer — the phone falls back to its ordinary
+          // queued send; refusing here keeps the two paths distinct instead
+          // of silently double-queueing.
+          return { ok: false, delivery: 'idle', reason: 'No active run to steer' }
+        }
+        const runId = `remote-steer-${randomUUID()}`
+        const ownerToken = randomUUID()
+        const queueMessageId = midRunQueuedMessageId(runId)
+        const preparationReason = `Steer is waiting for the active ${providerLabel(session.provider)} turn to reach its natural boundary.`
+        try {
+          runQueueServiceRef.requestJob(
+            {
+              runId,
+              provider: session.provider,
+              chatId: chat.appChatId,
+              workspaceId: chat.workspaceId,
+              workspacePath: chat.workspacePath,
+              source: 'remote',
+              status: 'paused',
+              statusReason: preparationReason,
+              request: {
+                prompt: text,
+                provider: session.provider,
+                remoteComposer: { text }
+              }
+            },
+            { soloSteerTranscriptBarrier: { ownerToken, queueMessageId } }
+          )
+        } catch (error) {
+          return {
+            ok: false,
+            reason: error instanceof Error ? error.message : 'Steer barrier was not minted'
+          }
+        }
+        // The exact row shape hasExactSoloSteerTranscriptRow verifies — a
+        // mismatch is a stranded barrier, so this is contract, not styling.
+        const updated: ChatRecord = {
+          ...chat,
+          messages: [
+            ...chat.messages,
+            {
+              id: queueMessageId,
+              role: 'user' as const,
+              content: text,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                kind: 'midRunSteering',
+                midRunQueueRunId: runId,
+                midRunQueueSource: 'soloSteer',
+                remoteComposer: true
+              }
+            }
+          ],
+          updatedAt: Date.now()
+        }
+        saveAndBroadcastChat(updated)
+        const entry = midRunSteeringRegistry.register({
+          chatId: chat.appChatId,
+          messageId: queueMessageId,
+          text,
+          source: 'liveSteer',
+          authorKind: 'host',
+          createdAtIso: new Date().toISOString()
+        })
+        const outcome = await liveSteeringCoordinator.start({
+          chatId: chat.appChatId,
+          activeRunId: session.runId,
+          queuedRunId: runId,
+          ownerToken,
+          provider: session.provider,
+          entry
+        })
+        broadcastRemoteComposerQueueChange(chat, action.workspaceId)
+        return { ok: true, delivery: outcome.status, reason: outcome.reason }
+      }
       const queueRemoteComposerPrompt = async (action: {
         workspaceId: string
         threadId: string
@@ -46632,6 +46741,7 @@ if (isGeminiMcpBridgeProcess) {
         },
         composerQueuePromptFn: queueRemoteComposerPrompt,
         composerQueueItemFn: updateRemoteComposerQueueItem,
+        composerSteerLiveFn: steerRemoteThreadLive,
         log: (line) => {
           console.log(line)
         }
