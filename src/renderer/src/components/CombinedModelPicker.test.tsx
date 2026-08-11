@@ -9,8 +9,10 @@ import {
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
   modelPickerHueClass,
+  resolveCombinedModelPickerEnterAction,
   resolveCombinedModelPickerResetState,
-  resolveCombinedPickerPosition
+  resolveCombinedPickerPosition,
+  runCombinedModelPickerConfirmAction
 } from './CombinedModelPicker'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
@@ -42,6 +44,32 @@ describe('CombinedModelPicker', () => {
     expect(confirmLayoutRule).not.toMatch(
       /(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/
     )
+  })
+
+  it('keeps Add open while Done is the Return-key action that closes', () => {
+    const events: string[] = []
+    const addAction = {
+      label: 'Add',
+      keepOpen: true,
+      onConfirm: () => events.push('add')
+    }
+    const doneAction = {
+      label: 'Done',
+      submitOnEnter: true,
+      onConfirm: () => events.push('done')
+    }
+
+    expect(resolveCombinedModelPickerEnterAction(undefined, [addAction, doneAction])).toBe(
+      doneAction
+    )
+    expect(runCombinedModelPickerConfirmAction(addAction, false, () => events.push('close'))).toBe(
+      true
+    )
+    expect(events).toEqual(['add'])
+    expect(
+      runCombinedModelPickerConfirmAction(doneAction, false, () => events.push('close'))
+    ).toBe(true)
+    expect(events).toEqual(['add', 'done', 'close'])
   })
 
   // Model labels no longer spell out their lane ("Gemini API: 2.5 Flash-Lite"

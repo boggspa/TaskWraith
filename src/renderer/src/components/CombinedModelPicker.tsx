@@ -178,6 +178,29 @@ export interface CombinedModelPickerConfirmAction {
   label: string
   onConfirm: () => void
   disabled?: boolean
+  /** Keep a draft-based picker open after this action commits. Defaults to false. */
+  keepOpen?: boolean
+  /** Make this action the picker's Return-key default while the popover is open. */
+  submitOnEnter?: boolean
+}
+
+export function resolveCombinedModelPickerEnterAction(
+  confirmAction: CombinedModelPickerConfirmAction | undefined,
+  confirmActions: readonly CombinedModelPickerConfirmAction[] | undefined
+): CombinedModelPickerConfirmAction | undefined {
+  const actions = confirmActions?.length ? confirmActions : confirmAction ? [confirmAction] : []
+  return actions.find((action) => action.submitOnEnter)
+}
+
+export function runCombinedModelPickerConfirmAction(
+  action: CombinedModelPickerConfirmAction,
+  disabled: boolean,
+  onClose?: () => void
+): boolean {
+  if (disabled || action.disabled) return false
+  action.onConfirm()
+  if (!action.keepOpen) onClose?.()
+  return true
 }
 
 export function CombinedModelPickerConfirmButton({
@@ -197,9 +220,7 @@ export function CombinedModelPickerConfirmButton({
       className="composer-combined-picker-confirm"
       disabled={buttonDisabled}
       onClick={() => {
-        if (buttonDisabled) return
-        action.onConfirm()
-        onConfirmed?.()
+        runCombinedModelPickerConfirmAction(action, buttonDisabled, onConfirmed)
       }}
     >
       {action.label}
@@ -272,8 +293,12 @@ interface CombinedModelPickerProps {
   customTrigger?: CombinedModelPickerCustomTrigger
   /** Optional footer action for draft-based picker flows. */
   confirmAction?: CombinedModelPickerConfirmAction
+  /** Optional stacked footer actions for draft-based picker flows. */
+  confirmActions?: readonly CombinedModelPickerConfirmAction[]
   /** Optional full-width content above the existing picker columns. */
   topContent?: ReactNode
+  /** Optional full-width content below the existing picker columns. */
+  bottomContent?: ReactNode
   /** Internal surface hook for a caller-specific popover layout. */
   popoverClassName?: string
   /** Accessible name override for caller-specific picker compositions. */
@@ -1050,7 +1075,9 @@ export function CombinedModelPicker({
   repositionOnScroll,
   customTrigger,
   confirmAction,
+  confirmActions,
   topContent,
+  bottomContent,
   popoverClassName,
   dialogAriaLabel,
   onOpenChange,
@@ -1071,6 +1098,12 @@ export function CombinedModelPicker({
   )
   const showReasoningSidecar = true
   const hasTopContent = Boolean(topContent)
+  const hasBottomContent = Boolean(bottomContent)
+  const stackedConfirmActions = confirmActions?.length ? confirmActions : null
+  const enterConfirmAction = resolveCombinedModelPickerEnterAction(
+    confirmAction,
+    stackedConfirmActions || undefined
+  )
   const ladder = useMemo(
     () => buildLadderModel(provider, reasoningOptions),
     [provider, reasoningOptions]
@@ -1487,11 +1520,21 @@ export function CombinedModelPicker({
       const targetInsidePopover =
         target instanceof Node && Boolean(popoverRef.current?.contains(target))
       if (target !== triggerRef.current && !targetInsidePopover) return
-      if (
-        target instanceof Element &&
-        targetInsidePopover &&
-        target.closest('button, input, select, textarea, [contenteditable="true"]')
-      ) {
+      const interactiveTarget =
+        target instanceof Element && targetInsidePopover
+          ? target.closest('button, input, select, textarea, [contenteditable="true"]')
+          : null
+      const nativeEnterTarget =
+        event.key === 'Enter' &&
+        interactiveTarget?.closest('button, select, textarea, [contenteditable="true"]')
+      if (event.key === 'Enter' && enterConfirmAction && !nativeEnterTarget) {
+        event.preventDefault()
+        runCombinedModelPickerConfirmAction(enterConfirmAction, Boolean(disabled), () =>
+          setOpen(false)
+        )
+        return
+      }
+      if (interactiveTarget) {
         // Once focus has moved into an interactive child, let its native
         // keyboard behavior win. This covers the Add-participant detail fields
         // as well as the existing confirm and Fast buttons.
@@ -1595,7 +1638,8 @@ export function CombinedModelPicker({
     ladder,
     provider,
     selectedReasoning,
-    unifiedModelEntries
+    unifiedModelEntries,
+    enterConfirmAction
   ])
 
   const popoverContent = open && position && (
@@ -1605,7 +1649,7 @@ export function CombinedModelPicker({
         isOllamaProviderPicker ? 'is-ollama-model-picker' : ''
       } ${isUnifiedProviderPicker ? 'is-unified-provider-picker' : ''} ${
         hasTopContent ? 'has-top-content' : ''
-      } ${popoverClassName || ''}`}
+      } ${hasBottomContent ? 'has-bottom-content' : ''} ${popoverClassName || ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
@@ -1940,14 +1984,28 @@ export function CombinedModelPicker({
               </span>
             </button>
           )}
-          {confirmAction && (
+          {stackedConfirmActions ? (
+            <div className="composer-combined-picker-confirm-actions">
+              {stackedConfirmActions.map((action, index) => (
+                <CombinedModelPickerConfirmButton
+                  key={`${action.label}:${index}`}
+                  action={action}
+                  disabled={disabled}
+                  onConfirmed={() => setOpen(false)}
+                />
+              ))}
+            </div>
+          ) : confirmAction ? (
             <CombinedModelPickerConfirmButton
               action={confirmAction}
               disabled={disabled}
               onConfirmed={() => setOpen(false)}
             />
-          )}
+          ) : null}
         </div>
+      )}
+      {hasBottomContent && (
+        <div className="composer-combined-picker-bottom-content">{bottomContent}</div>
       )}
     </div>
   )

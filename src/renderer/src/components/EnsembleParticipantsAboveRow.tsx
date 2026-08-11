@@ -72,6 +72,7 @@ import {
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { buildParticipantTokenChipTooltipLine } from '../lib/participantTokenChip'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { humaniseModelId } from '../lib/modelDisplayName'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
 import {
   resolveEffectiveRoster,
@@ -107,6 +108,7 @@ import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader then-four-provider roster plus alternates (e.g. two
@@ -435,7 +437,7 @@ export function createEnsembleParticipantAddConfiguration(
 
 export function createEnsembleParticipantAddDetails(
   provider: ProviderId,
-  participants: EnsembleParticipant[],
+  participants: ReadonlyArray<Pick<EnsembleParticipant, 'role'>>,
   autoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
 ): EnsembleParticipantAddDetails {
   const roleName = getDefaultEnsembleRoleName(provider)
@@ -454,7 +456,7 @@ export function retargetEnsembleParticipantAddDetails(
   current: EnsembleParticipantAddDetails,
   previousProvider: ProviderId,
   nextProvider: ProviderId,
-  participants: EnsembleParticipant[],
+  participants: ReadonlyArray<Pick<EnsembleParticipant, 'role'>>,
   autoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
 ): EnsembleParticipantAddDetails {
   const previousDefaults = createEnsembleParticipantAddDetails(
@@ -474,6 +476,40 @@ export function retargetEnsembleParticipantAddDetails(
       current.instructions === previousDefaults.instructions
         ? nextDefaults.instructions
         : current.instructions
+  }
+}
+
+/**
+ * Copies every setting represented in the Add picker from an existing seat.
+ * Models retired from the live catalog fall back to that provider's current
+ * default. Runtime identity, permissions, ordering, and session linkage remain
+ * fresh-seat concerns; the role is uniquified so the duplicate stays addressable.
+ */
+export function createEnsembleParticipantDuplicateDraft(
+  participant: EnsembleParticipant,
+  participants: readonly EnsembleParticipant[],
+  authority: EnsembleParticipantAuthority,
+  autoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals'],
+  providerGroups?: readonly CombinedModelPickerProviderGroup[]
+): EnsembleParticipantAddDraft {
+  const configuration = createEnsembleParticipantAddConfiguration(
+    participant.provider,
+    participant.model,
+    providerGroups
+  )
+  return {
+    ...configuration,
+    reasoningEffort: participant.reasoningEffort ?? configuration.reasoningEffort,
+    fastModeEnabled: participant.fastModeEnabled ?? configuration.fastModeEnabled,
+    thinkingEnabled: participant.thinkingEnabled ?? configuration.thinkingEnabled,
+    serviceTier: participant.serviceTier ?? configuration.serviceTier,
+    enabled: participant.enabled,
+    authority: participant.stageRole === 'background' ? 'agent' : authority,
+    autoApprovalsEnabled: autoApprovals?.enabled === true,
+    autoApprovalsConfirmedAt: autoApprovals?.confirmedAt,
+    stageRole: participant.stageRole,
+    role: nextRoleLabel(participant.role, participants),
+    instructions: participant.instructions
   }
 }
 
@@ -1495,6 +1531,8 @@ export function EnsembleParticipantsAboveRow({
             providerGroups={providerGroups}
             participants={participants}
             hasLeadership={hasLeadership}
+            bossmanParticipantId={configuredAuthority.bossmanParticipantId}
+            captainParticipantIds={configuredAuthority.captainParticipantIds}
             captainAssignmentDisabled={
               configuredAuthority.captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS
             }
@@ -1585,6 +1623,8 @@ function EnsembleAddParticipantButton({
   providerGroups,
   participants,
   hasLeadership,
+  bossmanParticipantId,
+  captainParticipantIds,
   captainAssignmentDisabled,
   bossmanAutoApprovals,
   initialProvider,
@@ -1598,6 +1638,8 @@ function EnsembleAddParticipantButton({
   providerGroups?: readonly CombinedModelPickerProviderGroup[]
   participants: EnsembleParticipant[]
   hasLeadership: boolean
+  bossmanParticipantId?: string
+  captainParticipantIds: readonly string[]
   captainAssignmentDisabled: boolean
   bossmanAutoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
   initialProvider: ProviderId
@@ -1608,6 +1650,15 @@ function EnsembleAddParticipantButton({
     [cursorAvailable, grokAvailable, providerGroups]
   )
   const pickerDisabled = disabled || availableProviderGroups.length === 0
+  const duplicableProviderIds = useMemo(
+    () =>
+      new Set(
+        availableProviderGroups
+          .filter((group) => group.modelOptions.some((option) => !option.disabled))
+          .map((group) => group.provider)
+      ),
+    [availableProviderGroups]
+  )
   const resolvedInitialProvider = availableProviderGroups.some(
     (group) => group.provider === initialProvider
   )
@@ -1627,6 +1678,7 @@ function EnsembleAddParticipantButton({
   )
   const [detailsDraft, setDetailsDraft] = useState<EnsembleParticipantAddDetails>(initialDetails)
   const [rolePresetId, setRolePresetId] = useState(() => resolveRolePresetId(initialDetails.role))
+  const [duplicateSourceId, setDuplicateSourceId] = useState<string | null>(null)
   const displayProviderGroups = useMemo(
     () =>
       availableProviderGroups.map((group) =>
@@ -1665,29 +1717,35 @@ function EnsembleAddParticipantButton({
   const fastModeEnabled =
     draft.provider === 'codex' ? draft.serviceTier === 'fast' : Boolean(draft.fastModeEnabled)
 
+  const resetDraft = useCallback(
+    (
+      provider: ProviderId,
+      roleSources: ReadonlyArray<Pick<EnsembleParticipant, 'role'>> = participants
+    ) => {
+      const nextDetails = createEnsembleParticipantAddDetails(
+        provider,
+        roleSources,
+        bossmanAutoApprovals
+      )
+      setDraft(
+        createEnsembleParticipantAddConfiguration(provider, undefined, availableProviderGroups)
+      )
+      setDetailsDraft(nextDetails)
+      setRolePresetId(resolveRolePresetId(nextDetails.role))
+      setDuplicateSourceId(null)
+    },
+    [availableProviderGroups, bossmanAutoApprovals, participants]
+  )
+
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      if (open) {
-        const nextDetails = createEnsembleParticipantAddDetails(
-          resolvedInitialProvider,
-          participants,
-          bossmanAutoApprovals
-        )
-        setDraft(
-          createEnsembleParticipantAddConfiguration(
-            resolvedInitialProvider,
-            undefined,
-            availableProviderGroups
-          )
-        )
-        setDetailsDraft(nextDetails)
-        setRolePresetId(resolveRolePresetId(nextDetails.role))
-      }
+      if (open) resetDraft(resolvedInitialProvider)
     },
-    [availableProviderGroups, bossmanAutoApprovals, participants, resolvedInitialProvider]
+    [resetDraft, resolvedInitialProvider]
   )
   const handleProviderModelSelection = useCallback(
     (provider: ProviderId, model: string) => {
+      setDuplicateSourceId(null)
       if (provider !== draft.provider) {
         setDetailsDraft((current) =>
           retargetEnsembleParticipantAddDetails(
@@ -1707,6 +1765,7 @@ function EnsembleAddParticipantButton({
   )
   const handleReasoningSelection = useCallback(
     (value: string) => {
+      setDuplicateSourceId(null)
       setDraft((current) => {
         if (current.provider === 'antigravity') {
           const modelOptions =
@@ -1733,6 +1792,7 @@ function EnsembleAddParticipantButton({
     [availableProviderGroups]
   )
   const handleToggleFastMode = useCallback(() => {
+    setDuplicateSourceId(null)
     setDraft((current) => {
       if (current.provider === 'codex') {
         const nextFast = current.serviceTier !== 'fast'
@@ -1768,6 +1828,7 @@ function EnsembleAddParticipantButton({
 
   const patchDetails = useCallback(
     (patch: Partial<EnsembleParticipantAddDetails>) => {
+      setDuplicateSourceId(null)
       setDetailsDraft((current) => {
         const next = { ...current, ...patch }
         if (patch.stageRole === 'background' && next.authority !== 'agent') {
@@ -1800,6 +1861,69 @@ function EnsembleAddParticipantButton({
       })
     },
     [detailsDraft.autoApprovalsConfirmedAt, patchDetails]
+  )
+
+  const handleRolePresetIdChange = useCallback((nextRolePresetId: string) => {
+    setDuplicateSourceId(null)
+    setRolePresetId(nextRolePresetId)
+  }, [])
+
+  const commitDraft = useCallback((): boolean => {
+    if (pickerDisabled) return false
+    onAdd({ ...draft, ...detailsDraft })
+    return true
+  }, [detailsDraft, draft, onAdd, pickerDisabled])
+
+  const handleAddAnother = useCallback(() => {
+    if (!commitDraft()) return
+    resetDraft(draft.provider, [...participants, { role: detailsDraft.role }])
+  }, [commitDraft, detailsDraft.role, draft.provider, participants, resetDraft])
+
+  const handleDuplicate = useCallback(
+    (participant: EnsembleParticipant) => {
+      if (!duplicableProviderIds.has(participant.provider)) return
+      const sourceAuthority: EnsembleParticipantAuthority =
+        participant.id === bossmanParticipantId
+          ? 'boss'
+          : captainParticipantIds.includes(participant.id) && !captainAssignmentDisabled
+            ? 'captain'
+            : 'agent'
+      const duplicateDraft = createEnsembleParticipantDuplicateDraft(
+        participant,
+        participants,
+        sourceAuthority,
+        bossmanAutoApprovals,
+        availableProviderGroups
+      )
+      setDraft({
+        provider: duplicateDraft.provider,
+        model: duplicateDraft.model,
+        reasoningEffort: duplicateDraft.reasoningEffort,
+        fastModeEnabled: duplicateDraft.fastModeEnabled,
+        thinkingEnabled: duplicateDraft.thinkingEnabled,
+        serviceTier: duplicateDraft.serviceTier
+      })
+      setDetailsDraft({
+        enabled: duplicateDraft.enabled,
+        authority: duplicateDraft.authority,
+        autoApprovalsEnabled: duplicateDraft.autoApprovalsEnabled,
+        autoApprovalsConfirmedAt: duplicateDraft.autoApprovalsConfirmedAt,
+        stageRole: duplicateDraft.stageRole,
+        role: duplicateDraft.role,
+        instructions: duplicateDraft.instructions
+      })
+      setRolePresetId(resolveRolePresetId(duplicateDraft.role))
+      setDuplicateSourceId(participant.id)
+    },
+    [
+      availableProviderGroups,
+      bossmanAutoApprovals,
+      bossmanParticipantId,
+      captainAssignmentDisabled,
+      captainParticipantIds,
+      duplicableProviderIds,
+      participants
+    ]
   )
 
   return (
@@ -1844,9 +1968,20 @@ function EnsembleAddParticipantButton({
           captainAssignmentDisabled={captainAssignmentDisabled}
           disabled={pickerDisabled}
           onDetailsChange={patchDetails}
-          onRolePresetIdChange={setRolePresetId}
+          onRolePresetIdChange={handleRolePresetIdChange}
           onAutoApprovalsChange={handleAutoApprovalsChange}
         />
+      }
+      bottomContent={
+        participants.length > 0 ? (
+          <EnsembleParticipantDuplicateRow
+            participants={participants}
+            selectedSourceId={duplicateSourceId}
+            duplicableProviderIds={duplicableProviderIds}
+            disabled={pickerDisabled}
+            onDuplicate={handleDuplicate}
+          />
+        ) : undefined
       }
       popoverClassName="is-ensemble-add-participant"
       dialogAriaLabel="Configure and add Ensemble participant"
@@ -1859,14 +1994,90 @@ function EnsembleAddParticipantButton({
             : title,
         ariaLabel: 'Add Ensemble participant'
       }}
-      confirmAction={{
-        label: 'Add',
-        onConfirm: () => {
-          if (!pickerDisabled) onAdd({ ...draft, ...detailsDraft })
+      confirmActions={[
+        {
+          label: 'Add',
+          onConfirm: handleAddAnother,
+          keepOpen: true
+        },
+        {
+          label: 'Done',
+          onConfirm: commitDraft,
+          submitOnEnter: true
         }
-      }}
+      ]}
       onOpenChange={handleOpenChange}
     />
+  )
+}
+
+export function EnsembleParticipantDuplicateRow({
+  participants,
+  selectedSourceId,
+  duplicableProviderIds,
+  disabled,
+  onDuplicate
+}: {
+  participants: readonly EnsembleParticipant[]
+  selectedSourceId: string | null
+  duplicableProviderIds?: ReadonlySet<ProviderId>
+  disabled: boolean
+  onDuplicate: (participant: EnsembleParticipant) => void
+}): React.JSX.Element {
+  return (
+    <div className="ensemble-add-participant-duplicate-row">
+      <span className="ensemble-add-participant-duplicate-label">Duplicate</span>
+      <div
+        className="ensemble-add-participant-duplicate-list"
+        aria-label="Duplicate configuration from an existing participant"
+      >
+        {participants.map((participant) => {
+          const role = participant.role || getProviderName(participant.provider)
+          const model = participant.model
+            ? humaniseModelId(participant.provider, participant.model)
+            : getProviderName(participant.provider)
+          const selected = participant.id === selectedSourceId
+          const providerHue = resolveProviderHueClass(participant.provider, participant.model)
+          const providerUnavailable =
+            duplicableProviderIds !== undefined && !duplicableProviderIds.has(participant.provider)
+          return (
+            <button
+              key={participant.id}
+              type="button"
+              className={`ensemble-add-participant-duplicate-chip${selected ? ' is-selected' : ''}`}
+              data-participant-id={participant.id}
+              data-provider={participant.provider}
+              style={
+                {
+                  '--duplicate-participant-accent': `var(--provider-${providerHue}-color, var(--accent))`
+                } as React.CSSProperties
+              }
+              disabled={disabled || providerUnavailable}
+              aria-pressed={selected}
+              aria-label={
+                providerUnavailable
+                  ? `Cannot duplicate configuration from ${role}: provider unavailable`
+                  : `Duplicate configuration from ${role}`
+              }
+              title={
+                providerUnavailable
+                  ? `${getProviderName(participant.provider)} is not available for a new participant.`
+                  : `Copy ${role}'s picker configuration into this new participant draft.`
+              }
+              onClick={() => onDuplicate(participant)}
+            >
+              <ProviderBrandLogoIcon
+                provider={participant.provider}
+                accentProvider={providerHue}
+                wrapperClassName="ensemble-add-participant-duplicate-provider"
+              />
+              <span className="ensemble-add-participant-duplicate-role">{role}</span>
+              <span className="ensemble-add-participant-duplicate-model">{model}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -2943,7 +3154,10 @@ function nextParticipantId(participants: EnsembleParticipant[]): string {
   return `ensemble-participant-${Date.now().toString(36)}`
 }
 
-function nextRoleLabel(baseRole: string, participants: EnsembleParticipant[]): string {
+function nextRoleLabel(
+  baseRole: string,
+  participants: ReadonlyArray<Pick<EnsembleParticipant, 'role'>>
+): string {
   const base = (baseRole || 'Participant').replace(/\s+\d+$/, '').trim() || 'Participant'
   const existing = new Set(
     participants.map((participant) =>

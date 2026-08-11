@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleAddParticipantFields,
+  EnsembleParticipantDuplicateRow,
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
@@ -13,6 +14,7 @@ import {
   computeEnsembleChipRowDistribution,
   createEnsembleParticipantAddConfiguration,
   createEnsembleParticipantAddDetails,
+  createEnsembleParticipantDuplicateDraft,
   getEnsembleAddReasoningOptions,
   resolveEnsembleAddProviderGroups,
   resolveEnsembleParticipantAddAuthorityPatch,
@@ -399,6 +401,117 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
     })
 
+    it('duplicates every picker-visible setting into a fresh, uniquely named draft', () => {
+      const participant = makeParticipant({
+        id: 'reviewer-1',
+        provider: 'codex',
+        enabled: false,
+        role: 'Release reviewer',
+        instructions: 'Review the final diff.',
+        model: 'gpt-5.6-sol',
+        stageRole: 'reviewer',
+        reasoningEffort: 'high',
+        fastModeEnabled: true,
+        serviceTier: 'fast'
+      })
+      const autoApprovals = {
+        enabled: true,
+        mode: 'permission_preset_once' as const,
+        confirmedAt: '2026-08-11T20:00:00.000Z'
+      }
+
+      expect(
+        createEnsembleParticipantDuplicateDraft(
+          participant,
+          [participant],
+          'captain',
+          autoApprovals
+        )
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high',
+        fastModeEnabled: true,
+        serviceTier: 'fast',
+        enabled: false,
+        authority: 'captain',
+        autoApprovalsEnabled: true,
+        autoApprovalsConfirmedAt: '2026-08-11T20:00:00.000Z',
+        stageRole: 'reviewer',
+        role: 'Release reviewer 2',
+        instructions: 'Review the final diff.'
+      })
+    })
+
+    it('falls back from a legacy duplicated model to a visible live-catalog default', () => {
+      const participant = makeParticipant({
+        provider: 'claude',
+        model: 'auto-claude-3',
+        role: 'Legacy reviewer'
+      })
+
+      expect(
+        createEnsembleParticipantDuplicateDraft(
+          participant,
+          [participant],
+          'agent',
+          undefined,
+          [
+            {
+              provider: 'claude',
+              modelOptions: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }]
+            }
+          ]
+        ).model
+      ).toBe('claude-sonnet-5')
+    })
+
+    it('renders the existing participants as a horizontally scrollable duplicate rail', () => {
+      const participants = [
+        makeParticipant({ id: 'planner', role: 'Planner', model: 'claude-opus-4-7' }),
+        makeParticipant({
+          id: 'builder',
+          provider: 'codex',
+          role: 'Builder',
+          model: 'gpt-5.6-sol',
+          order: 2
+        })
+      ]
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantDuplicateRow
+          participants={participants}
+          selectedSourceId="builder"
+          duplicableProviderIds={new Set(['claude', 'codex'])}
+          disabled={false}
+          onDuplicate={() => undefined}
+        />
+      )
+
+      expect(html).toContain('>Duplicate</span>')
+      expect(html).toContain('aria-label="Duplicate configuration from Planner"')
+      expect(html).toContain('aria-label="Duplicate configuration from Builder"')
+      expect(html).toMatch(/data-participant-id="builder"[^>]*aria-pressed="true"/)
+      expect(html).toContain('>GPT-5.6-Sol</span>')
+    })
+
+    it('keeps unavailable legacy providers visible but disables their duplicate action', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantDuplicateRow
+          participants={[
+            makeParticipant({ id: 'legacy-gemini', provider: 'gemini', role: 'Legacy Gemini' })
+          ]}
+          selectedSourceId={null}
+          duplicableProviderIds={new Set(['codex'])}
+          disabled={false}
+          onDuplicate={() => undefined}
+        />
+      )
+
+      expect(html).toContain('data-participant-id="legacy-gemini"')
+      expect(html).toContain('disabled=""')
+      expect(html).toContain('Cannot duplicate configuration from Legacy Gemini: provider unavailable')
+    })
+
     it('renders every participant field in the Add-only top section', () => {
       const participants = [makeParticipant({ id: 'claude-1', order: 1 })]
       const html = renderToStaticMarkup(
@@ -471,7 +584,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toMatch(/data-segmented-control-value="captain"[^>]*disabled=""/)
     })
 
-    it('scopes the three-part layout to the Ensemble Add picker', () => {
+    it('scopes the four-part layout to the Ensemble Add picker', () => {
       const css = readFileSync(
         new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
         'utf8'
@@ -480,12 +593,19 @@ describe('EnsembleParticipantsAboveRow', () => {
         '.composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant'
       )
       expect(css).toContain('grid-template-columns: minmax(0, 1fr) 124px')
+      expect(css).toContain('grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto')
       expect(css).toContain('height: min(570px, calc(100dvh - 16px))')
       expect(css).toContain('.is-ensemble-add-participant > .composer-combined-picker-top-content')
       expect(css).toContain('border-bottom: 1px solid')
       expect(css).toContain('.ensemble-add-participant-fields-primary')
       expect(css).toContain('border-right: 1px solid')
       expect(css).toContain('.ensemble-add-participant-brief .ensemble-brief-textarea-wrap')
+      expect(css).toContain(
+        '.is-ensemble-add-participant > .composer-combined-picker-bottom-content'
+      )
+      expect(css).toContain('.composer-combined-picker-confirm-actions')
+      expect(css).toContain('.ensemble-add-participant-duplicate-list')
+      expect(css).toContain('overflow-x: auto')
       expect(css).toContain('height: 100%')
     })
 

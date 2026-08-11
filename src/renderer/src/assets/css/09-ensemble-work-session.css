@@ -2212,7 +2212,7 @@
 .composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 124px;
-  grid-template-rows: minmax(0, 43fr) minmax(0, 57fr);
+  grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto;
   width: min(520px, calc(100vw - 16px));
   min-width: min(520px, calc(100vw - 16px));
   max-width: min(520px, calc(100vw - 16px));
@@ -2244,6 +2244,30 @@
   grid-column: 2;
   grid-row: 2;
   min-height: 0;
+}
+
+.is-ensemble-add-participant > .composer-combined-picker-bottom-content {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  min-width: 0;
+  padding: 6px 8px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+  position: relative;
+  z-index: 2;
+}
+
+.is-ensemble-add-participant .composer-combined-picker-confirm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: auto 0 2px;
+}
+
+.is-ensemble-add-participant
+  .composer-combined-picker-confirm-actions
+  .composer-combined-picker-confirm {
+  width: calc(100% - 12px);
+  margin: 0 6px;
 }
 
 .is-ensemble-add-participant .composer-combined-picker-ladder {
@@ -2292,6 +2316,87 @@
   min-height: 0;
   max-height: none;
   height: 100%;
+}
+
+.ensemble-add-participant-duplicate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ensemble-add-participant-duplicate-label {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ensemble-add-participant-duplicate-list {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 2px 3px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+
+.ensemble-add-participant-duplicate-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-raised, var(--panel-bg)) 76%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ensemble-add-participant-duplicate-chip:hover:not(:disabled),
+.ensemble-add-participant-duplicate-chip.is-selected {
+  border-color: color-mix(
+    in srgb,
+    var(--duplicate-participant-accent) 68%,
+    var(--panel-border)
+  );
+  background: color-mix(in srgb, var(--duplicate-participant-accent) 12%, transparent);
+}
+
+.ensemble-add-participant-duplicate-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ensemble-add-participant-duplicate-provider,
+.ensemble-add-participant-duplicate-provider .provider-brand-logo {
+  width: 13px;
+  height: 13px;
+}
+
+.ensemble-add-participant-duplicate-role {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--duplicate-participant-accent) 76%, var(--text-primary));
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ensemble-add-participant-duplicate-model {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 460px) {
