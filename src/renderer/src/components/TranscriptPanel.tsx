@@ -5986,6 +5986,9 @@ export const TranscriptPanel = memo(
                           estimatedCurrentTurnTokens={
                             tokenTarget?.estimatedCurrentTurnTokens ?? 0
                           }
+                          estimatedToolResultTokens={
+                            tokenTarget?.estimatedToolResultTokens ?? 0
+                          }
                         />
                       }
                     />

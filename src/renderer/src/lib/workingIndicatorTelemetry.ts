@@ -1,6 +1,7 @@
-import type { ChatMessage, ChatRun } from '../../../main/store/types'
+import type { ChatMessage, ChatRun, ToolActivity } from '../../../main/store/types'
+import { estimateTokensFromChars, visiblePayloadChars } from '../../../shared/tokenEstimate'
 import { extractUsageCountsFromCandidate } from './usageStats'
-import { estimateLiveOutputTokensFromChars } from './liveOutputTokens'
+import { isReasoningToolName } from './ToolParser'
 
 export type WorkingIndicatorTokenInput = {
   runId: string | null
@@ -11,13 +12,38 @@ export type WorkingIndicatorTokenTarget = {
   runId: string | null
   /** Completed participant turns plus the best live current-turn snapshot. */
   targetTokens: number
-  /** Stream-text estimate used only when an authoritative snapshot is absent. */
+  /** Visible assistant text plus tool inputs/results observed for this run. */
   estimatedCurrentTurnTokens: number
+  /** Tool-result subset that may arrive after the latest provider snapshot. */
+  estimatedToolResultTokens: number
 }
 
 function nonNegativeInteger(value: unknown): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : 0
+}
+
+function toolActivityPayloadChars(activity: ToolActivity): {
+  total: number
+  result: number
+} {
+  const resultPayload =
+    activity.rawResultEvent ??
+    activity.outputPreview ??
+    activity.resultSummary ??
+    activity.outputSummary ??
+    ''
+  const result = visiblePayloadChars(resultPayload)
+  return {
+    total:
+      (activity.toolName?.length || 0) +
+      visiblePayloadChars(activity.parameters ?? activity.rawUseEvent) +
+      result,
+    // A real tool result becomes input to the next model invocation. Reasoning
+    // activities are provider output, so an authoritative usage snapshot can
+    // already include them and they must not ride the additive bridge.
+    result: isReasoningToolName(activity.toolName || '') ? 0 : result
+  }
 }
 
 /**
@@ -35,15 +61,27 @@ export function buildWorkingIndicatorTokenTargets(
     if (input.runId) inputsByRunId.set(input.runId, input)
   }
 
-  const charsByRunId = new Map<string, number>()
+  const messageCharsByRunId = new Map<string, number>()
+  const activityCharsByRunId = new Map<string, Map<string, { total: number; result: number }>>()
   for (const message of messages) {
-    if (message.role !== 'assistant' || !message.runId || !inputsByRunId.has(message.runId)) {
-      continue
+    if (!message.runId || !inputsByRunId.has(message.runId)) continue
+    if (message.role === 'assistant') {
+      messageCharsByRunId.set(
+        message.runId,
+        (messageCharsByRunId.get(message.runId) || 0) + (message.content?.length || 0)
+      )
     }
-    charsByRunId.set(
-      message.runId,
-      (charsByRunId.get(message.runId) || 0) + (message.content?.length || 0)
-    )
+    if (!message.toolActivities?.length) continue
+    const activities = activityCharsByRunId.get(message.runId) || new Map()
+    for (const activity of message.toolActivities) {
+      const payload = toolActivityPayloadChars(activity)
+      const previous = activities.get(activity.id)
+      activities.set(activity.id, {
+        total: Math.max(previous?.total || 0, payload.total),
+        result: Math.max(previous?.result || 0, payload.result)
+      })
+    }
+    activityCharsByRunId.set(message.runId, activities)
   }
 
   const runsById = new Map(runs.map((run) => [run.runId, run]))
@@ -54,13 +92,22 @@ export function buildWorkingIndicatorTokenTargets(
     const reportedCurrentTurn = run
       ? nonNegativeInteger(extractUsageCountsFromCandidate(run.stats).totalTokens)
       : 0
+    const activities = input.runId ? activityCharsByRunId.get(input.runId) : undefined
+    let activityChars = 0
+    let toolResultChars = 0
+    for (const payload of activities?.values() || []) {
+      activityChars += payload.total
+      toolResultChars += payload.result
+    }
     const estimatedCurrentTurnTokens = input.runId
-      ? estimateLiveOutputTokensFromChars(charsByRunId.get(input.runId) || 0)
+      ? estimateTokensFromChars((messageCharsByRunId.get(input.runId) || 0) + activityChars)
       : 0
+    const estimatedToolResultTokens = estimateTokensFromChars(toolResultChars)
     targets.set(input.runId, {
       runId: input.runId,
       targetTokens: base + Math.max(reportedCurrentTurn, estimatedCurrentTurnTokens),
-      estimatedCurrentTurnTokens
+      estimatedCurrentTurnTokens,
+      estimatedToolResultTokens
     })
   }
   return targets

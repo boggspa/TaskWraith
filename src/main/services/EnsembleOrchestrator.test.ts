@@ -1504,7 +1504,15 @@ describe('EnsembleOrchestrator', () => {
         { provider: 'claude', chatId: 'ensemble-chat' }
       )
     ).toBe(true)
-    now += 500
+    now += 200
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        { input_tokens: 40, output_tokens: 12, total_tokens: 52 },
+        { provider: 'claude', chatId: 'ensemble-chat' }
+      )
+    ).toBe(true)
+    now += 200
     expect(
       harness.orchestrator.reportParticipantTokenUsage(
         runId,

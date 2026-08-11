@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ChatRun } from '../../../main/store/types'
+import type { ChatMessage, ChatRun, ToolActivity } from '../../../main/store/types'
 import {
   buildWorkingIndicatorTokenTargets,
   workingIndicatorTokenSnapshotBucket
@@ -20,6 +20,33 @@ const message = (runId: string, content: string): ChatMessage =>
     runId,
     content,
     timestamp: '2026-07-11T18:00:01.000Z'
+  }) as ChatMessage
+
+const activity = (
+  id: string,
+  toolName: string,
+  category: ToolActivity['category'],
+  parameters: Record<string, unknown>,
+  outputPreview: string
+): ToolActivity =>
+  ({
+    id,
+    toolName,
+    displayName: toolName,
+    category,
+    status: 'success',
+    parameters,
+    outputPreview
+  }) as ToolActivity
+
+const toolMessage = (runId: string, toolActivities: ToolActivity[]): ChatMessage =>
+  ({
+    id: `tools-${runId}`,
+    role: 'tool',
+    runId,
+    content: '',
+    toolActivities,
+    timestamp: '2026-07-11T18:00:02.000Z'
   }) as ChatMessage
 
 describe('buildWorkingIndicatorTokenTargets', () => {
@@ -56,6 +83,30 @@ describe('buildWorkingIndicatorTokenTargets', () => {
 
     expect(targets.get('claude-run')).toMatchObject({
       targetTokens: 212_500
+    })
+  })
+
+  it('keeps estimating through file reads, shell commands, and edits', () => {
+    const targets = buildWorkingIndicatorTokenTargets(
+      [run('codex-run')],
+      [
+        message('codex-run', 'abcdefgh'),
+        toolMessage('codex-run', [
+          activity('read', 'read_file', 'read', { path: 'a' }, 'read-result'),
+          activity('shell', 'shell', 'shell', { cmd: 'ls -la' }, 'shell-result'),
+          activity('write', 'write_file', 'write', { path: 'b', content: 'edit' }, 'done')
+        ]),
+        toolMessage('other-run', [
+          activity('other', 'read_file', 'read', { path: 'large' }, 'must-not-bleed')
+        ])
+      ],
+      [{ runId: 'codex-run', tokenAccumulatorBase: 1_000 }]
+    )
+
+    expect(targets.get('codex-run')).toMatchObject({
+      targetTokens: 1_029,
+      estimatedCurrentTurnTokens: 29,
+      estimatedToolResultTokens: 7
     })
   })
 })

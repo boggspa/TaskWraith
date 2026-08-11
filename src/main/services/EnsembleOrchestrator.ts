@@ -3495,12 +3495,13 @@ export class EnsembleOrchestrator {
    */
   private terminalRunToolTombstones = new Map<string, number>()
   private readonly cursorCompletionWatchdog = new EnsembleCursorCompletionWatchdog()
-  /** Last emitted monotonic usage value per active seat. Keeps the renderer
-   * animation smooth without putting a timer or write loop in main. */
+  /** Last sampled monotonic usage value and last emission time per active seat.
+   * Keeps the renderer animation smooth without putting a timer or write loop
+   * in main. */
   private participantWorkingTelemetryByRunId = new Map<
     string,
     {
-      sentAt: number
+      emittedAt: number
       inputTokens: number
       outputTokens: number
       totalTokens: number
@@ -13851,10 +13852,15 @@ export class EnsembleOrchestrator {
       estimated !== previous.estimated ||
       !contextUsageSnapshotsEqual(contextUsage, previous.contextUsage)
     // Always retain the latest sample for Cursor pressure recovery even when no
-    // working-telemetry listener is wired (tests / headless embedders).
+    // working-telemetry listener is wired (tests / headless embedders). Keep the
+    // last *emission* time unchanged while coalescing: advancing it for every
+    // suppressed sample makes a steady sub-interval stream postpone its next
+    // UI update forever.
+    const shouldEmit =
+      !previous || now - previous.emittedAt >= PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS
     if (changed || !previous) {
       this.participantWorkingTelemetryByRunId.set(runId, {
-        sentAt: now,
+        emittedAt: shouldEmit ? now : (previous?.emittedAt ?? now),
         inputTokens,
         outputTokens,
         totalTokens,
@@ -13866,9 +13872,7 @@ export class EnsembleOrchestrator {
     const telemetry = this.deps.onParticipantWorkingTelemetry
     if (!telemetry) return true
     if (!changed) return true
-    if (previous && now - previous.sentAt < PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS) {
-      return true
-    }
+    if (!shouldEmit) return true
     telemetry({
       type: 'snapshot',
       chatId: run.chatId,

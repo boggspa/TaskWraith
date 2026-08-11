@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
 import {
   compactWorkingTokenOdometer,
-  formatParticipantWorkingElapsed
+  formatParticipantWorkingElapsed,
+  unreportedWorkingTokenEstimate
 } from '../lib/participantWorkingTelemetryModel'
 
 describe('ParticipantWorkingTelemetry', () => {
@@ -31,6 +32,11 @@ describe('ParticipantWorkingTelemetry', () => {
     })
   })
 
+  it('adds only tool-result tokens observed after a provider snapshot', () => {
+    expect(unreportedWorkingTokenEstimate(1_240, 1_000)).toBe(240)
+    expect(unreportedWorkingTokenEstimate(900, 1_000)).toBe(0)
+  })
+
   it('renders a visual-only per-turn telemetry readout through DigitOdometer', () => {
     const html = renderToStaticMarkup(
       <MemoizedParticipantWorkingTelemetry
@@ -39,6 +45,7 @@ describe('ParticipantWorkingTelemetry', () => {
         tokenAccumulatorBase={285_100}
         fallbackTargetTokens={285_100}
         estimatedCurrentTurnTokens={0}
+        estimatedToolResultTokens={0}
       />
     )
 
@@ -57,6 +64,7 @@ describe('ParticipantWorkingTelemetry', () => {
         tokenAccumulatorBase={0}
         fallbackTargetTokens={0}
         estimatedCurrentTurnTokens={0}
+        estimatedToolResultTokens={0}
       />
     )
 

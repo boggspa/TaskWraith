@@ -44,3 +44,14 @@ export function compactWorkingTokenOdometer(value: number): {
   const scaled = Math.floor(tokens / 1_000_000)
   return { value: scaled, decimalPlaces: 0, suffix: 'M tokens', label: `${scaled}M tokens` }
 }
+
+/**
+ * Tool results observed after the latest authoritative provider snapshot are
+ * new context for the next invocation. Layer only that monotonic delta onto
+ * the provider total; the next provider snapshot replaces the estimate.
+ */
+export function unreportedWorkingTokenEstimate(current: number, atSnapshot: number): number {
+  const currentTokens = Number.isFinite(current) && current > 0 ? Math.trunc(current) : 0
+  const snapshotTokens = Number.isFinite(atSnapshot) && atSnapshot > 0 ? Math.trunc(atSnapshot) : 0
+  return Math.max(0, currentTokens - snapshotTokens)
+}

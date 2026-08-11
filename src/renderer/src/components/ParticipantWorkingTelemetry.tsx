@@ -2,7 +2,8 @@ import { memo, useEffect, useRef, useState, type JSX } from 'react'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import {
   compactWorkingTokenOdometer,
-  formatParticipantWorkingElapsed
+  formatParticipantWorkingElapsed,
+  unreportedWorkingTokenEstimate
 } from '../lib/participantWorkingTelemetryModel'
 import { workingIndicatorTokenSnapshotBucket } from '../lib/workingIndicatorTelemetry'
 import { DigitOdometer } from './DigitOdometer'
@@ -14,9 +15,10 @@ export type ParticipantWorkingTelemetryProps = {
   startedAt: string | null
   /** Durable completed-turn total for this seat. */
   tokenAccumulatorBase: number
-  /** Baseline plus a renderer-side streamed-output fallback. */
+  /** Baseline plus a renderer-side visible-payload fallback. */
   fallbackTargetTokens: number
   estimatedCurrentTurnTokens: number
+  estimatedToolResultTokens: number
 }
 
 function ParticipantWorkingTelemetry({
@@ -24,12 +26,37 @@ function ParticipantWorkingTelemetry({
   startedAt,
   tokenAccumulatorBase,
   fallbackTargetTokens,
-  estimatedCurrentTurnTokens
+  estimatedCurrentTurnTokens,
+  estimatedToolResultTokens
 }: ParticipantWorkingTelemetryProps): JSX.Element {
   const providerSnapshot = useParticipantWorkingTokenSnapshot(runId)
   const baseTokens = Math.max(0, Math.trunc(tokenAccumulatorBase || 0))
   const fallbackTokens = Math.max(baseTokens, Math.trunc(fallbackTargetTokens || 0))
-  const providerTargetTokens = baseTokens + Math.max(0, providerSnapshot?.totalTokens || 0)
+  const currentToolResultTokens = Math.max(0, Math.trunc(estimatedToolResultTokens || 0))
+  const [providerEstimateBaseline, setProviderEstimateBaseline] = useState({
+    runId,
+    snapshot: providerSnapshot,
+    toolResultTokens: currentToolResultTokens
+  })
+  const baselineMatchesSnapshot =
+    providerEstimateBaseline.runId === runId &&
+    providerEstimateBaseline.snapshot === providerSnapshot
+  if (!baselineMatchesSnapshot) {
+    setProviderEstimateBaseline({
+      runId,
+      snapshot: providerSnapshot,
+      toolResultTokens: currentToolResultTokens
+    })
+  }
+  const toolResultTokensAtSnapshot = baselineMatchesSnapshot
+    ? providerEstimateBaseline.toolResultTokens
+    : currentToolResultTokens
+  const unreportedToolResultTokens =
+    providerSnapshot && !providerSnapshot.estimated
+      ? unreportedWorkingTokenEstimate(currentToolResultTokens, toolResultTokensAtSnapshot)
+      : 0
+  const providerTargetTokens =
+    baseTokens + Math.max(0, providerSnapshot?.totalTokens || 0) + unreportedToolResultTokens
   const targetTokens = Math.max(fallbackTokens, providerTargetTokens)
   const targetTokensRef = useRef(targetTokens)
   const [displayedTokens, setDisplayedTokens] = useState(targetTokens)
@@ -72,19 +99,23 @@ function ParticipantWorkingTelemetry({
     providerSnapshot && providerSnapshot.totalTokens > 0 && !providerSnapshot.estimated
   )
   const isEstimated =
-    !hasReportedUsage &&
-    (Boolean(providerSnapshot?.estimated && providerSnapshot.totalTokens > 0) ||
-      estimatedCurrentTurnTokens > 0)
+    unreportedToolResultTokens > 0 ||
+    (!hasReportedUsage &&
+      (Boolean(providerSnapshot?.estimated && providerSnapshot.totalTokens > 0) ||
+        estimatedCurrentTurnTokens > 0))
   const isUnavailable =
     !providerSnapshot &&
     displayedTokens <= 0 &&
     fallbackTokens <= 0 &&
     estimatedCurrentTurnTokens <= 0
-  const source = hasReportedUsage
-    ? 'live provider usage snapshot'
-    : isEstimated
-      ? 'live output estimate'
-      : 'completed-turn accumulator'
+  const source =
+    unreportedToolResultTokens > 0
+      ? 'provider usage plus live tool-result estimate'
+      : hasReportedUsage
+        ? 'live provider usage snapshot'
+        : isEstimated
+          ? 'live output estimate'
+          : 'completed-turn accumulator'
   const title = isUnavailable
     ? `${elapsed} elapsed · current-run token usage unavailable`
     : `${elapsed} elapsed · ${displayedTokens.toLocaleString()} accumulated tokens (${source})`
@@ -123,5 +154,7 @@ export const MemoizedParticipantWorkingTelemetry = memo(
     workingIndicatorTokenSnapshotBucket(previous.fallbackTargetTokens) ===
       workingIndicatorTokenSnapshotBucket(next.fallbackTargetTokens) &&
     workingIndicatorTokenSnapshotBucket(previous.estimatedCurrentTurnTokens) ===
-      workingIndicatorTokenSnapshotBucket(next.estimatedCurrentTurnTokens)
+      workingIndicatorTokenSnapshotBucket(next.estimatedCurrentTurnTokens) &&
+    workingIndicatorTokenSnapshotBucket(previous.estimatedToolResultTokens) ===
+      workingIndicatorTokenSnapshotBucket(next.estimatedToolResultTokens)
 )
