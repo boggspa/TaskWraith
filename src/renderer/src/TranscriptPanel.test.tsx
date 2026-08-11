@@ -45,7 +45,11 @@ const RENDERER_PROVIDERS: ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity',
+  'pi',
+  'mistral',
+  'muse'
 ]
 
 function makeProps(overrides: Record<string, any> = {}): any {
@@ -2493,6 +2497,95 @@ describe('collapsed one-liner super-groups', () => {
     // Exactly one collapsed summary row for the group.
     expect(html.match(/collapsed-activity-stack-summary/g)?.length).toBe(1)
   })
+
+  it.each([
+    ['antigravity', 'gemini-3.1-pro-high'],
+    ['muse', 'muse-spark-1.2']
+  ] as const)(
+    'keeps the %s activity hue when a system notice leads the merged one-liner',
+    (provider, model) => {
+      const participant = ensembleParticipant({
+        id: `${provider}-reviewer`,
+        provider,
+        role: 'Reviewer',
+        model
+      })
+      const messages: ChatMessage[] = [
+        { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+        {
+          id: `${provider}-sys-lead`,
+          role: 'system',
+          content: 'Provider setup notice.',
+          timestamp: '2026-01-01T00:00:01.000Z'
+        },
+        {
+          id: `${provider}-stack`,
+          role: 'tool',
+          content: '',
+          timestamp: '2026-01-01T00:00:02.000Z',
+          metadata: {
+            ensembleProvider: provider,
+            ensembleParticipantId: participant.id,
+            ensembleRole: participant.role,
+            ensembleModel: model
+          },
+          toolActivities: [
+            {
+              ...shellActivity(`${provider}-shell`),
+              metadata: {
+                provider,
+                ensembleProvider: provider,
+                ensembleParticipantId: participant.id
+              }
+            }
+          ]
+        },
+        {
+          id: `${provider}-sys-tail`,
+          role: 'system',
+          content: 'Provider completion notice.',
+          timestamp: '2026-01-01T00:00:03.000Z'
+        },
+        {
+          id: `${provider}-final`,
+          role: 'assistant',
+          content: 'Done.',
+          timestamp: '2026-01-01T00:00:04.000Z'
+        }
+      ]
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            currentProvider: provider,
+            currentProviderLabel: providerLabel(provider),
+            currentChat: {
+              appChatId: `${provider}-super-group-chat`,
+              chatKind: 'ensemble',
+              provider,
+              title: `${provider} super-group`,
+              createdAt: 0,
+              updatedAt: 0,
+              archived: false,
+              messages: [],
+              runs: [],
+              ensemble: {
+                enabled: true,
+                maxParticipants: 1,
+                participants: [participant]
+              }
+            } as ChatRecord,
+            messages
+          })}
+        />
+      )
+
+      expect(html).toContain('Ran 1 command')
+      expect(html).toContain('2 system notices')
+      expect(html).toContain(`message-meta provider-${provider}`)
+      expect(html).toContain(`--accent:var(--provider-${provider}-color, var(--accent))`)
+    }
+  )
 
   it('tags hidden member blocks is-super-hidden (zero-space), never the lead', () => {
     const html = renderToStaticMarkup(

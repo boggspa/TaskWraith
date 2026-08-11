@@ -4404,6 +4404,19 @@ export const TranscriptPanel = memo(
                     firstSystemPreview: superGroup.firstSystemPreview
                   })
                 : null
+            // A system notice may be the DOM lead for a merged run, but it
+            // must not replace the activity speaker as the branding owner.
+            // Resolve from the first stack member so interleaved notices stay
+            // muted while the actual activity verbs keep their provider hue.
+            const superGroupProviderHueClass =
+              isSuperLead && superGroup?.headerMessage
+                ? activityStackSpeakerPresentation({
+                    message: superGroup.headerMessage,
+                    chat: currentChat,
+                    fallbackProvider: currentProvider,
+                    fallbackProviderLabel: currentProviderLabel
+                  }).providerClass || undefined
+                : undefined
             // Level-1 roll-up: when a settled stack first swaps to its
             // one-liner, animate the row height down from the slot's last
             // measured height instead of teleporting. Super-group members are
@@ -4713,6 +4726,7 @@ export const TranscriptPanel = memo(
                         diffStats={superSummary.diff}
                         compact={!superGroup.headerMessage}
                         errored={superSummary.errorCount > 0}
+                        providerHueClass={superGroupProviderHueClass}
                         expanded={superGroupExpanded}
                         onToggle={(expanded) => setSuperGroupExpanded(superGroup.leadId, expanded)}
                         ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
