@@ -13956,6 +13956,111 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
   })
 
+  it('rejects a stale continuation before publishing a pass or awaiting seat compaction', async () => {
+    const compactionGate = deferred<unknown>()
+    let blockOnCompaction = false
+    const harness = makeHarness({
+      awaitPendingSeatCompaction: () => (blockOnCompaction ? compactionGate.promise : undefined)
+    })
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((participant) => ({
+      ...participant
+    }))
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Do not revive this round after it closes.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const io = harness.orchestrator as unknown as {
+      roundsByChatId: Map<
+        string,
+        {
+          continuationHops: number
+          continuationPass: number
+        }
+      >
+      tryAutoContinueRound: (runtime: object, chat: ChatRecord) => EnsembleParticipant[] | null
+      runRound: (
+        runtime: object,
+        participants: EnsembleParticipant[],
+        options?: { skipPreamble?: boolean }
+      ) => Promise<void>
+    }
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    const round = harness.chat.ensemble!.activeRound!
+    harness.chat.ensemble!.activeRound = {
+      ...round,
+      status: 'completed',
+      endedAt: '2026-05-24T00:01:00.000Z',
+      participants: round.participants.map((participant) => ({
+        ...participant,
+        status: 'answered' as const
+      }))
+    }
+    io.roundsByChatId.delete('ensemble-chat')
+    const hopsBefore = runtime.continuationHops
+    const passBefore = runtime.continuationPass
+    const messagesBefore = harness.chat.messages.length
+
+    expect(io.tryAutoContinueRound.call(harness.orchestrator, runtime, harness.chat)).toBeNull()
+    expect(runtime.continuationHops).toBe(hopsBefore)
+    expect(runtime.continuationPass).toBe(passBefore)
+    expect(harness.chat.messages).toHaveLength(messagesBefore)
+
+    // This is the observed freeze seam: a stale run used to enter the pending
+    // compaction wait before its first exact ownership check.
+    blockOnCompaction = true
+    const staleRun = io.runRound.call(
+      harness.orchestrator,
+      runtime,
+      [harness.chat.ensemble!.participants[0]],
+      { skipPreamble: true }
+    )
+    const outcome = await Promise.race([
+      staleRun.then(() => 'returned' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 20))
+    ])
+    compactionGate.resolve(undefined)
+    await staleRun
+    expect(outcome).toBe('returned')
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('holds a drained round for owner settlement after its fan-out lane turns terminal', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep the round open through owner cleanup.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const io = harness.orchestrator as unknown as {
+      roundsByChatId: Map<string, object>
+      runsByRunId: Map<string, { ownedFanoutSettlements?: Set<Promise<void>> }>
+      deferredLaneDrainByChatId: Map<string, object>
+      deferDrainForActiveLanes: (runtime: object) => boolean
+    }
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    const owner = io.runsByRunId.get(harness.dispatched[0].appRunId!)!
+    owner.ownedFanoutSettlements = new Set([Promise.resolve()])
+
+    expect(io.deferDrainForActiveLanes.call(harness.orchestrator, runtime)).toBe(true)
+    expect(io.deferredLaneDrainByChatId.get('ensemble-chat')).toBe(runtime)
+    expect(
+      harness.chat.messages.some((message) =>
+        (message.content || '').includes('pending fan-out settlement(s)')
+      )
+    ).toBe(true)
+
+    owner.ownedFanoutSettlements = undefined
+    io.deferredLaneDrainByChatId.delete('ensemble-chat')
+    await harness.orchestrator.cancelRound('ensemble-chat', 'test cleanup')
+  })
+
   it('suppresses a pending terminal hop-limit status when the held round is cancelled', async () => {
     const harness = makeHarness()
     await holdExhaustedContinuousRoundForBackground(harness)

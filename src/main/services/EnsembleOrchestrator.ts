@@ -3851,6 +3851,23 @@ export class EnsembleOrchestrator {
     return tracked
   }
 
+  /**
+   * Exact admission fence for every async path that can continue or dispatch a
+   * round. Matching only `roundId` is insufficient: a drained callback can
+   * outlive `clearRuntimeIfCurrent`, while the completed round snapshot remains
+   * readable in chat history. Such a callback must not publish another pass or
+   * wait on seat maintenance after it has lost runtime ownership.
+   */
+  private ownsRunningRound(runtime: ActiveRoundRuntime): boolean {
+    const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    return (
+      !runtime.cancelled &&
+      this.roundsByChatId.get(runtime.chatId) === runtime &&
+      round?.roundId === runtime.roundId &&
+      round.status === 'running'
+    )
+  }
+
   private async requestExactRunCancellation(run: ActiveParticipantRun): Promise<boolean> {
     const cancelled = await this.deps.cancelRun(run.participant.provider, run.runId)
     if (cancelled === true) run.transportCancellationConfirmed = true
@@ -14697,6 +14714,11 @@ export class EnsembleOrchestrator {
       // parked-steer guard in `steerQueuedPrompt`.
       runtime.startAfterCancellation = undefined
     }
+    // Continuation/deferred-drain callbacks are detached from the provider
+    // turn that created them. The round can close while one is queued. Fence
+    // before the first maintenance await so a stale callback cannot spend up
+    // to the seat-compaction timeout looking like a live but frozen pass.
+    if (!this.ownsRunningRound(runtime)) return
     // Slice C extension (1.0.3) — convert the fixed for-loop into a
     // mutable remaining-queue so `ensemble_yield(target:...)` can
     // reorder upcoming turns after each completion. The original
@@ -15125,7 +15147,7 @@ export class EnsembleOrchestrator {
       // longer owns, so it keeps speaking, Stop can't reach it, and the round
       // reads stuck 'running'. Bail cleanly; `finishRound` below no-ops against
       // the replacement round, leaving the live round untouched.
-      if (runtime.cancelled) break
+      if (!this.ownsRunningRound(runtime)) break
 
       // A user steer can reserve this exact seat while the serial path is
       // suspended in compaction. Reconcile the dispatch-start receipt again at
@@ -15137,10 +15159,7 @@ export class EnsembleOrchestrator {
       if (postCompactionUserFanoutDispatch) {
         await postCompactionUserFanoutDispatch.catch(() => false)
       }
-      if (
-        runtime.cancelled ||
-        this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
-      ) {
+      if (!this.ownsRunningRound(runtime)) {
         break
       }
       const postCompactionFanoutState = this.participantFanoutDispatchState(runtime, participant.id)
@@ -16276,17 +16295,26 @@ export class EnsembleOrchestrator {
    */
   private deferDrainForActiveLanes(runtime: ActiveRoundRuntime): boolean {
     const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
-    if (!round || round.roundId !== runtime.roundId || round.status !== 'running') return false
+    if (!this.ownsRunningRound(runtime) || !round) return false
     const reservedCount = runtime.fanoutReservedParticipantIds?.size || 0
-    if (!roundHasActiveLanes(round) && reservedCount === 0) return false
+    const pendingOwnedSettlement = this.hasPendingOwnedFanoutSettlements(
+      runtime.chatId,
+      runtime.roundId
+    )
+    if (!roundHasActiveLanes(round) && reservedCount === 0 && !pendingOwnedSettlement) return false
     this.deferredLaneDrainByChatId.set(runtime.chatId, runtime)
     const activeLaneCount = Object.values(round.lanes || {}).filter(
       (lane) => !isTerminalLaneStatus(lane.status)
     ).length
+    const holdCount = Math.max(activeLaneCount, reservedCount, pendingOwnedSettlement ? 1 : 0)
+    const holdKind =
+      activeLaneCount > 0 || reservedCount > 0
+        ? 'active fan-out lane(s)'
+        : 'pending fan-out settlement(s)'
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Serial queue drained · holding the round open for ${Math.max(activeLaneCount, reservedCount)} active fan-out lane(s).`
+      `Serial queue drained · holding the round open for ${holdCount} ${holdKind}.`
     )
     return true
   }
@@ -16490,7 +16518,7 @@ export class EnsembleOrchestrator {
     const runtime = this.deferredLaneDrainByChatId.get(chatId)
     if (!runtime) return
     const round = this.deps.getChat(chatId)?.ensemble?.activeRound
-    if (!round || round.roundId !== runtime.roundId || round.status !== 'running') {
+    if (!this.ownsRunningRound(runtime) || !round) {
       this.deferredLaneDrainByChatId.delete(chatId)
       return
     }
@@ -16617,6 +16645,9 @@ export class EnsembleOrchestrator {
    * round for restart/orphan recovery only.
    */
   private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
+    // A second drain tail may arrive after the first one completed and cleared
+    // this runtime. It owns neither another terminal projection nor teardown.
+    if (!this.ownsRunningRound(runtime)) return
     const chat = this.deps.getChat(runtime.chatId)
     const continuationLimitStillOwnsClose =
       runtime.continuationLimitPending === true &&
@@ -18369,6 +18400,10 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     chat: ChatRecord
   ): EnsembleParticipant[] | null {
+    // A completed round snapshot remains available after its runtime is
+    // cleared. Never let a late serial/fan-out drain mutate hop counters or
+    // announce a pass from that stale snapshot.
+    if (!this.ownsRunningRound(runtime)) return null
     if (runtime.orchestrationMode !== 'continuous') return null
     if (runtime.cancelled) return null
     if (runtime.returnedControlToUser) return null
@@ -20378,7 +20413,7 @@ export class EnsembleOrchestrator {
   }
 
   private clearRuntimeIfCurrent(runtime: ActiveRoundRuntime): void {
-    if (this.roundsByChatId.get(runtime.chatId)?.roundId === runtime.roundId) {
+    if (this.roundsByChatId.get(runtime.chatId) === runtime) {
       this.roundsByChatId.delete(runtime.chatId)
     }
     // Teardown hygiene: a runtime leaving the registry must not leave a
