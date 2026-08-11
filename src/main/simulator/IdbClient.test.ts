@@ -256,4 +256,73 @@ describe('IdbClient', () => {
       ['ui', 'rotate', 'LANDSCAPE_LEFT', '--udid', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
     ])
   })
+
+  it('ensureConnected pre-warms once per udid within the TTL', async () => {
+    const calls: string[][] = []
+    let now = 1000
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      now: () => now,
+      run: async (_binary, args) => {
+        calls.push([...args])
+        return { stdout: '', stderr: '' }
+      }
+    })
+
+    await client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    await client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    expect(calls).toEqual([['connect', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']])
+
+    now += 31_000
+    await client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    expect(calls).toEqual([
+      ['connect', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'],
+      ['connect', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']
+    ])
+  })
+
+  it('ensureConnected dedupes concurrent pre-warm calls for the same udid', async () => {
+    const calls: string[][] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls.push([...args])
+        await gate
+        return { stdout: '', stderr: '' }
+      }
+    })
+
+    const first = client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    const second = client.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    release()
+    await Promise.all([first, second])
+    expect(calls).toEqual([['connect', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA']])
+  })
+
+  it('ensureConnected never throws when the companion cannot be reached', async () => {
+    const missing = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => null
+    })
+    await expect(
+      missing.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    ).resolves.toBeUndefined()
+
+    const failing = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async () => {
+        throw new Error('idb connect failed: companion down')
+      }
+    })
+    await expect(
+      failing.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+    ).resolves.toBeUndefined()
+  })
 })

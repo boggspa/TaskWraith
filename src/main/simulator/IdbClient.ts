@@ -16,6 +16,8 @@ const IDB_TIMEOUT_MS = 60_000
 /** Truncate AX dumps before they swamp MCP/transcript budgets. */
 const DESCRIBE_ALL_MAX_CHARS = 200_000
 const DESCRIBE_ALL_MAX_NODES = 500
+/** Per-udid TTL for best-effort companion pre-warm (`idb connect`). */
+const CONNECT_PREWARM_TTL_MS = 30_000
 
 export type IdbExecRunner = (
   binary: string,
@@ -26,6 +28,7 @@ export interface IdbClientDeps {
   platform?: NodeJS.Platform
   resolveBinary?: (name: string) => string | null
   run?: IdbExecRunner
+  now?: () => number
 }
 
 export interface IdbExecResult {
@@ -171,11 +174,15 @@ export class IdbClient {
   private readonly platform: NodeJS.Platform
   private readonly resolveBinary: (name: string) => string | null
   private readonly run: IdbExecRunner
+  private readonly now: () => number
+  private readonly connectCache = new Map<string, number>()
+  private readonly connectInFlight = new Map<string, Promise<void>>()
 
   constructor(deps: IdbClientDeps = {}) {
     this.platform = deps.platform ?? process.platform
     this.resolveBinary = deps.resolveBinary ?? ((name) => findExecutableOnHost(name))
     this.run = deps.run ?? defaultRunner
+    this.now = deps.now ?? (() => Date.now())
   }
 
   /** True when the `idb` client binary resolves on PATH (macOS only). */
@@ -230,6 +237,32 @@ export class IdbClient {
 
   async connect(udid: string): Promise<IdbExecResult> {
     return this.exec(['connect', udid.trim()])
+  }
+
+  /**
+   * Best-effort companion pre-warm: `idb connect <udid>` at most once per TTL
+   * per target, deduped while in flight. Never throws — a failed pre-warm must
+   * not block or fail the gesture that follows.
+   */
+  async ensureConnected(udid: string): Promise<void> {
+    const id = typeof udid === 'string' ? udid.trim() : ''
+    if (!id) return
+    const last = this.connectCache.get(id)
+    if (typeof last === 'number' && this.now() - last < CONNECT_PREWARM_TTL_MS) return
+    const inFlight = this.connectInFlight.get(id)
+    if (inFlight) return inFlight
+    const pending = (async () => {
+      try {
+        await this.connect(id)
+      } catch {
+        // Pre-warm is best-effort; swallow so the gesture can proceed.
+      } finally {
+        this.connectCache.set(id, this.now())
+        this.connectInFlight.delete(id)
+      }
+    })()
+    this.connectInFlight.set(id, pending)
+    return pending
   }
 
   async boot(udid: string): Promise<IdbExecResult> {
@@ -296,10 +329,7 @@ export class IdbClient {
       if (!retry.ok) {
         return {
           ok: false,
-          error:
-            retry.error ||
-            first.error ||
-            'idb ui describe-all failed (stdout was not JSON).'
+          error: retry.error || first.error || 'idb ui describe-all failed (stdout was not JSON).'
         }
       }
       parsed = tryParseJson(retry.stdout)
@@ -335,10 +365,7 @@ export class IdbClient {
    * Absolute rotate via `idb ui rotate PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT`.
    * Relative CLOCKWISE/COUNTER_CLOCKWISE are rejected — Facebook idb expects absolutes.
    */
-  async rotate(
-    udid: string,
-    direction: SimulatorRotateDirection
-  ): Promise<IdbExecResult> {
+  async rotate(udid: string, direction: SimulatorRotateDirection): Promise<IdbExecResult> {
     if (!isSimulatorRotateDirection(direction)) {
       return {
         ok: false,

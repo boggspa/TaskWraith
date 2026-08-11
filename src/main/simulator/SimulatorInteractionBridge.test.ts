@@ -191,11 +191,7 @@ describe('SimulatorInteractionBridge', () => {
     })
     // Tap must use point extents (390×844), not raw PNG pixel dims (780×1688).
     expect(idb.tap).toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 195, 211)
-    expect(idb.tap).not.toHaveBeenCalledWith(
-      'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
-      390,
-      422
-    )
+    expect(idb.tap).not.toHaveBeenCalledWith('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', 390, 422)
 
     expect(await bridge.type({ chatId: 'chat-1', text: 'hello' })).toEqual({
       ok: true,
@@ -249,5 +245,40 @@ describe('SimulatorInteractionBridge', () => {
       recorded: true
     })
     expect(idb.tap).not.toHaveBeenCalled()
+  })
+
+  it('pre-warms the companion before tap/type/scroll and never blocks on pre-warm failure', async () => {
+    const ensureConnected = vi.fn(async (udid: string) => {
+      expect(udid).toBe('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
+      throw new Error('companion cold')
+    })
+    const idb = { ...mockIdb(), ensureConnected }
+    const bridge = new SimulatorInteractionBridge({
+      getControlStatus: () => ({ canControl: true, hasObservation: true }),
+      hasControllerLease: () => true,
+      idb,
+      getActuationTarget: () => ({
+        udid: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',
+        pointWidth: 390,
+        pointHeight: 844
+      })
+    })
+
+    await expect(bridge.tap({ chatId: 'chat-1', x: 0.5, y: 0.5 })).resolves.toEqual({
+      ok: true,
+      recorded: true
+    })
+    await expect(bridge.type({ chatId: 'chat-1', text: 'hi' })).resolves.toEqual({
+      ok: true,
+      recorded: true
+    })
+    await expect(
+      bridge.scroll({ chatId: 'chat-1', x: 0.5, y: 0.5, deltaX: 0, deltaY: -10 })
+    ).resolves.toEqual({ ok: true, recorded: true })
+
+    expect(ensureConnected).toHaveBeenCalledTimes(3)
+    expect(idb.tap).toHaveBeenCalled()
+    expect(idb.text).toHaveBeenCalled()
+    expect(idb.swipe).toHaveBeenCalled()
   })
 })

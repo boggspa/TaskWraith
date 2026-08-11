@@ -20,11 +20,7 @@ import {
 } from '../../shared/simulatorCanvas'
 import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import type { IdbClient } from './IdbClient'
-import {
-  clamp01,
-  mapNormalizedScroll,
-  mapNormalizedTap
-} from './simulatorGestureMapping'
+import { clamp01, mapNormalizedScroll, mapNormalizedTap } from './simulatorGestureMapping'
 
 export type SimulatorControlProbe = (chatId: string) => {
   canControl: boolean
@@ -41,7 +37,10 @@ export type SimulatorActuationTarget = {
   height?: number
 }
 
-export type SimulatorIdbSurface = Pick<IdbClient, 'isAvailable' | 'tap' | 'text' | 'swipe'>
+export type SimulatorIdbSurface = Pick<IdbClient, 'isAvailable' | 'tap' | 'text' | 'swipe'> & {
+  /** Optional best-effort companion pre-warm (`idb connect`); must never throw. */
+  ensureConnected?: (udid: string) => Promise<void>
+}
 
 export interface SimulatorInteractionBridgeDeps {
   /** Optional probe into NativeWindowCoordinator.statusForChat (or a test double). */
@@ -93,9 +92,7 @@ function resolvePointExtents(target: SimulatorActuationTarget): {
   let pointWidth =
     typeof target.pointWidth === 'number' && target.pointWidth > 0 ? target.pointWidth : 0
   let pointHeight =
-    typeof target.pointHeight === 'number' && target.pointHeight > 0
-      ? target.pointHeight
-      : 0
+    typeof target.pointHeight === 'number' && target.pointHeight > 0 ? target.pointHeight : 0
   if (!(pointWidth > 0 && pointHeight > 0)) {
     if (
       typeof target.width === 'number' &&
@@ -112,10 +109,8 @@ function resolvePointExtents(target: SimulatorActuationTarget): {
   return {
     pointWidth,
     pointHeight,
-    pixelWidth:
-      typeof target.width === 'number' && target.width > 0 ? target.width : undefined,
-    pixelHeight:
-      typeof target.height === 'number' && target.height > 0 ? target.height : undefined
+    pixelWidth: typeof target.width === 'number' && target.width > 0 ? target.width : undefined,
+    pixelHeight: typeof target.height === 'number' && target.height > 0 ? target.height : undefined
   }
 }
 
@@ -206,6 +201,15 @@ export class SimulatorInteractionBridge {
     this.recorded.length = 0
   }
 
+  /** Best-effort companion pre-warm; a failed pre-warm never blocks a gesture. */
+  private async prewarm(udid: string): Promise<void> {
+    try {
+      await this.idb?.ensureConnected?.(udid)
+    } catch {
+      // Never let a pre-warm failure surface as a gesture failure.
+    }
+  }
+
   async tap(input: SimulatorTapGesture): Promise<SimulatorGestureResult> {
     const chatId = requireChatId(input.chatId)
     const status = this.interactionStatus(chatId)
@@ -227,6 +231,7 @@ export class SimulatorInteractionBridge {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
     const point = mapNormalizedTap(gesture.x, gesture.y, extents)
+    await this.prewarm(target.udid)
     const result = await this.idb.tap(target.udid, point.x, point.y)
     return result.ok
       ? { ok: true, recorded: true }
@@ -251,6 +256,7 @@ export class SimulatorInteractionBridge {
     if (!target) {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
+    await this.prewarm(target.udid)
     const result = await this.idb.text(target.udid, gesture.text)
     return result.ok
       ? { ok: true, recorded: true }
@@ -279,13 +285,8 @@ export class SimulatorInteractionBridge {
     if (!target || !extents) {
       return { ok: false, error: SIMULATOR_GESTURE_ACTUATION_DEFERRED, recorded: true }
     }
-    const swipe = mapNormalizedScroll(
-      gesture.x,
-      gesture.y,
-      gesture.deltaX,
-      gesture.deltaY,
-      extents
-    )
+    const swipe = mapNormalizedScroll(gesture.x, gesture.y, gesture.deltaX, gesture.deltaY, extents)
+    await this.prewarm(target.udid)
     const result = await this.idb.swipe(
       target.udid,
       swipe.startX,
