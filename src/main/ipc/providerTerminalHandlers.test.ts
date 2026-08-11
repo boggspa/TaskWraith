@@ -126,23 +126,45 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.openPath).toHaveBeenCalledWith(commandFile)
   })
 
-  it.each(['logout', 'upgrade'] as const)(
-    'rejects unsupported AntiGravity %s without starting agy',
-    async (action) => {
-      const { deps } = createDeps()
-      registerProviderTerminalHandlers(deps)
+  it('rejects unsupported AntiGravity logout without starting agy', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
 
-      await expect(
-        handlerFor(`provider:open-${action}-terminal`)({}, 'antigravity')
-      ).resolves.toEqual({
-        ok: false,
-        error: `AntiGravity terminal ${action} is not supported here. No agy process was started.`
-      })
-      expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
-      expect(deps.writeFileSync).not.toHaveBeenCalled()
-      expect(deps.openPath).not.toHaveBeenCalled()
-    }
-  )
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'antigravity')).resolves.toEqual({
+      ok: false,
+      error: 'AntiGravity terminal logout is not supported here. No agy process was started.'
+    })
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+    expect(deps.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.openPath).not.toHaveBeenCalled()
+  })
+
+  it('upgrades the same official agy binary TaskWraith resolves for managed runs', async () => {
+    const { deps, loginDir } = createDeps()
+    const commandFile = join(loginDir, 'antigravity-upgrade.command')
+    deps.resolveCliProviderBinary.mockResolvedValueOnce(
+      createResolved('/Users/test/.local/bin/agy')
+    )
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'antigravity')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/official user-installed agy CLI.*updater/i)
+    })
+
+    expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('antigravity')
+    expect(deps.writeFileSync).toHaveBeenCalledWith(
+      commandFile,
+      expect.stringContaining("'/Users/test/.local/bin/agy' 'update'"),
+      { mode: 0o755 }
+    )
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS')
+    expect(script).not.toContain('--dangerously-skip-permissions')
+    expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+  })
 
   it('clears Google credential environment variables before agy on Windows', async () => {
     const { deps } = createDeps()

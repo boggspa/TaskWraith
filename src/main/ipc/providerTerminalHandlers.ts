@@ -41,6 +41,9 @@ const KIMI_USER_OWNED_SETUP_NOTICE =
 const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
   'This opens the official user-installed agy CLI for a user-owned sign-in. TaskWraith does not read, copy, or store Google or AntiGravity OAuth or keyring credentials. Completing sign-in does not make AntiGravity available for managed runs until its runtime support is available.'
 
+const ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE =
+  "This opens the official user-installed agy CLI's own updater. TaskWraith resolves and invokes that same CLI installation but does not download or repackage the update. Updating agy does not make AntiGravity ToS-approved or ban-safe."
+
 const MISTRAL_USER_OWNED_SETUP_NOTICE =
   'This opens the official Mistral Vibe setup wizard for a user-owned plan or API-key sign-in. TaskWraith does not read, copy, or store Vibe credentials. After setup, managed Mistral runs use the separate `vibe-acp` runtime.'
 
@@ -164,19 +167,27 @@ async function openProviderAuthTerminal(
         commandParts = [resolved.binaryPath || 'kimi', 'login']
       }
     } else if (provider === 'antigravity') {
-      if (action !== 'login') {
+      if (action === 'logout') {
         return {
           ok: false,
           error: `AntiGravity terminal ${action} is not supported here. No agy process was started.`
         }
       }
-      // The official CLI starts its own browser/keyring sign-in when launched.
-      // Do not resolve or inspect credentials here; S2 owns any bounded CLI
-      // resolver and S3 owns managed runtime registration.
       label = 'AntiGravity'
-      setupNotice = ANTIGRAVITY_USER_OWNED_SETUP_NOTICE
       stripGoogleCredentialEnvironment = true
-      commandParts = ['agy']
+      if (action === 'upgrade') {
+        // `agy update` is the CLI's own updater. Resolve the same executable
+        // used by managed runs so a second PATH installation cannot report a
+        // successful upgrade while TaskWraith keeps launching stale bytes.
+        const resolved = await deps.resolveCliProviderBinary('antigravity')
+        setupNotice = ANTIGRAVITY_USER_OWNED_UPGRADE_NOTICE
+        commandParts = [resolved.binaryPath || 'agy', 'update']
+      } else {
+        // The official CLI starts its own browser/keyring sign-in when launched.
+        // Do not resolve or inspect credentials for this interactive handoff.
+        setupNotice = ANTIGRAVITY_USER_OWNED_SETUP_NOTICE
+        commandParts = ['agy']
+      }
     } else if (provider === 'cursor') {
       label = 'Cursor'
       const resolved = await deps.resolveCliProviderBinary('cursor')

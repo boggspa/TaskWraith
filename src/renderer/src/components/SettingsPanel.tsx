@@ -7467,6 +7467,10 @@ export function SettingsPanel({
                     geminiApiMonthlySpendCapUsd={antigravityGeminiApiMonthlySpendCapUsd}
                     onChange={onChange}
                     onOpenLogin={onProviderLogin ? () => onProviderLogin('antigravity') : undefined}
+                    onOpenUpgrade={
+                      onProviderUpgrade ? () => onProviderUpgrade('antigravity') : undefined
+                    }
+                    upgradeState={providerUpgradeState('antigravity')}
                   />
                 </div>
               </div>

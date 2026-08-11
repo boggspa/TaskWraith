@@ -356,6 +356,27 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('February 2026')
   })
 
+  it('offers the shared CLI upgrade flow inside the consented AntiGravity lane', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          antigravityEnabled: true,
+          antigravityOptInAcceptedAt: 1_700_000_000_000,
+          onProviderLogin: () => {},
+          onProviderUpgrade: () => {},
+          providerCliUpgradeState: { antigravity: 'opened' }
+        })}
+      />
+    )
+
+    const antigravityStart = html.indexOf('data-provider="antigravity"')
+    expect(antigravityStart).toBeGreaterThanOrEqual(0)
+    const card = html.slice(antigravityStart)
+    expect(card).toContain('Open Terminal to sign in')
+    expect(card).toContain('Upgrade CLI…')
+    expect(card).toContain('Upgrade terminal opened')
+  })
+
   it('does not render the retired Gemini sign-in card on the Providers tab', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

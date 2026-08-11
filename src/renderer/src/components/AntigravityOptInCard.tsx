@@ -30,6 +30,8 @@ interface AntigravityOptInCardProps {
     antigravityGeminiApiMonthlySpendCapUsd?: number | null
   }) => void
   onOpenLogin?: () => void
+  onOpenUpgrade?: () => void
+  upgradeState?: 'idle' | 'opening' | 'opened' | 'error'
   geminiApiDisclosureAcceptedAt?: number | null
   /** Soft monthly budget (USD) for the key lane's Model Usage spend meter. */
   geminiApiMonthlySpendCapUsd?: number | null
@@ -138,6 +140,8 @@ export function AntigravityOptInCard({
   acceptedAt,
   onChange,
   onOpenLogin,
+  onOpenUpgrade,
+  upgradeState = 'idle',
   geminiApiDisclosureAcceptedAt = null,
   geminiApiMonthlySpendCapUsd = null
 }: AntigravityOptInCardProps): React.JSX.Element {
@@ -416,12 +420,29 @@ export function AntigravityOptInCard({
             </PillButton>
             <PillButton
               size="compact"
+              variant="secondary"
+              disabled={!onOpenUpgrade || upgradeState === 'opening'}
+              onClick={onOpenUpgrade}
+            >
+              {upgradeState === 'opening' ? 'Opening…' : 'Upgrade CLI…'}
+            </PillButton>
+            <PillButton
+              size="compact"
               variant="danger"
               onClick={() => onChange({ antigravityEnabled: false })}
             >
               Disable AntiGravity
             </PillButton>
           </div>
+          {upgradeState === 'opened' ? (
+            <p className="settings-provider-auth-footnote" aria-live="polite">
+              Upgrade terminal opened; TaskWraith will refresh detected CLI status shortly.
+            </p>
+          ) : upgradeState === 'error' ? (
+            <p className="settings-provider-auth-footnote" aria-live="polite">
+              Could not open the upgrade terminal.
+            </p>
+          ) : null}
         </>
       )}
 

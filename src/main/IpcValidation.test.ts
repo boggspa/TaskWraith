@@ -526,7 +526,16 @@ describe('IpcValidation', () => {
   })
 
   it('accepts provider CLI upgrade terminal requests for CLI-backed providers', () => {
-    for (const provider of ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'mistral']) {
+    for (const provider of [
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'cursor',
+      'antigravity',
+      'mistral'
+    ]) {
       expect(() => validateIpcArgs('provider:open-upgrade-terminal', [provider])).not.toThrow()
     }
     expect(() => validateIpcArgs('provider:open-upgrade-terminal', ['bad'])).toThrow(

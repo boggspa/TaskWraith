@@ -45,12 +45,16 @@ describe('AntigravityOptInCard', () => {
         acceptedAt={1_769_000_000_000}
         onChange={() => {}}
         onOpenLogin={() => {}}
+        onOpenUpgrade={() => {}}
+        upgradeState="opened"
       />
     )
 
     expect(html).toContain('Risk acceptance recorded')
     expect(html).toContain('<code>agy</code>')
     expect(html).toContain('Open Terminal to sign in')
+    expect(html).toContain('Upgrade CLI…')
+    expect(html).toContain('Upgrade terminal opened')
     expect(html).toContain('Disable AntiGravity')
     expect(html).not.toContain('Accept risk and enable')
   })
