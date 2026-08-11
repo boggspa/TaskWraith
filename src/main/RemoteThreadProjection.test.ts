@@ -1510,11 +1510,12 @@ describe('RemoteThreadProjection', () => {
   })
 
   describe('agentQuestion', () => {
-    const ask = (overrides = {}) =>
+    const ask = (overrides = {}, runId?: string) =>
       msg(1, {
         id: 'agent-question-q1',
         role: 'system',
         content: 'Agent asked you a question:',
+        ...(runId ? { runId } : {}),
         metadata: {
           kind: 'agentQuestion',
           questionId: 'q1',
@@ -1524,6 +1525,50 @@ describe('RemoteThreadProjection', () => {
           ...overrides
         }
       })
+
+    it('attaches the asking seat resolved from the run behind the marker', () => {
+      // Desktop measurement (transcriptSeat.ts): every marker resolves to a
+      // run, and no marker carries a seat of its own — so the SEAT COMES FROM
+      // THE RUN. Without this a 50-seat round shows an unattributed question
+      // on the phone. Authority is deliberately never claimed: a run records
+      // no boss/captain field, and an unknown is not a default.
+      const runs = [
+        {
+          runId: 'run-q1',
+          provider: 'claude',
+          ensembleRole: 'SolBoss',
+          ensembleOrder: 1,
+          ensembleStageRole: 'worker',
+          ensembleSeatSnapshot: {
+            provider: 'claude',
+            model: 'claude-opus-5',
+            reasoningEffort: 'max',
+            configuredPermissionPresetId: 'default',
+            thinkingEnabled: false
+          }
+        } as unknown as ChatRun
+      ]
+      const snap = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], runs)
+      expect(snap.rows[0].agentQuestion?.seat).toEqual({
+        provider: 'claude',
+        model: 'claude-opus-5',
+        role: 'SolBoss',
+        seatNumber: 1,
+        stageRole: 'worker',
+        reasoningEffort: 'max',
+        thinkingEnabled: false,
+        permissionPresetId: 'default'
+      })
+      // A run without a seat snapshot (solo) attaches nothing — the phone
+      // then shows no asker, matching the desktop card contract.
+      const solo = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        { runId: 'run-q1', provider: 'claude' } as unknown as ChatRun
+      ])
+      expect(solo.rows[0].agentQuestion?.seat).toBeUndefined()
+      // A marker without a runId attaches nothing.
+      const unlinked = project({ kind: 'latestN', n: 10 }, [ask()], runs)
+      expect(unlinked.rows[0].agentQuestion?.seat).toBeUndefined()
+    })
 
     it('projects metadata.agentQuestion as an inline structured field (still an attention row)', () => {
       const snap = project({ kind: 'latestN', n: 10 }, [ask()])

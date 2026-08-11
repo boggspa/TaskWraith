@@ -746,6 +746,15 @@ export interface RemoteAgentQuestion {
    * fail to decode, which is why this is a string and not an enum.
    */
   outcome?: string
+  /**
+   * The seat that asked, resolved MAC-SIDE from the RUN behind the marker —
+   * both writers know only the provider, and (desktop measurement, 2026-08-06)
+   * no marker carries a seat in its own metadata. Absent for solo/chat-level
+   * turns and unresolvable runs; the phone then shows no asker at all, the
+   * desktop card's own contract. Never carries `authority`: a run records no
+   * boss/captain field, and an unknown is not a default.
+   */
+  seat?: RemoteSeatChangeSeat
 }
 
 /** Answer + custom flag, keyed by the ASKING message id. Built once per
@@ -2423,9 +2432,41 @@ function buildCloseoutFileChanges(
  * registry questionId — the inline card resolves the same parked tool the banner
  * does. Options are capped at 4 (the tool's ceiling).
  */
+/**
+ * The remote twin of the renderer's `seatFromChatRun`: both provider AND
+ * model required (an empty model renders as a seat with no model rather than
+ * the absent seat it actually is), stageRole carried, authority never claimed.
+ */
+function questionSeatFromRun(run: ChatRun): RemoteSeatChangeSeat | undefined {
+  const snapshot = run?.ensembleSeatSnapshot
+  if (!snapshot) return undefined
+  const provider = stringField(snapshot.provider, REMOTE_SEAT_FIELD_MAX)
+  const model = stringField(snapshot.model, REMOTE_SEAT_FIELD_MAX)
+  if (!provider || !model) return undefined
+  const result: RemoteSeatChangeSeat = { provider, model }
+  const role = stringField(run.ensembleRole, REMOTE_SEAT_FIELD_MAX)
+  if (role) result.role = role
+  const seatNumber = boundedSeatCount(run.ensembleOrder, 1, REMOTE_SEAT_NUMBER_MAX)
+  if (seatNumber !== undefined) result.seatNumber = seatNumber
+  const stageRole = stringField(run.ensembleStageRole, REMOTE_SEAT_FIELD_MAX)
+  if (stageRole) result.stageRole = stageRole
+  const reasoningEffort = stringField(snapshot.reasoningEffort, REMOTE_SEAT_FIELD_MAX)
+  if (reasoningEffort) result.reasoningEffort = reasoningEffort
+  if (typeof snapshot.thinkingEnabled === 'boolean') {
+    result.thinkingEnabled = snapshot.thinkingEnabled
+  }
+  const permissionPresetId = stringField(
+    snapshot.configuredPermissionPresetId,
+    REMOTE_SEAT_FIELD_MAX
+  )
+  if (permissionPresetId) result.permissionPresetId = permissionPresetId
+  return result
+}
+
 function buildAgentQuestion(
   message: ChatMessage,
-  answers?: RemoteAgentQuestionAnswers
+  answers?: RemoteAgentQuestionAnswers,
+  questionSeatsByRunId?: ReadonlyMap<string, RemoteSeatChangeSeat>
 ): RemoteAgentQuestion | undefined {
   const metadata = message.metadata as Record<string, unknown> | undefined
   if (message.role !== 'system' || metadata?.kind !== 'agentQuestion') return undefined
@@ -2459,6 +2500,8 @@ function buildAgentQuestion(
       result.outcome = 'unanswered'
     }
   }
+  const seat = message.runId ? questionSeatsByRunId?.get(message.runId) : undefined
+  if (seat) result.seat = seat
   return result
 }
 
@@ -2665,7 +2708,8 @@ function buildRow(
   fallbackPooledAgentIdentity?: RemotePooledAgentIdentity,
   questionAnswers?: RemoteAgentQuestionAnswers,
   runProviderHueClasses?: ReadonlyMap<string, string>,
-  returnedSubThreadIds?: ReadonlySet<string>
+  returnedSubThreadIds?: ReadonlySet<string>,
+  questionSeatsByRunId?: ReadonlyMap<string, RemoteSeatChangeSeat>
 ): RemoteThreadRow {
   const threadMessage = buildThreadMessage(message)
   const peopleContribution = buildPeopleContribution(message)
@@ -2837,7 +2881,7 @@ function buildRow(
       phase: recordKind === 'failed' ? 'failed' : recordKind === 'started' ? 'started' : 'completed'
     }
   }
-  const agentQuestion = buildAgentQuestion(message, questionAnswers)
+  const agentQuestion = buildAgentQuestion(message, questionAnswers, questionSeatsByRunId)
   if (agentQuestion) row.agentQuestion = agentQuestion
   const fanoutResult = buildFanoutResult(message, previewMax)
   if (fanoutResult) row.fanoutResult = fanoutResult
@@ -3674,6 +3718,14 @@ export function projectRemoteThread(
   // Built once over the WHOLE message list: buildRow sees one message at a
   // time, and a question's answer lives on a separate reply row.
   const questionAnswers = indexRemoteAgentQuestionAnswers(all)
+  // The desktop's agentQuestionSeatsByRunId, resolved Mac-side: the marker
+  // names only the provider, the RUN knows the seat.
+  const questionSeatsByRunId = new Map<string, RemoteSeatChangeSeat>()
+  for (const run of runs ?? []) {
+    if (!run?.runId) continue
+    const seat = questionSeatFromRun(run)
+    if (seat) questionSeatsByRunId.set(run.runId, seat)
+  }
   const returnedSubThreadIds = new Set(
     all
       .filter((message) => message.metadata?.kind === 'subThreadReturn')
@@ -3701,7 +3753,8 @@ export function projectRemoteThread(
           fallbackPooledAgentIdentity,
           questionAnswers,
           runProviderHueClasses,
-          returnedSubThreadIds
+          returnedSubThreadIds,
+          questionSeatsByRunId
         )
       ),
     MAX_PINNED_THUMBNAIL_BASE64
@@ -3768,7 +3821,8 @@ export function projectRemoteThread(
       fallbackPooledAgentIdentity,
       questionAnswers,
       runProviderHueClasses,
-      returnedSubThreadIds
+      returnedSubThreadIds,
+      questionSeatsByRunId
     )
     const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker

@@ -1743,6 +1743,11 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var isAnswered: Bool {
                 outcome == "answered" || (answer?.isEmpty == false)
             }
+
+            /// The seat that asked, resolved Mac-side from the RUN behind the
+            /// marker. Absent for solo turns and older Macs — the card then
+            /// shows its plain kicker, exactly as before this field existed.
+            public let seat: TWSeatChangeState?
         }
         public let agentQuestion: AgentQuestion?
         /// Ensemble fan-out lane identity — the desktop EnsembleFanoutResult

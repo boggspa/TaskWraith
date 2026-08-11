@@ -430,6 +430,10 @@ struct ApprovalActionDescriptor: Identifiable, Equatable {
 struct QuestionRow: View {
     @ObservedObject var model: RemoteSessionModel
     let card: MobileQuestionCard
+    /// The asking seat, when the transcript row behind this card resolved one
+    /// (inline surface only — the attention banner passes nothing and renders
+    /// exactly as before).
+    var askerSeat: TWSeatChangeState? = nil
     @State private var freeText = ""
 
     private var expiresCaption: String? {
@@ -453,6 +457,9 @@ struct QuestionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let askerSeat {
+                AgentQuestionAskerLine(seat: askerSeat, verb: "asks")
+            }
             HStack(spacing: 6) {
                 Text(card.resolvedQuestion ?? "Question")
                     .font(.subheadline.weight(.semibold))

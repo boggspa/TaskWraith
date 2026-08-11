@@ -42,7 +42,7 @@ struct AgentQuestionRow: View {
 
     var body: some View {
         if let card = liveCard {
-            QuestionRow(model: model, card: card)
+            QuestionRow(model: model, card: card, askerSeat: question.seat)
         } else {
             AgentQuestionSettledCard(
                 question: question,
@@ -50,6 +50,45 @@ struct AgentQuestionRow: View {
                 // BEFORE the Mac projects the answer back. Without this flag the
                 // card would spend that window claiming the question was skipped.
                 awaitingProjection: model.hasPendingLocalQuestionReply(promptId))
+        }
+    }
+}
+
+/// The asking seat's one-line identity — glyph + "#N Role" in the provider
+/// accent + the verb, the desktop AgentQuestionAsker essentials. Renders
+/// nothing without a role: on a phone the asker earns its place only where
+/// "which of the fifty?" is a real question, and the Mac already omits the
+/// seat for solo turns (the desktop card's own contract).
+struct AgentQuestionAskerLine: View {
+    let seat: TWSeatChangeState
+    var verb: String = "asks"
+
+    var body: some View {
+        let side = twSeatStripSide(seat)
+        if !side.roleLabel.isEmpty {
+            let accent = TWTheme.providerAccent(
+                side.provider, modelId: side.model, modelLabel: side.modelLabel)
+            HStack(spacing: 4) {
+                if !side.roleGlyph.isEmpty {
+                    Image(systemName: side.roleGlyph)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .accessibilityHidden(true)
+                }
+                Text(side.roleLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(verb)
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                side.roleGlyphTitle.isEmpty
+                    ? "\(side.roleLabel) \(verb)"
+                    : "\(side.roleGlyphTitle) \(side.roleLabel) \(verb)")
         }
     }
 }
@@ -80,10 +119,19 @@ struct AgentQuestionSettledCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Asked")
-                .font(Font.caption2)
-                .foregroundStyle(TWTheme.textTertiary)
-                .textCase(.uppercase)
+            // A resolved seat replaces the anonymous kicker — in a 50-seat
+            // round, "#15 GrokCapt asked" is the difference between a record
+            // and a mystery. Solo turns keep the plain kicker.
+            if let seat = question.seat,
+                !twSeatStripSide(seat).roleLabel.isEmpty
+            {
+                AgentQuestionAskerLine(seat: seat, verb: "asked")
+            } else {
+                Text("Asked")
+                    .font(Font.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .textCase(.uppercase)
+            }
 
             Text(question.question ?? "Question")
                 .font(Font.callout)

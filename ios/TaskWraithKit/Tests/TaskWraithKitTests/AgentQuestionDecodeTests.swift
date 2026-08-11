@@ -105,4 +105,21 @@ struct AgentQuestionDecodeTests {
         #expect(r.agentQuestion == nil)
         #expect(r.id == "m1")
     }
+
+    @Test("the asking seat decodes with its stage identity; absent stays nil")
+    func askingSeat() throws {
+        let r = try row(
+            """
+            {"id":"agent-question-q7","role":"system",
+             "agentQuestion":{"promptId":"q7","question":"Pick one",
+               "seat":{"provider":"grok","model":"grok-4.5-fast","role":"GrokCapt",
+                       "seatNumber":15,"stageRole":"scout"}}}
+            """)
+        #expect(r.agentQuestion?.seat?.role == "GrokCapt")
+        #expect(r.agentQuestion?.seat?.seatNumber == 15)
+        #expect(r.agentQuestion?.seat?.stageRole == "scout")
+        let solo = try row(
+            #"{"id":"q8","role":"system","agentQuestion":{"promptId":"q8","question":"Go?"}}"#)
+        #expect(solo.agentQuestion?.seat == nil)
+    }
 }
