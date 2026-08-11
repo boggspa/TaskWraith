@@ -119,7 +119,8 @@ export function createResolveDirectoryState(
 
 const MAX_BODY_BYTES = 16 * 1024
 
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/** Exported for the Tier-2 gateway (same 16KB bound, same JSON discipline). */
+export function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
@@ -143,7 +144,8 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
-function respond(res: ServerResponse, status: number, body: unknown): void {
+/** Exported for the Tier-2 gateway. */
+export function respond(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status
   res.setHeader('content-type', 'application/json')
   res.end(JSON.stringify(body))

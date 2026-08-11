@@ -22,12 +22,15 @@ describe('relay Tier-2 APNs gateway routing', () => {
     }
   })
 
-  it('routes owned paths to the injected scaffold gateway (501 until implemented)', async () => {
+  it('routes owned paths to the injected gateway, which fails closed on junk', async () => {
     const relay = await createRelayServer({ port: 0, apnsGateway: createApnsGateway() })
     try {
       for (const p of GATEWAY_PATHS) {
+        // Empty body: invalid JSON → uniform 400; never the old 501, never a
+        // stack trace, never which check failed.
         const r = await fetch(`http://127.0.0.1:${relay.port}${p}`, { method: 'POST' })
-        expect(r.status).toBe(501)
+        expect(r.status).toBe(400)
+        expect(await r.text()).toBe('{"ok":false,"error":"bad request"}')
       }
     } finally {
       await relay.close()
