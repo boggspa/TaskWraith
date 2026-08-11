@@ -5,6 +5,7 @@ import {
   buildLaneId,
   canStartConcurrentRound,
   createLane,
+  formatFanoutWaveCompletionStatus,
   isTerminalLaneStatus,
   lanesForParticipant,
   NON_TERMINAL_LANE_STATUSES,
@@ -368,5 +369,147 @@ describe('canStartConcurrentRound', () => {
     })
     expect(result.ok).toBe(true)
     expect(result.reason).toBeUndefined()
+  })
+})
+
+describe('formatFanoutWaveCompletionStatus', () => {
+  it('keeps the plain disposition copy when every lane returned', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [
+          { label: 'Scout', status: 'answered' },
+          { label: 'Worker', status: 'yielded' }
+        ],
+        hasSourceRun: true,
+        continuousReviewWave: false
+      })
+    ).toBe('Fan-out wave complete · 2 lane(s) returned to the caller.')
+  })
+
+  it('names a skipped lane and its recorded reason', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [
+          { label: 'Work1', status: 'answered' },
+          {
+            label: 'Work3',
+            status: 'cancelled',
+            reason: 'Lane lane-kimi-1 is not approved to write .wip-work3-slice3.'
+          }
+        ],
+        hasSourceRun: true,
+        continuousReviewWave: false
+      })
+    ).toBe(
+      'Fan-out wave complete · 1 lane(s) returned, 1 skipped (Work3 — Lane lane-kimi-1 is not approved to write .wip-work3-slice3.).'
+    )
+  })
+
+  it('separates failed lanes from returned ones instead of counting them as returned', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [
+          { label: 'Work1', status: 'answered' },
+          { label: 'Work3', status: 'failed', reason: 'kimi transport rejected every write tool.' }
+        ],
+        hasSourceRun: true,
+        continuousReviewWave: false
+      })
+    ).toBe(
+      'Fan-out wave complete · 1 lane(s) returned, 1 failed (Work3 — kimi transport rejected every write tool.).'
+    )
+  })
+
+  it('keeps the bare count when no skipped lane recorded a reason', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [
+          { label: 'Work1', status: 'answered' },
+          { label: 'Work3', status: 'cancelled' }
+        ],
+        hasSourceRun: true,
+        continuousReviewWave: false
+      })
+    ).toBe('Fan-out wave complete · 1 lane(s) returned, 1 skipped.')
+  })
+
+  it('keeps "complete" for a wave whose lanes all ran but produced nothing', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Review wave',
+        outcomes: [
+          { label: 'Scout', status: 'skipped', reason: 'Completed without producing output.' },
+          { label: 'Work3', status: 'skipped', reason: 'Completed without producing output.' }
+        ],
+        hasSourceRun: false,
+        continuousReviewWave: true
+      })
+    ).toBe(
+      'Review wave complete · 0 lane(s) returned, 2 skipped (Scout — Completed without producing output.; Work3 — Completed without producing output.).'
+    )
+  })
+
+  it('lists every stopped lane when the whole wave was stopped', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Review wave',
+        outcomes: [
+          { label: 'Scout', status: 'cancelled', reason: 'Owning participant was skipped.' },
+          { label: 'Work3', status: 'cancelled', reason: 'Stop requested by user.' }
+        ],
+        hasSourceRun: false,
+        continuousReviewWave: false
+      })
+    ).toBe(
+      'Review wave skipped · 2 lane(s) stopped (Scout — Owning participant was skipped.; Work3 — Stop requested by user.).'
+    )
+  })
+
+  it('truncates an oversized lane reason for the status feed', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [
+          { label: 'Work1', status: 'answered' },
+          { label: 'Work3', status: 'cancelled', reason: 'x'.repeat(200) }
+        ],
+        hasSourceRun: true,
+        continuousReviewWave: false
+      })
+    ).toBe(
+      `Fan-out wave complete · 1 lane(s) returned, 1 skipped (Work3 — ${'x'.repeat(139)}…).`
+    )
+  })
+
+  it('keeps the background, continuous review-wave, and serial-return arms', () => {
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Scout wave',
+        outcomes: [{ label: 'Scout', status: 'answered' }],
+        completionDisposition: 'background',
+        hasSourceRun: false,
+        continuousReviewWave: false
+      })
+    ).toBe('Scout wave complete · 1 lane(s) returned.')
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Review wave',
+        outcomes: [{ label: 'Scout', status: 'answered' }],
+        hasSourceRun: false,
+        continuousReviewWave: true
+      })
+    ).toBe('Review wave complete · continuing Continuous while hops remain.')
+    expect(
+      formatFanoutWaveCompletionStatus({
+        label: 'Fan-out wave',
+        outcomes: [{ label: 'Scout', status: 'answered' }],
+        hasSourceRun: false,
+        continuousReviewWave: false
+      })
+    ).toBe('Fan-out wave complete · returning to serial writer step.')
   })
 })

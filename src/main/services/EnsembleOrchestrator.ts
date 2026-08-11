@@ -198,6 +198,7 @@ import {
   buildLaneId,
   canStartConcurrentRound,
   createLane,
+  formatFanoutWaveCompletionStatus,
   isTerminalLaneStatus,
   roundHasActiveLanes,
   transitionLane
@@ -1099,6 +1100,8 @@ export interface EnsembleAwaitLaneStatus {
   /** ConcurrentLane status at return time ('pending'|'running'|...|terminal). */
   status: string
   settled: boolean
+  /** Last recorded failure/skip/block reason for the lane, when one exists. */
+  reason?: string
 }
 
 export interface EnsembleAwaitResult {
@@ -1133,6 +1136,8 @@ export interface EnsembleLaneResultResult {
    * when only durable transcript messages remain. */
   laneStatus?: string
   settled?: boolean
+  /** Last recorded failure/skip/block reason for the lane, when one exists. */
+  reason?: string
   content?: string
   contentChars?: number
   truncated?: boolean
@@ -11353,7 +11358,8 @@ export class EnsembleOrchestrator {
           participantId: lane?.participantId || '',
           provider: (lane?.provider || 'claude') as ProviderId,
           status: lane?.status || 'unknown',
-          settled: lane ? isTerminalLaneStatus(lane.status) : false
+          settled: lane ? isTerminalLaneStatus(lane.status) : false,
+          ...(lane?.reason ? { reason: lane.reason } : {})
         }
       })
     const allSettled = (): boolean =>
@@ -11474,6 +11480,7 @@ export class EnsembleOrchestrator {
         : {}),
       laneStatus: lane?.status || 'archived',
       settled,
+      ...(lane?.reason ? { reason: lane.reason } : {}),
       content,
       contentChars: fullContent.length,
       truncated
@@ -14277,6 +14284,11 @@ export class EnsembleOrchestrator {
       }
       const emptyAfterProviderDiagnostic =
         Boolean(run.providerDiagnostic) && run.content.trim().length === 0
+      // An empty-transcript success used to finalize 'skipped' with NO reason,
+      // which downstream surfaces (seat chips, wave summaries, ensemble_await)
+      // rendered as a bare "skipped" — the exact shape a permission-walled
+      // seat leaves behind. Record an explicit reason so the wave owner can
+      // tell "seat ran and said nothing" from "seat was stopped".
       this.finalizeRun(
         run,
         failed || emptyAfterProviderDiagnostic
@@ -14284,7 +14296,11 @@ export class EnsembleOrchestrator {
           : run.content.trim()
             ? 'answered'
             : 'skipped',
-        failed || emptyAfterProviderDiagnostic ? run.providerDiagnostic : undefined
+        failed || emptyAfterProviderDiagnostic
+          ? run.providerDiagnostic
+          : run.content.trim()
+            ? undefined
+            : 'Completed without producing output.'
       )
       return true
     }
@@ -17870,25 +17886,18 @@ export class EnsembleOrchestrator {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
-          (() => {
-            const skippedCount = laneRuns.filter((run) => run.status === 'cancelled').length
-            if (skippedCount === laneRuns.length) {
-              return `${label} skipped · ${skippedCount} lane(s) stopped.`
-            }
-            if (skippedCount > 0) {
-              return `${label} complete · ${laneRuns.length - skippedCount} lane(s) returned, ${skippedCount} skipped.`
-            }
-            if (options.completionDisposition === 'background') {
-              return `${label} complete · ${laneRuns.length} lane(s) returned.`
-            }
-            if (options.completionDisposition === 'caller' || options.sourceRunId) {
-              return `${label} complete · ${laneRuns.length} lane(s) returned to the caller.`
-            }
-            if (label === 'Review wave' && runtime.orchestrationMode === 'continuous') {
-              return `${label} complete · continuing Continuous while hops remain.`
-            }
-            return `${label} complete · returning to serial writer step.`
-          })()
+          formatFanoutWaveCompletionStatus({
+            label,
+            outcomes: laneRuns.map((run) => ({
+              label: participantDisplayName(run.participant),
+              status: run.status,
+              reason: run.terminalReason
+            })),
+            completionDisposition: options.completionDisposition,
+            hasSourceRun: Boolean(options.sourceRunId),
+            continuousReviewWave:
+              label === 'Review wave' && runtime.orchestrationMode === 'continuous'
+          })
         )
       } finally {
         for (const run of laneRuns) {

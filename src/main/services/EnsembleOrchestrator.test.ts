@@ -24125,6 +24125,62 @@ describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_resu
     settleLane(harness, 'kimi')
   })
 
+  it('names skipped and failed lanes with their reasons in the wave-completion status', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+    await dispatchLanes(harness, ownerRunId)
+    // Reviewer lane completes with an empty transcript (the permission-walled
+    // seat shape); Builder lane fails outright.
+    settleLane(harness, 'claude')
+    const kimiLane = harness.dispatched.find((payload) => payload.provider === 'kimi')!
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: kimiLane.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'failed' }
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            typeof message.content === 'string' &&
+            message.content.includes(
+              '0 lane(s) returned, 1 failed, 1 skipped (Reviewer — Completed without producing output.)'
+            )
+        )
+      ).toBe(true)
+    )
+    void ownerRunId
+  })
+
+  it('carries each settled lane reason through ensemble_await and ensemble_lane_result', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+    const laneIds = await dispatchLanes(harness, ownerRunId)
+    settleLane(harness, 'claude')
+    settleLane(harness, 'kimi', 'Built the ballistics system.')
+    await vi.waitFor(() => {
+      const lanes = harness.chat.ensemble?.activeRound?.lanes || {}
+      expect(Object.values(lanes).every((lane) => lane.endedAt)).toBe(true)
+    })
+
+    const awaited = await harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds })
+    expect(awaited.ok).toBe(true)
+    const reviewerLane = awaited.lanes?.find((lane) => lane.participantId === 'claude')
+    expect(reviewerLane?.reason).toBe('Completed without producing output.')
+    const builderLane = awaited.lanes?.find((lane) => lane.participantId === 'kimi')
+    expect(builderLane?.reason).toBeUndefined()
+
+    const laneRecord = Object.values(harness.chat.ensemble?.activeRound?.lanes || {}).find(
+      (lane) => lane.participantId === 'claude'
+    )!
+    const read = harness.orchestrator.laneResultForRun(ownerRunId, {
+      laneId: laneRecord.laneId
+    })
+    expect(read.ok).toBe(true)
+    expect(read.reason).toBe('Completed without producing output.')
+  })
+
   it('await validates lane ids and reports empty rounds', async () => {
     const harness = makeHarness()
     const { ownerRunId } = await startGraphRound(harness)

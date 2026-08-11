@@ -224,6 +224,81 @@ export interface CanStartConcurrentRoundResult {
   reason?: string
 }
 
+/** Longest lane reason the wave-completion status line will carry verbatim. */
+const MAX_WAVE_REASON_CHARS = 140
+
+/**
+ * Terminal outcome of one fan-out lane run, pre-labelled by the caller so the
+ * formatter stays pure (the orchestrator owns participant display names).
+ */
+export interface FanoutWaveLaneOutcome {
+  label: string
+  /** Terminal participant-run status ('answered' | 'failed' | 'cancelled' | ...). */
+  status: string
+  /** Terminal reason the orchestrator recorded for the run, when one exists. */
+  reason?: string
+}
+
+function truncateWaveReason(reason: string): string {
+  if (reason.length <= MAX_WAVE_REASON_CHARS) return reason
+  return `${reason.slice(0, MAX_WAVE_REASON_CHARS - 1)}…`
+}
+
+function laneOutcomeDetail(outcomes: FanoutWaveLaneOutcome[]): string {
+  if (!outcomes.some((outcome) => outcome.reason)) return ''
+  const parts = outcomes.map((outcome) =>
+    outcome.reason ? `${outcome.label} — ${truncateWaveReason(outcome.reason)}` : outcome.label
+  )
+  return ` (${parts.join('; ')})`
+}
+
+/**
+ * Wave-completion round-status line. Skipped ('cancelled'/'skipped') and failed
+ * lane runs are named with their recorded terminal reason so the wave owner
+ * reads WHY a lane produced nothing instead of a bare count — a bare
+ * "1 skipped" twice in a row is how a permission-walled seat gets re-dispatched
+ * into the same wall. Failed lanes are counted apart from returned ones for the
+ * same reason. When every lane in a bucket lacks a reason the bare count copy
+ * is preserved unchanged.
+ */
+export function formatFanoutWaveCompletionStatus(input: {
+  label: string
+  outcomes: FanoutWaveLaneOutcome[]
+  completionDisposition?: string
+  hasSourceRun: boolean
+  continuousReviewWave: boolean
+}): string {
+  const skipped = input.outcomes.filter(
+    (outcome) => outcome.status === 'cancelled' || outcome.status === 'skipped'
+  )
+  const failed = input.outcomes.filter((outcome) => outcome.status === 'failed')
+  // "Stopped" is cancellation vocabulary. A lane run that finalized 'skipped'
+  // (ran, produced nothing) must not read as stopped — it lands in the
+  // mixed-arm skipped count with its reason instead.
+  const stopped = input.outcomes.filter((outcome) => outcome.status === 'cancelled')
+  if (input.outcomes.length > 0 && stopped.length === input.outcomes.length) {
+    return `${input.label} skipped · ${stopped.length} lane(s) stopped${laneOutcomeDetail(stopped)}.`
+  }
+  if (skipped.length > 0 || failed.length > 0) {
+    const returned = input.outcomes.length - skipped.length - failed.length
+    const failedClause =
+      failed.length > 0 ? `, ${failed.length} failed${laneOutcomeDetail(failed)}` : ''
+    const skippedClause =
+      skipped.length > 0 ? `, ${skipped.length} skipped${laneOutcomeDetail(skipped)}` : ''
+    return `${input.label} complete · ${returned} lane(s) returned${failedClause}${skippedClause}.`
+  }
+  if (input.completionDisposition === 'background') {
+    return `${input.label} complete · ${input.outcomes.length} lane(s) returned.`
+  }
+  if (input.completionDisposition === 'caller' || input.hasSourceRun) {
+    return `${input.label} complete · ${input.outcomes.length} lane(s) returned to the caller.`
+  }
+  if (input.continuousReviewWave) {
+    return `${input.label} complete · continuing Continuous while hops remain.`
+  }
+  return `${input.label} complete · returning to serial writer step.`
+}
+
 export function canStartConcurrentRound(input: {
   concurrentLanesEnabled: boolean
   chatIsEnsemble: boolean
