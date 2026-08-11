@@ -90,3 +90,35 @@ production root, so startup deliberately supplies an explicit empty list rather
 than inferring one from chat ids or People content. P5 must replace that port
 with its exact retained ids before it introduces such a share; it is the only
 remaining People edge by design.
+
+## 2026-08-11 post-proof addendum — review fixes
+
+An adversarial review after the record above found three defects in the
+committed-state contract; all are fixed with red-first tests, and the combined
+Channels selector, the terminal production mission, and both node/web
+typechecks were rerun green on the fixed tree.
+
+1. **Empty-scope settle (`72d151950`, predates this addendum).** The
+   frozen-scope classifier read an empty legacy scope as forever
+   `awaiting_retirement`, blocking startup on every profile with zero People
+   shares. The classifier now resolves `retired` first, and the
+   chats-present/zero-share upgrade profile has an end-to-end production test.
+2. **Committed fast-path.** Every boot re-ran the additive route verify and the
+   terminal metadata digest comparison against the live Channel store, so any
+   post-commit product activity — a posted message, a member join, a closed
+   channel, or history deletion — permanently blocked the next launch. Once the
+   recovery intent is `committed`, startup now verifies the immutable chain
+   (intent, receipt, sealed execution digest, manifest digest, escrow) and
+   rebuilds the startup projection from the durable manifest and terminal
+   escrow. Initial additive invitations are still verified unusable wherever
+   they survive; migration-window recovery (`finalizing`) keeps the strict
+   frozen-world checks.
+3. **Erasure integration.** `purgeAllShares` asserted the legacy write gate
+   with no share id, so a post-migration global history clear wedged forever
+   and stranded queued collaborator message bodies. It now asserts per share:
+   an empty store settles, retained P5 shares are erased, and an ordinary share
+   surviving quiescence still fails closed. The plaintext pre-migration People
+   backup is likewise no longer immortal: it is deleted when the receipt
+   commits (and on the next committed startup for profiles that committed
+   before deletion existed), and a committed record tolerates its absence. The
+   backup only ever served the prepare-to-commit crash window.
