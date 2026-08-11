@@ -27,6 +27,13 @@ import {
 import { computeTranscriptHash, confirmCodeFromTranscript, deriveSessionKeys } from './keyschedule'
 import { seal, open } from './cipher'
 import { registerSigningString, resolveSigningString } from './resolve'
+import {
+  apnsDeregisterSigningString,
+  apnsRegisterSigningString,
+  sharedApnsCollapseId,
+  triggerSigningString
+} from './push'
+import { createHash } from 'crypto'
 
 const ED_PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex')
 const X_PKCS8 = Buffer.from('302e020100300506032b656e04220420', 'hex')
@@ -162,5 +169,58 @@ describe('cross-impl golden vectors (must match ios/TaskWraithKit)', () => {
     ).toBe(
       'taskwraith-resolve-v1|resolve|F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=|11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=|zMzMzMzMzMzMzMzMzMzMzA==|1700000000000'
     )
+  })
+
+  it('push gateway signing strings are byte-stable (P3 lock)', () => {
+    // These vectors AUTHOR the byte layout the design doc left unwritten —
+    // Swift InteropVectorsTests carries the SAME literals. Booleans encode as
+    // String(boolean) ('true'/'false'), which is also Swift's String(Bool).
+    const macKey = b64.encode(exportRawEd25519PublicKey(macIdPub))
+    const phoneKey = b64.encode(exportRawEd25519PublicKey(iphoneIdPub))
+    const nonce = b64.encode(Buffer.alloc(16, 0xdd))
+    expect(
+      apnsRegisterSigningString({
+        macIdentityPubKey: macKey,
+        iphoneIdentityPubKey: phoneKey,
+        deviceTokenHex: 'aabbccdd00112233',
+        env: 'sandbox',
+        notifyFinishedTurns: true,
+        issuedAt: 1_700_000_000_000,
+        nonce
+      })
+    ).toBe(
+      `taskwraith-push-trigger-v1|apns-register|F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=|11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=|aabbccdd00112233|sandbox|true|1700000000000|${nonce}`
+    )
+    expect(
+      apnsDeregisterSigningString({
+        macIdentityPubKey: macKey,
+        iphoneIdentityPubKey: phoneKey,
+        issuedAt: 1_700_000_000_000,
+        nonce
+      })
+    ).toBe(
+      `taskwraith-push-trigger-v1|apns-deregister|${macKey}|${phoneKey}|1700000000000|${nonce}`
+    )
+    expect(
+      triggerSigningString({
+        macIdentityPubKey: macKey,
+        targetIphoneIdentityPubKey: phoneKey,
+        reason: 'runComplete',
+        threadId: 'thread-9',
+        runId: 'run-3',
+        collapseId: 'tw1-abc',
+        issuedAt: 1_700_000_000_000,
+        nonce
+      })
+    ).toBe(
+      `taskwraith-push-trigger-v1|trigger|${macKey}|${phoneKey}|runComplete|thread-9|run-3||tw1-abc|1700000000000|${nonce}`
+    )
+    // The one derivation both tiers and the relay coalesce key share.
+    expect(sharedApnsCollapseId({ reason: 'runComplete', threadId: 't-1', runId: 'r-1' })).toBe(
+      `tw1-${createHash('sha256').update('runComplete|t-1|r-1').digest('hex').slice(0, 56)}`
+    )
+    expect(
+      sharedApnsCollapseId({ reason: 'runComplete', threadId: 't-1', runId: 'r-1' }).length
+    ).toBeLessThanOrEqual(64)
   })
 })

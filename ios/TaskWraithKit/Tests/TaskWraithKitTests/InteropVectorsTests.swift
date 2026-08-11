@@ -271,4 +271,31 @@ struct InteropVectorsTests {
                 nonce: Base64.encode(fill(0xCC, 16)), issuedAt: 1_700_000_000_000)
                 == "taskwraith-resolve-v1|resolve|F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=|11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=|zMzMzMzMzMzMzMzMzMzMzA==|1700000000000")
     }
+
+    @Test("push gateway signing strings are byte-stable (P3 lock)")
+    func pushStrings() {
+        // These literals AUTHOR the byte layout the design doc left
+        // unwritten; src/shared/e2ee/crossImplVectors.test.ts carries the
+        // SAME strings. Booleans are String(Bool) — 'true'/'false'.
+        let macKey = Base64.encode(macId.publicKey.rawRepresentation)
+        let phoneKey = Base64.encode(iphoneId.publicKey.rawRepresentation)
+        let nonce = Base64.encode(fill(0xDD, 16))
+        #expect(
+            TWPush.apnsRegisterSigningString(
+                macIdentityPubKey: macKey, iphoneIdentityPubKey: phoneKey,
+                deviceTokenHex: "aabbccdd00112233", env: "sandbox",
+                notifyFinishedTurns: true, issuedAt: 1_700_000_000_000, nonce: nonce)
+                == "taskwraith-push-trigger-v1|apns-register|F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=|11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=|aabbccdd00112233|sandbox|true|1700000000000|\(nonce)")
+        #expect(
+            TWPush.apnsDeregisterSigningString(
+                macIdentityPubKey: macKey, iphoneIdentityPubKey: phoneKey,
+                issuedAt: 1_700_000_000_000, nonce: nonce)
+                == "taskwraith-push-trigger-v1|apns-deregister|\(macKey)|\(phoneKey)|1700000000000|\(nonce)")
+        #expect(
+            TWPush.triggerSigningString(
+                macIdentityPubKey: macKey, targetIphoneIdentityPubKey: phoneKey,
+                reason: "runComplete", threadId: "thread-9", runId: "run-3", taskId: nil,
+                collapseId: "tw1-abc", issuedAt: 1_700_000_000_000, nonce: nonce)
+                == "taskwraith-push-trigger-v1|trigger|\(macKey)|\(phoneKey)|runComplete|thread-9|run-3||tw1-abc|1700000000000|\(nonce)")
+    }
 }
