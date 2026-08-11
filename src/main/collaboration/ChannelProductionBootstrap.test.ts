@@ -352,6 +352,17 @@ describe('ChannelProductionBootstrap', () => {
     expect(snapshot).toHaveBeenCalledWith({ chatId: 'chat-a' })
   })
 
+  it('passes a validated migrated admission authority only to the production service', () => {
+    const migratedAdmissionAuthority = {
+      reconcile: vi.fn(() => 0),
+      bind: vi.fn(() => false),
+      affectedChannelIds: vi.fn(() => ['channel-a'])
+    } as unknown as NonNullable<ChannelProductionServiceOptions['migratedAdmissionAuthority']>
+    const fixture = harness({ migratedAdmissionAuthority })
+
+    expect(fixture.serviceOptions.migratedAdmissionAuthority).toBe(migratedAdmissionAuthority)
+  })
+
   it('composes the canonical agent controller, native owner, and closed IPC lifecycle', async () => {
     const management = agentManagement()
     const fixture = harness({ agentManagement: management.options })
@@ -577,6 +588,12 @@ describe('ChannelProductionBootstrap', () => {
         }
       })
     ).toThrow('agent execution requires main-owned runtime ports')
+  })
+
+  it('rejects an incomplete migrated admission authority before constructing the service', () => {
+    expect(() => harness({ migratedAdmissionAuthority: {} as never })).toThrow(
+      'migrated admission authority is invalid'
+    )
   })
 })
 

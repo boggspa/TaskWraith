@@ -28,6 +28,7 @@ import {
   type ChannelProductionStatus
 } from './ChannelProductionService'
 import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
+import type { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
 import type { PeopleToChannelMigrationHandoffService } from './PeopleToChannelMigrationHandoffService'
 
 export interface ChannelProductionRelaySources {
@@ -66,6 +67,8 @@ export interface ChannelProductionBootstrapOptions {
   logger?: (line: string) => void
   /** Constructed by the migration startup owner before this bootstrap starts serving IPC. */
   migrationHandoff?: Pick<PeopleToChannelMigrationHandoffService, 'snapshot'>
+  /** Constructed by the migration startup owner before Channel recovery begins. */
+  migratedAdmissionAuthority?: PeopleToChannelMigrationAdmissionAuthority
   createService?: (options: ChannelProductionServiceOptions) => ChannelProductionService
 }
 
@@ -216,6 +219,15 @@ export function createChannelProductionBootstrap(
   ) {
     throw new Error('ChannelProductionBootstrap migration handoff must be a snapshot provider')
   }
+  if (
+    options.migratedAdmissionAuthority !== undefined &&
+    (!options.migratedAdmissionAuthority ||
+      typeof options.migratedAdmissionAuthority.reconcile !== 'function' ||
+      typeof options.migratedAdmissionAuthority.bind !== 'function' ||
+      typeof options.migratedAdmissionAuthority.affectedChannelIds !== 'function')
+  ) {
+    throw new Error('ChannelProductionBootstrap migrated admission authority is invalid')
+  }
 
   let stopped = false
   let registration: ChannelHandlersRegistration | null = null
@@ -261,6 +273,9 @@ export function createChannelProductionBootstrap(
     },
     ...(options.socketFactory ? { socketFactory: options.socketFactory } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.migratedAdmissionAuthority
+      ? { migratedAdmissionAuthority: options.migratedAdmissionAuthority }
+      : {}),
     onChange: publishChange
   })
   const agentController = new ChannelAgentManagementController({
