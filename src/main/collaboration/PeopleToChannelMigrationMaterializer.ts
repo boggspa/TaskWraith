@@ -523,6 +523,12 @@ export function materializePeopleToChannels(input: {
     backfilledGeneralChatIds.push(chat.chatId)
   }
 
+  // The plan has no execution timestamp, so an unconsumed-but-expired invite
+  // can conservatively request reissue there. The executable requirement must
+  // instead follow the timestamped manifest that will actually mint authority.
+  requirements.delete('pending_admission_reissue')
+  if (pendingAdmissionReissues.length > 0) requirements.add('pending_admission_reissue')
+
   const withoutDigest: Omit<PeopleToChannelMigrationMaterialization, 'materializationDigest'> = {
     schemaVersion: PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION,
     planId: input.plan.planId,

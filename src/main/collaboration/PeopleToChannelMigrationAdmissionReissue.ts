@@ -477,11 +477,17 @@ function admissionContext(args: {
 }): { tasks: ReissueTask[]; expectedManifestDigest: string } {
   validateInputs(args)
   const tasks = reissueTasks(args.base.pendingAdmissionReissues)
-  if (
-    !Array.isArray(args.base.requirements) ||
-    args.base.requirements.filter((requirement) => requirement === 'pending_admission_reissue')
-      .length !== (tasks.length > 0 ? 1 : 0)
-  ) {
+  if (!Array.isArray(args.base.requirements)) {
+    blocked('People migration admission requirement does not match its manifest')
+  }
+  const requirementCount = args.base.requirements.filter(
+    (requirement) => requirement === 'pending_admission_reissue'
+  ).length
+  // Materialization v4 checkpoints created before invite-expiry reconciliation
+  // may over-declare this requirement with an empty manifest. That state can
+  // mint no authority and must remain recoverable; a non-empty manifest still
+  // requires exactly one declaration, and duplicate declarations stay invalid.
+  if (requirementCount > 1 || (tasks.length > 0 && requirementCount !== 1)) {
     blocked('People migration admission requirement does not match its manifest')
   }
   return { tasks, expectedManifestDigest: manifestDigest({ ...args, tasks }) }

@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { readFileSync, rmSync, writeFileSync } from 'fs'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
@@ -17,7 +18,10 @@ import { HUMAN_COLLABORATOR_COMMENT_KIND } from './HumanCollaboratorMessages'
 import { ChannelMessageLog } from './ChannelMessageLog'
 import { channelProductionDataPaths } from './ChannelProductionService'
 import { ChannelStore } from './ChannelStore'
-import { peopleToChannelMigrationExecutionPath } from './PeopleToChannelMigrationExecutionStore'
+import {
+  peopleToChannelMigrationExecutionPath,
+  type PeopleToChannelMigrationExecution
+} from './PeopleToChannelMigrationExecutionStore'
 import {
   PEOPLE_TO_CHANNEL_PRODUCTION_RUNNER_VERSION,
   PeopleToChannelMigrationProductionRunner,
@@ -47,6 +51,29 @@ function safeStorage(available = true): HumanCollaborationSafeStorage {
     encryptString: (plain) => xor(Buffer.from(plain, 'utf8')),
     decryptString: (encrypted) => xor(encrypted).toString('utf8')
   }
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => compareText(left, right))
+      .map(([key, entry]) => [key, canonicalize(entry)])
+  )
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value))
 }
 
 function donorMessage(content = 'review /Users/private/source.txt'): ChatMessage {
@@ -125,6 +152,55 @@ function peopleSource(activeKey: string, pendingKey: string): unknown {
   }
 }
 
+function expiredInviteOnlyPeopleSource(activeKey: string): unknown {
+  return {
+    shares: [
+      {
+        shareId: 'share_one',
+        chatId: 'chat_one',
+        mode: 'comments',
+        enabled: true,
+        createdAt: 100,
+        updatedAt: 300,
+        nextSequence: 2,
+        participants: [
+          {
+            collaboratorId: 'active_person',
+            displayName: 'Active Person',
+            publicKeyId: activeKey,
+            status: 'active',
+            joinedAt: 150,
+            seatOrder: 2,
+            colorIndex: 5
+          }
+        ],
+        invites: [
+          {
+            inviteId: 'active_invite',
+            tokenHash: 'legacy_consumed_token_hash',
+            createdAt: 120,
+            expiresAt: 20_000,
+            consumedAt: 150,
+            collaboratorId: 'active_person',
+            roomId: 'active_room'
+          },
+          {
+            inviteId: 'expired_open_invite',
+            tokenHash: 'legacy_expired_open_token_hash',
+            createdAt: 200,
+            expiresAt: 500,
+            roomId: 'legacy_expired_open_room'
+          }
+        ],
+        idempotency: {},
+        contributionRules: contributionRulesForPreset('requestHostAction'),
+        requiresHostApproval: true,
+        fullHistory: true
+      }
+    ]
+  }
+}
+
 interface Fixture {
   userDataPath: string
   identity: KeyPair
@@ -140,7 +216,7 @@ interface Fixture {
   }
 }
 
-function fixture(): Fixture {
+function fixture(args: { expiredInviteOnly?: boolean } = {}): Fixture {
   const userDataPath = directory()
   const identity = generateIdentityKeyPair()
   const sourcePath = join(userDataPath, 'human-collaboration.json')
@@ -150,7 +226,15 @@ function fixture(): Fixture {
   const pendingKey = exportRawEd25519PublicKey(generateIdentityKeyPair().publicKey).toString(
     'base64'
   )
-  writeFileSync(sourcePath, JSON.stringify(peopleSource(activeKey, pendingKey)), { mode: 0o600 })
+  writeFileSync(
+    sourcePath,
+    JSON.stringify(
+      args.expiredInviteOnly
+        ? expiredInviteOnlyPeopleSource(activeKey)
+        : peopleSource(activeKey, pendingKey)
+    ),
+    { mode: 0o600 }
+  )
   return {
     userDataPath,
     identity,
@@ -165,6 +249,35 @@ function fixture(): Fixture {
       messages: [donorMessage()]
     }
   }
+}
+
+function rewritePreparedExecutionWithLegacyAdmissionRequirement(built: Fixture): void {
+  const path = peopleToChannelMigrationExecutionPath(built.userDataPath)
+  const envelope = JSON.parse(readFileSync(path, 'utf8')) as {
+    encryptedPayload: string
+    payloadDigest: string
+  }
+  const execution = JSON.parse(
+    xor(Buffer.from(envelope.encryptedPayload, 'base64')).toString('utf8')
+  ) as PeopleToChannelMigrationExecution
+  const { materializationDigest: _baseDigest, ...baseDraft } = execution.base
+  baseDraft.requirements = [
+    ...new Set([...baseDraft.requirements, 'pending_admission_reissue' as const])
+  ].sort(compareText)
+  const base = {
+    ...baseDraft,
+    materializationDigest: sha256(canonicalJson(baseDraft))
+  }
+  const { executionDigest: _historyDigest, ...historyDraft } = execution.history
+  historyDraft.baseMaterializationDigest = base.materializationDigest
+  const history = {
+    ...historyDraft,
+    executionDigest: sha256(canonicalJson(historyDraft))
+  }
+  const plaintext = JSON.stringify({ ...execution, base, history })
+  envelope.payloadDigest = sha256(plaintext)
+  envelope.encryptedPayload = xor(Buffer.from(plaintext, 'utf8')).toString('base64')
+  writeFileSync(path, `${JSON.stringify(envelope, null, 2)}\n`, { mode: 0o600 })
 }
 
 function runner(
@@ -207,6 +320,37 @@ function durableState(built: Fixture) {
 }
 
 describe('PeopleToChannelMigrationProductionRunner', () => {
+  it('migrates an expired unconsumed invite without minting admission authority', () => {
+    const built = fixture({ expiredInviteOnly: true })
+    const result = runner(built).runToSoak()
+
+    expect(result).toMatchObject({
+      phase: 'cutover_applied',
+      invitations: [],
+      recovery: { phase: 'cutover_applied' }
+    })
+    expect(durableState(built).channel).toMatchObject({ chatId: 'chat_one', messageCount: 1 })
+    expect(readFileSync(built.sourcePath)).toEqual(built.sourceBytes)
+  })
+
+  it('resumes a prepared v4 checkpoint that over-declared an expired invite reissue', () => {
+    const built = fixture({ expiredInviteOnly: true })
+    expect(() => runner(built, { crashAt: 'recovery_prepared' }).runToSoak()).toThrow(
+      'injected crash at recovery_prepared'
+    )
+    rewritePreparedExecutionWithLegacyAdmissionRequirement(built)
+
+    const resumed = runner(built).runToSoak()
+    expect(resumed).toMatchObject({
+      phase: 'cutover_applied',
+      executionCreatedThisRun: false,
+      invitations: [],
+      recovery: { phase: 'cutover_applied' }
+    })
+    expect(durableState(built).channel).toMatchObject({ chatId: 'chat_one', messageCount: 1 })
+    expect(readFileSync(built.sourcePath)).toEqual(built.sourceBytes)
+  })
+
   it('preflights read-only then reaches additive soak without mutating People', () => {
     const built = fixture()
     const active = runner(built)

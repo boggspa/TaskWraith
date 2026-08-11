@@ -153,6 +153,39 @@ function source(
 }
 
 describe('PeopleToChannelMigrationMaterializer', () => {
+  it('does not require admission reissue for an expired unconsumed invite', () => {
+    const inventory = source({
+      people: {
+        shares: [
+          share({
+            participants: [],
+            invites: [
+              {
+                inviteId: 'expired_invite_only',
+                tokenHash: 'private-expired-only-token-hash',
+                createdAt: 400,
+                expiresAt: 800,
+                roomId: 'expired_only_room'
+              }
+            ]
+          })
+        ]
+      }
+    })
+    const plan = createPeopleToChannelMigrationPlan(inventory)
+    const materialized = materializePeopleToChannels({
+      plan,
+      source: inventory,
+      hostDisplayName: 'Host Person',
+      migrationAt: 1_000
+    })
+
+    expect(plan.entries[0].requirements).toContain('pending_admission_reissue')
+    expect(materialized.pendingAdmissionReissues).toEqual([])
+    expect(materialized.requirements).not.toContain('pending_admission_reissue')
+    expect(materialized.requirements).toContain('legacy_invite_retirement')
+  })
+
   it('builds a deterministic create batch without importing pending invites or tokens', () => {
     const inventory = source()
     const plan = createPeopleToChannelMigrationPlan(inventory)

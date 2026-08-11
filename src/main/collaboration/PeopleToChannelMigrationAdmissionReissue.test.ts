@@ -564,5 +564,20 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
       })
     ).toEqual({ invitations: [], escrowDigest: null })
     expect(existsSync(built.escrowPath)).toBe(false)
+
+    const { materializationDigest: _digest, ...legacyDraft } = clone(built.base)
+    legacyDraft.requirements = ['pending_admission_reissue']
+    const legacyBase = sealBase(legacyDraft)
+    const { executionDigest: _historyDigest, ...legacyHistoryDraft } = clone(built.history)
+    legacyHistoryDraft.baseMaterializationDigest = legacyBase.materializationDigest
+    const legacyHistory = sealHistory(legacyHistoryDraft)
+
+    expect(
+      service(built, { safeStorage: safeStorage(false) }).apply({
+        base: legacyBase,
+        history: legacyHistory
+      })
+    ).toEqual(result)
+    expect(existsSync(built.escrowPath)).toBe(false)
   })
 })
