@@ -33,11 +33,13 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     }
   })
 
-  it('pins small-panel roles, authority and curated permission presets', () => {
+  it('pins small-panel roles, authority and uniform Accept Edits presets', () => {
     // permissionPresetId is pinned EXPLICITLY here, not against
-    // getDefaultEnsembleParticipantConfig: the seeded panel keeps a curated
-    // writer/reader split (codex lone writer, read-only recon seats) while
-    // chip-strip adds seed uniformly with 'default' (Accept Edits).
+    // getDefaultEnsembleParticipantConfig: every seeded seat starts on
+    // 'default' (Accept Edits) — owner directive 2026-08-12; the old curated
+    // writer/reader split is retired. Chip-strip adds seed the same value, so
+    // seeded and added seats now match. Read-only recon is a per-seat picker
+    // choice, never a seeded posture.
     const config = createDefaultEnsembleConfig()
     const rolesByProvider = Object.fromEntries(
       config.participants.map((participant) => [
@@ -55,25 +57,25 @@ describe('createDefaultEnsembleConfig parity guard', () => {
         role: 'Boss',
         instructions:
           'Own the outcome, keep the panel scoped, and synthesize a clear decision from the other seats. Explore the request, identify constraints, and propose the safest path forward.',
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'default'
       },
       codex: {
         role: 'Captain',
         instructions:
           'Act as second-in-command: challenge the plan, track unresolved risks, and keep the work moving. Implement concrete code or workflow changes when the round calls for action.',
-        permissionPresetId: 'workspace_write'
+        permissionPresetId: 'default'
       },
       kimi: {
         role: 'Specialist',
         instructions:
           'Contribute concrete domain work and evidence for the task in front of the panel. Review prior responses for gaps, edge cases, and test coverage.',
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'default'
       },
       ollama: {
         role: 'Outsider',
         instructions:
           'Take an independent view, stress-test the emerging consensus, and surface missed alternatives. Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'default'
       }
     })
     expect(config.bossmanParticipantId).toBe('ensemble-claude')

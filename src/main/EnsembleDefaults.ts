@@ -20,13 +20,14 @@ import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
  * fixtures pin the values, and `EnsembleDefaults.test.ts` asserts the
  * model parity).
  *
- * permissionPresetId is the one INTENTIONAL divergence: this seeded
- * default panel keeps a curated writer/reader split (codex is the lone
- * writer; the rest are read-only recon seats, which read-only fan-out
- * depends on). Participants ADDED later via the chip strip / roster
- * editor instead seed uniformly with 'default' (Accept Edits) from
- * `getDefaultEnsembleParticipantConfig` — fully deterministic, no
- * inheritance from whichever chip was selected.
+ * permissionPresetId seeds uniformly with 'default' (Accept Edits) —
+ * owner directive 2026-08-12, matching what chip-strip / roster-editor
+ * adds already seed via `getDefaultEnsembleParticipantConfig`. The old
+ * curated writer/reader split (codex lone writer, read-only recon
+ * seats) is retired: read-only recon is a per-seat picker choice the
+ * user makes, never a seeded posture. Seats on providers that are
+ * toolless at dispatch (grok until G5 tool mediation) carry the preset
+ * inertly until the row becomes tool-capable.
  */
 const DEFAULT_ENSEMBLE_ROLES: Array<{
   provider: ProviderId
@@ -38,37 +39,33 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
     provider: 'claude',
     role: 'Claude',
     instructions: 'Explore the request, identify constraints, and propose the safest path forward.',
-    permissionPresetId: 'read_only'
+    permissionPresetId: 'default'
   },
   {
     provider: 'codex',
     role: 'Codex',
     instructions: 'Implement concrete code or workflow changes when the round calls for action.',
-    permissionPresetId: 'workspace_write'
+    permissionPresetId: 'default'
   },
   {
     provider: 'kimi',
     role: 'Kimi',
     instructions: 'Review prior responses for gaps, edge cases, and test coverage.',
-    permissionPresetId: 'read_only'
+    permissionPresetId: 'default'
   },
   {
-    // Grok is now a first-class provider, so it seeds into the default panel
-    // like the others. Read-only in THIS curated panel until G5 (tool
-    // mediation via TaskWraith MCP + approval ledger) lands write-capable
-    // runs; chip-strip adds seed 'default' instead (see header note).
     provider: 'grok',
     role: 'Grok',
     instructions:
       'Stress-test the proposed approach: surface risky assumptions, failure modes, and simpler alternatives.',
-    permissionPresetId: 'read_only'
+    permissionPresetId: 'default'
   },
   {
     provider: 'ollama',
     role: 'Local',
     instructions:
       'Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
-    permissionPresetId: 'read_only'
+    permissionPresetId: 'default'
   }
 ]
 
