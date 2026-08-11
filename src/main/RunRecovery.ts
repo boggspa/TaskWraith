@@ -264,7 +264,14 @@ export function recoverRunQueueJobsAfterStartup(
 ): RunRecoveryResult {
   const records: RunRecoveryRecord[] = []
   const recoveredJobs = jobs.map((job) => {
-    const isInterrupted = ACTIVE_RUN_QUEUE_STATUSES.includes(job.status)
+    // A prepared solo-steer barrier is a durable handoff transaction, not a
+    // provider process. It deliberately survives restart so the renderer can
+    // prove whether the transcript row landed and either release it to queued
+    // or fail it closed. `steer_promoting` is otherwise an active lifecycle
+    // status, but routing this exact barrier through generic interrupted-run
+    // recovery destroys the owner token and loses the pending follow-up.
+    const isInterrupted =
+      ACTIVE_RUN_QUEUE_STATUSES.includes(job.status) && !isPreparedSoloSteerTranscriptBarrier(job)
     const hasStaleFailedProcess = job.status === 'failed' && isValidPid(job.processPid)
     const hasStalePausedProcess = job.status === 'paused' && isValidPid(job.processPid)
     const hasExpiredSteerState = isExpiredSteerPromotingRun(job, recoveredAt)

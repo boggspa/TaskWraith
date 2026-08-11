@@ -1,4 +1,8 @@
 import { randomUUID } from 'crypto'
+import {
+  SOLO_STEER_TRANSCRIPT_PREPARATION,
+  midRunQueuedMessageId
+} from '../shared/midRunSteeringQueue'
 import type { RunQueueJob, RunQueueJobFilter, RunQueueJobStatus } from './store/types'
 
 export type RunQueueJobInput = Omit<
@@ -120,6 +124,17 @@ export function isNonterminalRunQueueStatus(status: RunQueueJobStatus): boolean 
   return RUN_QUEUE_NONTERMINAL_STATUS_SET[status]
 }
 
+function isPreparedSoloSteerTranscriptBarrier(job: RunQueueJob): boolean {
+  return Boolean(
+    job.status === 'steer_promoting' &&
+    job.steerPreparationKind === SOLO_STEER_TRANSCRIPT_PREPARATION &&
+    job.promotionOwnerToken &&
+    job.promotionToken === job.promotionOwnerToken &&
+    job.request &&
+    job.queueMessageId === midRunQueuedMessageId(job.runId)
+  )
+}
+
 function compactPreview(value: string | undefined, maxLength = 240): string | undefined {
   const normalized = String(value || '')
     .replace(/\s+/g, ' ')
@@ -228,6 +243,31 @@ export function recoverInterruptedRunQueueJobs(
   recoveredAt: string = new Date().toISOString()
 ): RunQueueJob[] {
   return jobs.map((job) => {
+    if (job.status === 'steer_promoting') {
+      // Main-minted transcript barriers are repaired by the startup handshake;
+      // all other promotion owners disappeared with the previous renderer and
+      // must return to the runnable queue instead of becoming zombies or being
+      // misreported as interrupted provider processes.
+      if (isPreparedSoloSteerTranscriptBarrier(job)) return job
+      return updateRunQueueJobRecord(
+        job,
+        {
+          status: 'queued',
+          statusReason:
+            'Steer promotion state could not resume after app restart; rerunning from queued.',
+          recoveryReason: 'stale_steer_promoting_recovered',
+          processPid: undefined,
+          processOwnership: undefined,
+          promotionOwnerToken: undefined,
+          promotionToken: undefined,
+          promotionAttempt: undefined,
+          transitionVersion: undefined,
+          promotedAt: undefined,
+          queueMessageId: undefined
+        },
+        recoveredAt
+      )
+    }
     if (!ACTIVE_RUN_QUEUE_STATUSES.includes(job.status)) return job
     return updateRunQueueJobRecord(
       job,

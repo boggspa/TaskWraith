@@ -771,6 +771,14 @@ describe('IpcValidation', () => {
       ])
     ).not.toThrow()
     expect(() =>
+      validateIpcArgs('steering:inject', [
+        { chatId: 'chat-1', runId: 'run-1', text: 'Change direction.' }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('steering:cancel', [{ chatId: 'chat-1', runId: 'run-1' }])
+    ).not.toThrow()
+    expect(() =>
       validateIpcArgs('create-sub-thread', [
         {
           parentChatId: 'parent-1',

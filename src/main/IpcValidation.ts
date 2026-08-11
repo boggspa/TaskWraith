@@ -306,6 +306,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'promote-queued-job-for-steer': ['object'],
   'lease-promoted-steer-job': ['object'],
   'fallback-promoted-steer-job': ['object'],
+  'steering:inject': ['object'],
+  'steering:cancel': ['object'],
   'get-run-events': ['optionalObject'],
   'get-run-event-replay': ['runId'],
   'run-analyst:analyze': ['object'],

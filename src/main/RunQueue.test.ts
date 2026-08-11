@@ -291,6 +291,53 @@ describe('RunQueue', () => {
     expect(recoveredActive?.failedAt).toBe('2026-05-06T00:03:00.000Z')
   })
 
+  it('requeues abandoned steer promotions but preserves a main-owned transcript barrier', () => {
+    const abandoned = createRunQueueJob({
+      id: 'abandoned-steer',
+      runId: 'abandoned-steer',
+      provider: 'codex',
+      workspacePath: '/workspace',
+      source: 'manual',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'dead-renderer',
+      promotionToken: 'dead-renderer',
+      queueMessageId: 'queued-row-1'
+    })
+    const barrier = createRunQueueJob({
+      id: 'prepared-steer',
+      runId: 'prepared-steer',
+      provider: 'codex',
+      workspacePath: '/workspace',
+      source: 'manual',
+      status: 'steer_promoting',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      promotionOwnerToken: 'main-owner',
+      promotionToken: 'main-owner',
+      queueMessageId: 'midrun-queued-user-prepared-steer',
+      request: {
+        prompt: 'Follow up after the boundary.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    const recovered = recoverInterruptedRunQueueJobs(
+      [abandoned, barrier],
+      '2026-05-06T00:03:00.000Z'
+    )
+
+    expect(recovered[0]).toMatchObject({
+      status: 'queued',
+      recoveryReason: 'stale_steer_promoting_recovered'
+    })
+    expect(recovered[0].promotionOwnerToken).toBeUndefined()
+    expect(recovered[0].promotionToken).toBeUndefined()
+    expect(recovered[1]).toBe(barrier)
+  })
+
   it('filters and sorts jobs by active work before queued and terminal history', () => {
     const jobs = [
       createRunQueueJob({
