@@ -1,7 +1,27 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
+import {
+  CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT,
+  CloseoutFileChangesSection,
+  closeoutFileChangeWindow
+} from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
+
+function fileChangeRows(count: number): {
+  path: string
+  status: 'modified'
+  additions: number
+  deletions: number
+}[] {
+  return Array.from({ length: count }, (_, index) => ({
+    // Zero-padded so `src/file-01.ts` is never a substring of `src/file-11.ts`
+    // and the "row N is hidden" assertions below can't pass vacuously.
+    path: `src/file-${String(index + 1).padStart(2, '0')}.ts`,
+    status: 'modified' as const,
+    additions: 1,
+    deletions: 1
+  }))
+}
 
 describe('RunCompleteEpicStack', () => {
   it('stacks participants, file changes, and commits with seat attribution', () => {
@@ -284,5 +304,52 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('file-change-summary-owner')
     const rowCount = html.split('file-change-summary-row-content is-closeout').length - 1
     expect(rowCount).toBe(2)
+  })
+
+  it('caps the close-out file list at ten rows and offers a "Show more" toggle', () => {
+    const html = renderToStaticMarkup(<CloseoutFileChangesSection changes={fileChangeRows(13)} />)
+
+    const rowCount = html.split('file-change-summary-row-content is-closeout').length - 1
+    expect(rowCount).toBe(CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT)
+    expect(html).toContain('src/file-10.ts')
+    expect(html).not.toContain('src/file-11.ts')
+    expect(html).not.toContain('src/file-13.ts')
+    expect(html).toContain('file-change-summary-show-more')
+    expect(html).toContain('Show 3 more…')
+    expect(html).toContain('aria-expanded="false"')
+    // The cap is a view window, not a filter: the header keeps counting and
+    // summing every change, so the totals still describe the whole close-out.
+    expect(html).toContain('13 files')
+    expect(html).toContain('+13')
+    expect(html).toContain('-13')
+  })
+
+  it('renders no "Show more" row when the close-out file list fits the cap', () => {
+    const html = renderToStaticMarkup(
+      <CloseoutFileChangesSection changes={fileChangeRows(CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT)} />
+    )
+
+    const rowCount = html.split('file-change-summary-row-content is-closeout').length - 1
+    expect(rowCount).toBe(CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT)
+    expect(html).toContain('src/file-10.ts')
+    expect(html).not.toContain('file-change-summary-show-more')
+  })
+
+  it('opens the whole close-out file list once the window is expanded', () => {
+    // No DOM test environment here, so the toggle's two states are proven on
+    // the pure window helper the component renders from rather than by click.
+    const changes = fileChangeRows(13)
+
+    const collapsed = closeoutFileChangeWindow(changes, false)
+    expect(collapsed.visible).toHaveLength(CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT)
+    expect(collapsed.hiddenCount).toBe(3)
+
+    const expanded = closeoutFileChangeWindow(changes, true)
+    expect(expanded.visible).toHaveLength(13)
+    expect(expanded.hiddenCount).toBe(3)
+
+    const short = closeoutFileChangeWindow(changes.slice(0, 4), false)
+    expect(short.visible).toHaveLength(4)
+    expect(short.hiddenCount).toBe(0)
   })
 })

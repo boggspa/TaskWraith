@@ -4895,6 +4895,37 @@ input:disabled, select:disabled, textarea:disabled {
   outline-offset: -1px;
 }
 
+/* "Show N more… / Show less" row that caps a long close-out file list at
+ * CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT. It carries .file-change-summary-item so
+ * it inherits the list's row height, fill and separator; everything here is
+ * either a <button> reset or the quiet-affordance treatment. */
+.file-change-summary-show-more {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  /* NOT `font: inherit` — that shorthand would also reset the row's
+   * font-size back to the transcript's. */
+  font-family: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  cursor: pointer;
+  transition: background-color 140ms cubic-bezier(0.22, 1, 0.36, 1), color 140ms ease;
+}
+
+/* Qualified past `.file-change-summary-item` and scoped to the list because the
+ * light-theme solid row fill in 08 is itself three classes and loads later —
+ * at equal specificity it would win and the hover would read as dead. */
+.file-change-summary-list .file-change-summary-item.file-change-summary-show-more:hover,
+.file-change-summary-list .file-change-summary-item.file-change-summary-show-more:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  outline: none;
+}
+
 .file-change-summary-main-action {
   appearance: none;
   -webkit-appearance: none;

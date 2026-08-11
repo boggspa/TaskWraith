@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import type { DiffFileSummary } from '../../../main/store/types'
 import type { CloseoutFileChange } from '../lib/taskWraithCloseoutMessage'
@@ -5,6 +6,29 @@ import { DIFF_HOVER_PREVIEW_TOOLTIP_ID } from './DiffHoverPreview'
 import { FileTypeIcon } from './FileTypeIcon'
 
 const FILE_CHANGE_PATH_LABEL_MAX = 44
+
+/** A wide close-out can list dozens of files and swamp the transcript, so the
+ * card opens on a preview window and reveals the rest on demand. */
+export const CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT = 10
+
+/**
+ * Visible slice of a close-out file list plus how many sit beyond the preview
+ * cap. `hiddenCount` counts the overflow regardless of `expanded` — it is what
+ * the toggle's "Show N more…" label reads, and it is what tells the card
+ * whether to render the toggle at all.
+ */
+export function closeoutFileChangeWindow<T>(
+  changes: T[],
+  expanded: boolean
+): { visible: T[]; hiddenCount: number } {
+  const rows = Array.isArray(changes) ? changes : []
+  const hiddenCount = Math.max(0, rows.length - CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT)
+  const collapsed = hiddenCount > 0 && !expanded
+  return {
+    visible: collapsed ? rows.slice(0, CLOSEOUT_FILE_CHANGE_PREVIEW_LIMIT) : rows,
+    hiddenCount
+  }
+}
 
 function truncateFilePathFromHead(path: string): string {
   if (path.length <= FILE_CHANGE_PATH_LABEL_MAX) return path
@@ -48,8 +72,14 @@ export function CloseoutFileChangesSection({
   resolveSummary?: (change: CloseoutFileChange) => DiffFileSummary
   workspacePath?: string
 }): ReactNode {
+  // Declared above the empty-list bail so the hook order never depends on the
+  // props — a close-out that starts empty and fills in later still renders.
+  const [expanded, setExpanded] = useState(false)
+
   if (!Array.isArray(changes) || changes.length === 0) return null
 
+  // Totals stay over the WHOLE list: the cap below is a view window, not a
+  // filter, so the header keeps describing the entire close-out.
   let adds = 0
   let dels = 0
   let showStats = false
@@ -60,6 +90,8 @@ export function CloseoutFileChangesSection({
       dels += item.deletions || 0
     }
   }
+
+  const { visible: visibleChanges, hiddenCount } = closeoutFileChangeWindow(changes, expanded)
 
   return (
     <section className="file-change-summary-card run-complete-epic-card" aria-label="File changes">
@@ -82,7 +114,7 @@ export function CloseoutFileChangesSection({
         </div>
       </div>
       <div className="file-change-summary-list">
-        {changes.map((item) => {
+        {visibleChanges.map((item) => {
           const summary = resolveSummary?.(item) || {
             ...item,
             previewKind: 'none' as const
@@ -171,6 +203,18 @@ export function CloseoutFileChangesSection({
             </div>
           )
         })}
+        {hiddenCount > 0 && (
+          /* Renders as the row after the last visible file so the card reads as
+           * one continuous list rather than a list plus a detached control. */
+          <button
+            className="file-change-summary-item file-change-summary-show-more"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            {expanded ? 'Show less' : `Show ${hiddenCount} more…`}
+          </button>
+        )}
       </div>
     </section>
   )
