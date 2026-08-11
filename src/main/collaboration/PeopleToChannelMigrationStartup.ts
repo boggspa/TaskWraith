@@ -17,19 +17,23 @@ export interface PeopleToChannelMigrationStartupBootstrapDependencies {
   migrationHandoff: Pick<PeopleToChannelMigrationHandoffService, 'snapshot'>
 }
 
-export interface PeopleToChannelMigrationStartupOptions {
+export interface PeopleToChannelMigrationStartupOptions<
+  Bootstrap extends PeopleToChannelMigrationStartupBootstrap =
+    PeopleToChannelMigrationStartupBootstrap
+> {
   /** The durable runner must settle before a Channel handler can begin serving. */
   runner: Pick<PeopleToChannelMigrationProductionRunner, 'runToSoak'>
-  createBootstrap: (
-    dependencies: PeopleToChannelMigrationStartupBootstrapDependencies
-  ) => PeopleToChannelMigrationStartupBootstrap
+  createBootstrap: (dependencies: PeopleToChannelMigrationStartupBootstrapDependencies) => Bootstrap
 }
 
-export interface PeopleToChannelMigrationStartupResult {
+export interface PeopleToChannelMigrationStartupResult<
+  Bootstrap extends PeopleToChannelMigrationStartupBootstrap =
+    PeopleToChannelMigrationStartupBootstrap
+> {
   migration: PeopleToChannelMigrationProductionRunResult
   admissionAuthority: PeopleToChannelMigrationAdmissionAuthority
   handoff: PeopleToChannelMigrationHandoffService
-  bootstrap: PeopleToChannelMigrationStartupBootstrap
+  bootstrap: Bootstrap
   status: ChannelProductionStatus
 }
 
@@ -74,9 +78,11 @@ function assertBootstrap(
  * constructed, and the bootstrap cannot serve until the handoff authority has
  * been created from its verified live invite projection.
  */
-export function startPeopleToChannelMigrationBootstrap(
-  options: PeopleToChannelMigrationStartupOptions
-): PeopleToChannelMigrationStartupResult {
+export function startPeopleToChannelMigrationBootstrap<
+  Bootstrap extends PeopleToChannelMigrationStartupBootstrap
+>(
+  options: PeopleToChannelMigrationStartupOptions<Bootstrap>
+): PeopleToChannelMigrationStartupResult<Bootstrap> {
   if (
     !options ||
     typeof options !== 'object' ||

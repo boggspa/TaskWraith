@@ -599,6 +599,8 @@ import {
 } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
+import { PeopleToChannelMigrationProductionRunner } from './collaboration/PeopleToChannelMigrationProductionRunner'
+import { startPeopleToChannelMigrationBootstrap } from './collaboration/PeopleToChannelMigrationStartup'
 import {
   createChannelProductionBootstrap,
   createChannelProductionRelayPort,
@@ -48166,7 +48168,7 @@ if (isGeminiMcpBridgeProcess) {
         safeStorage,
         (line) => console.warn(line)
       )
-      channelProductionBootstrap = createChannelProductionBootstrap({
+      const channelProductionBootstrapOptions = {
         userDataPath: app.getPath('userData'),
         loadIdentity: () => channelIdentityStore.load(),
         safeStorage,
@@ -48232,8 +48234,23 @@ if (isGeminiMcpBridgeProcess) {
           win.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
         },
         logger: (line) => console.warn(line)
+      }
+      const channelMigrationStartup = startPeopleToChannelMigrationBootstrap({
+        runner: new PeopleToChannelMigrationProductionRunner({
+          userDataPath: app.getPath('userData'),
+          safeStorage,
+          loadIdentity: () => channelIdentityStore.load(),
+          hostDisplayName: app.getName().trim() || 'TaskWraith',
+          listChats: () => AppStore.getChats()
+        }),
+        createBootstrap: ({ migratedAdmissionAuthority, migrationHandoff }) =>
+          createChannelProductionBootstrap({
+            ...channelProductionBootstrapOptions,
+            migratedAdmissionAuthority,
+            migrationHandoff,
+          })
       })
-      channelProductionBootstrap.start()
+      channelProductionBootstrap = channelMigrationStartup.bootstrap
     } catch (error) {
       const failedBootstrap = channelProductionBootstrap
       channelProductionBootstrap = null
