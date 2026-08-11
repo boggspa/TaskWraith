@@ -267,6 +267,30 @@ describe('registerCanvasEmbedIpc', () => {
     expect(missing).toMatchObject({ ok: false, error: expect.stringMatching(/canonical chat/) })
   })
 
+  it('opens an embedded browser as an explicit dock presentation when requested', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    const result = await ipc.invoke('canvas:open-embedded', {
+      url: 'http://localhost:3000',
+      chatId: 'chat-a',
+      presentation: 'dock'
+    })
+
+    expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
+    expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
+      {
+        driver: 'web',
+        url: 'http://localhost:3000',
+        originAllowlist: undefined,
+        embed: true,
+        presentation: 'dock'
+      },
+      { chatId: 'chat-a', workspacePath: '/workspace/a' }
+    ])
+  })
+
   it('opens a standalone sketch under the same canonical authority', async () => {
     const ipc = fakeIpc()
     const deps = fakeDeps()
@@ -283,10 +307,13 @@ describe('registerCanvasEmbedIpc', () => {
     const ipc = fakeIpc()
     const deps = fakeDeps()
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
-    const result = await ipc.invoke('canvas:open-sketch-embedded', { chatId: 'chat-a' })
+    const result = await ipc.invoke('canvas:open-sketch-embedded', {
+      chatId: 'chat-a',
+      presentation: 'dock'
+    })
     expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
     expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
-      { driver: 'sketch', embed: true },
+      { driver: 'sketch', embed: true, presentation: 'dock' },
       { chatId: 'chat-a', workspacePath: '/workspace/a' }
     ])
   })

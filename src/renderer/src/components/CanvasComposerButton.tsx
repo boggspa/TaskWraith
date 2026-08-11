@@ -1,5 +1,5 @@
-// Composer telemetry-row button that opens Canvas surfaces in standalone floating
-// window (the one-click entry point — vs. the multiview empty-pane launcher, or
+// Composer telemetry-row button that opens Canvas surfaces in the right dock
+// (the one-click entry point — vs. the multiview empty-pane launcher, or
 // asking an agent to canvas_open). It mirrors the other footer icons (Multiview /
 // Screen Watch / Goal): a bare icon-only trigger (composer-canvas-trigger) with a
 // hover/focus hint pill (composer-hint-pill + data-hint-label), and a portaled
@@ -57,7 +57,7 @@ function CanvasGlyph() {
 }
 
 function sketchBridgeAvailable(): boolean {
-  return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchWindow)
+  return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchEmbedded)
 }
 
 export function CanvasComposerButton({
@@ -83,11 +83,10 @@ export function CanvasComposerButton({
     setBusyMode('web')
     try {
       if (!chatId) throw new Error('Canvas requires an active chat.')
-      // A standalone floating window (movable / closable) — not embedded over a
-      // pane, so there's no DOM-overlay positioning to get wrong.
-      const result = await window.api.canvas?.openWindow({
+      const result = await window.api.canvas?.openEmbedded({
         url,
-        chatId
+        chatId,
+        presentation: 'dock'
       })
       if (result?.ok) {
         setOpen(false)
@@ -103,8 +102,8 @@ export function CanvasComposerButton({
 
   const handleOpenSketch = async (): Promise<void> => {
     setError(null)
-    const openSketchWindow = window.api.canvas?.openSketchWindow
-    if (!openSketchWindow) {
+    const openSketchEmbedded = window.api.canvas?.openSketchEmbedded
+    if (!openSketchEmbedded) {
       setError('Sketch Canvas needs the updated preload bridge. Restart TaskWraith and try again.')
       return
     }
@@ -114,7 +113,7 @@ export function CanvasComposerButton({
     }
     setBusyMode('sketch')
     try {
-      const result = await openSketchWindow({ chatId })
+      const result = await openSketchEmbedded({ chatId, presentation: 'dock' })
       if (result?.ok) {
         setOpen(false)
       } else {

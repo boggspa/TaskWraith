@@ -36,8 +36,15 @@ export interface CanvasEmbedIpcAuthority {
   clear: () => void
 }
 
-type OpenArgs = { url?: string; originAllowlist?: string[]; chatId?: string } | undefined
-type OpenSketchArgs = { chatId?: string } | undefined
+type OpenArgs =
+  | {
+      url?: string
+      originAllowlist?: string[]
+      chatId?: string
+      presentation?: 'dock'
+    }
+  | undefined
+type OpenSketchArgs = { chatId?: string; presentation?: 'dock' } | undefined
 type AdoptEmbeddedArgs = { chatId?: string; canvasId?: string } | undefined
 type OpenCanvasResult =
   | {
@@ -93,7 +100,8 @@ export function registerCanvasEmbedIpc(
           driver: 'web',
           url: args?.url,
           originAllowlist: Array.isArray(args?.originAllowlist) ? args.originAllowlist : undefined,
-          embed
+          embed,
+          ...(embed && args?.presentation === 'dock' ? { presentation: 'dock' as const } : {})
         },
         context
       )
@@ -133,7 +141,14 @@ export function registerCanvasEmbedIpc(
     let openedCanvasId: string | undefined
     try {
       context = deps.resolveContext(event, requiredChatId(args?.chatId))
-      const opened = await deps.controller.open({ driver: 'sketch', embed }, context)
+      const opened = await deps.controller.open(
+        {
+          driver: 'sketch',
+          embed,
+          ...(embed && args?.presentation === 'dock' ? { presentation: 'dock' as const } : {})
+        },
+        context
+      )
       openedCanvasId = opened.canvasId
       const current = deps.resolveContext(event, context.chatId || '')
       if (!sameAuthority(current, context)) throw new Error('Canvas chat authority changed.')

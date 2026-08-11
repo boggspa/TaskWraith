@@ -1203,6 +1203,7 @@ const api = {
       url: string
       originAllowlist?: string[]
       chatId: string
+      presentation?: 'dock'
     }): Promise<
       | {
           ok: true
@@ -1229,6 +1230,7 @@ const api = {
     > => ipcRenderer.invoke('canvas:open-sketch-window', args),
     openSketchEmbedded: (args: {
       chatId: string
+      presentation?: 'dock'
     }): Promise<
       | {
           ok: true

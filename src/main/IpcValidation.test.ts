@@ -249,6 +249,16 @@ describe('IpcValidation', () => {
         }
       ])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-embedded', [
+        { url: 'http://localhost:5173', chatId: 'chat-1', presentation: 'dock' }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-sketch-embedded', [
+        { chatId: 'chat-1', presentation: 'dock' }
+      ])
+    ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: 800, height: 600 }])
@@ -267,6 +277,16 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('canvas:open-sketch-window', [{ url: 'https://x.test' }])).toThrow(
       /unknown field/
     )
+    expect(() =>
+      validateIpcArgs('canvas:open-window', [
+        { url: 'https://x.test', chatId: 'chat-1', presentation: 'dock' }
+      ])
+    ).toThrow(/unknown field/)
+    expect(() =>
+      validateIpcArgs('canvas:open-embedded', [
+        { url: 'https://x.test', chatId: 'chat-1', presentation: 'window' }
+      ])
+    ).toThrow(/presentation must be dock/)
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: '1', y: 2, width: 800, height: 600 }])
     ).toThrow(/bounds.x must be a finite number/)

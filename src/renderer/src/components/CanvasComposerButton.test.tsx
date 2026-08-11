@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CanvasComposerButton } from './CanvasComposerButton'
@@ -20,5 +22,17 @@ describe('CanvasComposerButton (static render)', () => {
   it('reflects the disabled prop on the trigger', () => {
     const html = renderToStaticMarkup(<CanvasComposerButton disabled />)
     expect(html).toContain('disabled')
+  })
+
+  it('opens Browser and Sketch as explicit dock presentations', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasComposerButton.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('window.api.canvas?.openEmbedded')
+    expect(source).toContain('window.api.canvas?.openSketchEmbedded')
+    expect(source.match(/presentation: 'dock'/g)).toHaveLength(2)
+    expect(source).not.toContain('openWindow({')
+    expect(source).not.toContain('openSketchWindow({')
   })
 })

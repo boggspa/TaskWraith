@@ -1256,6 +1256,7 @@ declare global {
           url: string
           originAllowlist?: string[]
           chatId: string
+          presentation?: 'dock'
         }) => Promise<
           | {
               ok: true
@@ -1292,7 +1293,7 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openSketchEmbedded: (args: { chatId: string }) => Promise<
+        openSketchEmbedded: (args: { chatId: string; presentation?: 'dock' }) => Promise<
           | {
               ok: true
               canvasId: string

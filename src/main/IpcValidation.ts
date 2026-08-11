@@ -894,7 +894,12 @@ function validateOptionalCanvasChatId(channel: string, value: unknown): void {
 function validateCanvasOpenArgs(channel: string, value: unknown): void {
   if (value === undefined || value === null) return
   if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
-  validateKnownKeys(channel, value, new Set(['url', 'originAllowlist', 'chatId']))
+  const embedded = channel === 'canvas:open-embedded'
+  validateKnownKeys(
+    channel,
+    value,
+    new Set(['url', 'originAllowlist', 'chatId', ...(embedded ? ['presentation'] : [])])
+  )
   if (value.url !== undefined) {
     if (typeof value.url !== 'string' || !value.url.trim() || value.url.length > 8_192) {
       throw new Error(`${channel} url must be a non-empty string of at most 8192 characters.`)
@@ -910,13 +915,24 @@ function validateCanvasOpenArgs(channel: string, value: unknown): void {
       }
     }
   }
+  if (value.presentation !== undefined && value.presentation !== 'dock') {
+    throw new Error(`${channel} presentation must be dock.`)
+  }
   validateOptionalCanvasChatId(channel, value.chatId)
 }
 
 function validateCanvasSketchArgs(channel: string, value: unknown): void {
   if (value === undefined || value === null) return
   if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
-  validateKnownKeys(channel, value, new Set(['chatId']))
+  const embedded = channel === 'canvas:open-sketch-embedded'
+  validateKnownKeys(
+    channel,
+    value,
+    new Set(['chatId', ...(embedded ? ['presentation'] : [])])
+  )
+  if (value.presentation !== undefined && value.presentation !== 'dock') {
+    throw new Error(`${channel} presentation must be dock.`)
+  }
   validateOptionalCanvasChatId(channel, value.chatId)
 }
 
