@@ -2746,7 +2746,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'array',
             items: { type: 'string' },
             description:
-              'For reorder_remaining: pending participant ids in desired priority order. For select_participants on a Continuous pass (including Continuous pass 1): exact participant ids or unique role/model aliases to keep; every other pending serial participant is skipped. Turn-bound first pass still rejects selection.'
+              'For reorder_remaining: pending participant ids in desired priority order. For select_participants on a Continuous pass (including Continuous pass 1): exact participant ids or unique role/model aliases to keep; every other pending serial participant is skipped. If every named seat already dispatched this pass, Continuous queues the selection and applies it once when the next pass forms. Turn-bound first pass still rejects selection.'
           },
           participantRoles: {
             type: 'array',

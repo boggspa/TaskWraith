@@ -6788,6 +6788,143 @@ Next action:
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('kimi')
   })
 
+  it('queues a late Continuous select_participants and applies it exactly once when the next pass forms', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.participants.push({
+      id: 'kimi',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Researcher',
+      instructions: 'Research.',
+      order: 3,
+      permissionPresetId: 'read_only'
+    })
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationPass: number; remainingParticipants: EnsembleParticipant[] }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
+    // Both worker seats are already past pending for this pass — the
+    // retrospective shape: the Boss decided after the window closed. Splice in
+    // place: the serial drain loop holds a reference to this exact array.
+    runtime.remainingParticipants.splice(0, runtime.remainingParticipants.length)
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Only the landing seat should continue.'
+      }
+    )
+
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    expect(selection.message).toContain(
+      'queued to apply once when the next Continuous pass forms'
+    )
+    // Queueing rewrites no seat state in the live pass.
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'kimi'
+      )?.status
+    ).toBe('idle')
+
+    // Both worker seats already spoke this pass (that is WHY they were past
+    // pending); reflect that so the drain reads a productive pass rather than
+    // an administrative deadlock.
+    for (const participant of harness.chat.ensemble!.activeRound!.participants) {
+      if (participant.participantId !== 'claude') participant.status = 'answered'
+    }
+
+    // Boss ends its turn; the drained pass auto-continues into pass 3 with
+    // only the kept Worker plus the queuing authority.
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Queued for next pass.')
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('Boss selection queued during pass 2 applied: keeping')
+      )
+    ).toBe(true)
+    // The pass-3 authority turn makes its routing decision explicitly so its
+    // completion advances the kept Worker instead of re-summoning the Boss.
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[1].appRunId, {
+      action: 'skip_intervention'
+    })
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('codex')
+    expect(
+      harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
+    ).not.toContain('kimi')
+
+    // One-shot: pass 4 forms via ordinary narrowing (authority-only here),
+    // not the consumed queue, and the applied note never repeats.
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('claude')
+    expect(
+      harness.chat.messages.filter(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('selection queued during pass 2 applied')
+      )
+    ).toHaveLength(1)
+    expect(harness.dispatched.map((payload) => payload.ensembleRun?.participantId)).not.toContain(
+      'kimi'
+    )
+  })
+
+  it('keeps the plain not-pending rejection when no further pass can form', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<
+          string,
+          { continuationPass: number; remainingParticipants: EnsembleParticipant[] }
+        >
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
+    runtime.remainingParticipants.splice(0, runtime.remainingParticipants.length)
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker']
+      }
+    )
+
+    expect(selection).toMatchObject({ ok: false, error: 'invalid_target' })
+    expect(selection.message).toContain('no longer pending in this pass')
+  })
+
   it('inserts a tagged Boss checkpoint before a peer yield and allows an explicit opt-out', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

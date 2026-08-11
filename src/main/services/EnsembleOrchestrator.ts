@@ -98,13 +98,15 @@ import {
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
 import {
+  applyQueuedAuthorityRosterSelection,
   collectAuthorityOnlyContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
   shouldResummonAuthorityForUnresolvedRouting,
   type EnsembleAuthorityRoutingCheckpoint,
-  type EnsembleAuthorityRoutingDecision
+  type EnsembleAuthorityRoutingDecision,
+  type QueuedAuthorityRosterSelection
 } from '../EnsembleAuthorityRouting'
 import type {
   EnsembleYieldOutcome,
@@ -3384,6 +3386,14 @@ interface ActiveRoundRuntime {
   maxContinuationHops: number
   /** One-based autonomous pass. Kept separately from per-seat hop accounting. */
   continuationPass: number
+  /**
+   * One-shot keep-list from a `select_participants` call that arrived after
+   * every named seat had dispatched in its pass. Consumed (and cleared) when
+   * the next Continuous pass forms; superseded by any later live selection.
+   * Deliberately runtime-only: restart recovery must not resurrect a stale
+   * trim — a full pass is the safe default.
+   */
+  queuedAuthoritySelection?: QueuedAuthorityRosterSelection
   /** Tagged authority call-ins waiting to be attached to the resulting run. */
   pendingAuthorityRoutingCheckpoints?: Map<string, EnsembleAuthorityRoutingCheckpoint>
   continuationLimitNotified?: boolean
@@ -8365,6 +8375,48 @@ export class EnsembleOrchestrator {
       callerParticipantId: caller.participant.id
     })
     if (!selection.ok) {
+      // A keep-list naming only already-dispatched seats used to dead-end here
+      // ("no longer pending in this pass") even though the authority's intent
+      // stays valid for the pass that forms next. Queue it instead — one-shot,
+      // applied by `tryAutoContinueRound` exactly where a live first-act call
+      // would land — but only when another pass CAN form (Continuous), and only
+      // when every selector still resolves against the full roster (ambiguous /
+      // unknown selectors keep their immediate rejection).
+      if (selection.error === 'not_pending_selector' && runtime.orchestrationMode === 'continuous') {
+        const resolvable = resolveAuthoritySelection({
+          participantIds: input.participantIds,
+          participantRoles: input.participantRoles,
+          participants: chat.ensemble.participants,
+          pendingParticipants: chat.ensemble.participants,
+          callerParticipantId: caller.participant.id
+        })
+        if (resolvable.ok) {
+          runtime.queuedAuthoritySelection = {
+            participantIds: input.participantIds ? [...input.participantIds] : undefined,
+            participantRoles: input.participantRoles ? [...input.participantRoles] : undefined,
+            reason: input.reason,
+            authorityLabel,
+            callerParticipantId: caller.participant.id,
+            queuedAtPass: runtime.continuationPass
+          }
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${authorityLabel} selection arrived after this pass's seats dispatched — queued to apply once when the next Continuous pass forms.`
+          )
+          // Queueing IS the authority's routing decision for this turn; an
+          // unmet checkpoint would otherwise re-summon the Boss to re-decide
+          // what it just decided.
+          this.markAuthorityRoutingDecision(caller, 'selected')
+          return {
+            ok: true,
+            tool: 'ensemble_bossman_control',
+            action: 'select_participants',
+            roundId: runtime.roundId,
+            message: `"${selection.selector}" is no longer pending in this pass, so the selection was queued to apply once when the next Continuous pass forms. It is dropped if the round ends first.`
+          }
+        }
+      }
       const message =
         selection.error === 'missing_selection'
           ? `${authorityLabel} selection requires participantIds and/or participantRoles.`
@@ -8384,6 +8436,8 @@ export class EnsembleOrchestrator {
     }
 
     const reason = input.reason || `${authorityLabel} kept this participant for the current pass.`
+    // A live selection is the authority's newest intent; drop any stale queue.
+    runtime.queuedAuthoritySelection = undefined
     remaining.splice(0, remaining.length, ...selection.selected)
     for (const participant of selection.skipped) {
       this.updateParticipantState(
@@ -18475,7 +18529,29 @@ export class EnsembleOrchestrator {
         !this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
     )
     if (fullRoster.length === 0) return null
-    const roster = this.narrowContinuationRosterToOpenWork(chat, fullRoster, runtime)
+    const narrowedRoster = this.narrowContinuationRosterToOpenWork(chat, fullRoster, runtime)
+    // Consume a queued late `select_participants` exactly once. It resolves
+    // against the FULL admissible roster, not the narrowed one: an explicit
+    // authority keep-list is exactly the "authority-directed seats" input the
+    // narrowing heuristic exists to approximate (`select_participants expands
+    // within the authority-only pass` — EnsembleAuthorityRouting). The outcome
+    // only decides which seats join this pass, in normal roster order with no
+    // per-seat state rewrites, and fails open to the standard pass with a
+    // visible note when it no longer resolves.
+    let roster = narrowedRoster
+    let queuedSelectionNote = ''
+    const queuedSelection = runtime.queuedAuthoritySelection
+    if (queuedSelection) {
+      runtime.queuedAuthoritySelection = undefined
+      const outcome = applyQueuedAuthorityRosterSelection({
+        queued: queuedSelection,
+        roster: fullRoster,
+        participants: chat.ensemble.participants,
+        displayName: participantDisplayName
+      })
+      queuedSelectionNote = ` ${outcome.note}`
+      if (outcome.applied) roster = outcome.roster
+    }
     const fresh: EnsembleParticipant[] = []
     for (const participant of roster) {
       if (runtime.continuationHops >= runtime.maxContinuationHops) {
@@ -18513,13 +18589,13 @@ export class EnsembleOrchestrator {
         : round
     )
     const narrowingNote =
-      roster.length < fullRoster.length
+      !queuedSelectionNote && roster.length < fullRoster.length
         ? ` Focused continuation pass: ${fresh.length} of ${fullRoster.length} seats have open work, directed routing, or authority.`
         : ''
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Continuous mode: no explicit handoff — auto-continuing for pass ${runtime.continuationPass} (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote} Mark the goal complete to stop.`
+      `Continuous mode: no explicit handoff — auto-continuing for pass ${runtime.continuationPass} (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote}${queuedSelectionNote} Mark the goal complete to stop.`
     )
     return fresh
   }

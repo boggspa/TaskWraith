@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyQueuedAuthorityRosterSelection,
   collectAuthorityOnlyContinuationCandidateIds,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
@@ -193,5 +194,94 @@ describe('Continuous Boss ownership helpers', () => {
         yieldReturnParticipantIds: []
       })
     ).toEqual([])
+  })
+})
+
+describe('applyQueuedAuthorityRosterSelection', () => {
+  const displayName = (participant: EnsembleParticipant): string =>
+    participant.role || participant.id
+
+  it('filters the next pass narrowing-style, keeping roster order and the queuing authority', () => {
+    const outcome = applyQueuedAuthorityRosterSelection({
+      queued: {
+        participantRoles: ['Reviewer'],
+        authorityLabel: 'Boss',
+        callerParticipantId: 'boss',
+        queuedAtPass: 5
+      },
+      roster: participants,
+      participants,
+      displayName
+    })
+
+    expect(outcome.applied).toBe(true)
+    if (!outcome.applied) return
+    expect(outcome.roster.map((participant) => participant.id)).toEqual(['boss', 'reviewer'])
+    expect(outcome.note).toBe(
+      'Boss selection queued during pass 5 applied: keeping Boss, Reviewer; not dispatching Worker this pass.'
+    )
+  })
+
+  it('reports an already-matching queue without inventing exclusions', () => {
+    const outcome = applyQueuedAuthorityRosterSelection({
+      queued: {
+        participantIds: ['worker', 'reviewer'],
+        authorityLabel: 'Captain',
+        callerParticipantId: 'boss',
+        queuedAtPass: 2
+      },
+      roster: participants,
+      participants,
+      displayName
+    })
+
+    expect(outcome.applied).toBe(true)
+    if (!outcome.applied) return
+    expect(outcome.roster.map((participant) => participant.id)).toEqual([
+      'boss',
+      'worker',
+      'reviewer'
+    ])
+    expect(outcome.note).toBe(
+      'Captain selection queued during pass 2 applied: it already matches this pass (Boss, Worker, Reviewer).'
+    )
+  })
+
+  it('fails open when a queued selector no longer resolves', () => {
+    expect(
+      applyQueuedAuthorityRosterSelection({
+        queued: {
+          participantRoles: ['Ghost'],
+          authorityLabel: 'Boss',
+          callerParticipantId: 'boss',
+          queuedAtPass: 4
+        },
+        roster: participants,
+        participants,
+        displayName
+      })
+    ).toEqual({
+      applied: false,
+      note: 'Boss selection queued during pass 4 could not be applied ("Ghost" no longer resolves to a participant); continuing with the standard pass.'
+    })
+  })
+
+  it('fails open when the kept seat is excluded from the formed pass', () => {
+    expect(
+      applyQueuedAuthorityRosterSelection({
+        queued: {
+          participantIds: ['worker'],
+          authorityLabel: 'Boss',
+          callerParticipantId: 'boss',
+          queuedAtPass: 3
+        },
+        roster: participants.filter((participant) => participant.id !== 'worker'),
+        participants,
+        displayName
+      })
+    ).toEqual({
+      applied: false,
+      note: 'Boss selection queued during pass 3 could not be applied ("worker" is not in this pass); continuing with the standard pass.'
+    })
   })
 })

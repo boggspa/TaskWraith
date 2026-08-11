@@ -174,3 +174,83 @@ export function resolveAuthoritySelection(
     skipped: input.pendingParticipants.filter((participant) => !selectedIds.has(participant.id))
   }
 }
+
+/**
+ * One-shot keep-list an authority queued because its live `select_participants`
+ * call arrived after every named seat had already dispatched in the current
+ * pass. Consumed exactly once when the next Continuous pass forms; it dies with
+ * the round runtime if no further pass forms (restart recovery deliberately
+ * does not resurrect it — a stale trim is worse than a full pass).
+ */
+export interface QueuedAuthorityRosterSelection {
+  participantIds?: string[]
+  participantRoles?: string[]
+  reason?: string
+  authorityLabel: 'Boss' | 'Captain'
+  callerParticipantId: string
+  queuedAtPass: number
+}
+
+export type QueuedAuthorityRosterSelectionOutcome =
+  | { applied: true; roster: EnsembleParticipant[]; note: string }
+  | { applied: false; note: string }
+
+/**
+ * Apply a queued keep-list to the roster of a freshly forming Continuous pass,
+ * narrowing-style: the outcome only filters which seats join the pass — it
+ * never rewrites per-seat round state and never reorders, so excluded seats
+ * look exactly like seats excluded by assignment-aware narrowing and the pass
+ * dispatches in normal roster order. The queuing authority always stays
+ * admitted when the pass contains it (authority runs every pass; the selector
+ * resolver deliberately refuses self-selection). Fail-open: a queue that no
+ * longer resolves leaves the roster untouched and reports why.
+ */
+export function applyQueuedAuthorityRosterSelection(input: {
+  queued: QueuedAuthorityRosterSelection
+  roster: readonly EnsembleParticipant[]
+  participants: readonly EnsembleParticipant[]
+  displayName: (participant: EnsembleParticipant) => string
+}): QueuedAuthorityRosterSelectionOutcome {
+  const { queued } = input
+  const provenance = `${queued.authorityLabel} selection queued during pass ${queued.queuedAtPass}`
+  const resolution = resolveAuthoritySelection({
+    participantIds: queued.participantIds,
+    participantRoles: queued.participantRoles,
+    participants: input.participants,
+    pendingParticipants: input.roster,
+    callerParticipantId: queued.callerParticipantId
+  })
+  if (!resolution.ok) {
+    const detail =
+      resolution.error === 'not_pending_selector'
+        ? `"${resolution.selector}" is not in this pass`
+        : resolution.error === 'ambiguous_selector'
+          ? `"${resolution.selector}" is ambiguous`
+          : resolution.error === 'unknown_selector'
+            ? `"${resolution.selector}" no longer resolves to a participant`
+            : 'no selectors were provided'
+    return {
+      applied: false,
+      note: `${provenance} could not be applied (${detail}); continuing with the standard pass.`
+    }
+  }
+  const keptIds = new Set(resolution.selected.map((participant) => participant.id))
+  keptIds.add(queued.callerParticipantId)
+  const roster = input.roster.filter((participant) => keptIds.has(participant.id))
+  const excluded = input.roster.filter((participant) => !keptIds.has(participant.id))
+  const keptNames = roster.map(input.displayName).join(', ')
+  if (excluded.length === 0) {
+    return {
+      applied: true,
+      roster,
+      note: `${provenance} applied: it already matches this pass (${keptNames}).`
+    }
+  }
+  return {
+    applied: true,
+    roster,
+    note: `${provenance} applied: keeping ${keptNames}; not dispatching ${excluded
+      .map(input.displayName)
+      .join(', ')} this pass.`
+  }
+}
