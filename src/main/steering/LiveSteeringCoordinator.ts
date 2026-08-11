@@ -89,7 +89,11 @@ export class LiveSteeringCoordinator {
     attempt.strategy = result.strategy
 
     if (result.status !== 'injected' && result.status !== 'broker-pending') {
-      this.releaseToBoundary(input.queuedRunId, result.reason || 'Live steering was not available.')
+      this.releaseToBoundary(
+        input.queuedRunId,
+        result.reason || 'Live steering was not available.',
+        false
+      )
       return result
     }
 
@@ -164,13 +168,19 @@ export class LiveSteeringCoordinator {
     )
   }
 
-  private releaseToBoundary(queuedRunId: string, reason: string): void {
+  private releaseToBoundary(
+    queuedRunId: string,
+    reason: string,
+    cancelTransport = true
+  ): void {
     const attempt = this.take(queuedRunId)
     if (!attempt) return
-    try {
-      this.deps.runManager.get(attempt.activeRunId)?.liveSteerTransport?.cancel()
-    } catch {
-      // Queue fallback is authoritative even if provider-side cleanup fails.
+    if (cancelTransport) {
+      try {
+        this.deps.runManager.get(attempt.activeRunId)?.liveSteerTransport?.cancel()
+      } catch {
+        // Queue fallback is authoritative even if provider-side cleanup fails.
+      }
     }
     this.deps.fallbackQueuedRun({
       runId: attempt.queuedRunId,

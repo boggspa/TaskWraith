@@ -68,12 +68,18 @@ describe('LiveSteeringCoordinator', () => {
 
   it('releases a refused provider to the exact boundary queue', () => {
     const harness = fixture('codex')
+    const cancel = vi.fn()
+    harness.runManager.registerLiveSteerTransport('active-1', {
+      sendSteer: vi.fn(),
+      cancel
+    })
     expect(harness.coordinator.start(harness.input).status).toBe('boundary')
     expect(harness.fallbackQueuedRun).toHaveBeenCalledWith({
       runId: 'queued-1',
       ownerToken: 'owner-1',
       reason: expect.stringContaining('not available')
     })
+    expect(cancel).not.toHaveBeenCalled()
   })
 
   it('cancels an undrained broker injection and releases it after timeout', () => {
