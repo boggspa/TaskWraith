@@ -793,9 +793,12 @@ struct HomeView: View {
             }
         }
 
-        // ── Shared — existing People/collaboration chats only. iOS does not
-        //    create invites; it simply continues already-visible shared chats
-        //    projected by the Mac under the normal workspace allowlist. ─────
+        // ── Channels — chats with an active channel, projected by the Mac
+        //    (post People→Channel migration, isShared is channel-backed).
+        //    iOS does not create channels or invites; it continues chats
+        //    already visible under the normal workspace allowlist. The
+        //    section key stays "shared" so persisted collapse state
+        //    survives the rename. ──────────────────────────────────────────
         let sharedCards = projection.listedCards.filter {
             ($0.isShared ?? false) && $0.parentChatId == nil
         }
@@ -808,7 +811,7 @@ struct HomeView: View {
                 }
             } header: {
                 GlassPillHeader(
-                    title: "Shared", systemImage: "person.2",
+                    title: "Channels", systemImage: "person.2",
                     count: sharedCards.count,
                     collapsed: collapsedSections.contains("shared")
                 ) { toggleSection("shared") }
@@ -1439,7 +1442,7 @@ struct TaskRow: View {
                         Image(systemName: "person.2.fill")
                             .font(.caption2)
                             .foregroundStyle(TWTheme.chroma2)
-                            .accessibilityLabel("Shared")
+                            .accessibilityLabel("Channel")
                     }
                     // Running is the ghost mark pulsing slowly — the sole running
                     // cue on a row, now that the accent rim means selection only.

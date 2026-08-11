@@ -46744,6 +46744,16 @@ if (isGeminiMcpBridgeProcess) {
       return { approvalCounts, questionCounts }
     }
 
+    // Chats with an ACTIVE channel, for the remote task-card `isShared`
+    // projection. Declared as a rebindable noop because the channel
+    // production bootstrap (`channelProductionBootstrap`) is a `let` some
+    // 1500 lines below — referencing it from this closure directly would be
+    // a TDZ crash if a remote snapshot ever built before startup wiring ran.
+    // The real resolver is assigned right after the bootstrap try/catch and
+    // fails closed to the empty set while the channel authority is not
+    // running (including the degraded no-channels launch path).
+    let resolveActiveChannelChatIds: () => ReadonlySet<string> = () => new Set()
+
     const buildRemoteTaskCardForChat = (
       chat: ChatRecord,
       generatedAt: string,
@@ -46751,6 +46761,13 @@ if (isGeminiMcpBridgeProcess) {
     ): { chat: ChatRecord; taskCard: RemoteTaskCard } => {
       const canonicalChat = canonicalizeRemoteWorkspaceRecord(chat)
       const capabilities = remoteTaskCapabilitiesForWorkspace(canonicalChat.workspaceId)
+      // Channel-backed since the People→Channel migration retired (DELETED)
+      // the legacy share records: reading only getShareForChat here turns the
+      // phone's channel-membership section permanently dark the moment
+      // migration finalizes. The legacy lookup remains as a union for the
+      // pre-migration boot window and the P5 workspace-bootstrap seam, which
+      // is People-share-shaped by contract.
+      const activeChannelChatIds = resolveActiveChannelChatIds()
       const collaborationShare = humanCollaborationStore.getShareForChat(canonicalChat.appChatId)
       const queuedComposerJobs = AppStore.getRunQueueJobs({
         chatId: canonicalChat.appChatId,
@@ -46796,8 +46813,10 @@ if (isGeminiMcpBridgeProcess) {
           trustedSessionEnabled,
           trustedSessionParticipantIds,
           openCanvases: canvasService.list({ chatId: canonicalChat.appChatId }),
-          isShared: Boolean(collaborationShare),
-          sharedMode: collaborationShare?.mode,
+          isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||
+            Boolean(collaborationShare),
+          sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel'
+            : collaborationShare?.mode,
           runtimeProfileId: soloRuntimeProfileId
         })
       }
@@ -48326,6 +48345,20 @@ if (isGeminiMcpBridgeProcess) {
         '[channels] production bootstrap failed — continuing without channels this launch',
         degraded.error
       )
+    }
+    // Wire the remote task-card channel lookup now that the bootstrap
+    // binding exists (see the holder's TDZ note at its declaration). Lazy
+    // reads keep this correct on the degraded path: with no bootstrap, or an
+    // authority that is not running, every chat projects unshared — matching
+    // what the desktop sidebar's channels.list() shows in the same state.
+    resolveActiveChannelChatIds = () => {
+      const service = channelProductionBootstrap?.service
+      if (!service || service.status().state !== 'running') return new Set()
+      const activeChatIds = new Set<string>()
+      for (const channel of service.listChannels()) {
+        if (channel.status === 'active') activeChatIds.add(channel.chatId)
+      }
+      return activeChatIds
     }
 
     let channelMemberProductionBootstrap: ReturnType<

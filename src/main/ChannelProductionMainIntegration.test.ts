@@ -194,4 +194,34 @@ describe('Channels production main integration', () => {
     )
     expect(shutdown).toContain('channelProductionBootstrap?.stop().catch((error) => {')
   })
+
+  it('projects remote isShared from the active-channel set, not the retired share store', () => {
+    // The People→Channel migration DELETES legacy share records at
+    // finalization, so a task card whose isShared reads only
+    // getShareForChat goes permanently dark on iOS the moment migration
+    // commits — the phone's channel-membership section silently empties.
+    const card = between(
+      'const buildRemoteTaskCardForChat = (',
+      'const leanRemoteDiffSummary = ('
+    )
+    expect(card).toContain('resolveActiveChannelChatIds()')
+    expect(card).toContain('isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||')
+    expect(card).toContain(
+      "sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel'"
+    )
+    // Legacy lookup stays as the pre-migration / P5 workspace-bootstrap
+    // fallback — union, never replacement.
+    expect(card).toContain('humanCollaborationStore.getShareForChat(canonicalChat.appChatId)')
+
+    // The resolver is wired AFTER the bootstrap try/catch (TDZ: the
+    // projection closure is declared ~1500 lines above the `let` binding)
+    // and must fail closed to the empty set unless the channel authority is
+    // actually running; only ACTIVE channels count as shared.
+    const wiring = between(
+      'resolveActiveChannelChatIds = () => {',
+      'const purgeChannelsForHistoryPreparation = ('
+    )
+    expect(wiring).toContain("if (!service || service.status().state !== 'running')")
+    expect(wiring).toContain("channel.status === 'active'")
+  })
 })
