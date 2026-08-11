@@ -210,6 +210,19 @@ export type BridgeComposerQueuedPromptAction =
   | BridgeComposerQueuePromptAction
   | BridgeComposerSchedulePromptAction
 
+/** Read the durable approval ledger — the "why did this auto-deny at 02:14"
+ * surface. Read-only; the Mac projects a BOUNDED record (no params/preview
+ * blobs — those can carry command lines and paths) and the phone renders it.
+ * A paired device that can grant postures must be able to audit outcomes. */
+export interface BridgeApprovalLedgerListAction extends BridgeActionMetadata {
+  kind: 'approvalLedgerList'
+  workspaceId: string
+  /** Restrict to one thread; absent = the workspace's recent decisions. */
+  threadId?: string
+  /** Row cap; the Mac clamps to [1, 200] with a 50 default. */
+  limit?: number
+}
+
 /** Live mid-turn steer of an ACTIVE solo run — the paired-device twin of the
  * desktop composer's Steer button. The Mac mints the sealed solo-steer
  * transcript barrier itself and attempts in-turn delivery through the
@@ -1065,6 +1078,7 @@ export type BridgeActionPayload =
   | BridgeComposerQueuePromptAction
   | BridgeComposerSchedulePromptAction
   | BridgeComposerSteerLiveAction
+  | BridgeApprovalLedgerListAction
   | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
@@ -1216,6 +1230,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
     case 'composerSteerLive':
+    case 'approvalLedgerList':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1308,6 +1323,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
     case 'composerSteerLive':
+    case 'approvalLedgerList':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1492,6 +1508,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'setWatchedThread':
     case 'chatMarkdownTranscript':
     case 'chatMessageTranscript':
+    case 'approvalLedgerList':
       return false
     case 'unknown':
       return true
@@ -1533,6 +1550,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isComposerSteerLive(parsed)
         ? (parsed as unknown as BridgeComposerSteerLiveAction)
         : { kind: 'unknown', rawKind: 'composerSteerLive', raw: parsed }
+    case 'approvalLedgerList':
+      return isApprovalLedgerList(parsed)
+        ? (parsed as unknown as BridgeApprovalLedgerListAction)
+        : { kind: 'unknown', rawKind: 'approvalLedgerList', raw: parsed }
     case 'composerQueueItem':
       return isComposerQueueItem(parsed)
         ? (parsed as unknown as BridgeComposerQueueItemAction)
@@ -1927,6 +1948,15 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
       (isScheduled && typeof v.scheduledRunAt === 'string')) &&
     (!isScheduled ||
       (typeof v.scheduledRunAt === 'string' && v.scheduledRunAt.trim().length > 0))
+  )
+}
+
+function isApprovalLedgerList(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    (v.threadId === undefined || typeof v.threadId === 'string') &&
+    (v.limit === undefined || (typeof v.limit === 'number' && Number.isFinite(v.limit)))
   )
 }
 

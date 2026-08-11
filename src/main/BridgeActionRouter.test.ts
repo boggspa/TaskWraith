@@ -152,6 +152,10 @@ function makeStubExecutor(
       executed: true,
       message: 'composerSteerLive done'
     }),
+    executeApprovalLedgerList: make('executeApprovalLedgerList', {
+      executed: true,
+      message: 'approvalLedgerList done'
+    }),
     executeCreateThread: make('executeCreateThread', {
       executed: true,
       message: 'createThread done'

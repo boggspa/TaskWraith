@@ -730,6 +730,8 @@ export class BridgeActionRouter {
         return this.executor.executeComposerQueueItem(payload)
       case 'composerSteerLive':
         return this.executor.executeComposerSteerLive(payload)
+      case 'approvalLedgerList':
+        return this.executor.executeApprovalLedgerList(payload)
       case 'createThread':
         return this.executor.executeCreateThread(payload)
       case 'threadRowExpand':
@@ -1424,6 +1426,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'threadSnapshotRequest':
     case 'threadRowExpand':
     case 'threadMediaFetch':
+    case 'approvalLedgerList':
     case 'chatMarkdownTranscript':
     case 'chatMessageTranscript':
       return 'monitor'

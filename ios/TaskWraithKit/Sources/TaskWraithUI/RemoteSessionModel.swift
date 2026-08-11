@@ -5052,6 +5052,19 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Local branches + linked worktrees for the branch picker.
+    /// Read the Mac's durable approval ledger (bounded rows). The phone user
+    /// is exactly the one who wasn't watching when something auto-denied at
+    /// 02:14 — this is the audit read for that question.
+    public func fetchApprovalLedger(
+        workspaceId: String, threadId: String? = nil, limit: Int? = nil
+    ) async throws -> [ApprovalLedgerEntry] {
+        let ack = try await requestFileAction(
+            BridgeAction.approvalLedgerList(
+                workspaceId: workspaceId, threadId: threadId, limit: limit),
+            timeoutMs: 20_000)
+        return ack.data?.approvalLedgerEntries ?? []
+    }
+
     public func fetchGitBranches(
         workspaceId: String
     ) async throws -> (branches: [GitBranchEntry], worktrees: [GitWorktreeEntry]) {

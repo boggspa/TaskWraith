@@ -46763,6 +46763,39 @@ if (isGeminiMcpBridgeProcess) {
         composerQueuePromptFn: queueRemoteComposerPrompt,
         composerQueueItemFn: updateRemoteComposerQueueItem,
         composerSteerLiveFn: steerRemoteThreadLive,
+        // Read-only ledger projection. BOUNDED on purpose: params/preview can
+        // carry command lines and file paths, so the wire gets identity,
+        // outcome, and clocks — the audit trail, never the payloads.
+        approvalLedgerListFn: async (action) => {
+          const limit = Math.max(1, Math.min(200, Math.trunc(action.limit ?? 50)))
+          const chatIdFilter = action.threadId?.trim() || undefined
+          const entries = AppStore.getApprovalLedger({})
+            .filter((record) => {
+              if (chatIdFilter) return record.chatId === chatIdFilter
+              if (record.workspaceId) return record.workspaceId === action.workspaceId
+              const chat = record.chatId ? AppStore.getChat(record.chatId) : null
+              return chat ? chatMatchesRemoteScope(chat, action.workspaceId) : false
+            })
+            .sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || ''))
+            .slice(0, limit)
+            .map((record) => ({
+              id: record.id,
+              provider: record.provider,
+              method: record.method,
+              title: record.title,
+              status: record.status,
+              requestedAt: record.requestedAt,
+              respondedAt: record.respondedAt,
+              decision: typeof record.decision === 'string' ? record.decision : undefined,
+              decisionSource:
+                typeof record.decisionSource === 'string' ? record.decisionSource : undefined,
+              grantedScope:
+                typeof record.grantedScope === 'string' ? record.grantedScope : undefined,
+              threadId: record.chatId,
+              runId: record.runId
+            }))
+          return { ok: true, entries }
+        },
         log: (line) => {
           console.log(line)
         }

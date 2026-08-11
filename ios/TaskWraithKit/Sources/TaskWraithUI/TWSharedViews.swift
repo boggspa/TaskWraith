@@ -7509,6 +7509,8 @@ public struct AppSettingsSheet: View {
     @State private var selectedSection: MobileSettingsSection = .appearance
     @State private var compactPath: [MobileSettingsSection] = []
     @State private var searchText = ""
+    /// Non-nil presents the read-only approval ledger for that workspace.
+    @State private var approvalLedgerWorkspaceId: String? = nil
     private let onOpenFirstLaunchGuide: (() -> Void)?
 
     public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
@@ -7911,8 +7913,51 @@ public struct AppSettingsSheet: View {
 
     private var approvalsSection: some View {
         VStack(spacing: 12) {
+            // The durable audit: the desktop owns the ledger; the phone can
+            // now READ it — the phone user is exactly the one who was not
+            // watching when something auto-denied overnight.
+            SettingsCard(title: "Approval ledger", systemImage: "list.bullet.rectangle") {
+                if model.workspaces.isEmpty {
+                    SettingsInfoRow(
+                        icon: "clock",
+                        title: "No workspaces visible",
+                        detail: "Pair with a Mac and grant a workspace to read its decision history."
+                    )
+                } else {
+                    ForEach(model.workspaces, id: \.id) { workspace in
+                        Button {
+                            approvalLedgerWorkspaceId = workspace.id
+                        } label: {
+                            HStack {
+                                Text(workspace.displayName)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(TWTheme.textPrimary)
+                                Spacer(minLength: 6)
+                                Text("Recent decisions")
+                                    .font(.caption2)
+                                    .foregroundStyle(TWTheme.textSecondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(TWTheme.textMuted)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
             SettingsCard(title: "Live requests", systemImage: "hand.raised") {
                 SettingsValueRow(title: "Approvals waiting", value: "\(model.approvals.count)")
+                EmptyView()
+                    .sheet(
+                        isPresented: Binding(
+                            get: { approvalLedgerWorkspaceId != nil },
+                            set: { if !$0 { approvalLedgerWorkspaceId = nil } })
+                    ) {
+                        if let workspaceId = approvalLedgerWorkspaceId {
+                            ApprovalLedgerSheet(model: model, workspaceId: workspaceId)
+                        }
+                    }
                 SettingsValueRow(title: "Questions waiting", value: "\(model.questions.count)")
                 if model.approvals.isEmpty && model.questions.isEmpty {
                     SettingsInfoRow(

@@ -910,6 +910,26 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let deleteMessage: Bool?
 }
 
+/// One bounded approval-ledger row (the "why did this auto-deny at 02:14"
+/// audit surface). Every field optional + plain String so a value a newer
+/// Mac invents degrades instead of failing the decode.
+public struct ApprovalLedgerEntry: Codable, Sendable, Equatable, Identifiable {
+    public let id: String?
+    public let provider: String?
+    public let method: String?
+    public let title: String?
+    public let status: String?
+    public let requestedAt: String?
+    public let respondedAt: String?
+    public let decision: String?
+    public let decisionSource: String?
+    public let grantedScope: String?
+    public let threadId: String?
+    public let runId: String?
+
+    public var resolvedId: String { id ?? "\(requestedAt ?? "")-\(title ?? "")" }
+}
+
 /// Nested `result` inside a successful `bridge.ack` for action requests.
 public struct BridgeActionAck: Codable, Sendable {
     public let accepted: Bool?
@@ -946,6 +966,9 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let branches: [GitBranchEntry]?
     /// Linked worktrees (`gitBranches` ack).
     public let worktrees: [GitWorktreeEntry]?
+    /// Bounded approval-ledger rows (`approvalLedgerList` ack). Identity,
+    /// outcome, clocks — never params/preview payloads.
+    public let approvalLedgerEntries: [ApprovalLedgerEntry]?
     /// Mac-final watch state (`githubWatchPr` ack) — authoritative over the
     /// phone's optimistic toggle, since the Mac may refuse (no open PR).
     public let watching: Bool?
@@ -2836,6 +2859,21 @@ public enum BridgeAction {
         if let imageAttachments, !imageAttachments.isEmpty {
             payload["imageAttachments"] = imageAttachments
         }
+        return encode(payload)
+    }
+
+    /// Read the durable approval ledger (bounded rows — identity, outcome,
+    /// clocks; never params/preview payloads).
+    public static func approvalLedgerList(
+        workspaceId: String, threadId: String? = nil, limit: Int? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "approvalLedgerList", "actionId": actionId,
+            "workspaceId": workspaceId,
+        ]
+        if let threadId { payload["threadId"] = threadId }
+        if let limit { payload["limit"] = limit }
         return encode(payload)
     }
 

@@ -3,6 +3,7 @@ import type {
   BridgeCancelRunAction,
   BridgeComposerPromptAction,
   BridgeComposerQueuedPromptAction,
+  BridgeApprovalLedgerListAction,
   BridgeComposerQueueItemAction,
   BridgeComposerSteerLiveAction,
   BridgeCreateThreadAction,
@@ -143,6 +144,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeComposerSteerLive(
     action: BridgeComposerSteerLiveAction
+  ): Promise<BridgeActionExecutionResult>
+  executeApprovalLedgerList(
+    action: BridgeApprovalLedgerListAction
   ): Promise<BridgeActionExecutionResult>
   executeCreateThread(action: BridgeCreateThreadAction): Promise<BridgeActionExecutionResult>
   executeThreadRowExpand(
@@ -329,6 +333,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeComposerSteerLiveAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('composerSteerLive', action.threadId)
+  }
+  async executeApprovalLedgerList(
+    action: BridgeApprovalLedgerListAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('approvalLedgerList', action.workspaceId)
   }
   async executeCreateThread(
     action: BridgeCreateThreadAction
@@ -735,6 +744,12 @@ export interface MainProcessActionExecutorDependencies {
   composerSteerLiveFn?: (action: BridgeComposerSteerLiveAction) => Promise<{
     ok: boolean
     delivery?: string
+    reason?: string
+  }>
+  /** Bounded approval-ledger read — entries carry NO params/preview blobs. */
+  approvalLedgerListFn?: (action: BridgeApprovalLedgerListAction) => Promise<{
+    ok: boolean
+    entries?: unknown[]
     reason?: string
   }>
   createThreadFn?: (action: BridgeCreateThreadAction) => Promise<{
@@ -1893,6 +1908,27 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         executed: false,
         message: `Queued prompt update failed: ${errMessage}`
       }
+    }
+  }
+
+  async executeApprovalLedgerList(
+    action: BridgeApprovalLedgerListAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.approvalLedgerListFn) {
+      return notWired('approvalLedgerList', action.workspaceId)
+    }
+    try {
+      const result = await this.deps.approvalLedgerListFn(action)
+      return {
+        executed: Boolean(result.ok),
+        message: result.ok
+          ? `Approval ledger: ${result.entries?.length ?? 0} entries.`
+          : (result.reason ?? 'Approval ledger read failed.'),
+        data: { approvalLedgerEntries: result.entries ?? [] }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Approval ledger read failed: ${errMessage}` }
     }
   }
 
