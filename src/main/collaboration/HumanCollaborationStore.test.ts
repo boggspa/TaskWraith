@@ -69,6 +69,52 @@ describe('HumanCollaborationStore', () => {
     expect(store.getShare(pending.share.shareId)).toMatchObject({ enabled: true })
   })
 
+  it('keeps only the retained P5 workspace-bootstrap share live after terminal quiescence', () => {
+    const gate = new PeopleToChannelMigrationLegacyWriteGate()
+    const store = new HumanCollaborationStore(undefined, { legacyWriteGate: gate })
+    const p5 = store.createShare({ chatId: 'workspace-bootstrap', mode: 'comments', now: 100 })
+    const ordinary = store.createShare({ chatId: 'ordinary-chat', mode: 'comments', now: 101 })
+
+    gate.quiesce({ retainedWorkspaceBootstrapShareIds: [p5.share.shareId] })
+
+    expect(
+      store.createShare({ chatId: 'workspace-bootstrap', mode: 'comments', now: 102 }).share.shareId
+    ).toBe(p5.share.shareId)
+    expect(() =>
+      store.consumeInvite({
+        shareId: ordinary.share.shareId,
+        inviteToken: ordinary.inviteToken,
+        displayName: 'Ordinary Person',
+        publicKeyId: 'ed25519:ordinary',
+        now: 103
+      })
+    ).toThrow(PeopleToChannelMigrationLegacyWriteGateError)
+    const admitted = store.consumeInvite({
+      shareId: p5.share.shareId,
+      inviteToken: p5.inviteToken,
+      displayName: 'P5 Person',
+      publicKeyId: 'ed25519:p5',
+      now: 103
+    }).participant
+    expect(() =>
+      store.recordAppend({
+        shareId: p5.share.shareId,
+        chatId: p5.share.chatId,
+        collaboratorId: admitted.collaboratorId,
+        clientMessageId: 'p5-write',
+        messageId: 'p5-message'
+      })
+    ).not.toThrow()
+    expect(() => store.retireSharesForChannelMigration([p5.share.shareId])).toThrow(
+      /cannot be retired/
+    )
+    expect(() => store.purgeChatShares([p5.share.chatId, ordinary.share.chatId])).toThrow(
+      PeopleToChannelMigrationLegacyWriteGateError
+    )
+    expect(store.getShare(p5.share.shareId)).toMatchObject({ enabled: true })
+    expect(store.getShare(ordinary.share.shareId)).toMatchObject({ enabled: true })
+  })
+
   it('creates single-use high-entropy invites and pins collaborator identity', () => {
     const store = new HumanCollaborationStore()
     const created = store.createShare({

@@ -268,9 +268,9 @@ export class HumanCollaborationStore {
     now?: number
     inviteTtlMs?: number
   }): CreateShareResult {
-    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const existing = this.memory.shares.find((share) => share.chatId === args.chatId && share.enabled)
+    this.assertOrdinaryWriteAllowed(existing?.shareId)
     const share =
       existing ||
       ({
@@ -330,8 +330,10 @@ export class HumanCollaborationStore {
    * of committing while share records survive. Idempotent per scope.
    */
   purgeChatShares(chatIds: readonly string[]): number {
-    this.assertOrdinaryWriteAllowed()
     const targets = new Set(chatIds)
+    this.memory.shares
+      .filter((share) => targets.has(share.chatId))
+      .forEach((share) => this.assertOrdinaryWriteAllowed(share.shareId))
     const retained = this.memory.shares.filter((share) => !targets.has(share.chatId))
     const removed = this.memory.shares.length - retained.length
     if (removed === 0) return 0
@@ -351,7 +353,7 @@ export class HumanCollaborationStore {
   }
 
   revokeShare(shareId: string, now: number = Date.now()): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === shareId)
     if (!share) return null
     share.enabled = false
@@ -370,7 +372,7 @@ export class HumanCollaborationStore {
     collaboratorId: string
     now?: number
   }): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) return null
@@ -394,7 +396,7 @@ export class HumanCollaborationStore {
     requiresHostApproval: boolean
     now?: number
   }): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
     const next = args.requiresHostApproval === true
@@ -428,7 +430,7 @@ export class HumanCollaborationStore {
     fullHistory: boolean
     now?: number
   }): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
     const next = args.fullHistory === true
@@ -462,7 +464,7 @@ export class HumanCollaborationStore {
     seatDisabled?: boolean
     now?: number
   }): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     // Explicit rather than incidental: today `revokeShare` revokes every active
@@ -530,7 +532,7 @@ export class HumanCollaborationStore {
     preset: HumanContributionPreset
     now?: number
   }): HumanCollaborationShare | null {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
@@ -550,7 +552,7 @@ export class HumanCollaborationStore {
     chatId?: string
     now?: number
   }): ConsumeInviteResult {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const now = args.now ?? Date.now()
     const state = this.findInvite({
       shareId: args.shareId,
@@ -724,7 +726,7 @@ export class HumanCollaborationStore {
     /** P2b contribution intent; plain comment when omitted (v1 clients). */
     intent?: 'comment' | 'requestHostAction'
   }): { share: HumanCollaborationShare; participant: HumanCollaboratorParticipant; existingMessageId?: string } {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
     if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
@@ -773,7 +775,7 @@ export class HumanCollaborationStore {
     clientMessageId: string
     messageId: string
   }): number {
-    this.assertOrdinaryWriteAllowed()
+    this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
     if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
@@ -812,7 +814,8 @@ export class HumanCollaborationStore {
   * absence. The coordinator must never pass the retained P5 bootstrap ids.
   */
   retireSharesForChannelMigration(shareIds: readonly string[]): number {
-    if (!this.options.legacyWriteGate?.isQuiesced()) {
+    const gate = this.options.legacyWriteGate
+    if (!gate?.isQuiesced()) {
       throw new Error('Migration retirement requires a quiesced legacy write gate.')
     }
     if (
@@ -823,6 +826,7 @@ export class HumanCollaborationStore {
     ) {
       throw new Error('Migration retirement share ids are invalid.')
     }
+    shareIds.forEach((shareId) => gate.assertRetirementAllowed(shareId))
     const targets = new Set(shareIds)
     const retained = this.memory.shares.filter((share) => !targets.has(share.shareId))
     const removed = this.memory.shares.length - retained.length
@@ -832,8 +836,8 @@ export class HumanCollaborationStore {
     return removed
   }
 
-  private assertOrdinaryWriteAllowed(): void {
-    this.options.legacyWriteGate?.assertOrdinaryWriteAllowed()
+  private assertOrdinaryWriteAllowed(shareId?: string): void {
+    this.options.legacyWriteGate?.assertOrdinaryWriteAllowed(shareId)
   }
 
   private load(): HumanCollaborationSnapshot {

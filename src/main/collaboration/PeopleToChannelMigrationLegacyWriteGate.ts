@@ -6,21 +6,47 @@
 export class PeopleToChannelMigrationLegacyWriteGateError extends Error {
   readonly code = 'recovery_blocked'
 
-  constructor() {
-    super('Ordinary People writes are quiesced for the Channels migration.')
+  constructor(message = 'Ordinary People writes are quiesced for the Channels migration.') {
+    super(message)
     this.name = 'PeopleToChannelMigrationLegacyWriteGateError'
   }
 }
 
 export interface PeopleToChannelMigrationLegacyWriteGateLike {
   isQuiesced(): boolean
-  assertOrdinaryWriteAllowed(): void
+  assertOrdinaryWriteAllowed(shareId?: string): void
+  assertRetirementAllowed(shareId: string): void
 }
 
 export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelMigrationLegacyWriteGateLike {
   private quiesced = false
+  private retainedWorkspaceBootstrapShareIds = new Set<string>()
 
-  quiesce(): void {
+  quiesce(input: { retainedWorkspaceBootstrapShareIds?: readonly string[] } = {}): void {
+    const retained = [...(input.retainedWorkspaceBootstrapShareIds ?? [])]
+    if (
+      retained.some(
+        (shareId) =>
+          typeof shareId !== 'string' ||
+          !shareId ||
+          shareId.trim() !== shareId ||
+          shareId.length > 512
+      ) ||
+      new Set(retained).size !== retained.length
+    ) {
+      throw new Error('Retained workspace-bootstrap share ids are invalid.')
+    }
+    const next = new Set(retained)
+    if (
+      this.quiesced &&
+      (next.size !== this.retainedWorkspaceBootstrapShareIds.size ||
+        [...next].some((shareId) => !this.retainedWorkspaceBootstrapShareIds.has(shareId)))
+    ) {
+      throw new PeopleToChannelMigrationLegacyWriteGateError(
+        'People migration write scope cannot change after quiescence.'
+      )
+    }
+    this.retainedWorkspaceBootstrapShareIds = next
     this.quiesced = true
   }
 
@@ -28,8 +54,24 @@ export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelM
     return this.quiesced
   }
 
-  assertOrdinaryWriteAllowed(): void {
-    if (this.quiesced) throw new PeopleToChannelMigrationLegacyWriteGateError()
+  assertOrdinaryWriteAllowed(shareId?: string): void {
+    if (!this.quiesced || (shareId && this.retainedWorkspaceBootstrapShareIds.has(shareId))) {
+      return
+    }
+    throw new PeopleToChannelMigrationLegacyWriteGateError()
+  }
+
+  assertRetirementAllowed(shareId: string): void {
+    if (!this.quiesced) {
+      throw new PeopleToChannelMigrationLegacyWriteGateError(
+        'Migration retirement requires a quiesced legacy write gate.'
+      )
+    }
+    if (this.retainedWorkspaceBootstrapShareIds.has(shareId)) {
+      throw new PeopleToChannelMigrationLegacyWriteGateError(
+        'The retained workspace-bootstrap People share cannot be retired by P4.'
+      )
+    }
   }
 }
 
