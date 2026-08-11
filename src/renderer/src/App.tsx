@@ -14173,6 +14173,9 @@ function App(): React.JSX.Element {
         ...(composedPayload.geminiAuthProfileId
           ? { geminiAuthProfileId: composedPayload.geminiAuthProfileId }
           : {}),
+        ...(composerMetadata.promptEnvelope
+          ? { promptEnvelope: composerMetadata.promptEnvelope }
+          : {}),
         ...(chatToUpdate.activeGoal && chatToUpdate.activeGoal.status !== 'completed'
           ? {
               activeGoalId: chatToUpdate.activeGoal.id,
@@ -14239,8 +14242,8 @@ function App(): React.JSX.Element {
 
       const promptLogContent =
         discordContextReads.length > 0
-          ? `Prompt being sent: ${displayFinalPrompt}\n\n[${discordContextReads.length} Discord context snapshot(s) supplied to provider; run-only Discord message content omitted from Inspector log.]`
-          : `Exact prompt being sent: ${contextualPrompt}`
+          ? `User prompt (pre-composition): ${displayFinalPrompt}\n\n[${discordContextReads.length} Discord context snapshot(s) supplied to provider; run-only Discord message content omitted from Inspector log.]`
+          : `TaskWraith-composed prompt (before provider adapter): ${contextualPrompt}`
       const initialRawLogs: RawLogEntry[] = [
         { type: 'info', content: contextApplicationLog },
         { type: 'info', content: promptLogContent },

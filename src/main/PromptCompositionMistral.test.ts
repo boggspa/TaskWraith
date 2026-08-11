@@ -29,6 +29,7 @@ const priorTurns: ChatMessage[] = [
 
 function composeMistral(overrides: Record<string, unknown> = {}) {
   return composeRunPrompt({
+    instructionContext: null,
     provider: 'mistral',
     finalPrompt: 'Now update the docs to match.',
     messages: priorTurns,

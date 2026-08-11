@@ -26,6 +26,7 @@ const priorTurns: ChatMessage[] = [
 
 function composeMuse(overrides: Record<string, unknown> = {}) {
   return composeRunPrompt({
+    instructionContext: null,
     provider: 'muse',
     finalPrompt: 'Now summarize the greeting.',
     messages: priorTurns,

@@ -148,6 +148,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'storeLocalChatHistory',
   'storeRawEvents',
   'storePromptResponseInUsage',
+  'customInstructionsEnabled',
   'auditRetention',
   'ensembleModeEnabled',
   'geminiCheckpointingEnabled',
@@ -1769,6 +1770,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('autoUpdateEnabled' in sanitized) {
       if (typeof sanitized.autoUpdateEnabled !== 'boolean') {
         delete sanitized.autoUpdateEnabled
+      }
+    }
+    if ('customInstructionsEnabled' in sanitized) {
+      if (typeof sanitized.customInstructionsEnabled !== 'boolean') {
+        delete sanitized.customInstructionsEnabled
       }
     }
     if ('activityReportingEnabled' in sanitized) {

@@ -491,6 +491,10 @@ interface ComposerRunMetadata {
   discordContextReads?: DiscordContextReadMetadata[]
   projectReferenceContext?: ResolvedProjectReferenceContext
   planModeParsed?: boolean
+  /** Per-run prompt-envelope snapshot; the renderer copies it onto the
+   * ChatRun it appends. Content fields present only when raw-event storage
+   * was on at compose time. */
+  promptEnvelope?: import('../shared/instructions/InstructionTypes').PromptEnvelopeSnapshot
 }
 
 type ComposerRunPayload = AgentRunPayload & {

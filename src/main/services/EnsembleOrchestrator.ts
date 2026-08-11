@@ -16,6 +16,7 @@ import {
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import type { TrustedSessionScope } from '../TrustedSessionGrants'
+import type { ResolvedInstructionContext } from '../../shared/instructions/InstructionTypes'
 import {
   buildEnsembleDynamicStateSnapshot,
   buildEnsembleParticipantPromptProjection,
@@ -490,6 +491,16 @@ export interface EnsembleOrchestratorDeps {
   getChat: (chatId: string) => ChatRecord | null
   saveChat: (chat: ChatRecord) => void
   getSettings: () => AppSettings
+  /**
+   * Resolved user instruction layers (global custom-instructions document +
+   * workspace TASKWRAITH.md) for participant briefings. The digest also
+   * feeds `computeEnsemblePromptShellStamp`, so an instructions edit
+   * re-briefs every slim-resumed seat. Optional so the unit-test harness
+   * can omit it (seats then brief without the block).
+   */
+  resolveInstructionContext?: (
+    workspacePath: string | null
+  ) => ResolvedInstructionContext | null
   /**
    * Stamp a participant run's permission posture so the
    * `normalizeAgentRunPayload` clamp trusts this main-built (and
@@ -15308,6 +15319,14 @@ export class EnsembleOrchestrator {
         ? { ...dispatchChat.ensemble, selfReflective: true }
         : dispatchChat.ensemble
       const chatContextTurns = this.deps.getSettings().chatContextTurns
+      // User instruction layers, resolved once per dispatch. The digest joins
+      // the shell stamp below, so editing instructions re-briefs slim seats.
+      const instructionContext =
+        this.deps.resolveInstructionContext?.(
+          (dispatchChat.scope ?? 'workspace') === 'global'
+            ? null
+            : dispatchChat.workspacePath || null
+        ) ?? null
       // Spike 5 — slim resumed-turn prompt (TASKWRAITH_ENSEMBLE_SLIM_RESUME,
       // default OFF). Eligible only when: the flag is on; the seat's provider
       // session genuinely resumes across turns (claude/codex plus Kimi
@@ -15319,7 +15338,9 @@ export class EnsembleOrchestrator {
       // config (roster/rules/instructions unchanged since its last full
       // briefing). The fresh stamp is recorded on the run either way and
       // persisted by flushRun next to linkedProviderSessionId.
-      const promptShellStamp = computeEnsemblePromptShellStamp(ensembleConfigForRound)
+      const promptShellStamp = computeEnsemblePromptShellStamp(ensembleConfigForRound, {
+        instructionsDigest: instructionContext?.digest
+      })
       const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
         dispatchChat,
         ensembleConfigForRound
@@ -15388,6 +15409,7 @@ export class EnsembleOrchestrator {
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
         authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+        instructionContext,
         ...skillHookContext
       })
       const prompt = promptProjection.prompt
@@ -15418,6 +15440,7 @@ export class EnsembleOrchestrator {
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode,
               authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+              instructionContext,
               // Same dispatch, same evidence — reuse the sample rather than
               // re-shelling git for the resume-failure fallback.
               ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
@@ -17524,10 +17547,18 @@ export class EnsembleOrchestrator {
           }
         : dispatchChat
       const chatContextTurns = this.deps.getSettings().chatContextTurns
+      const instructionContext =
+        this.deps.resolveInstructionContext?.(
+          (dispatchChat.scope ?? 'workspace') === 'global'
+            ? null
+            : dispatchChat.workspacePath || null
+        ) ?? null
       // Fan-out lanes receive a full briefing, but still participate in the
       // dynamic-state receipt protocol so a later resumed serial turn knows
       // exactly which replacement snapshot reached this provider session.
-      const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble!)
+      const promptShellStamp = computeEnsemblePromptShellStamp(dispatchChat.ensemble!, {
+        instructionsDigest: instructionContext?.digest
+      })
       const dynamicStateSnapshot = buildEnsembleDynamicStateSnapshot(
         dispatchChat,
         dispatchChat.ensemble!
@@ -17557,6 +17588,7 @@ export class EnsembleOrchestrator {
         chatContextTurns,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode,
+        instructionContext,
         ...fanoutSkillHookContext
         // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
         // CONCURRENTLY, so a sample taken now would blend siblings' in-flight

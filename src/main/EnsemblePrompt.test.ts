@@ -3969,3 +3969,94 @@ describe('workspace isolation policy disclosure', () => {
     expect(anyStamp).not.toBe(stamp)
   })
 })
+
+describe('ensemble user custom instructions', () => {
+  const instructionContext = {
+    layers: [
+      {
+        scope: 'global' as const,
+        source: 'Settings → Custom Instructions',
+        status: 'applied' as const,
+        sha256: 'aaa',
+        bytes: 24,
+        content: 'Always answer in British English.'
+      },
+      {
+        scope: 'workspace' as const,
+        source: 'TASKWRAITH.md',
+        status: 'applied' as const,
+        sha256: 'bbb',
+        bytes: 18,
+        content: 'Prefer tabs in this repo.'
+      }
+    ],
+    digest: 'digest-v1',
+    enabled: true
+  }
+
+  it('includes both layers in a full briefing, above the dynamic state', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review the plan.',
+      roundId: 'round-1',
+      instructionContext
+    })
+    expect(prompt).toContain('## User instructions')
+    expect(prompt).toContain('Always answer in British English.')
+    expect(prompt).toContain('Prefer tabs in this repo.')
+    const instructionsIndex = prompt.indexOf('## User instructions')
+    const dynamicStateIndex = prompt.indexOf('Dynamic ensemble state')
+    const rosterIndex = prompt.indexOf('Participant roster:')
+    expect(instructionsIndex).toBeGreaterThanOrEqual(0)
+    expect(dynamicStateIndex).toBeGreaterThan(instructionsIndex)
+    expect(rosterIndex).toBeGreaterThan(instructionsIndex)
+  })
+
+  it('omits the block from slim resumed turns but names it as unchanged shell state', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-2',
+      slimTurn: true,
+      instructionContext
+    })
+    expect(prompt).not.toContain('## User instructions')
+    expect(prompt).toContain('the user instructions,')
+  })
+
+  it('briefs without the block when no instruction context is supplied', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review the plan.',
+      roundId: 'round-1'
+    })
+    expect(prompt).not.toContain('## User instructions')
+  })
+
+  it('folds the instructions digest into the shell stamp so edits re-brief slim seats', () => {
+    const withoutInstructions = computeEnsemblePromptShellStamp(ensemble)
+    const withV1 = computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: 'digest-v1' })
+    const withV1Again = computeEnsemblePromptShellStamp(ensemble, {
+      instructionsDigest: 'digest-v1'
+    })
+    const withV2 = computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: 'digest-v2' })
+    expect(withV1).toBe(withV1Again)
+    expect(withV1).not.toBe(withoutInstructions)
+    expect(withV2).not.toBe(withV1)
+    // 'none' (nothing applied) and '' must equal the omitted form so
+    // pre-feature receipts stay valid for seats with no instructions
+    // configured — the orchestrator passes the resolver's literal 'none'.
+    expect(computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: '' })).toBe(
+      withoutInstructions
+    )
+    expect(computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: 'none' })).toBe(
+      withoutInstructions
+    )
+  })
+})

@@ -29,6 +29,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 const MAX_MESSAGE_CHARS = 4000
 const MAX_TRANSCRIPT_CHARS = 24000
 import { formatScoutBriefsForPrompt, type ScoutBriefRecord } from './ScoutBrief'
+import { buildUserInstructionBlock } from './PromptComposition'
+import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
 import type { EnsembleAuthorityRoutingCheckpoint } from './EnsembleAuthorityRouting'
 import {
   ollamaScoutDelegateWorkflowHint,
@@ -158,6 +160,18 @@ export interface BuildEnsemblePromptInput {
    */
   promptTransportProfile?: EnsemblePromptTransportProfile
   /**
+   * Resolved user instruction layers (global custom-instructions document +
+   * workspace TASKWRAITH.md). Optional here — unlike composeRunPrompt's
+   * REQUIRED field — because this builder has exactly two production callers
+   * (EnsembleOrchestrator's serial and concurrent dispatch paths, both
+   * wired) against 100+ test constructions. The block joins FULL briefings
+   * only; slim resumed turns rely on the digest being folded into
+   * `computeEnsemblePromptShellStamp`, so an instructions edit invalidates
+   * the shell receipt and forces a full re-briefing (the existing
+   * "Brief updated" flow) instead of duplicating the block every turn.
+   */
+  instructionContext?: ResolvedInstructionContext | null
+  /**
    * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
    * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
    * relative to a snapshot taken at round start.
@@ -222,7 +236,22 @@ export interface EnsembleDynamicStateSnapshot {
  * assignments, and round/orchestration modes. Any change produces a new
  * stamp, so the slim-turn gate falls back to a full briefing automatically.
  */
-export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string {
+export function computeEnsemblePromptShellStamp(
+  config: EnsembleConfig,
+  extras?: {
+    /**
+     * Digest of the resolved user-instruction layers
+     * (`ResolvedInstructionContext.digest`, 'none' when nothing applies).
+     * Shell-relevant: the block ships only in full briefings, so an edit must
+     * invalidate every seat's shell receipt or slim-resumed seats would keep
+     * following the old instructions indefinitely. Unlike churn (kept OUT of
+     * the stamp because it changes every round), instructions change only on
+     * explicit user edits, so folding them in costs a re-brief exactly when
+     * one is needed.
+     */
+    instructionsDigest?: string
+  }
+): string {
   const authority = normalizeEnsembleAuthority({
     participants: config.participants,
     bossmanParticipantId: config.bossmanParticipantId,
@@ -263,7 +292,13 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     // The Isolate policy line is part of the invariant shell — without this
     // entry a mid-chat Shared/Worktrees/Any flip would never re-brief a seat
     // riding slim resumed turns.
-    config.fanoutIsolation || ''
+    config.fanoutIsolation || '',
+    // 'none' (nothing applied) normalizes to the omitted form so existing
+    // seat receipts stay valid when no instructions are configured — the
+    // stamp only moves when instruction content actually exists/changes.
+    extras?.instructionsDigest && extras.instructionsDigest !== 'none'
+      ? extras.instructionsDigest
+      : ''
     // Review F3: printable escape, NOT a raw NUL byte (a literal 0x00 in the
     // source made git classify this whole file as binary).
   ].join('\u0001')
@@ -978,6 +1013,9 @@ export function buildEnsembleParticipantPromptProjection(
   // byte-identical to before (no extra noise where there's no ambiguity).
   const dupProviderModelLabels = buildDupProviderModelLabels(input.config.participants)
   const selfModelLabel = dupProviderModelLabels.get(input.participant.id)
+  const userInstructionsBlock = input.instructionContext?.enabled
+    ? buildUserInstructionBlock(input.instructionContext)
+    : ''
   const participantLabel = `${providerLabel(input.participant.provider)} / ${input.participant.role || 'Participant'}${
     selfModelLabel ? ` (${selfModelLabel})` : ''
   }${selfToken ? ` #${selfToken}` : ''}`
@@ -1377,7 +1415,7 @@ export function buildEnsembleParticipantPromptProjection(
     const prompt = [
       'TaskWraith Ensemble Mode — resumed turn',
       '',
-      `You are ${participantLabel}. Your provider session from your previous turns on this panel has been resumed; the roster, rules, and your role instructions are unchanged from the full briefing you already received. Address peers exactly as before.`,
+      `You are ${participantLabel}. Your provider session from your previous turns on this panel has been resumed; the roster, rules,${userInstructionsBlock ? ' the user instructions,' : ''} and your role instructions are unchanged from the full briefing you already received. Address peers exactly as before.`,
       `Round id: ${input.roundId}`,
       ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
       ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
@@ -1471,6 +1509,11 @@ export function buildEnsembleParticipantPromptProjection(
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
     ...(workspaceIsolationLine ? [workspaceIsolationLine] : []),
     ...(workspaceStanza ? [workspaceStanza] : []),
+    // User instruction layers are part of the INVARIANT shell (they join
+    // computeEnsemblePromptShellStamp), so they sit above the round-volatile
+    // dynamic state and ship only in full briefings — slim resumed turns
+    // re-brief automatically when the digest changes the stamp.
+    ...(userInstructionsBlock ? ['', userInstructionsBlock] : []),
     '',
     dynamicStateSnapshot.block,
     // Tree-derived churn sits immediately after the dynamic state block: both

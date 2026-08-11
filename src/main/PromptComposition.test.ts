@@ -5,6 +5,9 @@ import {
   TASKWRAITH_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+  USER_INSTRUCTIONS_BLOCK_HEADER,
+  USER_INSTRUCTIONS_REMOVED_NOTE,
+  USER_INSTRUCTIONS_UPDATED_NOTE,
   buildConversationCompactionProjection,
   buildConversationContextBlock,
   buildConversationContextProjection,
@@ -14,6 +17,7 @@ import {
   promptNeedsImageToolsHint,
   sanitizeTaskWraithMcpPromptClaims
 } from './PromptComposition'
+import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
@@ -149,6 +153,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
   it('strips a Claude runtime block before an advertised Kimi reroute', () => {
     const sourcePrompt = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'User work.',
       messages: [],
@@ -173,6 +178,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
   it('strips Cursor-only aliases before a core-profile Claude reroute', () => {
     const sourcePrompt = composeRunPrompt({
+      instructionContext: null,
       provider: 'cursor',
       finalPrompt: 'User work.',
       messages: [],
@@ -198,6 +204,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
   it('keeps a runtime block already composed for the reroute target', () => {
     const targetPrompt = composeRunPrompt({
+      instructionContext: null,
       provider: 'kimi',
       finalPrompt: 'User work.',
       messages: [],
@@ -287,6 +294,7 @@ describe('composeRunPrompt — peer thread messages', () => {
 
   const compose = (overrides: Record<string, unknown> = {}) =>
     composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Carry on.',
       messages: [],
@@ -347,6 +355,7 @@ describe('composeRunPrompt — peer thread messages', () => {
 describe('composeRunPrompt sub-thread returns', () => {
   it('injects pending sub-thread results even when provider session history is authoritative', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [message({ role: 'assistant', content: 'Delegated.' }), subThreadReturn()],
@@ -365,6 +374,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('keeps mailbox-owned return cards out of resumed provider prompts', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [
@@ -386,6 +396,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('replays compact Codex history when no app-server thread can be resumed', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: "Let's try that again.",
       messages: [
@@ -567,6 +578,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('keeps resumed Codex turns on native session history', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [message({ role: 'user', content: 'Earlier request.' })],
@@ -584,6 +596,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('injects an active thread goal even when provider session history is authoritative', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [message({ role: 'user', content: 'Earlier request.' })],
@@ -612,6 +625,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('injects progressive skill discovery and SessionStart hook context when provided', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Use the skill.',
       messages: [],
@@ -635,6 +649,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not inject paused active goals', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [],
@@ -661,6 +676,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not inject native Codex goals because app-server owns steering', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [],
@@ -687,6 +703,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not inject native Grok goals because the Grok runtime owns /goal steering', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'grok',
       finalPrompt: 'Continue.',
       messages: [],
@@ -715,6 +732,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('advertises the governed broker to a managed Path-B Cursor turn', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'cursor',
       finalPrompt: 'Create a test file.',
       messages: [],
@@ -734,6 +752,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'grok',
       finalPrompt: 'Create a test file.',
       messages: [],
@@ -765,6 +784,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     for (const [provider, delegateTool, delegateWaveTool] of cases) {
       const withoutWave = composeRunPrompt({
+        instructionContext: null,
         provider,
         finalPrompt: 'Make the change.',
         messages: [],
@@ -780,6 +800,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(withoutWave.contextualPrompt).not.toContain('wave join')
 
       const result = composeRunPrompt({
+        instructionContext: null,
         provider,
         finalPrompt: 'Make the change.',
         messages: [],
@@ -817,6 +838,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('adds sub-thread recall examples only for operational delegation prompts', () => {
     const requested = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Use two review agents and delegate one to Claude.',
       messages: [],
@@ -846,6 +868,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(requested.contextualPrompt).not.toMatch(/Recall example:\s*TaskWraith__delegate_wave/)
 
     const preV13 = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Use two review agents and delegate one to Claude.',
       messages: [],
@@ -862,6 +885,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(preV13.contextualPrompt).not.toContain('TaskWraith__delegate_wave')
 
     const negated = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Do not delegate this; just explain sub-threads.',
       messages: [],
@@ -880,6 +904,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('uses the persisted preamble version to avoid or force resume reinjection', () => {
     const current = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [],
@@ -896,6 +921,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(current.runtimePreambleVersion).toBeUndefined()
 
     const stale = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [],
@@ -912,6 +938,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(stale.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
 
     const wrongProvider = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Continue.',
       messages: [],
@@ -932,6 +959,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('re-teaches a resumed pre-gateway session exactly once after the main backstop', () => {
     const composed = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Use a specialized TaskWraith capability.',
       messages: [],
@@ -961,6 +989,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not advertise Cursor/Grok write tools in plan mode', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'cursor',
       finalPrompt: 'Inspect only.',
       messages: [],
@@ -977,6 +1006,7 @@ describe('composeRunPrompt sub-thread returns', () => {
   it('preserves the read → edit → verify contract in compact cloud preambles', () => {
     for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'grok', 'cursor'] as const) {
       const result = composeRunPrompt({
+        instructionContext: null,
         provider,
         finalPrompt: 'Make the change.',
         messages: [],
@@ -1000,6 +1030,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('omits the edit discipline in plan mode and global (read-only) runs', () => {
     const planRun = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Inspect only.',
       messages: [],
@@ -1012,6 +1043,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(planRun.contextualPrompt).not.toContain('Read existing files with read_file')
 
     const globalRun = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Inspect only.',
       messages: [],
@@ -1027,6 +1059,7 @@ describe('composeRunPrompt sub-thread returns', () => {
   it('applies compact Ollama context budget and scout workflow hint', () => {
     const long = 'x'.repeat(500)
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Read README',
       messages: [message({ role: 'assistant', content: long })],
@@ -1048,6 +1081,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('skips the scout hint for conversational Ollama prompts', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Hi OSS how are you?',
       messages: [],
@@ -1066,6 +1100,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('labels cold Ollama workspace prompts with Current user request exactly once', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Add a Zig joke test.',
       messages: [],
@@ -1083,6 +1118,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not double-wrap Ollama workspace prompts that already carry the marker', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Read README.md and fix the Zig compile error.',
       messages: [
@@ -1107,6 +1143,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('does not add Current user request cold-wrap for non-Ollama providers', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Add a Zig joke test.',
       messages: [],
@@ -1123,6 +1160,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('keeps thanks-only follow-ups free of the prior tool trajectory block', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'thanks, that looks great!',
       messages: [],
@@ -1148,6 +1186,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
   it('injects persisted Ollama session memory ahead of the scout hint', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Continue the refactor',
       messages: [],
@@ -1177,6 +1216,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     // notice is gone — the standard permission role governs the tool surface, so
     // there is no tier to bump and no notice to surface.
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'ollama',
       finalPrompt: 'Refactor this entire module and fix all tests',
       messages: [],
@@ -1233,6 +1273,7 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
 
   it('injects a compact transcript on the default ACP transport (no native resume)', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'grok',
       finalPrompt: 'What about Kimi?',
       messages: priorTurns,
@@ -1256,6 +1297,7 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
     process.env.TASKWRAITH_GROK_ACP = '0'
     try {
       const result = composeRunPrompt({
+        instructionContext: null,
         provider: 'grok',
         finalPrompt: 'What about Kimi?',
         messages: priorTurns,
@@ -1297,6 +1339,7 @@ describe('Browser Canvas handoff', () => {
       title: 'Private account'
     }
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Can you see it?',
       messages: [],
@@ -1336,6 +1379,7 @@ describe('Browser Canvas handoff', () => {
 
   it('teaches the gateway route for an explicit Browser Canvas request before one is open', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Navigate the browser canvas to example.com.',
       messages: [],
@@ -1353,6 +1397,7 @@ describe('Browser Canvas handoff', () => {
 
   it('does not promise Canvas tooling when the run has no TaskWraith MCP transport', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Can you see the webpage in the browser canvas?',
       messages: [],
@@ -1391,6 +1436,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('names image tools in a cold-run preamble only for image work', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'blur the screenshot',
       messages: [],
@@ -1404,6 +1450,7 @@ describe('image-tool discoverability (PR5)', () => {
     expect(result.contextualPrompt).toContain('Image tools are also available over MCP')
 
     const ordinary = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'fix the failing test',
       messages: [],
@@ -1418,6 +1465,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('does not promise tools omitted from the Grok 4.5 core profile', () => {
     const coldCursor = composeRunPrompt({
+      instructionContext: null,
       provider: 'cursor',
       finalPrompt: 'blur the screenshot',
       messages: [],
@@ -1433,6 +1481,7 @@ describe('image-tool discoverability (PR5)', () => {
     expect(coldCursor.contextualPrompt).toContain('read_file')
 
     const resumedGrok = composeRunPrompt({
+      instructionContext: null,
       provider: 'grok',
       finalPrompt: 'blur the screenshot',
       messages: [],
@@ -1452,6 +1501,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('states Claude core-profile limits and never promises omitted image tools', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'blur the screenshot',
       messages: [],
@@ -1470,6 +1520,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('states that gateway-hidden tools remain discoverable and does not claim they are absent', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'trim the video and make a thumbnail',
       messages: [],
@@ -1491,6 +1542,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('re-injects only the image note on a resumed session when the prompt is image-related', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'blur the screenshot please',
       messages: [],
@@ -1511,6 +1563,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('does NOT inject the image note on a resumed session for a non-image prompt', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'fix the failing test',
       messages: [],
@@ -1528,6 +1581,7 @@ describe('image-tool discoverability (PR5)', () => {
 
   it('does NOT inject the image note on a global run even with image intent', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'blur the screenshot',
       messages: [],
@@ -1557,6 +1611,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('injects the recon steer for a plan-approvalMode run on a NORMAL workflow (Ask)', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'kimi',
       workflowMode: 'normal'
@@ -1570,6 +1625,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('does NOT inject the steer for Plan workflow, despite the byte-identical posture', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'kimi',
       workflowMode: 'plan'
@@ -1580,6 +1636,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('does NOT inject the steer when workflowMode is absent (legacy caller)', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'kimi'
     })
@@ -1588,6 +1645,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('does NOT inject the steer on non-plan approval modes', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'claude',
       providerLabel: 'Claude',
@@ -1599,6 +1657,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('does NOT inject the steer on global runs', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'kimi',
       isGlobalRun: true,
@@ -1609,6 +1668,7 @@ describe('composeRunPrompt read-only recon steer', () => {
 
   it('excludes ollama from the generic recon steer because it has local workflow hints', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       ...base,
       provider: 'ollama',
       providerLabel: 'Ollama',
@@ -1631,13 +1691,13 @@ describe('composeRunPrompt ollama workflow-hint intent', () => {
   }
 
   it('uses the findings-shaped recon hint for normal-workflow read-only runs', () => {
-    const result = composeRunPrompt({ ...base, workflowMode: 'normal' })
+    const result = composeRunPrompt({ instructionContext: null, ...base, workflowMode: 'normal' })
     expect(result.contextualPrompt).toContain('TaskWraith local-recon workflow')
     expect(result.contextualPrompt).not.toContain('draft a short implementation plan')
   })
 
   it('keeps the plan-drafting scout hint for Plan-workflow runs', () => {
-    const result = composeRunPrompt({ ...base, workflowMode: 'plan' })
+    const result = composeRunPrompt({ instructionContext: null, ...base, workflowMode: 'plan' })
     expect(result.contextualPrompt).toContain('TaskWraith local-scout workflow')
     expect(result.contextualPrompt).toContain('When the plan is ready, ask the user')
   })
@@ -1662,6 +1722,7 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
     // gating it on `!resumeSessionId` (correct for claude/codex) would silently
     // drop it exactly where it is the only carrier of older history.
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'mistral',
       finalPrompt: 'Continue the work.',
       messages: [priorTurn],
@@ -1683,6 +1744,7 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
 
   it('seeds a sessionless Claude dispatch with summary + compact transcript', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Continue the work.',
       messages: [priorTurn],
@@ -1707,6 +1769,7 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
 
   it('keeps a resumable Claude session slim — its history is authoritative', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'claude',
       finalPrompt: 'Continue the work.',
       messages: [priorTurn],
@@ -1731,6 +1794,7 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
     // !resumeSessionId on EVERY pi turn. Injecting here would duplicate the
     // conversation each turn on top of pi's own native session history.
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'pi',
       finalPrompt: 'Continue the work.',
       messages: [priorTurn],
@@ -1770,6 +1834,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
 
   it('injects a legacy summary but treats its timestamp as non-pruning', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'kimi',
       finalPrompt: 'Continue the work.',
       messages: [coveredTurn, freshTurn],
@@ -1794,6 +1859,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
 
   it('defers to Kimi Code native history on ACP session/resume', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'kimi',
       finalPrompt: 'Continue the work.',
       messages: [coveredTurn, freshTurn],
@@ -1817,6 +1883,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
 
   it('prunes only an exact contiguous-prefix provenance claim', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'kimi',
       finalPrompt: 'Continue the work.',
       messages: [coveredTurn, freshTurn],
@@ -1853,6 +1920,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       }
     ]) {
       const result = composeRunPrompt({
+        instructionContext: null,
         provider: 'kimi',
         finalPrompt: 'Continue the work.',
         messages: [coveredTurn, freshTurn],
@@ -1878,7 +1946,8 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       isGlobalRun: false,
       approvalMode: 'default',
       providerLabel: 'Cursor',
-      contextCompactionSummary: summary
+      contextCompactionSummary: summary,
+      instructionContext: null
     }
     const fresh = composeRunPrompt(base)
     expect(fresh.contextualPrompt).toContain(summary.text)
@@ -1892,6 +1961,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
 
   it('never injects into a verbatim slash dispatch', () => {
     const result = composeRunPrompt({
+      instructionContext: null,
       provider: 'kimi',
       finalPrompt: '/compact',
       messages: [freshTurn],
@@ -1904,5 +1974,323 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     })
     expect(result.contextualPrompt).toBe('/compact')
+  })
+})
+
+describe('composeRunPrompt user custom instructions', () => {
+  const instructionContext = (
+    overrides: Partial<ResolvedInstructionContext> = {}
+  ): ResolvedInstructionContext => ({
+    layers: [
+      {
+        scope: 'global',
+        source: 'Settings → Custom Instructions',
+        status: 'applied',
+        sha256: 'aaa',
+        bytes: 24,
+        content: 'Always answer in British English.'
+      },
+      {
+        scope: 'workspace',
+        source: 'TASKWRAITH.md',
+        status: 'applied',
+        sha256: 'bbb',
+        bytes: 18,
+        content: 'Prefer tabs in this repo.'
+      }
+    ],
+    digest: 'digest-v1',
+    enabled: true,
+    ...overrides
+  })
+
+  const base = {
+    finalPrompt: 'Refactor the auth module.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default',
+    providerLabel: 'Cursor',
+    instructionContext: instructionContext()
+  }
+
+  it('injects both layers every turn for a host-fed-context provider', () => {
+    const result = composeRunPrompt({ ...base, provider: 'cursor' })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.contextualPrompt).toContain('### Global custom instructions')
+    expect(result.contextualPrompt).toContain('Always answer in British English.')
+    expect(result.contextualPrompt).toContain('### Workspace instructions (TASKWRAITH.md)')
+    expect(result.contextualPrompt).toContain('Prefer tabs in this repo.')
+    expect(result.applicationLog).toContain('user instructions injected')
+    expect(result.instructionsDigest).toBe('digest-v1')
+    expect(result.instructionsProvider).toBe('cursor')
+  })
+
+  it('keeps the instruction block above the current request and below the runtime preamble', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'cursor',
+      providerLabel: 'Cursor'
+    })
+    const prompt = result.contextualPrompt
+    const preambleIndex = prompt.indexOf('TaskWraith runtime note')
+    const instructionsIndex = prompt.indexOf(USER_INSTRUCTIONS_BLOCK_HEADER)
+    const requestIndex = prompt.indexOf('Refactor the auth module.')
+    expect(preambleIndex).toBeGreaterThanOrEqual(0)
+    expect(instructionsIndex).toBeGreaterThan(preambleIndex)
+    expect(requestIndex).toBeGreaterThan(instructionsIndex)
+  })
+
+  it('injects on a cold session-carrying dispatch even when the stamp matches', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'claude'
+    })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.instructionsDigest).toBe('digest-v1')
+  })
+
+  it('skips a resumed session whose stamp matches the current digest', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'claude-session-1',
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'claude'
+    })
+    expect(result.contextualPrompt).not.toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.applicationLog).toContain('user instructions already in session')
+    expect(result.instructionsDigest).toBeUndefined()
+  })
+
+  it('sends a replacement block into a resumed session when the digest changed', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'claude-session-1',
+      instructionsDigestApplied: 'digest-v0',
+      instructionsDigestProvider: 'claude'
+    })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_UPDATED_NOTE)
+    expect(result.applicationLog).toContain('user instructions replaced')
+    expect(result.instructionsDigest).toBe('digest-v1')
+  })
+
+  it('ignores a stamp recorded for a different provider', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'claude-session-1',
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'codex'
+    })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.instructionsDigest).toBe('digest-v1')
+  })
+
+  it('revokes instructions from a resumed session after the user removed them', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'claude-session-1',
+      instructionContext: instructionContext({
+        layers: [
+          {
+            scope: 'global',
+            source: 'Settings → Custom Instructions',
+            status: 'absent'
+          }
+        ],
+        digest: 'none'
+      }),
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'claude'
+    })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_REMOVED_NOTE)
+    expect(result.applicationLog).toContain('user instructions revoked')
+    expect(result.instructionsDigest).toBe('none')
+  })
+
+  it('treats Pi as an implicitly persistent session once a stamp exists', () => {
+    const first = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi'
+    })
+    expect(first.contextualPrompt).toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    const second = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi',
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'pi'
+    })
+    expect(second.contextualPrompt).not.toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(second.applicationLog).toContain('user instructions already in session')
+  })
+
+  it('reports a disabled toggle instead of injecting', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'cursor',
+      instructionContext: instructionContext({ enabled: false, digest: 'none' })
+    })
+    expect(result.contextualPrompt).not.toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.applicationLog).toContain('user instructions disabled')
+  })
+
+  it('never injects into a verbatim slash dispatch', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      verbatimPrompt: true,
+      finalPrompt: '/compact'
+    })
+    expect(result.contextualPrompt).toBe('/compact')
+    expect(result.instructionsDigest).toBeUndefined()
+  })
+
+  it('carries the surviving layer and logs the skipped one', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'cursor',
+      instructionContext: instructionContext({
+        layers: [
+          {
+            scope: 'global',
+            source: 'Settings → Custom Instructions',
+            status: 'applied',
+            sha256: 'aaa',
+            bytes: 24,
+            content: 'Always answer in British English.'
+          },
+          {
+            scope: 'workspace',
+            source: 'TASKWRAITH.md',
+            status: 'skipped',
+            skipReason: 'symlink_refused'
+          }
+        ],
+        digest: 'digest-global-only'
+      })
+    })
+    expect(result.contextualPrompt).toContain('Always answer in British English.')
+    expect(result.contextualPrompt).not.toContain('### Workspace instructions')
+    expect(result.applicationLog).toContain('workspace instructions skipped (symlink_refused)')
+  })
+
+  it('withholds instructions from Ollama conversational turns and says so', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'ollama',
+      providerLabel: 'Ollama',
+      finalPrompt: 'hey, how are you today?'
+    })
+    expect(result.contextualPrompt).not.toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.applicationLog).toContain('user instructions withheld (conversational turn)')
+  })
+
+  it('joins the Ollama workspace scaffolding on cold work turns instead of being clobbered', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'ollama',
+      providerLabel: 'Ollama',
+      approvalMode: 'plan',
+      finalPrompt: 'Investigate the failing login flow in src/auth.'
+    })
+    expect(result.contextualPrompt).toContain(USER_INSTRUCTIONS_BLOCK_HEADER)
+    expect(result.contextualPrompt).toContain('Prefer tabs in this repo.')
+    const instructionsIndex = result.contextualPrompt.indexOf(USER_INSTRUCTIONS_BLOCK_HEADER)
+    const requestIndex = result.contextualPrompt.indexOf('Current user request:')
+    expect(requestIndex).toBeGreaterThan(instructionsIndex)
+  })
+})
+
+describe('composeRunPrompt envelope layers', () => {
+  const instructionContext = {
+    layers: [
+      {
+        scope: 'global' as const,
+        source: 'Settings → Custom Instructions',
+        status: 'applied' as const,
+        sha256: 'aaa',
+        bytes: 24,
+        content: 'Always answer in British English.'
+      },
+      {
+        scope: 'workspace' as const,
+        source: 'TASKWRAITH.md',
+        status: 'skipped' as const,
+        skipReason: 'too_large' as const,
+        bytes: 99999
+      }
+    ],
+    digest: 'digest-v1',
+    enabled: true
+  }
+  const base = {
+    finalPrompt: 'Refactor the auth module.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default',
+    providerLabel: 'Cursor',
+    instructionContext
+  }
+
+  it('records applied, skipped, and request layers in final top-to-bottom order', () => {
+    const result = composeRunPrompt({ ...base, provider: 'cursor' })
+    const ids = result.envelopeLayers.map((layer) => layer.id)
+    expect(ids[ids.length - 1]).toBe('current_request')
+    expect(ids.indexOf('runtime_preamble')).toBeLessThan(ids.indexOf('instructions_global'))
+    const globalLayer = result.envelopeLayers.find((layer) => layer.id === 'instructions_global')
+    expect(globalLayer?.state).toBe('applied')
+    expect(globalLayer?.sha256).toBe('aaa')
+    expect(globalLayer?.content).toBe('Always answer in British English.')
+    const workspaceLayer = result.envelopeLayers.find(
+      (layer) => layer.id === 'instructions_workspace'
+    )
+    expect(workspaceLayer?.state).toBe('skipped')
+    expect(workspaceLayer?.reason).toBe('too_large')
+    const preamble = result.envelopeLayers.find((layer) => layer.id === 'runtime_preamble')
+    expect(preamble?.state).toBe('applied')
+    expect(preamble?.content).toContain('TaskWraith runtime note')
+  })
+
+  it('marks instructions inherited on a stamp-matched resumed session', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'claude-session-1',
+      instructionsDigestApplied: 'digest-v1',
+      instructionsDigestProvider: 'claude'
+    })
+    const globalLayer = result.envelopeLayers.find((layer) => layer.id === 'instructions_global')
+    expect(globalLayer?.state).toBe('inherited')
+    expect(globalLayer?.reason).toContain('digest match')
+    expect(globalLayer?.content).toBeUndefined()
+  })
+
+  it('reports a verbatim dispatch as a single current_request layer', () => {
+    const result = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      verbatimPrompt: true,
+      finalPrompt: '/compact'
+    })
+    expect(result.envelopeLayers).toHaveLength(1)
+    expect(result.envelopeLayers[0].id).toBe('current_request')
   })
 })

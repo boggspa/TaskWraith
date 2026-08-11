@@ -2352,6 +2352,15 @@ export interface AppSettings {
   /** Display name used to greet the user in New General Chat. Optional;
    * blank/whitespace is treated as "no name" and omitted from the greeting. */
   userName?: string
+  /**
+   * Apply the user's custom-instruction layers (global document + workspace
+   * TASKWRAITH.md) to prompt composition. Default TRUE — the layers only
+   * exist if the user authored them. False lists both layers as 'disabled'
+   * in the resolved context so the Prompt Inspector stays honest about why
+   * nothing was injected. The document itself lives in a standalone file
+   * under userData (InstructionStore), never in this settings JSON.
+   */
+  customInstructionsEnabled?: boolean
   claudeBinaryPath?: string
   claudeApiKey?: string
   kimiBinaryPath?: string
@@ -3676,6 +3685,17 @@ export interface ChatRun {
   diffUnavailableReason?: string
   rawEventsFile?: string
   diffSnapshot?: string
+  /**
+   * Per-run prompt-envelope snapshot (Prompt Inspector "Layers" view):
+   * which layers composed this run's prompt, with digests and applied/
+   * skipped/inherited states. Layer CONTENT is present only when the
+   * `storeRawEvents` setting was on at compose time (`contentStored`);
+   * metadata persists regardless. Wire-boundary captures append to
+   * `wire` per dispatch attempt. Copied from the composer metadata at
+   * run creation; post-dispatch inspection reads this snapshot, never
+   * the live instruction files.
+   */
+  promptEnvelope?: import('../../shared/instructions/InstructionTypes').PromptEnvelopeSnapshot
   runDiff?: RunDiffResult
   /**
    * 1.0.6-TV7 — per-WRITE-workspace file-change summaries for this run,

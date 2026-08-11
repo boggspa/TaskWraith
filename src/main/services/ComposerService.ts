@@ -12,6 +12,11 @@ import {
   type OpenCanvasPromptContext
 } from '../PromptComposition'
 import { resolveRunSkillHookContext } from '../skillsHooks/resolveRunSkillHookContext'
+import type {
+  PromptEnvelopeSnapshot,
+  ResolvedInstructionContext
+} from '../../shared/instructions/InstructionTypes'
+import { buildPromptEnvelopeSnapshot } from '../run/PromptEnvelope'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -183,6 +188,13 @@ export interface ComposerRunMetadata {
    * from `finalPrompt` so it never reaches the provider verbatim.
    */
   selfReflectiveRequested?: boolean
+  /**
+   * Per-run prompt-envelope snapshot (Prompt Inspector "Layers" view).
+   * Metadata always; layer content only when `storeRawEvents` was on at
+   * compose time (see buildPromptEnvelopeSnapshot). The renderer copies
+   * this onto the ChatRun it appends, which is what persists it.
+   */
+  promptEnvelope?: PromptEnvelopeSnapshot
 }
 
 export type ComposerRunPayload = AgentRunPayload & {
@@ -269,6 +281,15 @@ export interface ComposerServiceDeps {
    * composition consumes only id/driver/status, never URL or page content.
    */
   listOpenCanvasSessions?: (chatId: string) => readonly OpenCanvasPromptContext[]
+  /**
+   * Resolved user instruction layers (global custom-instructions document +
+   * workspace TASKWRAITH.md) for prompt composition. Receives null for
+   * global-scope runs (no workspace layer there). Optional so unit tests
+   * that don't exercise the InstructionResolver omit it — composeRunPrompt's
+   * REQUIRED instructionContext input still forces this service to pass an
+   * explicit null in that case.
+   */
+  resolveInstructionContext?: (workspacePath: string | null) => ResolvedInstructionContext | null
 }
 
 /**
@@ -661,6 +682,15 @@ export class ComposerService {
     const openCanvasSessions = contextIsolated
       ? []
       : this.deps.listOpenCanvasSessions?.(chat.appChatId) || []
+    // Context-isolated lanes (execution graph, channel agent) strip ambient
+    // chat/workspace context the same way skills/hooks are stripped above —
+    // instruction layers follow that existing isolation contract.
+    const instructionContext =
+      !contextIsolated && this.deps.resolveInstructionContext
+        ? this.deps.resolveInstructionContext(
+            scope === 'global' ? null : workspacePathForSkills || null
+          )
+        : null
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
@@ -675,6 +705,9 @@ export class ComposerService {
       isGlobalRun: scope === 'global',
       approvalMode,
       workflowMode,
+      instructionContext,
+      instructionsDigestApplied: metadataString(chat, 'taskWraithInstructionsDigest'),
+      instructionsDigestProvider: metadataString(chat, 'taskWraithInstructionsProvider'),
       runtimePreambleVersion: metadataString(chat, 'taskWraithRuntimePreambleVersion'),
       runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
       providerLabel: getProviderLabel(provider),
@@ -727,6 +760,12 @@ export class ComposerService {
         ? {
             taskWraithRuntimePreambleVersion: composed.runtimePreambleVersion,
             taskWraithRuntimePreambleProvider: composed.runtimePreambleProvider || provider
+          }
+        : {}),
+      ...(composed.instructionsDigest
+        ? {
+            taskWraithInstructionsDigest: composed.instructionsDigest,
+            taskWraithInstructionsProvider: composed.instructionsProvider || provider
           }
         : {}),
       ...(provider === 'gemini' ? { geminiAuthProfileId } : {})
@@ -952,7 +991,15 @@ export class ComposerService {
             }
           : {}),
         planModeParsed: planParsed.planMode,
-        ...(selfReflectiveRequested ? { selfReflectiveRequested: true } : {})
+        ...(selfReflectiveRequested ? { selfReflectiveRequested: true } : {}),
+        promptEnvelope: buildPromptEnvelopeSnapshot({
+          provider,
+          model: requestedModel,
+          composedPrompt: composed.contextualPrompt,
+          layers: composed.envelopeLayers,
+          instructionsDigest: instructionContext?.digest || 'none',
+          storeContent: settings.storeRawEvents === true
+        })
       }
     }
 

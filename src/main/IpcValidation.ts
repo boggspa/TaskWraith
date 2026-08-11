@@ -366,6 +366,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'skills:delete': ['object'],
   'skills:set-enabled': ['object'],
   'skills:reveal-root': ['object'],
+  // Custom Instructions Settings — payload objects validated in instructionsHandlers.
+  'instructions:get-global': [],
+  'instructions:set-global': ['object'],
+  'instructions:resolve-status': ['object'],
   // Host shell hooks Settings — workspacePath string or mutation request object.
   'hooks:get-effective': ['workspacePath'],
   'hooks:get-user': [],

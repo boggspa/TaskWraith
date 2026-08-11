@@ -41,6 +41,12 @@ import {
   type ContextCompactionProvenance
 } from '../shared/contextCompaction'
 import { buildSkillDiscoveryBlock } from './skills/SkillPromptInjection'
+import type {
+  PromptEnvelopeLayerId,
+  PromptEnvelopeLayerSnapshot,
+  ResolvedInstructionContext,
+  ResolvedInstructionLayer
+} from '../shared/instructions/InstructionTypes'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -883,6 +889,172 @@ export function appendConversationContext(
 }
 
 // ============================================================================
+// User custom instructions — the host-resolved global + workspace layers.
+//
+// Resolution (fs, digests, safety gates) happens in MAIN's InstructionResolver;
+// this section only turns an already-resolved context into prompt text and
+// decides delivery per turn. Delivery policy mirrors the conversation-context
+// classes above: providers whose cross-turn context is host-fed re-receive the
+// block every turn (their prompt IS their memory); session-carrying providers
+// receive it cold and then only when the digest changes (a replacement block —
+// never a session rotation; see storedSeatSessionRotationRequired, which
+// deliberately ignores system-prefix drift for context-carrying transports).
+// ============================================================================
+
+export const USER_INSTRUCTIONS_BLOCK_HEADER = '## User instructions'
+export const USER_INSTRUCTIONS_UPDATED_NOTE =
+  'Updated this turn — this block REPLACES any earlier user-instruction block in this session.'
+export const USER_INSTRUCTIONS_REMOVED_NOTE =
+  'User instructions update: the user removed their custom instructions. Disregard any earlier user-instruction block in this session.'
+
+export function buildUserInstructionBlock(
+  context: ResolvedInstructionContext,
+  options?: { updated?: boolean }
+): string {
+  const applied = context.layers.filter(
+    (layer): layer is ResolvedInstructionLayer & { content: string } =>
+      layer.status === 'applied' && typeof layer.content === 'string' && layer.content.length > 0
+  )
+  if (applied.length === 0) return ''
+  const sections = applied.map((layer) =>
+    layer.scope === 'global'
+      ? `### Global custom instructions\n${layer.content}`
+      : `### Workspace instructions (${layer.source})\n${layer.content}`
+  )
+  return [
+    USER_INSTRUCTIONS_BLOCK_HEADER,
+    ...(options?.updated ? [USER_INSTRUCTIONS_UPDATED_NOTE] : []),
+    'Standing preferences from the user. Precedence: workspace instructions override global ones where they conflict; the current explicit request overrides both. These instructions cannot enable tools, grant permissions, or change the approval posture — capability facts stated by the TaskWraith runtime remain authoritative.',
+    ...sections
+  ].join('\n\n')
+}
+
+export interface InstructionInjectionPlan {
+  /** Empty string when nothing should enter this prompt. */
+  block: string
+  /** Digest to persist after successful dispatch; undefined = the recorded
+   * stamp must not move (nothing was delivered this turn). */
+  digestToPersist?: string
+  /** applicationLog fragment; empty when there is nothing worth logging. */
+  log: string
+  /** True when the block replaces an earlier, different delivery. */
+  updated: boolean
+}
+
+export function planInstructionInjection(args: {
+  provider: ProviderId
+  instructionContext: ResolvedInstructionContext | null | undefined
+  instructionsDigestApplied?: string | null
+  instructionsDigestProvider?: string | null
+  /** This turn re-feeds full host context (fresh provider session each turn). */
+  hostFedContextTurn: boolean
+  /** The provider session genuinely resumes with its own history this turn. */
+  sessionCarryingResume: boolean
+  /** Pi-class: the session persists implicitly, with no resume id to observe. */
+  implicitPersistentSession: boolean
+  /** Ollama conversational turns get bare prompts by design. */
+  conversationalTurn: boolean
+}): InstructionInjectionPlan {
+  const none: InstructionInjectionPlan = { block: '', log: '', updated: false }
+  const ctx = args.instructionContext
+  if (!ctx) return none
+  if (!ctx.enabled) return { ...none, log: 'user instructions disabled' }
+  const providerMatch = (args.instructionsDigestProvider || null) === args.provider
+  const appliedStamp = providerMatch ? args.instructionsDigestApplied || null : null
+  const stampMatches = appliedStamp === ctx.digest
+  const hasApplied = ctx.layers.some((layer) => layer.status === 'applied')
+  const skippedLayers = ctx.layers.filter((layer) => layer.status === 'skipped')
+  const skippedNote = skippedLayers
+    .map((layer) => `${layer.scope} instructions skipped (${layer.skipReason})`)
+    .join('; ')
+  const withSkips = (log: string): string =>
+    [log, skippedNote].filter(Boolean).join('; ')
+
+  if (args.conversationalTurn) {
+    return {
+      ...none,
+      log: hasApplied ? withSkips('user instructions withheld (conversational turn)') : skippedNote
+    }
+  }
+
+  if (!hasApplied) {
+    // Revocation: a session that carries history AND previously received a
+    // block must be told the instructions are gone, or it keeps following
+    // stale ones. Fresh/host-fed sessions simply never see them.
+    const carriesHistory = args.sessionCarryingResume || args.implicitPersistentSession
+    const hadRealStamp = Boolean(appliedStamp) && appliedStamp !== 'none'
+    if (carriesHistory && hadRealStamp) {
+      return {
+        block: USER_INSTRUCTIONS_REMOVED_NOTE,
+        digestToPersist: ctx.digest,
+        log: withSkips('user instructions revoked'),
+        updated: true
+      }
+    }
+    return { ...none, log: skippedNote }
+  }
+
+  if (args.hostFedContextTurn) {
+    return {
+      block: buildUserInstructionBlock(ctx),
+      digestToPersist: ctx.digest,
+      log: withSkips('user instructions injected'),
+      updated: false
+    }
+  }
+
+  const resumedWithHistory =
+    args.sessionCarryingResume || (args.implicitPersistentSession && appliedStamp !== null)
+  if (!resumedWithHistory) {
+    return {
+      block: buildUserInstructionBlock(ctx),
+      digestToPersist: ctx.digest,
+      log: withSkips('user instructions injected'),
+      updated: false
+    }
+  }
+  if (stampMatches) {
+    return { ...none, log: withSkips('user instructions already in session') }
+  }
+  return {
+    block: buildUserInstructionBlock(ctx, { updated: true }),
+    digestToPersist: ctx.digest,
+    log: withSkips('user instructions replaced (edited since last delivery)'),
+    updated: true
+  }
+}
+
+/** Canonical top-to-bottom order of envelope layers in the composed prompt.
+ * The Ollama scaffolding branch deviates slightly (its hint sits above the
+ * instruction block); the Layers view documents provenance, not byte
+ * geometry, so the canonical order is used for all providers. */
+const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
+  'browser_canvas_hint',
+  'image_tools_note',
+  'recon_steer',
+  'runtime_preamble',
+  'instructions_global',
+  'instructions_workspace',
+  'session_start_hooks',
+  'skill_discovery',
+  'compaction_summary',
+  'ollama_session_memory',
+  'ollama_workflow_hint',
+  'conversation_context',
+  'peer_context',
+  'active_goal',
+  'current_request'
+]
+
+function orderEnvelopeLayers(
+  layers: PromptEnvelopeLayerSnapshot[]
+): PromptEnvelopeLayerSnapshot[] {
+  return [...layers].sort(
+    (a, b) => ENVELOPE_LAYER_ORDER.indexOf(a.id) - ENVELOPE_LAYER_ORDER.indexOf(b.id)
+  )
+}
+
+// ============================================================================
 // composeRunPrompt — the single entry point for "given a user request and
 // the chat's state, produce the final prompt the provider will receive".
 // Originally inline in App.tsx around lines 6105-6159 (per-provider context-
@@ -1011,6 +1183,25 @@ export interface ComposeRunPromptInput {
    * composition; URL, title, DOM, and pixels remain behind Canvas tools.
    */
   openCanvasSessions?: readonly OpenCanvasPromptContext[]
+  /**
+   * Resolved user instruction layers (global custom-instructions document +
+   * workspace `TASKWRAITH.md`), resolved by the MAIN-side InstructionResolver
+   * before composition. REQUIRED — pass null only as an explicit decision
+   * (context-isolated runs, producers with genuinely no instruction sources).
+   * An optional field here would silently drop the layers on any producer
+   * that forgot to thread them; the compiler making every caller decide IS
+   * the coverage mechanism.
+   */
+  instructionContext: ResolvedInstructionContext | null
+  /**
+   * Instruction digest this chat's provider session last received (chat
+   * metadata `taskWraithInstructionsDigest`), plus the provider it was
+   * recorded for. Session-carrying providers re-receive the block only when
+   * the current digest differs (the "replacement block on the next turn"
+   * semantics) — never as a session rotation.
+   */
+  instructionsDigestApplied?: string | null
+  instructionsDigestProvider?: string | null
 }
 
 export interface ComposeRunPromptResult {
@@ -1041,6 +1232,24 @@ export interface ComposeRunPromptResult {
    * slash dispatch) must never look like a delivery.
    */
   threadMessageIdsApplied?: string[]
+  /**
+   * Set when this run injected (or replaced, or revoked) the user-instruction
+   * block — the caller persists it to chat metadata
+   * `taskWraithInstructionsDigest` (+ provider) after a successful dispatch.
+   * Absent means the stamp must not move: nothing was delivered this turn.
+   */
+  instructionsDigest?: string
+  instructionsProvider?: ProviderId
+  /**
+   * Per-layer provenance of the composed prompt, in final top-to-bottom
+   * order — the Prompt Inspector's "Layers" view. Pure data: layer content
+   * is INCLUDED here (this function has no settings access); MAIN's
+   * buildPromptEnvelopeSnapshot adds digests and strips content unless the
+   * user's raw-event storage setting is on. Layers that are simply not
+   * configured for this run are omitted; explicit skip/inherit decisions
+   * are recorded.
+   */
+  envelopeLayers: PromptEnvelopeLayerSnapshot[]
 }
 
 /** Compose the final prompt for an outgoing run according to provider rules.
@@ -1087,9 +1296,18 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     return {
       contextualPrompt: finalPrompt,
       contextTurnsApplied: 0,
-      applicationLog: `${providerLabel}: verbatim slash dispatch — prompt composition skipped.`
+      applicationLog: `${providerLabel}: verbatim slash dispatch — prompt composition skipped.`,
+      envelopeLayers: [
+        {
+          id: 'current_request',
+          label: 'Current request (verbatim slash dispatch)',
+          state: 'applied',
+          bytes: finalPrompt.length
+        }
+      ]
     }
   }
+  const envelopeLayers: PromptEnvelopeLayerSnapshot[] = []
   const contextBudget = resolveContextBudget(provider, nextModel, input.ollamaLiveContextTokens)
   const nativeSubAgentInstruction = nativeSubAgentPromptInstruction(
     nativeSubAgentRequests,
@@ -1344,6 +1562,85 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     applicationLog = `${applicationLog}; session-start hook context injected`
   }
 
+  // (2b) User custom instructions — sit directly under the runtime preamble
+  // (prepended after this, so it lands above). The Ollama workspace branch
+  // below rebuilds the prompt around its own scaffolding and can discard
+  // earlier prepends on a cold chat, so that path joins the same plan inside
+  // the branch instead of here.
+  const instructionPlan = planInstructionInjection({
+    provider,
+    instructionContext: input.instructionContext,
+    instructionsDigestApplied: input.instructionsDigestApplied,
+    instructionsDigestProvider: input.instructionsDigestProvider,
+    hostFedContextTurn:
+      kimiNeedsContextInjection ||
+      grokNeedsContextInjection ||
+      cursorNeedsContextInjection ||
+      mistralNeedsContextInjection ||
+      museNeedsContextInjection ||
+      ollamaNeedsContextInjection,
+    sessionCarryingResume: Boolean(resumeSessionId) || nativeKimiSessionResume,
+    implicitPersistentSession: provider === 'pi',
+    conversationalTurn: provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+  })
+  const ollamaScaffoldingBranch = provider === 'ollama' && !isGlobalRun
+  if (instructionPlan.block && !ollamaScaffoldingBranch) {
+    contextualPrompt = `${instructionPlan.block}\n\n${contextualPrompt}`
+  }
+  if (instructionPlan.log) {
+    applicationLog = `${applicationLog}; ${instructionPlan.log}`
+  }
+  for (const layer of input.instructionContext?.layers || []) {
+    const id: PromptEnvelopeLayerId =
+      layer.scope === 'global' ? 'instructions_global' : 'instructions_workspace'
+    const label =
+      layer.scope === 'global'
+        ? 'User instructions — global'
+        : `User instructions — workspace (${layer.source})`
+    if (layer.status === 'applied') {
+      envelopeLayers.push(
+        instructionPlan.block
+          ? {
+              id,
+              label,
+              state: 'applied',
+              ...(instructionPlan.updated ? { reason: 'replaced earlier delivery' } : {}),
+              ...(layer.sha256 ? { sha256: layer.sha256 } : {}),
+              ...(layer.bytes === undefined ? {} : { bytes: layer.bytes }),
+              ...(layer.content === undefined ? {} : { content: layer.content })
+            }
+          : {
+              id,
+              label,
+              state: 'inherited',
+              reason: instructionPlan.log.includes('withheld')
+                ? 'withheld on this conversational turn'
+                : 'already delivered to this provider session (digest match)',
+              ...(layer.sha256 ? { sha256: layer.sha256 } : {})
+            }
+      )
+    } else if (layer.status === 'skipped') {
+      envelopeLayers.push({
+        id,
+        label,
+        state: 'skipped',
+        reason: layer.skipReason || 'skipped',
+        ...(layer.bytes === undefined ? {} : { bytes: layer.bytes })
+      })
+    } else if (layer.status === 'disabled') {
+      envelopeLayers.push({ id, label, state: 'skipped', reason: 'disabled in Settings' })
+    }
+  }
+  if (instructionPlan.block === USER_INSTRUCTIONS_REMOVED_NOTE) {
+    envelopeLayers.push({
+      id: 'instructions_global',
+      label: 'User instructions — revocation note',
+      state: 'applied',
+      reason: 'user removed their instructions; session told to disregard earlier block',
+      content: USER_INSTRUCTIONS_REMOVED_NOTE
+    })
+  }
+
   // (3) Write-capable cloud/runtime preamble. Keep this compact and invariant:
   // the active MCP catalog is available through tool metadata, while the prompt
   // only carries the provider namespace, edit discipline, and cross-provider
@@ -1374,6 +1671,24 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
+    envelopeLayers.push({
+      id: 'runtime_preamble',
+      label: `TaskWraith runtime preamble (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION})`,
+      state: 'applied',
+      content: taskWraithRuntimePreamble
+    })
+  }
+  if (
+    !runtimePreambleInjected &&
+    runtimePreambleVersion === TASKWRAITH_RUNTIME_PREAMBLE_VERSION &&
+    runtimePreambleProvider === provider
+  ) {
+    envelopeLayers.push({
+      id: 'runtime_preamble',
+      label: `TaskWraith runtime preamble (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION})`,
+      state: 'inherited',
+      reason: 'resumed provider session was already briefed with this version'
+    })
   }
 
   // (3b) Ask steer — mutually exclusive with the runtime preamble
@@ -1390,6 +1705,12 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   ) {
     contextualPrompt = `${TASKWRAITH_RECON_STEER_NOTE}\n\n${contextualPrompt}`
     applicationLog = `${applicationLog}; recon steer injected`
+    envelopeLayers.push({
+      id: 'recon_steer',
+      label: 'Read-only recon steer',
+      state: 'applied',
+      content: TASKWRAITH_RECON_STEER_NOTE
+    })
   }
 
   // Resumed-session image discoverability: the full preamble (which already
@@ -1407,6 +1728,12 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     promptNeedsImageToolsHint(finalPrompt)
   ) {
     contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`
+    envelopeLayers.push({
+      id: 'image_tools_note',
+      label: 'Image tools note',
+      state: 'applied',
+      content: TASKWRAITH_IMAGE_TOOLS_NOTE
+    })
   }
 
   // Browser Canvas is live desktop state, not provider-native history. Teach
@@ -1424,6 +1751,12 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   if (browserCanvasToolsHint) {
     contextualPrompt = `${browserCanvasToolsHint}\n\n${contextualPrompt}`
     applicationLog = `${applicationLog}; Browser Canvas context injected`
+    envelopeLayers.push({
+      id: 'browser_canvas_hint',
+      label: 'Browser Canvas context',
+      state: 'applied',
+      content: browserCanvasToolsHint
+    })
   }
 
   if (provider === 'ollama' && !isGlobalRun) {
@@ -1447,9 +1780,25 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
         'read_only',
         input.workflowMode === 'plan' ? 'plan' : 'recon'
       )
-      contextualPrompt = [sessionMemoryBlock, scoutHint, contextualPrompt]
+      contextualPrompt = [sessionMemoryBlock, scoutHint, instructionPlan.block, contextualPrompt]
         .filter(Boolean)
         .join('\n\n')
+      if (sessionMemoryBlock) {
+        envelopeLayers.push({
+          id: 'ollama_session_memory',
+          label: 'Ollama session memory (tool trajectory)',
+          state: 'applied',
+          content: sessionMemoryBlock
+        })
+      }
+      if (scoutHint) {
+        envelopeLayers.push({
+          id: 'ollama_workflow_hint',
+          label: 'Ollama workflow hint',
+          state: 'applied',
+          content: scoutHint
+        })
+      }
     }
   }
 
@@ -1457,16 +1806,88 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // pre-run notices — the tier ladder is gone; the standard permission role now
   // governs the tool surface, so there is nothing to bump.
 
+  // Transcript-level layers, recorded from FINAL values (the Codex handoff
+  // branch above can change contextTurnsApplied after the initial decision).
+  // Content is deliberately omitted for layers whose text is already visible
+  // elsewhere in the app (transcript rows, the goal control); content rides
+  // only for host-authored blocks that are otherwise invisible.
+  if (sessionStartContext) {
+    envelopeLayers.push({
+      id: 'session_start_hooks',
+      label: 'SessionStart hook context',
+      state: 'applied',
+      content: sessionStartContext
+    })
+  }
+  if (skillDiscoveryBlock) {
+    envelopeLayers.push({
+      id: 'skill_discovery',
+      label: 'Skill discovery',
+      state: 'applied',
+      content: skillDiscoveryBlock
+    })
+  }
+  if (compactionSummaryBlock) {
+    envelopeLayers.push({
+      id: 'compaction_summary',
+      label: 'Prior-session compaction summary',
+      state: 'applied',
+      content: compactionSummaryBlock
+    })
+  }
+  if (contextTurnsApplied > 0) {
+    envelopeLayers.push({
+      id: 'conversation_context',
+      label: 'Conversation context',
+      state: 'applied',
+      reason: `${contextTurnsApplied} turn(s) of host-fed transcript`
+    })
+  } else if ((messages || []).length > 0) {
+    envelopeLayers.push({
+      id: 'conversation_context',
+      label: 'Conversation context',
+      state: 'inherited',
+      reason: 'provider/session history is authoritative for this turn'
+    })
+  }
+  if (additionalPeerContext) {
+    envelopeLayers.push({
+      id: 'peer_context',
+      label: 'Peer thread / sub-thread context',
+      state: 'applied'
+    })
+  }
+  if (activeGoalContext) {
+    envelopeLayers.push({
+      id: 'active_goal',
+      label: 'Active goal',
+      state: 'applied'
+    })
+  }
+  envelopeLayers.push({
+    id: 'current_request',
+    label: 'Current request',
+    state: 'applied',
+    bytes: finalPrompt.length
+  })
+
   return {
     contextualPrompt,
     contextTurnsApplied,
     applicationLog,
     codexHandoffApplied,
     uiNoticeMessage,
+    envelopeLayers: orderEnvelopeLayers(envelopeLayers),
     ...(runtimePreambleInjected
       ? {
           runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
           runtimePreambleProvider: provider
+        }
+      : {}),
+    ...(instructionPlan.digestToPersist
+      ? {
+          instructionsDigest: instructionPlan.digestToPersist,
+          instructionsProvider: provider
         }
       : {})
   }

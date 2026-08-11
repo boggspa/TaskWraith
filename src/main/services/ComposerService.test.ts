@@ -2211,3 +2211,144 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.effectivePermissions?.agenticServices.simulatorCanvas).toBe('ask')
   })
 })
+
+describe('composeRun user custom instructions', () => {
+  it('threads resolved layers into the prompt and stamps the digest patch', async () => {
+    const chat = makeChat({ provider: 'cursor' })
+    const { deps } = makeDeps(chat)
+    const resolveInstructionContext = vi.fn(() => ({
+      layers: [
+        {
+          scope: 'global' as const,
+          source: 'Settings → Custom Instructions',
+          status: 'applied' as const,
+          sha256: 'aaa',
+          bytes: 10,
+          content: 'Be terse.'
+        }
+      ],
+      digest: 'digest-abc',
+      enabled: true
+    }))
+    const service = new ComposerService({ ...deps, resolveInstructionContext })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'cursor',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+    expect(resolveInstructionContext).toHaveBeenCalledWith('/repo')
+    expect(payload.prompt).toContain('## User instructions')
+    expect(payload.prompt).toContain('Be terse.')
+    expect(payload.composer.providerMetadataPatch).toMatchObject({
+      taskWraithInstructionsDigest: 'digest-abc',
+      taskWraithInstructionsProvider: 'cursor'
+    })
+  })
+
+  it('does not resolve instructions for context-isolated lanes', async () => {
+    const chat = makeChat({ provider: 'codex' })
+    const { deps } = makeDeps(chat)
+    const resolveInstructionContext = vi.fn(() => ({
+      layers: [],
+      digest: 'none',
+      enabled: true
+    }))
+    const service = new ComposerService({ ...deps, resolveInstructionContext })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'codex',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'gpt-5.6',
+      approvalMode: 'default',
+      contextIsolation: 'execution_graph'
+    })
+    expect(resolveInstructionContext).not.toHaveBeenCalled()
+    expect(payload.prompt).not.toContain('## User instructions')
+  })
+})
+
+describe('composeRun prompt envelope', () => {
+  it('attaches a metadata-only envelope when raw-event storage is off (the product default)', async () => {
+    const chat = makeChat({ provider: 'cursor' })
+    // The test fixture's settings enable storeRawEvents; the PRODUCT default
+    // is false (store defaults), which is the posture this test asserts.
+    const { deps } = makeDeps(chat, { storeRawEvents: false })
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => ({
+        layers: [
+          {
+            scope: 'global' as const,
+            source: 'Settings → Custom Instructions',
+            status: 'applied' as const,
+            sha256: 'aaa',
+            bytes: 10,
+            content: 'Be terse.'
+          }
+        ],
+        digest: 'digest-abc',
+        enabled: true
+      })
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'cursor',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+    const envelope = payload.composer.promptEnvelope
+    expect(envelope).toBeTruthy()
+    expect(envelope?.accuracy).toBe('composed')
+    expect(envelope?.contentStored).toBe(false)
+    expect(envelope?.instructionsDigest).toBe('digest-abc')
+    expect(envelope?.composedSha256).toMatch(/^[0-9a-f]{64}$/)
+    const instructionLayer = envelope?.layers.find(
+      (layer) => layer.id === 'instructions_global'
+    )
+    expect(instructionLayer?.state).toBe('applied')
+    expect(instructionLayer?.content).toBeUndefined()
+    const requestLayer = envelope?.layers.find((layer) => layer.id === 'current_request')
+    expect(requestLayer?.state).toBe('applied')
+  })
+
+  it('stores layer content when storeRawEvents is on', async () => {
+    const chat = makeChat({ provider: 'cursor' })
+    const { deps } = makeDeps(chat, { storeRawEvents: true })
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => ({
+        layers: [
+          {
+            scope: 'global' as const,
+            source: 'Settings → Custom Instructions',
+            status: 'applied' as const,
+            sha256: 'aaa',
+            bytes: 10,
+            content: 'Be terse.'
+          }
+        ],
+        digest: 'digest-abc',
+        enabled: true
+      })
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'cursor',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+    const envelope = payload.composer.promptEnvelope
+    expect(envelope?.contentStored).toBe(true)
+    expect(
+      envelope?.layers.find((layer) => layer.id === 'instructions_global')?.content
+    ).toBe('Be terse.')
+  })
+})

@@ -1400,6 +1400,10 @@ import {
 } from './mcp/SkillToolExecutors'
 import { createSkillsHooksSubsystem, getSkillsHooksSubsystem } from './skillsHooks/registerSkillsHooksSubsystem'
 import {
+  createInstructionsSubsystem,
+  getInstructionsSubsystem
+} from './instructions/registerInstructionsSubsystem'
+import {
   resolveRunSkillHookContext,
   setRunSkillHookHostDepsBuilder
 } from './skillsHooks/resolveRunSkillHookContext'
@@ -11034,6 +11038,14 @@ async function composeDelegatedProviderPrompts(args: {
     isGlobalRun,
     allowWorkspaceHooks: settings.trustWorkspaceHooks === true
   })
+  // Instruction layers ride the host-fed composed paths only. The slim Kimi
+  // native-resume prompt stays instruction-free (the session already carries
+  // its history and no stamp persistence exists on sub-thread records); the
+  // signed cold-recovery twin below IS a cold seed, so it carries the layers.
+  const delegatedInstructionContext =
+    getInstructionsSubsystem()?.resolveForRun(
+      isGlobalRun ? null : args.subThread.workspacePath || null
+    ) ?? null
   const promptInput = {
     provider: args.provider,
     finalPrompt: args.prompt,
@@ -11052,6 +11064,7 @@ async function composeDelegatedProviderPrompts(args: {
     taskWraithMcpAdvertised,
     taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
     openCanvasSessions: canvasService.list({ chatId: args.subThread.appChatId }),
+    instructionContext: needsHostTranscriptInjection ? delegatedInstructionContext : null,
     ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
     ...skillHookContext
   } satisfies Parameters<typeof composeRunPrompt>[0]
@@ -11059,7 +11072,8 @@ async function composeDelegatedProviderPrompts(args: {
   if (!kimiNativeSessionResume) return { prompt }
   const resumeFallbackPrompt = composeRunPrompt({
     ...promptInput,
-    nativeSessionResume: false
+    nativeSessionResume: false,
+    instructionContext: delegatedInstructionContext
   }).contextualPrompt
   return {
     prompt,
@@ -46216,6 +46230,22 @@ if (isGeminiMcpBridgeProcess) {
             taskWraithMcpAdvertised: bridgeTaskWraithMcpAdvertised,
             taskWraithMcpProfileId: bridgeTaskWraithMcpProfile.profileId,
             openCanvasSessions: canvasService.list({ chatId: chat.appChatId }),
+            // Same instruction layers the desktop composer resolves. The
+            // stamp is read (so a resumed session that already carries the
+            // block skips it) but not re-persisted here — mirroring how the
+            // bridge treats the runtime preamble version.
+            instructionContext:
+              getInstructionsSubsystem()?.resolveForRun(
+                isGlobalScope ? null : chat.workspacePath || null
+              ) ?? null,
+            instructionsDigestApplied:
+              typeof chat.providerMetadata?.taskWraithInstructionsDigest === 'string'
+                ? chat.providerMetadata.taskWraithInstructionsDigest
+                : null,
+            instructionsDigestProvider:
+              typeof chat.providerMetadata?.taskWraithInstructionsProvider === 'string'
+                ? chat.providerMetadata.taskWraithInstructionsProvider
+                : null,
             // Ollama continuity is NOT a session id — it's the persisted
             // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
@@ -50358,6 +50388,18 @@ if (isGeminiMcpBridgeProcess) {
     setRunSkillHookHostDepsBuilder((workspacePath) =>
       buildHostHookCallDeps({ hooksStore, workspacePath })
     )
+    const instructionsSubsystem = createInstructionsSubsystem({
+      userDataPath: app.getPath('userData'),
+      getSettings: () => AppStore.getSettings(),
+      isMainRendererSender,
+      requireRegisteredWorkspace,
+      assertSenderScope: (event, workspacePath) =>
+        assertRendererFilesystemScope(event, {
+          capability: 'workspace-file',
+          workspacePath,
+          operation: 'read'
+        })
+    })
     const fireStopHooksForWorkspace = (
       workspacePath: string,
       status?: string,
@@ -50942,7 +50984,9 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       resolveUnattendedElevation,
-      isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
+      isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
+      resolveInstructionContext: (workspacePath) =>
+        instructionsSubsystem.resolveForRun(workspacePath)
     })
     const discordContextConfig = resolveDiscordContextConfig({
       userDataPath: app.getPath('userData'),
@@ -55094,6 +55138,8 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
+      resolveInstructionContext: (workspacePath) =>
+        getInstructionsSubsystem()?.resolveForRun(workspacePath) ?? null,
       issueRunScopedExternalGrants: ({ chat, participant, appRunId, attachments }) =>
         issueRunScopedExternalGrantsForNonImageAttachments(
           chat,

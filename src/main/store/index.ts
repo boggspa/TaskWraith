@@ -2219,6 +2219,7 @@ const defaultSettings: AppSettings = {
   storeLocalChatHistory: true,
   storeRawEvents: false,
   storePromptResponseInUsage: false,
+  customInstructionsEnabled: true,
   auditRetention: DEFAULT_AUDIT_RETENTION,
   ensembleModeEnabled: true,
   geminiCheckpointingEnabled: false,
