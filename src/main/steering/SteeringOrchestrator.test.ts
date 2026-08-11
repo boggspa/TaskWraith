@@ -180,6 +180,20 @@ describe('routeSteerDelivery', () => {
     expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
   })
 
+  it('broker-injection: ollama arms the same pending text for the in-main tool loop drain', () => {
+    const { runManager, deps, entry } = makeFixture()
+    startRun(runManager, 'ollama')
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'ollama'
+    })
+    expect(result.status).toBe('broker-pending')
+    expect(result.strategy).toBe('broker-injection')
+    expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
+  })
+
   it('pi-live-frame: requires its own opt-in gate even when the unified gate is on', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'pi')

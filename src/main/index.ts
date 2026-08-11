@@ -674,6 +674,7 @@ import {
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
+import { drainPendingSteerTextFromSession } from './steering/BrokerSteerTransport'
 import { midTurnSteerEnabled } from './steering/SteeringFeatureGate'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
@@ -3131,16 +3132,8 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   appendLimitedOutput,
   executeGeminiMcpTool,
   resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
-  drainPendingSteerText: (appRunId: string) => {
-    const session = runManager.get(appRunId)
-    if (!session) return null
-    const transportText = session.liveSteerTransport?.drain?.()
-    if (transportText) return transportText
-    if (!session.pendingSteerText) return null
-    const text = session.pendingSteerText
-    session.pendingSteerText = null
-    return text
-  },
+  drainPendingSteerText: (appRunId: string) =>
+    drainPendingSteerTextFromSession(runManager.get(appRunId)),
   installGeminiToolContextForRun,
   sendAgentCompatLine
 })

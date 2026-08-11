@@ -17,6 +17,7 @@ import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
+import { formatSteeringInjection } from '../steering/BrokerSteerTransport'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../../shared/tokenEstimate'
 import type {
   AppSettings,
@@ -241,6 +242,14 @@ export interface OllamaProviderDeps {
     memory: OllamaSessionMemory,
     memoryKey?: string
   ) => void
+  /**
+   * Mid-turn steering (broker-injection): drain steer text the
+   * SteeringOrchestrator armed on this run's session. Draining fires the
+   * delivery-evidence hooks, so callers must only drain when the returned
+   * text is guaranteed a seat in the next model request. Same contract as
+   * the McpBridgeRuntime dep of the same name.
+   */
+  drainPendingSteerText?: (appRunId: string) => string | null
 }
 
 interface OllamaTagsResponse {
@@ -3465,6 +3474,20 @@ export async function runOllamaProvider(
           },
           route
         )
+      }
+      // Mid-turn steering (broker-injection): text the SteeringOrchestrator
+      // armed on this run's session is drained here — the last seam before
+      // the request body is composed — and delivered as a framed user
+      // message the model reads this very call. Turn 0 is skipped because
+      // its request is the pre-resolved `launchPlan.firstRequest`, whose
+      // message list was snapshotted at compose time; draining there would
+      // fire delivery evidence for text the outgoing body cannot carry.
+      // Text never drained here stays owned by the durable boundary queue.
+      if (turnIndex > 0 && route.appRunId) {
+        const pendingSteerText = deps.drainPendingSteerText?.(route.appRunId)
+        if (pendingSteerText) {
+          messages.push({ role: 'user', content: formatSteeringInjection(pendingSteerText) })
+        }
       }
       const turn = await runOllamaChatTurn({
         baseUrl,

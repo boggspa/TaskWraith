@@ -557,11 +557,16 @@ export function midTurnSteeringCapabilityForProvider(provider: ProviderId): MidT
       return { strategy: 'acp-interrupt', live: true }
     case 'cursor':
       return { strategy: 'broker-injection', live: true }
+    case 'ollama':
+      // Same arm/drain transport and delivery-evidence contract as Cursor,
+      // with a different consumer: the in-main tool loop (OllamaProvider)
+      // drains the armed text at the head of every iteration after the first
+      // and injects it as a framed user message in the next model request.
+      return { strategy: 'broker-injection', live: true }
     case 'claude':
     case 'codex':
     case 'antigravity':
     case 'muse':
-    case 'ollama':
       // Boundary-only until a provider adapter can emit concrete delivery
       // evidence. RunManager interrupt flags alone have no execution consumer.
       return { strategy: 'cooperative-cancel-resume', live: false }

@@ -4608,3 +4608,81 @@ describe('shouldReleaseOllamaContentDelta — streaming cadence gate', () => {
     ).toBe(true)
   })
 })
+
+describe('runOllamaProvider mid-turn steering', () => {
+  it('delivers drained steer text as a framed user message in the next model request, never in turn 0', async () => {
+    const chatBodies: string[] = []
+    const executeTool = vi.fn(async () => ({
+      ok: true,
+      output: 'src/main/EnsemblePrompt.ts:1: steering probe'
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(String(init?.body || ''))
+        if (chatBodies.length === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content:
+                  '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"steering probe","path":".","maxResults":5}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Focusing on the tests now.' }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const drainPendingSteerText = vi
+      .fn<(appRunId: string) => string | null>()
+      .mockReturnValueOnce('Actually focus on the tests first.')
+      .mockReturnValue(null)
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.drainPendingSteerText = drainPendingSteerText
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatBodies).toHaveLength(2)
+    // Turn 0 rides the pre-resolved launch-plan request; a drain there would
+    // fire delivery evidence for text the request body cannot carry.
+    expect(chatBodies[0]).not.toContain('[TaskWraith Steering]')
+    expect(drainPendingSteerText).toHaveBeenCalledTimes(1)
+    expect(drainPendingSteerText).toHaveBeenCalledWith('run-ollama-1')
+    expect(chatBodies[1]).toContain('[TaskWraith Steering]')
+    expect(chatBodies[1]).toContain('Actually focus on the tests first.')
+    const secondRequest = JSON.parse(chatBodies[1]) as {
+      messages: Array<{ role: string; content?: string }>
+    }
+    const steerMessage = secondRequest.messages.find((message) =>
+      String(message.content || '').includes('[TaskWraith Steering]')
+    )
+    expect(steerMessage?.role).toBe('user')
+    const toolResultIndex = secondRequest.messages.findIndex((message) =>
+      String(message.content || '').includes('steering probe')
+    )
+    expect(secondRequest.messages.indexOf(steerMessage!)).toBeGreaterThan(toolResultIndex)
+  })
+})

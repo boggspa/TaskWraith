@@ -184,10 +184,11 @@ export function routeSteerDelivery(
     }
 
     case 'broker-injection': {
-      // The broker adapter watches `liveSteerTransport` on the session and
-      // injects the next tool result with `{"type":"steering","text":...}`.
-      // Auto-create the transport on first use so the Cursor launch site
-      // doesn't need to know about broker-injection plumbing.
+      // A main-side consumer drains the armed text at its next natural
+      // boundary: the MCP broker's tools/call handler for Cursor, the
+      // provider tool loop's next model request for Ollama. Auto-create the
+      // transport on first use so launch sites don't need to know about
+      // broker-injection plumbing.
       if (!session.liveSteerTransport) {
         const transport = createBrokerSteerTransport(
           (text) => {

@@ -18,6 +18,7 @@ import {
 } from '../ScopedPathAccess'
 import { isRecord, requireNonEmptyString } from '../settings/MainSanitizers'
 import { routeWithRunId } from '../run/RunRoute'
+import { drainPendingSteerTextFromSession } from '../steering/BrokerSteerTransport'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { GeminiToolContext } from '../runStateTypes'
 import type { RunManager } from '../RunManager'
@@ -678,6 +679,11 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         reportWorkingTokenUsage: deps.reportWorkingTokenUsage,
         runManager: deps.runManager,
         emitProviderCapabilityWarnings: deps.emitProviderCapabilityWarnings,
+        // Mid-turn steering: the provider loop drains text the
+        // SteeringOrchestrator armed on this run's session and injects it
+        // into its next model request (see OllamaProvider).
+        drainPendingSteerText: (appRunId) =>
+          drainPendingSteerTextFromSession(deps.runManager.get(appRunId)),
         executeTool: executeLocalTool,
         createHostCommandProjection: deps.createHostCommandProjection,
         getOllamaSessionMemory: (chatId, memoryKey) => {
