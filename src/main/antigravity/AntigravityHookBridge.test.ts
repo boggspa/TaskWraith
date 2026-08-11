@@ -148,6 +148,49 @@ describe('startAgyHookBridgeServer', () => {
     ])
   })
 
+  it('decodes the JSON-quoted scalar args emitted by agy 1.1.12 before policy checks', async () => {
+    const server = await startServer()
+    const token = createAgyHookBridgeToken()
+    const seen: Array<{ command: string | null; path: string | null }> = []
+    server.registerRun(token, async (toolCall) => {
+      seen.push({ command: toolCall.command, path: toolCall.targetPath })
+      return toolCall.command === 'git status --porcelain'
+        ? { decision: 'allow' }
+        : { decision: 'none' }
+    })
+
+    await expect(
+      post(
+        server.port,
+        {
+          toolCall: {
+            name: 'run_command',
+            args: {
+              CommandLine: '"git status --porcelain"',
+              Cwd: '"/repo"'
+            }
+          }
+        },
+        token
+      )
+    ).resolves.toEqual({ decision: 'allow' })
+    await post(
+      server.port,
+      {
+        toolCall: {
+          name: 'write_to_file',
+          args: { TargetFile: '"/repo/src/a.ts"' }
+        }
+      },
+      token
+    )
+
+    expect(seen).toEqual([
+      { command: 'git status --porcelain', path: null },
+      { command: null, path: '/repo/src/a.ts' }
+    ])
+  })
+
   it('arbitrates a mutation tool that carries no recognisable path', async () => {
     const server = await startServer()
     const token = createAgyHookBridgeToken()
@@ -161,7 +204,7 @@ describe('startAgyHookBridgeServer', () => {
     ).resolves.toEqual({ decision: 'deny', reason: 'plan mode' })
   })
 
-  it('maps gate decisions for a registered token and stays no-decision for everything else', async () => {
+  it('maps gate decisions, fails closed on invalid requests, and preserves deliberate none', async () => {
     const server = await startServer()
     const token = createAgyHookBridgeToken()
     const seen: string[] = []
@@ -182,29 +225,39 @@ describe('startAgyHookBridgeServer', () => {
       decision: 'deny',
       reason: 'tier declined'
     })
-    // Missing/unknown token → {} (fail-safe: agy-native flow).
-    await expect(post(server.port, toolCallBody('git log'), undefined)).resolves.toEqual({})
+    // The settings lease may have opened command(*), so requests that cannot
+    // reach their registered TaskWraith gate must deny rather than fall through.
+    await expect(post(server.port, toolCallBody('git log'), undefined)).resolves.toMatchObject({
+      decision: 'deny'
+    })
     await expect(
       post(server.port, toolCallBody('git log'), createAgyHookBridgeToken())
-    ).resolves.toEqual({})
-    // Malformed body, and a tool this handler chose not to arbitrate → {}.
-    await expect(post(server.port, 'not json', token)).resolves.toEqual({})
+    ).resolves.toMatchObject({ decision: 'deny' })
+    // Malformed body denies. A valid tool the registered handler deliberately
+    // declines to arbitrate still returns {} and follows agy's native rules.
+    await expect(post(server.port, 'not json', token)).resolves.toMatchObject({
+      decision: 'deny'
+    })
     await expect(
       post(server.port, { toolCall: { name: 'view_file', args: {} } }, token)
     ).resolves.toEqual({})
     expect(seen).toEqual(['git log --oneline', 'rm -rf build'])
 
     unregister()
-    await expect(post(server.port, toolCallBody('git log'), token)).resolves.toEqual({})
+    await expect(post(server.port, toolCallBody('git log'), token)).resolves.toMatchObject({
+      decision: 'deny'
+    })
   })
 
-  it('resolves to no-decision when the gate handler itself throws', async () => {
+  it('denies when the gate handler itself throws', async () => {
     const server = await startServer()
     const token = createAgyHookBridgeToken()
     server.registerRun(token, async () => {
       throw new Error('gate exploded')
     })
-    await expect(post(server.port, toolCallBody('git status'), token)).resolves.toEqual({})
+    await expect(post(server.port, toolCallBody('git status'), token)).resolves.toMatchObject({
+      decision: 'deny'
+    })
   })
 
   it('lets the handler return none to defer to the agy-native flow', async () => {

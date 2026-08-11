@@ -24,9 +24,9 @@
 // emits a deny decision rather than `{}` — `{}` would hand the call back to an
 // agy permission layer TaskWraith has deliberately opened.
 //
-// Fail-safe shape: bad token, malformed body, and gate throws still resolve to
-// `{}`; those are answered by a live bridge that has simply chosen not to
-// arbitrate, and agy's own permission layer remains in force for them.
+// Fail-safe shape: bad token, malformed body, and gate throws DENY. Only an
+// explicit `none` from the registered run handler defers to agy's native flow;
+// otherwise `{}` could hand a call to the command(*) rule the lease installed.
 
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
@@ -34,7 +34,7 @@ import { randomBytes } from 'node:crypto'
 const HOOK_NAME = 'taskwraith-approval-bridge'
 /** agy default hook timeout is 30s; an attended approval card needs longer. */
 const HOOK_TIMEOUT_SECONDS = 600
-/** curl gives up before agy's own hook timeout so the fallback `{}` wins. */
+/** curl gives up before agy's own hook timeout so the fallback denial wins. */
 const CURL_MAX_TIME_SECONDS = HOOK_TIMEOUT_SECONDS - 10
 const MAX_REQUEST_BYTES = 512 * 1024
 const TOKEN_HEX_RE = /^[0-9a-f]{32,128}$/
@@ -96,6 +96,27 @@ const TARGET_PATH_KEYS = [
   'path'
 ]
 
+/**
+ * agy 1.1.12 started encoding scalar tool args as JSON string literals inside
+ * the already-JSON hook payload (`CommandLine: '"git status"'`). Decode exactly
+ * one such layer before policy classification. If the value is not a valid
+ * JSON string literal, preserve it byte-for-byte so the downstream command
+ * classifier fails closed instead of repairing attacker-controlled syntax.
+ */
+function decodeAgyHookScalar(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const decoded = JSON.parse(trimmed)
+      if (typeof decoded === 'string') return decoded
+    } catch {
+      // Keep the original value; policy classifiers will reject bad quoting.
+    }
+  }
+  return value
+}
+
 export function createAgyHookBridgeToken(): string {
   return randomBytes(24).toString('hex')
 }
@@ -144,25 +165,25 @@ function extractToolCall(body: unknown): AgyHookToolCall | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
   const toolCall = (body as { toolCall?: unknown }).toolCall
   if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) return null
-  const name = (toolCall as { name?: unknown }).name
-  if (typeof name !== 'string' || !name) return null
+  const name = decodeAgyHookScalar((toolCall as { name?: unknown }).name)
+  if (!name) return null
   const args = (toolCall as { args?: unknown }).args
   const argRecord =
     args && typeof args === 'object' && !Array.isArray(args)
       ? (args as Record<string, unknown>)
       : null
-  const commandLine = argRecord?.CommandLine
+  const commandLine = decodeAgyHookScalar(argRecord?.CommandLine)
   let targetPath: string | null = null
   for (const key of TARGET_PATH_KEYS) {
-    const value = argRecord?.[key]
-    if (typeof value === 'string' && value.trim()) {
+    const value = decodeAgyHookScalar(argRecord?.[key])
+    if (value?.trim()) {
       targetPath = value
       break
     }
   }
   return {
     name,
-    command: typeof commandLine === 'string' ? commandLine : null,
+    command: commandLine,
     targetPath
   }
 }
@@ -194,15 +215,22 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
       })
       response.end(text)
     }
+    const denyBridgeFailure = (): void => {
+      respond({
+        decision: 'deny',
+        reason:
+          'The TaskWraith approval bridge could not validate this tool call, so it was denied rather than run outside the signed permission posture.'
+      })
+    }
 
     if (request.method !== 'POST' || request.url !== '/agy/pretooluse') {
-      respond({})
+      denyBridgeFailure()
       return
     }
     const token = request.headers['x-taskwraith-hook-token']
     const decide = typeof token === 'string' ? runs.get(token) : undefined
     if (!decide) {
-      respond({})
+      denyBridgeFailure()
       return
     }
 
@@ -219,11 +247,11 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
       chunks.push(chunk)
     })
     request.on('error', () => {
-      if (!response.writableEnded) respond({})
+      if (!response.writableEnded) denyBridgeFailure()
     })
     request.on('end', () => {
       if (overflowed) {
-        respond({})
+        denyBridgeFailure()
         return
       }
       let toolCall: AgyHookToolCall | null = null
@@ -233,7 +261,7 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
         toolCall = null
       }
       if (!toolCall) {
-        respond({})
+        denyBridgeFailure()
         return
       }
       decide(toolCall).then(
@@ -245,7 +273,7 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
                 ? { decision: 'allow' }
                 : {}
           ),
-        () => respond({})
+        denyBridgeFailure
       )
     })
   })
