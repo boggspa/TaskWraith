@@ -15,11 +15,16 @@ disclosure, and TW-SEC-2026-014 moved from `Open` to `Remediated` after its
 multi-store completeness pass. Those dated notes are provenance, not the
 current release pointer.
 
-**2026-08-10 v1.9.4 public-baseline / v1.9.5 source-ahead boundary:** the
-latest published baseline is now **v1.9.4**
+**2026-08-11 v1.9.4 public-baseline / v1.9.5 source-ahead boundary:** the
+latest published baseline is **v1.9.4**
 (`ec967526f3cea0c46fade17ee1c392bbbf457c9b`). This checkout contains
-source-ahead work toward the **v1.9.5** release boundary; the exact integrated
-candidate must be re-recorded and verified before a release claim. The
+source-ahead work toward the **v1.9.5** release boundary, now at
+**`9dc267cbf`** (**62 commits** past the 2026-08-10 ledger snapshot). The
+exact integrated candidate must be re-recorded and verified before a release
+claim. A post-8/10 security review of those 62 commits (channels migration,
+antiGravity headless-shell/permission-lease fixes, mid-turn steering, advisory
+guidance, ensemble/closeout/renderer work) found **no new security posture
+change requiring a new ledger entry** at this source-ahead tip. The
 2026-07-27 v1.9.0 paperwork boundary below retains the historical v1.8.9 to
 v1.9.0 provenance.
 
