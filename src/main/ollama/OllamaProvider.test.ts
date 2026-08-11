@@ -3253,6 +3253,9 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
     expect(humanizeOllamaModelId('granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
     expect(humanizeOllamaModelId('nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
+    expect(humanizeOllamaModelId('nemotron-3.5-lightning:30b-mlx')).toBe(
+      'Nemotron 3.5 Lightning (30B-MLX)'
+    )
     expect(humanizeOllamaModelId('llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
     expect(humanizeOllamaModelId('rnj-1:latest')).toBe('Rnj-1 (8B Param)')

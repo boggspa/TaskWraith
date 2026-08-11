@@ -204,6 +204,7 @@ describe('Ollama provider model defaults', () => {
       'granite4.1:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
+      'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
       'ministral-3:3b',
       'ministral-3:14b',

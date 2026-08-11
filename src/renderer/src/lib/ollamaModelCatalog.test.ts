@@ -30,6 +30,19 @@ describe('mergeOllamaModelCatalog', () => {
     )
   })
 
+  it('keeps the curated Nemotron Lightning MLX label when live Ollama returns the raw tag', () => {
+    const models = mergeOllamaModelCatalog([
+      {
+        id: 'nemotron-3.5-lightning:30b-mlx',
+        label: 'nemotron-3.5-lightning:30b-mlx'
+      }
+    ])
+
+    expect(models.find((model) => model.id === 'nemotron-3.5-lightning:30b-mlx')?.label).toBe(
+      'Nemotron 3.5 Lightning (30B-MLX)'
+    )
+  })
+
   it('deduplicates GPT OSS aliases into one OpenAI picker row', () => {
     const models = mergeOllamaModelCatalog([
       { id: 'gpt-oss:latest', label: 'gpt-oss:latest' },

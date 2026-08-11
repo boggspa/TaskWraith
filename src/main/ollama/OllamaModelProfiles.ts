@@ -198,6 +198,11 @@ export function ollamaModelFamilyPromptLines(
         'Model profile (Nemotron 3 33B): use its multimodal reasoning profile for deeper local analysis, but keep workspace tools scoped.',
         'Prefer native tool calls and make verification gaps explicit before release-sensitive changes.'
       ]
+    case 'nemotron3_5_lightning_30b':
+      return [
+        'Model profile (Nemotron 3.5 Lightning 30B-A3B): always-on agent model with native tools, thinking support, and a 262K context window.',
+        'Use precise tool schemas, checkpoint state across sustained workflows, and close consequential changes with explicit verification.'
+      ]
     case 'gpt_oss_20b':
       return [
         'Model profile (GPT OSS): you may reason internally, but you MUST emit a real tool call or a final answer — never stop on a tool-intent stub.',
@@ -503,6 +508,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'granite4_1_30b' ||
     family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
+    family === 'nemotron3_5_lightning_30b' ||
     family === 'qwen3_5_4b' ||
     family === 'devstral_small_2_24b' ||
     family === 'ministral_3_3b' ||

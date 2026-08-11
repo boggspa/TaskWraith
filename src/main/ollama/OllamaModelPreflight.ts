@@ -21,6 +21,7 @@ export type OllamaModelFamily =
   | 'granite4_1_30b'
   | 'nemotron3_nano_4b'
   | 'nemotron3_33b'
+  | 'nemotron3_5_lightning_30b'
   | 'devstral_small_2_24b'
   | 'ministral_3_3b'
   | 'ministral_3_14b'
@@ -114,6 +115,12 @@ export function resolveOllamaModelFamily(
     return 'nemotron3_nano_4b'
   }
   if (key === 'nemotron3:33b' || key.startsWith('nemotron3:33b-')) return 'nemotron3_33b'
+  if (
+    key === 'nemotron-3.5-lightning:30b-mlx' ||
+    key.startsWith('nemotron-3.5-lightning:30b-mlx-')
+  ) {
+    return 'nemotron3_5_lightning_30b'
+  }
   if (key === 'qwen3:4b-instruct' || key.startsWith('qwen3:4b')) return 'qwen3_4b'
   // The dense 3.5 sizes must be matched BEFORE the bare `qwen3` metadata
   // fallbacks below; their order is cosmetic because the tags do not overlap.
@@ -227,6 +234,14 @@ export function resolveOllamaModelFamily(
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
     if (billions != null && billions < 3) return 'qwen3_5_2b'
     return billions != null && billions < 7 ? 'qwen3_5_4b' : 'qwen3_5_9b'
+  }
+  if (
+    meta.includes('nemotron-3.5-lightning') ||
+    meta.includes('nemotron 3.5 lightning') ||
+    meta.includes('nemotron3.5lightning') ||
+    meta.includes('nemotron_3_5_lightning')
+  ) {
+    return 'nemotron3_5_lightning_30b'
   }
   if (meta.includes('nemotron')) {
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
@@ -446,6 +461,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it for deep local analysis and visual checks; pair broad multi-file implementation with an explicit verification plan when latency or reliability matters.'
       }
+    case 'nemotron3_5_lightning_30b':
+      return {
+        guidance: `${modelLabel} is NVIDIA's 30B-A3B mixture-of-experts model for always-on agents, with native tools, thinking support, and a 262K context window.`,
+        delegateHint:
+          'Use it for sustained tool-driven workflows, checkpoint durable state between long steps, and close release-sensitive work with explicit verification.'
+      }
     case 'devstral_small_2_24b':
       return {
         guidance: `${modelLabel} is an agentic-coding local model built for tool-driven workspace edits.`,
@@ -563,6 +584,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 4
     case 'nemotron3_33b':
       return 33
+    case 'nemotron3_5_lightning_30b':
+      return 30
     case 'devstral_small_2_24b':
       return 24
     case 'ministral_3_3b':

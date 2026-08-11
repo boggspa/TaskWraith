@@ -155,6 +155,7 @@ public enum ModelContextLengths {
                 (id: "granite4.1:30b",     label: "Granite 4.1 (30B Param)"),
                 (id: "nemotron-3-nano:4b", label: "Nemotron 3 Nano (4B Param)"),
                 (id: "nemotron3:33b",      label: "Nemotron 3 Nano Omni (33B Param)"),
+                (id: "nemotron-3.5-lightning:30b-mlx", label: "Nemotron 3.5 Lightning (30B-MLX)"),
                 (id: "devstral-small-2:24b", label: "Devstral Small 2 (24B Param)"),
                 (id: "ministral-3:3b",     label: "Ministral 3 (3B Param)"),
                 (id: "ministral-3:14b",    label: "Ministral 3 (14B Param)"),

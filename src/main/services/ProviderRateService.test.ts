@@ -341,6 +341,7 @@ describe('BAKED_IN_RATES', () => {
         'granite4.1:3b',
         'granite4.1:30b',
         'nemotron3:33b',
+        'nemotron-3.5-lightning:30b-mlx',
         'qwen3.5:4b',
         'devstral-small-2:24b',
         'ministral-3:14b',

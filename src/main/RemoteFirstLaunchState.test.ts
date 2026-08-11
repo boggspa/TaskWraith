@@ -166,6 +166,11 @@ describe('buildRemoteFirstLaunchState', () => {
           command: 'ollama run north-mini-code-1.0:q4_K_M'
         }),
         {
+          id: 'nemotron-3.5-lightning:30b-mlx',
+          label: 'Nemotron 3.5 Lightning (30B-MLX)',
+          command: 'ollama run nemotron-3.5-lightning:30b-mlx'
+        },
+        {
           id: 'muse-glimmer:30b-mlx',
           label: 'Muse Glimmer (30B-MLX)',
           command: 'ollama run muse-glimmer:30b-mlx'

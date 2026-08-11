@@ -199,6 +199,10 @@ describe('buildModelContextLengthGroups', () => {
       label: 'Muse Glimmer (30B-MLX)',
       contextWindow: 131_072
     })
+    expect(byId.get('nemotron-3.5-lightning:30b-mlx')).toMatchObject({
+      label: 'Nemotron 3.5 Lightning (30B-MLX)',
+      contextWindow: 262_144
+    })
     expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
   })
 

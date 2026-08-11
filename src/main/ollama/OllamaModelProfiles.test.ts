@@ -91,6 +91,13 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines).toContain('explicit verification')
   })
 
+  it('adds Nemotron Lightning sustained-agent and checkpoint guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('nemotron-3.5-lightning:30b-mlx').join(' ')
+    expect(lines).toContain('Nemotron 3.5 Lightning 30B-A3B')
+    expect(lines).toContain('always-on agent')
+    expect(lines).toContain('checkpoint state')
+  })
+
   it('gives the 3.5 4B tag its own lightweight profile, not the unknown fallback', () => {
     const lines = ollamaModelFamilyPromptLines('qwen3.5:4b').join(' ')
     expect(lines).toContain('Qwen 3.5 4B')

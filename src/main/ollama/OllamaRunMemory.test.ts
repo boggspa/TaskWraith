@@ -134,6 +134,12 @@ describe('OllamaRunMemory', () => {
       resolveOllamaWorkingMemoryLimits('muse-glimmer:30b-mlx').workingMemoryMaxChars
     ).toBeGreaterThan(resolveOllamaWorkingMemoryLimits('llama3.1:8b').workingMemoryMaxChars)
     expect(resolveOllamaWorkingMemoryLimits('muse-glimmer:30b-mlx').toolResultMaxChars).toBe(1200)
+    expect(
+      resolveOllamaWorkingMemoryLimits('nemotron-3.5-lightning:30b-mlx').workingMemoryMaxChars
+    ).toBeGreaterThan(resolveOllamaWorkingMemoryLimits('llama3.1:8b').workingMemoryMaxChars)
+    expect(
+      resolveOllamaWorkingMemoryLimits('nemotron-3.5-lightning:30b-mlx').toolResultMaxChars
+    ).toBe(1200)
     for (const modelId of [
       'ministral-3:3b',
       'granite4:3b',

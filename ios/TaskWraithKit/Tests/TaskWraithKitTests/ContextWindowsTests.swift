@@ -32,6 +32,9 @@ struct ContextWindowsTests {
         #expect(
             ContextWindows.resolve(provider: "ollama", model: "north-mini-code-1.0:q4_K_M")
                 == 500_000)
+        #expect(
+            ContextWindows.resolve(
+                provider: "ollama", model: "nemotron-3.5-lightning:30b-mlx") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.2:3b") == 131_072)
         let lightweightWindows = [
             "ministral-3:3b": 262_144,

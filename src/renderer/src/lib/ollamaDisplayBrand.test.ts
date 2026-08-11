@@ -35,6 +35,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'NVIDIA',
       providerClass: 'nvidia'
     })
+    expect(resolveOllamaDisplayBrand('nemotron-3.5-lightning:30b-mlx')).toMatchObject({
+      providerLabel: 'NVIDIA',
+      providerClass: 'nvidia',
+      modelLabel: 'Nemotron 3.5 Lightning (30B-MLX)'
+    })
     expect(resolveOllamaDisplayBrand('gpt-oss:20b', 'GPT OSS (20B Param)')).toMatchObject({
       providerLabel: 'OpenAI',
       providerClass: 'openai'
@@ -127,6 +132,7 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'ministral-3:14b')).toBe('mistral')
     expect(resolveProviderHueClass('ollama', 'llama3.2:3b')).toBe('meta')
     expect(resolveProviderHueClass('ollama', 'muse-glimmer:30b-mlx')).toBe('meta')
+    expect(resolveProviderHueClass('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe('nvidia')
     expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
     expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
   })
@@ -186,6 +192,7 @@ describe('resolveProviderBrandLabel', () => {
   it('returns the spoofed upstream brand label for Ollama brands', () => {
     expect(resolveProviderBrandLabel('ollama', 'qwen3.5:9b')).toBe('Alibaba')
     expect(resolveProviderBrandLabel('ollama', 'nemotron3:33b')).toBe('NVIDIA')
+    expect(resolveProviderBrandLabel('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe('NVIDIA')
     expect(resolveProviderBrandLabel('ollama', 'laguna-xs-2.1:q8_0')).toBe('Poolside')
     expect(resolveProviderBrandLabel('ollama', 'devstral-small-2:24b')).toBe('Mistral')
     expect(resolveProviderBrandLabel('ollama', 'ministral-3:14b')).toBe('Mistral')

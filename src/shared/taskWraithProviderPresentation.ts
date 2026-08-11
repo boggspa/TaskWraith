@@ -156,6 +156,7 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^granite4:3b(?:-|$)/, 'Granite 4.0 (3B Param)'],
     [/^nemotron-3-nano:4b(?:-|$)/, 'Nemotron 3 Nano (4B Param)'],
     [/^nemotron3:33b(?:-|$)/, 'Nemotron 3 Nano Omni (33B Param)'],
+    [/^nemotron-3\.5-lightning:30b-mlx(?:-|$)/, 'Nemotron 3.5 Lightning (30B-MLX)'],
     [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)'],
     [/^devstral-small-2:24b(?:-|$)/, 'Devstral Small 2 (24B Param)'],
     [/^ministral-3:3b(?:-|$)/, 'Ministral 3 (3B Param)'],

@@ -20,6 +20,7 @@ describe('OllamaRetrievalFirst', () => {
       'rnj-1',
       'glm-4.7-flash:q4_K_M',
       'north-mini-code-1.0:q4_K_M',
+      'nemotron-3.5-lightning:30b-mlx',
       'muse-glimmer:30b-mlx',
       'llama3.2:3b'
     ]) {

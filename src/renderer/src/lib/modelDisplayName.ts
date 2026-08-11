@@ -174,6 +174,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
   'nemotron-3-nano:4b': 'Nemotron 3 Nano (4B Param)',
   'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
+  'nemotron-3.5-lightning:30b-mlx': 'Nemotron 3.5 Lightning (30B-MLX)',
   // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
   // `devstral-small` row above — same brand, different runtime.
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
@@ -384,6 +385,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('nemotron-3-nano:4b-')) {
     return 'Nemotron 3 Nano (4B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('nemotron-3.5-lightning:30b-mlx-')) {
+    return 'Nemotron 3.5 Lightning (30B-MLX)'
   }
   if (provider === 'ollama' && key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'

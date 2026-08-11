@@ -154,6 +154,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'granite4.1:30b': 131_072,
   'nemotron-3-nano:4b': 262_144,
   'nemotron3:33b': 131_072,
+  // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
+  'nemotron-3.5-lightning:30b-mlx': 262_144,
   // Both read off the live daemon's `/api/show` `mistral3.context_length`
   // (2026-07-30) rather than assumed from the upstream Mistral API — Devstral
   // Small 2 carries a 384k window locally, 3x what the API tier documents.

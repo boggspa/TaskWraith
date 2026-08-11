@@ -217,6 +217,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'granite4.1:3b')).toBe('Granite 4.1 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
       expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
+      expect(humaniseModelId('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
+        'Nemotron 3.5 Lightning (30B-MLX)'
+      )
       expect(humaniseModelId('ollama', 'qwen3.5:4b')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')

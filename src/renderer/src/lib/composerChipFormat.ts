@@ -224,6 +224,12 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'nemotron3:33b' || id.startsWith('nemotron3:33b-')) {
       return 'Nemotron 3 Nano Omni (33B Param)'
     }
+    if (
+      id === 'nemotron-3.5-lightning:30b-mlx' ||
+      id.startsWith('nemotron-3.5-lightning:30b-mlx-')
+    ) {
+      return 'Nemotron 3.5 Lightning (30B-MLX)'
+    }
     if (id === 'devstral-small-2:24b' || id.startsWith('devstral-small-2:24b-')) {
       return 'Devstral Small 2 (24B Param)'
     }

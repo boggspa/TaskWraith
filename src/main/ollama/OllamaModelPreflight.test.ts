@@ -29,6 +29,9 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('granite4.1:3b')).toBe('granite4_1_3b')
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
+    expect(resolveOllamaModelFamily('nemotron-3.5-lightning:30b-mlx')).toBe(
+      'nemotron3_5_lightning_30b'
+    )
     expect(resolveOllamaModelFamily('gpt-oss:latest')).toBe('gpt_oss_20b')
     expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
     expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
@@ -93,6 +96,15 @@ describe('resolveOllamaModelFamily', () => {
         show: { model_info: { 'general.architecture': 'MuseGlimmerForConditionalGeneration' } }
       })
     ).toBe('muse_glimmer_30b')
+    expect(
+      resolveOllamaModelFamily('custom-lightning:latest', {
+        id: 'custom-lightning:latest',
+        label: 'Custom Lightning',
+        family: 'nemotron_h',
+        parameterSize: '30B',
+        show: { model_info: { 'general.basename': 'Nemotron-3.5-Lightning' } }
+      })
+    ).toBe('nemotron3_5_lightning_30b')
     expect(
       resolveOllamaModelFamily('custom-legacy-llama:latest', {
         id: 'custom-legacy-llama:latest',
@@ -382,6 +394,27 @@ describe('evaluateOllamaModelPreflight', () => {
     })
     expect(result.family).toBe('muse_glimmer_30b')
     expect(result.guidance).toContain("Meta's 30B multimodal agentic model")
+    expect(result.checks.find((check) => check.id === 'tools')?.ok).toBe(true)
+  })
+
+  it('surfaces Nemotron 3.5 Lightning as an always-on NVIDIA agent model', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'nemotron-3.5-lightning:30b-mlx',
+      modelLabel: 'Nemotron 3.5 Lightning (30B-MLX)',
+      modelInfo: {
+        id: 'nemotron-3.5-lightning:30b-mlx',
+        label: 'Nemotron 3.5 Lightning (30B-MLX)',
+        parameterSize: '30B',
+        quantizationLevel: 'NVFP4',
+        sizeBytes: 23_000_000_000,
+        capabilities: ['completion', 'tools', 'thinking']
+      },
+      installedModelIds: ['nemotron-3.5-lightning:30b-mlx'],
+      totalMemoryBytes: 64 * GB
+    })
+    expect(result.family).toBe('nemotron3_5_lightning_30b')
+    expect(result.guidance).toContain('always-on agents')
+    expect(result.guidance).toContain('262K context window')
     expect(result.checks.find((check) => check.id === 'tools')?.ok).toBe(true)
   })
 

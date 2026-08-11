@@ -8,6 +8,12 @@ describe('resolveHealthEntryPresentation', () => {
       displayProviderLabel: 'Alibaba',
       displayHueClass: 'alibaba'
     })
+    expect(
+      resolveHealthEntryPresentation('ollama', 'nemotron-3.5-lightning:30b-mlx', 'Ollama')
+    ).toEqual({
+      displayProviderLabel: 'NVIDIA',
+      displayHueClass: 'nvidia'
+    })
   })
 
   it('falls back to the runtime provider for non-Ollama participants', () => {
@@ -101,6 +107,10 @@ describe('matchOllamaBrand', () => {
     expect(matchOllamaBrand('qwen3.5:2b')?.providerClass).toBe('alibaba')
     expect(matchOllamaBrand('deepseek-r1:1.5b')?.providerClass).toBe('deepseek')
     expect(matchOllamaBrand('nemotron-3-nano:4b')?.providerClass).toBe('nvidia')
+    expect(matchOllamaBrand('nemotron-3.5-lightning:30b-mlx')).toMatchObject({
+      providerLabel: 'NVIDIA',
+      providerClass: 'nvidia'
+    })
     expect(matchOllamaBrand('lfm2.5-thinking:1.2b')?.providerClass).toBe('liquid')
     expect(matchOllamaBrand('gemma3:4b')?.providerClass).toBe('google')
   })

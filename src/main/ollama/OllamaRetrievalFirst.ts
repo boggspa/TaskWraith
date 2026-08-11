@@ -20,6 +20,7 @@ const RETRIEVAL_FIRST_FAMILIES = new Set([
   'granite4_1_30b',
   'nemotron3_nano_4b',
   'nemotron3_33b',
+  'nemotron3_5_lightning_30b',
   'devstral_small_2_24b',
   'ministral_3_3b',
   'ministral_3_14b',

@@ -35,10 +35,11 @@ public struct OllamaDisplayBrandDefinition: Hashable, Sendable {
 public enum OllamaDisplayBrands {
 
     /// Exact catalogue labels for models that share an upstream brand with a
-    /// differently named family. Brand-wide fallbacks cannot distinguish Muse
-    /// Glimmer from Llama when callers only have the raw Ollama tag.
+    /// differently named family. Brand-wide fallbacks cannot distinguish these
+    /// newer families when callers only have the raw Ollama tag.
     private static let exactModelLabels = [
-        "muse-glimmer:30b-mlx": "Muse Glimmer (30B-MLX)"
+        "nemotron-3.5-lightning:30b-mlx": "Nemotron 3.5 Lightning (30B-MLX)",
+        "muse-glimmer:30b-mlx": "Muse Glimmer (30B-MLX)",
     ]
 
     /// Curated brand table. Order mirrors the desktop picker ordering.

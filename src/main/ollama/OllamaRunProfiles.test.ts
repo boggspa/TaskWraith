@@ -79,6 +79,10 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaRunProfile('muse-glimmer:30b-mlx', 'provider_parity').contextCapTokens
     ).toBe(131_072)
+    expect(
+      resolveOllamaRunProfile('nemotron-3.5-lightning:30b-mlx', 'provider_parity')
+        .contextCapTokens
+    ).toBe(262_144)
     expect(resolveOllamaRunProfile('llama3.2:3b', 'provider_parity').contextCapTokens).toBe(131_072)
   })
 
@@ -165,6 +169,7 @@ describe('OllamaRunProfiles', () => {
       'deepseek-r1:8b',
       'glm-4.7-flash:q4_K_M',
       'north-mini-code-1.0:q4_K_M',
+      'nemotron-3.5-lightning:30b-mlx',
       'muse-glimmer:30b-mlx'
     ]) {
       expect(resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(

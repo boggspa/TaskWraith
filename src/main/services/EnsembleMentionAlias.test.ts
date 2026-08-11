@@ -174,6 +174,12 @@ describe('generateModelAliases', () => {
     expect(aliases).toContain('muse glimmer 30b mlx')
     expect(aliases).not.toContain('muse')
   })
+
+  it('ollama: supports the complete Nemotron 3.5 Lightning family mention', () => {
+    const aliases = generateModelAliases('ollama', 'nemotron-3.5-lightning:30b-mlx')
+    expect(aliases).toContain('nemotron 3.5 lightning')
+    expect(aliases).toContain('nemotron 3.5 lightning 30b mlx')
+  })
 })
 
 describe('getParticipantAliases', () => {

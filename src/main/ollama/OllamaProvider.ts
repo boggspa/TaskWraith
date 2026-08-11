@@ -811,6 +811,12 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'nemotron3:33b' || key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
   }
+  if (
+    key === 'nemotron-3.5-lightning:30b-mlx' ||
+    key.startsWith('nemotron-3.5-lightning:30b-mlx-')
+  ) {
+    return 'Nemotron 3.5 Lightning (30B-MLX)'
+  }
   if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
   }

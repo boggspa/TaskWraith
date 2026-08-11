@@ -221,6 +221,7 @@ export function resolveOllamaThinkingLevel(
     family === 'ornith_35b' ||
     family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
+    family === 'nemotron3_5_lightning_30b' ||
     family === 'deepseek_r1_1_5b' ||
     family === 'deepseek_r1_8b' ||
     family === 'glm_4_7_flash' ||

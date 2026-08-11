@@ -25,6 +25,12 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.resolve(modelId: "nemotron3:33b")?.providerLabel == "NVIDIA")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "nemotron-3.5-lightning:30b-mlx")?.providerClass
+                == "nvidia")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "nemotron-3.5-lightning:30b-mlx")?.modelLabel
+                == "Nemotron 3.5 Lightning (30B-MLX)")
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "gpt-oss:20b")?.providerClass == "openai")
         #expect(
             OllamaDisplayBrands.resolve(modelId: "minicpm-v4.5:8b")?.providerLabel == "OpenBMB")
@@ -109,6 +115,9 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "muse-glimmer:30b-mlx") == "meta")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "nemotron-3.5-lightning:30b-mlx") == "nvidia")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(

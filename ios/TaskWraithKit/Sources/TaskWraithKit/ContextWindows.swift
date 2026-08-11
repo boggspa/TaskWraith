@@ -144,6 +144,8 @@ public enum ContextWindows {
         "granite4.1:30b": 131_072,
         "nemotron-3-nano:4b": 262_144,
         "nemotron3:33b": 131_072,
+        // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
+        "nemotron-3.5-lightning:30b-mlx": 262_144,
         "devstral-small-2:24b": 393_216,
         "ministral-3:3b": 262_144,
         "ministral-3:14b": 262_144,

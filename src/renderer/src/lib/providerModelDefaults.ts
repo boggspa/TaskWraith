@@ -416,6 +416,12 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking'
   },
   {
+    id: 'nemotron-3.5-lightning:30b-mlx',
+    label: 'Nemotron 3.5 Lightning (30B-MLX)',
+    description:
+      'NVIDIA Nemotron 3.5 Lightning 30B-MLX via Ollama · 262k context · tools/thinking · 3B active · always-on agents'
+  },
+  {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     description:

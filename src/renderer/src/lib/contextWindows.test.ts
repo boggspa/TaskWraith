@@ -53,6 +53,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'granite4.1:3b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'granite4.1:30b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron3:33b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.5:4b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.5:2b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma3:4b')).toBe(131_072)

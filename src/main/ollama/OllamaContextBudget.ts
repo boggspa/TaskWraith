@@ -187,6 +187,7 @@ export function resolveOllamaContextBudget(
     case 'laguna_xs_2_1':
     case 'granite4_1_30b':
     case 'nemotron3_33b':
+    case 'nemotron3_5_lightning_30b':
     case 'devstral_small_2_24b':
     case 'glm_4_7_flash':
     case 'north_mini_code_1_0':

@@ -121,6 +121,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   },
   { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)', command: 'ollama run nemotron3:33b' },
   {
+    id: 'nemotron-3.5-lightning:30b-mlx',
+    label: 'Nemotron 3.5 Lightning (30B-MLX)',
+    command: 'ollama run nemotron-3.5-lightning:30b-mlx'
+  },
+  {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     command: 'ollama run devstral-small-2:24b'
