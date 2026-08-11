@@ -930,11 +930,7 @@ function validateCanvasSketchArgs(channel: string, value: unknown): void {
   if (value === undefined || value === null) return
   if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
   const embedded = channel === 'canvas:open-sketch-embedded'
-  validateKnownKeys(
-    channel,
-    value,
-    new Set(['chatId', ...(embedded ? ['presentation'] : [])])
-  )
+  validateKnownKeys(channel, value, new Set(['chatId', ...(embedded ? ['presentation'] : [])]))
   if (value.presentation !== undefined && value.presentation !== 'dock') {
     throw new Error(`${channel} presentation must be dock.`)
   }

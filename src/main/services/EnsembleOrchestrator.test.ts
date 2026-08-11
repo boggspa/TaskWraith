@@ -6832,9 +6832,7 @@ Next action:
     )
 
     expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
-    expect(selection.message).toContain(
-      'queued to apply once when the next Continuous pass forms'
-    )
+    expect(selection.message).toContain('queued to apply once when the next Continuous pass forms')
     // Queueing rewrites no seat state in the live pass.
     expect(
       harness.chat.ensemble?.activeRound?.participants.find(

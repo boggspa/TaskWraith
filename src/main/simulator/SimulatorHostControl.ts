@@ -10,10 +10,7 @@
  * in parallel.
  */
 import type { SimulatorHostActionResult } from '../../shared/simulatorCanvas'
-import type {
-  SimulatorHostService,
-  SimulatorPasteboardDirection
-} from './SimulatorHostService'
+import type { SimulatorHostService, SimulatorPasteboardDirection } from './SimulatorHostService'
 import type { SimulatorControllerLease } from './SimulatorControllerLease'
 import type { SimulatorSessionStore } from './SimulatorSessionStore'
 

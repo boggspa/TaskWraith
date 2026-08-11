@@ -386,19 +386,16 @@ export function registerSimulatorCanvasHandlers(
     }
   )
 
-  ipcMain.handle(
-    'simulator-canvas:authorize-pasteboard-intent',
-    async (event, token: unknown) => {
-      const value = requiredString(token, 'intent token')
-      const senderId = (event as { sender?: { id?: number } })?.sender?.id
-      if (typeof senderId !== 'number') return { ok: false as const }
-      pasteboardIntents.set(senderId, {
-        token: value,
-        expiresAt: Date.now() + SIMULATOR_PASTEBOARD_INTENT_TTL_MS
-      })
-      return { ok: true as const }
-    }
-  )
+  ipcMain.handle('simulator-canvas:authorize-pasteboard-intent', async (event, token: unknown) => {
+    const value = requiredString(token, 'intent token')
+    const senderId = (event as { sender?: { id?: number } })?.sender?.id
+    if (typeof senderId !== 'number') return { ok: false as const }
+    pasteboardIntents.set(senderId, {
+      token: value,
+      expiresAt: Date.now() + SIMULATOR_PASTEBOARD_INTENT_TTL_MS
+    })
+    return { ok: true as const }
+  })
 
   ipcMain.handle(
     'simulator-canvas:clipboard-push',

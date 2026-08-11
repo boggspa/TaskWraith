@@ -255,9 +255,7 @@ describe('IpcValidation', () => {
       ])
     ).not.toThrow()
     expect(() =>
-      validateIpcArgs('canvas:open-sketch-embedded', [
-        { chatId: 'chat-1', presentation: 'dock' }
-      ])
+      validateIpcArgs('canvas:open-sketch-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
     ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
     expect(() =>

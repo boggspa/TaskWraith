@@ -113,10 +113,7 @@ describe('DiffHoverPreview source labels', () => {
 describe('DiffHoverPreview semantics', () => {
   it('uses a caller-provided empty-state message for async commit previews', () => {
     expect(
-      diffHoverPreviewEmptyMessage(
-        { emptyMessage: 'Loading files changed by this commit…' },
-        false
-      )
+      diffHoverPreviewEmptyMessage({ emptyMessage: 'Loading files changed by this commit…' }, false)
     ).toBe('Loading files changed by this commit…')
     expect(diffHoverPreviewEmptyMessage({}, false)).toBe('No inline diff captured.')
   })

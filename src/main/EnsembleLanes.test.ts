@@ -480,9 +480,7 @@ describe('formatFanoutWaveCompletionStatus', () => {
         hasSourceRun: true,
         continuousReviewWave: false
       })
-    ).toBe(
-      `Fan-out wave complete · 1 lane(s) returned, 1 skipped (Work3 — ${'x'.repeat(139)}…).`
-    )
+    ).toBe(`Fan-out wave complete · 1 lane(s) returned, 1 skipped (Work3 — ${'x'.repeat(139)}…).`)
   })
 
   it('keeps the background, continuous review-wave, and serial-return arms', () => {

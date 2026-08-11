@@ -56,14 +56,14 @@ Collaboration, closed IPC/preload bridges, host/member panels, renderer models,
 and Channel-agent compatibility tests across `src/main`, `src/shared`,
 `src/preload`, and `src/renderer/src`.
 
-| Gate | Result |
-| --- | --- |
-| Combined Channels selector | PASS — 93 files / 795 tests |
-| Terminal production mission | PASS — 1 file / 14 tests |
-| TUI typecheck | PASS |
-| Architecture guard | PASS — no added renderer-to-main runtime edges |
-| Doctrine-integrity guard | PASS — 167 agent-read files checked |
-| Format ratchet | PASS |
+| Gate                        | Result                                         |
+| --------------------------- | ---------------------------------------------- |
+| Combined Channels selector  | PASS — 93 files / 795 tests                    |
+| Terminal production mission | PASS — 1 file / 14 tests                       |
+| TUI typecheck               | PASS                                           |
+| Architecture guard          | PASS — no added renderer-to-main runtime edges |
+| Doctrine-integrity guard    | PASS — 167 agent-read files checked            |
+| Format ratchet              | PASS                                           |
 
 The selector first found one stale textual integration assertion after host
 startup moved behind the terminal coordinator. The isolated test-only repair is
@@ -74,11 +74,11 @@ startup moved behind the terminal coordinator. The isolated test-only repair is
 The Channels paths are type-clean, but the full repository typecheck is not
 green because of existing unrelated errors:
 
-| Command | Result | Unrelated blocker |
-| --- | --- | --- |
+| Command                  | Result  | Unrelated blocker                                                                                      |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------ |
 | `npm run typecheck:node` | blocked | `src/main/muse/MuseIpcBridge.test.ts:274` (TS2352, TS2493) and `src/main/muse/MuseRun.ts:405` (TS2339) |
-| `npm run typecheck:web` | blocked | `src/renderer/src/lib/GeminiAdapter.ts:254` (TS2345: required `model`) |
-| `npm run typecheck:tui` | PASS | — |
+| `npm run typecheck:web`  | blocked | `src/renderer/src/lib/GeminiAdapter.ts:254` (TS2345: required `model`)                                 |
+| `npm run typecheck:tui`  | PASS    | —                                                                                                      |
 
 These failures are outside the Channels claim and were left untouched.
 
