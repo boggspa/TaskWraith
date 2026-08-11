@@ -164,11 +164,22 @@ describe('notification registry', () => {
     const ollama = groups.find((g) => g.provider === 'ollama')
     // Newest curated local tags — each spoofs its upstream brand hue.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'Muse Glimmer (30B-MLX)',
+      'Nemotron 3.5 Lightning (30B-MLX)',
       'North Mini Code 1.0',
       'GLM-4.7-Flash',
       'Rnj-1'
     ])
-    expect(ollama?.models.map((m) => m.accentProvider)).toEqual(['cohere', 'zai', 'essential'])
+    expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'meta',
+      'nvidia',
+      'cohere',
+      'zai',
+      'essential'
+    ])
+    // Muse Glimmer is an Ollama runtime entry even though Meta also has its own
+    // provider surface; do not split either new local model into a new group.
+    expect(groups.find((g) => g.provider === 'meta')).toBeUndefined()
 
     const mistral = groups.find((g) => g.provider === 'mistral')
     // Mistral's own Vibe seat, distinct from the `mistral/*` BYOK rows Pi

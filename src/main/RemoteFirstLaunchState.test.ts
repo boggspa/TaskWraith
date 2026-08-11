@@ -416,15 +416,20 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'Muse Glimmer (30B-MLX)',
+      'Nemotron 3.5 Lightning (30B-MLX)',
       'North Mini Code 1.0',
       'GLM-4.7-Flash',
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'meta',
+      'nvidia',
       'cohere',
       'zai',
       'essential'
     ])
+    expect(newAdditions?.groups?.find((group) => group.provider === 'meta')).toBeUndefined()
     const mistralGroup = newAdditions?.groups?.find((group) => group.provider === 'mistral')
     expect(mistralGroup?.models.map((model) => model.name)).toEqual([
       'Devstral Small',

@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-10'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-11'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'Muse Spark 1.2, local Ollama North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
+    body: 'Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
     dismissible: true,
     groups: [
       {
@@ -157,6 +157,18 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         provider: 'ollama',
         label: 'Ollama',
         models: [
+          {
+            name: 'Muse Glimmer (30B-MLX)',
+            blurb:
+              "Meta's 30B multimodal agent model with vision, tools, thinking, and failure recovery (131K).",
+            accentProvider: 'meta'
+          },
+          {
+            name: 'Nemotron 3.5 Lightning (30B-MLX)',
+            blurb:
+              "NVIDIA's 30B-A3B always-on agent model with tools, thinking, and a 262K context window.",
+            accentProvider: 'nvidia'
+          },
           {
             name: 'North Mini Code 1.0',
             blurb: "Cohere's 500K agentic coder with tools and thinking — local, no cloud account.",

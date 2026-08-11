@@ -72,6 +72,10 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('data-provider="ollama"')
     expect(html).toContain('data-provider="pi"')
     expect(html).toContain('data-provider="mistral"')
+    expect(html).toContain('Muse Glimmer (30B-MLX)')
+    expect(html).toContain('Nemotron 3.5 Lightning (30B-MLX)')
+    expect(html).toContain('notification-newadditions-provider provider-ollama')
+    expect(html).not.toContain('notification-newadditions-provider provider-meta')
   })
 
   it('offers Mistral Vibe setup separately from Pi API-key setup', () => {

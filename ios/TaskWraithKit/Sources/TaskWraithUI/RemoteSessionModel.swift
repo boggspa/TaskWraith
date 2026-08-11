@@ -2122,11 +2122,13 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-10","kind":"addition","title":"New Additions","body":"Muse Spark 1.2, local Ollama North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-11","kind":"addition","title":"New Additions","body":"Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"muse","label":"Muse","models":[
               {"name":"Muse Spark 1.2","blurb":"Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
+              {"name":"Muse Glimmer (30B-MLX)","blurb":"Meta's 30B multimodal agent model with vision, tools, thinking, and failure recovery (131K).","accentProvider":"meta"},
+              {"name":"Nemotron 3.5 Lightning (30B-MLX)","blurb":"NVIDIA's 30B-A3B always-on agent model with tools, thinking, and a 262K context window.","accentProvider":"nvidia"},
               {"name":"North Mini Code 1.0","blurb":"Cohere's 500K agentic coder with tools and thinking — local, no cloud account.","accentProvider":"cohere"},
               {"name":"GLM-4.7-Flash","blurb":"Z.ai 30B-A3B local reasoner with tools and thinking (~203K).","accentProvider":"zai"},
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}

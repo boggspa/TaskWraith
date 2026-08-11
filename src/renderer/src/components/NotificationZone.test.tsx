@@ -211,6 +211,11 @@ describe('NotificationZone', () => {
     expect(html).toContain('data-provider-logo="pi"')
     expect(html).toContain('provider-logo-mistral.png')
     expect(html).not.toContain('provider-glyph-mistral')
+    expect(html).toContain('Muse Glimmer (30B-MLX)')
+    expect(html).toContain('Nemotron 3.5 Lightning (30B-MLX)')
+    expect(html).toContain('notification-newadditions-model provider-meta')
+    expect(html).toContain('notification-newadditions-model provider-nvidia')
+    expect(html).not.toContain('notification-newadditions-provider provider-meta')
   })
 
   it('drops expired notifications when now is past expiresAt', () => {
