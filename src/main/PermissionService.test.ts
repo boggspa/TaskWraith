@@ -907,10 +907,12 @@ describe('PermissionService', () => {
       expect(decisionFor('full_access', 'crossThreadRead')).toBe('allow')
     })
 
-    it('publication follows the standard permission ladder', () => {
+    it('publication asks through Accept Edits and auto-allows on the write tiers', () => {
       expect(decisionFor('read_only', 'externalPublish')).toBe('ask')
       expect(decisionFor('plan', 'externalPublish')).toBe('ask')
-      expect(decisionFor('default', 'externalPublish')).toBe('allow')
+      // Accept Edits keeps external publishing as an attended decision (push/PR
+      // require a separate workspace grant or per-invocation approval).
+      expect(decisionFor('default', 'externalPublish')).toBe('ask')
       expect(decisionFor('workspace_write', 'externalPublish')).toBe('allow')
       expect(decisionFor('full_access', 'externalPublish')).toBe('allow')
     })

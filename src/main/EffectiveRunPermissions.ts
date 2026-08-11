@@ -35,9 +35,10 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 
 // The standard user-facing tool surface follows one permission ladder. Ask and
 // Plan always present the approval modal; Accept Edits and higher authorize the
-// same services for the run without a second grant decision. Keep this list
-// separate from AGENTIC_SERVICE_IDS: cross-thread messaging, eval, and capture
-// retain their existing specialist policies.
+// same services for the run without a second grant decision (one carve-out:
+// externalPublish stays 'ask' under Accept Edits — see the preset map). Keep
+// this list separate from AGENTIC_SERVICE_IDS: cross-thread messaging, eval,
+// and capture retain their existing specialist policies.
 export const LINEAR_PERMISSION_SERVICES: readonly AgenticServiceId[] = [
   'shellCommands',
   'fileChanges',
