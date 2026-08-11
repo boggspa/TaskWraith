@@ -12,6 +12,20 @@ Source-ahead work toward the next release. See the commits since the
 [v1.9.4](https://github.com/boggspa/TaskWraith/releases/tag/v1.9.4) tag for the
 current boundary; release notes will be compiled when 1.9.5 is tagged.
 
+### Provider setup and run control
+
+- **AntiGravity CLI maintenance.** Settings can open the official user-installed `agy` updater. TaskWraith does not download or repackage the CLI, access provider credentials, or change AntiGravity's separate consent and availability requirements.
+- **Mid-turn steering.** Solo chats can inject a steer into an active run with delivery-aware provider handling, scoped cancellation, and recovery for queued steering requests.
+
+### Channels and collaboration
+
+- **Safer People-to-Channel migration.** Existing conversations can preserve member presentation and invitation handoffs while migrated posts remain available for host review. Startup migration is fenced, restart-safe, and completed before the channel serves the migrated data.
+
+### Review and usage polish
+
+- **Richer close-out commit review.** Historical commit files and per-file change summaries now load into close-out views, with clearer loading-failure feedback and more room for change totals.
+- **Readable usage summaries.** Compact usage and spend displays stay legible for larger currency values and provider lists.
+
 ## 1.9.4 - 2026-08-08
 
 ### Work Project references

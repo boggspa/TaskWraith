@@ -188,6 +188,9 @@ user choices, and the exact data boundary.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.
+  AntiGravity settings can also open the official user-installed `agy` updater;
+  TaskWraith does not download or repackage that CLI, access its credentials, or
+  change AntiGravity's separate consent and availability requirements.
 - **Multiview and Workflows**: Split the workbench into live panes, and run
   Workflows as first-class chat/run objects with scheduled recovery, dedicated
   sidebar space, and optional ensemble execution where enabled.
