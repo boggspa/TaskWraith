@@ -16,15 +16,27 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 
 - **AntiGravity CLI maintenance.** Settings can open the official user-installed `agy` updater. TaskWraith does not download or repackage the CLI, access provider credentials, or change AntiGravity's separate consent and availability requirements.
 - **Mid-turn steering.** Solo chats can inject a steer into an active run with delivery-aware provider handling, scoped cancellation, and recovery for queued steering requests.
+- **Write-capable Kimi permissions.** Kimi seats now properly honor write-capable file permissions instead of degrading.
 
 ### Channels and collaboration
 
 - **Safer People-to-Channel migration.** Existing conversations can preserve member presentation and invitation handoffs while migrated posts remain available for host review. Startup migration is fenced, restart-safe, and completed before the channel serves the migrated data.
 
+### Ensemble and Orchestration
+
+- **Boss post-Round 1 handoff rule.** Boss and Captain seats must make explicit routing decisions with `ensemble_yield` or `ensemble_fanout` after the first continuous pass instead of silently dropping the turn.
+- **Fence stale continuous drains.** Fences stale continuous drains and suppresses impossible lane retries during continuous orchestration.
+- **Read-only search inspection.** Read-only search inspection is now allowed under standard permission models.
+
+### Simulator Canvas
+
+- **Companion gRPC for gestures.** Uses pinned fb-idb gRPC schema to handle gestures natively.
+
 ### Review and usage polish
 
 - **Richer close-out commit review.** Historical commit files and per-file change summaries now load into close-out views, with clearer loading-failure feedback and more room for change totals.
 - **Readable usage summaries.** Compact usage and spend displays stay legible for larger currency values and provider lists.
+- **Mesh-canvas dismiss.** Mesh-canvas replaces delete with dismiss.
 
 ## 1.9.4 - 2026-08-08
 
