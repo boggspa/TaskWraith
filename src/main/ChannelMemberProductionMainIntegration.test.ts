@@ -28,7 +28,7 @@ describe('Channel member production main integration', () => {
       'mainWindow.webContents.send(CHANNEL_MEMBER_IPC_CHANGED_EVENT, event)'
     )
 
-    const hostStart = source.indexOf('channelProductionBootstrap.start()')
+    const hostStart = source.indexOf('startPeopleToChannelMigrationBootstrap({')
     const memberStart = source.indexOf('channelMemberProductionBootstrap.start()')
     const recovery = source.indexOf('await recoverPendingHistoryDeletionBeforeRunQueue()')
     expect(hostStart).toBeGreaterThanOrEqual(0)
