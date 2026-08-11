@@ -24,11 +24,11 @@ import os from 'os'
 import { join } from 'path'
 import { parseAgyProjectBoundSessionId, agyCliRootPath } from './AntigravityConversationReceipt'
 
-type SendAgentCompatLine = (
+type SendAgentCompatLine<TRoute> = (
   sender: Electron.WebContents,
   provider: 'antigravity',
   payload: Record<string, unknown>,
-  route?: unknown
+  route?: TRoute
 ) => void
 
 /**
@@ -41,11 +41,11 @@ type SendAgentCompatLine = (
  * @param route              The route object from the provider run
  * @param deps               Injectable dependencies for testing
  */
-export async function projectAgyBrainTranscriptTools(
+export async function projectAgyBrainTranscriptTools<TRoute>(
   providerSessionId: string | null | undefined,
-  sendCompatLine: SendAgentCompatLine,
+  sendCompatLine: SendAgentCompatLine<TRoute>,
   sender: Electron.WebContents,
-  route: unknown,
+  route: TRoute,
   deps?: {
     readFile?: (path: string) => Promise<string>
     homeDir?: string
@@ -118,12 +118,6 @@ export interface AgyToolEvent {
   parameters: Record<string, unknown>
   status?: 'success' | 'error'
   output?: string
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 /**
@@ -290,6 +284,7 @@ export function projectAgyStepTools(step: AgyTranscriptStep): AgyToolEvent[] {
     type: 'tool_result',
     tool_id: toolId,
     tool_name: toolName,
+    parameters: {},
     status: failed ? 'error' : 'success',
     output
   })

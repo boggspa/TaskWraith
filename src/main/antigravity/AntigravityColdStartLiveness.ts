@@ -14,17 +14,17 @@
  * @internal Called only from runAntigravityAgyProvider.
  */
 
-type SendAgentCompatLine = (
+type SendAgentCompatLine<TRoute> = (
   sender: Electron.WebContents,
   provider: 'antigravity',
   payload: Record<string, unknown>,
-  route?: unknown
+  route?: TRoute
 ) => void
 
-export function emitAntigravityColdStartInit(
-  sendAgentCompatLine: SendAgentCompatLine,
+export function emitAntigravityColdStartInit<TRoute>(
+  sendAgentCompatLine: SendAgentCompatLine<TRoute>,
   sender: Electron.WebContents,
-  route: unknown
+  route: TRoute
 ): void {
   const initToolId = `agy-init-${Date.now()}`
   sendAgentCompatLine(
@@ -45,6 +45,7 @@ export function emitAntigravityColdStartInit(
       type: 'tool_result',
       tool_id: initToolId,
       tool_name: 'antigravity_init',
+      parameters: {},
       status: 'success',
       output:
         'Initializing AntiGravity project — this may take a few seconds for the first turn in a new chat.'

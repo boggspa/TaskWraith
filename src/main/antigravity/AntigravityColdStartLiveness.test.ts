@@ -31,6 +31,7 @@ describe('emitAntigravityColdStartInit', () => {
     expect(toolUse.payload.tool_name).toBe('antigravity_init')
     expect(toolResult.payload.type).toBe('tool_result')
     expect(toolResult.payload.tool_name).toBe('antigravity_init')
+    expect(toolResult.payload.parameters).toEqual({})
     expect(toolResult.payload.status).toBe('success')
     // The pair must share one id so the orchestrator pairs the result back to
     // the call instead of surfacing an orphan card.

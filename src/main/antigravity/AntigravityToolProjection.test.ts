@@ -98,6 +98,7 @@ describe('projectAgyStepTools', () => {
       type: 'tool_result',
       tool_id: 'agy-view_file-3',
       tool_name: 'view_file',
+      parameters: {},
       status: 'success'
     })
     expect(events[1].output).toContain('file:///Users/chrisizatt/Documents/AGBench/src/main/index.ts')
@@ -162,6 +163,7 @@ describe('projectAgyStepTools', () => {
     expect(events[1]).toMatchObject({
       type: 'tool_result',
       tool_id: 'agy-error_message-3',
+      parameters: {},
       status: 'error',
       output: 'Failed to read file: permission denied'
     })

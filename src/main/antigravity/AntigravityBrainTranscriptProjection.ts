@@ -13,11 +13,11 @@
 import { readAgyConversationReceipt, formatAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
 import { projectAgyBrainTranscriptTools } from './AntigravityToolProjection'
 
-type SendAgentCompatLine = (
+type SendAgentCompatLine<TRoute> = (
   sender: Electron.WebContents,
   provider: 'antigravity',
   payload: Record<string, unknown>,
-  route?: unknown
+  route?: TRoute
 ) => void
 
 /**
@@ -28,10 +28,10 @@ type SendAgentCompatLine = (
  *
  * Best-effort: failures are silent. Tool projection is display-only.
  */
-export async function projectAgyBrainTranscriptAfterTurn(
-  sendAgentCompatLine: SendAgentCompatLine,
+export async function projectAgyBrainTranscriptAfterTurn<TRoute>(
+  sendAgentCompatLine: SendAgentCompatLine<TRoute>,
   sender: Electron.WebContents,
-  route: unknown,
+  route: TRoute,
   workspace: string | null | undefined
 ): Promise<void> {
   // Re-read the receipt to learn the conversation id agy actually used.
