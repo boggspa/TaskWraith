@@ -3856,6 +3856,43 @@ describe('permission-surface rule', () => {
     expect(prompt).not.toContain('DENIED this run')
   })
 
+  it('tells concurrent writer lanes to rely on the runtime WIP marker', () => {
+    const concurrentEnsemble = withActiveRoundStatuses(ensemble, { codex: 'running' })
+    concurrentEnsemble.activeRound = {
+      ...concurrentEnsemble.activeRound!,
+      concurrentMode: true,
+      lanes: {
+        'lane-codex-1': {
+          laneId: 'lane-codex-1',
+          participantId: 'codex',
+          provider: 'codex',
+          status: 'running',
+          intent: 'write',
+          approvedWriteScopes: [
+            {
+              kind: 'path',
+              path: 'src/main/example.ts',
+              approvedBy: 'boss',
+              approvedAt: '2026-08-11T00:00:00.000Z'
+            }
+          ],
+          startedAt: '2026-08-11T00:00:00.000Z'
+        }
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: concurrentEnsemble,
+      participant: concurrentEnsemble.participants[1],
+      currentPrompt: 'Implement the assigned source slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('TaskWraith projects the runtime WIP marker')
+    expect(prompt).toContain('do not create an additional manual marker with a file tool')
+  })
+
   it('a plan-clamped approval mode forces the modal-gated sentence even for write presets', () => {
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),

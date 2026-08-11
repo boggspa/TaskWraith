@@ -115,6 +115,31 @@ describe('validateToolPermissionRetryRequest', () => {
     ).toMatchObject({ ok: false, code: 'target_does_not_need_permission' })
   })
 
+  it.each([
+    'Lane lane-kimi-1 is not approved to write .wip-work3-slice3.',
+    'The participant is outside the approved lane scope.',
+    'Lane lane-codex-3 has no approved write scope.',
+    'This Ensemble participant run is no longer active and cannot mutate workspace state.'
+  ])('rejects a non-grantable Ensemble lane boundary: %s', (failure) => {
+    const value = {
+      toolName: 'write_file' as const,
+      arguments: { path: '.WORK-IN-PROGRESS-codex-work1.md', content: 'marker' },
+      failure
+    }
+
+    expect(validateToolPermissionRetryRequest({ value, definitions, isAutoAllowed })).toMatchObject(
+      { ok: false, code: 'non_retriable_failure' }
+    )
+    expect(
+      buildToolPermissionRetryInstruction({
+        available: true,
+        ...value,
+        definitions,
+        isAutoAllowed
+      })
+    ).toBeNull()
+  })
+
   it('rejects special approval paths and invalid target arguments', () => {
     expect(
       validateToolPermissionRetryRequest({

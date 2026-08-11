@@ -21,6 +21,16 @@ const MAX_ARGUMENT_BYTES = 64 * 1024
 const UNPROVABLE_MUTATION_SCOPE_PATTERN =
   /\bcannot prove an exact (?:file\/hunk )?mutation scope\b/i
 
+const NON_RETRIABLE_ENSEMBLE_LANE_PATTERNS = [
+  /\b(?:lane|participant)\b.{0,160}\bnot approved to write\b/i,
+  /\boutside the approved lane scope\b/i,
+  /\bnot a writer lane\b/i,
+  /\bno approved write scope\b/i,
+  /\bpath-scoped writer lane\b/i,
+  /\bparallel writer lanes?\b/i,
+  /\bensemble participant run is no longer active\b/i
+]
+
 const NON_RETRIABLE_TARGETS = new Set<TaskWraithMcpToolName>([
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   'ask_user_question',
@@ -182,6 +192,17 @@ export function validateToolPermissionRetryRequest(input: {
       code: 'explicit_user_decline',
       message:
         'The prior result says the user explicitly declined or cancelled. Respect that decision and do not request the same permission again.'
+    }
+  }
+  if (
+    rawToolName !== 'run_shell_command' &&
+    NON_RETRIABLE_ENSEMBLE_LANE_PATTERNS.some((pattern) => pattern.test(failure))
+  ) {
+    return {
+      ok: false,
+      code: 'non_retriable_failure',
+      message:
+        'A one-shot permission retry cannot expand an Ensemble lane write scope. Report the blocked path to the orchestrator instead of asking the user to retry the same invocation.'
     }
   }
   if (rawToolName !== 'run_shell_command' && UNPROVABLE_MUTATION_SCOPE_PATTERN.test(failure)) {

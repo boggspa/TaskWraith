@@ -1466,7 +1466,7 @@ export function buildEnsembleParticipantPromptProjection(
     ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
     activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss- or Captain-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
+        ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss- or Captain-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. TaskWraith projects the runtime WIP marker when it acquires that lock; this satisfies repository instructions to raise a marker, so do not create an additional manual marker with a file tool. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: read-only fan-out lanes may run concurrently. Writer-capable participants still run serially unless locked writer lanes are explicitly enabled.'
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
     ...(workspaceIsolationLine ? [workspaceIsolationLine] : []),
