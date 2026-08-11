@@ -159,13 +159,17 @@ People shares; the source profile was never modified):
   fast-path; a resumed chain (kill, relaunch, kill, relaunch) also converged.
   The in-between durable boundaries are covered deterministically by the
   eleven-boundary crash matrix in the terminal production mission.
-- **Demonstrated defect (open):** when safeStorage cannot decrypt the pinned
-  People identity key (in the wild: keychain reset or restore-without-
-  keychain; in the soak: clone under a different app-name keychain scope),
-  the identity store correctly refuses to mint a replacement — but the
-  channels bootstrap rethrow kills the whole app with no window and no
+- **Demonstrated defect (FIXED same day):** when safeStorage cannot decrypt
+  the pinned People identity key (in the wild: keychain reset or restore-
+  without-keychain; in the soak: clone under a different app-name keychain
+  scope), the identity store correctly refuses to mint a replacement — but
+  the channels bootstrap rethrow killed the whole app with no window and no
   durable evidence, before the migration's first write. This matches the
-  observed dev no-window report exactly. Planned fix: fail closed for
-  channels, fail open for the app — a degraded launch with channels
-  unavailable, ordinary People writes still quiesced by a standalone gate,
-  and a loud log line.
+  observed dev no-window report exactly. Fixed by the degraded launch:
+  channels fail closed while the app fails open — the startup catch stops
+  rethrowing, installs a standalone quiesced legacy write gate so every
+  People write stays blocked, and logs one loud line. Live-verified against
+  the same bad-identity clone: the launch that previously died now boots to
+  a working window in about a second, logs the degrade line, and writes no
+  migration state. A degraded launch leaves zero state delta, so every later
+  launch repeats the same safe behavior until the keychain returns.
