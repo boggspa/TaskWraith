@@ -1,8 +1,11 @@
 // Defense-in-depth permission policy for a contained Kimi Code ACP seat.
 // Production statically denies every native fs/exec/egress/fan-out tool; this
 // classifier repeats that exact wall if a provider build asks anyway. Only
-// sanctioned read-only TaskWraith MCP tools auto-allow. Other broker requests
-// are gated on write-capable seats and denied on read-only seats.
+// sanctioned read-only TaskWraith MCP tools auto-allow. Exact TaskWraith
+// fileChanges tools also pass through on write-capable seats because the signed
+// broker below this transport remains their authoritative permission gate.
+// Other broker requests are gated on write-capable seats and denied on
+// read-only seats.
 
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
@@ -228,7 +231,7 @@ export interface KimiToolPolicyRequest {
 }
 
 export interface KimiToolPolicyOptions {
-  /** False for a plan / read-only seat: mutating tools are denied, not gated. */
+  /** False for a plan / read-only seat: mutating tools are denied, not admitted. */
   writeCapable: boolean
   /** True for a read-only / safe TaskWraith MCP tool (or capability gateway). */
   isSafeMcpTool: (request: KimiToolPolicyRequest) => boolean
@@ -257,13 +260,16 @@ export function isKimiDeniedNativeTool(request: KimiToolPolicyRequest): boolean 
 
 /**
  * Classify what to do with a tool that asked for permission:
- *  - `allow` — auto-approve without prompting (read-only / safe).
+ *  - `allow` — auto-approve without an ACP prompt (read-only / safe, plus
+ *    exact TaskWraith fileChanges calls on write-capable seats).
  *  - `gate`  — route to the approval ledger (mutating, write-capable seat).
  *  - `deny`  — refuse outright (mutating tool on a read-only / plan seat).
  *
- * The mutating-MCP host gates still apply INSIDE the broker (executeGeminiMcpTool)
- * regardless of an `allow` here, so auto-allowing a safe/gateway MCP tool does
- * not bypass the per-instrument host gate for a mutating capability.
+ * The mutating-MCP host gates still apply INSIDE the signed broker
+ * (executeGeminiMcpTool) regardless of an `allow` here. Passing an exact file
+ * change through this provider transport therefore preserves the standard
+ * Accept Edits / Full WS / Full Access policy, workspace containment, mutation
+ * claims, and dedicated per-instrument gates.
  */
 export function classifyKimiToolPermission(
   request: KimiToolPolicyRequest,
@@ -271,6 +277,9 @@ export function classifyKimiToolPermission(
 ): KimiToolDecision {
   if (isKimiDeniedNativeTool(request)) return 'deny'
   if (options.isSafeMcpTool(request)) return 'allow'
+  if (options.writeCapable && resolveKimiTaskWraithMcpToolService(request) === 'fileChanges') {
+    return 'allow'
+  }
   if (options.isBrokerDeferredMcpTool?.(request)) return 'gate'
   return options.writeCapable ? 'gate' : 'deny'
 }

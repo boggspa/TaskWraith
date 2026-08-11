@@ -9,6 +9,7 @@ import {
   type KimiToolPolicyRequest
 } from './KimiToolPolicy'
 import { MESH_MCP_TOOL_NAMES } from '../../shared/taskWraithMcpCatalog'
+import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 
 const never = () => false
 const opts = (over: Partial<Parameters<typeof classifyKimiToolPermission>[1]> = {}) => ({
@@ -335,13 +336,33 @@ describe('classifyKimiToolPermission', () => {
     expect(classifyKimiToolPermission({ toolKind: 'search' }, opts())).toBe('gate')
   })
 
-  it('gates a non-safe broker tool on a write-capable seat', () => {
-    expect(
-      classifyKimiToolPermission(
-        { toolName: 'mcp__taskwraith__write_file', toolKind: 'edit' },
-        opts()
+  it('passes exact TaskWraith file changes through on Accept Edits+ seats', () => {
+    const fileChangeTools = Object.entries(TASKWRAITH_TOOL_ACTIONS)
+      .filter(([, action]) => action.service === 'fileChanges')
+      .map(([toolName]) => toolName)
+    expect(fileChangeTools).toContain('write_file')
+
+    for (const toolName of fileChangeTools) {
+      expect(
+        classifyKimiToolPermission(
+          { toolName: `mcp__taskwraith__${toolName}`, toolKind: 'edit' },
+          opts()
+        ),
+        toolName
+      ).toBe('allow')
+    }
+  })
+
+  it('keeps non-file, foreign, and unknown tools on the write-capable gate', () => {
+    for (const toolName of [
+      'mcp__taskwraith__run_shell_command',
+      'mcp__taskwraith__git_push',
+      'mcp__evil__write_file'
+    ]) {
+      expect(classifyKimiToolPermission({ toolName, toolKind: 'execute' }, opts()), toolName).toBe(
+        'gate'
       )
-    ).toBe('gate')
+    }
     // Unknown kind defaults to gate (fail-safe: prompt, not silent-allow).
     expect(classifyKimiToolPermission({ toolKind: 'other' }, opts())).toBe('gate')
   })
@@ -356,6 +377,12 @@ describe('classifyKimiToolPermission', () => {
     expect(classifyKimiToolPermission({ toolKind: 'execute' }, opts({ writeCapable: false }))).toBe(
       'deny'
     )
+    expect(
+      classifyKimiToolPermission(
+        { toolName: 'mcp__taskwraith__write_file', toolKind: 'edit' },
+        opts({ writeCapable: false })
+      )
+    ).toBe('deny')
   })
 
   it('auto-allows only sanctioned MCP reads on a read-only seat', () => {
