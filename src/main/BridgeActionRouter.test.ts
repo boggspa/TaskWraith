@@ -156,6 +156,10 @@ function makeStubExecutor(
       executed: true,
       message: 'approvalLedgerList done'
     }),
+    executeBlackboardPollVote: make('executeBlackboardPollVote', {
+      executed: true,
+      message: 'blackboardPollVote done'
+    }),
     executeCreateThread: make('executeCreateThread', {
       executed: true,
       message: 'createThread done'

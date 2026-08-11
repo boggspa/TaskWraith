@@ -2113,6 +2113,7 @@ import {
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
 import { ingestBlackboardPostImages } from './blackboard/BlackboardPostAttachments'
+import { applyBlackboardPollVoteToChat } from './blackboard/BlackboardPoll'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
 import { BlackboardExpiryService } from './blackboard/BlackboardExpiryService'
 import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
@@ -44352,6 +44353,37 @@ if (isGeminiMcpBridgeProcess) {
           pushRemoteTaskCardDelta(updated.appChatId)
           return { ok: true, goal: activeGoal }
         },
+        blackboardPollVoteFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, reason: 'Thread not found' }
+          if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
+            return { ok: false, reason: 'Thread does not belong to the requested workspace' }
+          }
+          // Mirror the renderer's answer-ensemble-poll handler exactly: the
+          // durable blackboard poll first, the live orchestrator poll as the
+          // fallback — one standing 'user' vote either way.
+          const now = new Date()
+          const blackboardVote = applyBlackboardPollVoteToChat({
+            chat,
+            pollId: action.pollId,
+            choice: action.choice,
+            voterId: 'user',
+            votedAt: now.toISOString(),
+            updatedAtMs: now.getTime()
+          })
+          if (blackboardVote.handled) {
+            if (!blackboardVote.ok) return { ok: false, reason: blackboardVote.message }
+            saveAndBroadcastChat(blackboardVote.updatedChat)
+            const canonical = canonicalRemoteWorkspaceId(blackboardVote.updatedChat.workspaceId)
+            if (canonical) pushRemoteThreadSnapshot(blackboardVote.updatedChat, canonical)
+            return { ok: true }
+          }
+          const result = ensembleOrchestratorRef?.userPollResponseForChat(chat.appChatId, {
+            pollId: action.pollId,
+            choice: action.choice
+          }) || { ok: false, message: 'Ensemble orchestrator is not available.' }
+          return result.ok ? { ok: true } : { ok: false, reason: result.message }
+        },
         blackboardPostFn: async (action) => {
           if (AppStore.getSettings().ensembleModeEnabled === false) {
             return { ok: false, reason: 'Ensemble Mode is disabled.' }
@@ -44390,8 +44422,37 @@ if (isGeminiMcpBridgeProcess) {
               reason: `${fieldError.code}: max ${fieldError.maxLength}, got ${fieldError.originalLength}`
             }
           }
+          const entryId = `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          // Phone camera-roll images: persist the base64 attachments into the
+          // owned media store (the same helper the remote composer queue
+          // uses), then run the SAME ingest the desktop picker path runs so
+          // the entry carries ordinary mediaRefs — never raw bytes.
+          let entryMediaRefs: TranscriptMediaRef[] | undefined
+          if (action.imageAttachments?.length) {
+            try {
+              const persisted = persistRemoteImageAttachments({
+                appChatId: chat.appChatId,
+                attachments: action.imageAttachments,
+                store: getTranscriptMediaAssetStore()
+              })
+              const ingest = await ingestBlackboardPostImages({
+                appChatId: chat.appChatId,
+                entryId,
+                workspaceImagePaths: persisted.map((attachment) => attachment.path),
+                authorizedFilePaths: persisted.map((attachment) => attachment.path),
+                store: getTranscriptMediaAssetStore()
+              })
+              if (!ingest.ok) {
+                return { ok: false, reason: `${ingest.code}: ${ingest.error}` }
+              }
+              entryMediaRefs = ingest.mediaRefs
+            } catch (err) {
+              console.warn('[bridge-blackboard] image ingest failed:', err)
+              return { ok: false, reason: 'Attached images could not be stored' }
+            }
+          }
           const entry = makeBlackboardEntry({
-            id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            id: entryId,
             chatId: chat.appChatId,
             roundId: roundResolution.roundId,
             participantId: 'user',
@@ -44399,7 +44460,8 @@ if (isGeminiMcpBridgeProcess) {
             value,
             category: action.category,
             scope: roundResolution.scope,
-            createdAt
+            createdAt,
+            ...(entryMediaRefs?.length ? { mediaRefs: entryMediaRefs } : {})
           })
           if (!entry) {
             return { ok: false, reason: 'Blackboard entry requires non-empty key and value.' }

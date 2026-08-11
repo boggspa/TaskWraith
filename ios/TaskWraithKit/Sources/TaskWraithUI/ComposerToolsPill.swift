@@ -23,7 +23,8 @@ public struct ComposerToolsPill: View {
     let blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry]
     let onEnsembleToggle: ((Bool) -> Void)?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
-    let onBlackboardPost: ((String, String, String) -> Void)?
+    let onBlackboardPost: ((String, String, String, [[String: Any]]) -> Void)?
+    let onBlackboardPollVote: ((String, String) -> Void)?
     /// Liquid Glass morph namespace shared with the sibling diff pill.
     var glassNamespace: Namespace.ID? = nil
 
@@ -45,7 +46,8 @@ public struct ComposerToolsPill: View {
         blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry] = [],
         onEnsembleToggle: ((Bool) -> Void)? = nil,
         onGoalUpdate: ((String, String?, String?) -> Void)? = nil,
-        onBlackboardPost: ((String, String, String) -> Void)? = nil,
+        onBlackboardPost: ((String, String, String, [[String: Any]]) -> Void)? = nil,
+        onBlackboardPollVote: ((String, String) -> Void)? = nil,
         glassNamespace: Namespace.ID? = nil
     ) {
         self.glassNamespace = glassNamespace
@@ -59,6 +61,7 @@ public struct ComposerToolsPill: View {
         self.onEnsembleToggle = onEnsembleToggle
         self.onGoalUpdate = onGoalUpdate
         self.onBlackboardPost = onBlackboardPost
+        self.onBlackboardPollVote = onBlackboardPollVote
     }
 
     private var summaryLabel: String {
@@ -170,6 +173,7 @@ public struct ComposerToolsPill: View {
                 onEnsembleToggle: onEnsembleToggle,
                 onGoalUpdate: onGoalUpdate,
                 onBlackboardPost: onBlackboardPost,
+                onBlackboardPollVote: onBlackboardPollVote,
                 initialRoute: selectedRoute
             )
             .twSheetLiquidGlass(detents: [.medium, .large])
@@ -307,7 +311,8 @@ private struct ComposerToolsPickerSheet: View {
     let blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry]
     let onEnsembleToggle: ((Bool) -> Void)?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
-    let onBlackboardPost: ((String, String, String) -> Void)?
+    let onBlackboardPost: ((String, String, String, [[String: Any]]) -> Void)?
+    let onBlackboardPollVote: ((String, String) -> Void)?
     /// Section to push on open — set by the tools pill's tapped segment. Nil
     /// opens the root list (the old behaviour, still used by any caller that
     /// has no specific destination in mind).
@@ -390,9 +395,10 @@ private struct ComposerToolsPickerSheet: View {
                     BlackboardToolsPanel(
                         entries: blackboardEntries,
                         canPost: onBlackboardPost != nil,
-                        onPost: { value, category, scope in
-                            onBlackboardPost?(value, category, scope)
-                        })
+                        onPost: { value, category, scope, attachments in
+                            onBlackboardPost?(value, category, scope, attachments)
+                        },
+                        onVote: onBlackboardPollVote)
                 }
             }
         }
@@ -746,12 +752,19 @@ private struct PlanToolsPanel: View {
 private struct BlackboardToolsPanel: View {
     let entries: [RemoteThreadSnapshot.BlackboardEntry]
     let canPost: Bool
-    let onPost: (String, String, String) -> Void
+    let onPost: (String, String, String, [[String: Any]]) -> Void
+    var onVote: ((String, String) -> Void)? = nil
 
     @State private var draft = ""
     @State private var category = "note"
     @State private var scope = "session"
     @State private var postTick = 0
+    /// Poll the user just voted on (optimistic tick until the Mac echoes).
+    @State private var pendingVotePollId: String? = nil
+    #if canImport(UIKit)
+        @State private var pickedItems: [PhotosPickerItem] = []
+        @State private var pickedImages: [(name: String, image: UIImage)] = []
+    #endif
 
     private static let categoryOrder = ["decision", "fact", "risk", "do-not-repeat", "note"]
     private static let categoryLabels: [String: String] = [
@@ -800,11 +813,41 @@ private struct BlackboardToolsPanel: View {
                             Text(item.label).tag(item.id)
                         }
                     }
+                    #if canImport(UIKit)
+                        PhotosPicker(
+                            selection: $pickedItems, maxSelectionCount: 3, matching: .images
+                        ) {
+                            Label(
+                                pickedImages.isEmpty
+                                    ? "Attach images"
+                                    : "\(pickedImages.count) image\(pickedImages.count == 1 ? "" : "s") attached",
+                                systemImage: "photo.on.rectangle")
+                                .font(.caption)
+                        }
+                        .onChange(of: pickedItems) { _, items in
+                            Task {
+                                var loaded: [(name: String, image: UIImage)] = []
+                                for (index, item) in items.enumerated() {
+                                    if let data = try? await item.loadTransferable(
+                                        type: Data.self),
+                                        let image = UIImage(data: data)
+                                    {
+                                        loaded.append((name: "blackboard-\(index + 1).jpg", image: image))
+                                    }
+                                }
+                                pickedImages = loaded
+                            }
+                        }
+                    #endif
                     Button {
                         guard !draftTrimmed.isEmpty else { return }
-                        onPost(draftTrimmed, category, scope)
+                        onPost(draftTrimmed, category, scope, attachmentPayloads())
                         draft = ""
                         postTick += 1
+                        #if canImport(UIKit)
+                            pickedItems = []
+                            pickedImages = []
+                        #endif
                     } label: {
                         Label("Post to Blackboard", systemImage: "paperplane.fill")
                     }
@@ -841,6 +884,9 @@ private struct BlackboardToolsPanel: View {
                                     if let images = entry.images, !images.isEmpty {
                                         BlackboardThumbnailGrid(images: images)
                                     }
+                                    if let poll = entry.poll {
+                                        blackboardPollRows(entry: entry, poll: poll)
+                                    }
                                     if let participant = entry.participantId, !participant.isEmpty {
                                         Text(participant)
                                             .font(.caption2)
@@ -861,4 +907,70 @@ private struct BlackboardToolsPanel: View {
         #endif
         .motionHaptic(MotionHaptics.success, trigger: postTick)
     }
+
+    /// One tappable row per option: tally share, count, and the user's own
+    /// standing vote ticked. The phone could WATCH a vote before this; now it
+    /// casts one — desktop BlackboardPollControls parity, list-idiom sized.
+    @ViewBuilder
+    private func blackboardPollRows(
+        entry: RemoteThreadSnapshot.BlackboardEntry,
+        poll: RemoteThreadSnapshot.BlackboardEntry.Poll
+    ) -> some View {
+        let votes = poll.votes ?? []
+        let canVote = onVote != nil && poll.userVotable != false
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(poll.options, id: \.self) { option in
+                let optionVotes = votes.filter { $0.choice == option }.count
+                let chosen = poll.userChoice == option
+                Button {
+                    guard canVote, !chosen else { return }
+                    pendingVotePollId = entry.id
+                    onVote?(entry.id, option)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: chosen ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(chosen ? TWTheme.statusSuccess : TWTheme.textMuted)
+                        Text(option)
+                            .font(.caption)
+                            .foregroundStyle(TWTheme.textPrimary)
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
+                        Text("\(optionVotes)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(TWTheme.textSecondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canVote)
+                .accessibilityLabel(
+                    "Vote \(option), \(optionVotes) vote\(optionVotes == 1 ? "" : "s")\(chosen ? ", your vote" : "")"
+                )
+            }
+            if pendingVotePollId == entry.id && canVote {
+                Text("Sending vote…")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    #if canImport(UIKit)
+        private func attachmentPayloads() -> [[String: Any]] {
+            pickedImages.compactMap { attachment in
+                guard let data = attachment.image.jpegData(compressionQuality: 0.8) else {
+                    return nil
+                }
+                return [
+                    "name": attachment.name,
+                    "mimeType": "image/jpeg",
+                    "dataBase64": data.base64EncodedString(),
+                ]
+            }
+        }
+    #else
+        private func attachmentPayloads() -> [[String: Any]] { [] }
+    #endif
 }

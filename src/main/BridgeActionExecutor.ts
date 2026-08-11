@@ -4,6 +4,7 @@ import type {
   BridgeComposerPromptAction,
   BridgeComposerQueuedPromptAction,
   BridgeApprovalLedgerListAction,
+  BridgeBlackboardPollVoteAction,
   BridgeComposerQueueItemAction,
   BridgeComposerSteerLiveAction,
   BridgeCreateThreadAction,
@@ -236,6 +237,9 @@ export interface BridgeActionExecutor {
   executeSetChatKind(action: BridgeSetChatKindAction): Promise<BridgeActionExecutionResult>
   executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult>
   executeBlackboardPost(action: BridgeBlackboardPostAction): Promise<BridgeActionExecutionResult>
+  executeBlackboardPollVote(
+    action: BridgeBlackboardPollVoteAction
+  ): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
   ): Promise<BridgeActionExecutionResult>
@@ -542,6 +546,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeBlackboardPostAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('blackboardPost', action.threadId)
+  }
+  async executeBlackboardPollVote(
+    action: BridgeBlackboardPollVoteAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('blackboardPollVote', action.pollId)
   }
   async executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
@@ -1023,6 +1032,10 @@ export interface MainProcessActionExecutorDependencies {
   goalUpdateFn?: (action: BridgeGoalUpdateAction) => Promise<{
     ok: boolean
     goal?: unknown
+    reason?: string
+  }>
+  blackboardPollVoteFn?: (action: BridgeBlackboardPollVoteAction) => Promise<{
+    ok: boolean
     reason?: string
   }>
   blackboardPostFn?: (action: BridgeBlackboardPostAction) => Promise<{
@@ -2264,6 +2277,25 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] goalUpdate failed: ${errMessage}`)
       return { executed: false, message: `Goal update failed: ${errMessage}` }
+    }
+  }
+
+  async executeBlackboardPollVote(
+    action: BridgeBlackboardPollVoteAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.blackboardPollVoteFn) {
+      return notWired('blackboardPollVote', action.pollId)
+    }
+    try {
+      const result = await this.deps.blackboardPollVoteFn(action)
+      return {
+        executed: Boolean(result.ok),
+        message: result.ok ? 'Vote recorded.' : (result.reason ?? 'Vote failed.'),
+        data: { pollId: action.pollId, choice: action.choice }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Vote failed: ${errMessage}` }
     }
   }
 

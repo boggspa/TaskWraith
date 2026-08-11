@@ -110,6 +110,42 @@ describe('RemoteThreadProjection', () => {
       expect(fitted.blackboardEntries).toBeUndefined()
     })
 
+    it('projects the poll tally with the human standing vote, bounded and validated', () => {
+      const snap = project({ kind: 'latestN', n: 3 }, MESSAGES, [], {
+        blackboardEntries: [
+          {
+            id: 'poll-1',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'p-1',
+            key: 'vote',
+            value: 'Which migration order?',
+            category: 'decision',
+            scope: 'round',
+            createdAt: '2026-01-01T00:00:01.000Z',
+            poll: {
+              options: ['A first', 'B first'],
+              votes: [
+                { voterId: 'p-1', choice: 'A first' },
+                { voterId: 'user', choice: 'B first' },
+                // A vote for a retired option must not survive projection.
+                { voterId: 'p-2', choice: 'ghost option' }
+              ],
+              userVotable: true
+            }
+          } as never
+        ]
+      })
+      expect(snap.blackboardEntries?.[0]?.poll).toEqual({
+        options: ['A first', 'B first'],
+        votes: [
+          { voterId: 'p-1', choice: 'A first' },
+          { voterId: 'user', choice: 'B first' }
+        ],
+        userChoice: 'B first'
+      })
+    })
+
     it('projects bounded blackboard entries separately from transcript rows', () => {
       const snap = project({ kind: 'latestN', n: 3 }, MESSAGES, [], {
         blackboardEntries: [

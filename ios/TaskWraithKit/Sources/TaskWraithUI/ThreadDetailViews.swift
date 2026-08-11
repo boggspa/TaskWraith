@@ -2434,9 +2434,16 @@ struct ThreadDetailView: View {
                                         card, op: op, objective: objective, reason: reason)
                                 },
                                 onBlackboardPost: card.isEnsemble
-                                    ? { value, category, scope in
+                                    ? { value, category, scope, attachments in
                                         model.postBlackboardEntry(
-                                            card, value: value, category: category, scope: scope)
+                                            card, value: value, category: category, scope: scope,
+                                            imageAttachments: attachments)
+                                    }
+                                    : nil,
+                                onBlackboardPollVote: card.isEnsemble
+                                    ? { pollId, choice in
+                                        model.voteBlackboardPoll(
+                                            card, pollId: pollId, choice: choice)
                                     }
                                     : nil,
                                 glassNamespace: composerPillGlass

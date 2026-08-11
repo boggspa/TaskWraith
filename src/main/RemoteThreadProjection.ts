@@ -1144,6 +1144,15 @@ export interface RemoteBlackboardEntry {
   valueTruncated?: boolean
   originalLength?: number
   images?: RemoteBlackboardImage[]
+  /** Present when this entry is an interactive durable poll. Votes are the
+   * full tally (bounded); `userChoice` is the human's own standing vote so
+   * the phone can pre-select without scanning voter ids. */
+  poll?: {
+    options: string[]
+    votes: Array<{ voterId: string; choice: string }>
+    userChoice?: string
+    userVotable?: boolean
+  }
 }
 
 export interface RemoteBlackboardImage {
@@ -1466,6 +1475,44 @@ export function sanitizePreview(
   return { preview: `${collapsed.slice(0, Math.max(0, limit - 3)).trimEnd()}...`, truncated: true }
 }
 
+/** Bounded poll projection: ≤8 options (the validator's own ceiling), ≤128
+ * votes, every string sanitized. Absent for ordinary notes. */
+function projectBlackboardPoll(
+  entry: BlackboardEntry
+): { poll: NonNullable<RemoteBlackboardEntry['poll']> } | undefined {
+  const poll = (entry as { poll?: unknown }).poll
+  if (!poll || typeof poll !== 'object') return undefined
+  const record = poll as {
+    options?: unknown
+    votes?: unknown
+    userVotable?: unknown
+  }
+  if (!Array.isArray(record.options)) return undefined
+  const options = record.options
+    .map((option) => sanitizePreview(String(option ?? ''), 120).preview)
+    .filter((option) => option.length > 0)
+    .slice(0, 8)
+  if (options.length < 2) return undefined
+  const votes = (Array.isArray(record.votes) ? record.votes : [])
+    .map((vote) => {
+      const raw = vote as { voterId?: unknown; choice?: unknown }
+      const voterId = sanitizePreview(String(raw?.voterId ?? ''), 80).preview
+      const choice = sanitizePreview(String(raw?.choice ?? ''), 120).preview
+      return voterId && choice && options.includes(choice) ? { voterId, choice } : null
+    })
+    .filter((vote): vote is { voterId: string; choice: string } => Boolean(vote))
+    .slice(0, 128)
+  const userChoice = votes.find((vote) => vote.voterId === 'user')?.choice
+  return {
+    poll: {
+      options,
+      votes,
+      ...(userChoice ? { userChoice } : {}),
+      ...(record.userVotable === false ? { userVotable: false } : {})
+    }
+  }
+}
+
 function projectBlackboardEntries(
   entries: BlackboardEntry[] | undefined,
   nowMs: number
@@ -1507,7 +1554,8 @@ function projectBlackboardEntries(
         ...(images.length > 0 ? { images } : {}),
         ...(valueSanitized.truncated
           ? { valueTruncated: true, originalLength: entry.value.length }
-          : {})
+          : {}),
+        ...(projectBlackboardPoll(entry) ?? {})
       }
     })
     .filter((entry) => entry.key && entry.value)

@@ -856,6 +856,21 @@ export interface BridgeBlackboardPostAction extends BridgeActionMetadata {
   category?: string
   scope?: string
   key?: string
+  /** Phone camera-roll images to attach (desktop picker parity). Persisted
+   * Mac-side into the transcript media store, then ingested as the entry's
+   * mediaRefs — never raw bytes on the entry itself. */
+  imageAttachments?: BridgeImageAttachment[]
+}
+
+/** Cast (or move) the human vote on a durable blackboard poll — the phone
+ * twin of the desktop BlackboardPollControls. The Mac applies the same
+ * validated single-standing-vote semantics as the renderer IPC. */
+export interface BridgeBlackboardPollVoteAction extends BridgeActionMetadata {
+  kind: 'blackboardPollVote'
+  workspaceId: string
+  threadId: string
+  pollId: string
+  choice: string
 }
 
 export interface BridgeToggleMessagePinAction extends BridgeActionMetadata {
@@ -1122,6 +1137,7 @@ export type BridgeActionPayload =
   | BridgeSetChatKindAction
   | BridgeGoalUpdateAction
   | BridgeBlackboardPostAction
+  | BridgeBlackboardPollVoteAction
   | BridgeToggleMessagePinAction
   | BridgeToggleMessageFeedbackAction
   | BridgeDeleteTranscriptMessageAction
@@ -1272,6 +1288,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'setChatKind':
     case 'goalUpdate':
     case 'blackboardPost':
+    case 'blackboardPollVote':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
     case 'deleteTranscriptMessage':
@@ -1367,6 +1384,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'setChatKind':
     case 'goalUpdate':
     case 'blackboardPost':
+    case 'blackboardPollVote':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
     case 'deleteTranscriptMessage':
@@ -1463,6 +1481,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'setChatKind':
     case 'goalUpdate':
     case 'blackboardPost':
+    case 'blackboardPollVote':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
     case 'deleteTranscriptMessage':
@@ -1726,6 +1745,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isBlackboardPost(parsed)
         ? (parsed as unknown as BridgeBlackboardPostAction)
         : { kind: 'unknown', rawKind: 'blackboardPost', raw: parsed }
+    case 'blackboardPollVote':
+      return isBlackboardPollVote(parsed)
+        ? (parsed as unknown as BridgeBlackboardPollVoteAction)
+        : { kind: 'unknown', rawKind: 'blackboardPollVote', raw: parsed }
     case 'toggleMessagePin':
       return isToggleMessagePin(parsed)
         ? (parsed as unknown as BridgeToggleMessagePinAction)
@@ -2516,8 +2539,20 @@ function isGoalUpdate(v: Record<string, unknown>): boolean {
 const BRIDGE_BLACKBOARD_VALUE_MAX_CHARS = 1000
 const BRIDGE_BLACKBOARD_KEY_MAX_CHARS = 80
 
+function isBlackboardPollVote(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.pollId === 'string' &&
+    v.pollId.trim().length > 0 &&
+    typeof v.choice === 'string' &&
+    v.choice.trim().length > 0 &&
+    v.choice.length <= 200
+  )
+}
+
 function isBlackboardPost(v: Record<string, unknown>): boolean {
   if (!isWorkspaceThreadAction(v)) return false
+  if (v.imageAttachments !== undefined && !isImageAttachments(v.imageAttachments)) return false
   if (typeof v.value !== 'string' || v.value.trim().length === 0) return false
   if (v.value.length > BRIDGE_BLACKBOARD_VALUE_MAX_CHARS) return false
   if (

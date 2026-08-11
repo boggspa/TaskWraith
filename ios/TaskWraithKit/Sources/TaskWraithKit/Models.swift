@@ -2011,10 +2011,38 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { attachmentId }
         }
 
+        /// Interactive durable poll riding an otherwise ordinary entry. The
+        /// tally is the full bounded vote list; `userChoice` is this human's
+        /// standing vote (one per poll, movable).
+        public struct Poll: Codable, Sendable, Equatable {
+            public struct Vote: Codable, Sendable, Equatable {
+                public let voterId: String
+                public let choice: String
+                public init(voterId: String, choice: String) {
+                    self.voterId = voterId
+                    self.choice = choice
+                }
+            }
+            public let options: [String]
+            public let votes: [Vote]?
+            public let userChoice: String?
+            public let userVotable: Bool?
+            public init(
+                options: [String], votes: [Vote]? = nil,
+                userChoice: String? = nil, userVotable: Bool? = nil
+            ) {
+                self.options = options
+                self.votes = votes
+                self.userChoice = userChoice
+                self.userVotable = userVotable
+            }
+        }
+        public let poll: Poll?
+
         public init(
             id: String, key: String, value: String, category: String, scope: String,
             participantId: String? = nil, roundId: String? = nil, createdAt: String? = nil,
-            images: [BlackboardImage]? = nil
+            images: [BlackboardImage]? = nil, poll: Poll? = nil
         ) {
             self.id = id
             self.key = key
@@ -2025,6 +2053,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             self.roundId = roundId
             self.createdAt = createdAt
             self.images = images
+            self.poll = poll
         }
     }
     public let threadId: String?
@@ -2611,6 +2640,7 @@ public enum BridgeAction {
     public static func blackboardPost(
         workspaceId: String, threadId: String, value: String,
         category: String? = nil, scope: String? = nil, key: String? = nil,
+        imageAttachments: [[String: Any]]? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -2620,7 +2650,22 @@ public enum BridgeAction {
         if let category, !category.isEmpty { payload["category"] = category }
         if let scope, !scope.isEmpty { payload["scope"] = scope }
         if let key, !key.isEmpty { payload["key"] = key }
+        if let imageAttachments, !imageAttachments.isEmpty {
+            payload["imageAttachments"] = imageAttachments
+        }
         return encode(payload)
+    }
+
+    /// Cast (or move) the human vote on a durable blackboard poll.
+    public static func blackboardPollVote(
+        workspaceId: String, threadId: String, pollId: String, choice: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "blackboardPollVote", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "pollId": pollId, "choice": choice,
+        ])
     }
 
     public static func toggleMessagePin(

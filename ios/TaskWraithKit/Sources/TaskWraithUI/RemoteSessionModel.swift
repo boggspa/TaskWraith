@@ -5715,9 +5715,23 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Post a user-authored Ensemble blackboard note (composer Blackboard parity).
+    /// Cast (or move) the human vote on a durable blackboard poll. One
+    /// standing vote per poll — the Mac's validator enforces it, the panel
+    /// pre-selects from the projected userChoice.
+    public func voteBlackboardPoll(_ card: RemoteTaskCard, pollId: String, choice: String) {
+        guard card.isEnsemble, let thread = card.threadId else { return }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        send(
+            BridgeAction.blackboardPollVote(
+                workspaceId: ws, threadId: thread, pollId: pollId, choice: choice),
+            successLabel: "Vote recorded.")
+        scheduleThreadRefreshAfterUserAction(thread)
+    }
+
     public func postBlackboardEntry(
         _ card: RemoteTaskCard, value: String,
-        category: String = "note", scope: String = "session", key: String? = nil
+        category: String = "note", scope: String = "session", key: String? = nil,
+        imageAttachments: [[String: Any]] = []
     ) {
         guard card.isEnsemble, let thread = card.threadId else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5745,7 +5759,8 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.blackboardPost(
                 workspaceId: ws, threadId: thread, value: trimmed,
-                category: category, scope: scope, key: key),
+                category: category, scope: scope, key: key,
+                imageAttachments: imageAttachments.isEmpty ? nil : imageAttachments),
             successLabel: "Posted to blackboard.")
         scheduleThreadRefreshAfterUserAction(thread)
     }
