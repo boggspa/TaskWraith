@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatRun } from '../../../main/store/types'
 import {
   composedSeatRole,
+  seatFromApprovalAttribution,
   seatFromChatRun,
   seatFromEnsembleMetadata,
   seatFromSubThreadMetadata
@@ -286,5 +287,172 @@ describe('seatFromChatRun', () => {
 
   it('makes no authority claim — a run does not record one', () => {
     expect(seatFromChatRun(run())).not.toHaveProperty('authority')
+  })
+})
+
+describe('seatFromApprovalAttribution', () => {
+  const attribution = (over: Record<string, unknown> = {}) => ({
+    participantId: 'p-3',
+    role: 'Scout2',
+    stageRole: 'scout',
+    order: 3,
+    ...over
+  })
+
+  const roster = (over: Record<string, unknown> = {}) => ({
+    participants: [
+      { id: 'p-1', model: 'claude-opus-5' },
+      {
+        id: 'p-3',
+        role: 'Scout2',
+        order: 3,
+        model: 'gemini-3.6-flash',
+        reasoningEffort: 'high',
+        permissionPresetId: 'accept_edits',
+        stageRole: 'scout'
+      }
+    ],
+    ...over
+  })
+
+  it('joins the validated identity to the live roster configuration', () => {
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster()
+      })
+    ).toEqual({
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash',
+      role: 'Scout2',
+      seatNumber: 3,
+      stageRole: 'scout',
+      reasoningEffort: 'high',
+      permissionPresetId: 'accept_edits'
+    })
+  })
+
+  it('takes the provider from the approval, never the roster', () => {
+    // The request genuinely came from that provider's CLI. A roster edit landing
+    // between request and render must not be able to re-label it.
+    const seat = seatFromApprovalAttribution({
+      provider: 'antigravity',
+      attribution: attribution(),
+      roster: roster({
+        participants: [{ id: 'p-3', provider: 'claude', model: 'gemini-3.6-flash' }]
+      })
+    })
+    expect(seat?.provider).toBe('antigravity')
+  })
+
+  it('takes the role and seat number from the attribution, not the roster', () => {
+    // Same rule: the attribution is what the approval was FILED under, and it is
+    // what `agentApprovalDisplayTitle` strips off the title. A roster rename must
+    // not change whose request the user thinks they are answering.
+    const seat = seatFromApprovalAttribution({
+      provider: 'antigravity',
+      attribution: attribution(),
+      roster: roster({
+        participants: [{ id: 'p-3', role: 'Renamed', order: 9, model: 'gemini-3.6-flash' }]
+      })
+    })
+    expect(seat?.role).toBe('Scout2')
+    expect(seat?.seatNumber).toBe(3)
+  })
+
+  it('resolves chat-level authority, which outranks the stage glyph', () => {
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster({ bossmanParticipantId: 'p-3' })
+      })?.authority
+    ).toBe('boss')
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster({ captainParticipantIds: ['p-9', 'p-3'] })
+      })?.authority
+    ).toBe('captain')
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster()
+      })
+    ).not.toHaveProperty('authority')
+  })
+
+  it('returns null when no model resolves, so the caller keeps its pills', () => {
+    // A participant deleted mid-flight, one that never carried a model, and a
+    // chat with no roster at all: an identity-shaped strip naming no model says
+    // less than the plain pills it would replace.
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution({ participantId: 'p-gone' }),
+        roster: roster()
+      })
+    ).toBeNull()
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster({ participants: [{ id: 'p-3', model: '  ' }] })
+      })
+    ).toBeNull()
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: undefined
+      })
+    ).toBeNull()
+  })
+
+  it('returns null without an attribution or a provider — a solo approval has no seat', () => {
+    expect(
+      seatFromApprovalAttribution({ provider: 'antigravity', attribution: null, roster: roster() })
+    ).toBeNull()
+    expect(
+      seatFromApprovalAttribution({ provider: '', attribution: attribution(), roster: roster() })
+    ).toBeNull()
+  })
+
+  it('drops an unknown stage role rather than passing it to the glyph', () => {
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution({ stageRole: 'overlord' }),
+        roster: roster()
+      })
+    ).not.toHaveProperty('stageRole')
+  })
+
+  it('carries the thinking flag, including when it is false', () => {
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'kimi',
+        attribution: attribution(),
+        roster: roster({
+          participants: [{ id: 'p-3', model: 'kimi-k2.7-code', thinkingEnabled: false }]
+        })
+      })?.thinkingEnabled
+    ).toBe(false)
+  })
+
+  it('makes no permission claim when the seat carries no preset', () => {
+    // An absent preset is not the default preset — the chip would otherwise
+    // claim "Accept Edits" for a seat that may be running read-only, on the one
+    // modal where that lie costs the most.
+    expect(
+      seatFromApprovalAttribution({
+        provider: 'antigravity',
+        attribution: attribution(),
+        roster: roster({ participants: [{ id: 'p-3', model: 'gemini-3.6-flash' }] })
+      })
+    ).not.toHaveProperty('permissionPresetId')
   })
 })

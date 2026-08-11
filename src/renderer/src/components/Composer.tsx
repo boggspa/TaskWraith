@@ -119,6 +119,9 @@ import {
   agentApprovalDisplayTitle,
   agentApprovalEnsembleAttribution
 } from '../lib/agentApprovalAttribution'
+import { composedSeatRole, seatFromApprovalAttribution } from '../lib/transcriptSeat'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
@@ -1327,6 +1330,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     approvalEnsembleAttribution && pendingAgentApproval && approvalSeatModel
       ? shortModelName(pendingAgentApproval.provider, '', approvalSeatModel)
       : null
+  // The seat element (close-out table / fan-out lane card / question card /
+  // peer message) rather than a fifth chip vocabulary for the same question —
+  // "which participant is this?". `seatFromApprovalAttribution` reads live
+  // roster config on purpose; see its doc comment for why an approval is the
+  // one case where that is right.
+  const approvalSeat = seatFromApprovalAttribution({
+    provider: pendingAgentApproval?.provider || '',
+    attribution: approvalEnsembleAttribution,
+    roster: currentChat?.ensemble
+  })
+  const approvalSeatRole = composedSeatRole(approvalSeat)
   const approvalDisplayTitle = pendingAgentApproval
     ? agentApprovalDisplayTitle(
         pendingAgentApproval.title,
@@ -5522,37 +5536,89 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     aria-label="Ensemble permission request attribution"
                   >
                     <span className="composer-permission-attribution-label">Requested by</span>
-                    {/* The fan-out result-card chip family: the @Role chip's
-                      --primary variant tints itself from the card's pinned
-                      participant accent, the rest stay neutral. None are
-                      interactive. */}
-                    <strong className="segmented-control-action segmented-control-action--compact segmented-control-action--primary composer-permission-attribution-chip">
-                      @{approvalEnsembleAttribution.role}
-                    </strong>
-                    {approvalEnsembleAttribution.order ? (
-                      <span
-                        className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip composer-permission-attribution-order"
-                        title={`Participant order ${approvalEnsembleAttribution.order}`}
-                      >
-                        #{approvalEnsembleAttribution.order}
-                      </span>
-                    ) : null}
-                    <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
-                      {getProviderLabel(pendingAgentApproval.provider)}
-                    </span>
-                    {approvalSeatModelBadge ? (
-                      <span
-                        className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip"
-                        title={`Model: ${approvalSeatModelBadge}`}
-                      >
-                        {approvalSeatModelBadge}
-                      </span>
-                    ) : null}
-                    {approvalEnsembleAttribution.stageRole ? (
-                      <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
-                        {approvalEnsembleAttribution.stageRole}
-                      </span>
-                    ) : null}
+                    {approvalSeat ? (
+                      <>
+                        {/* Role first, then the config chips, so the line reads
+                          as one sentence — "Requested by #3 Scout2 ·
+                          AntiGravity · Gemini 3.6 Flash · Accept Edits" — the
+                          same order the fan-out lane card and the question card
+                          use. Two things the old pill row could not say arrive
+                          with it: the stage is now the glyph beside the role
+                          (Boss/Captain outranking it, which the pills never
+                          showed at all), and the permission chip states the
+                          tier this seat is actually running under — the single
+                          most relevant fact on an approval modal, and the one
+                          field the pills omitted.
+
+                          `seatAccentVar`, never re-derived: the hue resolves
+                          from the HUMANISED model label, and any other
+                          derivation drifts from the chips beside it on exactly
+                          the Ollama and Pi seats. */}
+                        {approvalSeatRole && (
+                          <strong
+                            className="composer-permission-attribution-role"
+                            style={{ color: seatAccentVar(approvalSeat) }}
+                            title={
+                              [
+                                participantRoleIconTitle(
+                                  approvalSeat.authority,
+                                  approvalSeat.stageRole
+                                ),
+                                approvalSeatRole
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || undefined
+                            }
+                          >
+                            <ParticipantRoleIcon
+                              authority={approvalSeat.authority}
+                              stageRole={approvalSeat.stageRole}
+                              className="seat-role-icon"
+                            />
+                            {approvalSeatRole}
+                          </strong>
+                        )}
+                        <SeatStateChips
+                          seat={approvalSeat}
+                          className="composer-permission-attribution-seat"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        {/* No model resolved — the participant was deleted
+                          mid-flight, or never carried one. Keep the original
+                          pills: an identity-shaped strip that names no model
+                          says less than they do, and this is the same call the
+                          fan-out card makes for its pre-snapshot rows. */}
+                        <strong className="segmented-control-action segmented-control-action--compact segmented-control-action--primary composer-permission-attribution-chip">
+                          @{approvalEnsembleAttribution.role}
+                        </strong>
+                        {approvalEnsembleAttribution.order ? (
+                          <span
+                            className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip composer-permission-attribution-order"
+                            title={`Participant order ${approvalEnsembleAttribution.order}`}
+                          >
+                            #{approvalEnsembleAttribution.order}
+                          </span>
+                        ) : null}
+                        <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
+                          {getProviderLabel(pendingAgentApproval.provider)}
+                        </span>
+                        {approvalSeatModelBadge ? (
+                          <span
+                            className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip"
+                            title={`Model: ${approvalSeatModelBadge}`}
+                          >
+                            {approvalSeatModelBadge}
+                          </span>
+                        ) : null}
+                        {approvalEnsembleAttribution.stageRole ? (
+                          <span className="segmented-control-action segmented-control-action--compact composer-permission-attribution-chip">
+                            {approvalEnsembleAttribution.stageRole}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
                   </section>
                 )}
                 {agentApprovalCountdownMs != null && (

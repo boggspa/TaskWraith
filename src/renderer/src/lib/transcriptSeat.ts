@@ -16,6 +16,7 @@
 
 import type { ChatRun } from '../../../main/store/types'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
+import { resolveSeatAuthority } from '../../../shared/seatChange'
 
 function trimmed(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -179,6 +180,103 @@ export function agentQuestionSeatKey(seat: SeatChangeSeatState | null | undefine
     seat.thinkingEnabled === undefined ? '' : String(seat.thinkingEnabled),
     seat.permissionPresetId ?? ''
   ].join('|')
+}
+
+/** The roster fields the approval decoder reads. A structural subset of
+ *  `EnsembleConfig` rather than the type itself: the decoder needs six of its
+ *  fields, and a test fixture should not have to satisfy the other forty. */
+export interface ApprovalSeatRoster {
+  participants?: readonly {
+    id: string
+    role?: string
+    order?: number
+    model?: string
+    reasoningEffort?: string
+    thinkingEnabled?: boolean
+    permissionPresetId?: string
+    stageRole?: string
+  }[]
+  bossmanParticipantId?: string | null
+  captainParticipantIds?: readonly string[] | null
+}
+
+/**
+ * The seat behind a PENDING approval request.
+ *
+ * **This decoder reads LIVE roster config, and it is the only one here that
+ * does.** Every other function in this file reads a snapshot on purpose — a
+ * lane that ran an hour ago must keep describing the seat it actually ran as.
+ * An approval is the opposite case: it is a request being made right now, by a
+ * seat that is mid-turn, and the roster IS what it is running as. There is also
+ * no snapshot to read — `ensembleApprovalContext` (main/index.ts) bakes
+ * participantId / provider / role / stageRole / order into the preview and
+ * stops there, so model, reasoning and permission preset have no other source.
+ *
+ * Identity comes from the ATTRIBUTION, configuration from the roster. That
+ * split is deliberate: the attribution is the validated, bounded identity the
+ * approval was filed under (and the one `agentApprovalDisplayTitle` strips from
+ * the title), so a roster edit landing between request and render must not be
+ * able to re-label whose request the user is answering. Provider likewise comes
+ * from the approval itself — the request genuinely came from that provider's
+ * CLI, whatever the roster now says.
+ *
+ * Returns null when no model resolves — a participant deleted mid-flight, or
+ * one that never had one. The caller keeps its own fallback for that: an
+ * identity-shaped strip that names no model is worse than plain pills.
+ */
+export function seatFromApprovalAttribution(input: {
+  provider: string
+  attribution: {
+    participantId: string
+    role: string
+    stageRole?: string
+    order?: number
+  } | null
+  roster: ApprovalSeatRoster | null | undefined
+}): SeatChangeSeatState | null {
+  const { attribution } = input
+  if (!attribution) return null
+  const provider = trimmed(input.provider)
+  const participantId = trimmed(attribution.participantId)
+  if (!provider || !participantId) return null
+
+  const participant = (input.roster?.participants || []).find(
+    (candidate) => trimmed(candidate.id) === participantId
+  )
+  const model = trimmed(participant?.model)
+  // As everywhere else here: an empty model renders as a seat with no model
+  // rather than as the absent seat it actually is.
+  if (!model) return null
+
+  const role = trimmed(attribution.role)
+  const seatNumber = positiveInt(attribution.order)
+  const stageRole = stageRoleOf(attribution.stageRole)
+  const reasoningEffort = trimmed(participant?.reasoningEffort)
+  const permissionPresetId = trimmed(participant?.permissionPresetId)
+  // Chat-level, so it cannot come off the participant — same resolver the
+  // orchestrator stamps onto a fan-out row, so a Boss wears its crown in the
+  // approval modal exactly as it does in the lane card.
+  const authority = resolveSeatAuthority({
+    participantId,
+    stageRole: stageRole ?? participant?.stageRole,
+    bossmanParticipantId: input.roster?.bossmanParticipantId,
+    captainParticipantIds: input.roster?.captainParticipantIds
+  })
+
+  return {
+    provider,
+    model,
+    ...(role ? { role } : {}),
+    ...(seatNumber ? { seatNumber } : {}),
+    ...(stageRole ? { stageRole } : {}),
+    ...(authority ? { authority } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    // `false` is meaningful — a type check, never truthiness.
+    ...(typeof participant?.thinkingEnabled === 'boolean'
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(permissionPresetId ? { permissionPresetId } : {})
+  }
 }
 
 /**

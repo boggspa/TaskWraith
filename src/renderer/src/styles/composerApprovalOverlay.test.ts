@@ -66,6 +66,67 @@ describe('composer agent-approval overlay', () => {
     )
   })
 
+  /*
+   * "Requested by" answers the same question the close-out table, the fan-out
+   * lane card, the sub-thread return and the question card all answer — which
+   * participant is this — and it now answers it with the same element instead
+   * of a fifth chip vocabulary. Two facts the old `segmented-control-action`
+   * pills could not carry come with it: the seat's PERMISSION TIER (the single
+   * most relevant field on an approval modal, and the one the pills omitted),
+   * and Boss/Captain authority, drawn as the glyph the stage-role pill used to
+   * displace.
+   */
+  it('renders the attribution as the shared seat element, pills only as fallback', () => {
+    const source = readSource('src/renderer/src/components/Composer.tsx')
+
+    // The element itself, not a local re-implementation of its chips.
+    expect(source).toContain("import { SeatStateChips, seatAccentVar } from './SeatChangeRow'")
+    expect(source).toContain('className="composer-permission-attribution-seat"')
+    // The hue is the seat's own, never re-derived: it resolves from the
+    // HUMANISED model label, and any other derivation drifts from the chips
+    // beside it on exactly the Ollama and Pi seats.
+    expect(source).toContain('seatAccentVar(approvalSeat)')
+    expect(source).toContain('<ParticipantRoleIcon')
+
+    // The pills survive ONLY behind the no-seat branch. A seat that resolves no
+    // model would otherwise render an identity-shaped strip naming nothing.
+    const attribution = source.indexOf('composer-permission-attribution-label')
+    expect(attribution).toBeGreaterThanOrEqual(0)
+    const section = source.slice(attribution, source.indexOf('</section>', attribution))
+    const seatBranch = section.indexOf('{approvalSeat ? (')
+    const pill = section.indexOf('composer-permission-attribution-chip')
+    expect(seatBranch).toBeGreaterThanOrEqual(0)
+    expect(pill).toBeGreaterThan(seatBranch)
+    expect(section.indexOf(') : (')).toBeLessThan(pill)
+  })
+
+  it('lets the seat cluster shrink so the permission tier survives a long model id', () => {
+    // Composer triggers are `flex-shrink: 0` — correct in the toolbar, where the
+    // trigger is a real control. Inside the width-capped card that pushes the
+    // tier chip past the rim, and the tier is the whole reason the element beats
+    // the pills it replaced. The model label ellipsises instead.
+    const css = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
+
+    expect(css).toMatch(
+      /\.composer-permission-attribution-seat\.seat-state-chips \{[^}]*min-width: 0/
+    )
+    expect(css).toMatch(
+      /\.composer-permission-attribution-seat > \.seat-change-chip\[data-composer-control='permission'\] \{[^}]*flex: 0 0 auto/
+    )
+    expect(css).toMatch(
+      /\.composer-permission-attribution-seat \.composer-combined-picker-trigger-primary \{[^}]*text-overflow: ellipsis/
+    )
+
+    // Layout only. A `color` anywhere on this chain kills the provider hue, the
+    // permission tint and the reasoning shimmer flowing into `.seat-change-chip`
+    // from the composer's own rules. The role span's colour is inline, from
+    // `seatAccentVar` — never here.
+    const roleStart = css.indexOf('.composer-permission-attribution-role {')
+    expect(roleStart).toBeGreaterThanOrEqual(0)
+    const seatRules = css.slice(roleStart, css.indexOf('.composer-permission-countdown {'))
+    expect(seatRules).not.toMatch(/^\s*color:/m)
+  })
+
   it('keeps every child of the clipped card shrinkable, with the actions pinned', () => {
     // The card clips at max-height with overflow:hidden, and flex items
     // default to min-height:auto. Without these rules a single agent-authored

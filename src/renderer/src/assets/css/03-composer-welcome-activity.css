@@ -8854,6 +8854,58 @@ button.composer-run-timecode.is-open {
   font-weight: 500;
 }
 
+/* ── The seat element, as the approval modal's answer to "who asked" ──
+ * Same element the close-out table, the fan-out lane card, the sub-thread
+ * return and the question card render, so this is layout ONLY. The chips carry
+ * their own chrome strip (`.seat-change-chip`) and take their text colours from
+ * the composer's own trigger rules — a `color` declared anywhere on this chain
+ * would kill the provider hue, the permission tint and the reasoning shimmer.
+ * (The section's own `color: var(--text-secondary)` above never reaches them:
+ * `.composer-combined-picker-trigger` sets `color` itself.) The one colour is
+ * on the role span, inline from `seatAccentVar`. */
+.composer-permission-attribution-role {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+/* The card is width-capped and its title row already competes for the space, so
+ * the cluster chip may shrink — the model label ellipsises first, keeping the
+ * provider and, above all, the permission tier readable. Without this the chips
+ * are `flex-shrink: 0` (correct in the composer toolbar, where the trigger is a
+ * real control) and a long model id shoves the tier past the card rim. */
+.composer-permission-attribution-seat.seat-state-chips {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.composer-permission-attribution-seat
+  > .seat-change-chip:not([data-composer-control='permission']) {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.composer-permission-attribution-seat > .seat-change-chip[data-composer-control='permission'] {
+  flex: 0 0 auto;
+}
+
+.composer-permission-attribution-seat .composer-combined-picker-trigger-provider,
+.composer-permission-attribution-seat .composer-combined-picker-trigger-tail {
+  flex-shrink: 0;
+}
+
+.composer-permission-attribution-seat .composer-combined-picker-trigger-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The card title dropped its amber, so the countdown is now where the
  * caution colour lives — it is also the only row whose urgency grows. */
 .composer-permission-countdown {
