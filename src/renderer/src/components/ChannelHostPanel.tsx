@@ -45,6 +45,7 @@ export interface ChannelHostPanelViewProps {
   onCreate: () => void
   onIssueInvite: () => void
   onCopyInvite: () => void
+  onCopyMigratedInvite: (inviteId: string) => void
   onClearInvite: () => void
   onAppend: () => void
   onLoadMore: () => void
@@ -125,6 +126,7 @@ export function ChannelHostPanelView({
   onCreate,
   onIssueInvite,
   onCopyInvite,
+  onCopyMigratedInvite,
   onClearInvite,
   onAppend,
   onLoadMore,
@@ -267,6 +269,82 @@ export function ChannelHostPanelView({
                 <span>{channel.display.memberCount} members</span>
                 <span>{channel.display.messageCount} messages</span>
               </div>
+
+              {(state.migrationHandoff || state.migrationHandoffError) && (
+                <section
+                  className="channel-host-section"
+                  aria-labelledby={`${panelId}-migrated-invitations`}
+                >
+                  <div className="channel-host-section-heading">
+                    <div>
+                      <h3 id={`${panelId}-migrated-invitations`}>Migrated invitations</h3>
+                      <span>Reissued Channel invitations from the adjacent People rollout.</span>
+                    </div>
+                  </div>
+                  {state.migrationHandoffError ? (
+                    <p className="channel-host-invite-warning" role="alert">
+                      {state.migrationHandoffError}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="channel-host-members">
+                        {state.migrationHandoff?.invitations.map((invitation, index) => {
+                          const inviteId = invitation.invite?.inviteId
+                          const ready = invitation.status === 'ready' && Boolean(inviteId)
+                          return (
+                            <div
+                              key={inviteId || `${invitation.channelId}-${index}`}
+                              className="channel-host-member"
+                            >
+                              <div>
+                                <strong>{invitation.recipientLabel}</strong>
+                                <span>
+                                  {invitation.purpose === 'pending-collaborator'
+                                    ? 'Reissued pending invitation'
+                                    : 'Reissued open invitation'}{' '}
+                                  · Expires {isoTime(invitation.expiresAt)}
+                                </span>
+                              </div>
+                              {ready && inviteId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onCopyMigratedInvite(inviteId)}
+                                  disabled={busy}
+                                  aria-label={`Copy migrated Channel invitation for ${invitation.recipientLabel}`}
+                                >
+                                  {state.busy === 'migration-invite'
+                                    ? 'Copying…'
+                                    : state.copiedMigrationInviteId === inviteId
+                                      ? 'Copied'
+                                      : 'Copy invitation'}
+                                </button>
+                              ) : (
+                                <span className="channel-host-muted">
+                                  Relay unavailable — credential withheld.
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {state.migrationHandoff?.invitations.length === 0 && (
+                          <span className="channel-host-muted">
+                            No active migrated invitations remain for this chat.
+                          </span>
+                        )}
+                      </div>
+                      {state.migrationHandoff?.retiredInvitationCount ? (
+                        <p className="channel-host-muted">
+                          {state.migrationHandoff.retiredInvitationCount} migrated invitation
+                          {state.migrationHandoff.retiredInvitationCount === 1
+                            ? ' has'
+                            : 's have'}{' '}
+                          already retired.
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </section>
+              )}
 
               {active && ready && state.pendingAdmissions.length > 0 && (
                 <section
@@ -635,6 +713,7 @@ function ChannelHostPanelForChat({
       onCreate={() => void controller?.create(ownerDisplayName)}
       onIssueInvite={() => void controller?.issueInvite()}
       onCopyInvite={() => void controller?.copyCurrentInvite()}
+      onCopyMigratedInvite={(inviteId) => void controller?.copyMigratedInvite(inviteId)}
       onClearInvite={() => controller?.clearInvite()}
       onAppend={() => {
         void controller?.append(draft).then((posted) => {

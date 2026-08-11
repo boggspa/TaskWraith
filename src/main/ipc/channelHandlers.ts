@@ -13,6 +13,9 @@ import type {
   ChannelIpcHumanReviewInput,
   ChannelIpcInviteResult,
   ChannelIpcIssueInviteInput,
+  ChannelIpcMigrationHandoff,
+  ChannelIpcMigrationHandoffInvitation,
+  ChannelIpcMigrationHandoffInput,
   ChannelIpcMember,
   ChannelIpcMessage,
   ChannelIpcReadInput,
@@ -41,6 +44,10 @@ import type {
   ChannelProductionReadResult,
   ChannelProductionService
 } from '../collaboration/ChannelProductionService'
+import {
+  isPeopleToChannelMigrationHandoffError,
+  type PeopleToChannelMigrationHandoffService
+} from '../collaboration/PeopleToChannelMigrationHandoffService'
 import { ChannelError } from '../collaboration/ChannelStore'
 import type { ChatRecord } from '../store/types'
 
@@ -48,6 +55,7 @@ const MAX_IDENTIFIER_LENGTH = 512
 const MAX_DISPLAY_NAME_LENGTH = 120
 const MAX_CHANNEL_TITLE_LENGTH = 200
 const MAX_AUDIT_LIMIT = 1_000
+const MAX_MIGRATION_HANDOFF_INVITATIONS = 512
 const MIN_INVITE_TTL_MS = 1_000
 const MAX_INVITE_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_ERROR_MESSAGE_LENGTH = 240
@@ -58,6 +66,7 @@ const HANDLED_CHANNELS = [
   'channels:audit',
   'channels:create',
   'channels:issue-invite',
+  'channels:migration-handoff',
   'channels:append',
   'channels:revoke-member',
   'channels:human-reviews',
@@ -85,6 +94,8 @@ export interface ChannelHandlersDeps {
   >
   getChat: (chatId: string) => Pick<ChatRecord, 'appChatId' | 'title' | 'archived'> | null
   resolveSenderScope: (event: IpcMainInvokeEvent) => ChannelIpcSenderScope
+  /** Optional until the migration bootstrap has constructed its handoff authority. */
+  migrationHandoff?: Pick<PeopleToChannelMigrationHandoffService, 'snapshot'>
 }
 
 export interface ChannelHandlersRegistration {
@@ -232,6 +243,12 @@ function parseIssueInviteInput(value: unknown): ChannelIpcIssueInviteInput {
     channelId: requireIdentifier(input.channelId, 'channel id'),
     ...(ttlMs === undefined ? {} : { ttlMs })
   }
+}
+
+function parseMigrationHandoffInput(value: unknown): ChannelIpcMigrationHandoffInput {
+  const input = requireRecord(value, 'Migrated Channel handoff input')
+  requireOnlyKeys(input, ['chatId'], 'Migrated Channel handoff input')
+  return { chatId: requireChatId(input.chatId) }
 }
 
 function parseAppendInput(value: unknown): ChannelIpcAppendInput {
@@ -383,6 +400,120 @@ function projectInvite(invite: ChannelProductionInviteResult): ChannelIpcInviteR
   }
 }
 
+function migrationBlocked(message: string): never {
+  throw new ChannelError('recovery_blocked', message)
+}
+
+function migrationIdentifier(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value.trim() !== value ||
+    value.length > MAX_IDENTIFIER_LENGTH ||
+    value.includes('\0')
+  ) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) {
+      migrationBlocked('Migrated Channel handoff is invalid')
+    }
+  }
+  return value
+}
+
+function migrationRecipientLabel(value: unknown): string {
+  const label = migrationIdentifier(value)
+  if (label.length > MAX_DISPLAY_NAME_LENGTH) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  return label
+}
+
+function migrationTimestamp(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  return Number(value)
+}
+
+function projectMigrationHandoffInvite(value: unknown): ChannelIpcInviteResult {
+  const input = isRecord(value) ? value : migrationBlocked('Migrated Channel handoff is invalid')
+  if (!Array.isArray(input.relayUrls) || input.relayUrls.length > 32) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  if (typeof input.hostRoomOpened !== 'boolean') {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  return {
+    channelId: migrationIdentifier(input.channelId),
+    inviteId: migrationIdentifier(input.inviteId),
+    inviteToken: migrationIdentifier(input.inviteToken),
+    roomId: migrationIdentifier(input.roomId),
+    expiresAt: migrationTimestamp(input.expiresAt),
+    relayUrls: input.relayUrls.map(migrationIdentifier),
+    hostRoomOpened: input.hostRoomOpened
+  }
+}
+
+function projectMigrationHandoff(value: unknown, chatId: string): ChannelIpcMigrationHandoff {
+  const snapshot = isRecord(value) ? value : migrationBlocked('Migrated Channel handoff is invalid')
+  if (
+    !Array.isArray(snapshot.invitations) ||
+    snapshot.invitations.length > MAX_MIGRATION_HANDOFF_INVITATIONS
+  ) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  const retiredInvitationCount = migrationTimestamp(snapshot.retiredInvitationCount)
+  const relayUnavailableInvitationCount = migrationTimestamp(
+    snapshot.relayUnavailableInvitationCount
+  )
+  if (retiredInvitationCount > MAX_MIGRATION_HANDOFF_INVITATIONS) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+
+  const invitations = snapshot.invitations.map((candidate) => {
+    const input = isRecord(candidate)
+      ? candidate
+      : migrationBlocked('Migrated Channel handoff is invalid')
+    let projectedChatId: string
+    try {
+      projectedChatId = requireChatId(input.chatId)
+    } catch {
+      return migrationBlocked('Migrated Channel handoff is invalid')
+    }
+    if (projectedChatId !== chatId) migrationBlocked('Migrated Channel handoff scope is invalid')
+    if (
+      (input.purpose !== 'pending-collaborator' && input.purpose !== 'open-invite') ||
+      (input.status !== 'ready' && input.status !== 'relay_unavailable')
+    ) {
+      migrationBlocked('Migrated Channel handoff is invalid')
+    }
+    const channelId = migrationIdentifier(input.channelId)
+    const purpose: ChannelIpcMigrationHandoffInvitation['purpose'] = input.purpose
+    const status: ChannelIpcMigrationHandoffInvitation['status'] = input.status
+    const recipientLabel = migrationRecipientLabel(input.recipientLabel)
+    const expiresAt = migrationTimestamp(input.expiresAt)
+    const invite = input.invite === null ? null : projectMigrationHandoffInvite(input.invite)
+    if (
+      (status === 'ready' && (!invite || invite.relayUrls.length === 0)) ||
+      (status === 'relay_unavailable' && invite !== null) ||
+      (invite && (invite.channelId !== channelId || invite.expiresAt !== expiresAt))
+    ) {
+      migrationBlocked('Migrated Channel handoff is invalid')
+    }
+    return { channelId, purpose, recipientLabel, expiresAt, status, invite }
+  })
+  if (
+    relayUnavailableInvitationCount !==
+    invitations.filter((invitation) => invitation.status === 'relay_unavailable').length
+  ) {
+    migrationBlocked('Migrated Channel handoff is invalid')
+  }
+  return { invitations, retiredInvitationCount, relayUnavailableInvitationCount }
+}
+
 function projectAppend(result: ChannelAppendResult): ChannelIpcAppendResult {
   return { record: projectMessage(result.record), deduplicated: result.deduplicated }
 }
@@ -446,7 +577,9 @@ export function registerChannelHandlers(
     !deps ||
     !deps.service ||
     typeof deps.getChat !== 'function' ||
-    typeof deps.resolveSenderScope !== 'function'
+    typeof deps.resolveSenderScope !== 'function' ||
+    (deps.migrationHandoff !== undefined &&
+      (!deps.migrationHandoff || typeof deps.migrationHandoff.snapshot !== 'function'))
   ) {
     throw new Error('registerChannelHandlers requires its production dependencies')
   }
@@ -577,6 +710,29 @@ export function registerChannelHandlers(
       const input = parseIssueInviteInput(value)
       requireOwnedChannel(scope, input.channelId)
       return projectInvite(deps.service.issueInvite(input))
+    })
+  )
+
+  ipc.handle('channels:migration-handoff', (event, value: unknown) =>
+    boundary(() => {
+      const scope = senderScope(event)
+      const input = parseMigrationHandoffInput(value)
+      assertScopeOwnsChat(scope, input.chatId)
+      if (!deps.migrationHandoff) return null
+      try {
+        return projectMigrationHandoff(
+          deps.migrationHandoff.snapshot({ chatId: input.chatId }),
+          input.chatId
+        )
+      } catch (error) {
+        if (isPeopleToChannelMigrationHandoffError(error)) {
+          throw new ChannelError(
+            'recovery_blocked',
+            'Migrated Channel invitations could not be recovered safely'
+          )
+        }
+        throw error
+      }
     })
   )
 

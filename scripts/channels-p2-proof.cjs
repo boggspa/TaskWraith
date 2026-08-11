@@ -30,11 +30,15 @@ const EXPECTED_HOST_IPC = [
   'channels:agent:revoke',
   'channels:agent:rotate',
   'channels:append',
+  'channels:approve-human-review',
   'channels:audit',
   'channels:close',
   'channels:create',
+  'channels:deny-human-review',
+  'channels:human-reviews',
   'channels:issue-invite',
   'channels:list',
+  'channels:migration-handoff',
   'channels:read',
   'channels:revoke-member'
 ]
@@ -55,15 +59,22 @@ const EXPECTED_MEMBER_IPC = [
 const PACKAGED_SURFACE_MARKERS = {
   main: [
     'channels:issue-invite',
+    'channels:migration-handoff',
     'channels:member:begin-join',
     'channels:member:reset-local-history'
   ],
-  preload: ['channelMemberships', 'channels:changed', 'channels:member:begin-join'],
+  preload: [
+    'channelMemberships',
+    'channels:changed',
+    'migrationHandoff',
+    'channels:member:begin-join'
+  ],
   renderer: [
     'Confirm joins',
     'Compare each code out of band before the member confirms.',
     'Opened the retained read-only history for this revoked membership.',
     'People share stays available alongside it',
+    'Migrated invitations',
     'Human posts stay manual.',
     'named in an active signed grant can mention that agent to start a bounded run'
   ]

@@ -28,6 +28,7 @@ import {
   type ChannelProductionStatus
 } from './ChannelProductionService'
 import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
+import type { PeopleToChannelMigrationHandoffService } from './PeopleToChannelMigrationHandoffService'
 
 export interface ChannelProductionRelaySources {
   getEmbeddedRelayPort: () => number | null | undefined
@@ -63,6 +64,8 @@ export interface ChannelProductionBootstrapOptions {
   agentExecution: ChannelProductionAgentRuntimeOptions
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
+  /** Constructed by the migration startup owner before this bootstrap starts serving IPC. */
+  migrationHandoff?: Pick<PeopleToChannelMigrationHandoffService, 'snapshot'>
   createService?: (options: ChannelProductionServiceOptions) => ChannelProductionService
 }
 
@@ -207,6 +210,12 @@ export function createChannelProductionBootstrap(
   if (options.createService !== undefined && typeof options.createService !== 'function') {
     throw new Error('ChannelProductionBootstrap createService must be a function')
   }
+  if (
+    options.migrationHandoff !== undefined &&
+    (!options.migrationHandoff || typeof options.migrationHandoff.snapshot !== 'function')
+  ) {
+    throw new Error('ChannelProductionBootstrap migration handoff must be a snapshot provider')
+  }
 
   let stopped = false
   let registration: ChannelHandlersRegistration | null = null
@@ -279,7 +288,8 @@ export function createChannelProductionBootstrap(
         registration = registerChannelHandlers(options.ipc, {
           service,
           getChat: options.getChat,
-          resolveSenderScope
+          resolveSenderScope,
+          ...(options.migrationHandoff ? { migrationHandoff: options.migrationHandoff } : {})
         })
         agentRegistration = registerChannelAgentHandlers(options.ipc, {
           controller: agentController,

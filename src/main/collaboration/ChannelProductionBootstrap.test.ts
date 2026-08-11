@@ -253,7 +253,7 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
 }
 
 describe('ChannelProductionBootstrap', () => {
-  it('registers the mandatory 16-handler surface and binds popouts to their chat', async () => {
+  it('registers the mandatory 17-handler surface and binds popouts to their chat', async () => {
     const fixture = harness()
 
     expect(fixture.handlers.size).toBe(0)
@@ -290,6 +290,7 @@ describe('ChannelProductionBootstrap', () => {
         'channels:human-reviews',
         'channels:issue-invite',
         'channels:list',
+        'channels:migration-handoff',
         'channels:approve-human-review',
         'channels:read',
         'channels:revoke-member',
@@ -306,6 +307,49 @@ describe('ChannelProductionBootstrap', () => {
     expect(main.ok && main.value.map((item) => item.channelId)).toEqual(['channel-a', 'channel-b'])
     expect(popout.ok && popout.value.map((item) => item.channelId)).toEqual(['channel-a'])
     expect(denied).toMatchObject({ ok: false, error: { code: 'not_authorized' } })
+  })
+
+  it('passes an optional migrated-invitation authority only to the closed chat handler', async () => {
+    const snapshot = vi.fn(() => ({
+      invitations: [
+        {
+          channelId: 'channel-a',
+          chatId: 'chat-a',
+          purpose: 'pending-collaborator',
+          recipientLabel: 'Alex Pending',
+          expiresAt: 60_000,
+          status: 'ready',
+          invite: {
+            channelId: 'channel-a',
+            inviteId: 'migrated-invite-a',
+            inviteToken: 'migrated-one-shot-token',
+            roomId: 'room-a',
+            expiresAt: 60_000,
+            relayUrls: ['wss://relay.example'],
+            hostRoomOpened: true
+          }
+        }
+      ],
+      retiredInvitationCount: 0,
+      relayUnavailableInvitationCount: 0
+    }))
+    const fixture = harness({ migrationHandoff: { snapshot } as never })
+
+    fixture.bootstrap.start()
+    const handoff = fixture.handlers.get('channels:migration-handoff')
+    if (!handoff) throw new Error('channels:migration-handoff was not registered')
+    const result = (await handoff(
+      { sender: { id: 2 } },
+      { chatId: 'chat-a' }
+    )) as ChannelIpcResult<{
+      invitations: Array<{ recipientLabel: string }>
+    } | null>
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { invitations: [{ recipientLabel: 'Alex Pending' }] }
+    })
+    expect(snapshot).toHaveBeenCalledWith({ chatId: 'chat-a' })
   })
 
   it('composes the canonical agent controller, native owner, and closed IPC lifecycle', async () => {
@@ -367,6 +411,7 @@ describe('ChannelProductionBootstrap', () => {
         'channels:human-reviews',
         'channels:issue-invite',
         'channels:list',
+        'channels:migration-handoff',
         'channels:approve-human-review',
         'channels:read',
         'channels:revoke-member',
@@ -439,7 +484,7 @@ describe('ChannelProductionBootstrap', () => {
 
     await fixture.bootstrap.stop()
     expect(fixture.handlers.size).toBe(0)
-    expect(fixture.removeHandler).toHaveBeenCalledTimes(32)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(34)
   })
 
   it('projects safe changes to main and only the exact owning chat popout', async () => {
@@ -487,7 +532,7 @@ describe('ChannelProductionBootstrap', () => {
     await fixture.bootstrap.stop()
 
     expect(fixture.handlers.size).toBe(0)
-    expect(fixture.removeHandler).toHaveBeenCalledTimes(32)
+    expect(fixture.removeHandler).toHaveBeenCalledTimes(34)
     expect(fixture.service.stop).toHaveBeenCalledOnce()
     await expect(fixture.bootstrap.stop()).resolves.toBeUndefined()
     expect(fixture.service.stop).toHaveBeenCalledOnce()

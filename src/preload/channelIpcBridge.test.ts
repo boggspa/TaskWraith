@@ -32,6 +32,7 @@ describe('Channel IPC preload bridge', () => {
       'audit',
       'create',
       'issueInvite',
+      'migrationHandoff',
       'append',
       'revokeMember',
       'listHumanReviews',
@@ -45,6 +46,7 @@ describe('Channel IPC preload bridge', () => {
     const audit = { channelId: 'channel-a', limit: 20 }
     const create = { chatId: 'chat-a', ownerDisplayName: 'Host' }
     const invite = { channelId: 'channel-a', ttlMs: 60_000 }
+    const migrationHandoff = { chatId: 'chat-a' }
     const append = { channelId: 'channel-a', clientMessageId: 'client-a', content: 'hello' }
     const revoke = { channelId: 'channel-a', memberId: 'member-a' }
     const reviews = { channelId: 'channel-a' }
@@ -57,6 +59,7 @@ describe('Channel IPC preload bridge', () => {
     await target.bridge.audit(audit)
     await target.bridge.create(create)
     await target.bridge.issueInvite(invite)
+    await target.bridge.migrationHandoff(migrationHandoff)
     await target.bridge.append(append)
     await target.bridge.revokeMember(revoke)
     await target.bridge.listHumanReviews(reviews)
@@ -71,6 +74,7 @@ describe('Channel IPC preload bridge', () => {
       [CHANNEL_IPC_CHANNELS.audit, audit],
       [CHANNEL_IPC_CHANNELS.create, create],
       [CHANNEL_IPC_CHANNELS.issueInvite, invite],
+      [CHANNEL_IPC_CHANNELS.migrationHandoff, migrationHandoff],
       [CHANNEL_IPC_CHANNELS.append, append],
       [CHANNEL_IPC_CHANNELS.revokeMember, revoke],
       [CHANNEL_IPC_CHANNELS.humanReviews, reviews],

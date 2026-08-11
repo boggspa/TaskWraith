@@ -72,6 +72,9 @@ function props(overrides: Partial<ChannelHostPanelViewProps> = {}): ChannelHostP
       records: [],
       highWaterSequence: 0,
       invite: null,
+      migrationHandoff: null,
+      copiedMigrationInviteId: null,
+      migrationHandoffError: null,
       notice: null,
       error: null
     },
@@ -82,6 +85,7 @@ function props(overrides: Partial<ChannelHostPanelViewProps> = {}): ChannelHostP
     onCreate: () => undefined,
     onIssueInvite: () => undefined,
     onCopyInvite: () => undefined,
+    onCopyMigratedInvite: () => undefined,
     onClearInvite: () => undefined,
     onAppend: () => undefined,
     onLoadMore: () => undefined,
@@ -158,6 +162,9 @@ describe('ChannelHostPanelView', () => {
         ],
         highWaterSequence: 3,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -228,6 +235,9 @@ describe('ChannelHostPanelView', () => {
         ],
         highWaterSequence: 1,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -259,6 +269,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -275,6 +288,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -291,6 +307,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -333,6 +352,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -370,6 +392,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -400,6 +425,9 @@ describe('ChannelHostPanelView', () => {
           hostRoomOpened: false,
           copied: false
         },
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: 'Invite created.',
         error: null
       }
@@ -410,6 +438,65 @@ describe('ChannelHostPanelView', () => {
     expect(html).toContain('relay room is not open yet')
     expect(html).toContain('six-digit security code out of band')
     expect(html).toContain('aria-label="Channel invite payload"')
+  })
+
+  it('shows recipient-labelled migrated invitations without rendering their credentials', () => {
+    const html = render({
+      state: {
+        loading: false,
+        busy: null,
+        channel: channel(),
+        members: [member()],
+        pendingAdmissions: [],
+        humanReviews: [],
+        records: [],
+        highWaterSequence: 0,
+        invite: null,
+        migrationHandoff: {
+          invitations: [
+            {
+              channelId: 'channel-1',
+              purpose: 'pending-collaborator',
+              recipientLabel: 'Alex Pending',
+              expiresAt: 1_786_262_400_000,
+              status: 'ready',
+              invite: {
+                channelId: 'channel-1',
+                inviteId: 'migrated-invite-1',
+                inviteToken: 'migrated-one-shot-token',
+                roomId: 'migrated-room-1',
+                expiresAt: 1_786_262_400_000,
+                relayUrls: ['wss://relay.example'],
+                hostRoomOpened: true
+              }
+            },
+            {
+              channelId: 'channel-1',
+              purpose: 'open-invite',
+              recipientLabel: 'Open invitation 1',
+              expiresAt: 1_786_262_400_000,
+              status: 'relay_unavailable',
+              invite: null
+            }
+          ],
+          retiredInvitationCount: 1,
+          relayUnavailableInvitationCount: 1
+        },
+        copiedMigrationInviteId: 'migrated-invite-1',
+        migrationHandoffError: null,
+        notice: null,
+        error: null
+      }
+    })
+
+    expect(html).toContain('Migrated invitations')
+    expect(html).toContain('Alex Pending')
+    expect(html).toContain('Open invitation 1')
+    expect(html).toContain('Copied')
+    expect(html).toContain('Relay unavailable — credential withheld.')
+    expect(html).toContain('1 migrated invitation has already retired.')
+    expect(html).not.toContain('migrated-one-shot-token')
+    expect(html).not.toContain('migrated-room-1')
   })
 
   it('offers bounded forward paging when durable history is not caught up', () => {
@@ -424,6 +511,9 @@ describe('ChannelHostPanelView', () => {
         records: [message({ sequence: 256 })],
         highWaterSequence: 400,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -449,6 +539,9 @@ describe('ChannelHostPanelView', () => {
         records: [message()],
         highWaterSequence: 1,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -474,6 +567,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: null
       }
@@ -508,6 +604,9 @@ describe('ChannelHostPanelView', () => {
         records: [],
         highWaterSequence: 0,
         invite: null,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
         notice: null,
         error: 'This Channel is unavailable until its durable history is recovered.'
       }

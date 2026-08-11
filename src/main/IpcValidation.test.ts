@@ -118,6 +118,7 @@ describe('IpcValidation', () => {
       'channels:read',
       'channels:create',
       'channels:issue-invite',
+      'channels:migration-handoff',
       'channels:append',
       'channels:revoke-member',
       'channels:human-reviews',

@@ -127,6 +127,7 @@ describe('RendererIpcPolicy', () => {
     'channels:human-reviews',
     'channels:issue-invite',
     'channels:list',
+    'channels:migration-handoff',
     'channels:read',
     'channels:revoke-member'
   ])('lets scoped Channel handler %s reach its domain authority check', (channel) => {

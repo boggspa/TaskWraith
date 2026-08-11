@@ -7,6 +7,10 @@ import {
 } from '../../shared/collaboration/ChannelIpc'
 import { ChannelError } from '../collaboration/ChannelStore'
 import {
+  PEOPLE_TO_CHANNEL_HANDOFF_VERSION,
+  type PeopleToChannelMigrationHandoffSnapshot
+} from '../collaboration/PeopleToChannelMigrationHandoffService'
+import {
   registerChannelHandlers,
   type ChannelHandlersDeps,
   type ChannelIpcSenderScope
@@ -42,6 +46,36 @@ function channel(
 
 function event(id = 1): IpcMainInvokeEvent {
   return { sender: { id } } as unknown as IpcMainInvokeEvent
+}
+
+function migrationSnapshot(chatId: string): PeopleToChannelMigrationHandoffSnapshot {
+  return {
+    schemaVersion: PEOPLE_TO_CHANNEL_HANDOFF_VERSION,
+    planId: 'f'.repeat(64),
+    phase: 'cutover_applied',
+    routes: [{ chatId, channelId: 'channel-a', origin: 'general-and-people' }],
+    invitations: [
+      {
+        channelId: 'channel-a',
+        chatId,
+        purpose: 'pending-collaborator',
+        recipientLabel: 'Alex Pending',
+        expiresAt: 60_000,
+        status: 'ready',
+        invite: {
+          channelId: 'channel-a',
+          inviteId: 'migrated-invite-a',
+          inviteToken: 'migrated-one-shot-token',
+          roomId: 'room-a',
+          expiresAt: 60_000,
+          relayUrls: ['wss://relay.example'],
+          hostRoomOpened: true
+        }
+      }
+    ],
+    retiredInvitationCount: 1,
+    relayUnavailableInvitationCount: 0
+  }
 }
 
 function fixture(
@@ -434,6 +468,88 @@ describe('registerChannelHandlers', () => {
     expect(closed).toMatchObject({ ok: true, value: { status: 'closed' } })
   })
 
+  it('projects a recipient-labelled migration handoff only to its owning chat', async () => {
+    const snapshot = vi.fn(({ chatId }: { chatId?: string } = {}) =>
+      migrationSnapshot(chatId ?? 'chat-a')
+    )
+    const target = fixture({
+      scope: { kind: 'chat', chatId: 'chat-a' },
+      migrationHandoff: { snapshot }
+    })
+
+    const handoff = await target.invoke(CHANNEL_IPC_CHANNELS.migrationHandoff, {
+      chatId: 'chat-a'
+    })
+    expect(handoff).toMatchObject({
+      ok: true,
+      value: {
+        invitations: [
+          {
+            channelId: 'channel-a',
+            recipientLabel: 'Alex Pending',
+            status: 'ready',
+            invite: { inviteToken: 'migrated-one-shot-token' }
+          }
+        ],
+        retiredInvitationCount: 1,
+        relayUnavailableInvitationCount: 0
+      }
+    })
+    expect(snapshot).toHaveBeenCalledWith({ chatId: 'chat-a' })
+    expect(JSON.stringify(handoff)).not.toMatch(/planId|routes|f{64}/)
+
+    const wrongScope = fixture({
+      scope: { kind: 'chat', chatId: 'chat-b' },
+      migrationHandoff: { snapshot }
+    })
+    const denied = await wrongScope.invoke(CHANNEL_IPC_CHANNELS.migrationHandoff, {
+      chatId: 'chat-a'
+    })
+    expect(denied).toMatchObject({ ok: false, error: { code: 'not_authorized' } })
+    expect(snapshot).toHaveBeenCalledTimes(1)
+
+    const unavailable = fixture()
+    expect(
+      await unavailable.invoke(CHANNEL_IPC_CHANNELS.migrationHandoff, { chatId: 'chat-a' })
+    ).toEqual({ ok: true, value: null })
+  })
+
+  it('withholds malformed or relay-unavailable migration credentials', async () => {
+    const target = fixture({
+      migrationHandoff: {
+        snapshot: (() => ({
+          invitations: [
+            {
+              channelId: 'channel-a',
+              chatId: 'chat-a',
+              purpose: 'pending-collaborator',
+              recipientLabel: 'Alex Pending',
+              expiresAt: 60_000,
+              status: 'relay_unavailable',
+              invite: {
+                channelId: 'channel-a',
+                inviteId: 'must-not-project',
+                inviteToken: 'must-not-project',
+                roomId: 'room-a',
+                expiresAt: 60_000,
+                relayUrls: [],
+                hostRoomOpened: false
+              }
+            }
+          ],
+          retiredInvitationCount: 0,
+          relayUnavailableInvitationCount: 1
+        })) as never
+      }
+    })
+
+    const result = await target.invoke(CHANNEL_IPC_CHANNELS.migrationHandoff, {
+      chatId: 'chat-a'
+    })
+    expect(result).toMatchObject({ ok: false, error: { code: 'recovery_blocked' } })
+    expect(JSON.stringify(result)).not.toContain('must-not-project')
+  })
+
   it('scopes human review content to its owning chat and projects only decision evidence', async () => {
     const target = fixture({ scope: { kind: 'chat', chatId: 'chat-a' } })
     const reviews = await target.invoke(CHANNEL_IPC_CHANNELS.humanReviews, {
@@ -552,6 +668,7 @@ describe('registerChannelHandlers', () => {
       [CHANNEL_IPC_CHANNELS.read, { channelId: 'channel-a', resumeAfter: -1 }],
       [CHANNEL_IPC_CHANNELS.audit, { limit: 1_001 }],
       [CHANNEL_IPC_CHANNELS.issueInvite, { channelId: 'channel-a', ttlMs: 999 }],
+      [CHANNEL_IPC_CHANNELS.migrationHandoff, { chatId: 'chat-a', channelId: 'channel-a' }],
       [
         CHANNEL_IPC_CHANNELS.append,
         { channelId: 'channel-a', clientMessageId: 'client', content: 'x'.repeat(8_001) }

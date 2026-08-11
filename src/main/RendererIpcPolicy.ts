@@ -37,6 +37,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'channels:human-reviews',
   'channels:issue-invite',
   'channels:list',
+  'channels:migration-handoff',
   'channels:read',
   'channels:revoke-member',
   'check-trust',

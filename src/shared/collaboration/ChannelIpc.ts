@@ -7,6 +7,7 @@ export const CHANNEL_IPC_CHANNELS = {
   audit: 'channels:audit',
   create: 'channels:create',
   issueInvite: 'channels:issue-invite',
+  migrationHandoff: 'channels:migration-handoff',
   append: 'channels:append',
   revokeMember: 'channels:revoke-member',
   humanReviews: 'channels:human-reviews',
@@ -151,6 +152,26 @@ export interface ChannelIpcInviteResult {
   hostRoomOpened: boolean
 }
 
+/**
+ * A recipient-labelled, host-only reissue from an already-validated People
+ * migration. It deliberately has no People ids, source policy, or escrow data.
+ */
+export interface ChannelIpcMigrationHandoffInvitation {
+  channelId: string
+  purpose: 'pending-collaborator' | 'open-invite'
+  recipientLabel: string
+  expiresAt: number
+  status: 'ready' | 'relay_unavailable'
+  /** Null means the credential is intentionally withheld until relay is usable. */
+  invite: ChannelIpcInviteResult | null
+}
+
+export interface ChannelIpcMigrationHandoff {
+  invitations: ChannelIpcMigrationHandoffInvitation[]
+  retiredInvitationCount: number
+  relayUnavailableInvitationCount: number
+}
+
 export interface ChannelIpcAppendResult {
   record: ChannelIpcMessage
   deduplicated: boolean
@@ -207,6 +228,10 @@ export interface ChannelIpcIssueInviteInput {
   ttlMs?: number
 }
 
+export interface ChannelIpcMigrationHandoffInput {
+  chatId: string
+}
+
 export interface ChannelIpcAppendInput {
   channelId: string
   clientMessageId: string
@@ -233,6 +258,9 @@ export interface ChannelIpcApi {
   audit(input?: ChannelIpcAuditInput): Promise<ChannelIpcResult<ChannelIpcAuditEvent[]>>
   create(input: ChannelIpcCreateInput): Promise<ChannelIpcResult<ChannelIpcChannel>>
   issueInvite(input: ChannelIpcIssueInviteInput): Promise<ChannelIpcResult<ChannelIpcInviteResult>>
+  migrationHandoff(
+    input: ChannelIpcMigrationHandoffInput
+  ): Promise<ChannelIpcResult<ChannelIpcMigrationHandoff | null>>
   append(input: ChannelIpcAppendInput): Promise<ChannelIpcResult<ChannelIpcAppendResult>>
   revokeMember(input: ChannelIpcRevokeMemberInput): Promise<ChannelIpcResult<ChannelIpcMember>>
   listHumanReviews(

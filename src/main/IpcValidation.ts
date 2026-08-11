@@ -216,6 +216,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'channels:audit': ['optionalObject'],
   'channels:create': ['object'],
   'channels:issue-invite': ['object'],
+  'channels:migration-handoff': ['object'],
   'channels:append': ['object'],
   'channels:revoke-member': ['object'],
   'channels:human-reviews': ['object'],

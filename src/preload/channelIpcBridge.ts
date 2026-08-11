@@ -10,6 +10,7 @@ import {
   type ChannelIpcHumanReviewApprovalResult,
   type ChannelIpcHumanReviewDenialResult,
   type ChannelIpcInviteResult,
+  type ChannelIpcMigrationHandoff,
   type ChannelIpcMember,
   type ChannelIpcReadResult,
   type ChannelIpcResult
@@ -63,6 +64,8 @@ export function createChannelIpcBridge(ipcRenderer: ChannelIpcRendererPort): Cha
         : invoke<ChannelIpcAuditEvent[]>(CHANNEL_IPC_CHANNELS.audit, input),
     create: (input) => invoke<ChannelIpcChannel>(CHANNEL_IPC_CHANNELS.create, input),
     issueInvite: (input) => invoke<ChannelIpcInviteResult>(CHANNEL_IPC_CHANNELS.issueInvite, input),
+    migrationHandoff: (input) =>
+      invoke<ChannelIpcMigrationHandoff | null>(CHANNEL_IPC_CHANNELS.migrationHandoff, input),
     append: (input) => invoke<ChannelIpcAppendResult>(CHANNEL_IPC_CHANNELS.append, input),
     revokeMember: (input) => invoke<ChannelIpcMember>(CHANNEL_IPC_CHANNELS.revokeMember, input),
     listHumanReviews: (input) =>

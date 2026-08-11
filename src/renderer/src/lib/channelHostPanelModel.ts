@@ -4,6 +4,7 @@ import type {
   ChannelIpcError,
   ChannelIpcHumanReview,
   ChannelIpcInviteResult,
+  ChannelIpcMigrationHandoff,
   ChannelIpcMember,
   ChannelIpcMessage,
   ChannelIpcPendingAdmission
@@ -18,6 +19,7 @@ export const CHANNEL_HISTORY_PAGE_BYTES = 512 * 1024
 export type ChannelHostPanelAction =
   | 'create'
   | 'invite'
+  | 'migration-invite'
   | 'append'
   | 'revoke'
   | 'review'
@@ -41,6 +43,9 @@ export interface ChannelHostPanelState {
   records: ChannelIpcMessage[]
   highWaterSequence: number
   invite: ChannelHostInviteProjection | null
+  migrationHandoff: ChannelIpcMigrationHandoff | null
+  copiedMigrationInviteId: string | null
+  migrationHandoffError: string | null
   notice: string | null
   error: string | null
 }
@@ -80,6 +85,9 @@ export function createChannelHostPanelInitialState(): ChannelHostPanelState {
     records: [],
     highWaterSequence: 0,
     invite: null,
+    migrationHandoff: null,
+    copiedMigrationInviteId: null,
+    migrationHandoffError: null,
     notice: null,
     error: null
   }
@@ -313,6 +321,73 @@ export class ChannelHostPanelController {
     }
   }
 
+  async copyMigratedInvite(inviteId: string): Promise<boolean> {
+    const channel = this.state.channel
+    if (!channel || !inviteId || !this.beginAction('migration-invite')) return false
+    try {
+      const result = await this.options.api.migrationHandoff({ chatId: this.options.chatId })
+      if (!result.ok) {
+        const message = describeIpcError(result.error)
+        this.patch({
+          busy: null,
+          migrationHandoff: null,
+          copiedMigrationInviteId: null,
+          migrationHandoffError: message,
+          error: message,
+          notice: null
+        })
+        return false
+      }
+      const handoff = result.value
+      const invitation = handoff?.invitations.find(
+        (candidate) => candidate.invite?.inviteId === inviteId
+      )
+      if (
+        !invitation ||
+        invitation.status !== 'ready' ||
+        !invitation.invite ||
+        invitation.channelId !== channel.channelId ||
+        invitation.invite.channelId !== channel.channelId
+      ) {
+        this.patch({
+          busy: null,
+          migrationHandoff: handoff,
+          copiedMigrationInviteId: null,
+          migrationHandoffError: null,
+          error: 'This migrated invitation is no longer ready to copy. Refresh the Channel status.',
+          notice: null
+        })
+        return false
+      }
+      const payload = serializeChannelInvite(invitation.invite, this.options.chatId)
+      try {
+        await this.copyText(payload)
+      } catch {
+        this.patch({
+          busy: null,
+          migrationHandoff: handoff,
+          copiedMigrationInviteId: null,
+          migrationHandoffError: null,
+          error:
+            'Clipboard access is unavailable. Enable it, then copy the migrated invitation again.',
+          notice: null
+        })
+        return false
+      }
+      this.patch({
+        busy: null,
+        migrationHandoff: handoff,
+        copiedMigrationInviteId: inviteId,
+        migrationHandoffError: null,
+        notice: `Migrated invitation for ${invitation.recipientLabel} copied.`,
+        error: null
+      })
+      return true
+    } catch (error) {
+      return this.failThrown(error)
+    }
+  }
+
   clearInvite(): void {
     this.patch({ invite: null, notice: null })
   }
@@ -498,7 +573,13 @@ export class ChannelHostPanelController {
       const listed = await this.options.api.list()
       if (this.disposed) return false
       if (!listed.ok) {
-        this.patch({ loading: false, error: describeIpcError(listed.error) })
+        this.patch({
+          loading: false,
+          migrationHandoff: null,
+          copiedMigrationInviteId: null,
+          migrationHandoffError: null,
+          error: describeIpcError(listed.error)
+        })
         return false
       }
       const channel = findChannelForChat(listed.value, this.options.chatId)
@@ -512,10 +593,25 @@ export class ChannelHostPanelController {
           records: [],
           highWaterSequence: 0,
           invite: null,
+          migrationHandoff: null,
+          copiedMigrationInviteId: null,
+          migrationHandoffError: null,
           error: null
         })
         return true
       }
+
+      const handoffResult = await this.options.api.migrationHandoff({
+        chatId: this.options.chatId
+      })
+      if (this.disposed) return false
+      const migrationHandoff = handoffResult.ok ? handoffResult.value : null
+      const migrationHandoffError = handoffResult.ok ? null : describeIpcError(handoffResult.error)
+      const copiedMigrationInviteId = migrationHandoff?.invitations.some(
+        (invitation) => invitation.invite?.inviteId === this.state.copiedMigrationInviteId
+      )
+        ? this.state.copiedMigrationInviteId
+        : null
 
       const sameChannel = !reset && this.state.channel?.channelId === channel.channelId
       const previousRecords = sameChannel ? this.state.records : []
@@ -529,6 +625,9 @@ export class ChannelHostPanelController {
           humanReviews: [],
           records: previousRecords,
           highWaterSequence: Math.max(this.state.highWaterSequence, channel.messageCount),
+          migrationHandoff,
+          copiedMigrationInviteId,
+          migrationHandoffError,
           error: 'This Channel is unavailable until its durable history is recovered.'
         })
         return false
@@ -547,6 +646,9 @@ export class ChannelHostPanelController {
           channel,
           members: previousMembers,
           records: previousRecords,
+          migrationHandoff,
+          copiedMigrationInviteId,
+          migrationHandoffError,
           error: describeIpcError(read.error)
         })
         return false
@@ -564,6 +666,9 @@ export class ChannelHostPanelController {
           records: mergeRecords(previousRecords, read.value.records),
           highWaterSequence: read.value.highWaterSequence,
           humanReviews: [],
+          migrationHandoff,
+          copiedMigrationInviteId,
+          migrationHandoffError,
           error: describeIpcError(humanReviews.error)
         })
         return false
@@ -576,11 +681,20 @@ export class ChannelHostPanelController {
         humanReviews: humanReviews.value,
         records: mergeRecords(previousRecords, read.value.records),
         highWaterSequence: read.value.highWaterSequence,
-        error: null
+        migrationHandoff,
+        copiedMigrationInviteId,
+        migrationHandoffError,
+        error: migrationHandoffError
       })
       return true
     } catch (error) {
-      this.patch({ loading: false, error: describeThrown(error) })
+      this.patch({
+        loading: false,
+        migrationHandoff: null,
+        copiedMigrationInviteId: null,
+        migrationHandoffError: null,
+        error: describeThrown(error)
+      })
       return false
     }
   }

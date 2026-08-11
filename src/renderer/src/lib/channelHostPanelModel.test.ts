@@ -5,6 +5,7 @@ import type {
   ChannelIpcChangeEvent,
   ChannelIpcHumanReview,
   ChannelIpcInviteResult,
+  ChannelIpcMigrationHandoff,
   ChannelIpcMember,
   ChannelIpcMessage,
   ChannelIpcPendingAdmission,
@@ -96,6 +97,34 @@ function ok<T>(value: T): ChannelIpcResult<T> {
   return { ok: true, value }
 }
 
+function migrationHandoff(
+  overrides: Partial<ChannelIpcMigrationHandoff> = {}
+): ChannelIpcMigrationHandoff {
+  return {
+    invitations: [
+      {
+        channelId: 'channel-1',
+        purpose: 'pending-collaborator',
+        recipientLabel: 'Alex Pending',
+        expiresAt: 60_000,
+        status: 'ready',
+        invite: {
+          channelId: 'channel-1',
+          inviteId: 'migrated-invite-1',
+          inviteToken: 'migrated-one-shot-token',
+          roomId: 'migrated-room-1',
+          expiresAt: 60_000,
+          relayUrls: ['wss://relay.example'],
+          hostRoomOpened: true
+        }
+      }
+    ],
+    retiredInvitationCount: 0,
+    relayUnavailableInvitationCount: 0,
+    ...overrides
+  }
+}
+
 function createApi(overrides: Partial<ChannelIpcApi> = {}): ChannelIpcApi {
   const room = channel()
   return {
@@ -120,6 +149,7 @@ function createApi(overrides: Partial<ChannelIpcApi> = {}): ChannelIpcApi {
         relayUrls: ['wss://relay.example'],
         hostRoomOpened: true
       }),
+    migrationHandoff: async () => ok(null),
     append: async ({ clientMessageId, content }) =>
       ok({
         record: message(1, { clientMessageId, content }),
@@ -306,6 +336,72 @@ describe('ChannelHostPanelController', () => {
     expect(await controller.issueInvite()).toBe(true)
     expect(controller.snapshot().invite?.hostRoomOpened).toBe(false)
     expect(controller.snapshot().notice).toContain('could not open its relay room')
+  })
+
+  it('rechecks and copies only a currently relay-ready migrated invitation', async () => {
+    const copied: string[] = []
+    let handoff = migrationHandoff()
+    const getHandoff = vi.fn(async ({ chatId }: { chatId: string }) => {
+      expect(chatId).toBe('chat-1')
+      return ok(handoff)
+    })
+    const controller = new ChannelHostPanelController({
+      api: createApi({ migrationHandoff: getHandoff }),
+      chatId: 'chat-1',
+      copyText: async (text) => {
+        copied.push(text)
+      }
+    })
+
+    await controller.start()
+    expect(controller.snapshot().migrationHandoff?.invitations).toMatchObject([
+      { recipientLabel: 'Alex Pending', status: 'ready' }
+    ])
+    expect(await controller.copyMigratedInvite('migrated-invite-1')).toBe(true)
+    expect(copied).toHaveLength(1)
+    expect(copied[0]).toContain('migrated-one-shot-token')
+    expect(controller.snapshot()).toMatchObject({
+      copiedMigrationInviteId: 'migrated-invite-1',
+      notice: 'Migrated invitation for Alex Pending copied.'
+    })
+
+    handoff = migrationHandoff({
+      invitations: [
+        {
+          channelId: 'channel-1',
+          purpose: 'pending-collaborator',
+          recipientLabel: 'Alex Pending',
+          expiresAt: 60_000,
+          status: 'relay_unavailable',
+          invite: null
+        }
+      ],
+      relayUnavailableInvitationCount: 1
+    })
+    expect(await controller.copyMigratedInvite('migrated-invite-1')).toBe(false)
+    expect(copied).toHaveLength(1)
+    expect(controller.snapshot().copiedMigrationInviteId).toBeNull()
+    expect(controller.snapshot().error).toContain('no longer ready')
+    expect(JSON.stringify(controller.snapshot().migrationHandoff)).not.toContain(
+      'migrated-one-shot-token'
+    )
+    expect(getHandoff).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not render a fallback token when copying a migrated invitation is denied', async () => {
+    const controller = new ChannelHostPanelController({
+      api: createApi({ migrationHandoff: async () => ok(migrationHandoff()) }),
+      chatId: 'chat-1',
+      copyText: async () => {
+        throw new Error('clipboard denied')
+      }
+    })
+
+    await controller.start()
+    expect(await controller.copyMigratedInvite('migrated-invite-1')).toBe(false)
+    expect(controller.snapshot().copiedMigrationInviteId).toBeNull()
+    expect(controller.snapshot().error).toContain('Clipboard access is unavailable')
+    expect(JSON.stringify(controller.snapshot().migrationHandoff)).not.toContain('payload')
   })
 
   it('reuses the exact append id after an ambiguous transport failure', async () => {
