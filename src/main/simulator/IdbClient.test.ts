@@ -325,4 +325,59 @@ describe('IdbClient', () => {
       failing.ensureConnected('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')
     ).resolves.toBeUndefined()
   })
+
+  it('serialises concurrent invocations so companion auto-spawn cannot race', async () => {
+    const udid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+    const started: string[][] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        started.push([...args])
+        if (started.length === 1) await gate
+        return { stdout: '', stderr: '' }
+      }
+    })
+
+    const first = client.tap(udid, 1, 2)
+    const second = client.text(udid, 'x')
+    // Let the queue start the first invocation; the second must wait behind it.
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(started).toEqual([['ui', 'tap', '1', '2', '--udid', udid]])
+    release()
+    await Promise.all([first, second])
+    expect(started).toEqual([
+      ['ui', 'tap', '1', '2', '--udid', udid],
+      ['ui', 'text', 'x', '--udid', udid]
+    ])
+  })
+
+  it('keeps the queue moving after a failed invocation', async () => {
+    const udid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+    const started: string[][] = []
+    let calls = 0
+    const client = new IdbClient({
+      platform: 'darwin',
+      resolveBinary: () => '/mock/idb',
+      run: async (_binary, args) => {
+        calls += 1
+        started.push([...args])
+        if (calls === 1) throw new Error('idb ui failed: companion down')
+        return { stdout: '', stderr: '' }
+      }
+    })
+
+    const first = await client.tap(udid, 1, 2)
+    const second = await client.tap(udid, 3, 4)
+    expect(first).toMatchObject({ ok: false, error: 'idb ui failed: companion down' })
+    expect(second).toMatchObject({ ok: true })
+    expect(started).toEqual([
+      ['ui', 'tap', '1', '2', '--udid', udid],
+      ['ui', 'tap', '3', '4', '--udid', udid]
+    ])
+  })
 })

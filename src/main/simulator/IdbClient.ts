@@ -214,7 +214,26 @@ export class IdbClient {
     return path
   }
 
-  private async exec(args: readonly string[]): Promise<IdbExecResult> {
+  /**
+   * Serialises every idb CLI invocation from this client. Concurrent `idb`
+   * processes each auto-spawn an `idb_companion` when none is live, racing on
+   * the same /tmp/idb/<udid>_companion.sock path (observed on-host: three
+   * companions, one udid, one socket, same start second). One invocation at a
+   * time keeps companion acquisition single-threaded and gesture order
+   * deterministic. A failed command never jams the queue.
+   */
+  private execQueue: Promise<void> = Promise.resolve()
+
+  private exec(args: readonly string[]): Promise<IdbExecResult> {
+    const result = this.execQueue.then(() => this.execSerialized(args))
+    this.execQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  private async execSerialized(args: readonly string[]): Promise<IdbExecResult> {
     try {
       const binary = this.requireIdb()
       const { stdout, stderr } = await this.run(binary, args)
