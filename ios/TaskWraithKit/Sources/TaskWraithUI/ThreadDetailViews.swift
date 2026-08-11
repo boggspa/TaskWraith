@@ -3971,8 +3971,32 @@ struct SubThreadReturnSummaryCard: View {
 /// `formatContextCompactionSummary` ("Context compacted · …").
 struct ContextCompactionSummaryCard: View {
     let preview: String
+    var phase: String? = nil
 
-    static func matches(preview: String?, role: String?, kind: String?) -> Bool {
+    enum CompactionState: Equatable {
+        case completed, failed, inProgress
+    }
+
+    /// Wire phase outranks wording: when the Mac says what this record is,
+    /// the English prefixes are irrelevant (and may not even be English).
+    /// The text path survives only for Macs too old to ship the field.
+    static func state(phase: String?, preview: String) -> CompactionState {
+        if let phase {
+            if phase == "failed" { return .failed }
+            if phase == "started" { return .inProgress }
+            return .completed
+        }
+        let lower = preview.lowercased()
+        if lower.hasPrefix("context compaction failed") { return .failed }
+        if lower.hasPrefix("compacting context") { return .inProgress }
+        return .completed
+    }
+
+    static func matches(
+        compaction: RemoteThreadSnapshot.Row.ContextCompaction?,
+        preview: String?, role: String?, kind: String?
+    ) -> Bool {
+        if compaction != nil { return true }
         guard let preview, !preview.isEmpty else { return false }
         guard role == "system" || kind == "system" else { return false }
         let lower = preview.lowercased()
@@ -3982,11 +4006,11 @@ struct ContextCompactionSummaryCard: View {
     }
 
     private var failed: Bool {
-        preview.lowercased().hasPrefix("context compaction failed")
+        Self.state(phase: phase, preview: preview) == .failed
     }
 
     private var inProgress: Bool {
-        preview.lowercased().hasPrefix("compacting context")
+        Self.state(phase: phase, preview: preview) == .inProgress
     }
 
     private var accent: Color {
@@ -4591,6 +4615,7 @@ struct ThreadRowView: View, Equatable {
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
         ContextCompactionSummaryCard.matches(
+            compaction: row.contextCompaction,
             preview: row.preview, role: row.role, kind: row.kind)
     }
     /// Fan-out is a FRAME, not a replacement: the header renders above the
@@ -4690,7 +4715,8 @@ struct ThreadRowView: View, Equatable {
                         showsChair: true,
                         timestamp: row.seatChange?.appliedAt ?? row.timestamp)
                 } else if hasContextCompactionCard {
-                    ContextCompactionSummaryCard(preview: row.preview ?? "")
+                    ContextCompactionSummaryCard(
+                        preview: row.preview ?? "", phase: row.contextCompaction?.phase)
                 } else if let plan = row.proposedPlan {
                     ProposedPlanRow(
                         model: model, threadId: threadId, rowId: row.id, plan: plan)

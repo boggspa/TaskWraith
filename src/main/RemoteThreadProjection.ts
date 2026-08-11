@@ -989,6 +989,12 @@ export interface RemoteThreadRow {
    * ProviderRunFailureCard parity). The row stays kind 'error' so clients without
    * the card still render the failure text in the error style. */
   runFailure?: RemoteRunFailure
+  /** Present on a context-compaction record — structural detection for the
+   * phone's compaction card. Detection previously matched the English preview
+   * prefix, so a Mac-side wording change silently killed the card. The row
+   * stays kind 'system' with the formatted one-liner in `preview`; older
+   * phones keep text-matching, older Macs simply omit the field. */
+  contextCompaction?: { phase: 'started' | 'completed' | 'failed' }
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -2735,6 +2741,18 @@ function buildRow(
   if (proposedPlan) row.proposedPlan = proposedPlan
   const seatChange = buildSeatChange(message)
   if (seatChange) row.seatChange = seatChange
+  if (metadata?.kind === 'contextCompaction') {
+    // Mirror the renderer's mapping (ContextCompactionCard): 'failed' and
+    // 'started' pass through, anything else — including record kinds a
+    // future Mac writes that this build has never seen — reads 'completed'.
+    const recordKind =
+      metadata.contextCompaction && typeof metadata.contextCompaction === 'object'
+        ? (metadata.contextCompaction as { kind?: unknown }).kind
+        : undefined
+    row.contextCompaction = {
+      phase: recordKind === 'failed' ? 'failed' : recordKind === 'started' ? 'started' : 'completed'
+    }
+  }
   const agentQuestion = buildAgentQuestion(message, questionAnswers)
   if (agentQuestion) row.agentQuestion = agentQuestion
   const fanoutResult = buildFanoutResult(message, previewMax)

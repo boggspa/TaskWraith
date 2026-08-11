@@ -1986,6 +1986,58 @@ describe('RemoteThreadProjection', () => {
       ])
       expect(snap.rows[0].runFailure).toBeUndefined()
     })
+  })
+
+  describe('contextCompaction (structural card detection)', () => {
+    // iOS previously detected the compaction card by matching the English
+    // preview prefix ("Context compacted…"), so any Mac-side wording change
+    // silently killed the card with no compile-time signal on either side.
+    // The phase field is the structural replacement; the preview keeps
+    // carrying the formatted one-liner for the card body and old clients.
+    const compaction = (kind: unknown, content = 'Context compacted · 80k → 20k tokens') =>
+      msg(1, {
+        id: 'compact-1',
+        role: 'system',
+        content,
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: { kind, telemetry: { preTokens: 80_000, postTokens: 20_000 } }
+        }
+      })
+
+    it('projects the phase for completed, failed, and started records', () => {
+      expect(
+        project({ kind: 'latestN', n: 10 }, [compaction('completed')]).rows[0].contextCompaction
+      ).toEqual({ phase: 'completed' })
+      expect(
+        project({ kind: 'latestN', n: 10 }, [compaction('failed', 'Context compaction failed.')])
+          .rows[0].contextCompaction
+      ).toEqual({ phase: 'failed' })
+      expect(
+        project({ kind: 'latestN', n: 10 }, [compaction('started', 'Compacting context…')]).rows[0]
+          .contextCompaction
+      ).toEqual({ phase: 'started' })
+    })
+
+    it('treats an unknown record kind as completed and keeps the row a system row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [compaction('someFutureKind')])
+      expect(snap.rows[0].contextCompaction).toEqual({ phase: 'completed' })
+      expect(snap.rows[0].kind).toBe('system')
+    })
+
+    it('projects the phase even when the wording is not English', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        compaction('completed', 'Kontext verdichtet · 80k → 20k')
+      ])
+      expect(snap.rows[0].contextCompaction).toEqual({ phase: 'completed' })
+    })
+
+    it('does not stamp ordinary system rows', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, { id: 's', role: 'system', content: 'Context compacted: look-alike text' })
+      ])
+      expect(snap.rows[0].contextCompaction).toBeUndefined()
+    })
 
     // Shape contract: the reconciler settlement notice and the bridge lane's
     // synthesized error both reuse this metadata precisely so they land as the

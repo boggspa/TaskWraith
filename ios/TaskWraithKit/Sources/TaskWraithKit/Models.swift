@@ -1875,6 +1875,15 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { path ?? "file" }
         }
         public let closeoutFileChanges: [CloseoutFileChange]?
+
+        /// Structural context-compaction marker (phase "started" /
+        /// "completed" / "failed"). Older Macs omit it — the card's
+        /// text-prefix fallback keeps those rendering; with it present, a
+        /// Mac-side wording change can no longer kill card detection.
+        public struct ContextCompaction: Codable, Sendable, Equatable {
+            public let phase: String?
+        }
+        public let contextCompaction: ContextCompaction?
     }
     public struct RunSummary: Codable, Sendable, Equatable {
         public let runId: String?
