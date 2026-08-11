@@ -2835,6 +2835,21 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Live mid-turn steer of an ACTIVE solo run — the phone twin of the
+    /// desktop composer's Steer button. Plain text by contract: attachments
+    /// and directed context are shape-changing and belong to the queued
+    /// boundary path. The Mac mints the durable transcript barrier itself, so
+    /// a refused live attempt still delivers at the natural boundary.
+    public static func composerSteerLive(
+        workspaceId: String, threadId: String, text: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "composerSteerLive", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId, "text": text,
+        ])
+    }
+
     public static func ensembleQueuePrompt(
         workspaceId: String, threadId: String, text: String, roundId: String? = nil,
         actionId: String = UUID().uuidString

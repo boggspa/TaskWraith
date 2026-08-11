@@ -4,6 +4,7 @@ import type {
   BridgeComposerPromptAction,
   BridgeComposerQueuedPromptAction,
   BridgeComposerQueueItemAction,
+  BridgeComposerSteerLiveAction,
   BridgeCreateThreadAction,
   BridgeThreadRowExpandAction,
   BridgeThreadMediaFetchAction,
@@ -139,6 +140,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeComposerQueueItem(
     action: BridgeComposerQueueItemAction
+  ): Promise<BridgeActionExecutionResult>
+  executeComposerSteerLive(
+    action: BridgeComposerSteerLiveAction
   ): Promise<BridgeActionExecutionResult>
   executeCreateThread(action: BridgeCreateThreadAction): Promise<BridgeActionExecutionResult>
   executeThreadRowExpand(
@@ -320,6 +324,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeComposerQueueItemAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('composerQueueItem', action.queueId)
+  }
+  async executeComposerSteerLive(
+    action: BridgeComposerSteerLiveAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('composerSteerLive', action.threadId)
   }
   async executeCreateThread(
     action: BridgeCreateThreadAction
@@ -717,6 +726,15 @@ export interface MainProcessActionExecutorDependencies {
   }>
   composerQueueItemFn?: (action: BridgeComposerQueueItemAction) => Promise<{
     ok: boolean
+    reason?: string
+  }>
+  /** Live mid-turn steer of an active solo run. `delivery` reports the
+   * steering machinery's verdict: injected/interrupting/broker-pending mean
+   * the words reached (or are reaching) the live turn; boundary/queued mean
+   * the exact same durable row waits for the natural boundary instead. */
+  composerSteerLiveFn?: (action: BridgeComposerSteerLiveAction) => Promise<{
+    ok: boolean
+    delivery?: string
     reason?: string
   }>
   createThreadFn?: (action: BridgeCreateThreadAction) => Promise<{
@@ -1874,6 +1892,38 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       return {
         executed: false,
         message: `Queued prompt update failed: ${errMessage}`
+      }
+    }
+  }
+
+  async executeComposerSteerLive(
+    action: BridgeComposerSteerLiveAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.composerSteerLiveFn) {
+      return notWired('composerSteerLive', action.threadId)
+    }
+    this.log(`[BridgeActionExecutor] composerSteerLive threadId=${action.threadId}`)
+    try {
+      const result = await this.deps.composerSteerLiveFn(action)
+      return {
+        executed: Boolean(result.ok),
+        message: result.ok
+          ? result.delivery === 'boundary' || result.delivery === 'queued'
+            ? 'Steer queued for the natural boundary.'
+            : 'Steer delivered into the live turn.'
+          : (result.reason ?? 'Live steer failed.'),
+        data: {
+          workspaceId: action.workspaceId,
+          threadId: action.threadId,
+          delivery: result.delivery
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] composerSteerLive failed: ${errMessage}`)
+      return {
+        executed: false,
+        message: `Live steer failed: ${errMessage}`
       }
     }
   }

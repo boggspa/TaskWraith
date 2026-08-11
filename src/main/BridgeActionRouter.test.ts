@@ -148,6 +148,10 @@ function makeStubExecutor(
       executed: true,
       message: 'composerQueueItem done'
     }),
+    executeComposerSteerLive: make('executeComposerSteerLive', {
+      executed: true,
+      message: 'composerSteerLive done'
+    }),
     executeCreateThread: make('executeCreateThread', {
       executed: true,
       message: 'createThread done'

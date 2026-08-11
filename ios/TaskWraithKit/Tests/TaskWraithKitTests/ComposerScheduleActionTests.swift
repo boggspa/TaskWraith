@@ -59,4 +59,19 @@ struct ComposerScheduleActionTests {
         #expect(payload["kimiFastMode"] as? Bool == false)
         #expect(payload["kimiThinkingEnabled"] as? Bool == true)
     }
+
+    @Test("composerSteerLive carries exactly the live-steer contract")
+    func composerSteerLivePayload() throws {
+        let params = BridgeAction.composerSteerLive(
+            workspaceId: "ws-1", threadId: "t-1",
+            text: "Actually, target the staging config instead.")
+        let payload = try payload(params)
+        #expect(payload["kind"] as? String == "composerSteerLive")
+        #expect(payload["workspaceId"] as? String == "ws-1")
+        #expect(payload["threadId"] as? String == "t-1")
+        #expect(payload["text"] as? String == "Actually, target the staging config instead.")
+        // Plain text by contract — no attachment key may ever ride along
+        // (attachments are shape-changing and belong to the queued path).
+        #expect(payload["imageAttachments"] == nil)
+    }
 }

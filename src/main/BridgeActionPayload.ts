@@ -210,6 +210,20 @@ export type BridgeComposerQueuedPromptAction =
   | BridgeComposerQueuePromptAction
   | BridgeComposerSchedulePromptAction
 
+/** Live mid-turn steer of an ACTIVE solo run — the paired-device twin of the
+ * desktop composer's Steer button. The Mac mints the sealed solo-steer
+ * transcript barrier itself and attempts in-turn delivery through the
+ * provider's live transport; a refused or shape-blocked attempt releases the
+ * exact same durable row to the natural-boundary queue, so a phone steer can
+ * never strand or duplicate a user message. Solo chats only — ensembles have
+ * `ensembleSteer`. */
+export interface BridgeComposerSteerLiveAction extends BridgeActionMetadata {
+  kind: 'composerSteerLive'
+  workspaceId: string
+  threadId: string
+  text: string
+}
+
 export interface BridgeComposerQueueItemAction extends BridgeActionMetadata {
   kind: 'composerQueueItem'
   workspaceId: string
@@ -1050,6 +1064,7 @@ export type BridgeActionPayload =
   | BridgeComposerPromptAction
   | BridgeComposerQueuePromptAction
   | BridgeComposerSchedulePromptAction
+  | BridgeComposerSteerLiveAction
   | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
@@ -1200,6 +1215,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'composerPrompt':
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
+    case 'composerSteerLive':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1291,6 +1307,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'composerPrompt':
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
+    case 'composerSteerLive':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
@@ -1407,6 +1424,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'composerPrompt':
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
+    case 'composerSteerLive':
     case 'composerQueueItem':
     case 'createThread':
     case 'threadMessage':
@@ -1511,6 +1529,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isComposerPrompt(parsed)
         ? (parsed as unknown as BridgeComposerSchedulePromptAction)
         : { kind: 'unknown', rawKind: 'composerSchedulePrompt', raw: parsed }
+    case 'composerSteerLive':
+      return isComposerSteerLive(parsed)
+        ? (parsed as unknown as BridgeComposerSteerLiveAction)
+        : { kind: 'unknown', rawKind: 'composerSteerLive', raw: parsed }
     case 'composerQueueItem':
       return isComposerQueueItem(parsed)
         ? (parsed as unknown as BridgeComposerQueueItemAction)
@@ -1905,6 +1927,19 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
       (isScheduled && typeof v.scheduledRunAt === 'string')) &&
     (!isScheduled ||
       (typeof v.scheduledRunAt === 'string' && v.scheduledRunAt.trim().length > 0))
+  )
+}
+
+function isComposerSteerLive(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.threadId === 'string' &&
+    typeof v.text === 'string' &&
+    v.text.trim().length > 0 &&
+    // A live steer is plain text by contract: attachments and directed
+    // context are shape-changing and belong to the queued boundary path.
+    v.text.length <= 16_000
   )
 }
 

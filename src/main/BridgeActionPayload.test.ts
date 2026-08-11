@@ -1377,6 +1377,32 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes composerSteerLive and fails closed on empty steer text', () => {
+      const steer = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerSteerLive',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'Actually, target the staging config instead.'
+        })
+      ).payload
+      expect(steer.kind).toBe('composerSteerLive')
+      if (steer.kind === 'composerSteerLive') {
+        expect(steer.text).toContain('staging config')
+      }
+      // A live steer with nothing to say is not a steer — fail closed rather
+      // than minting an empty barrier the queue must then clean up.
+      const empty = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerSteerLive',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: '   '
+        })
+      ).payload
+      expect(empty.kind).toBe('unknown')
+    })
+
     it('decodes scheduled composer actions as their own fail-closed kind', () => {
       const scheduledRunAt = '2026-07-08T21:15:00.000Z'
       const prompt = decodeBridgeActionPayload(

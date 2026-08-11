@@ -803,6 +803,7 @@ struct Composer: View {
                         if canQueueCurrentPrompt {
                             queueButton
                         }
+                        steerLiveButton
                         if !card.isEnsemble {
                             scheduleButton
                         }
@@ -835,6 +836,7 @@ struct Composer: View {
                     if canQueueCurrentPrompt {
                         queueButton
                     }
+                    steerLiveButton
                     if !card.isEnsemble {
                         scheduleButton
                     }
@@ -878,6 +880,49 @@ struct Composer: View {
                 .background(TWTheme.surface2)
                 .presentationCompactAdaptation(.popover)
             }
+        }
+    }
+
+    /// Live steer for an ACTIVE solo turn — the desktop composer Steer
+    /// button's phone twin: redirect the agent NOW rather than queue behind
+    /// it. Renders nothing outside a live solo run with text to say; the
+    /// Return key and the Queue chip keep their queue-at-boundary meaning.
+    @ViewBuilder
+    private var steerLiveButton: some View {
+        if isRunActive && !card.isEnsemble
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            Button {
+                steerCurrentLive()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bolt.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Steer")
+                        .font(.caption2.weight(.semibold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(TWTheme.chroma1.opacity(0.14), in: Capsule())
+                .overlay(Capsule().strokeBorder(TWTheme.chroma1.opacity(0.35)))
+                .foregroundStyle(TWTheme.chroma1)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Steer the live turn")
+            .accessibilityHint(
+                "Delivers this message into the running turn now; if the provider refuses, it queues for the next boundary instead."
+            )
+        }
+    }
+
+    private func steerCurrentLive() {
+        let submitted = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !submitted.isEmpty else { return }
+        text = ""
+        model.steerSoloLive(card, prompt: submitted) {
+            // The action never reached the Mac — restore the draft rather
+            // than silently eating the words.
+            text = submitted
         }
     }
 

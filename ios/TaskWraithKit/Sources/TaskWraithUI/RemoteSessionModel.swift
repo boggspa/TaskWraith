@@ -7329,6 +7329,30 @@ public final class RemoteSessionModel: ObservableObject {
     /// the side-chat mini pane sends must NOT steal the main transcript
     /// (the ack carries the side chat's threadId, which would otherwise
     /// claim navigationTarget and reload the detail pane).
+    /// Live-steer the ACTIVE solo turn (composerSteerLive) — redirect the
+    /// agent NOW instead of queueing behind the turn. Delivery is judged by
+    /// the Mac's ack (the run-queue verdict travels back in the action
+    /// result), never by watching the transcript. A Mac that refuses the live
+    /// attempt has already released the same durable row to the boundary
+    /// queue, so the words are never lost either way.
+    public func steerSoloLive(
+        _ card: RemoteTaskCard, prompt: String,
+        onActionUnsent: (() -> Void)? = nil
+    ) {
+        guard !isDemo else {
+            appendDemoTurn(card: card, prompt: prompt)
+            return
+        }
+        guard let thread = card.threadId else { return }
+        let cardWorkspace = (card.workspaceId ?? "").isEmpty ? nil : card.workspaceId
+        let ws = cardWorkspace ?? "global"
+        send(
+            BridgeAction.composerSteerLive(workspaceId: ws, threadId: thread, text: prompt),
+            successLabel: "Steering the live turn.",
+            navigateOnAck: false,
+            onUnsent: onActionUnsent)
+    }
+
     public func continueTask(
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
         workflowMode: String? = nil, permissionPresetId: String? = nil,

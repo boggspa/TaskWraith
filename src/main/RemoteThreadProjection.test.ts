@@ -817,7 +817,10 @@ describe('RemoteThreadProjection', () => {
               },
               { subThreadId: 'sub-2', provider: 'grok', status: 'someFutureStatus' },
               { title: 'no id — dropped' }
-            ]
+              // Cast: the last two entries deliberately break the declared
+              // metadata type (a future status; a missing id) — containing
+              // exactly that is the projector's job.
+            ] as never
           }
         })
       ])

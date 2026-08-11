@@ -728,6 +728,8 @@ export class BridgeActionRouter {
         return this.executor.executeComposerQueuePrompt(payload)
       case 'composerQueueItem':
         return this.executor.executeComposerQueueItem(payload)
+      case 'composerSteerLive':
+        return this.executor.executeComposerSteerLive(payload)
       case 'createThread':
         return this.executor.executeCreateThread(payload)
       case 'threadRowExpand':
@@ -1476,6 +1478,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'composerQueueItem':
+    case 'composerSteerLive':
       return 'steer'
     // Thread annotations, guests, and side-chat management are write-class but
     // less powerful than file writes. Gate them under startTurn so the default
