@@ -730,7 +730,32 @@ export class PeopleToChannelMigrationRecoveryStore {
       updatedAt: safeNow(input.now ?? this.now(), record.updatedAt)
     }
     this.writeIntent(next, 'intent:committed')
+    this.deleteBackup(next)
     return clone(next)
+  }
+
+  /**
+   * Post-receipt cleanup for profiles that committed before deletion existed.
+   * Best-effort: a failed delete is retried on the next committed startup and
+   * never blocks recovery.
+   */
+  deleteBackupAfterCommit(): boolean {
+    const record = this.load()
+    if (!record || record.phase !== 'committed') return false
+    return this.deleteBackup(record)
+  }
+
+  private deleteBackup(record: PeopleToChannelMigrationRecoveryRecord): boolean {
+    const file = record.source.backupFile
+    if (!record.source.exists || !file || basename(file) !== file) return false
+    const path = join(this.paths.backups, file)
+    try {
+      if (!existsSync(path)) return false
+      unlinkSync(path)
+      return true
+    } catch {
+      return false
+    }
   }
 
   /** Legacy shorthand retained for recovery callers that have no terminal evidence. */
@@ -757,6 +782,10 @@ export class PeopleToChannelMigrationRecoveryStore {
 
   private verifyBackup(record: PeopleToChannelMigrationRecoveryRecord): void {
     if (!record.source.exists) return
+    // The backup only serves the prepare→commit crash window. Once the receipt
+    // is durable the backup is deleted, so a committed record must tolerate
+    // its absence instead of demanding an immortal plaintext People snapshot.
+    if (record.phase === 'committed') return
     const file = record.source.backupFile
     if (!file || basename(file) !== file || !record.source.fileSha256) {
       blocked('Migration source backup metadata is invalid')
