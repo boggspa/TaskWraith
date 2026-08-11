@@ -121,11 +121,16 @@ function clampOverestimate(percent: number | undefined): number {
  *   bias is currency-agnostic. Clamped to 0-25. Default 0 (no bias —
  *   identical to pre-EW34 behaviour).
  */
+export interface FormatCostOptions {
+  truncateOneDecimal?: boolean
+}
+
 export function formatCost(
   usd: number,
   currency: DisplayCurrency = 'USD',
   locale?: string,
-  overestimatePercent: number = 0
+  overestimatePercent: number = 0,
+  options?: FormatCostOptions
 ): string {
   if (!Number.isFinite(usd) || usd <= 0) return ''
   // Apply the overestimate first (in USD-space) so the bias is
@@ -141,19 +146,24 @@ export function formatCost(
   const converted = biased * rate
   const floor = FLOORS[currency]
   if (converted < floor.threshold) return floor.label
+
+  const truncate = options?.truncateOneDecimal
+  const finalValue = truncate ? Math.floor(converted * 10) / 10 : converted
+  const fractionDigits = truncate ? 1 : 2
+
   try {
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(converted)
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits
+    }).format(finalValue)
   } catch {
     // Fallback for environments without full ICU — render the
     // bare number with a currency-prefix symbol. Shouldn't fire
     // in normal Electron, but keeps us robust.
     const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : '€'
-    return `${symbol}${converted.toFixed(2)}`
+    return `${symbol}${finalValue.toFixed(fractionDigits)}`
   }
 }
 

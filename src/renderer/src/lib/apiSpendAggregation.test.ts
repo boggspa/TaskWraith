@@ -92,7 +92,7 @@ describe('buildApiSpendByProvider — empty / zero', () => {
     expect(cursor.provider).toBe('cursor')
     expect(cursor.day.totalTokens).toBe(15_000)
     expect(cursor.day.costUsd).toBeCloseTo(0.105, 6)
-    expect(cursor.day.costDisplay).toBe('$0.11')
+    expect(cursor.day.costDisplay).toBe('$0.1')
   })
 })
 
@@ -164,7 +164,7 @@ describe('buildApiSpendByProvider — cost math', () => {
     expect(codex.day.tokensIn).toBe(2_000_000)
     expect(codex.day.tokensOut).toBe(500_000)
     expect(codex.day.totalTokens).toBe(2_500_000)
-    expect(codex.day.costDisplay).toBe('$7.00')
+    expect(codex.day.costDisplay).toBe('$7.0')
   })
 
   it('sums multiple records into the right windows independently', () => {
@@ -214,7 +214,7 @@ describe('buildApiSpendByProvider — currency conversion + overestimate', () =>
       const records = [makeRecord({ timestamp: NOW - 1000, inputTokens: 10_000_000 })] // $10
       const [codex] = buildApiSpendByProvider(records, RATES, { currency: 'GBP' }, NOW)
       expect(codex.day.costUsd).toBeCloseTo(10, 6) // raw stays USD
-      expect(codex.day.costDisplay).toBe('£8.00') // 10 * 0.8
+      expect(codex.day.costDisplay).toBe('£8.0') // 10 * 0.8
     } finally {
       setFxRatesPerUsd(before)
     }
@@ -233,7 +233,7 @@ describe('buildApiSpendByProvider — currency conversion + overestimate', () =>
       )
       // raw costUsd is unbiased; only the display string carries the +20%.
       expect(codex.day.costUsd).toBeCloseTo(10, 6)
-      expect(codex.day.costDisplay).toBe('€12.00') // 10 * 1.20 * 1.0
+      expect(codex.day.costDisplay).toBe('€12.0') // 10 * 1.20 * 1.0
     } finally {
       setFxRatesPerUsd(before)
     }
@@ -251,7 +251,7 @@ describe('buildApiSpendByProvider — currency conversion + overestimate', () =>
         NOW
       )
       // 999% clamps to 25% → $12.50.
-      expect(codex.day.costDisplay).toBe('$12.50')
+      expect(codex.day.costDisplay).toBe('$12.5')
     } finally {
       setFxRatesPerUsd(before)
     }

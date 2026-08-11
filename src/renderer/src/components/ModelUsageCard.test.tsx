@@ -753,9 +753,9 @@ describe('ApiSpendProviderBlock (View B populated render)', () => {
     expect(html).toContain('Day')
     expect(html).toContain('7d')
     expect(html).toContain('30d')
-    // Token chip (compact) + projected cost in USD ($2 in + $5 out = $7.00).
+    // Token chip (compact) + projected cost in USD ($2 in + $5 out = $7.0).
     expect(html).toContain('tok')
-    expect(html).toContain('$7.00')
+    expect(html).toContain('$7.0')
   })
 })
 
@@ -795,8 +795,8 @@ describe('AntiGravity budget meter (spend view)', () => {
     const html = renderToStaticMarkup(<ApiSpendProviderBlock entry={entry} capMeter={meter} />)
     expect(html).toContain('Antigravity')
     expect(html).toContain('Budget')
-    expect(html).toContain('$1.00')
-    expect(html).toContain('$20.00')
+    expect(html).toContain('$1.0')
+    expect(html).toContain('$20.0')
     expect(html).toContain('resets')
     expect(html).toContain('quota-progress-bar')
     // Advisory framing must survive on the row itself.
@@ -853,8 +853,8 @@ describe('Muse budget meter (spend view)', () => {
     const html = renderToStaticMarkup(<ApiSpendProviderBlock entry={entry} capMeter={meter} />)
     expect(html).toContain('Muse')
     expect(html).toContain('Budget')
-    expect(html).toContain('$1.25')
-    expect(html).toContain('$15.00')
+    expect(html).toContain('$1.2')
+    expect(html).toContain('$15.0')
     expect(html).toContain('resets')
     expect(html).toContain('muse-cap-meter-label')
     expect(html).toContain('quota-progress-bar')

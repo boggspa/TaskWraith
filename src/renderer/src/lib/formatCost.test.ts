@@ -201,3 +201,58 @@ describe('formatCostAlwaysOn — overestimate threading', () => {
     expect(digitsOnly(out)).toBe('0.00')
   })
 })
+
+describe('formatCost — truncateOneDecimal option (API-spend one-decimal display)', () => {
+  it('truncates to 1 decimal place with Math.floor (not rounding)', () => {
+    // $1.259 → truncated to $1.2 (not $1.3)
+    const out = formatCost(1.259, 'USD', undefined, 0, { truncateOneDecimal: true })
+    expect(digitsOnly(out)).toBe('1.2')
+  })
+
+  it('renders 2 decimals by default when truncateOneDecimal is omitted', () => {
+    const out = formatCost(1.259, 'USD')
+    expect(digitsOnly(out)).toBe('1.26')
+  })
+
+  it('renders 2 decimals when truncateOneDecimal is false', () => {
+    const out = formatCost(1.259, 'USD', undefined, 0, { truncateOneDecimal: false })
+    expect(digitsOnly(out)).toBe('1.26')
+  })
+
+  it('preserves exact round amounts as 1-decimal (no trailing zero stripping)', () => {
+    // $7.00 exactly → $7.0
+    const out = formatCost(7, 'USD', undefined, 0, { truncateOneDecimal: true })
+    expect(digitsOnly(out)).toBe('7.0')
+  })
+
+  it('composes truncation with overestimate bias correctly', () => {
+    // $10 at +20% = $12.00 → $12.0
+    const out = formatCost(10, 'USD', undefined, 20, { truncateOneDecimal: true })
+    expect(digitsOnly(out)).toBe('12.0')
+  })
+
+  it('composes truncation with FX conversion correctly', () => {
+    // $1 at GBP 0.79 = £0.79 → truncation: £0.7
+    const out = formatCost(1, 'GBP', undefined, 0, { truncateOneDecimal: true })
+    expect(digitsOnly(out)).toBe('0.7')
+  })
+
+  it('still returns the floor label for tiny amounts even with truncation enabled', () => {
+    // $0.005 is below $0.01 floor → renders as `<$0.01`.
+    const out = formatCost(0.005, 'USD', undefined, 0, { truncateOneDecimal: true })
+    expect(out).toBe('<$0.01')
+  })
+
+  it('still returns empty string for non-positive amounts with truncation enabled', () => {
+    expect(formatCost(0, 'USD', undefined, 0, { truncateOneDecimal: true })).toBe('')
+    expect(formatCost(-1, 'USD', undefined, 0, { truncateOneDecimal: true })).toBe('')
+  })
+
+  it('truncation strips the sub-cent digits even for large converted values', () => {
+    // $12345.6789 → $12,345.6 (truncated, with grouping separators)
+    const out = formatCost(12345.6789, 'USD', undefined, 0, { truncateOneDecimal: true })
+    // Extract just the decimal portion to avoid locale-dependent grouping.
+    const decimal = out.replace(/[^.]*\./, '.')
+    expect(decimal).toBe('.6')
+  })
+})

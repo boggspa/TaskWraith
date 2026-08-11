@@ -177,7 +177,7 @@ function finalizeWindow(
     totalTokens: acc.tokensIn + acc.tokensOut,
     runs: acc.runs,
     costUsd: acc.costUsd,
-    costDisplay: formatCost(acc.costUsd, currency, locale, overestimatePercent)
+    costDisplay: formatCost(acc.costUsd, currency, locale, overestimatePercent, { truncateOneDecimal: true })
   }
 }
 
@@ -332,9 +332,9 @@ export function buildProviderCalendarMonthSpend(
   const cap = Number.isFinite(capUsd) && (capUsd as number) > 0 ? (capUsd as number) : null
   return {
     spentUsd,
-    spentDisplay: formatCost(spentUsd, currency, locale, overestimatePercent),
+    spentDisplay: formatCost(spentUsd, currency, locale, overestimatePercent, { truncateOneDecimal: true }),
     capUsd: cap,
-    capDisplay: cap === null ? '' : formatCost(cap, currency, locale, 0),
+    capDisplay: cap === null ? '' : formatCost(cap, currency, locale, 0, { truncateOneDecimal: true }),
     fraction: cap === null ? 0 : Math.min(1, Math.max(0, spentUsd / cap)),
     resetLabel: nextMonthFirst.toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
     runs
