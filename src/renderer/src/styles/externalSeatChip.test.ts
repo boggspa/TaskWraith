@@ -11,6 +11,12 @@ const STRIP = 'src/renderer/src/components/EnsembleParticipantsAboveRow.tsx'
  * External human seats appear as chips holding a turn position among the AI
  * seats. Three things here fail SILENTLY if broken — no error, no warning,
  * nothing visible in review — so each is pinned.
+ *
+ * DORMANT since c3001deac: nothing passes `externalSeats` any more — the
+ * People share that fed it is retired and channel members do not take roster
+ * seats (yet). The block is the renderer half of the kept S16 delivery seam
+ * (main's `resolveExternalSeats` wiring is deliberately untouched), so it
+ * stays pinned rather than deleted.
  */
 /** The whole external chip element, from its map opening to its close. */
 function externalChipBlock(): string {
@@ -87,15 +93,18 @@ describe('external seat chips', () => {
     expect(source).toContain('externalSeatChips.length')
   })
 
-  it('derives seats from the share the composer already holds', () => {
-    // No new IPC, and no App.tsx change — so neither Multiview pane-context
-    // lane is touched and each pane resolves its own chat's share.
+  it('no longer derives seats from a People share — that path is retired', () => {
+    // e34d3c290 resolved seats in the composer from the share it already held
+    // (`externalSeatsForShare(humanCollaborationShare)`). c3001deac retired
+    // every renderer People surface onto the channel runtime and deleted that
+    // plumbing: post-migration the share store is quiesced — every share
+    // retired, invite paths sealed — so the derivation could only return [].
+    // Channel members have their own surfaces (host panel, sidebar, Settings)
+    // and no roster seats yet; when they get them, the feed is a
+    // channel-native derivation, not this share IPC. Pin the absence so the
+    // quiesced plumbing does not creep back in.
     const composer = readSource('src/renderer/src/components/Composer.tsx')
-    expect(composer).toContain('externalSeatsForShare(humanCollaborationShare)')
-    // Resolved from shared, never from main — see guard:architecture.
-    expect(composer).toContain(
-      "import { externalSeatsForShare } from '../../../shared/effectiveEnsembleRoster'"
-    )
-    expect(composer).toContain('externalSeats={externalSeatsForChat}')
+    expect(composer).not.toContain('humanCollaborationShare')
+    expect(composer).not.toContain('externalSeatsForShare')
   })
 })
