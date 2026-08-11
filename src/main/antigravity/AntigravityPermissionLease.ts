@@ -225,7 +225,11 @@ function workspaceRules(input: AntigravityPermissionLeaseRequest): string[] {
   if (input.allowWrite) {
     rules.push(`write_file(${workspacePath})`)
   }
-  if (input.allowShell) {
+  // A live hook overlay is the per-call TaskWraith approval authority. agy's
+  // settings layer can only pre-deny; it cannot consume the hook's Allow. Open
+  // sandboxed commands while that fail-closed bridge is installed so Ask/Plan
+  // approvals are executable instead of being auto-denied a second time.
+  if (input.allowShell || input.hookOverlay) {
     rules.push('command(*)')
   }
   return rules
@@ -261,7 +265,7 @@ function buildInstalledSettings(
   settings.permissions = permissions
 
   const installedScalars: AntigravityPermissionLeaseReceipt['installedScalars'] = {}
-  if (input.allowShell) {
+  if (input.allowShell || input.hookOverlay) {
     settings.toolPermission = 'proceed-in-sandbox'
     installedScalars.toolPermission = 'proceed-in-sandbox'
   }

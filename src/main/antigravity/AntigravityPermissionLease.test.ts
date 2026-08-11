@@ -201,6 +201,13 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
 
     const installed = JSON.parse(await readFile(hooksPath, 'utf8'))
     expect(installed['taskwraith-approval-bridge']).toEqual(namedHook)
+    const installedSettings = JSON.parse(await readFile(settingsPath, 'utf8'))
+    // Ask/Plan still routes every command through TaskWraith's live hook gate.
+    // The agy settings layer must make an explicitly approved command possible
+    // or headless mode auto-denies it after the user presses Allow.
+    expect(installedSettings.permissions.allow).toContain('command(*)')
+    expect(installedSettings.toolPermission).toBe('proceed-in-sandbox')
+    expect(installedSettings.permissions.allow).not.toContain(`write_file(${workspace})`)
 
     await lease.release()
     // hooks.json did not exist before → removed outright; settings byte-exact.
