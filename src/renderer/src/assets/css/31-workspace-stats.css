@@ -1,24 +1,16 @@
-/* Workspace Stats is the read-only sixth action in MainPaneActionPill. The
- * popover is a direct child of the pill so it can align to the owned top-right
- * corner instead of inheriting the third icon's offset. */
-.chat-corner-controls > .workspace-stats-popover-host {
+/* Workspace Stats is the read-only sixth action in MainPaneActionPill. Keep
+ * its host body-portaled so the popover samples the transcript itself instead
+ * of the top action pill's already-filtered backdrop root. */
+.workspace-stats-popover-host {
   --workspace-stats-scale: 0.85;
 
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 1002;
-  width: min(527px, calc(100vw - 32px));
+  position: fixed;
+  z-index: 10060;
   max-width: calc(100vw - 32px);
 }
 
-.chat-corner-controls > .workspace-stats-popover-host::before {
+.workspace-stats-popover-host::before {
   content: none;
-}
-
-.multiview-pane-corner-controls > .workspace-stats-popover-host {
-  width: min(442px, calc(100cqw - 24px));
-  max-width: calc(100cqw - 24px);
 }
 
 .side-chat-layout-menu.workspace-stats-popover {

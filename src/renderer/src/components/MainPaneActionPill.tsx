@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -8,6 +9,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ChatPopoutIcon,
   GhostCompanionIcon,
@@ -40,6 +42,50 @@ export const INFO_MENU_ITEMS = [
 ] as const
 export const MAIN_PANE_GLASS_POPOVER_CLASS =
   'side-chat-layout-menu composer-combined-picker-popover'
+
+const WORKSPACE_STATS_POPOVER_GAP = 8
+const WORKSPACE_STATS_VIEWPORT_GUTTER = 16
+const WORKSPACE_STATS_MULTIVIEW_GUTTER = 12
+const WORKSPACE_STATS_MAX_WIDTH = 527
+const WORKSPACE_STATS_MULTIVIEW_MAX_WIDTH = 442
+
+export interface WorkspaceStatsPopoverPosition {
+  left: number
+  top: number
+  width: number
+}
+
+export function resolveWorkspaceStatsPopoverPosition({
+  anchorRect,
+  viewportWidth,
+  multiviewBounds
+}: {
+  anchorRect: Pick<DOMRect, 'right' | 'bottom'>
+  viewportWidth: number
+  multiviewBounds?: Pick<DOMRect, 'left' | 'right'>
+}): WorkspaceStatsPopoverPosition {
+  const leftBoundary = Math.max(
+    WORKSPACE_STATS_VIEWPORT_GUTTER,
+    multiviewBounds
+      ? multiviewBounds.left + WORKSPACE_STATS_MULTIVIEW_GUTTER
+      : WORKSPACE_STATS_VIEWPORT_GUTTER
+  )
+  const rightBoundary = Math.min(
+    Math.max(WORKSPACE_STATS_VIEWPORT_GUTTER, viewportWidth - WORKSPACE_STATS_VIEWPORT_GUTTER),
+    multiviewBounds
+      ? multiviewBounds.right - WORKSPACE_STATS_MULTIVIEW_GUTTER
+      : viewportWidth - WORKSPACE_STATS_VIEWPORT_GUTTER
+  )
+  const maxWidth = multiviewBounds ? WORKSPACE_STATS_MULTIVIEW_MAX_WIDTH : WORKSPACE_STATS_MAX_WIDTH
+  const width = Math.max(0, Math.min(maxWidth, rightBoundary - leftBoundary))
+  const maxLeft = Math.max(leftBoundary, rightBoundary - width)
+
+  return {
+    left: Math.round(Math.min(Math.max(anchorRect.right - width, leftBoundary), maxLeft)),
+    top: Math.round(anchorRect.bottom + WORKSPACE_STATS_POPOVER_GAP),
+    width: Math.round(width)
+  }
+}
 
 export interface MainPaneActionPillProps {
   /** Stable DOM-id scope. Multiview supplies one per pane to avoid duplicate
@@ -122,6 +168,8 @@ export function MainPaneActionPill({
   const infoTriggerRef = useRef<HTMLButtonElement>(null)
   const workspaceStatsTriggerRef = useRef<HTMLButtonElement>(null)
   const popoutTriggerRef = useRef<HTMLButtonElement>(null)
+  const [workspaceStatsPopoverPosition, setWorkspaceStatsPopoverPosition] =
+    useState<WorkspaceStatsPopoverPosition | null>(null)
   const fxTriggerId = `${idScope}-fx-trigger`
   const fxMenuId = `${idScope}-fx-menu`
   const infoTriggerId = `${idScope}-info-trigger`
@@ -132,7 +180,11 @@ export function MainPaneActionPill({
   useEffect(() => {
     if (!menu && !popoutMenuOpen) return
     const handlePointerDown = (event: MouseEvent): void => {
-      if (rootRef.current?.contains(event.target as Node)) return
+      if (
+        rootRef.current?.contains(event.target as Node) ||
+        menuRef.current?.contains(event.target as Node)
+      )
+        return
       setMenu(null)
       setPopoutMenuOpen(false)
     }
@@ -169,6 +221,38 @@ export function MainPaneActionPill({
     const timeout = window.setTimeout(() => setMenu(null), 0)
     return () => window.clearTimeout(timeout)
   }, [menu, workspaceStats])
+
+  useLayoutEffect(() => {
+    if (menu !== 'workspace-stats') return
+
+    const updatePosition = (): void => {
+      const anchor = rootRef.current
+      if (!anchor) return
+      const multiviewBounds = anchor.classList.contains('multiview-pane-corner-controls')
+        ? anchor.closest<HTMLElement>('.multiview-cell')?.getBoundingClientRect()
+        : undefined
+      setWorkspaceStatsPopoverPosition(
+        resolveWorkspaceStatsPopoverPosition({
+          anchorRect: anchor.getBoundingClientRect(),
+          viewportWidth: window.innerWidth,
+          multiviewBounds
+        })
+      )
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    const anchor = rootRef.current
+    const observer =
+      anchor && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updatePosition) : null
+    if (anchor) observer?.observe(anchor)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      observer?.disconnect()
+    }
+  }, [menu])
 
   const toggleMenu = (next: Exclude<MainPaneMenu, null>): void => {
     setPopoutMenuOpen(false)
@@ -208,7 +292,30 @@ export function MainPaneActionPill({
     items[nextIndex]?.focus()
   }
 
-  return (
+  const workspaceStatsPopover =
+    menu === 'workspace-stats' && workspaceStats && workspaceStatsPopoverPosition ? (
+      <div
+        className="workspace-stats-popover-host"
+        style={{
+          left: workspaceStatsPopoverPosition.left,
+          top: workspaceStatsPopoverPosition.top,
+          width: workspaceStatsPopoverPosition.width
+        }}
+      >
+        <WorkspaceStatsPopover
+          context={workspaceStats}
+          containerRef={menuRef}
+          id={workspaceStatsPopoverId}
+          labelledBy={workspaceStatsTriggerId}
+          onClose={() => {
+            setMenu(null)
+            window.setTimeout(() => workspaceStatsTriggerRef.current?.focus(), 0)
+          }}
+        />
+      </div>
+    ) : null
+
+  const actionPill = (
     <div
       ref={rootRef}
       className={`chat-corner-controls chat-corner-controls-right${className ? ` ${className}` : ''}`}
@@ -451,21 +558,15 @@ export function MainPaneActionPill({
       >
         <SidebarCornerIcon direction="right" isOpen={homeOpen} />
       </button>
-
-      {menu === 'workspace-stats' && workspaceStats && (
-        <div className="workspace-stats-popover-host">
-          <WorkspaceStatsPopover
-            context={workspaceStats}
-            containerRef={menuRef}
-            id={workspaceStatsPopoverId}
-            labelledBy={workspaceStatsTriggerId}
-            onClose={() => {
-              setMenu(null)
-              window.setTimeout(() => workspaceStatsTriggerRef.current?.focus(), 0)
-            }}
-          />
-        </div>
-      )}
     </div>
+  )
+
+  return (
+    <>
+      {actionPill}
+      {workspaceStatsPopover && typeof document !== 'undefined'
+        ? createPortal(workspaceStatsPopover, document.body)
+        : null}
+    </>
   )
 }
