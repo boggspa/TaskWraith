@@ -9015,6 +9015,9 @@ private struct BlackboardEntryCard: View {
             MarkdownLite(entry.value, baseColor: TWTheme.textPrimary)
                 .font(.caption)
                 .lineLimit(5)
+            if let images = entry.images, !images.isEmpty {
+                BlackboardThumbnailGrid(images: images)
+            }
             if let participant = entry.participantId, !participant.isEmpty {
                 Text(participant)
                     .font(.caption2.weight(.semibold))
@@ -9026,6 +9029,42 @@ private struct BlackboardEntryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(TWTheme.surface2.opacity(0.72), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(TWTheme.border.opacity(0.7)))
+    }
+}
+
+struct BlackboardThumbnailGrid: View {
+    let images: [RemoteThreadSnapshot.BlackboardEntry.BlackboardImage]
+
+    var body: some View {
+        #if canImport(UIKit)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(images) { item in
+                    if let dataBase64 = item.thumbnail?.dataBase64,
+                        let data = Data(base64Encoded: dataBase64),
+                        let image = UIImage(data: data)
+                    {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 96, height: 72)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            Text(item.name)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(TWTheme.textMuted)
+                                .lineLimit(1)
+                                .frame(width: 96, alignment: .leading)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Attached image \(item.name)")
+                    }
+                }
+            }
+        }
+        #else
+        EmptyView()
+        #endif
     }
 }
 

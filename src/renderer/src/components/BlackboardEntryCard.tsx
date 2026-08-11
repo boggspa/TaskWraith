@@ -8,6 +8,7 @@ import type {
 import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { inlineMarkdownImageThumbnail } from '../lib/resolveMarkdownImageRef'
 import { BlackboardPollControls } from './BlackboardPollControls'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { MarkdownMessage } from './MarkdownMessage'
@@ -323,6 +324,10 @@ export function BlackboardEntryCard({
   const timestamp = formatBlackboardTimestamp(entry.createdAt)
   const expiryTimestamp = formatBlackboardTimestamp(entry.expiresAt)
   const showKey = !isGeneratedBlackboardKey(entry.key)
+  const images = (entry.mediaRefs || [])
+    .filter((ref) => ref.kind === 'image')
+    .map((ref) => ({ ref, thumbnail: inlineMarkdownImageThumbnail(ref) }))
+    .filter(({ thumbnail }) => thumbnail.startsWith('data:image/'))
   return (
     <article
       className={`blackboard-card blackboard-cat-${entry.category}`}
@@ -357,6 +362,16 @@ export function BlackboardEntryCard({
       <div className="blackboard-card-body">
         <MarkdownMessage content={entry.value} chat={chat || undefined} allowSafeHtml />
       </div>
+      {images.length > 0 && (
+        <div className="blackboard-card-images" aria-label="Attached images">
+          {images.map(({ ref, thumbnail }) => (
+            <figure className="blackboard-card-image" key={ref.id}>
+              <img src={thumbnail} alt={ref.alt || ref.name || 'Blackboard attachment'} />
+              <figcaption title={ref.name}>{ref.name}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
       {entry.poll && (
         <BlackboardPollControls
           chat={chat}

@@ -25,6 +25,7 @@ import {
   buildBlackboardGroups,
   type BlackboardGroup
 } from './BlackboardEntryCard'
+import { BlackboardImageAttachmentPicker } from './BlackboardImageAttachmentPicker'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
@@ -157,11 +158,17 @@ export function ComposerBlackboardPostForm(
   const [draft, setDraft] = useState('')
   const [category, setCategory] = useState<BlackboardEntry['category']>('note')
   const [ttlMinutes, setTtlMinutes] = useState<number | ''>('')
+  const [imagePaths, setImagePaths] = useState<string[]>([])
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
   const chatId = props.chat?.appChatId
   const canPost = Boolean(chatId && props.chat?.ensemble && !props.disabled)
   const draftValue = draft.trim()
+
+  useEffect(() => {
+    setImagePaths([])
+    setPostError(null)
+  }, [chatId])
 
   const submitPost = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -174,10 +181,12 @@ export function ComposerBlackboardPostForm(
         value: draftValue,
         category,
         scope: 'session',
+        ...(imagePaths.length > 0 ? { imagePaths } : {}),
         ...(ttlMinutes === '' ? {} : { ttlMinutes })
       })
       setDraft('')
       setTtlMinutes('')
+      setImagePaths([])
     } catch (error) {
       setPostError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -207,6 +216,12 @@ export function ComposerBlackboardPostForm(
         aria-label="Blackboard entry"
         placeholder="Post a note to the Blackboard..."
         rows={4}
+      />
+      <BlackboardImageAttachmentPicker
+        paths={imagePaths}
+        disabled={posting}
+        onChange={setImagePaths}
+        onError={setPostError}
       />
       <div className="composer-blackboard-post-controls">
         <label className="composer-blackboard-post-section">

@@ -1926,10 +1926,23 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let participantId: String?
         public let roundId: String?
         public let createdAt: String?
+        public let images: [BlackboardImage]?
+
+        public struct BlackboardImage: Codable, Sendable, Identifiable, Equatable {
+            public let attachmentId: String
+            public let name: String
+            public let mimeType: String
+            public let byteLength: Int?
+            public let width: Int?
+            public let height: Int?
+            public let thumbnail: Row.ImageThumbnail?
+            public var id: String { attachmentId }
+        }
 
         public init(
             id: String, key: String, value: String, category: String, scope: String,
-            participantId: String? = nil, roundId: String? = nil, createdAt: String? = nil
+            participantId: String? = nil, roundId: String? = nil, createdAt: String? = nil,
+            images: [BlackboardImage]? = nil
         ) {
             self.id = id
             self.key = key
@@ -1939,6 +1952,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             self.participantId = participantId
             self.roundId = roundId
             self.createdAt = createdAt
+            self.images = images
         }
     }
     public let threadId: String?

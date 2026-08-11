@@ -188,6 +188,41 @@ describe('BlackboardSeenByRail (static render)', () => {
 })
 
 describe('BlackboardEntryCard (static render)', () => {
+  it('renders only the bounded persisted thumbnail for attached images', () => {
+    const html = renderToStaticMarkup(
+      <BlackboardEntryCard
+        chat={rosterChat}
+        entry={entry({
+          key: 'screenshot',
+          value: 'The observed UI state.',
+          mediaRefs: [
+            {
+              id: 'blackboard:entry:image:0:abc',
+              kind: 'image',
+              format: 'raster',
+              source: 'upload',
+              name: 'observed.png',
+              mimeType: 'image/png',
+              path: '/private/secret/original.png',
+              thumbnail: {
+                dataBase64: 'c21hbGw=',
+                mimeType: 'image/png',
+                width: 80,
+                height: 60
+              }
+            }
+          ]
+        })}
+        variant="panel"
+      />
+    )
+
+    expect(html).toContain('aria-label="Attached images"')
+    expect(html).toContain('src="data:image/png;base64,c21hbGw="')
+    expect(html).toContain('alt="observed.png"')
+    expect(html).not.toContain('/private/secret/original.png')
+  })
+
   it('shows author chip, scope badge, and meaningful key', () => {
     const html = renderToStaticMarkup(
       <BlackboardEntryCard

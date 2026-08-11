@@ -123,7 +123,7 @@ export function resolveMarkdownImageRef(
  * (e.g. an SVG, an over-size image, or a path-only upload) so the caller falls
  * back to the inert placeholder. Never returns `ref.path` or any remote URL.
  */
-export function inlineMarkdownImageThumbnail(ref: ChatMediaRef): string {
+export function inlineMarkdownImageThumbnail(ref: Pick<ChatMediaRef, 'thumbnail'>): string {
   const thumbnail = ref.thumbnail
   if (thumbnail?.dataBase64 && /^image\/(png|jpe?g|webp)$/i.test(thumbnail.mimeType || '')) {
     return `data:${thumbnail.mimeType};base64,${thumbnail.dataBase64}`

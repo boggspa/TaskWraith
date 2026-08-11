@@ -49,6 +49,7 @@ import type {
   ToolActivity
 } from './store/types'
 import { isBlackboardEntryExpired } from './blackboard/Blackboard'
+import { sanitizeBlackboardMediaRefs } from './blackboard/BlackboardMedia'
 import {
   createToolResultMediaRefs,
   extractMcpImageBlocksFromRawResult
@@ -1069,6 +1070,17 @@ export interface RemoteBlackboardEntry {
   expiresAt?: string
   valueTruncated?: boolean
   originalLength?: number
+  images?: RemoteBlackboardImage[]
+}
+
+export interface RemoteBlackboardImage {
+  attachmentId: string
+  name: string
+  mimeType: string
+  byteLength?: number
+  width?: number
+  height?: number
+  thumbnail?: TranscriptMediaThumbnail
 }
 
 export interface RemoteThreadSnapshot {
@@ -1181,6 +1193,7 @@ export interface RemoteProjectionOptions {
 const DEFAULT_PREVIEW_MAX = 280
 const DEFAULT_MAX_ATTENTION_ROWS = 50
 const REMOTE_BLACKBOARD_MAX_ENTRIES = 24
+const REMOTE_BLACKBOARD_THUMBNAIL_BASE64 = 180_000
 /** Cumulative caps (base64 chars) on attachment-thumbnail bytes shipped in
  * ONE snapshot. The relay drops frames over ~1MB (`maxFrameBytes`), so an
  * image-heavy thread could otherwise lose its entire snapshot. We keep
@@ -1385,7 +1398,7 @@ function projectBlackboardEntries(
   nowMs: number
 ): RemoteBlackboardEntry[] {
   if (!Array.isArray(entries) || entries.length === 0) return []
-  return entries
+  const projected = entries
     .filter(
       (entry) =>
         typeof entry?.key === 'string' &&
@@ -1395,6 +1408,15 @@ function projectBlackboardEntries(
     .map((entry) => {
       const keySanitized = sanitizePreview(entry.key, 120)
       const valueSanitized = sanitizePreview(entry.value, 900)
+      const images = sanitizeBlackboardMediaRefs(entry.mediaRefs).map((ref) => ({
+        attachmentId: ref.id,
+        name: sanitizePreview(ref.name, 160).preview || 'Blackboard image',
+        mimeType: ref.mimeType,
+        ...(ref.byteLength ? { byteLength: ref.byteLength } : {}),
+        ...(ref.width ? { width: ref.width } : {}),
+        ...(ref.height ? { height: ref.height } : {}),
+        ...(ref.thumbnail ? { thumbnail: ref.thumbnail } : {})
+      }))
       return {
         id: entry.id,
         key: keySanitized.preview,
@@ -1409,6 +1431,7 @@ function projectBlackboardEntries(
         ...(entry.expiresAt && Number.isFinite(Date.parse(entry.expiresAt))
           ? { expiresAt: entry.expiresAt }
           : {}),
+        ...(images.length > 0 ? { images } : {}),
         ...(valueSanitized.truncated
           ? { valueTruncated: true, originalLength: entry.value.length }
           : {})
@@ -1421,6 +1444,20 @@ function projectBlackboardEntries(
       return (b.createdAt || '').localeCompare(a.createdAt || '')
     })
     .slice(0, REMOTE_BLACKBOARD_MAX_ENTRIES)
+
+  let remainingThumbnailBase64 = REMOTE_BLACKBOARD_THUMBNAIL_BASE64
+  for (const entry of projected) {
+    for (const image of entry.images || []) {
+      const cost = image.thumbnail?.dataBase64.length || 0
+      if (cost <= 0) continue
+      if (cost <= remainingThumbnailBase64) {
+        remainingThumbnailBase64 -= cost
+      } else {
+        delete image.thumbnail
+      }
+    }
+  }
+  return projected
 }
 
 /**

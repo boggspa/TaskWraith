@@ -10804,6 +10804,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     'entry submit'
+    'attachments submit'
     'controls submit'
     'error error';
   column-gap: 6px;
@@ -10845,6 +10846,10 @@
   flex-wrap: wrap;
   gap: 6px 12px;
   min-width: 0;
+}
+
+.composer-blackboard-compose > .blackboard-image-picker {
+  grid-area: attachments;
 }
 
 .composer-blackboard-post-section {

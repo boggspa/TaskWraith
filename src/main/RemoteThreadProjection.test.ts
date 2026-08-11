@@ -187,6 +187,62 @@ describe('RemoteThreadProjection', () => {
       })
       expect(snap.blackboardEntries?.[0]?.value.length).toBeLessThan(longValue.length)
     })
+
+    it('projects bounded blackboard thumbnails without original locators', () => {
+      const snap = project({ kind: 'latestN', n: 1 }, MESSAGES.slice(0, 1), [], {
+        blackboardEntries: [
+          {
+            id: 'b-image',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'Codex',
+            key: 'observed-state',
+            value: 'The state captured during verification.',
+            category: 'fact',
+            scope: 'session',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            mediaRefs: [
+              {
+                id: 'blackboard:b-image:image:0:abc',
+                kind: 'image',
+                format: 'raster',
+                source: 'upload',
+                name: 'observed.png',
+                mimeType: 'image/png',
+                byteLength: 1024,
+                sha256: 'a'.repeat(43),
+                assetId: 'blackboard-image:private-locator',
+                path: '/private/original.png',
+                thumbnail: {
+                  dataBase64: PNG_1X1_BASE64,
+                  mimeType: 'image/png',
+                  width: 1,
+                  height: 1
+                }
+              }
+            ]
+          }
+        ]
+      })
+
+      expect(snap.blackboardEntries?.[0]?.images).toEqual([
+        {
+          attachmentId: 'blackboard:b-image:image:0:abc',
+          name: 'observed.png',
+          mimeType: 'image/png',
+          byteLength: 1024,
+          thumbnail: {
+            dataBase64: PNG_1X1_BASE64,
+            mimeType: 'image/png',
+            width: 1,
+            height: 1
+          }
+        }
+      ])
+      expect(JSON.stringify(snap.blackboardEntries)).not.toContain('/private/original.png')
+      expect(JSON.stringify(snap.blackboardEntries)).not.toContain('private-locator')
+      expect(JSON.stringify(snap.blackboardEntries)).not.toContain('"sha256"')
+    })
   })
 
   describe('latestN', () => {

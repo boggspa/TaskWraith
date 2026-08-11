@@ -1097,6 +1097,10 @@
   text-transform: none;
 }
 
+.pinned-blackboard-compose > .blackboard-image-picker {
+  grid-column: 1 / -1;
+}
+
 .pinned-blackboard-compose textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--panel-border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -1336,6 +1340,95 @@
 }
 .blackboard-card-body > :last-child {
   margin-bottom: 0;
+}
+
+.blackboard-card-images {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.blackboard-card-image {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--blackboard-cat-color) 28%, var(--panel-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.blackboard-card-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.blackboard-card-image figcaption {
+  overflow: hidden;
+  padding: 4px 6px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blackboard-image-picker {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.composer-blackboard-compose .blackboard-image-picker-button,
+.pinned-blackboard-compose .blackboard-image-picker-button {
+  align-self: flex-start;
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 8px;
+}
+
+.blackboard-image-picker-list {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.blackboard-image-picker-item {
+  position: relative;
+  flex: 0 0 72px;
+  min-width: 0;
+}
+
+.blackboard-image-picker-item > span {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-blackboard-compose .blackboard-image-picker-item > button,
+.pinned-blackboard-compose .blackboard-image-picker-item > button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  align-self: auto;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg, #111) 78%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 16px;
 }
 
 /* --- Durable polls -------------------------------------------------- */

@@ -5,6 +5,7 @@ import type {
   PinnedMessageSummary
 } from '../../../main/store/types'
 import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
+import { BlackboardImageAttachmentPicker } from './BlackboardImageAttachmentPicker'
 import { MarkdownMessage } from './MarkdownMessage'
 
 // Grouping/order/sort helpers moved to the shared BlackboardEntryCard module
@@ -128,6 +129,7 @@ function BlackboardSection({
   entries: BlackboardEntry[]
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
+  const [imagePaths, setImagePaths] = useState<string[]>([])
   const [posting, setPosting] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const [clearingAll, setClearingAll] = useState(false)
@@ -136,6 +138,10 @@ function BlackboardSection({
   const grouped = buildBlackboardGroups(entries)
   const visibleCount = grouped.reduce((total, group) => total + group.entries.length, 0)
   const draftValue = draft.trim()
+  useEffect(() => {
+    setImagePaths([])
+    setActionError(null)
+  }, [chat?.appChatId])
   const submitPost = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!chat?.appChatId || !draftValue || posting) return
@@ -146,9 +152,11 @@ function BlackboardSection({
         chatId: chat.appChatId,
         value: draftValue,
         category: 'note',
-        scope: 'session'
+        scope: 'session',
+        ...(imagePaths.length > 0 ? { imagePaths } : {})
       })
       setDraft('')
+      setImagePaths([])
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -213,6 +221,12 @@ function BlackboardSection({
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Post to blackboard..."
             rows={2}
+          />
+          <BlackboardImageAttachmentPicker
+            paths={imagePaths}
+            disabled={posting}
+            onChange={setImagePaths}
+            onError={setActionError}
           />
           <button type="submit" disabled={!draftValue || posting}>
             {posting ? 'Posting' : 'Post'}

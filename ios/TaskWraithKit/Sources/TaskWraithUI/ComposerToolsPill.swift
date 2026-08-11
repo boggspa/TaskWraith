@@ -838,6 +838,9 @@ private struct BlackboardToolsPanel: View {
                                         .font(.caption)
                                         .foregroundStyle(TWTheme.textSecondary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if let images = entry.images, !images.isEmpty {
+                                        BlackboardThumbnailGrid(images: images)
+                                    }
                                     if let participant = entry.participantId, !participant.isEmpty {
                                         Text(participant)
                                             .font(.caption2)
