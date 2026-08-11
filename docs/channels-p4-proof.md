@@ -142,3 +142,30 @@ finalization execution and escrow via safeStorage. This is not separately
 fixable at the migration seam — the Channel host identity store hard-requires
 safeStorage, so an unavailable OS keychain takes down the channels subsystem
 as a whole; graceful subsystem-wide degradation would be its own feature.
+
+## 2026-08-11 real-profile soak
+
+The roadmap's historical-profile soak ran against APFS clones of the real
+development profile (about 263 chat-index entries and two genuine disabled
+People shares; the source profile was never modified):
+
+- **Upgrade:** first launch migrated and committed — 26 channels, one per
+  General chat, all active; both real shares retired; the plaintext backup
+  deleted; one receipt. Three consecutive relaunches opened the window within
+  seconds through the committed fast-path with a stable plan id.
+- **Interruption:** kill -9 storms across the first migration. Kills that
+  landed before the first durable write left no state and converged from
+  zero on the next launch; kills after commit converged through the
+  fast-path; a resumed chain (kill, relaunch, kill, relaunch) also converged.
+  The in-between durable boundaries are covered deterministically by the
+  eleven-boundary crash matrix in the terminal production mission.
+- **Demonstrated defect (open):** when safeStorage cannot decrypt the pinned
+  People identity key (in the wild: keychain reset or restore-without-
+  keychain; in the soak: clone under a different app-name keychain scope),
+  the identity store correctly refuses to mint a replacement — but the
+  channels bootstrap rethrow kills the whole app with no window and no
+  durable evidence, before the migration's first write. This matches the
+  observed dev no-window report exactly. Planned fix: fail closed for
+  channels, fail open for the app — a degraded launch with channels
+  unavailable, ordinary People writes still quiesced by a standalone gate,
+  and a loud log line.
