@@ -4,6 +4,12 @@ import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
 
 export type DiffHoverPreviewSource = 'run-summary' | 'tool-call'
 
+export interface DiffHoverPreviewFile {
+  path: string
+  additions?: number
+  deletions?: number
+}
+
 export interface DiffHoverPreviewSummary {
   actionLabel?: string
   path: string
@@ -16,6 +22,10 @@ export interface DiffHoverPreviewSummary {
    * file's on-disk diff. */
   snapshot?: boolean
   source?: DiffHoverPreviewSource
+  /** Optional bounded file list, used by commit previews in Task Complete. */
+  files?: DiffHoverPreviewFile[]
+  /** Total files before the preview payload's 30-row cap. */
+  fileCount?: number
 }
 
 export interface DiffHoverPreviewState {
@@ -39,6 +49,9 @@ const DIFF_HOVER_PREVIEW_MAX_WIDTH = 1040
 const DIFF_HOVER_PREVIEW_HEIGHT = 360
 const DIFF_HOVER_PREVIEW_MARGIN = 12
 const DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS = 1400
+
+export const DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT = 8
+export const DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE = 30
 
 type DiffHoverPreviewRect = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
 
@@ -84,6 +97,43 @@ export function getDiffHoverPreviewStats(
     })
   }
   return stats
+}
+
+export interface DiffHoverPreviewFileWindow {
+  canShowMore: boolean
+  files: DiffHoverPreviewFile[]
+  hiddenAfterCap: number
+  nextShowCount: number
+  previewableCount: number
+  visibleCount: number
+}
+
+export function getDiffHoverPreviewFileWindow(
+  files: DiffHoverPreviewFile[] | undefined,
+  expanded = false,
+  totalFileCount?: number
+): DiffHoverPreviewFileWindow {
+  const allFiles = Array.isArray(files) ? files : []
+  const totalCount = Math.max(
+    allFiles.length,
+    typeof totalFileCount === 'number' && Number.isFinite(totalFileCount)
+      ? Math.max(0, Math.floor(totalFileCount))
+      : 0
+  )
+  const previewableCount = Math.min(totalCount, DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE)
+  const maxVisibleCount = Math.min(allFiles.length, previewableCount)
+  const visibleCount = expanded
+    ? maxVisibleCount
+    : Math.min(allFiles.length, DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT)
+
+  return {
+    canShowMore: !expanded && maxVisibleCount > visibleCount,
+    files: allFiles.slice(0, visibleCount),
+    hiddenAfterCap: Math.max(0, totalCount - DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE),
+    nextShowCount: Math.max(0, maxVisibleCount - visibleCount),
+    previewableCount,
+    visibleCount
+  }
 }
 
 export interface DiffHoverPreviewLayout {
@@ -338,6 +388,7 @@ export function DiffHoverPreviewOverlay({
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const actionRef = useRef<HTMLButtonElement | null>(null)
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null)
+  const [fileListExpanded, setFileListExpanded] = useState(false)
   const preparedDiff = useMemo(
     () =>
       preview?.summary.diffText
@@ -354,6 +405,19 @@ export function DiffHoverPreviewOverlay({
         : null,
     [preparedDiff]
   )
+  const fileWindow = useMemo(
+    () =>
+      getDiffHoverPreviewFileWindow(
+        preview?.summary.files,
+        fileListExpanded,
+        preview?.summary.fileCount
+      ),
+    [fileListExpanded, preview?.summary.fileCount, preview?.summary.files]
+  )
+
+  useEffect(() => {
+    setFileListExpanded(false)
+  }, [preview?.summary.path])
 
   useEffect(() => {
     if (!preview?.focusTarget) return
@@ -371,6 +435,9 @@ export function DiffHoverPreviewOverlay({
         preview.summary.additions ?? '',
         preview.summary.deletions ?? '',
         preview.summary.diffText?.length ?? 0,
+        preview.summary.files?.length ?? 0,
+        preview.summary.fileCount ?? 0,
+        fileWindow.visibleCount,
         preview.action?.label || ''
       ].join('|')
     : ''
@@ -474,7 +541,49 @@ export function DiffHoverPreviewOverlay({
         </div>
       </div>
       <div className="diff-hover-preview-body">
-        {parsed && parsed.sections.length > 0 ? (
+        {fileWindow.files.length > 0 ? (
+          <div className="diff-hover-preview-file-list" role="list">
+            {fileWindow.files.map((file, index) => (
+              <div
+                className="diff-hover-preview-file-row"
+                role="listitem"
+                key={`${file.path}-${index}`}
+              >
+                <span className="diff-hover-preview-file-path" title={file.path}>
+                  {file.path}
+                </span>
+                <span className="diff-hover-preview-file-stats">
+                  {typeof file.additions === 'number' && (
+                    <span className="diff-hover-preview-stat add">+{file.additions}</span>
+                  )}
+                  {typeof file.deletions === 'number' && (
+                    <span className="diff-hover-preview-stat delete">-{file.deletions}</span>
+                  )}
+                </span>
+              </div>
+            ))}
+            {fileWindow.canShowMore && (
+              <button
+                className="diff-hover-preview-file-more"
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setFileListExpanded(true)
+                }}
+              >
+                Show {fileWindow.nextShowCount} more file
+                {fileWindow.nextShowCount === 1 ? '' : 's'}
+              </button>
+            )}
+            {fileListExpanded && fileWindow.hiddenAfterCap > 0 && (
+              <div className="diff-hover-preview-file-cap-note">
+                +{fileWindow.hiddenAfterCap} more file
+                {fileWindow.hiddenAfterCap === 1 ? '' : 's'} not shown
+              </div>
+            )}
+          </div>
+        ) : parsed && parsed.sections.length > 0 ? (
           parsed.sections.map((section, sectionIndex) => (
             <div key={sectionIndex} className="diff-hover-preview-section">
               {section.header && <div className="diff-hover-preview-hunk">{section.header}</div>}
@@ -493,7 +602,12 @@ export function DiffHoverPreviewOverlay({
         <span>{preview.summary.actionLabel || 'Hover preview'}</span>
         <div className="diff-hover-preview-footer-actions">
           <span>
-            {parsed
+            {fileWindow.files.length > 0
+              ? `${fileWindow.visibleCount.toLocaleString()} of ${Math.min(
+                  fileWindow.previewableCount,
+                  DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE
+                ).toLocaleString()} files shown`
+              : parsed
               ? `${parsed.renderedLineCount.toLocaleString()} lines shown${
                   hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''
                 }`

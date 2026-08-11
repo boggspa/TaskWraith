@@ -250,7 +250,6 @@ import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
   type DiffHoverPreviewState,
-  canShowDiffHoverPreview,
   diffHoverPreviewBoundaryForElement,
   useDiffHoverPreviewDismiss,
   useDiffHoverPreviewState
@@ -2476,6 +2475,19 @@ export const TranscriptPanel = memo(
     )
     const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
       FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
+    )
+    const loadCloseoutCommitFiles = useCallback(
+      async (commit: CloseoutCommit) => {
+        const workspacePath = currentWorkspacePath || currentChat?.workspacePath
+        if (!workspacePath) return null
+        const result = await window.api.getCommitFilePreview({
+          workspacePath,
+          chatId: currentChat?.appChatId,
+          commitHash: commit.hash
+        })
+        return result.ok ? { files: result.files, totalFiles: result.totalFiles } : null
+      },
+      [currentChat?.appChatId, currentChat?.workspacePath, currentWorkspacePath]
     )
     const fileChangeSections = useMemo(
       () => buildFileChangeSummarySections(displayFileChangeSummaries, roundFileChangeSummaries),
@@ -5629,15 +5641,38 @@ export const TranscriptPanel = memo(
                                 deletions: item.deletions
                               }))
                             : null
+                        const closeoutFileChanges =
+                          fileChanges && fileChanges.length > 0
+                            ? fileChanges
+                            : liveFallbackFileChanges
+                        const liveSummaryByPath = isLatestCloseout
+                          ? new Map(displayFileChangeSummaries.map((item) => [item.path, item]))
+                          : null
+                        const resolveCloseoutFileChangeSummary = (
+                          change: CloseoutFileChange
+                        ): DiffFileSummary => {
+                          const liveSummary = liveSummaryByPath?.get(change.path)
+                          return {
+                            ...liveSummary,
+                            ...change,
+                            previewKind: liveSummary?.previewKind || 'none',
+                            owners: change.owners ?? liveSummary?.owners
+                          }
+                        }
                         const fileChangesNode =
-                          fileChanges && fileChanges.length > 0 ? (
+                          closeoutFileChanges && closeoutFileChanges.length > 0 ? (
                             <CloseoutFileChangesSection
-                              changes={fileChanges}
-                              workspacePath={currentWorkspacePath}
-                            />
-                          ) : liveFallbackFileChanges && liveFallbackFileChanges.length > 0 ? (
-                            <CloseoutFileChangesSection
-                              changes={liveFallbackFileChanges}
+                              changes={closeoutFileChanges}
+                              getMainActionLabel={(summary) =>
+                                onOpenFileChangeInWorkbench
+                                  ? `Open Workbench diff for ${summary.path}`
+                                  : `Preview diff for ${summary.path}`
+                              }
+                              onActivateChange={activateFileChangeSummary}
+                              onOpenPreview={openFileChangeDiffPreview}
+                              onScheduleClosePreview={scheduleCloseFileChangeDiffPreview}
+                              previewPath={fileChangeDiffPreview?.summary.path}
+                              resolveSummary={resolveCloseoutFileChangeSummary}
                               workspacePath={currentWorkspacePath}
                             />
                           ) : undefined
@@ -5711,6 +5746,7 @@ export const TranscriptPanel = memo(
                               subagentDelegations={subagentDelegations}
                               commits={commits}
                               fileChanges={fileChangesNode}
+                              loadCommitFiles={loadCloseoutCommitFiles}
                             />
                           </div>
                         )
@@ -6052,6 +6088,7 @@ export const TranscriptPanel = memo(
                 participantTable={footerParticipantTable}
                 subagentDelegations={footerSubagentDelegations}
                 commits={footerCommits}
+                loadCommitFiles={loadCloseoutCommitFiles}
                 fileChanges={
                   footerShowsLiveFileChanges ? (
               <div className="file-change-summary-card">

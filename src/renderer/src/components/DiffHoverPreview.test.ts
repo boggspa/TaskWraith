@@ -3,6 +3,9 @@ import {
   canShowDiffHoverPreview,
   diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
+  DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT,
+  DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE,
+  getDiffHoverPreviewFileWindow,
   getDiffHoverPreviewLayout,
   getDiffHoverPreviewStats,
   prepareDiffHoverPreviewText
@@ -69,6 +72,32 @@ describe('DiffHoverPreview text bounds', () => {
 
     expect(prepared.capped).toBe(true)
     expect(prepared.text).toHaveLength(40_000)
+  })
+})
+
+describe('DiffHoverPreview file-list bounds', () => {
+  const files = Array.from({ length: 42 }, (_, index) => ({
+    path: `src/file-${index + 1}.ts`,
+    additions: index + 1,
+    deletions: index
+  }))
+
+  it('shows eight commit files first and offers one bounded expansion', () => {
+    const window = getDiffHoverPreviewFileWindow(files)
+
+    expect(window.files).toHaveLength(DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT)
+    expect(window.canShowMore).toBe(true)
+    expect(window.nextShowCount).toBe(22)
+    expect(window.hiddenAfterCap).toBe(12)
+  })
+
+  it('never mounts more than thirty commit files after expansion', () => {
+    const window = getDiffHoverPreviewFileWindow(files.slice(0, 30), true, files.length)
+
+    expect(window.files).toHaveLength(DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE)
+    expect(window.files.at(-1)?.path).toBe('src/file-30.ts')
+    expect(window.canShowMore).toBe(false)
+    expect(window.hiddenAfterCap).toBe(12)
   })
 })
 

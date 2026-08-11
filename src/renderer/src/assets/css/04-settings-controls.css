@@ -4724,8 +4724,15 @@ input:disabled, select:disabled, textarea:disabled {
   cursor: default;
 }
 
-.run-complete-epic-row.is-commits.has-commit-files:hover {
+.run-complete-epic-row.is-commits.has-commit-files:hover,
+.run-complete-epic-row.is-commits.has-commit-files:focus-visible,
+.run-complete-epic-row.is-commits.has-commit-files:focus-within {
   background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
+.run-complete-epic-row.is-commits.has-commit-files:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  outline-offset: -1px;
 }
 
 .run-complete-epic-row:first-child {
@@ -5492,6 +5499,66 @@ input:disabled, select:disabled, textarea:disabled {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.diff-hover-preview-file-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.diff-hover-preview-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: 31px;
+  padding: 3px var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.diff-hover-preview-file-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-hover-preview-file-stats {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  min-width: 9ch;
+}
+
+.diff-hover-preview-file-more {
+  min-height: 32px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+  padding: 5px var(--space-md);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--transcript-font-family);
+  font-weight: 650;
+  text-align: left;
+}
+
+.diff-hover-preview-file-more:hover,
+.diff-hover-preview-file-more:focus-visible {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+
+.diff-hover-preview-file-cap-note {
+  padding: 6px var(--space-md);
+  color: var(--text-muted);
+  font-family: var(--transcript-font-family);
+  font-size: var(--font-size-xs);
 }
 
 .diff-hover-preview-section + .diff-hover-preview-section {

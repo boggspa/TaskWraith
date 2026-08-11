@@ -195,6 +195,70 @@ describe('RunCompleteEpicStack', () => {
     expect(html).not.toContain('Open Workbench')
   })
 
+  it('restores sticky row previews without adding a separate Diff mini-pill', () => {
+    const html = renderToStaticMarkup(
+      <CloseoutFileChangesSection
+        changes={[{ path: 'src/example.ts', status: 'modified', additions: 4, deletions: 2 }]}
+        getMainActionLabel={(summary) => `Open Workbench diff for ${summary.path}`}
+        onActivateChange={() => {}}
+        onOpenPreview={() => {}}
+        onScheduleClosePreview={() => {}}
+        previewPath="src/example.ts"
+      />
+    )
+
+    expect(html).toContain('file-change-summary-item-interactive has-diff-preview')
+    expect(html).not.toContain('file-change-summary-diff-bubble')
+    expect(html).toContain('aria-describedby="diff-hover-preview-tooltip"')
+    expect(html).toContain('Open Workbench diff for src/example.ts')
+  })
+
+  it('marks commit rows with file data as keyboard-accessible hover anchors', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        commits={[
+          {
+            hash: '83bbc32c8abcdef',
+            subject: 'Bound commit file previews',
+            stats: '42 files, +903 −211',
+            files: Array.from({ length: 42 }, (_, index) => ({
+              path: `src/file-${index + 1}.ts`,
+              additions: index + 1,
+              deletions: index
+            }))
+          }
+        ]}
+      />
+    )
+
+    expect(html).toContain('is-commits has-commit-files')
+    expect(html).toContain('tabindex="0"')
+  })
+
+  it('arms historical commit rows for lazy file lookup when tombstones have no file list', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        commits={[
+          {
+            hash: '83bbc32c8abcdef',
+            subject: 'Historical commit',
+            stats: '2 files, +14 −3'
+          }
+        ]}
+        loadCommitFiles={async () => ({
+          files: [
+            { path: 'src/example.ts', additions: 10, deletions: 2 },
+            { path: 'src/example.test.ts', additions: 4, deletions: 1 }
+          ],
+          totalFiles: 2
+        })}
+      />
+    )
+
+    expect(html).toContain('is-commits has-commit-files')
+    expect(html).toContain('tabindex="0"')
+  })
+
   it('marks closeout file-change rows as ownerless so the stats keep the last column', () => {
     const html = renderToStaticMarkup(
       <CloseoutFileChangesSection
