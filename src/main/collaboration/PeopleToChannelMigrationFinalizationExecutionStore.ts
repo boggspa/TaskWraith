@@ -23,6 +23,10 @@ import { PEOPLE_TO_CHANNEL_HISTORY_MATERIALIZATION_VERSION } from './PeopleToCha
 import { PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION } from './PeopleToChannelMigrationMaterializer'
 import { PEOPLE_TO_CHANNEL_MIGRATION_PLAN_VERSION } from './PeopleToChannelMigrationPlan'
 import { peopleToChannelMigrationRecoveryPaths } from './PeopleToChannelMigrationRecoveryStore'
+import {
+  validatePeopleToChannelMigrationFinalizationScope,
+  type PeopleToChannelMigrationFinalizationScope
+} from './PeopleToChannelMigrationFinalizationScope'
 
 export const PEOPLE_TO_CHANNEL_FINALIZATION_EXECUTION_VERSION = 1
 export const PEOPLE_TO_CHANNEL_FINALIZATION_EXECUTION_FILENAME = 'finalization-execution.json'
@@ -41,6 +45,8 @@ export interface PeopleToChannelMigrationFinalizationExecution {
   initialPlanDigest: string
   channelStateDigest: string
   cutoverStateDigest: string
+  /** Exact encrypted partition of ordinary retirement and the explicit P5 exception. */
+  scope: PeopleToChannelMigrationFinalizationScope
   delta: PeopleToChannelMigrationExecution
   /** Content-free hash committed to the recovery fence before retirement. */
   finalizationDigest: string
@@ -75,6 +81,7 @@ const FINALIZATION_KEYS = new Set([
   'initialPlanDigest',
   'channelStateDigest',
   'cutoverStateDigest',
+  'scope',
   'delta',
   'finalizationDigest'
 ])
@@ -229,6 +236,7 @@ function validateFinalizationExecution(
   }
   const execution = raw as unknown as PeopleToChannelMigrationFinalizationExecution
   const delta = validateDeltaExecution(execution.delta)
+  const scope = validatePeopleToChannelMigrationFinalizationScope(execution.scope)
   if (
     execution.schemaVersion !== PEOPLE_TO_CHANNEL_FINALIZATION_EXECUTION_VERSION ||
     !digest(execution.initialPlanId) ||
@@ -247,6 +255,7 @@ function validateFinalizationExecution(
     initialPlanDigest: execution.initialPlanDigest,
     channelStateDigest: execution.channelStateDigest,
     cutoverStateDigest: execution.cutoverStateDigest,
+    scope,
     delta,
     finalizationDigest: execution.finalizationDigest
   }

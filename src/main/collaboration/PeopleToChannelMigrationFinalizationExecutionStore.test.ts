@@ -130,6 +130,11 @@ function execution(
     initialPlanDigest: 'b'.repeat(64),
     channelStateDigest: 'c'.repeat(64),
     cutoverStateDigest: 'd'.repeat(64),
+    scope: {
+      schemaVersion: 1,
+      retireShareIds: ['ordinary_legacy'],
+      retainedWorkspaceBootstrapShareIds: ['p5_workspace_bootstrap']
+    },
     delta: delta(hostDisplayName)
   })
 }
@@ -184,6 +189,8 @@ describe('PeopleToChannelMigrationFinalizationExecutionStore', () => {
     for (const secret of [
       'Private migration title',
       'Different Private Host',
+      'ordinary_legacy',
+      'p5_workspace_bootstrap',
       replacement.delta.base.mutations[0].channel.channelId
     ]) {
       expect(atRest).not.toContain(secret)
