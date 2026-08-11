@@ -281,7 +281,10 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
       }
       assertRecoveryBinding({ recovery, initial, finalization: execution })
       assertSupportedDeltaAuthority({ initial, finalization: execution })
-      this.assertFrozenScope(execution, 'awaiting_retirement')
+      this.assertFrozenScope(
+        execution,
+        execution.scope.retireShareIds.length === 0 ? 'retired' : 'awaiting_retirement'
+      )
       this.options.finalizationExecution.prepareBeforeRecoveryFence(execution)
       this.options.afterStage?.('finalization_execution_durable')
       recovery = this.options.recovery.beginFinalization({
@@ -376,10 +379,10 @@ export class PeopleToChannelMigrationFinalizationCoordinator {
     const current = canonicalShareIds(
       this.options.people.listShares().map((share) => share.shareId)
     )
-    const state: FrozenScopeState = sameIds(current, all)
-      ? 'awaiting_retirement'
-      : sameIds(current, retained)
-        ? 'retired'
+    const state: FrozenScopeState = sameIds(current, retained)
+      ? 'retired'
+      : sameIds(current, all)
+        ? 'awaiting_retirement'
         : blocked('People migration terminal legacy scope is partial or changed')
     if (expected && state !== expected) {
       blocked('People migration terminal legacy scope is at an unsafe recovery boundary')

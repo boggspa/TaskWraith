@@ -155,6 +155,7 @@ interface Fixture {
   identity: KeyPair
   now: number
   sourcePath: string
+  empty: boolean
   chat: {
     appChatId: string
     title: string
@@ -164,7 +165,7 @@ interface Fixture {
   }
 }
 
-function fixture(args: { includeP5?: boolean } = {}): Fixture {
+function fixture(args: { empty?: boolean; includeP5?: boolean } = {}): Fixture {
   const userDataPath = directory()
   const identity = generateIdentityKeyPair()
   const sourcePath = join(userDataPath, 'human-collaboration.json')
@@ -176,7 +177,11 @@ function fixture(args: { includeP5?: boolean } = {}): Fixture {
   )
   writeFileSync(
     sourcePath,
-    JSON.stringify(peopleSource({ activeKey, pendingKey, includeP5: args.includeP5 })),
+    JSON.stringify(
+      args.empty
+        ? { shares: [] }
+        : peopleSource({ activeKey, pendingKey, includeP5: args.includeP5 })
+    ),
     { mode: 0o600 }
   )
   return {
@@ -184,6 +189,7 @@ function fixture(args: { includeP5?: boolean } = {}): Fixture {
     identity,
     now: 1_000,
     sourcePath,
+    empty: args.empty === true,
     chat: {
       appChatId: 'chat_one',
       title: 'Private terminal migration chat',
@@ -207,7 +213,7 @@ function runner(
     safeStorage: options.safeStorage ?? safeStorage(),
     loadIdentity: () => built.identity,
     hostDisplayName: 'Private Host Person',
-    listChats: () => [built.chat],
+    listChats: () => (built.empty ? [] : [built.chat]),
     listWorkflowChatIds: () => [],
     now: () => ++built.now,
     ...(options.retainedWorkspaceBootstrapShareIds
@@ -237,6 +243,23 @@ function durableState(built: Fixture) {
 }
 
 describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
+  it('commits an empty clean-profile migration without a retirement transition', () => {
+    const built = fixture({ empty: true })
+    const completed = runner(built).runToCompletion()
+
+    expect(completed).toMatchObject({
+      migration: { phase: 'committed', routes: [], recovery: { phase: 'committed' } },
+      finalization: {
+        phase: 'committed',
+        retireShareIds: [],
+        retainedWorkspaceBootstrapShareIds: []
+      }
+    })
+    expect(completed.legacyWriteGate.isQuiesced()).toBe(true)
+    expect(durableState(built).people.listShares()).toEqual([])
+    expect(runner(built).runToCompletion().terminalPlanId).toBe(completed.terminalPlanId)
+  })
+
   it('fences a terminal delta, retires ordinary People, and exposes only rotated credentials', () => {
     const built = fixture()
     const completed = runner(built).runToCompletion()

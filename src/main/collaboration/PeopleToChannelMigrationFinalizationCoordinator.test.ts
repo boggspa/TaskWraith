@@ -212,6 +212,32 @@ describe('PeopleToChannelMigrationFinalizationCoordinator', () => {
     expect(() => active.gate.assertOrdinaryWriteAllowed('ordinary_one')).toThrow()
   })
 
+  it('treats an empty legacy scope as already retired', () => {
+    const active = harness({ shareIds: [] })
+    const captured = finalization({
+      scope: {
+        schemaVersion: 1,
+        retireShareIds: [],
+        retainedWorkspaceBootstrapShareIds: []
+      }
+    })
+
+    expect(
+      active.coordinator.run({
+        retainedWorkspaceBootstrapShareIds: [],
+        capture: () => captured
+      })
+    ).toMatchObject({
+      phase: 'committed',
+      retireShareIds: [],
+      retainedWorkspaceBootstrapShareIds: []
+    })
+    expect(active.calls).not.toContain('people.retire:')
+    expect(active.calls).not.toContain('legacy_retired')
+    expect(active.recovery().phase).toBe('committed')
+    expect(active.shareIds()).toEqual([])
+  })
+
   it('recovers from the durable fence without recapturing or changing the P5 scope', () => {
     const first = harness({ crashAt: 'recovery_fenced' })
     const captured = finalization()
