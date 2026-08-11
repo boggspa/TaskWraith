@@ -14,6 +14,11 @@ import {
   PEOPLE_TO_CHANNEL_PRODUCTION_RUNNER_VERSION,
   type PeopleToChannelMigrationProductionRunResult
 } from './PeopleToChannelMigrationProductionRunner'
+import {
+  PEOPLE_TO_CHANNEL_FINALIZATION_PRODUCTION_RUNNER_VERSION,
+  type PeopleToChannelMigrationFinalizationProductionRunResult
+} from './PeopleToChannelMigrationFinalizationProductionRunner'
+import { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
 
 const PLAN_ID = 'a'.repeat(64)
 const SOURCE_DIGEST = 'b'.repeat(64)
@@ -47,6 +52,18 @@ function migration(): PeopleToChannelMigrationProductionRunResult {
       }
     ],
     recovery: {} as PeopleToChannelMigrationProductionRunResult['recovery']
+  }
+}
+
+function completedMigration(): PeopleToChannelMigrationFinalizationProductionRunResult {
+  const legacyWriteGate = new PeopleToChannelMigrationLegacyWriteGate()
+  legacyWriteGate.quiesce()
+  return {
+    schemaVersion: PEOPLE_TO_CHANNEL_FINALIZATION_PRODUCTION_RUNNER_VERSION,
+    migration: { ...migration(), phase: 'committed' },
+    terminalPlanId: 'd'.repeat(64),
+    finalization: {} as PeopleToChannelMigrationFinalizationProductionRunResult['finalization'],
+    legacyWriteGate
   }
 }
 
@@ -89,9 +106,9 @@ function bootstrap(
 describe('startPeopleToChannelMigrationBootstrap', () => {
   it('recovers before constructing Channels, then creates both migration authorities before serving', () => {
     const events: string[] = []
-    const runToSoak = vi.fn(() => {
+    const runToCompletion = vi.fn(() => {
       events.push('migration:run')
-      return migration()
+      return completedMigration()
     })
     const built = bootstrap(events)
     const captured: { dependencies: PeopleToChannelMigrationStartupBootstrapDependencies | null } =
@@ -100,7 +117,7 @@ describe('startPeopleToChannelMigrationBootstrap', () => {
       }
 
     const result = startPeopleToChannelMigrationBootstrap({
-      runner: { runToSoak },
+      runner: { runToCompletion },
       createBootstrap: (next) => {
         events.push('channels:constructed')
         captured.dependencies = next
@@ -112,8 +129,10 @@ describe('startPeopleToChannelMigrationBootstrap', () => {
     })
 
     expect(events).toEqual(['migration:run', 'channels:constructed', 'channels:start'])
-    expect(runToSoak).toHaveBeenCalledOnce()
+    expect(runToCompletion).toHaveBeenCalledOnce()
     expect(result.status).toMatchObject({ state: 'running', channelCount: 1 })
+    expect(result.terminalPlanId).toBe('d'.repeat(64))
+    expect(result.legacyWriteGate.isQuiesced()).toBe(true)
     expect(result.admissionAuthority.affectedChannelIds()).toEqual(['channel-a'])
     if (!captured.dependencies) throw new Error('startup did not construct dependencies')
     expect(captured.dependencies.migratedAdmissionAuthority).toBe(result.admissionAuthority)
@@ -144,23 +163,25 @@ describe('startPeopleToChannelMigrationBootstrap', () => {
 
   it('does not construct or serve Channels until an interrupted migration recovers on restart', () => {
     const events: string[] = []
-    const runToSoak = vi.fn<() => PeopleToChannelMigrationProductionRunResult>(() => {
-      throw new Error('injected crash before migration recovery completed')
-    })
+    const runToCompletion = vi.fn<() => PeopleToChannelMigrationFinalizationProductionRunResult>(
+      () => {
+        throw new Error('injected crash before migration recovery completed')
+      }
+    )
     const createBootstrap = vi.fn(() => bootstrap(events).bootstrap)
 
     expect(() =>
-      startPeopleToChannelMigrationBootstrap({ runner: { runToSoak }, createBootstrap })
+      startPeopleToChannelMigrationBootstrap({ runner: { runToCompletion }, createBootstrap })
     ).toThrow('injected crash before migration recovery completed')
     expect(createBootstrap).not.toHaveBeenCalled()
     expect(events).toEqual([])
 
-    runToSoak.mockImplementation(() => {
+    runToCompletion.mockImplementation(() => {
       events.push('migration:recovered')
-      return migration()
+      return completedMigration()
     })
     const result = startPeopleToChannelMigrationBootstrap({
-      runner: { runToSoak },
+      runner: { runToCompletion },
       createBootstrap
     })
 
@@ -175,7 +196,7 @@ describe('startPeopleToChannelMigrationBootstrap', () => {
 
     expect(() =>
       startPeopleToChannelMigrationBootstrap({
-        runner: { runToSoak: migration },
+        runner: { runToCompletion: completedMigration },
         createBootstrap: () => built.bootstrap
       })
     ).toThrow('channel identity unavailable')

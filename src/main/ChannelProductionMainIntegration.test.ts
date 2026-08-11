@@ -18,9 +18,12 @@ describe('Channels production main integration', () => {
       'type BroadHistoryStrictAttempt = {'
     )
     expect(composition).toContain('startPeopleToChannelMigrationBootstrap({')
-    expect(composition).toContain('runner: new PeopleToChannelMigrationProductionRunner({')
+    expect(composition).toContain(
+      'runner: new PeopleToChannelMigrationFinalizationProductionRunner({'
+    )
     expect(composition).toContain("hostDisplayName: app.getName().trim() || 'TaskWraith'")
     expect(composition).toContain('listChats: () => AppStore.getChats()')
+    expect(composition).toContain('retainedWorkspaceBootstrapShareIds: () => []')
     expect(composition).toContain('createChannelProductionBootstrap({')
     expect(composition).toContain("'human-collaboration-identity.json'")
     expect(composition).toContain('safeStorage,')
@@ -32,6 +35,9 @@ describe('Channels production main integration', () => {
       'getAdvertisedRelayUrls: () => iosRemoteRuntime?.describeHost().relayUrls ?? []'
     )
     expect(composition).toContain('channelProductionBootstrap = channelMigrationStartup.bootstrap')
+    expect(composition).toContain(
+      'channelMigrationLegacyWriteGate = channelMigrationStartup.legacyWriteGate'
+    )
     expect(composition).toContain('workspacePopoutOwnerForSender(senderId)')
     expect(composition).toContain('agentManagement: {')
     expect(composition).toContain('getSettings: () => AppStore.getSettings()')
@@ -75,6 +81,8 @@ describe('Channels production main integration', () => {
     expect(dispatchComposition).toContain('baseDispatchRunWithProviderPause(')
     expect(dispatchComposition).toContain('hooks.observer')
     expect(dispatchComposition).toContain('hooks.finalAuthorization')
+    expect(source).toContain('Channels migration authority is unavailable before People startup.')
+    expect(source).toContain('{ legacyWriteGate: channelMigrationLegacyWriteGate }')
   })
 
   it('isolates exact Channel runs from parent sessions, raw history, and ordinary failover', () => {

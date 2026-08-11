@@ -1,10 +1,12 @@
 import type { ChannelProductionService, ChannelProductionStatus } from './ChannelProductionService'
 import { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
+import type { PeopleToChannelMigrationLegacyWriteGate } from './PeopleToChannelMigrationLegacyWriteGate'
 import { PeopleToChannelMigrationHandoffService } from './PeopleToChannelMigrationHandoffService'
 import type {
-  PeopleToChannelMigrationProductionRunResult,
-  PeopleToChannelMigrationProductionRunner
-} from './PeopleToChannelMigrationProductionRunner'
+  PeopleToChannelMigrationFinalizationProductionRunResult,
+  PeopleToChannelMigrationFinalizationProductionRunner
+} from './PeopleToChannelMigrationFinalizationProductionRunner'
+import type { PeopleToChannelMigrationProductionRunResult } from './PeopleToChannelMigrationProductionRunner'
 
 export interface PeopleToChannelMigrationStartupBootstrap {
   readonly service: Pick<ChannelProductionService, 'describeExistingInvite'>
@@ -21,8 +23,8 @@ export interface PeopleToChannelMigrationStartupOptions<
   Bootstrap extends PeopleToChannelMigrationStartupBootstrap =
     PeopleToChannelMigrationStartupBootstrap
 > {
-  /** The durable runner must settle before a Channel handler can begin serving. */
-  runner: Pick<PeopleToChannelMigrationProductionRunner, 'runToSoak'>
+  /** The durable terminal runner must settle before either service can begin serving. */
+  runner: Pick<PeopleToChannelMigrationFinalizationProductionRunner, 'runToCompletion'>
   createBootstrap: (dependencies: PeopleToChannelMigrationStartupBootstrapDependencies) => Bootstrap
 }
 
@@ -31,6 +33,9 @@ export interface PeopleToChannelMigrationStartupResult<
     PeopleToChannelMigrationStartupBootstrap
 > {
   migration: PeopleToChannelMigrationProductionRunResult
+  terminalPlanId: string
+  /** The exact P4 latch must be reused when the lazy People runtime is built. */
+  legacyWriteGate: PeopleToChannelMigrationLegacyWriteGate
   admissionAuthority: PeopleToChannelMigrationAdmissionAuthority
   handoff: PeopleToChannelMigrationHandoffService
   bootstrap: Bootstrap
@@ -73,10 +78,10 @@ function assertBootstrap(
 }
 
 /**
- * Main-process-only composition for the P4 additive migration. The durable
- * runner resolves any interrupted execution before a Channel bootstrap is
- * constructed, and the bootstrap cannot serve until the handoff authority has
- * been created from its verified live invite projection.
+ * Main-process-only composition for terminal P4 migration. The durable runner
+ * resolves any interrupted execution before either runtime is constructed, and
+ * the Channel bootstrap cannot serve until it receives terminal-only admission
+ * and handoff authority from the committed migration receipt.
  */
 export function startPeopleToChannelMigrationBootstrap<
   Bootstrap extends PeopleToChannelMigrationStartupBootstrap
@@ -87,7 +92,7 @@ export function startPeopleToChannelMigrationBootstrap<
     !options ||
     typeof options !== 'object' ||
     !options.runner ||
-    typeof options.runner.runToSoak !== 'function' ||
+    typeof options.runner.runToCompletion !== 'function' ||
     typeof options.createBootstrap !== 'function'
   ) {
     throw new Error('People migration startup requires a runner and bootstrap factory')
@@ -95,9 +100,12 @@ export function startPeopleToChannelMigrationBootstrap<
 
   // This call is intentionally first: a failed or interrupted migration must
   // leave both Channel IPC and the legacy People runtime unavailable to serve.
-  const migration = options.runner.runToSoak()
+  const completed: PeopleToChannelMigrationFinalizationProductionRunResult =
+    options.runner.runToCompletion()
+  const migration = completed.migration
   const admissionAuthority = new PeopleToChannelMigrationAdmissionAuthority({
-    migrationPlanId: migration.planId,
+    migrationPlanId: completed.terminalPlanId,
+    initialMigrationPlanId: migration.planId,
     invitations: migration.invitations
   })
 
@@ -122,7 +130,15 @@ export function startPeopleToChannelMigrationBootstrap<
       channels: bootstrap.service
     })
     const status = bootstrap.start()
-    return { migration, admissionAuthority, handoff, bootstrap, status }
+    return {
+      migration,
+      terminalPlanId: completed.terminalPlanId,
+      legacyWriteGate: completed.legacyWriteGate,
+      admissionAuthority,
+      handoff,
+      bootstrap,
+      status
+    }
   } catch (error) {
     void bootstrap.stop().catch(() => undefined)
     throw error

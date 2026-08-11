@@ -599,7 +599,8 @@ import {
 } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
-import { PeopleToChannelMigrationProductionRunner } from './collaboration/PeopleToChannelMigrationProductionRunner'
+import { PeopleToChannelMigrationFinalizationProductionRunner } from './collaboration/PeopleToChannelMigrationFinalizationProductionRunner'
+import { PeopleToChannelMigrationLegacyWriteGate } from './collaboration/PeopleToChannelMigrationLegacyWriteGate'
 import { startPeopleToChannelMigrationBootstrap } from './collaboration/PeopleToChannelMigrationStartup'
 import {
   createChannelProductionBootstrap,
@@ -48216,6 +48217,7 @@ if (isGeminiMcpBridgeProcess) {
 
     let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
       null
+    let channelMigrationLegacyWriteGate: PeopleToChannelMigrationLegacyWriteGate | null = null
     let channelAgentDispatchRef: ChannelProductionAgentRuntimeOptions['dispatch'] | null = null
     try {
       const channelIdentityStore = new HumanCollaborationIdentityStore(
@@ -48291,12 +48293,16 @@ if (isGeminiMcpBridgeProcess) {
         logger: (line) => console.warn(line)
       }
       const channelMigrationStartup = startPeopleToChannelMigrationBootstrap({
-        runner: new PeopleToChannelMigrationProductionRunner({
+        runner: new PeopleToChannelMigrationFinalizationProductionRunner({
           userDataPath: app.getPath('userData'),
           safeStorage,
           loadIdentity: () => channelIdentityStore.load(),
           hostDisplayName: app.getName().trim() || 'TaskWraith',
-          listChats: () => AppStore.getChats()
+          listChats: () => AppStore.getChats(),
+          // P5 has not registered a concrete workspace-bootstrap People edge in
+          // this production root. An explicit empty scope is an assertion, not
+          // a heuristic: P5 must replace this port when it owns an id.
+          retainedWorkspaceBootstrapShareIds: () => []
         }),
         createBootstrap: ({ migratedAdmissionAuthority, migrationHandoff }) =>
           createChannelProductionBootstrap({
@@ -48305,12 +48311,14 @@ if (isGeminiMcpBridgeProcess) {
             migrationHandoff,
           })
       })
+      channelMigrationLegacyWriteGate = channelMigrationStartup.legacyWriteGate
       channelProductionBootstrap = channelMigrationStartup.bootstrap
     } catch (error) {
       const failedBootstrap = channelProductionBootstrap
       channelProductionBootstrap = null
       void failedBootstrap?.stop().catch(() => undefined)
       console.error('[channels] production bootstrap failed', error)
+      throw error
     }
 
     let channelMemberProductionBootstrap: ReturnType<
@@ -49255,8 +49263,12 @@ if (isGeminiMcpBridgeProcess) {
     // deletion recovery: the broad commit purges them under the durable intent,
     // and a startup-resumed erasure must not hit their temporal dead zone.
     // ChatService receives the same instances later in this ready flow.
+    if (!channelMigrationLegacyWriteGate) {
+      throw new Error('Channels migration authority is unavailable before People startup.')
+    }
     const humanCollaborationStore = new HumanCollaborationStore(
-      join(app.getPath('userData'), 'human-collaboration.json')
+      join(app.getPath('userData'), 'human-collaboration.json'),
+      { legacyWriteGate: channelMigrationLegacyWriteGate }
     )
     /**
      * Tri-state presence for external collaborators, owned here so the sweep
