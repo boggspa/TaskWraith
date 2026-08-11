@@ -479,6 +479,48 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('>MO</th>')
   })
 
+  it('hides the row legend column when there are more than 8 providers', () => {
+    const summary: ModelUsageAggregate[] = [
+      quotaEntry({ provider: 'codex', windows: [] }),
+      quotaEntry({ provider: 'claude', windows: [] }),
+      quotaEntry({ provider: 'kimi', windows: [] }),
+      quotaEntry({ provider: 'cursor', windows: [] }),
+      quotaEntry({ provider: 'antigravity', windows: [] }),
+      quotaEntry({ provider: 'deepseek', windows: [] }),
+      quotaEntry({ provider: 'cerebras', windows: [] }),
+      quotaEntry({ provider: 'meta', windows: [] })
+    ]
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={summary}
+        grokUsage={{
+          snapshot: parseGrokUsage('Weekly limit: 5%', '2026-07-04T12:00:00.000Z'),
+          loading: false,
+          errored: false,
+          stale: false
+        }}
+      />
+    )
+
+    expect(html).toContain('model-usage-compact-grid')
+    expect(html).not.toContain('>5H</th>')
+    expect(html).not.toContain('>WK</th>')
+    expect(html).not.toContain('>X1</th>')
+    expect(html).not.toContain('>X2</th>')
+    expect(html).not.toContain('aria-label="Window"')
+
+    // Providers are still rendered
+    expect(html).toContain('Codex')
+    expect(html).toContain('Claude')
+    expect(html).toContain('Kimi')
+    expect(html).toContain('Cursor')
+    expect(html).toContain('Grok')
+    expect(html).toContain('AntiGravity')
+    expect(html).toContain('DeepSeek')
+    expect(html).toContain('Cerebras')
+    expect(html).toContain('Meta')
+  })
+
   it('shows the Mistral monthly estimate as a spend figure in the X1 slot, not a band or MO row', () => {
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid

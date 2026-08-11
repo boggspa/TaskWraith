@@ -589,11 +589,15 @@ export function CompactModelUsageGrid({
     })
   }
 
+  const showWindowLegend = providers.length <= 8
+
   return (
     <table className="model-usage-compact-grid" aria-label="Compact model usage">
       <thead>
         <tr>
-          <th scope="col" className="model-usage-compact-corner" aria-label="Window" />
+          {showWindowLegend && (
+            <th scope="col" className="model-usage-compact-corner" aria-label="Window" />
+          )}
           {providers.map((provider) => (
             <th key={provider} scope="col" className={`provider-${provider}`}>
               {COMPACT_USAGE_PROVIDER_LABELS[provider]}
@@ -604,7 +608,7 @@ export function CompactModelUsageGrid({
       <tbody>
         {rows.map((row) => (
           <tr key={row.key}>
-            <th scope="row">{row.label}</th>
+            {showWindowLegend && <th scope="row">{row.label}</th>}
             {providers.map((provider) => {
               const cell = cellsByProvider.get(provider)?.[row.key]
               return (
