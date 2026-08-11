@@ -75,22 +75,6 @@
   justify-content: flex-end;
 }
 
-.mesh-canvas-delete {
-  border: 1px solid color-mix(in srgb, var(--status-failed, #e5484d) 46%, transparent);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--status-failed, #e5484d);
-  padding: 4px 7px;
-  font:
-    11px/1 system-ui,
-    sans-serif;
-  cursor: pointer;
-}
-
-.mesh-canvas-delete:hover {
-  background: color-mix(in srgb, var(--status-failed, #e5484d) 15%, transparent);
-}
-
 .mesh-canvas-import:hover,
 .mesh-canvas-dismiss:hover {
   background: var(--button-bg, rgba(127, 127, 127, 0.12));

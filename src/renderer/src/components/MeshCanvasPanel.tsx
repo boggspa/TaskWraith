@@ -456,6 +456,7 @@ export function MeshSceneViewer({ view, topologyDisplay, onIssue }: MeshSceneVie
 
 export interface MeshCanvasPanelProps {
   chatId: string
+  onDismiss: () => void
 }
 
 export interface MeshCanvasPanelStatusProps {
@@ -482,7 +483,7 @@ export function MeshCanvasPanelStatus({ hasView, hasScenes, issue }: MeshCanvasP
   )
 }
 
-export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
+export function MeshCanvasPanel({ chatId, onDismiss }: MeshCanvasPanelProps) {
   const [scenes, setScenes] = useState<readonly MeshSceneSummary[]>([])
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null)
   const [view, setView] = useState<MeshSceneView | null>(null)
@@ -617,36 +618,19 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     }
   }
 
-  const dismissPresentation = async (): Promise<void> => {
-    const api = window.api?.meshCanvas
-    if (!api || !activeSceneId) return
-    try {
-      await api.closePresentation(chatId, activeSceneId)
-      await refresh()
-    } catch (error) {
-      setIssue(meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.'))
+  const dismiss = async (): Promise<void> => {
+    if (view?.presentation) {
+      const api = window.api?.meshCanvas
+      if (!api || !activeSceneId) return
+      try {
+        await api.closePresentation(chatId, activeSceneId)
+        await refresh()
+      } catch (error) {
+        setIssue(meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.'))
+        return
+      }
     }
-  }
-
-  const deleteScene = async (): Promise<void> => {
-    const api = window.api?.meshCanvas
-    if (!api || !activeSceneId) return
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.confirm === 'function' &&
-      !window.confirm(
-        'Delete this Mesh Canvas scene and its unshared private assets? This cannot be undone.'
-      )
-    ) {
-      return
-    }
-    try {
-      await api.deleteScene(chatId, activeSceneId)
-      setView(null)
-      await refresh()
-    } catch (error) {
-      setIssue(meshCanvasIssueMessage(error, 'Could not delete the Mesh Canvas scene.'))
-    }
+    onDismiss()
   }
 
   const toggleTopologyDisplay = (key: keyof MeshTopologyDisplayOptions): void => {
@@ -690,20 +674,14 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
           >
             {importing ? 'Opening picker…' : 'Import scene package'}
           </button>
-          {view?.presentation && (
-            <button
-              type="button"
-              className="mesh-canvas-dismiss"
-              onClick={() => void dismissPresentation()}
-            >
-              Dismiss
-            </button>
-          )}
-          {activeSceneId && (
-            <button type="button" className="mesh-canvas-delete" onClick={() => void deleteScene()}>
-              Delete
-            </button>
-          )}
+          <button
+            type="button"
+            className="mesh-canvas-dismiss"
+            title="Dismiss Mesh Canvas without deleting the scene or its files"
+            onClick={() => void dismiss()}
+          >
+            Dismiss
+          </button>
         </div>
       </div>
 

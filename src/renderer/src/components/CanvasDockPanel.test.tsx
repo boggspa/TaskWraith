@@ -166,6 +166,16 @@ describe('isHostOccluded', () => {
 })
 
 describe('CanvasDockPanel mesh/simulator surface races', () => {
+  it('lets the Mesh Canvas toolbar dismiss its non-destructive surface', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('const dismissMeshSurface = useCallback')
+    expect(source).toContain('setShowMesh(false)')
+    expect(source).toContain('<MeshCanvasPanel chatId={chatId} onDismiss={dismissMeshSurface} />')
+  })
+
   it('listForChat mesh rehydrate consults the simulator override guard before openMeshSurface', () => {
     const source = readFileSync(
       join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),

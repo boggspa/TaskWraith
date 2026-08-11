@@ -399,6 +399,11 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     setOpenMenu(null)
   }, [])
 
+  const dismissMeshSurface = useCallback((): void => {
+    setShowMesh(false)
+    setOpenMenu(null)
+  }, [])
+
   const openSimulatorSurface = useCallback((): void => {
     setShowMesh(false)
     setShowSimulator(true)
@@ -1056,7 +1061,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       {showSimulator ? (
         <SimulatorCanvasPanel chatId={chatId} />
       ) : showMesh ? (
-        <MeshCanvasPanel chatId={chatId} />
+        <MeshCanvasPanel chatId={chatId} onDismiss={dismissMeshSurface} />
       ) : (
         <>
           {launcherVisible && (

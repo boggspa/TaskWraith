@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { MeshCanvasPanel, MeshCanvasPanelStatus, toMeshSceneSummary } from './MeshCanvasPanel'
@@ -47,14 +49,19 @@ describe('toMeshSceneSummary', () => {
 })
 
 describe('MeshCanvasPanel (static render)', () => {
-  it('offers the local Mesh Canvas surface before a scene exists', () => {
-    const html = renderToStaticMarkup(<MeshCanvasPanel chatId="chat-mesh-static" />)
+  it('offers the local Mesh Canvas surface with a non-destructive dismiss action', () => {
+    const html = renderToStaticMarkup(
+      <MeshCanvasPanel chatId="chat-mesh-static" onDismiss={() => undefined} />
+    )
     expect(html).toContain('Mesh Canvas')
     expect(html).toContain('Human and agent-built 3D scenes stay local to this chat.')
     expect(html).toContain('Import 3D scene or model')
     expect(html).toContain('Import scene package')
+    expect(html).toContain('Dismiss')
+    expect(html).toContain('Dismiss Mesh Canvas without deleting the scene or its files')
     expect(html).toContain('taskwraith.mesh-scene.json')
     expect(html).toContain('No Mesh Canvas scene has been created in this chat yet.')
+    expect(html).not.toContain('Delete')
     expect(html).not.toContain('twmesh://')
   })
 
@@ -68,5 +75,16 @@ describe('MeshCanvasPanel (static render)', () => {
     )
     expect(html).toContain('The Mesh Canvas scene is unavailable.')
     expect(html).not.toContain('No Mesh Canvas scene has been created in this chat yet.')
+  })
+
+  it('does not expose the scene-deletion IPC from the dismiss control', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/MeshCanvasPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('await api.closePresentation(chatId, activeSceneId)')
+    expect(source).toContain('onDismiss()')
+    expect(source).not.toContain('api.deleteScene(')
+    expect(source).not.toContain('mesh-canvas-delete')
   })
 })
