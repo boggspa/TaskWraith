@@ -165,6 +165,26 @@ window.addEventListener(
   true
 )
 
+let pendingSimulatorPasteboardIntent: { token: string; expiresAt: number } | null = null
+
+// Simulator Canvas pasteboard push proof: only this isolated preload observes
+// the trusted paste gesture, so renderer code cannot mint the token that lets
+// main sync the HOST pasteboard into a simulator (simctl pbsync).
+window.addEventListener(
+  'paste',
+  (event) => {
+    if (!event.isTrusted) return
+    const token = globalThis.crypto?.randomUUID?.()
+    if (!token) return
+    pendingSimulatorPasteboardIntent = {
+      token,
+      expiresAt: Date.now() + CLIPBOARD_PASTE_INTENT_TTL_MS
+    }
+    void ipcRenderer.invoke('simulator-canvas:authorize-pasteboard-intent', token)
+  },
+  true
+)
+
 async function saveClipboardImageAttachmentFromTrustedPaste(appChatId: string): Promise<string[]> {
   const intent = pendingClipboardPasteIntent
   pendingClipboardPasteIntent = null
@@ -1355,7 +1375,20 @@ const api = {
     button: (chatId: string, udid: string, button: string) =>
       ipcRenderer.invoke('simulator-canvas:button', chatId, udid, button),
     rotate: (chatId: string, udid: string, direction: string) =>
-      ipcRenderer.invoke('simulator-canvas:rotate', chatId, udid, direction)
+      ipcRenderer.invoke('simulator-canvas:rotate', chatId, udid, direction),
+    clipboardPush: (chatId: string, udid: string) => {
+      const intent = pendingSimulatorPasteboardIntent
+      pendingSimulatorPasteboardIntent = null
+      if (!intent || Date.now() > intent.expiresAt) {
+        return Promise.resolve({
+          ok: false as const,
+          error: 'Copy on the Mac first, then paste (⌘V) over the simulator to sync it.'
+        })
+      }
+      return ipcRenderer.invoke('simulator-canvas:clipboard-push', chatId, udid, intent.token)
+    },
+    clipboardPull: (chatId: string, udid: string) =>
+      ipcRenderer.invoke('simulator-canvas:clipboard-pull', chatId, udid)
   },
 
   // Simulator control setup is deliberately separate from AppDrive. It only

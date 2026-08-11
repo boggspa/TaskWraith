@@ -1394,6 +1394,8 @@ declare global {
           udid: string,
           direction: SimulatorRotateDirection
         ) => Promise<{ ok: boolean; error?: string }>
+        clipboardPush: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
+        clipboardPull: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
       }
       simulatorControl: {
         status: () => Promise<SimulatorControlSetupStatus>

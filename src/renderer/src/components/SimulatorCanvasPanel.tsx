@@ -93,6 +93,8 @@ type SimulatorCanvasBridge = {
     udid: string,
     direction: SimulatorRotateDirection
   ) => Promise<{ ok: boolean; error?: string }>
+  clipboardPush?: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
+  clipboardPull?: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
 }
 
 type SimulatorControlBridge = {
@@ -113,6 +115,7 @@ type BusyKind =
   | 'launch'
   | 'terminate'
   | 'hardware'
+  | 'clipboard'
   | 'setup'
   | null
 
@@ -182,7 +185,8 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const [orientation, setOrientation] = useState<SimulatorRotateDirection>('PORTRAIT')
   const [nowMs, setNowMs] = useState(() => Date.now())
   const screenRef = useRef<HTMLDivElement | null>(null)
-  const textQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const pendingTextRef = useRef('')
+  const textFlushInFlightRef = useRef(false)
   const dragRef = useRef<{
     pointerId: number
     point: { x: number; y: number }
@@ -809,28 +813,46 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     })
   }
 
+  // Text events arrive one character at a time, but every companion call pays
+  // a full idb CLI spawn (~1s). Buffer whatever arrives while a call is in
+  // flight and flush it as ONE follow-up `type` gesture — order is preserved
+  // by the single pending buffer, and a fast typist pays at most two spawns.
+  const flushPendingText = (): void => {
+    if (textFlushInFlightRef.current) return
+    const batch = pendingTextRef.current
+    if (!batch) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.type) return
+    pendingTextRef.current = ''
+    textFlushInFlightRef.current = true
+    void (async () => {
+      try {
+        const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
+          api.type!(buildTypeGesture(chatId, batch))
+        )
+        if (chatIdRef.current !== chatId || !gated.ok) return
+        const result = gated.value
+        if (result && result.ok === false) {
+          setIssue(result.error || 'Type was refused.')
+        }
+      } catch (error) {
+        if (chatIdRef.current === chatId) {
+          setIssue(error instanceof Error ? error.message : String(error))
+        }
+      } finally {
+        textFlushInFlightRef.current = false
+        flushPendingText()
+      }
+    })()
+  }
+
   const sendText = (text: string): void => {
     if (!gesturesEnabled) return
     const api = getSimulatorCanvasBridge()
     if (!api?.type) return
     if (!text) return
-    const send = async (): Promise<void> => {
-      const gated = await actuateAfterSoftClaim(ensureHumanLease, () =>
-        api.type!(buildTypeGesture(chatId, text))
-      )
-      if (chatIdRef.current !== chatId || !gated.ok) return
-      const result = gated.value
-      if (result && result.ok === false) {
-        setIssue(result.error || 'Type was refused.')
-      }
-    }
-    // Text events arrive one character at a time. Preserve their order so a
-    // fast keyboard input cannot race multiple local companion commands.
-    textQueueRef.current = textQueueRef.current.then(send, send).catch((error: unknown) => {
-      if (chatIdRef.current === chatId) {
-        setIssue(error instanceof Error ? error.message : String(error))
-      }
-    })
+    pendingTextRef.current += text
+    flushPendingText()
   }
 
   const handleBezelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -847,11 +869,61 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   }
 
   const handleBezelPaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    if (!controlReady) return
+    event.preventDefault()
+    // Bridge the real pasteboard too (simctl pbsync): rich content and in-app
+    // Paste menus work even when idb typing is unavailable. The preload
+    // consumed this same trusted paste gesture to mint the one-shot proof.
+    pushClipboardToDevice()
     if (!gesturesEnabled) return
     const text = event.clipboardData.getData('text')
-    if (!text) return
-    event.preventDefault()
-    sendText(text)
+    if (text) sendText(text)
+  }
+
+  const pushClipboardToDevice = (): void => {
+    if (!selectedUdid) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.clipboardPush) return
+    void api
+      .clipboardPush(chatId, selectedUdid)
+      .then((result) => {
+        if (chatIdRef.current !== chatId) return
+        if (result && result.ok === false) {
+          setIssue(result.error || 'Clipboard sync to the simulator was refused.')
+        }
+      })
+      .catch((error: unknown) => {
+        if (chatIdRef.current === chatId) {
+          setIssue(error instanceof Error ? error.message : String(error))
+        }
+      })
+  }
+
+  const copyClipboardFromDevice = (): void => {
+    if (!selectedUdid) return
+    const api = getSimulatorCanvasBridge()
+    if (!api?.clipboardPull) {
+      setIssue(BRIDGE_MISSING_HINT)
+      return
+    }
+    setBusy('clipboard')
+    setIssue(null)
+    void api
+      .clipboardPull(chatId, selectedUdid)
+      .then((result) => {
+        if (chatIdRef.current !== chatId) return
+        if (result && result.ok === false) {
+          setIssue(result.error || 'Copying the simulator clipboard was refused.')
+        }
+      })
+      .catch((error: unknown) => {
+        if (chatIdRef.current === chatId) {
+          setIssue(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (chatIdRef.current === chatId) setBusy(null)
+      })
   }
 
   const pressHardwareButton = (button: SimulatorHardwareButton): void => {
@@ -1234,6 +1306,15 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
           title={`Current ${orientation} → next ${nextOrientation}`}
         >
           Rotate → {nextOrientation}
+        </PillButton>
+        <PillButton
+          size="compact"
+          onClick={() => copyClipboardFromDevice()}
+          disabled={!canMutateHost || !selectedBooted}
+          loading={busy === 'clipboard'}
+          title="Copy the simulator clipboard to this Mac (simctl pbsync)"
+        >
+          Copy clipboard
         </PillButton>
       </div>
 

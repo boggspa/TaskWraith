@@ -16,6 +16,7 @@ describe('SimulatorHostControl', () => {
       launch: vi.fn(async () => ({ ok: true, udid: UDID })),
       terminate: vi.fn(async () => ({ ok: true, udid: UDID })),
       screenshot: vi.fn(async () => ({ ok: true, udid: UDID })),
+      pasteboardSync: vi.fn(async () => ({ ok: true, udid: UDID })),
       getOwnedSimulatorPid: vi.fn(() => null)
     }
     const gate = new SimulatorHostControl({
@@ -27,6 +28,13 @@ describe('SimulatorHostControl', () => {
     const denied = await gate.boot(UDID, { chatId: 'chat-a', controllerTokenId: 'missing' })
     expect(denied).toEqual({ ok: false, error: SIMULATOR_CONTROLLER_REQUIRED })
     expect(host.boot).not.toHaveBeenCalled()
+
+    const deniedPasteboard = await gate.pasteboardSync(UDID, 'host-to-sim', {
+      chatId: 'chat-a',
+      controllerTokenId: 'missing'
+    })
+    expect(deniedPasteboard).toEqual({ ok: false, error: SIMULATOR_CONTROLLER_REQUIRED })
+    expect(host.pasteboardSync).not.toHaveBeenCalled()
   })
 
   it('allows mutate + session upsert when the calling run holds the lease', async () => {
@@ -51,6 +59,7 @@ describe('SimulatorHostControl', () => {
           udid: UDID
         }
       })),
+      pasteboardSync: vi.fn(async () => ({ ok: true, udid: UDID })),
       getOwnedSimulatorPid: vi.fn(() => 99)
     }
     const lease = new SimulatorControllerLease({ createId: () => 'tok-1' })
@@ -73,5 +82,9 @@ describe('SimulatorHostControl', () => {
     expect(sessions.get('chat-a')?.lastFrame?.width).toBe(2)
     expect(sessions.get('chat-a')?.lastFrame?.pointWidth).toBe(1)
     expect(sessions.get('chat-a')?.lastFrame?.pointHeight).toBe(1)
+
+    // Pasteboard sync delegates with the exact direction once the lease holds.
+    expect((await gate.pasteboardSync(UDID, 'sim-to-host', control)).ok).toBe(true)
+    expect(host.pasteboardSync).toHaveBeenCalledWith(UDID, 'sim-to-host')
   })
 })

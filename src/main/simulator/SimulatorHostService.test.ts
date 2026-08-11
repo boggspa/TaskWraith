@@ -318,4 +318,30 @@ describe('SimulatorHostService', () => {
     expect(result.error).toMatch(/Simulator|Xcode/i)
     expect(host.getOwnedSimulatorPid()).toBeNull()
   })
+
+  it('pasteboardSync runs simctl pbsync with exact argv per direction', async () => {
+    const { host, calls } = makeHost()
+    expect((await host.pasteboardSync(UDID, 'host-to-sim')).ok).toBe(true)
+    expect((await host.pasteboardSync(UDID, 'sim-to-host')).ok).toBe(true)
+    expect(calls).toContainEqual(['pbsync', 'host', UDID])
+    expect(calls).toContainEqual(['pbsync', UDID, 'host'])
+  })
+
+  it('pasteboardSync rejects an invalid udid before simctl runs', async () => {
+    const { host, calls } = makeHost()
+    const result = await host.pasteboardSync('../evil', 'host-to-sim')
+    expect(result.ok).toBe(false)
+    expect(calls.some((args) => args[0] === 'pbsync')).toBe(false)
+  })
+
+  it('pasteboardSync maps simctl failures into result errors', async () => {
+    const { host } = makeHost({
+      runSimctl: async (args) => {
+        if (args[0] === 'pbsync') throw new Error('pbsync exploded')
+        return { stdout: SAMPLE_LIST_JSON, stderr: '' }
+      }
+    })
+    const result = await host.pasteboardSync(UDID, 'sim-to-host')
+    expect(result).toMatchObject({ ok: false, error: 'pbsync exploded' })
+  })
 })

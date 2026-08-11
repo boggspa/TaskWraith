@@ -10,7 +10,10 @@
  * in parallel.
  */
 import type { SimulatorHostActionResult } from '../../shared/simulatorCanvas'
-import type { SimulatorHostService } from './SimulatorHostService'
+import type {
+  SimulatorHostService,
+  SimulatorPasteboardDirection
+} from './SimulatorHostService'
 import type { SimulatorControllerLease } from './SimulatorControllerLease'
 import type { SimulatorSessionStore } from './SimulatorSessionStore'
 
@@ -33,6 +36,7 @@ export interface SimulatorHostControlDeps {
     | 'launch'
     | 'terminate'
     | 'screenshot'
+    | 'pasteboardSync'
     | 'getOwnedSimulatorPid'
   >
   controllerLease: SimulatorControllerLease
@@ -167,5 +171,16 @@ export class SimulatorHostControl {
       this.sessionStore.upsert(control.chatId, { udid: result.udid })
     }
     return result
+  }
+
+  /** Pasteboard bridge (simctl pbsync) — controller-gated; content stays inside simctl. */
+  async pasteboardSync(
+    udid: string,
+    direction: SimulatorPasteboardDirection,
+    control: SimulatorMutateControl
+  ): Promise<SimulatorHostActionResult> {
+    const denied = this.assertController(control)
+    if (denied) return denied
+    return this.host.pasteboardSync(udid, direction)
   }
 }

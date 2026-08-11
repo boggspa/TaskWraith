@@ -40,6 +40,7 @@ export interface SimulatorCanvasIpcDeps {
     | 'launch'
     | 'terminate'
     | 'screenshot'
+    | 'pasteboardSync'
   >
   getControllerLease: () => Pick<SimulatorControllerLease, 'claimHuman' | 'peek' | 'release'>
   getSessionStore?: () => Pick<SimulatorSessionStore, 'get' | 'upsert'>
@@ -153,10 +154,19 @@ function ensureHumanLease(
   return { ok: true, control: { chatId, controllerTokenId: claimed.token.tokenId } }
 }
 
+const SIMULATOR_PASTEBOARD_INTENT_TTL_MS = 1_500
+const SIMULATOR_PASTEBOARD_INTENT_REQUIRED =
+  'Clipboard push requires a fresh paste gesture (⌘V) over the simulator.'
+
 export function registerSimulatorCanvasHandlers(
   ipcMain: IpcMain,
   deps: SimulatorCanvasIpcDeps
 ): void {
+  // One-shot pasteboard-push proofs, keyed by sender WebContents id. Only the
+  // isolated preload mints one (from a trusted paste event); consuming is
+  // single-use and TTL-bound, so renderer code alone can never move the host
+  // clipboard into a simulator.
+  const pasteboardIntents = new Map<number, { token: string; expiresAt: number }>()
   ipcMain.handle('simulator-canvas:status', async () => {
     const status = await deps.getHostControl().status()
     const idb = deps.getIdb?.()
@@ -373,6 +383,48 @@ export function registerSimulatorCanvasHandlers(
         deps.getSessionStore?.().upsert(id, { orientation: direction })
       }
       return result
+    }
+  )
+
+  ipcMain.handle(
+    'simulator-canvas:authorize-pasteboard-intent',
+    async (event, token: unknown) => {
+      const value = requiredString(token, 'intent token')
+      const senderId = (event as { sender?: { id?: number } })?.sender?.id
+      if (typeof senderId !== 'number') return { ok: false as const }
+      pasteboardIntents.set(senderId, {
+        token: value,
+        expiresAt: Date.now() + SIMULATOR_PASTEBOARD_INTENT_TTL_MS
+      })
+      return { ok: true as const }
+    }
+  )
+
+  ipcMain.handle(
+    'simulator-canvas:clipboard-push',
+    async (event, chatId: unknown, udid: unknown, intentToken: unknown) => {
+      const id = requiredString(chatId, 'chatId')
+      const device = requiredString(udid, 'udid')
+      const token = requiredString(intentToken, 'intent token')
+      // Consume the one-shot proof BEFORE any lease claim: without a fresh
+      // trusted paste gesture this call must not claim human control.
+      const senderId = (event as { sender?: { id?: number } })?.sender?.id
+      const pending = typeof senderId === 'number' ? pasteboardIntents.get(senderId) : undefined
+      if (typeof senderId === 'number') pasteboardIntents.delete(senderId)
+      if (!pending || pending.token !== token || Date.now() > pending.expiresAt) {
+        return { ok: false as const, error: SIMULATOR_PASTEBOARD_INTENT_REQUIRED }
+      }
+      return deps.getHostControl().pasteboardSync(device, 'host-to-sim', humanControl(deps, id))
+    }
+  )
+
+  ipcMain.handle(
+    'simulator-canvas:clipboard-pull',
+    async (_event, chatId: unknown, udid: unknown) => {
+      const id = requiredString(chatId, 'chatId')
+      return deps
+        .getHostControl()
+        .pasteboardSync(requiredString(udid, 'udid'), 'sim-to-host', humanControl(deps, id))
     }
   )
 }

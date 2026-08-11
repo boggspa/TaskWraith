@@ -464,6 +464,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'simulator-canvas:inspect': ['nonEmptyString', 'nonEmptyString'],
   'simulator-canvas:button': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
   'simulator-canvas:rotate': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
+  // Pasteboard bridge (simctl pbsync). Push carries the preload-minted one-shot
+  // intent token; clipboard content itself never crosses IPC in either direction.
+  'simulator-canvas:authorize-pasteboard-intent': ['nonEmptyString'],
+  'simulator-canvas:clipboard-push': ['nonEmptyString', 'nonEmptyString', 'nonEmptyString'],
+  'simulator-canvas:clipboard-pull': ['nonEmptyString', 'nonEmptyString'],
   // Simulator control is a user-initiated local setup flow. These stay separate
   // from AppDrive, which has its own consent and transport boundary.
   'simulator-control:setup-status': [],

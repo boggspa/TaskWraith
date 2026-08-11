@@ -54,6 +54,9 @@ export type SimulatorHostStatus = SimulatorCapabilityStatus & {
   ownedPid: number | null
 }
 
+/** Direction for `simctl pbsync` between the Mac host and a simulator. */
+export type SimulatorPasteboardDirection = 'host-to-sim' | 'sim-to-host'
+
 export type SimulatorReleaseResult = {
   ok: boolean
   error?: string
@@ -443,6 +446,27 @@ export class SimulatorHostService {
         return ok({ udid: valid })
       }
       return fail(message, { udid: valid })
+    }
+  }
+
+  /**
+   * Sync the pasteboard between the Mac host and a simulator via
+   * `simctl pbsync`. Clipboard CONTENT never enters this process — simctl
+   * moves it directly, so nothing is logged and nothing crosses IPC.
+   */
+  async pasteboardSync(
+    udid: string,
+    direction: SimulatorPasteboardDirection
+  ): Promise<SimulatorHostActionResult> {
+    const valid = requireUdid(udid)
+    if (!valid) return fail('Invalid simulator `udid` (expected a UUID or "booted").')
+    const args =
+      direction === 'host-to-sim' ? ['pbsync', 'host', valid] : ['pbsync', valid, 'host']
+    try {
+      await this.runSimctl(args)
+      return ok({ udid: valid })
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error), { udid: valid })
     }
   }
 

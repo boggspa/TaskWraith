@@ -150,7 +150,10 @@ describe('registerSimulatorCanvasHandlers', () => {
       'simulator-canvas:scroll',
       'simulator-canvas:inspect',
       'simulator-canvas:button',
-      'simulator-canvas:rotate'
+      'simulator-canvas:rotate',
+      'simulator-canvas:authorize-pasteboard-intent',
+      'simulator-canvas:clipboard-push',
+      'simulator-canvas:clipboard-pull'
     ]
     expect([...handlers.keys()].sort()).toEqual([...expected].sort())
 
@@ -615,5 +618,88 @@ describe('registerSimulatorCanvasHandlers', () => {
     expect(hostControl.boot).not.toHaveBeenCalled()
     expect(hostControl.launch).not.toHaveBeenCalled()
     expect(interaction.tap).not.toHaveBeenCalled()
+  })
+
+  it('gates clipboard push behind a one-shot paste intent and auto-claims control', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler)
+      })
+    } as unknown as IpcMain
+    const pasteboardSync = vi.fn(async () => ({ ok: true }))
+    const claimHuman = vi.fn((chatId: string) => ({
+      ok: true as const,
+      token: {
+        tokenId: 'human-tok',
+        chatId,
+        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
+        kind: 'human' as const,
+        mintedAt: 1,
+        updatedAt: 1
+      }
+    }))
+    registerSimulatorCanvasHandlers(ipcMain, {
+      getHostControl: () =>
+        ({
+          status: vi.fn(),
+          openSimulatorApp: vi.fn(),
+          listDevices: vi.fn(),
+          boot: vi.fn(),
+          install: vi.fn(),
+          launch: vi.fn(),
+          terminate: vi.fn(),
+          screenshot: vi.fn(),
+          pasteboardSync
+        }) as never,
+      getControllerLease: () => ({ claimHuman, peek: vi.fn(), release: vi.fn() }),
+      getInteraction: () =>
+        ({ interactionStatus: vi.fn(), tap: vi.fn(), type: vi.fn(), scroll: vi.fn() }) as never
+    })
+
+    const udid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'
+    const sender = { sender: { id: 7 } } as unknown as IpcMainInvokeEvent
+
+    // Without a minted intent the push is refused and no lease is claimed.
+    const refused = await handlers.get('simulator-canvas:clipboard-push')?.(
+      sender,
+      'chat-1',
+      udid,
+      'tok-1'
+    )
+    expect(refused).toMatchObject({ ok: false })
+    expect(claimHuman).not.toHaveBeenCalled()
+    expect(pasteboardSync).not.toHaveBeenCalled()
+
+    // Preload-minted intent + matching token pushes host→sim under human control.
+    await handlers.get('simulator-canvas:authorize-pasteboard-intent')?.(sender, 'tok-1')
+    const pushed = await handlers.get('simulator-canvas:clipboard-push')?.(
+      sender,
+      'chat-1',
+      udid,
+      'tok-1'
+    )
+    expect(pushed).toEqual({ ok: true })
+    expect(pasteboardSync).toHaveBeenCalledWith(udid, 'host-to-sim', {
+      chatId: 'chat-1',
+      controllerTokenId: 'human-tok'
+    })
+
+    // The intent is single-use: replaying the same token is refused.
+    const replayed = await handlers.get('simulator-canvas:clipboard-push')?.(
+      sender,
+      'chat-1',
+      udid,
+      'tok-1'
+    )
+    expect(replayed).toMatchObject({ ok: false })
+
+    // Pull (sim→host) needs no intent — a host-clipboard write, lease-gated only.
+    const pulled = await handlers.get('simulator-canvas:clipboard-pull')?.(sender, 'chat-1', udid)
+    expect(pulled).toEqual({ ok: true })
+    expect(pasteboardSync).toHaveBeenCalledWith(udid, 'sim-to-host', {
+      chatId: 'chat-1',
+      controllerTokenId: 'human-tok'
+    })
   })
 })
