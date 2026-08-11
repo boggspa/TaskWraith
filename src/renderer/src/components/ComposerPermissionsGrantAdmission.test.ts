@@ -72,13 +72,6 @@ describe('Composer permission-picker admission while running', () => {
       '{externalPathGrantPrompt &&'
     )
     expect(externalGrantRegion).not.toContain('isCurrentComposerLocked')
-
-    const peopleRegion = sourceRegion(
-      composerSource,
-      '<HumanCollaborationInviteComposerControl',
-      '{voiceButtonLivesInActionRow &&'
-    )
-    expect(peopleRegion).not.toContain('disabled={isCurrentComposerLocked}')
   })
 
   it('keeps next-turn draft controls available during a solo run', () => {

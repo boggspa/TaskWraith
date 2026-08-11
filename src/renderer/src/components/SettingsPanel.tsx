@@ -106,7 +106,7 @@ import { PiProviderKeysCard } from './PiProviderKeysCard'
 import { MistralQuotaCard } from './MistralQuotaCard'
 import { MuseSpendBudgetCard } from './MuseSpendBudgetCard'
 import { SegmentedControl } from './SegmentedControl'
-import { SharesPanel } from './SharesPanel'
+import { ChannelsManagementPanel } from './ChannelsManagementPanel'
 import { CommittedDraftField } from './CommittedDraftField'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
 import { SimulatorControlSettingsCard } from './SimulatorControlSettingsCard'
@@ -2724,7 +2724,7 @@ export type SettingsTab =
   | 'thread-introspection'
   | 'safety-privacy'
   | 'pairing'
-  | 'shares'
+  | 'channels'
   | 'workspaces'
   | 'pinned-messages'
   | 'archived'
@@ -3048,20 +3048,20 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     scope: 'device'
   },
   {
-    id: 'shares',
-    label: 'People',
+    id: 'channels',
+    label: 'Channels',
     group: 'integrations',
     description:
-      'Chats you have invited people into — participants, access level, and per-chat revoke.',
+      'Chats you share as channels — members, access, per-channel close, and the audit log.',
     aliases: [
+      'channel',
+      'channels',
       'share',
       'shares',
       'shared chats',
       'collaborators',
       'people',
       'collaboration',
-      'guests',
-      'guest',
       'invite'
     ],
     scope: 'global'
@@ -11466,7 +11466,7 @@ export function SettingsPanel({
         {activeTab === 'pairing' && <PairingPage />}
 
         {/* ── Shares (human collaboration lifecycle) ─────────────────────── */}
-        {activeTab === 'shares' && <SharesPanel />}
+        {activeTab === 'channels' && <ChannelsManagementPanel />}
       </div>
       {/* end settings-panel-content */}
       {showPolicyPostureOverrideWarning && (

@@ -155,7 +155,7 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <rect x="4.5" y="1.8" width="7" height="12.4" rx="1.5" />
         <path d="M7 3.7h2M7.3 12.2h1.4" />
       </svg>
-    ) : tab === 'shares' ? (
+    ) : tab === 'channels' ? (
       <svg {...common}>
         <circle cx="8" cy="3.7" r="1.85" />
         <circle cx="3.9" cy="12.1" r="1.85" />

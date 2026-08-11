@@ -191,12 +191,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSaveExecutionGraph,
   copiedId,
   copy,
-  connectedCollaborationChatIds,
   currentAgentMcpStatus,
   currentAgentStatus,
   currentBlackboardEntries,
   currentChat,
-  currentChatHumanCollaborationShare,
   currentChatIdRef,
   currentChatMediaRefs,
   chatMediaPromoteTarget,
@@ -260,10 +258,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleClearClaudeApiKey,
   handleClearCodexUsageCredential,
   handleClearKimiApiKey,
-  handleCopyCurrentHumanCollaborationInvite,
   handleCopyMessage,
   handleCreateHandoffFromLane,
-  handleCreateHumanCollaborationShare,
   handleCreateWorkspaceBoard,
   handleDeleteAllChatHistory,
   handleDeleteChat,
@@ -322,7 +318,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleResumeCodexThread,
   handleRetryRunLane,
   handleReturnToSideChatParent,
-  handleRevokeHumanShare,
   handleRightPanelResizeKeyDown,
   handleRollbackCodexThread,
   handleRunWorkflowNow,
@@ -342,9 +337,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSidebarQuickUpdate,
   handleStartProjectHome,
   handleSelectedProjectChange,
-  handleStartSharedChat,
   handleSteerToQueuedMessage,
-  handleStopHumanCollaborationSharing,
   handleStoreClaudeApiKey,
   handleStoreKimiApiKey,
   handleToggleArchiveChat,
@@ -367,7 +360,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   hasWorkspaceContext,
   hideSideChatPane,
   hostWeather,
-  humanCollaborationShares,
   inspectingRunId,
   installGeminiMcpBridge,
   isAdvancedFxActive,
@@ -461,7 +453,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setDiffView,
   setGeminiTerminalInput,
   setInspectingRunId,
-  setJoinSharedChatOpen,
   setPopoutMenuOpen,
   setPreviewChatMediaRef,
   setPreviewMenuTarget,
@@ -1080,16 +1071,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         primaryGitSnapshot: null,
         primaryPr: null,
         primaryCi: null,
-        humanCollaborationInviteActive: false,
-        humanCollaborationShare: null,
-        humanCollaborationInviteHealth: null,
-        humanCollaborationInviteBusy: false,
-        humanCollaborationInviteLive: false,
-        onCopyHumanCollaborationInvite: undefined,
-        onCopyHumanCollaborationInviteText: undefined,
-        onStopHumanCollaborationSharing: undefined,
-        onOpenHumanCollaborationRemoteSetup: undefined,
-        onRefreshHumanCollaborationInviteHealth: undefined,
         attachedWindow: null,
         isAttachingWindow: false,
         resumeAppWatchSnapshot: null,
@@ -1268,42 +1249,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const humanCollaborationControls =
     currentChat && !isWelcomeChat ? (
       <div className="human-collaboration-header">
-        <button
-          type="button"
-          className="human-collaboration-people-btn"
-          onClick={handleCreateHumanCollaborationShare}
-          title={
-            collaboratingChatIds.has(currentChat.appChatId)
-              ? 'Create another collaborator invite'
-              : 'Invite collaborators to this chat'
-          }
-        >
-          People
-          {collaboratingChatIds.has(currentChat.appChatId) && (
-            <span className="human-collaboration-live-dot" aria-label="Shared" />
-          )}
-        </button>
         <ChannelHostPanel chatId={currentChat.appChatId} chatTitle={currentChat.title || 'Chat'} />
-        {currentChatHumanCollaborationShare && (
-          <button
-            type="button"
-            className="human-collaboration-people-btn"
-            onClick={handleCopyCurrentHumanCollaborationInvite}
-            title="Copy a fresh collaborator invite"
-          >
-            Copy invite
-          </button>
-        )}
-        {collaboratingChatIds.has(currentChat.appChatId) && (
-          <button
-            type="button"
-            className="human-collaboration-people-btn human-collaboration-stop-btn"
-            onClick={handleStopHumanCollaborationSharing}
-            title="Stop sharing this chat and revoke all collaborators"
-          >
-            Stop sharing
-          </button>
-        )}
       </div>
     ) : null
 
@@ -1458,8 +1404,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onAddLocalServerToWorkspaceBoard={
                   workspaceBoardApiReady ? handleAddLocalServerToWorkspaceBoard : undefined
                 }
-                onCreateSharedChat={handleStartSharedChat}
-                onJoinSharedChat={() => setJoinSharedChatOpen(true)}
                 onRunWorkflowNow={handleRunWorkflowNow}
                 onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
                 onEditWorkflowInterval={handleEditWorkflowInterval}
@@ -1488,9 +1432,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
                 onAnswerAgentQuestion={handleAgentQuestionSubmit}
                 onDismissAgentQuestion={handleAgentQuestionDismiss}
-                collaborationShares={humanCollaborationShares}
-                onRevokeShare={handleRevokeHumanShare}
-                hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
               />
             )}
             <div
@@ -2006,10 +1947,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
               onAnswerAgentQuestion={handleAgentQuestionSubmit}
               onDismissAgentQuestion={handleAgentQuestionDismiss}
-              collaborationShares={humanCollaborationShares}
-              collaboratingChatIds={collaboratingChatIds}
-              hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
-              onRevokeShare={handleRevokeHumanShare}
             />
           )}
 

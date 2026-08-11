@@ -15,11 +15,8 @@ import {
   resolveSidebarSettingsMenuPortalPosition,
   DevicesFooterPopover,
   ApprovalsFooterPopover,
-  SharesFooterPopover,
-  getSharedChatCreateOptions,
   sidebarChatRowPropsAreEqual,
   sidebarCompactChatRowPropsAreEqual,
-  type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
 } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
@@ -200,7 +197,6 @@ function renderSidebar(
     onArchiveWorkspaceBoard?: (boardId: string) => void
     onRestoreWorkspaceBoard?: (boardId: string) => void
     onDeleteWorkspaceBoard?: (boardId: string) => void
-    onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
     initialExpandedSubThreadParentIds?: string[]
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
@@ -263,7 +259,6 @@ function renderSidebar(
       onArchiveWorkspaceBoard={options.onArchiveWorkspaceBoard}
       onRestoreWorkspaceBoard={options.onRestoreWorkspaceBoard}
       onDeleteWorkspaceBoard={options.onDeleteWorkspaceBoard}
-      onCreateSharedChat={options.onCreateSharedChat}
       onRenameChat={options.onRenameChat}
       onTogglePinChat={options.onTogglePinChat}
       onToggleArchiveChat={options.onToggleArchiveChat}
@@ -1127,36 +1122,18 @@ describe('Sidebar workspace boards', () => {
   })
 })
 
-describe('Sidebar shared chat create options', () => {
-  it('offers explicit shared chat variants with availability constraints', () => {
-    expect(
-      getSharedChatCreateOptions({ hasWorkspace: true, ensembleModeEnabled: true }).map(
-        ({ variant, label, disabled }) => ({ variant, label, disabled })
-      )
-    ).toEqual([
-      { variant: 'global', label: 'People Chat (General)', disabled: false },
-      { variant: 'workspace', label: 'People Chat (Workspace)', disabled: false }
-    ])
-
-    expect(
-      getSharedChatCreateOptions({ hasWorkspace: false, ensembleModeEnabled: false }).map(
-        ({ variant, disabled }) => ({ variant, disabled })
-      )
-    ).toEqual([
-      { variant: 'global', disabled: false },
-      { variant: 'workspace', disabled: true }
-    ])
-  })
-
-  it('renders the Shared section launcher as a variant chooser', () => {
+describe('Sidebar Channels section', () => {
+  it('titles the section Channels with no dedicated creation launcher', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('shared')
     })
 
-    const html = renderSidebar([], { onCreateSharedChat: () => {} })
+    const html = renderSidebar([])
 
     expect(html).toContain('sidebar-shared-section')
-    expect(html).toContain('aria-label="Choose People chat type"')
+    expect(html).toContain('>Channels</h4>')
+    expect(html).not.toContain('Choose People chat type')
+    expect(html).not.toContain('People Chat (General)')
   })
 
   it('renders shared chats with the standard chat row action affordance', () => {
@@ -1184,8 +1161,8 @@ describe('Sidebar shared chat create options', () => {
 
     expect(html).toContain('Shared planning thread')
     expect(html).toContain('sidebar-shared-chat-item')
-    expect(html).toContain('People have access')
-    expect(html).toContain('aria-label="People chat actions"')
+    expect(html).toContain('Channel members have access')
+    expect(html).toContain('aria-label="Channel actions"')
     expect(html).toContain('sidebar-overflow-menu')
   })
 
@@ -1206,7 +1183,7 @@ describe('Sidebar shared chat create options', () => {
     )
 
     expect(html).not.toContain('Archived shared thread')
-    expect(html).toContain('No People chats')
+    expect(html).toContain('No channels yet')
   })
 })
 
@@ -2672,10 +2649,10 @@ describe('Sidebar waiting-on-you accent', () => {
 })
 
 describe('Sidebar footer controls', () => {
-  it('renders the Approvals and Shares control buttons', () => {
+  it('renders the Approvals control without the retired People button', () => {
     const html = renderSidebar([makeChat()])
     expect(html).toContain('aria-label="Approvals"')
-    expect(html).toContain('aria-label="People"')
+    expect(html).not.toContain('aria-label="People"')
   })
 
   it('glows the Approvals button red only while an approval is pending', () => {
@@ -2722,20 +2699,6 @@ describe('Sidebar footer controls', () => {
     expect(html).not.toContain('glow-red')
   })
 
-  it('glows the Shares button yellow only when a collaborator is connected', () => {
-    // Sharing alone does NOT glow — the glow is the precise "someone's actually
-    // here" signal, driven by a live collaborator session.
-    const sharingButEmpty = renderSidebar([makeChat()], {
-      collaboratingChatIds: new Set(['parent-1'])
-    })
-    expect(sharingButEmpty).not.toContain('glow-yellow')
-
-    const connected = renderSidebar([makeChat()], {
-      collaboratingChatIds: new Set(['parent-1']),
-      hasConnectedCollaborator: true
-    })
-    expect(connected).toContain('glow-yellow')
-  })
 })
 
 function makeDevice(overrides: Record<string, unknown> = {}) {
@@ -2949,94 +2912,7 @@ describe('ApprovalsFooterPopover', () => {
   })
 })
 
-function makeShare(overrides: Record<string, unknown> = {}) {
-  return {
-    shareId: 'share-1',
-    chatId: 'parent-1',
-    mode: 'comments' as const,
-    enabled: true,
-    createdAt: 1,
-    updatedAt: 1,
-    nextSequence: 1,
-    participants: [
-      {
-        collaboratorId: 'c-1',
-        displayName: 'Alex',
-        publicKeyId: 'ed25519:alex',
-        status: 'active' as const,
-        joinedAt: 2
-      }
-    ],
-    invites: [],
-    idempotency: {},
-    ...overrides
-  }
-}
 
-describe('SharesFooterPopover', () => {
-  it('shows an empty state with no active shares', () => {
-    const html = renderToStaticMarkup(
-      <SharesFooterPopover shares={[]} onOpenSettings={() => {}} />
-    )
-    expect(html).toContain('No active shares')
-    expect(html).toContain('Manage shares')
-  })
-
-  it('renders a share with its resolved title, mode and active count', () => {
-    const html = renderToStaticMarkup(
-      <SharesFooterPopover
-        shares={[makeShare()]}
-        resolveChatTitle={() => 'Design review'}
-        onJumpToChat={() => {}}
-        onRevokeShare={() => {}}
-        onOpenSettings={() => {}}
-      />
-    )
-    expect(html).toContain('Design review')
-    expect(html).toContain('Comments')
-    expect(html).toContain('1 active')
-    expect(html).toContain('Stop')
-    expect(html).toContain('is-clickable')
-  })
-
-  it('labels a read-only share and shows awaiting state with no active members', () => {
-    const html = renderToStaticMarkup(
-      <SharesFooterPopover
-        shares={[makeShare({ mode: 'readOnly', participants: [] })]}
-        resolveChatTitle={() => 'Spec'}
-        onJumpToChat={() => {}}
-        onOpenSettings={() => {}}
-      />
-    )
-    expect(html).toContain('Read-only')
-    expect(html).toContain('Awaiting collaborator')
-  })
-
-  it('omits the Stop button when no revoke handler is supplied', () => {
-    const html = renderToStaticMarkup(
-      <SharesFooterPopover
-        shares={[makeShare()]}
-        resolveChatTitle={() => 'Design review'}
-        onOpenSettings={() => {}}
-      />
-    )
-    expect(html).not.toContain('sidebar-footer-share-revoke')
-  })
-
-  it('marks share rows as live when the chat has a connected collaborator session', () => {
-    const html = renderToStaticMarkup(
-      <SharesFooterPopover
-        shares={[makeShare()]}
-        resolveChatTitle={() => 'Design review'}
-        connectedShareChatIds={new Set(['parent-1'])}
-        onJumpToChat={() => {}}
-        onOpenSettings={() => {}}
-      />
-    )
-    expect(html).toContain('Design review')
-    expect(html).toContain('Live')
-  })
-})
 
 describe('git workflow markers', () => {
   const merged = { state: 'merged' as const, prNumber: 12, updatedAt: 40 }

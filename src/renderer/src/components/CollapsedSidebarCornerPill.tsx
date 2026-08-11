@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import type { ChatRecord } from '../../../main/store/types'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { AgentQuestionState } from './AgentQuestionCard'
-import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import { reusePairedRemoteDevices } from '../lib/pairedRemoteDevices'
 import {
@@ -12,7 +11,6 @@ import {
   GearSymbolIcon,
   RemoteConnectionSymbolIcon,
   ShareNetworkIcon,
-  SharesFooterPopover,
   SidebarSettingsMenu,
   type PairedRemoteDeviceSummary,
   type SidebarSettingsMenuPane
@@ -22,7 +20,7 @@ import { useHostProjection } from '../hooks/useHostProjection'
 import { joinHostPendingApprovals } from '../hooks/usePendingApprovalsProjection'
 import { joinHostPendingQuestions } from '../hooks/usePendingQuestionsProjection'
 
-type CornerPillPanel = 'settings' | 'approvals' | 'shares' | 'devices'
+type CornerPillPanel = 'settings' | 'approvals' | 'devices'
 
 interface CollapsedSidebarCornerPillProps {
   chats: ChatRecord[]
@@ -31,7 +29,7 @@ interface CollapsedSidebarCornerPillProps {
   quickSettings?: ComponentProps<typeof SidebarSettingsMenu>['quickSettings']
   onAppearanceQuickChange?: ComponentProps<typeof SidebarSettingsMenu>['onAppearanceQuickChange']
   onOpenSettings: () => void
-  onOpenSettingsTab: (tab: 'pairing' | 'approval-ledger' | 'shares') => void
+  onOpenSettingsTab: (tab: 'pairing' | 'approval-ledger' | 'channels') => void
   onOpenWorkspacePopout?: ComponentProps<typeof SidebarSettingsMenu>['onOpenWorkspacePopout']
   canOpenWorkspacePopout?: boolean
   onQuitApp?: () => void
@@ -43,11 +41,6 @@ interface CollapsedSidebarCornerPillProps {
   pendingAgentQuestionsByChatId?: Record<string, readonly AgentQuestionState[]>
   onAnswerAgentQuestion?: ComponentProps<typeof ApprovalsFooterPopover>['onAnswerQuestion']
   onDismissAgentQuestion?: ComponentProps<typeof ApprovalsFooterPopover>['onDismissQuestion']
-  /** Shares. */
-  collaborationShares?: HumanCollaborationShare[]
-  collaboratingChatIds?: Set<string>
-  hasConnectedCollaborator?: boolean
-  onRevokeShare?: (shareId: string) => void
 }
 
 /**
@@ -73,10 +66,6 @@ export function CollapsedSidebarCornerPill({
   pendingAgentQuestionsByChatId = {},
   onAnswerAgentQuestion,
   onDismissAgentQuestion,
-  collaborationShares = [],
-  collaboratingChatIds,
-  hasConnectedCollaborator,
-  onRevokeShare
 }: CollapsedSidebarCornerPillProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   // Exclusive panel state — mirrors the sidebar footer, where opening any
@@ -244,15 +233,14 @@ export function CollapsedSidebarCornerPill({
         <ApprovalsShieldIcon />
       </button>
       <button
-        className={`chat-corner-btn${hasConnectedCollaborator ? ' glow-yellow' : ''}${
-          openPanel === 'shares' ? ' active' : ''
-        }`}
+        className="chat-corner-btn"
         type="button"
-        onClick={() => togglePanel('shares')}
-        title={hasConnectedCollaborator ? 'People — someone connected' : 'People'}
-        aria-label={hasConnectedCollaborator ? 'People, someone is connected' : 'People'}
-        aria-haspopup="dialog"
-        aria-expanded={openPanel === 'shares'}
+        onClick={() => {
+          setOpenPanel(null)
+          onOpenSettingsTab('channels')
+        }}
+        title="Channels"
+        aria-label="Channels"
       >
         <ShareNetworkIcon />
       </button>
@@ -303,21 +291,6 @@ export function CollapsedSidebarCornerPill({
           onOpenSettings={() => {
             setOpenPanel(null)
             onOpenSettingsTab('approval-ledger')
-          }}
-        />
-      )}
-      {openPanel === 'shares' && (
-        <SharesFooterPopover
-          shares={collaborationShares}
-          resolveChatTitle={(chatId) =>
-            chats.find((candidate) => candidate.appChatId === chatId)?.title
-          }
-          connectedShareChatIds={collaboratingChatIds}
-          onJumpToChat={jumpToChat}
-          onRevokeShare={onRevokeShare}
-          onOpenSettings={() => {
-            setOpenPanel(null)
-            onOpenSettingsTab('shares')
           }}
         />
       )}

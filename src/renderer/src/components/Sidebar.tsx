@@ -94,7 +94,6 @@ import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { AgentQuestionState } from './AgentQuestionCard'
 import { chatHasPendingAgentQuestion } from '../lib/agentQuestionQueue'
-import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 import { isCanvasEvalApprovalToolName } from '../lib/agentApprovalPreview'
@@ -123,42 +122,9 @@ import {
   type SidebarThreadOrderState
 } from '../lib/sidebarThreadOrder'
 
-export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
-
 export interface WorkspaceBoardCreateInput {
   workspaceId?: string
   name?: string
-}
-
-export interface SharedChatCreateOption {
-  variant: SharedChatCreateVariant
-  label: string
-  title: string
-  disabled: boolean
-}
-
-export function getSharedChatCreateOptions({
-  hasWorkspace
-}: {
-  hasWorkspace: boolean
-  ensembleModeEnabled?: boolean
-}): SharedChatCreateOption[] {
-  return [
-    {
-      variant: 'global',
-      label: 'People Chat (General)',
-      title: 'Create a general chat you can invite people into',
-      disabled: false
-    },
-    {
-      variant: 'workspace',
-      label: 'People Chat (Workspace)',
-      title: hasWorkspace
-        ? 'Create a workspace chat you can invite people into'
-        : 'Open a workspace first to create a workspace chat for people',
-      disabled: !hasWorkspace
-    }
-  ]
 }
 
 const ageTickListeners = new Set<() => void>()
@@ -328,10 +294,6 @@ interface SidebarProps {
   onAddWorkflowToWorkspaceBoard?: (workflow: WorkflowDefinition) => void
   onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   onAddLocalServerToWorkspaceBoard?: (server: LocalServerEntry) => void
-  /** Start a new shared chat + copy a collaborator invite (People feature). */
-  onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
-  /** Join someone else's shared chat by pasting their invite (People feature). */
-  onJoinSharedChat?: () => void
   onRunWorkflowNow?: (workflowId: string) => void
   onToggleWorkflowEnabled?: (workflow: WorkflowDefinition) => void
   onEditWorkflowInterval?: (workflow: WorkflowDefinition) => void
@@ -345,7 +307,7 @@ interface SidebarProps {
    * popovers (Approvals / Shares / Devices), each of which has a bottom nav
    * item that opens the matching tab. Falls back to the generic Settings
    * opener when omitted. */
-  onOpenSettingsTab?: (tab: 'pairing' | 'approval-ledger' | 'shares') => void
+  onOpenSettingsTab?: (tab: 'pairing' | 'approval-ledger' | 'channels') => void
   /** Per-chat head-of-queue agent approvals. Drives the Approvals footer
    * button's red glow and the pending list inside its popover. Sparse — only
    * chats with a live approval appear (see usePerChatState). */
@@ -375,7 +337,6 @@ interface SidebarProps {
   onDismissAgentQuestion?: (questionId: string) => void | Promise<void>
   /** Enabled human-collaboration shares — populates the Shares footer popover
    * (chat + mode + active-collaborator count). */
-  collaborationShares?: HumanCollaborationShare[]
   /** Revoke (stop) a single share by id, from the Shares popover. */
   onRevokeShare?: (shareId: string) => void
   /** True when at least one collaborator is LIVE-connected to a share right now
@@ -1774,14 +1735,14 @@ function SidebarChatRowInner({
     variant === 'shared'
       ? {
           chatId: chat.appChatId,
-          title: chat.title || 'People chat',
+          title: chat.title || 'Channel',
           provider: chat.provider,
           selected: isSelected,
           isRunning,
           needsInput,
           lastRunStatus,
           rowTone,
-          prefix: 'People'
+          prefix: 'Channel'
         }
       : {
           chatId: chat.appChatId,
@@ -1809,7 +1770,7 @@ function SidebarChatRowInner({
     variant === 'workspace'
       ? needsInput || isRunning || showStatus || subThreadCount > 0 || isCollaborating
       : needsInput || isRunning || showStatus
-  const copyTitle = variant === 'shared' ? chat.title || 'People chat' : chat.title
+  const copyTitle = variant === 'shared' ? chat.title || 'Channel' : chat.title
   return (
     <div
       role="button"
@@ -1896,7 +1857,7 @@ function SidebarChatRowInner({
             {variant === 'workspace' && isCollaborating && (
               <span
                 className="sidebar-branched-badge sidebar-shared-badge"
-                title="People have access"
+                title="Channel members have access"
               >
                 People
               </span>
@@ -1907,7 +1868,7 @@ function SidebarChatRowInner({
       {variant === 'shared' && (
         <span
           className="sidebar-branched-badge sidebar-shared-badge"
-          title="People have access"
+          title="Channel members have access"
         >
           People
         </span>
@@ -1915,7 +1876,7 @@ function SidebarChatRowInner({
       {isRunning && <SidebarRunningGhost />}
       {!isRunning && <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />}
       <SidebarOverflowMenu
-        triggerLabel={variant === 'shared' ? 'People chat actions' : 'Chat actions'}
+        triggerLabel={variant === 'shared' ? 'Channel actions' : 'Chat actions'}
         items={buildMenuItems(chat, surfaceId)}
       />
     </div>
@@ -2873,77 +2834,6 @@ export function ApprovalsFooterPopover({
   )
 }
 
-// Shares popover — each active shared chat with its mode + active-collaborator
-// count, a click-to-open affordance, and a per-share "Stop" (revoke), then a
-// deep-link to Settings → Shares.
-function shareModeLabel(mode: HumanCollaborationShare['mode']): string {
-  return mode === 'readOnly' ? 'Read-only' : 'Comments'
-}
-export function SharesFooterPopover({
-  shares,
-  resolveChatTitle,
-  connectedShareChatIds,
-  onJumpToChat,
-  onRevokeShare,
-  onOpenSettings
-}: {
-  shares: HumanCollaborationShare[]
-  resolveChatTitle?: (chatId: string) => string | undefined
-  connectedShareChatIds?: Set<string>
-  onJumpToChat?: (chatId: string) => void
-  onRevokeShare?: (shareId: string) => void
-  onOpenSettings: () => void
-}) {
-  return (
-    <SidebarFooterPopover
-      title="People"
-      ariaLabel="Active People chats"
-      navLabel="Manage shares"
-      onNav={onOpenSettings}
-    >
-      {shares.length === 0 ? (
-        <div className="sidebar-footer-popover-empty">No active shares</div>
-      ) : (
-        shares.map((share) => {
-          const title = resolveChatTitle?.(share.chatId) || 'People chat'
-          const isConnected = connectedShareChatIds?.has(share.chatId) ?? false
-          const active = share.participants.filter(
-            (participant) => participant.status === 'active'
-          ).length
-          return (
-            <div className="sidebar-footer-share-row" key={share.shareId}>
-              <button
-                type="button"
-                className={`sidebar-footer-share-main${onJumpToChat ? ' is-clickable' : ''}`}
-                onClick={onJumpToChat ? () => onJumpToChat(share.chatId) : undefined}
-                title={title}
-              >
-                <span className="sidebar-footer-share-title">{title}</span>
-                <span className="sidebar-footer-share-sub">
-                  {shareModeLabel(share.mode)} ·{' '}
-                  {active > 0 ? `${active} active` : 'Awaiting collaborator'}
-                  {' · '}
-                  {isConnected ? 'Live' : 'Not connected'}
-                </span>
-              </button>
-              {onRevokeShare && (
-                <button
-                  type="button"
-                  className="sidebar-footer-share-revoke"
-                  onClick={() => onRevokeShare(share.shareId)}
-                  title="Stop sharing"
-                  aria-label={`Stop sharing ${title}`}
-                >
-                  Stop
-                </button>
-              )}
-            </div>
-          )
-        })
-      )}
-    </SidebarFooterPopover>
-  )
-}
 
 // Devices popover — up to five paired devices, each with a connected/idle LED,
 // or an empty state, then a deep-link to Settings → Devices. The summaries
@@ -3068,8 +2958,6 @@ export function Sidebar({
   onAddWorkflowToWorkspaceBoard,
   onAddRunQueueJobToWorkspaceBoard,
   onAddLocalServerToWorkspaceBoard,
-  onCreateSharedChat,
-  onJoinSharedChat,
   onRunWorkflowNow,
   onToggleWorkflowEnabled,
   onEditWorkflowInterval,
@@ -3083,16 +2971,11 @@ export function Sidebar({
   pendingAgentQuestionsByChatId = {},
   onAnswerAgentQuestion,
   onDismissAgentQuestion,
-  collaborationShares = [],
-  onRevokeShare,
-  hasConnectedCollaborator = false,
   modelUsageApiSpend
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
-  const [newMenuSharedOpen, setNewMenuSharedOpen] = useState(false)
   const [newMenuWorkflowTemplatesOpen, setNewMenuWorkflowTemplatesOpen] = useState(false)
-  const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
   const [settingsMenuPortalPosition, setSettingsMenuPortalPosition] = useState<CSSProperties | null>(
@@ -3108,7 +2991,7 @@ export function Sidebar({
   // the generic Settings opener for any caller that hasn't wired the tab-aware
   // callback (keeps the prop optional).
   const openSettingsTab = useCallback(
-    (tab: 'pairing' | 'approval-ledger' | 'shares') => {
+    (tab: 'pairing' | 'approval-ledger' | 'channels') => {
       if (onOpenSettingsTab) onOpenSettingsTab(tab)
       else onOpenSettings()
     },
@@ -3199,7 +3082,6 @@ export function Sidebar({
   // rest of the app uses for floating menus (overflow menus, slash
   // menu portal, etc.).
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
-  const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuPortalRef = useRef<HTMLDivElement | null>(null)
   const positionSettingsMenu = useCallback(() => {
@@ -4050,7 +3932,6 @@ export function Sidebar({
   const defaultWorkflowWorkspace = defaultWorkspaceForNewChat
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     if (activeSidebarTab !== 'projects') setActiveSidebarTab('chat')
     onNewGlobalChat()
@@ -4058,14 +3939,12 @@ export function Sidebar({
   const handleNewWorkspaceChat = () => {
     if (!defaultWorkspaceForNewChat) return
     setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     if (activeSidebarTab !== 'projects') setActiveSidebarTab('threads')
     onNewChat(defaultWorkspaceForNewChat.id, defaultWorkspaceForNewChat.path)
   }
   const handleNewEnsemble = () => {
     setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('ensembles')
     onNewEnsemble()
@@ -4073,7 +3952,6 @@ export function Sidebar({
   const handleNewWorkflow = () => {
     if (!defaultWorkflowWorkspace) return
     setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('workflows')
     onCreateWorkflow?.(defaultWorkflowWorkspace)
@@ -4081,7 +3959,6 @@ export function Sidebar({
   const handleNewWorkflowFromTemplate = (templateId: string) => {
     if (!defaultWorkflowWorkspace) return
     setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('workflows')
     onCreateWorkflowFromPluginTemplate?.(templateId, defaultWorkflowWorkspace)
@@ -4089,7 +3966,6 @@ export function Sidebar({
   const openWorkspaceBoardCreator = () => {
     if (!onCreateWorkspaceBoard || workspaces.length === 0) return
     setNewMenuOpen(false)
-    setSharedCreateMenuOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
     expandSidebarSection('workspace-boards')
     onCreateWorkspaceBoard()
@@ -4097,22 +3973,6 @@ export function Sidebar({
   const handleNewWorkspaceBoard = () => {
     openWorkspaceBoardCreator()
   }
-  const sharedChatCreateOptions = getSharedChatCreateOptions({
-    hasWorkspace: Boolean(currentWorkspace),
-    ensembleModeEnabled
-  })
-  const handleCreateSharedChat = (variant: SharedChatCreateVariant) => {
-    setNewMenuOpen(false)
-    setNewMenuSharedOpen(false)
-    setNewMenuWorkflowTemplatesOpen(false)
-    setSharedCreateMenuOpen(false)
-    expandSidebarSection('shared')
-    if (activeSidebarTab !== 'projects') {
-      setActiveSidebarTab(variant === 'global' ? 'chat' : 'threads')
-    }
-    onCreateSharedChat?.(variant)
-  }
-
   // Outside-click + Escape dismiss for the `+ New` popover. Mounts
   // global mousedown / keydown listeners only while the menu is open
   // so we don't sit on event traffic the rest of the time. Click-
@@ -4126,12 +3986,10 @@ export function Sidebar({
       if (!wrap) return
       if (event.target instanceof Node && wrap.contains(event.target)) return
       setNewMenuOpen(false)
-      setNewMenuSharedOpen(false)
     }
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         setNewMenuOpen(false)
-        setNewMenuSharedOpen(false)
       }
     }
     document.addEventListener('mousedown', handleMouseDown)
@@ -4141,27 +3999,6 @@ export function Sidebar({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [newMenuOpen])
-
-  useEffect(() => {
-    if (!sharedCreateMenuOpen) return
-    const handleMouseDown = (event: globalThis.MouseEvent) => {
-      const wrap = sharedCreateMenuWrapRef.current
-      if (!wrap) return
-      if (event.target instanceof Node && wrap.contains(event.target)) return
-      setSharedCreateMenuOpen(false)
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSharedCreateMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [sharedCreateMenuOpen])
 
   useEffect(() => {
     if (!settingsMenuOpen) return
@@ -4951,11 +4788,9 @@ export function Sidebar({
               type="button"
               className="sidebar-primary-action"
               onClick={() => {
-                setSharedCreateMenuOpen(false)
                 setNewMenuOpen((current) => {
                   const next = !current
                   if (next) {
-                    setNewMenuSharedOpen(false)
                     setNewMenuWorkflowTemplatesOpen(false)
                   }
                   return next
@@ -5035,7 +4870,6 @@ export function Sidebar({
                       role="menuitem"
                       className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
                       onClick={() => {
-                        setNewMenuSharedOpen(false)
                         setNewMenuWorkflowTemplatesOpen((current) => !current)
                       }}
                       aria-expanded={newMenuWorkflowTemplatesOpen}
@@ -5089,58 +4923,6 @@ export function Sidebar({
                   >
                     <BoardSymbolIcon />
                     <span className="sidebar-new-menu-item-label">New Workspace Board</span>
-                  </button>
-                )}
-                {onCreateSharedChat && (
-                  <>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="sidebar-new-menu-item sidebar-new-menu-shared-toggle"
-                      onClick={() => {
-                        setNewMenuWorkflowTemplatesOpen(false)
-                        setNewMenuSharedOpen((current) => !current)
-                      }}
-                      aria-expanded={newMenuSharedOpen}
-                      title="Show People chat options"
-                    >
-                      <PeopleSymbolIcon />
-                      <span className="sidebar-new-menu-item-label">People...</span>
-                      <span className="sidebar-new-menu-chevron" aria-hidden>
-                        <ChevronSymbolIcon isExpanded={newMenuSharedOpen} />
-                      </span>
-                    </button>
-                    {newMenuSharedOpen && sharedChatCreateOptions.map((option) => (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        key={option.variant}
-                        className="sidebar-new-menu-item sidebar-new-menu-subitem"
-                        onClick={() => handleCreateSharedChat(option.variant)}
-                        disabled={option.disabled}
-                        title={option.title}
-                      >
-                        <PeopleSymbolIcon />
-                        <span className="sidebar-new-menu-item-label">{option.label}</span>
-                      </button>
-                    ))}
-                  </>
-                )}
-                {onJoinSharedChat && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="sidebar-new-menu-item"
-                    onClick={() => {
-                      setNewMenuOpen(false)
-                      setNewMenuSharedOpen(false)
-                      setNewMenuWorkflowTemplatesOpen(false)
-                      onJoinSharedChat()
-                    }}
-                    title="Join a People chat — paste an invite to follow along"
-                  >
-                    <PeopleSymbolIcon />
-                    <span className="sidebar-new-menu-item-label">Join a People Chat</span>
                   </button>
                 )}
               </div>
@@ -6224,7 +6006,7 @@ export function Sidebar({
                                 {collaboratingChatIds.has(chat.appChatId) && (
                                   <span
                                     className="sidebar-branched-badge sidebar-shared-badge"
-                                    title="People have access"
+                                    title="Channel members have access"
                                   >
                                     People
                                   </span>
@@ -6624,55 +6406,14 @@ export function Sidebar({
                   className="sidebar-section-header-toggle"
                   onClick={() => toggleSidebarSection('shared')}
                   aria-expanded={!isSectionCollapsed('shared')}
-                  title={isSectionCollapsed('shared') ? 'Expand People' : 'Collapse People'}
+                  title={isSectionCollapsed('shared') ? 'Expand Channels' : 'Collapse Channels'}
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
-                  <h4 className="sidebar-section-title">People</h4>
+                  <h4 className="sidebar-section-title">Channels</h4>
                   {visibleSharedChats.length > 0 && (
                     <span className="sidebar-section-count">{visibleSharedChats.length}</span>
                   )}
                 </button>
-                {onCreateSharedChat && (
-                  <div className="sidebar-new-menu-wrap" ref={sharedCreateMenuWrapRef}>
-                    <button
-                      type="button"
-                      className="sidebar-section-header-action sidebar-shared-create"
-                      onClick={() => {
-                        setNewMenuOpen(false)
-                        expandSidebarSection('shared')
-                        setSharedCreateMenuOpen((current) => !current)
-                      }}
-                      title="Choose People chat type"
-                      aria-label="Choose People chat type"
-                      aria-expanded={sharedCreateMenuOpen}
-                      aria-haspopup="menu"
-                    >
-                      <PlusSymbolIcon />
-                    </button>
-                    {sharedCreateMenuOpen && (
-                      <div
-                        className="sidebar-new-menu sidebar-shared-create-menu"
-                        role="menu"
-                        onKeyDown={moveMenuFocus}
-                      >
-                        {sharedChatCreateOptions.map((option) => (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            key={option.variant}
-                            className="sidebar-new-menu-item"
-                            onClick={() => handleCreateSharedChat(option.variant)}
-                            disabled={option.disabled}
-                            title={option.title}
-                          >
-                            <PeopleSymbolIcon />
-                            <span className="sidebar-new-menu-item-label">{option.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
               {!isSectionCollapsed('shared') && (
                 <div
@@ -6725,8 +6466,8 @@ export function Sidebar({
                   {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
                     <div className="sidebar-empty-state sidebar-empty-state--ghost">
                       <PeopleSymbolIcon />
-                      <strong>No People chats</strong>
-                      <span>Hit + above to invite people.</span>
+                      <strong>No channels yet</strong>
+                      <span>Share any chat from its Channel panel.</span>
                     </div>
                   )}
                 </div>
@@ -6847,48 +6588,6 @@ export function Sidebar({
                   onOpenSettings={() => {
                     setApprovalsPopoverOpen(false)
                     openSettingsTab('approval-ledger')
-                  }}
-                />
-              )}
-            </div>
-            <div className="sidebar-footer-control-anchor">
-              <button
-                type="button"
-                className={`sidebar-footer-icon-btn${
-                  hasConnectedCollaborator ? ' glow-yellow' : ''
-                }${sharesPopoverOpen ? ' is-open' : ''}`}
-                onClick={() => {
-                  setSettingsMenuOpen(false)
-                  setApprovalsPopoverOpen(false)
-                  setDevicesPopoverOpen(false)
-                  setSharesPopoverOpen((open) => !open)
-                }}
-                title={hasConnectedCollaborator ? 'People — someone connected' : 'People'}
-                aria-label={
-                  hasConnectedCollaborator ? 'People, someone is connected' : 'People'
-                }
-                aria-haspopup="dialog"
-                aria-expanded={sharesPopoverOpen}
-              >
-                <ShareNetworkIcon />
-              </button>
-
-              {sharesPopoverOpen && (
-                <SharesFooterPopover
-                  shares={collaborationShares}
-                  resolveChatTitle={(chatId) =>
-                    chats.find((candidate) => candidate.appChatId === chatId)?.title
-                  }
-                  connectedShareChatIds={collaboratingChatIds}
-                  onJumpToChat={(chatId) => {
-                    setSharesPopoverOpen(false)
-                    const chat = chats.find((candidate) => candidate.appChatId === chatId)
-                    if (chat) selectAndAcknowledgeChat(chat)
-                  }}
-                  onRevokeShare={onRevokeShare}
-                  onOpenSettings={() => {
-                    setSharesPopoverOpen(false)
-                    openSettingsTab('shares')
                   }}
                 />
               )}

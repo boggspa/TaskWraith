@@ -5,7 +5,7 @@ const layoutSource = readFileSync(new URL('./MainAppLayout.tsx', import.meta.url
 const mainCss = readFileSync(new URL('../../assets/main.css', import.meta.url), 'utf8')
 
 describe('MainAppLayout Channel integration', () => {
-  it('mounts the self-contained Channel panel directly beside unchanged People controls', () => {
+  it('mounts the self-contained Channel panel as the only sharing control', () => {
     expect(layoutSource).toContain(
       "import { ChannelHostPanel } from '../../components/ChannelHostPanel'"
     )
@@ -13,18 +13,12 @@ describe('MainAppLayout Channel integration', () => {
       "<ChannelHostPanel chatId={currentChat.appChatId} chatTitle={currentChat.title || 'Chat'} />"
     )
 
-    const peopleButton = layoutSource.indexOf('Invite collaborators to this chat')
-    const channelPanel = layoutSource.indexOf('<ChannelHostPanel', peopleButton)
-    const existingInviteControl = layoutSource.indexOf(
-      '{currentChatHumanCollaborationShare && (',
-      peopleButton
-    )
-    expect(peopleButton).toBeGreaterThan(-1)
-    expect(channelPanel).toBeGreaterThan(peopleButton)
-    expect(channelPanel).toBeLessThan(existingInviteControl)
-    expect(layoutSource).toContain('onClick={handleCreateHumanCollaborationShare}')
-    expect(layoutSource).toContain('onClick={handleCopyCurrentHumanCollaborationInvite}')
-    expect(layoutSource).toContain('onClick={handleStopHumanCollaborationSharing}')
+    // The legacy People header controls are retired; the Channel panel owns
+    // invite creation, copying, and stop-sharing on the channel runtime.
+    expect(layoutSource).not.toContain('Invite collaborators to this chat')
+    expect(layoutSource).not.toContain('handleCreateHumanCollaborationShare')
+    expect(layoutSource).not.toContain('handleCopyCurrentHumanCollaborationInvite')
+    expect(layoutSource).not.toContain('handleStopHumanCollaborationSharing')
   })
 
   it('mounts one process-global joined-member control only in the primary renderer', () => {

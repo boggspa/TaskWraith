@@ -18,11 +18,6 @@ import type {
 import { resolveEnsembleFanoutIsolationPolicy } from '../../../shared/ensembleFanoutIsolation'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
-import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
-import type {
-  HumanCollaborationInviteCopyResult,
-  HumanCollaborationInviteHealth
-} from '../lib/humanCollaborationInviteHealth'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
@@ -49,7 +44,6 @@ import {
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
 import { TrustedSessionConfirmSheet } from '../components/TrustedSessionConfirmSheet'
 import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
-import { HumanCollaborationInviteComposerControl } from './HumanCollaborationInviteComposerControl'
 import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
@@ -68,8 +62,6 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
-import { externalSeatsForShare } from '../../../shared/effectiveEnsembleRoster'
-import { PendingContributionsStack } from '../components/PendingContributionsStack'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
@@ -297,11 +289,6 @@ export interface ComposerProps {
   currentGoalButtonTitle: any
   currentGoalModeLabel: any
   currentGoalStatus: any
-  humanCollaborationInviteActive?: boolean
-  humanCollaborationShare?: HumanCollaborationShare | null
-  humanCollaborationInviteHealth?: HumanCollaborationInviteHealth | null
-  humanCollaborationInviteBusy?: boolean
-  humanCollaborationInviteLive?: boolean
   currentProvider: any
   configuredProviderSnapshot: {
     ready: boolean
@@ -415,17 +402,6 @@ export interface ComposerProps {
   markPersistentSessionRestartNeeded: any
   multiview: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
-  onCopyHumanCollaborationInvite?: (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
-    | Promise<HumanCollaborationInviteCopyResult>
-    | HumanCollaborationInviteCopyResult
-    | void
-  onCopyHumanCollaborationInviteText?: (invitePayload: string) => Promise<boolean> | boolean
-  onStopHumanCollaborationSharing?: () => void
-  onOpenHumanCollaborationRemoteSetup?: () => void
-  onRefreshHumanCollaborationInviteHealth?: () =>
-    | Promise<HumanCollaborationInviteHealth>
-    | HumanCollaborationInviteHealth
-    | void
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
@@ -647,11 +623,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentGoalButtonTitle,
     currentGoalModeLabel,
     currentGoalStatus,
-    humanCollaborationInviteActive,
-    humanCollaborationShare,
-    humanCollaborationInviteHealth,
-    humanCollaborationInviteBusy,
-    humanCollaborationInviteLive,
     currentProvider,
     configuredProviderSnapshot,
     currentProviderCapabilityWarning,
@@ -757,11 +728,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     markPersistentSessionRestartNeeded,
     multiview,
     onOllamaModelSelected,
-    onCopyHumanCollaborationInvite,
-    onCopyHumanCollaborationInviteText,
-    onStopHumanCollaborationSharing,
-    onOpenHumanCollaborationRemoteSetup,
-    onRefreshHumanCollaborationInviteHealth,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
@@ -872,22 +838,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
-
-  /**
-   * External human seats for this composer's chat, derived from the share the
-   * composer already holds. No new IPC and no App.tsx change — which also means
-   * neither Multiview pane-context lane is touched, and each pane resolves its
-   * own chat's share for free.
-   *
-   * No presence resolver: the renderer has no per-collaborator presence, and
-   * `externalSeatsForShare` treats an absent resolver as "do not judge" rather
-   * than as absent. Wiring the raw session map here would be worse than
-   * nothing — it is documented as wrong in both directions.
-   */
-  const externalSeatsForChat = useMemo(
-    () => externalSeatsForShare(humanCollaborationShare),
-    [humanCollaborationShare]
-  )
 
   // Per-chat workspace terminal open state. Each pane's <Composer> owns its
   // own terminal toggle; the state is keyed by THIS composer's chatId so
@@ -2197,10 +2147,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             }`}
             ref={composerAreaRef}
           >
-            {/* First in-flow child of the bottom-anchored column, so it sits
-                ABOVE the above-bar stack and the composer surface and grows the
-                measured reserve rather than covering the transcript's tail. */}
-            <PendingContributionsStack chatId={currentChat?.appChatId} />
             {shouldShowGhostCompanion && <GhostCompanion />}
             {/*
               Phase K-followup — Removed `provider-shell-status-row`.
@@ -2703,7 +2649,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <EnsembleParticipantsAboveRow
                     chat={currentChat}
                     participantProjection={currentComposerMentionParticipants}
-                    externalSeats={externalSeatsForChat}
                     animateEntrance={isWorkflowComposeChat}
                     selectedParticipantId={effectiveSelectedParticipantId}
                     onSelectParticipant={handleSelectParticipant}
@@ -4817,18 +4762,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <span>{steerIndicatorMessage}</span>
                           </span>
                         )}
-                        <HumanCollaborationInviteComposerControl
-                          active={Boolean(humanCollaborationInviteActive)}
-                          share={humanCollaborationShare}
-                          health={humanCollaborationInviteHealth}
-                          busy={humanCollaborationInviteBusy}
-                          live={humanCollaborationInviteLive}
-                          onCopyInvite={onCopyHumanCollaborationInvite}
-                          onCopyInviteText={onCopyHumanCollaborationInviteText}
-                          onStopSharing={onStopHumanCollaborationSharing}
-                          onOpenRemoteSetup={onOpenHumanCollaborationRemoteSetup}
-                          onRefreshHealth={onRefreshHumanCollaborationInviteHealth}
-                        />
                         {voiceButtonLivesInActionRow && (
                           <ComposerVoiceInputButton
                             composerStyle={appearance.composerStyle}

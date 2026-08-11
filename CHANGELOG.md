@@ -21,6 +21,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 ### Channels and collaboration
 
 - **Safer People-to-Channel migration.** Existing conversations can preserve member presentation and invitation handoffs while migrated posts remain available for host review. Startup migration is fenced, restart-safe, and completed before the channel serves the migrated data.
+- **Channels replaces People across the app.** The sidebar section, chat-header sharing controls, join flow, and Settings tab now speak the channel runtime directly: share any chat from its Channel panel, join by pasting an invite there, and manage every channel — members, revoke, close, audit — from Settings → Channels. The legacy People share surfaces are retired. A channel is reachable only while the host Mac is online.
 
 ### Ensemble and Orchestration
 

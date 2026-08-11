@@ -59,7 +59,6 @@ type MainAppLayoutSidebarProps = {
   chats: SidebarProps['chats']
   collaboratingChatIds: NonNullable<SidebarProps['collaboratingChatIds']>
   composerDraftChatIds: NonNullable<SidebarProps['composerDraftChatIds']>
-  connectedCollaborationChatIds: ReadonlySet<string>
   currentChat: SidebarProps['currentChat']
   currentWorkspace: SidebarProps['currentWorkspace']
   displayCurrency: SidebarDisplayCurrency
@@ -105,7 +104,6 @@ type MainAppLayoutSidebarProps = {
   handleRemoveWorkspace: SidebarProps['onRemoveWorkspace']
   handleRenameChat: NonNullable<SidebarProps['onRenameChat']>
   handleRenameWorkspaceBoard: NonNullable<SidebarProps['onRenameWorkspaceBoard']>
-  handleRevokeHumanShare: NonNullable<SidebarProps['onRevokeShare']>
   handleRunWorkflowNow: NonNullable<SidebarProps['onRunWorkflowNow']>
   handleSelectChat: SidebarProps['onSelectChat']
   handleSelectWorkspace: SidebarProps['onSelectWorkspaceDialog']
@@ -115,7 +113,6 @@ type MainAppLayoutSidebarProps = {
   handleSidebarQuickUpdate: NonNullable<SidebarProps['onQuickUpdate']>
   handleStartProjectHome: NonNullable<SidebarProps['onStartProjectHome']>
   handleSelectedProjectChange: NonNullable<SidebarProps['onSelectedProjectChange']>
-  handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
   handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>
   handleTogglePinChat: NonNullable<SidebarProps['onTogglePinChat']>
   handleSetChatHiddenFromMainList: NonNullable<SidebarProps['onSetChatHiddenFromMainList']>
@@ -130,7 +127,6 @@ type MainAppLayoutSidebarProps = {
   handleTogglePinWorkspaceBoard: NonNullable<SidebarProps['onTogglePinWorkspaceBoard']>
   handleToggleWorkflowEnabled: NonNullable<SidebarProps['onToggleWorkflowEnabled']>
   handleWorkspaceSidebarResizeKeyDown: NonNullable<ResizeHandleProps['onKeyDown']>
-  humanCollaborationShares: SidebarProps['collaborationShares']
   isChatPopoutWindow: boolean
   isEnsembleModeEnabled: SidebarProps['ensembleModeEnabled']
   manualUsageRefreshInFlight: SidebarModelUsageApiSpend['refreshing']
@@ -247,12 +243,10 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSaveExecutionGraph: (runId: string) => void
   copiedId: any
   copy: any
-  connectedCollaborationChatIds: MainAppLayoutSidebarProps['connectedCollaborationChatIds']
   currentAgentMcpStatus: any
   currentAgentStatus: any
   currentBlackboardEntries: any
   currentChat: MainAppLayoutSidebarProps['currentChat']
-  currentChatHumanCollaborationShare: any
   currentChatIdRef: any
   currentChatMediaRefs: any
   chatMediaPromoteTarget:
@@ -320,10 +314,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleClearClaudeApiKey: any
   handleClearCodexUsageCredential: any
   handleClearKimiApiKey: any
-  handleCopyCurrentHumanCollaborationInvite: any
   handleCopyMessage: any
   handleCreateHandoffFromLane: any
-  handleCreateHumanCollaborationShare: any
   handleCreateWorkspaceBoard: MainAppLayoutSidebarProps['handleCreateWorkspaceBoard']
   handleDeleteAllChatHistory: any
   handleDeleteChat: MainAppLayoutSidebarProps['handleDeleteChat']
@@ -384,7 +376,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleResumeCodexThread: any
   handleRetryRunLane: any
   handleReturnToSideChatParent: any
-  handleRevokeHumanShare: MainAppLayoutSidebarProps['handleRevokeHumanShare']
   handleRightPanelResizeKeyDown: any
   handleRollbackCodexThread: any
   handleRunWorkflowNow: MainAppLayoutSidebarProps['handleRunWorkflowNow']
@@ -404,9 +395,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideRun: any
   handleSideToggleFastMode: any
   handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
-  handleStartSharedChat: MainAppLayoutSidebarProps['handleStartSharedChat']
   handleSteerToQueuedMessage: any
-  handleStopHumanCollaborationSharing: any
   handleStoreClaudeApiKey: any
   handleStoreKimiApiKey: any
   handleToggleArchiveChat: MainAppLayoutSidebarProps['handleToggleArchiveChat']
@@ -428,7 +417,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   hasWorkspaceContext: any
   hideSideChatPane: any
   hostWeather: any
-  humanCollaborationShares: MainAppLayoutSidebarProps['humanCollaborationShares']
   inspectingRunId: any
   installGeminiMcpBridge: any
   interfaceStyle: any
@@ -536,7 +524,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   setGeminiTerminalInput: any
   setInspectingRunId: any
   setIsPinnedMessagesPanelOpen: any
-  setJoinSharedChatOpen: any
   setPendingElevation: any
   setPopoutMenuOpen: any
   setPreviewChatMediaRef: any
