@@ -10,12 +10,17 @@ import {
 import { SettingsSidebar } from './SettingsSidebar'
 
 describe('Settings tabs', () => {
-  it('does not include the retired Channels tab while exposing Devices by default', () => {
+  it('retires the messages and Shares tabs while exposing Channels and Devices by default', () => {
     const visibleTabs = getVisibleSettingsTabs().map((tab) => tab.id)
     const allTabs = SETTINGS_TABS.map((tab) => tab.id)
 
     expect(allTabs).not.toContain('messages')
     expect(visibleTabs).not.toContain('messages')
+    expect(allTabs).not.toContain('shares')
+    expect(visibleTabs).not.toContain('shares')
+    expect(visibleTabs).toContain('channels')
+    expect(isSettingsTabVisible('channels')).toBe(true)
+    expect(resolveVisibleSettingsTab('channels')).toBe('channels')
     expect(visibleTabs).toContain('pairing')
     expect(isSettingsTabVisible('pairing')).toBe(true)
     expect(resolveVisibleSettingsTab('pairing')).toBe('pairing')
@@ -46,7 +51,8 @@ describe('Settings tabs', () => {
       />
     )
 
-    expect(html).not.toContain('Channels')
+    expect(html).toContain('Channels')
+    expect(html).not.toContain('People')
     expect(html).not.toContain('sidebar-titlebar-fill')
     expect(html).toContain('Devices')
     expect(html).toContain('Search settings...')
