@@ -119,7 +119,8 @@ const PROVIDER_ORDER: ProviderId[] = [
   'grok',
   'ollama',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ]
 const OPTIONAL_PROVIDERS = new Set<ProviderId>([
   'kimi',
@@ -127,7 +128,8 @@ const OPTIONAL_PROVIDERS = new Set<ProviderId>([
   'grok',
   'ollama',
   'pi',
-  'mistral'
+  'mistral',
+  'muse'
 ])
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
@@ -151,7 +153,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   mistral:
     "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream.",
   muse:
-    'Muse Code CLI (`muse exec --json`) on a Meta Model API key / muse login. Not offered in the picker until the live-selectable intent commit.'
+    'Muse Code CLI (`muse exec --json`) on a Meta Model API key or Muse login.'
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -171,7 +173,7 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   mistral:
     'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.',
   muse:
-    'On your Mac, install the Muse Code CLI and finish muse login / Meta Model API key setup. Muse is decode-ready but not offered until the approved live-selectable commit.'
+    'On your Mac, install the Muse Code CLI and finish Muse login or Meta Model API key setup.'
 }
 
 export function buildRemoteFirstLaunchState(

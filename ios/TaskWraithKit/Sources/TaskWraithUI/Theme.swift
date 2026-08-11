@@ -319,7 +319,7 @@ public enum TWTheme {
         return retiredProviderIds.contains(provider.lowercased())
     }
 
-    /// The eight providers approved for static new-run offer by product intent.
+    /// The nine providers approved for static new-run offer by product intent.
     /// Offer membership is independent of run-management maturity: Cursor's
     /// Path-B containment/evidence can strengthen or visibly degrade without
     /// changing whether Cursor is offered, and the same rule applies to Pi and

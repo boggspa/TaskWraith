@@ -93,6 +93,11 @@ describe('buildRemoteFirstLaunchState', () => {
           version: '0.9.0',
           authState: 'not-observable'
         }),
+        muse: contract('muse', {
+          available: true,
+          version: '0.2.141',
+          authState: 'authenticated'
+        }),
         gemini: contract('gemini', {
           available: true,
           authState: 'authenticated'
@@ -113,7 +118,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'grok',
       'ollama',
       'pi',
-      'mistral'
+      'mistral',
+      'muse'
     ])
     expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
@@ -173,6 +179,16 @@ describe('buildRemoteFirstLaunchState', () => {
       state.providerCards
         .find((card) => card.id === 'mistral')
         ?.setupCommands.some((entry) => entry.id === 'mistral')
+    ).toBe(true)
+    expect(state.providerCards.find((card) => card.id === 'muse')).toMatchObject({
+      optional: true,
+      detail: expect.stringContaining('available for runs'),
+      setupHint: expect.stringContaining('Muse login')
+    })
+    expect(
+      state.providerCards
+        .find((card) => card.id === 'muse')
+        ?.setupCommands.some((entry) => entry.id === 'muse')
     ).toBe(true)
   })
 

@@ -11,7 +11,7 @@ import TaskWraithKit
 // simply absent from the iOS first-launch sheet — the same drift that shipped a Cursor
 // lockout in build 81. ComposerProviderAdmissionTests pins it against the live set.
 let firstLaunchFallbackProviderIds = [
-    "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
+    "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse",
 ]
 
 struct FirstLaunchSheetView: View {
@@ -40,7 +40,8 @@ struct FirstLaunchSheetView: View {
             return ProviderDisplay(
                 id: provider,
                 label: TWTheme.providerLabel(provider),
-                optional: ["kimi", "cursor", "grok", "ollama", "pi"].contains(provider),
+                optional: ["kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse"]
+                    .contains(provider),
                 statusKind: model.providerModels[provider]?.isEmpty == false
                     ? "notObservable" : "notLoaded",
                 statusText: model.providerModels[provider]?.isEmpty == false

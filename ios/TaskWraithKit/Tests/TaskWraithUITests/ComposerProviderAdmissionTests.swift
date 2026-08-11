@@ -105,10 +105,14 @@ struct ComposerProviderAdmissionTests {
     @Test func staticProviderOfferSetMatchesMacProductIntent() {
         #expect(
             TWTheme.liveSelectableProviderIds
-                == ["codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral"])
+                == [
+                    "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
+                    "muse",
+                ])
         #expect(Set(firstLaunchFallbackProviderIds) == TWTheme.liveSelectableProviderIds)
         #expect(TWTheme.isLiveSelectableProvider("cursor"))
         #expect(TWTheme.isLiveSelectableProvider("pi"))
+        #expect(TWTheme.isLiveSelectableProvider("muse"))
         #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
         #expect(!TWTheme.isLiveSelectableProvider("gemini"))
     }
