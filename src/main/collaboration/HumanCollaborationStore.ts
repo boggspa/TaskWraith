@@ -15,6 +15,7 @@ import {
 // The ONE palette-bound guard, shared with the contacts store so a ninth hue
 // cannot be silently rejected here while being accepted there.
 import { isContactColorIndex } from './HumanCollaborationContactsStore'
+import type { PeopleToChannelMigrationLegacyWriteGateLike } from './PeopleToChannelMigrationLegacyWriteGate'
 
 /**
  * A valid roster position: a non-negative integer, bounded so a hostile or buggy
@@ -175,6 +176,11 @@ export interface HumanCollaborationReconnectCandidate {
   participant: HumanCollaboratorParticipant
 }
 
+export interface HumanCollaborationStoreOptions {
+  /** Closed only by the terminal Channels migration while it captures/retire legacy state. */
+  legacyWriteGate?: PeopleToChannelMigrationLegacyWriteGateLike
+}
+
 const DEFAULT_INVITE_TTL_MS = 10 * 60 * 1000
 const MAX_ACTIVE_COLLABORATORS = 2
 // Cap the per-share idempotency map so a stream of unique clientMessageIds from
@@ -189,7 +195,10 @@ const CONSUMED_INVITE_RETENTION_MS = 24 * 60 * 60 * 1000
 export class HumanCollaborationStore {
   private memory: HumanCollaborationSnapshot = { shares: [] }
 
-  constructor(private readonly storagePath?: string) {
+  constructor(
+    private readonly storagePath?: string,
+    private readonly options: HumanCollaborationStoreOptions = {}
+  ) {
     this.memory = this.load()
   }
 
@@ -259,6 +268,7 @@ export class HumanCollaborationStore {
     now?: number
     inviteTtlMs?: number
   }): CreateShareResult {
+    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const existing = this.memory.shares.find((share) => share.chatId === args.chatId && share.enabled)
     const share =
@@ -320,6 +330,7 @@ export class HumanCollaborationStore {
    * of committing while share records survive. Idempotent per scope.
    */
   purgeChatShares(chatIds: readonly string[]): number {
+    this.assertOrdinaryWriteAllowed()
     const targets = new Set(chatIds)
     const retained = this.memory.shares.filter((share) => !targets.has(share.chatId))
     const removed = this.memory.shares.length - retained.length
@@ -331,6 +342,7 @@ export class HumanCollaborationStore {
 
   /** Global history clear: remove every share record. */
   purgeAllShares(): number {
+    this.assertOrdinaryWriteAllowed()
     const removed = this.memory.shares.length
     if (removed === 0) return 0
     this.memory.shares = []
@@ -339,6 +351,7 @@ export class HumanCollaborationStore {
   }
 
   revokeShare(shareId: string, now: number = Date.now()): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const share = this.memory.shares.find((candidate) => candidate.shareId === shareId)
     if (!share) return null
     share.enabled = false
@@ -357,6 +370,7 @@ export class HumanCollaborationStore {
     collaboratorId: string
     now?: number
   }): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) return null
@@ -380,6 +394,7 @@ export class HumanCollaborationStore {
     requiresHostApproval: boolean
     now?: number
   }): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
     const next = args.requiresHostApproval === true
@@ -413,6 +428,7 @@ export class HumanCollaborationStore {
     fullHistory: boolean
     now?: number
   }): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
     const next = args.fullHistory === true
@@ -446,6 +462,7 @@ export class HumanCollaborationStore {
     seatDisabled?: boolean
     now?: number
   }): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     // Explicit rather than incidental: today `revokeShare` revokes every active
@@ -513,6 +530,7 @@ export class HumanCollaborationStore {
     preset: HumanContributionPreset
     now?: number
   }): HumanCollaborationShare | null {
+    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share || !share.enabled) return null
@@ -532,6 +550,7 @@ export class HumanCollaborationStore {
     chatId?: string
     now?: number
   }): ConsumeInviteResult {
+    this.assertOrdinaryWriteAllowed()
     const now = args.now ?? Date.now()
     const state = this.findInvite({
       shareId: args.shareId,
@@ -705,6 +724,7 @@ export class HumanCollaborationStore {
     /** P2b contribution intent; plain comment when omitted (v1 clients). */
     intent?: 'comment' | 'requestHostAction'
   }): { share: HumanCollaborationShare; participant: HumanCollaboratorParticipant; existingMessageId?: string } {
+    this.assertOrdinaryWriteAllowed()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
     if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
@@ -753,6 +773,7 @@ export class HumanCollaborationStore {
     clientMessageId: string
     messageId: string
   }): number {
+    this.assertOrdinaryWriteAllowed()
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
     if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
     if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
@@ -783,6 +804,36 @@ export class HumanCollaborationStore {
     share.updatedAt = Date.now()
     this.persist()
     return sequence
+  }
+
+  /**
+   * Terminal migration-only retirement. It removes exactly the supplied legacy
+   * share records, which invalidates their invitations and active sessions by
+  * absence. The coordinator must never pass the retained P5 bootstrap ids.
+  */
+  retireSharesForChannelMigration(shareIds: readonly string[]): number {
+    if (!this.options.legacyWriteGate?.isQuiesced()) {
+      throw new Error('Migration retirement requires a quiesced legacy write gate.')
+    }
+    if (
+      !Array.isArray(shareIds) ||
+      shareIds.some(
+        (shareId) => typeof shareId !== 'string' || !shareId || shareId.trim() !== shareId
+      )
+    ) {
+      throw new Error('Migration retirement share ids are invalid.')
+    }
+    const targets = new Set(shareIds)
+    const retained = this.memory.shares.filter((share) => !targets.has(share.shareId))
+    const removed = this.memory.shares.length - retained.length
+    if (removed === 0) return 0
+    this.memory.shares = retained
+    this.persist()
+    return removed
+  }
+
+  private assertOrdinaryWriteAllowed(): void {
+    this.options.legacyWriteGate?.assertOrdinaryWriteAllowed()
   }
 
   private load(): HumanCollaborationSnapshot {

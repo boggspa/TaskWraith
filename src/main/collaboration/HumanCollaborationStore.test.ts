@@ -6,9 +6,69 @@ import {
   HumanCollaborationStore,
   type HumanCollaboratorParticipant
 } from './HumanCollaborationStore'
+import {
+  PeopleToChannelMigrationLegacyWriteGate,
+  PeopleToChannelMigrationLegacyWriteGateError
+} from './PeopleToChannelMigrationLegacyWriteGate'
 import { buildHumanShareProjection } from './HumanShareProjection'
 
 describe('HumanCollaborationStore', () => {
+  it('quiesces every ordinary People mutation while retaining the scoped migration retirement seam', () => {
+    const gate = new PeopleToChannelMigrationLegacyWriteGate()
+    const store = new HumanCollaborationStore(undefined, { legacyWriteGate: gate })
+    const active = store.createShare({ chatId: 'chat-active', mode: 'comments', now: 100 })
+    expect(() => store.retireSharesForChannelMigration([active.share.shareId])).toThrow(
+      /requires a quiesced legacy write gate/
+    )
+    const participant = store.consumeInvite({
+      shareId: active.share.shareId,
+      inviteToken: active.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'ed25519:alex',
+      now: 110
+    }).participant
+    const pending = store.createShare({ chatId: 'chat-pending', mode: 'comments', now: 120 })
+
+    gate.quiesce()
+
+    expect(() => store.createShare({ chatId: 'chat-new', mode: 'comments' })).toThrow(
+      PeopleToChannelMigrationLegacyWriteGateError
+    )
+    expect(() =>
+      store.consumeInvite({
+        shareId: pending.share.shareId,
+        inviteToken: pending.inviteToken,
+        displayName: 'Blair',
+        publicKeyId: 'ed25519:blair'
+      })
+    ).toThrow(PeopleToChannelMigrationLegacyWriteGateError)
+    expect(() =>
+      store.validateAppend({
+        shareId: active.share.shareId,
+        chatId: active.share.chatId,
+        collaboratorId: participant.collaboratorId,
+        clientMessageId: 'blocked-before-chat-write'
+      })
+    ).toThrow(PeopleToChannelMigrationLegacyWriteGateError)
+    expect(() =>
+      store.recordAppend({
+        shareId: active.share.shareId,
+        chatId: active.share.chatId,
+        collaboratorId: participant.collaboratorId,
+        clientMessageId: 'blocked-after-chat-write',
+        messageId: 'message-one'
+      })
+    ).toThrow(PeopleToChannelMigrationLegacyWriteGateError)
+    expect(() => store.revokeShare(active.share.shareId)).toThrow(
+      PeopleToChannelMigrationLegacyWriteGateError
+    )
+    expect(() => store.purgeAllShares()).toThrow(PeopleToChannelMigrationLegacyWriteGateError)
+
+    expect(store.retireSharesForChannelMigration([active.share.shareId])).toBe(1)
+    expect(store.getShare(active.share.shareId)).toBeNull()
+    expect(store.getShare(pending.share.shareId)).toMatchObject({ enabled: true })
+  })
+
   it('creates single-use high-entropy invites and pins collaborator identity', () => {
     const store = new HumanCollaborationStore()
     const created = store.createShare({
