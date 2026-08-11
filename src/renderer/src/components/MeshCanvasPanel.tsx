@@ -458,6 +458,30 @@ export interface MeshCanvasPanelProps {
   chatId: string
 }
 
+export interface MeshCanvasPanelStatusProps {
+  hasView: boolean
+  hasScenes: boolean
+  issue: string | null
+}
+
+export function MeshCanvasPanelStatus({ hasView, hasScenes, issue }: MeshCanvasPanelStatusProps) {
+  if (issue) {
+    return (
+      <div className="mesh-canvas-issue" role="alert">
+        {issue}
+      </div>
+    )
+  }
+  if (hasView) return null
+  return (
+    <div className="mesh-canvas-empty">
+      {hasScenes
+        ? 'Choose a scene to load its local 3D preview.'
+        : 'No Mesh Canvas scene has been created in this chat yet.'}
+    </div>
+  )
+}
+
 export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
   const [scenes, setScenes] = useState<readonly MeshSceneSummary[]>([])
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null)
@@ -733,19 +757,9 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
             · drag to orbit · scroll to zoom
           </div>
         </div>
-      ) : (
-        <div className="mesh-canvas-empty">
-          {scenes.length
-            ? 'Choose a scene to load its local 3D preview.'
-            : 'No Mesh Canvas scene has been created in this chat yet.'}
-        </div>
-      )}
+      ) : null}
 
-      {issue && (
-        <div className="mesh-canvas-issue" role="alert">
-          {issue}
-        </div>
-      )}
+      <MeshCanvasPanelStatus hasView={Boolean(view)} hasScenes={scenes.length > 0} issue={issue} />
     </section>
   )
 }

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
+import { MeshCanvasPanel, MeshCanvasPanelStatus, toMeshSceneSummary } from './MeshCanvasPanel'
 
 describe('toMeshSceneSummary', () => {
   it('decodes a renderer-safe summary and ignores unrelated payload fields', () => {
@@ -56,5 +56,17 @@ describe('MeshCanvasPanel (static render)', () => {
     expect(html).toContain('taskwraith.mesh-scene.json')
     expect(html).toContain('No Mesh Canvas scene has been created in this chat yet.')
     expect(html).not.toContain('twmesh://')
+  })
+
+  it('replaces the empty state with an error when no scene can be viewed', () => {
+    const html = renderToStaticMarkup(
+      <MeshCanvasPanelStatus
+        hasView={false}
+        hasScenes={false}
+        issue="The Mesh Canvas scene is unavailable."
+      />
+    )
+    expect(html).toContain('The Mesh Canvas scene is unavailable.')
+    expect(html).not.toContain('No Mesh Canvas scene has been created in this chat yet.')
   })
 })
