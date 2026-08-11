@@ -300,6 +300,23 @@ function normaliseQuotaWindowText(windowEntry: UsageWindowAggregate): string {
   return `${windowEntry.id} ${windowEntry.label}`.toLowerCase().replace(/[-_+]/g, ' ')
 }
 
+/**
+ * Truncate currency display values >= 10 to one decimal place so they fit in
+ * the compact sidebar grid columns. Values under 10 and non-currency text
+ * (percentages, "~LOW", "...") pass through unchanged.  The title/tooltip
+ * always keeps the full original string.
+ */
+function compactCurrencyCellValue(valueText: string): string {
+  const match = valueText.match(/^([~]?)(US\$|[\$£€])(\d[\d,]*\.?\d*)$/)
+  if (!match) return valueText
+  const [, hedge, symbol, digits] = match
+  const num = Number(digits.replace(/,/g, ''))
+  if (!Number.isFinite(num) || num < 10) return valueText
+  const truncated = Math.floor(num * 10) / 10
+  const formatted = truncated.toFixed(1)
+  return `${hedge}${symbol}${formatted}`
+}
+
 function compactWindowCell(
   provider: ModelUsageProviderId,
   windowEntry: UsageWindowAggregate
@@ -315,7 +332,7 @@ function compactWindowCell(
   ]
     .filter(Boolean)
     .join(' · ')
-  return { value: valueText, fraction, title }
+  return { value: compactCurrencyCellValue(valueText), fraction, title }
 }
 
 function findCompactWindow(
@@ -527,7 +544,7 @@ function compactMistralCell(
     // for a local estimate: the `~` prefix pushed the column into its
     // neighbour, and the hedged tooltip + `is-estimated` styling already say
     // it's estimated. The band still drives tone + the tooltip.
-    value: spentAmountText,
+    value: compactCurrencyCellValue(spentAmountText),
     fraction,
     title,
     estimated: !measured,

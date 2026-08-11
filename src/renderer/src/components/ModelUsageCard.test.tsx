@@ -722,6 +722,135 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('Mistral baseline + local estimate')
     expect(html).toContain('provider-mistral is-estimated')
   })
+
+  it('truncates currency values >= 10 in compact window cells to one decimal', () => {
+    const financialWindow = (
+      id: string,
+      label: string,
+      valueText: string,
+      limitLabel: string,
+      usedPercent: number
+    ) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel,
+      usedPercent,
+      valueText,
+      unit: label === 'This billing period' ? 'GBP' : 'USD'
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [
+              financialWindow('deepseek-credit', 'Credit used', '$13.51', '$13.51 of $20.00', 67.5)
+            ]
+          }),
+          quotaEntry({
+            provider: 'cerebras',
+            windows: [
+              financialWindow('cerebras-credit', 'Credit used', '£13.50', '£13.50 of £20.00', 67.5)
+            ]
+          }),
+          quotaEntry({
+            provider: 'meta',
+            windows: [
+              financialWindow('meta-credit', 'Credit used', '€10.99', '€10.99 of €20.00', 54.9)
+            ]
+          })
+        ]}
+      />
+    )
+
+    // Cell values truncated to 1 decimal (floor, not round)
+    expect(html).toContain('>$13.5</td>')
+    expect(html).toContain('>£13.5</td>')
+    expect(html).toContain('>€10.9</td>')
+    // Titles preserve full precision
+    expect(html).toContain('DeepSeek Credit used: $13.51')
+    expect(html).toContain('Cerebras Credit used: £13.50')
+    expect(html).toContain('Meta API Credit used: €10.99')
+  })
+
+  it('keeps currency values < 10 at full precision in compact window cells', () => {
+    const financialWindow = (
+      id: string,
+      label: string,
+      valueText: string,
+      limitLabel: string,
+      usedPercent: number
+    ) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel,
+      usedPercent,
+      valueText,
+      unit: 'USD'
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [
+              financialWindow('deepseek-credit', 'Credit used', '$9.99', '$9.99 of $20.00', 49.9)
+            ]
+          })
+        ]}
+      />
+    )
+
+    // Under 10 stays at full precision
+    expect(html).toContain('>$9.99</td>')
+    expect(html).toContain('DeepSeek Credit used: $9.99')
+  })
+
+  it('passes non-currency text through compactCurrencyCellValue unchanged', () => {
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'kimi',
+            windows: [
+              {
+                id: 'kimi-5h',
+                label: '5H',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '31 / 100 remaining',
+                usedPercent: 69,
+                valueText: '69%' // non-currency: percent
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    // Percent text passes through unmodified
+    expect(html).toContain('>69%</td>')
+    expect(html).toContain('Kimi 5H: 69%')
+  })
+
+  it('truncates Mistral compact cell spend >= 10 to one decimal', () => {
+    // $13.51 spend → cell should show $13.5, title keeps full $13.51
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[]}
+        mistralQuota={{ snapshot: mistralSnapshot(13.51, 'estimated', 0.13), loading: false }}
+      />
+    )
+
+    // Cell value truncated to 1 decimal
+    expect(html).toContain('>US$13.5</td>')
+    // Title preserves full precision (from formatMistralAccumulatedSpend)
+    expect(html).toContain('~US$13.51 of')
+  })
 })
 
 describe('ApiSpendProviderBlock (View B populated render)', () => {
