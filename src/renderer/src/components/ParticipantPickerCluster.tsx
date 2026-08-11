@@ -29,6 +29,11 @@ import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPerm
 import { resolveProviderRows } from './ComposerProviderPicker'
 import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
+import {
+  antigravityEffortForModelId,
+  antigravityVariantGroupForModel,
+  groupAntigravityModelRows
+} from '../../../shared/antigravityAgyModelGrouping'
 
 // Lossless permission options: the values ARE the PermissionPresetId, so
 // full_access + custom survive a round-trip (unlike the composer's 3-mode
@@ -78,7 +83,8 @@ export function buildParticipantPickerProviderGroups(
   grokAvailable: boolean,
   cursorAvailable: boolean,
   configuredProviderSnapshot: ConfiguredProviderSnapshot,
-  currentProvider: ProviderId
+  currentProvider: ProviderId,
+  selectedModelId?: string
 ): CombinedModelPickerProviderGroup[] {
   return resolveProviderRows(grokAvailable, cursorAvailable, undefined, {
     snapshot: configuredProviderSnapshot,
@@ -87,10 +93,10 @@ export function buildParticipantPickerProviderGroups(
     const providerDefaults = getEnsembleModelDefaults(row.id)
     const modelOptions: CombinedModelPickerModelOption[] =
       row.id === 'antigravity'
-        ? (configuredProviderSnapshot.modelsByProvider?.antigravity || []).map((model) => ({
-            id: model.id,
-            label: model.label
-          }))
+        ? groupAntigravityModelRows(
+            configuredProviderSnapshot.modelsByProvider?.antigravity || [],
+            row.id === currentProvider ? selectedModelId : undefined
+          )
         : providerDefaults.modelOptions
     return {
       provider: row.id,
@@ -123,19 +129,11 @@ export function ParticipantPickerCluster({
 }: ParticipantPickerClusterProps): JSX.Element {
   const resolved = resolveEnsembleParticipantSettings(participant)
   const defaults = getEnsembleModelDefaults(participant.provider)
+  const antigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []
   const modelOptions: CombinedModelPickerModelOption[] =
     participant.provider === 'antigravity'
-      ? (configuredProviderSnapshot.modelsByProvider?.antigravity || []).map((model) => ({
-          id: model.id,
-          label: model.label
-        }))
+      ? groupAntigravityModelRows(antigravityModels, participant.model)
       : defaults.modelOptions
-  const providerGroups = buildParticipantPickerProviderGroups(
-    grokAvailable,
-    cursorAvailable,
-    configuredProviderSnapshot,
-    participant.provider
-  )
   // Display the participant's model, mapping the agnostic 'cli-default' seed to
   // the provider's preferred id so the chip reads cleanly. The stored value is
   // untouched until the user actually picks a model.
@@ -143,18 +141,42 @@ export function ParticipantPickerCluster({
     participant.model && participant.model !== 'cli-default'
       ? participant.model
       : modelOptions[0]?.id || defaults.defaultModelId
+  const providerGroups = buildParticipantPickerProviderGroups(
+    grokAvailable,
+    cursorAvailable,
+    configuredProviderSnapshot,
+    participant.provider,
+    selectedModelId
+  )
 
   const onSelectProviderModel = (provider: ProviderId, model: string): void => {
     onPatch(buildParticipantProviderModelPatch(participant, provider, model))
   }
 
+  const antigravityVariantGroup =
+    participant.provider === 'antigravity'
+      ? antigravityVariantGroupForModel(antigravityModels, selectedModelId)
+      : null
   const selectedReasoning =
-    participant.provider === 'kimi'
-      ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
-      : resolved.reasoningEffort
-  const reasoningOptions = getEnsembleReasoningOptions(participant.provider, selectedModelId)
+    participant.provider === 'antigravity'
+      ? (antigravityEffortForModelId(selectedModelId) ?? '')
+      : participant.provider === 'kimi'
+        ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
+        : resolved.reasoningEffort
+  const reasoningOptions =
+    participant.provider === 'antigravity'
+      ? (antigravityVariantGroup?.variants.map((variant) => ({
+          value: variant.effort,
+          label: variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
+        })) ?? [])
+      : getEnsembleReasoningOptions(participant.provider, selectedModelId)
   const onSelectReasoning = (value: string): void => {
-    if (participant.provider === 'kimi') {
+    if (participant.provider === 'antigravity') {
+      const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)
+      if (target && target.id !== selectedModelId) {
+        onSelectProviderModel('antigravity', target.id)
+      }
+    } else if (participant.provider === 'kimi') {
       onPatch(buildKimiReasoningPickerPatch(selectedModelId, value))
     } else {
       onPatch({ reasoningEffort: value })

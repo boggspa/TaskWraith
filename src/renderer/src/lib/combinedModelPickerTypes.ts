@@ -15,6 +15,13 @@ export interface CombinedModelPickerModelOption {
     disabled?: boolean
     disabledReason?: string
   }>
+  /** Concrete AntiGravity wire-model variants represented by this grouped row.
+   * Its effort is encoded in the model id, so consumers use this map to swap
+   * model ids rather than persist a separate reasoning setting. */
+  antigravityVariants?: ReadonlyArray<{
+    effort: string
+    id: string
+  }>
   defaultReasoningEffort?: string | null
   additionalSpeedTiers?: string[]
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when the provider is retiring this

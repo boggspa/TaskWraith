@@ -106,6 +106,7 @@ import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
+import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader then-four-provider roster plus alternates (e.g. two
@@ -345,14 +346,35 @@ function reasoningOptionLabel(provider: ProviderId, value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
-function getEnsembleAddReasoningOptions(
+function findEnsembleAddModelOption(
+  provider: ProviderId,
+  model: string,
+  modelOptions: CombinedModelPickerProviderGroup['modelOptions']
+) {
+  return (
+    modelOptions.find((option) => option.id === model) ||
+    (provider === 'antigravity'
+      ? modelOptions.find((option) =>
+          option.antigravityVariants?.some((variant) => variant.id === model)
+        )
+      : undefined)
+  )
+}
+
+export function getEnsembleAddReasoningOptions(
   provider: ProviderId,
   model: string,
   providerGroups: readonly CombinedModelPickerProviderGroup[]
 ): CombinedModelPickerReasoningOption[] {
-  const modelOption = providerGroups
-    .find((group) => group.provider === provider)
-    ?.modelOptions.find((option) => option.id === model)
+  const modelOptions =
+    providerGroups.find((group) => group.provider === provider)?.modelOptions || []
+  const modelOption = findEnsembleAddModelOption(provider, model, modelOptions)
+  if (provider === 'antigravity' && modelOption?.antigravityVariants) {
+    return modelOption.antigravityVariants.map((variant) => ({
+      value: variant.effort,
+      label: reasoningOptionLabel(provider, variant.effort)
+    }))
+  }
   if (modelOption?.supportedReasoningEfforts) {
     return modelOption.supportedReasoningEfforts.map((option) => {
       const value = normalizeReasoningOptionValue(option.reasoningEffort)
@@ -384,9 +406,11 @@ export function createEnsembleParticipantAddConfiguration(
   const modelOptions = providerGroup?.modelOptions.length
     ? providerGroup.modelOptions
     : modelDefaults.modelOptions
-  const requestedOption = modelOptions.find(
-    (option) => option.id === requestedModel && option.id !== 'custom' && !option.disabled
-  )
+  const requestedOption = requestedModel
+    ? findEnsembleAddModelOption(provider, requestedModel, modelOptions)
+    : undefined
+  const selectableRequestedOption =
+    requestedOption?.id !== 'custom' && !requestedOption?.disabled ? requestedOption : undefined
   const defaultOption =
     modelOptions.find(
       (option) => option.id === participantDefaults.model && option.id !== 'custom' && !option.disabled
@@ -396,8 +420,10 @@ export function createEnsembleParticipantAddConfiguration(
         option.id === modelDefaults.defaultModelId && option.id !== 'custom' && !option.disabled
     ) ||
     modelOptions.find((option) => option.id !== 'custom' && !option.disabled)
-  const model = requestedOption?.id || defaultOption?.id || participantDefaults.model
-  const modelOption = requestedOption || defaultOption
+  const model = selectableRequestedOption
+    ? requestedModel!
+    : defaultOption?.id || participantDefaults.model
+  const modelOption = selectableRequestedOption || defaultOption
   const normalized = normalizeProviderModelSelection(provider, model, modelOption)
 
   return {
@@ -1601,9 +1627,25 @@ function EnsembleAddParticipantButton({
   )
   const [detailsDraft, setDetailsDraft] = useState<EnsembleParticipantAddDetails>(initialDetails)
   const [rolePresetId, setRolePresetId] = useState(() => resolveRolePresetId(initialDetails.role))
+  const displayProviderGroups = useMemo(
+    () =>
+      availableProviderGroups.map((group) =>
+        group.provider !== 'antigravity' || draft.provider !== 'antigravity'
+          ? group
+          : {
+              ...group,
+              modelOptions: group.modelOptions.map((option) =>
+                option.antigravityVariants?.some((variant) => variant.id === draft.model)
+                  ? { ...option, id: draft.model }
+                  : option
+              )
+            }
+      ),
+    [availableProviderGroups, draft.model, draft.provider]
+  )
   const selectedGroup =
-    availableProviderGroups.find((group) => group.provider === draft.provider) ||
-    availableProviderGroups[0]
+    displayProviderGroups.find((group) => group.provider === draft.provider) ||
+    displayProviderGroups[0]
   const selectedDefaults = getEnsembleModelDefaults(draft.provider)
   const reasoningOptions = useMemo(
     () =>
@@ -1615,9 +1657,11 @@ function EnsembleAddParticipantButton({
     [availableProviderGroups, draft.model, draft.provider]
   )
   const selectedReasoning =
-    draft.provider === 'kimi'
-      ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
-      : draft.reasoningEffort || ''
+    draft.provider === 'antigravity'
+      ? (antigravityEffortForModelId(draft.model) ?? '')
+      : draft.provider === 'kimi'
+        ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
+        : draft.reasoningEffort || ''
   const fastModeEnabled =
     draft.provider === 'codex' ? draft.serviceTier === 'fast' : Boolean(draft.fastModeEnabled)
 
@@ -1661,13 +1705,33 @@ function EnsembleAddParticipantButton({
     },
     [availableProviderGroups, bossmanAutoApprovals, draft.provider, participants]
   )
-  const handleReasoningSelection = useCallback((value: string) => {
-    setDraft((current) =>
-      current.provider === 'kimi'
-        ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
-        : { ...current, reasoningEffort: value }
-    )
-  }, [])
+  const handleReasoningSelection = useCallback(
+    (value: string) => {
+      setDraft((current) => {
+        if (current.provider === 'antigravity') {
+          const modelOptions =
+            availableProviderGroups.find((group) => group.provider === 'antigravity')
+              ?.modelOptions || []
+          const target = findEnsembleAddModelOption(
+            'antigravity',
+            current.model,
+            modelOptions
+          )?.antigravityVariants?.find((variant) => variant.effort === value)
+          return target && target.id !== current.model
+            ? createEnsembleParticipantAddConfiguration(
+                'antigravity',
+                target.id,
+                availableProviderGroups
+              )
+            : current
+        }
+        return current.provider === 'kimi'
+          ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
+          : { ...current, reasoningEffort: value }
+      })
+    },
+    [availableProviderGroups]
+  )
   const handleToggleFastMode = useCallback(() => {
     setDraft((current) => {
       if (current.provider === 'codex') {
@@ -1745,7 +1809,7 @@ function EnsembleAddParticipantButton({
       modelOptions={selectedGroup?.modelOptions || selectedDefaults.modelOptions}
       selectedModelId={draft.model}
       onSelectModel={(model) => handleProviderModelSelection(draft.provider, model)}
-      providerGroups={availableProviderGroups}
+      providerGroups={displayProviderGroups}
       onSelectProviderModel={handleProviderModelSelection}
       reasoningOptions={reasoningOptions}
       selectedReasoning={selectedReasoning}

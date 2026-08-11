@@ -34,6 +34,11 @@ describe('antigravityModelGrouping', () => {
     ])
     // Unselected grouped rows resolve to their catalogue-first variant.
     expect(rows[0].id).toBe('gemini-3.6-flash-high')
+    expect(rows[0].antigravityVariants).toEqual([
+      { effort: 'low', id: 'gemini-3.6-flash-low' },
+      { effort: 'medium', id: 'gemini-3.6-flash-medium' },
+      { effort: 'high', id: 'gemini-3.6-flash-high' }
+    ])
     expect(rows[2].id).toBe('gemini-3.1-pro-high')
     expect(rows[5].id).toBe('gpt-oss-120b-medium')
   })

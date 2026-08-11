@@ -169,6 +169,30 @@ describe('ParticipantPickerCluster', () => {
     ])
   })
 
+  it('groups AntiGravity effort variants and preserves the selected tier in its row', () => {
+    const groups = buildParticipantPickerProviderGroups(
+      false,
+      false,
+      {
+        ready: true,
+        providerIds: ['antigravity'],
+        modelsByProvider: {
+          antigravity: [
+            { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' },
+            { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
+            { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' }
+          ]
+        }
+      },
+      'antigravity',
+      'gemini-3.6-flash-high'
+    )
+
+    expect(groups.find((group) => group.provider === 'antigravity')?.modelOptions).toMatchObject([
+      { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash' }
+    ])
+  })
+
   it('keeps live providers visible while discovery is pending', () => {
     expect(
       buildParticipantPickerProviderGroups(
@@ -286,5 +310,35 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('K3')
     expect(html).toContain('>Max<')
     expect(html).not.toContain('data-selected-reasoning="on"')
+  })
+
+  it('uses AntiGravity model variants as its selected reasoning tier', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={participant({
+          provider: 'antigravity',
+          model: 'gemini-3.6-flash-high'
+        })}
+        configuredProviderSnapshot={{
+          ready: true,
+          providerIds: ['antigravity'],
+          modelsByProvider: {
+            antigravity: [
+              { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' },
+              { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
+              { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' }
+            ]
+          }
+        }}
+        composerStyle="gemini"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="high"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
+    expect(html).toContain('Gemini 3.6 Flash')
   })
 })

@@ -42,6 +42,9 @@ export interface AntigravityVariantGroup {
 export interface AntigravityGroupedModelRow {
   id: string
   label: string
+  /** Concrete wire-model variants retained for a consumer that needs to
+   * switch the family through the reasoning ladder. */
+  antigravityVariants?: AntigravityVariantGroup['variants']
 }
 
 interface CatalogueOptionLike {
@@ -159,7 +162,11 @@ export function groupAntigravityModelRows(
     const selected = selectedModelId
       ? group.variants.find((variant) => variant.id === selectedModelId)
       : undefined
-    return { id: selected?.id ?? group.defaultId, label: group.displayName }
+    return {
+      id: selected?.id ?? group.defaultId,
+      label: group.displayName,
+      antigravityVariants: group.variants
+    }
   })
 }
 

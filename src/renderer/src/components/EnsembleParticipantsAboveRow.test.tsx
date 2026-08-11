@@ -13,6 +13,7 @@ import {
   computeEnsembleChipRowDistribution,
   createEnsembleParticipantAddConfiguration,
   createEnsembleParticipantAddDetails,
+  getEnsembleAddReasoningOptions,
   resolveEnsembleAddProviderGroups,
   resolveEnsembleParticipantAddAuthorityPatch,
   resolveEnsembleParticipantAuthorityPatch,
@@ -21,6 +22,7 @@ import {
 } from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
+import { groupAntigravityModelRows } from '../../../shared/antigravityAgyModelGrouping'
 
 function makeParticipant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
   return {
@@ -599,6 +601,39 @@ describe('EnsembleParticipantsAboveRow', () => {
         fastModeEnabled: false,
         thinkingEnabled: undefined,
         serviceTier: ''
+      })
+    })
+
+    it('uses AntiGravity model variants as an effort ladder and preserves the selected wire id', () => {
+      const providerGroups = [
+        {
+          provider: 'antigravity' as const,
+          label: 'AntiGravity',
+          modelOptions: groupAntigravityModelRows([
+            { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' },
+            { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
+            { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' }
+          ])
+        }
+      ]
+
+      expect(
+        getEnsembleAddReasoningOptions('antigravity', 'gemini-3.6-flash-medium', providerGroups)
+      ).toEqual([
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' }
+      ])
+      expect(
+        createEnsembleParticipantAddConfiguration(
+          'antigravity',
+          'gemini-3.6-flash-medium',
+          providerGroups
+        )
+      ).toMatchObject({
+        provider: 'antigravity',
+        model: 'gemini-3.6-flash-medium',
+        reasoningEffort: undefined
       })
     })
 
