@@ -12,6 +12,8 @@ export interface DiffHoverPreviewFile {
 
 export interface DiffHoverPreviewSummary {
   actionLabel?: string
+  emptyFooterLabel?: string
+  emptyMessage?: string
   path: string
   status?: string
   additions?: number
@@ -106,6 +108,14 @@ export interface DiffHoverPreviewFileWindow {
   nextShowCount: number
   previewableCount: number
   visibleCount: number
+}
+
+export function diffHoverPreviewEmptyMessage(
+  summary: Pick<DiffHoverPreviewSummary, 'emptyMessage'>,
+  hasPreparedDiff: boolean
+): string {
+  if (summary.emptyMessage) return summary.emptyMessage
+  return hasPreparedDiff ? 'No diff hunks to preview.' : 'No inline diff captured.'
 }
 
 export function getDiffHoverPreviewFileWindow(
@@ -592,10 +602,10 @@ export function DiffHoverPreviewOverlay({
               ))}
             </div>
           ))
-        ) : !preparedDiff ? (
-          <div className="diff-hover-preview-empty">No inline diff captured.</div>
         ) : (
-          <div className="diff-hover-preview-empty">No diff hunks to preview.</div>
+          <div className="diff-hover-preview-empty">
+            {diffHoverPreviewEmptyMessage(preview.summary, Boolean(preparedDiff))}
+          </div>
         )}
       </div>
       <div className="diff-hover-preview-footer">
@@ -611,7 +621,7 @@ export function DiffHoverPreviewOverlay({
               ? `${parsed.renderedLineCount.toLocaleString()} lines shown${
                   hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''
                 }`
-              : 'No hunks captured'}
+              : preview.summary.emptyFooterLabel || 'No hunks captured'}
           </span>
           {preview.action && (
             <button

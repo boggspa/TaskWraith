@@ -156,6 +156,16 @@ export interface CommitFilePreviewLoadResult {
   totalFiles: number
 }
 
+type CommitFilePreviewCacheEntry =
+  | { status: 'loading'; promise: Promise<CommitFilePreviewLoadResult | null> }
+  | { status: 'loaded'; result: CommitFilePreviewLoadResult }
+  | { status: 'unavailable' }
+
+const COMMIT_FILES_LOADING_MESSAGE = 'Loading files changed by this commit…'
+const COMMIT_FILES_UNAVAILABLE_MESSAGE =
+  'Commit files are unavailable. Reload TaskWraith and hover this row again.'
+const COMMIT_FILES_EMPTY_MESSAGE = 'No changed files were reported for this commit.'
+
 export function RunCompleteEpicStack({
   participantTable,
   subagentDelegations,
@@ -192,14 +202,7 @@ export function RunCompleteEpicStack({
 
   useDiffHoverPreviewDismiss(commitFilesPill, closeCommitFilesPill)
   const hoveredCommitHashRef = useRef<string | null>(null)
-  const commitFileCacheRef = useRef<
-    Map<
-      string,
-      | CommitFilePreviewLoadResult
-      | Promise<CommitFilePreviewLoadResult | null>
-      | null
-    >
-  >(new Map())
+  const commitFileCacheRef = useRef<Map<string, CommitFilePreviewCacheEntry>>(new Map())
 
   const openCommitFilesPill = useCallback(
     (
@@ -211,10 +214,12 @@ export function RunCompleteEpicStack({
       hoveredCommitHashRef.current = commit.hash
       const buildPreview = (
         files: NonNullable<CloseoutCommit['files']>,
-        totalFiles: number
+        totalFiles: number,
+        emptyMessage?: string,
+        emptyFooterLabel?: string
       ): DiffHoverPreviewState | null => {
         if (!anchorElement.isConnected) return null
-        if (files.length === 0) return null
+        if (files.length === 0 && !emptyMessage) return null
         const totals = commitFileTotals({ ...commit, files })
         return {
           anchor: anchorElement.getBoundingClientRect(),
@@ -227,6 +232,8 @@ export function RunCompleteEpicStack({
             deletions: totals.deletions,
             files,
             fileCount: totalFiles,
+            emptyMessage,
+            emptyFooterLabel,
             source: 'run-summary'
           },
           focusTarget: options?.focusTarget
@@ -237,30 +244,51 @@ export function RunCompleteEpicStack({
           return buildPreview(commit.files, commit.files.length)
         }
         const cached = commitFileCacheRef.current.get(commit.hash)
-        if (cached && !(cached instanceof Promise)) {
-          return buildPreview(cached.files, cached.totalFiles)
+        if (cached?.status === 'loaded') {
+          return cached.result.files.length
+            ? buildPreview(cached.result.files, cached.result.totalFiles)
+            : buildPreview([], 0, COMMIT_FILES_EMPTY_MESSAGE, 'No files reported')
         }
-        if (cached === null || cached instanceof Promise || !loadCommitFiles) return null
+        if (cached?.status === 'unavailable') {
+          return buildPreview([], 0, COMMIT_FILES_UNAVAILABLE_MESSAGE, 'Reload required')
+        }
+        if (cached?.status === 'loading') {
+          return buildPreview([], 0, COMMIT_FILES_LOADING_MESSAGE, 'Loading files…')
+        }
+        if (!loadCommitFiles) return null
 
-        const pending = loadCommitFiles(commit)
+        const pending = Promise.resolve()
+          .then(() => loadCommitFiles(commit))
           .then((result) => {
-            commitFileCacheRef.current.set(commit.hash, result)
-            if (
-              result &&
-              hoveredCommitHashRef.current === commit.hash &&
-              anchorElement.isConnected
-            ) {
-              const nextPreview = buildPreview(result.files, result.totalFiles)
+            commitFileCacheRef.current.set(
+              commit.hash,
+              result ? { status: 'loaded', result } : { status: 'unavailable' }
+            )
+            if (hoveredCommitHashRef.current === commit.hash && anchorElement.isConnected) {
+              const nextPreview = result
+                ? result.files.length
+                  ? buildPreview(result.files, result.totalFiles)
+                  : buildPreview([], 0, COMMIT_FILES_EMPTY_MESSAGE, 'No files reported')
+                : buildPreview([], 0, COMMIT_FILES_UNAVAILABLE_MESSAGE, 'Reload required')
               if (nextPreview) showCommitFilesPill(nextPreview)
             }
             return result
           })
           .catch(() => {
-            commitFileCacheRef.current.set(commit.hash, null)
+            commitFileCacheRef.current.set(commit.hash, { status: 'unavailable' })
+            if (hoveredCommitHashRef.current === commit.hash && anchorElement.isConnected) {
+              const nextPreview = buildPreview(
+                [],
+                0,
+                COMMIT_FILES_UNAVAILABLE_MESSAGE,
+                'Reload required'
+              )
+              if (nextPreview) showCommitFilesPill(nextPreview)
+            }
             return null
           })
-        commitFileCacheRef.current.set(commit.hash, pending)
-        return null
+        commitFileCacheRef.current.set(commit.hash, { status: 'loading', promise: pending })
+        return buildPreview([], 0, COMMIT_FILES_LOADING_MESSAGE, 'Loading files…')
       }
       if (options?.immediate || options?.focusTarget) {
         const next = produce()

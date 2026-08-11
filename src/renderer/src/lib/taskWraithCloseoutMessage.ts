@@ -2385,7 +2385,6 @@ function extractCommitsFromText(text: string, requireGitReceipt = false): Closeo
     if (!existingCommit) continue
     const path = match[1].trim()
     if (!path) continue
-    const changeCount = parseInt(match[2], 10)
     const plusMinus = match[3]
     const additions = (plusMinus.match(/\+/g) || []).length
     const deletions = (plusMinus.match(/-/g) || []).length

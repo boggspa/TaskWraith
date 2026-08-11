@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canShowDiffHoverPreview,
+  diffHoverPreviewEmptyMessage,
   diffHoverPreviewRole,
   diffHoverPreviewSourceLabel,
   DIFF_HOVER_PREVIEW_FILE_INITIAL_LIMIT,
@@ -110,6 +111,16 @@ describe('DiffHoverPreview source labels', () => {
 })
 
 describe('DiffHoverPreview semantics', () => {
+  it('uses a caller-provided empty-state message for async commit previews', () => {
+    expect(
+      diffHoverPreviewEmptyMessage(
+        { emptyMessage: 'Loading files changed by this commit…' },
+        false
+      )
+    ).toBe('Loading files changed by this commit…')
+    expect(diffHoverPreviewEmptyMessage({}, false)).toBe('No inline diff captured.')
+  })
+
   it('uses dialog semantics only when the preview contains an action', () => {
     expect(diffHoverPreviewRole(true)).toBe('dialog')
     expect(diffHoverPreviewRole(false)).toBe('tooltip')

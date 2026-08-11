@@ -259,6 +259,15 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('tabindex="0"')
   })
 
+  it('keeps explicit loading and reload states beside the async commit preview path', () => {
+    const source = RunCompleteEpicStack.toString()
+
+    expect(source).toContain('COMMIT_FILES_LOADING_MESSAGE')
+    expect(source).toContain('COMMIT_FILES_UNAVAILABLE_MESSAGE')
+    expect(source).toContain('status: "loading"')
+    expect(source).toContain('status: "unavailable"')
+  })
+
   it('marks closeout file-change rows as ownerless so the stats keep the last column', () => {
     const html = renderToStaticMarkup(
       <CloseoutFileChangesSection
