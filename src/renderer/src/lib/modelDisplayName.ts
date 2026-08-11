@@ -179,6 +179,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
   'ministral-3:3b': 'Ministral 3 (3B Param)',
   'ministral-3:14b': 'Ministral 3 (14B Param)',
+  'muse-glimmer:30b-mlx': 'Muse Glimmer (30B-MLX)',
   'llama3.1:8b': 'Llama 3.1 (8B Param)',
   'deepseek-r1:1.5b': 'DeepSeek R1 (1.5B Param)',
   'deepseek-r1:8b': 'DeepSeek R1 (8B Param)',
@@ -392,6 +393,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('ministral-3:3b-')) {
     return 'Ministral 3 (3B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('muse-glimmer:30b-mlx-')) {
+    return 'Muse Glimmer (30B-MLX)'
   }
   if (provider === 'ollama' && key.startsWith('llama3.1:8b-')) {
     return 'Llama 3.1 (8B Param)'

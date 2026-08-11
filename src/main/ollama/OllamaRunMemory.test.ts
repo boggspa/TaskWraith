@@ -130,6 +130,10 @@ describe('OllamaRunMemory', () => {
     expect(
       resolveOllamaWorkingMemoryLimits('north-mini-code-1.0:q4_K_M').workingMemoryMaxChars
     ).toBeGreaterThan(10_000)
+    expect(
+      resolveOllamaWorkingMemoryLimits('muse-glimmer:30b-mlx').workingMemoryMaxChars
+    ).toBeGreaterThan(resolveOllamaWorkingMemoryLimits('llama3.1:8b').workingMemoryMaxChars)
+    expect(resolveOllamaWorkingMemoryLimits('muse-glimmer:30b-mlx').toolResultMaxChars).toBe(1200)
     for (const modelId of [
       'ministral-3:3b',
       'granite4:3b',

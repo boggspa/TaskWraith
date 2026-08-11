@@ -64,6 +64,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(393_216)
     expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ministral-3:3b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'muse-glimmer:30b-mlx')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'llama3.1:8b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'deepseek-r1:1.5b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'deepseek-r1:8b')).toBe(131_072)

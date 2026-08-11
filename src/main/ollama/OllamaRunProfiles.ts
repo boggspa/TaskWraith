@@ -224,7 +224,8 @@ export function resolveOllamaThinkingLevel(
     family === 'deepseek_r1_1_5b' ||
     family === 'deepseek_r1_8b' ||
     family === 'glm_4_7_flash' ||
-    family === 'north_mini_code_1_0'
+    family === 'north_mini_code_1_0' ||
+    family === 'muse_glimmer_30b'
     ? profile.reasoningLevel || 'medium'
     : undefined
 }

@@ -184,6 +184,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'devstral_small_2_24b':
     case 'glm_4_7_flash':
     case 'north_mini_code_1_0':
+    case 'muse_glimmer_30b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 1200,
         contextShare: 0.045,

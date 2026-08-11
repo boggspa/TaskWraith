@@ -147,6 +147,8 @@ public enum ContextWindows {
         "devstral-small-2:24b": 393_216,
         "ministral-3:3b": 262_144,
         "ministral-3:14b": 262_144,
+        // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
+        "muse-glimmer:30b-mlx": 131_072,
         // Exact GGUF metadata (`*.context_length`) from the Ollama registry /
         // local daemon on 2026-08-02. GLM/North's pages round to 198K/488K.
         "llama3.1:8b": 131_072,

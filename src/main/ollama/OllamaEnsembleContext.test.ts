@@ -32,6 +32,7 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('rnj-1')).toBe(32_768)
     expect(resolveOllamaContextTokenLimit('glm-4.7-flash:q4_K_M')).toBe(202_752)
     expect(resolveOllamaContextTokenLimit('north-mini-code-1.0:q4_K_M')).toBe(500_000)
+    expect(resolveOllamaContextTokenLimit('muse-glimmer:30b-mlx')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('llama3.2:3b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('custom-local', 300_000)).toBe(300_000)
   })
@@ -48,6 +49,7 @@ describe('OllamaEnsembleContext', () => {
       'rnj-1',
       'glm-4.7-flash:q4_K_M',
       'north-mini-code-1.0:q4_K_M',
+      'muse-glimmer:30b-mlx',
       'llama3.2:3b'
     ]) {
       expect(hasKnownOllamaContextTokenLimit(modelId)).toBe(true)

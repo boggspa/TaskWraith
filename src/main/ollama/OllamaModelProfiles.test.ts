@@ -84,6 +84,13 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(ministralEdits).not.toContain('short plan')
   })
 
+  it('adds Muse Glimmer agentic tool and verification guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('muse-glimmer:30b-mlx').join(' ')
+    expect(lines).toContain('Muse Glimmer 30B')
+    expect(lines).toContain('failure-recovery')
+    expect(lines).toContain('explicit verification')
+  })
+
   it('gives the 3.5 4B tag its own lightweight profile, not the unknown fallback', () => {
     const lines = ollamaModelFamilyPromptLines('qwen3.5:4b').join(' ')
     expect(lines).toContain('Qwen 3.5 4B')

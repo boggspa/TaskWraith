@@ -30,6 +30,9 @@ describe('resolveOllamaContextBudget', () => {
     expect(resolveOllamaContextBudget('lfm2.5:8b').maxBlockChars).toBeGreaterThan(
       resolveOllamaContextBudget('unknown-local:latest').maxBlockChars
     )
+    expect(resolveOllamaContextBudget('muse-glimmer:30b-mlx').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars
+    )
   })
 
   it('sizes the three new local tags by their own class, not the unknown floor', () => {

@@ -190,6 +190,7 @@ export function resolveOllamaContextBudget(
     case 'devstral_small_2_24b':
     case 'glm_4_7_flash':
     case 'north_mini_code_1_0':
+    case 'muse_glimmer_30b':
       return largeCodingBudget(trimmedModelId, measured)
     case 'minicpm_v45_8b':
     case 'lfm2_5_thinking_1_2b':

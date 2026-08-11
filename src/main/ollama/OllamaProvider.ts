@@ -820,6 +820,9 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
   }
+  if (key === 'muse-glimmer:30b-mlx' || key.startsWith('muse-glimmer:30b-mlx-')) {
+    return 'Muse Glimmer (30B-MLX)'
+  }
   if (key === 'llama3.1:8b' || key.startsWith('llama3.1:8b-')) {
     return 'Llama 3.1 (8B Param)'
   }

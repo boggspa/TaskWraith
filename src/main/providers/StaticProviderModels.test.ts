@@ -245,6 +245,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'devstral-small-2:24b',
       'ministral-3:3b',
       'ministral-3:14b',
+      'muse-glimmer:30b-mlx',
       'llama3.1:8b',
       'deepseek-r1:1.5b',
       'deepseek-r1:8b',

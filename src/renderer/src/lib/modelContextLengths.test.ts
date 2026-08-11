@@ -195,6 +195,10 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 500_000,
       formatted: '500k'
     })
+    expect(byId.get('muse-glimmer:30b-mlx')).toMatchObject({
+      label: 'Muse Glimmer (30B-MLX)',
+      contextWindow: 131_072
+    })
     expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
   })
 

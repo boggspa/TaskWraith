@@ -40,6 +40,11 @@ struct OllamaDisplayBrandTests {
         #expect(OllamaDisplayBrands.resolve(modelId: "llama3.1:8b")?.providerClass == "meta")
         #expect(OllamaDisplayBrands.resolve(modelId: "llama3.2:3b")?.providerLabel == "Meta")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "muse-glimmer:30b-mlx")?.providerClass == "meta")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "muse-glimmer:30b-mlx")?.modelLabel
+                == "Muse Glimmer (30B-MLX)")
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "deepseek-r1:8b")?.providerClass == "deepseek")
         #expect(OllamaDisplayBrands.resolve(modelId: "rnj-1")?.providerLabel == "Essential AI")
         #expect(
@@ -101,6 +106,9 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "llama3.2:3b")
                 == "meta")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "muse-glimmer:30b-mlx") == "meta")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(

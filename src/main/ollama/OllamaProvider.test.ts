@@ -3260,6 +3260,7 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('north-mini-code-1.0:q4_K_M')).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
+    expect(humanizeOllamaModelId('muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
     expect(humanizeOllamaModelId('llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
     for (const [modelId, label] of [
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],

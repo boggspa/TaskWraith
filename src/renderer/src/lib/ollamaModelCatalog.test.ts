@@ -20,6 +20,16 @@ describe('mergeOllamaModelCatalog', () => {
     )
   })
 
+  it('keeps the curated Muse Glimmer MLX label when live Ollama returns the raw tag', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'muse-glimmer:30b-mlx', label: 'muse-glimmer:30b-mlx' }
+    ])
+
+    expect(models.find((model) => model.id === 'muse-glimmer:30b-mlx')?.label).toBe(
+      'Muse Glimmer (30B-MLX)'
+    )
+  })
+
   it('deduplicates GPT OSS aliases into one OpenAI picker row', () => {
     const models = mergeOllamaModelCatalog([
       { id: 'gpt-oss:latest', label: 'gpt-oss:latest' },

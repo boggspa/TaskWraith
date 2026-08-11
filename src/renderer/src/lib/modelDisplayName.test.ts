@@ -221,6 +221,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')
       expect(humaniseModelId('ollama', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
+      expect(humaniseModelId('ollama', 'muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
       expect(humaniseModelId('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
       expect(humaniseModelId('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
       expect(humaniseModelId('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')

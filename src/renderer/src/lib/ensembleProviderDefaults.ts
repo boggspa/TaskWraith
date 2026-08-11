@@ -293,6 +293,7 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'devstral-small-2:24b', label: 'Devstral Small 2 (24B Param)' },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)' },
+  { id: 'muse-glimmer:30b-mlx', label: 'Muse Glimmer (30B-MLX)' },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)' },
   { id: 'deepseek-r1:1.5b', label: 'DeepSeek R1 (1.5B Param)' },
   { id: 'deepseek-r1:8b', label: 'DeepSeek R1 (8B Param)' },

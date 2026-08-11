@@ -397,6 +397,8 @@ struct ModelContextLengthsTests {
         #expect(row("glm-4.7-flash:q4_K_M")?.contextWindow == 202_752)
         #expect(row("north-mini-code-1.0:q4_K_M")?.contextWindow == 500_000)
         #expect(row("north-mini-code-1.0:q4_K_M")?.formatted == "500k")
+        #expect(row("muse-glimmer:30b-mlx")?.label == "Muse Glimmer (30B-MLX)")
+        #expect(row("muse-glimmer:30b-mlx")?.contextWindow == 131_072)
         #expect(row("llama3.2:3b")?.contextWindow == 131_072)
     }
 

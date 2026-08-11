@@ -243,7 +243,7 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
     }
   } else if (provider === 'ollama') {
     // qwen3.5:9b, qwen3:4b-instruct, gemma4:12b, ornith:35b, gpt-oss, lfm2.5:8b,
-    // devstral-small-2:24b, ministral-3:14b
+    // devstral-small-2:24b, ministral-3:14b, muse-glimmer:30b-mlx
     const parts = id.replace(/[:/]+/g, '-').split('-').filter(Boolean)
     if (parts.length > 0) {
       push(parts.join(' '))
@@ -276,6 +276,11 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
       if (parts[0] === 'ministral') {
         push('ministral')
         push('ministral 3')
+      }
+      // Keep bare `muse` for the first-class Muse provider seat; the complete
+      // model family remains an unambiguous alias for Meta's Ollama model.
+      if (parts[0] === 'muse' && parts[1] === 'glimmer') {
+        push('muse glimmer')
       }
     }
   }

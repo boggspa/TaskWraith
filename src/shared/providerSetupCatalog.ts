@@ -127,6 +127,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)', command: 'ollama run ministral-3:3b' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)', command: 'ollama run ministral-3:14b' },
+  {
+    id: 'muse-glimmer:30b-mlx',
+    label: 'Muse Glimmer (30B-MLX)',
+    command: 'ollama run muse-glimmer:30b-mlx'
+  },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)', command: 'ollama run llama3.1:8b' },
   {
     id: 'deepseek-r1:1.5b',

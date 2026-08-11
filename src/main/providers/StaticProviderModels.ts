@@ -721,6 +721,12 @@ const OLLAMA_STATIC_MODELS = [
     description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
   },
   {
+    id: 'muse-glimmer:30b-mlx',
+    label: 'Muse Glimmer (30B-MLX)',
+    description:
+      'Meta Muse Glimmer 30B-MLX via Ollama · 131k context · vision/tools/thinking · agentic'
+  },
+  {
     id: 'llama3.1:8b',
     label: 'Llama 3.1 (8B Param)',
     description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools'

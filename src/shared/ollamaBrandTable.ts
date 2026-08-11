@@ -82,7 +82,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     id: 'meta',
     providerLabel: 'Meta',
     providerClass: 'meta',
-    needles: ['llama3.1', 'llama 3.1', 'llama3.2', 'llama 3.2'],
+    needles: ['muse-glimmer', 'muse glimmer', 'llama3.1', 'llama 3.1', 'llama3.2', 'llama 3.2'],
     fallbackModelLabel: 'Llama 3.1 (8B Param)'
   },
   {

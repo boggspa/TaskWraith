@@ -34,6 +34,13 @@ public struct OllamaDisplayBrandDefinition: Hashable, Sendable {
 
 public enum OllamaDisplayBrands {
 
+    /// Exact catalogue labels for models that share an upstream brand with a
+    /// differently named family. Brand-wide fallbacks cannot distinguish Muse
+    /// Glimmer from Llama when callers only have the raw Ollama tag.
+    private static let exactModelLabels = [
+        "muse-glimmer:30b-mlx": "Muse Glimmer (30B-MLX)"
+    ]
+
     /// Curated brand table. Order mirrors the desktop picker ordering.
     public static let all: [OllamaDisplayBrandDefinition] = [
         OllamaDisplayBrandDefinition(
@@ -88,7 +95,10 @@ public enum OllamaDisplayBrands {
             id: "meta",
             providerLabel: "Meta",
             providerClass: "meta",
-            needles: ["llama3.1", "llama 3.1", "llama3.2", "llama 3.2"],
+            needles: [
+                "muse-glimmer", "muse glimmer", "llama3.1", "llama 3.1", "llama3.2",
+                "llama 3.2",
+            ],
             fallbackModelLabel: "Llama 3.1 (8B Param)"),
         // The `mistral` hue class + label already exist for the first-class
         // Mistral Vibe seat, so a local Devstral / Ministral tag reuses them
@@ -147,7 +157,8 @@ public enum OllamaDisplayBrands {
         return OllamaDisplayBrand(
             providerLabel: definition.providerLabel,
             providerClass: definition.providerClass,
-            modelLabel: label.isEmpty ? definition.fallbackModelLabel : label)
+            modelLabel: label.isEmpty
+                ? (exactModelLabels[id.lowercased()] ?? definition.fallbackModelLabel) : label)
     }
 
     /// CSS/theme hue class for a provider + model. Returns the runtime

@@ -22,6 +22,10 @@ describe('resolveHealthEntryPresentation', () => {
       displayProviderLabel: 'Meta',
       displayHueClass: 'meta'
     })
+    expect(resolveHealthEntryPresentation('ollama', 'muse-glimmer:30b-mlx', 'Ollama')).toEqual({
+      displayProviderLabel: 'Meta',
+      displayHueClass: 'meta'
+    })
   })
 
   it('freezes every Pi upstream brand label and hue from its wire model', () => {
@@ -81,6 +85,10 @@ describe('matchOllamaBrand', () => {
       providerClass: 'meta'
     })
     expect(matchOllamaBrand('llama3.2:3b')?.providerClass).toBe('meta')
+    expect(matchOllamaBrand('muse-glimmer:30b-mlx')).toMatchObject({
+      providerLabel: 'Meta',
+      providerClass: 'meta'
+    })
     expect(matchOllamaBrand('deepseek-r1:8b')?.providerClass).toBe('deepseek')
     expect(matchOllamaBrand('rnj-1')?.providerLabel).toBe('Essential AI')
     expect(matchOllamaBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')

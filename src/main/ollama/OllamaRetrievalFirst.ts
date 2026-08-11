@@ -29,6 +29,7 @@ const RETRIEVAL_FIRST_FAMILIES = new Set([
   'rnj_1_8b',
   'glm_4_7_flash',
   'north_mini_code_1_0',
+  'muse_glimmer_30b',
   'llama3_2_3b'
 ])
 

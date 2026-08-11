@@ -85,6 +85,11 @@ export function ollamaModelFamilyPromptLines(
           ? 'Report findings and a short plan rather than attempting broad changes.'
           : 'Make small localized edits directly and note what you verified; slice anything multi-file.'
       ]
+    case 'muse_glimmer_30b':
+      return [
+        'Model profile (Muse Glimmer 30B): multimodal agentic model with native tools, thinking support, and failure-recovery training.',
+        'Search before reading unfamiliar files, keep tool schemas precise, and close long tasks with explicit verification.'
+      ]
     case 'llama3_1_8b':
       return [
         'Model profile (Llama 3.1 8B): general tool-capable local model; search before reading and keep tool payloads focused.',
@@ -502,6 +507,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'devstral_small_2_24b' ||
     family === 'ministral_3_3b' ||
     family === 'ministral_3_14b' ||
+    family === 'muse_glimmer_30b' ||
     family === 'deepseek_r1_1_5b'
   if (intent === 'recon') {
     return [

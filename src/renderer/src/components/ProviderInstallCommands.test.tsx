@@ -13,6 +13,7 @@ describe('ProviderInstallCommands', () => {
       'ollama run rnj-1',
       'ollama run glm-4.7-flash:q4_K_M',
       'ollama run north-mini-code-1.0:q4_K_M',
+      'ollama run muse-glimmer:30b-mlx',
       'ollama run llama3.2:3b',
       'ollama run ministral-3:3b',
       'ollama run granite4:3b',

@@ -24,6 +24,7 @@ export type OllamaModelFamily =
   | 'devstral_small_2_24b'
   | 'ministral_3_3b'
   | 'ministral_3_14b'
+  | 'muse_glimmer_30b'
   | 'llama3_1_8b'
   | 'deepseek_r1_1_5b'
   | 'deepseek_r1_8b'
@@ -125,6 +126,14 @@ export function resolveOllamaModelFamily(
   if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) return 'ministral_3_3b'
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) return 'ministral_3_14b'
   if (
+    key === 'muse-glimmer' ||
+    key === 'muse-glimmer:latest' ||
+    key === 'muse-glimmer:30b-mlx' ||
+    key.startsWith('muse-glimmer:30b-mlx-')
+  ) {
+    return 'muse_glimmer_30b'
+  }
+  if (
     key === 'gemma3' ||
     key === 'gemma3:latest' ||
     key === 'gemma3:4b' ||
@@ -201,6 +210,13 @@ export function resolveOllamaModelFamily(
     if (meta.includes('ministral')) return 'ministral_3_14b'
     if (billions != null && billions < 6) return 'ministral_3_3b'
     return billions != null && billions < 20 ? 'ministral_3_14b' : 'devstral_small_2_24b'
+  }
+  if (
+    meta.includes('museglimmer') ||
+    meta.includes('muse glimmer') ||
+    meta.includes('muse_glimmer')
+  ) {
+    return 'muse_glimmer_30b'
   }
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
   // `qwen35` covers all three dense 3.5 sizes (the 35B MoE tags report
@@ -448,6 +464,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it as a local scout or patcher; for release-critical or multi-file work, pair it with a larger local tag or an explicit verification pass.'
       }
+    case 'muse_glimmer_30b':
+      return {
+        guidance: `${modelLabel} is Meta's 30B multimodal agentic model with native tools, thinking support, failure recovery, and a 131K context window.`,
+        delegateHint:
+          'Use its long-horizon profile for scoped implementation, keep tool schemas precise, and finish release-sensitive work with an explicit verification pass.'
+      }
     case 'llama3_1_8b':
       return {
         guidance: `${modelLabel} is a tool-capable general local model with a 131K context window.`,
@@ -547,6 +569,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 3
     case 'ministral_3_14b':
       return 14
+    case 'muse_glimmer_30b':
+      return 30
     case 'deepseek_r1_1_5b':
       return 1.5
     case 'llama3_1_8b':

@@ -62,6 +62,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerClass: 'meta'
     })
     expect(resolveOllamaDisplayBrand('llama3.2:3b')?.providerClass).toBe('meta')
+    expect(resolveOllamaDisplayBrand('muse-glimmer:30b-mlx')).toMatchObject({
+      providerLabel: 'Meta',
+      providerClass: 'meta',
+      modelLabel: 'Muse Glimmer (30B-MLX)'
+    })
     expect(resolveOllamaDisplayBrand('deepseek-r1:8b')?.providerClass).toBe('deepseek')
     expect(resolveOllamaDisplayBrand('rnj-1')?.providerLabel).toBe('Essential AI')
     expect(resolveOllamaDisplayBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
@@ -121,6 +126,7 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'devstral-small-2:24b')).toBe('mistral')
     expect(resolveProviderHueClass('ollama', 'ministral-3:14b')).toBe('mistral')
     expect(resolveProviderHueClass('ollama', 'llama3.2:3b')).toBe('meta')
+    expect(resolveProviderHueClass('ollama', 'muse-glimmer:30b-mlx')).toBe('meta')
     expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
     expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
   })

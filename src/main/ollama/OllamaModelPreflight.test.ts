@@ -33,6 +33,7 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
     expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
     expect(resolveOllamaModelFamily('ministral-3:14b')).toBe('ministral_3_14b')
+    expect(resolveOllamaModelFamily('muse-glimmer:30b-mlx')).toBe('muse_glimmer_30b')
     expect(resolveOllamaModelFamily('llama3.1:8b')).toBe('llama3_1_8b')
     expect(resolveOllamaModelFamily('deepseek-r1:8b')).toBe('deepseek_r1_8b')
     expect(resolveOllamaModelFamily('rnj-1')).toBe('rnj_1_8b')
@@ -83,6 +84,15 @@ describe('resolveOllamaModelFamily', () => {
         show: { model_info: { 'general.basename': 'Llama-3.2' } }
       })
     ).toBe('llama3_2_3b')
+    expect(
+      resolveOllamaModelFamily('custom-glimmer:latest', {
+        id: 'custom-glimmer:latest',
+        label: 'Custom Glimmer',
+        family: 'muse_glimmer',
+        parameterSize: '30B',
+        show: { model_info: { 'general.architecture': 'MuseGlimmerForConditionalGeneration' } }
+      })
+    ).toBe('muse_glimmer_30b')
     expect(
       resolveOllamaModelFamily('custom-legacy-llama:latest', {
         id: 'custom-legacy-llama:latest',
@@ -353,6 +363,26 @@ describe('evaluateOllamaModelPreflight', () => {
     expect(result.family).toBe('nemotron3_33b')
     expect(result.guidance).toContain('multimodal')
     expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
+  })
+
+  it('surfaces Muse Glimmer as a Meta agentic tools/thinking model', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'muse-glimmer:30b-mlx',
+      modelLabel: 'Muse Glimmer (30B-MLX)',
+      modelInfo: {
+        id: 'muse-glimmer:30b-mlx',
+        label: 'Muse Glimmer (30B-MLX)',
+        parameterSize: '30B',
+        quantizationLevel: 'NVFP4',
+        sizeBytes: 21_000_000_000,
+        capabilities: ['completion', 'vision', 'tools', 'thinking']
+      },
+      installedModelIds: ['muse-glimmer:30b-mlx'],
+      totalMemoryBytes: 64 * GB
+    })
+    expect(result.family).toBe('muse_glimmer_30b')
+    expect(result.guidance).toContain("Meta's 30B multimodal agentic model")
+    expect(result.checks.find((check) => check.id === 'tools')?.ok).toBe(true)
   })
 
   it('surfaces LFM 2.5 as a known tool-capable long-context local model', () => {

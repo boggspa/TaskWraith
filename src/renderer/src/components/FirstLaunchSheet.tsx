@@ -405,7 +405,7 @@ export function FirstLaunchSheet({
       id: 'ollama',
       label: 'Ollama',
       description:
-        'Local models running through Ollama. Best for on-device Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
+        'Local models running through Ollama. Best for on-device Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
       variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable

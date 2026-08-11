@@ -166,6 +166,11 @@ describe('buildRemoteFirstLaunchState', () => {
           command: 'ollama run north-mini-code-1.0:q4_K_M'
         }),
         {
+          id: 'muse-glimmer:30b-mlx',
+          label: 'Muse Glimmer (30B-MLX)',
+          command: 'ollama run muse-glimmer:30b-mlx'
+        },
+        {
           id: 'llama3.2:3b',
           label: 'Llama 3.2 (3B Param)',
           command: 'ollama run llama3.2:3b'

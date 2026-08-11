@@ -167,6 +167,13 @@ describe('generateModelAliases', () => {
     expect(aliases).toContain('ornith 35b')
     expect(aliases).toContain('ornith')
   })
+
+  it('ollama: supports Muse Glimmer without stealing the first-class Muse alias', () => {
+    const aliases = generateModelAliases('ollama', 'muse-glimmer:30b-mlx')
+    expect(aliases).toContain('muse glimmer')
+    expect(aliases).toContain('muse glimmer 30b mlx')
+    expect(aliases).not.toContain('muse')
+  })
 })
 
 describe('getParticipantAliases', () => {

@@ -233,6 +233,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'ministral-3:14b' || id.startsWith('ministral-3:14b-')) {
       return 'Ministral 3 (14B Param)'
     }
+    if (id === 'muse-glimmer:30b-mlx' || id.startsWith('muse-glimmer:30b-mlx-')) {
+      return 'Muse Glimmer (30B-MLX)'
+    }
     if (id === 'llama3.1:8b' || id.startsWith('llama3.1:8b-')) {
       return 'Llama 3.1 (8B Param)'
     }

@@ -76,6 +76,9 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaRunProfile('north-mini-code-1.0:q4_K_M', 'provider_parity').contextCapTokens
     ).toBe(500_000)
+    expect(
+      resolveOllamaRunProfile('muse-glimmer:30b-mlx', 'provider_parity').contextCapTokens
+    ).toBe(131_072)
     expect(resolveOllamaRunProfile('llama3.2:3b', 'provider_parity').contextCapTokens).toBe(131_072)
   })
 
@@ -161,7 +164,8 @@ describe('OllamaRunProfiles', () => {
       'lfm2.5-thinking:latest',
       'deepseek-r1:8b',
       'glm-4.7-flash:q4_K_M',
-      'north-mini-code-1.0:q4_K_M'
+      'north-mini-code-1.0:q4_K_M',
+      'muse-glimmer:30b-mlx'
     ]) {
       expect(resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
         'medium'
