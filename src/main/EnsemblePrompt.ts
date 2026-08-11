@@ -481,6 +481,26 @@ function formatAuthorityLines(
   ].filter(Boolean)
 }
 
+function formatBossPostRound1HandoffRule(
+  config: EnsembleConfig,
+  currentParticipantId: string
+): string[] {
+  const authority = normalizeEnsembleAuthority(config)
+  if (
+    authority.bossmanParticipantId !== currentParticipantId &&
+    !authority.captainParticipantIds.includes(currentParticipantId)
+  ) {
+    return []
+  }
+  return [
+    '- POST-ROUND-1 BOSS HANDOFF (applies after the first full pass / continuationHops >=1, or any time pass >0): you MUST end this turn with an explicit handoff. Do not emit a small follow-up that loops back to yourself.',
+    '  - If work remains owned by another seat: call a listed `ensemble_yield(target)` with a specific participant/role/model target (preferred for 1:1), OR call listed `ensemble_fanout` / `ensemble_fanout_all` for explicit parallel assignments.',
+    '  - Use `ensemble_fanout` for recon/review sweeps and for implementation slices that can run in parallel; use `ensemble_yield(target)` for a single-owner slice. Broad `all` is allowed for fan-out — see Parallel policy — but for yield the target must be specific, never `all`.',
+    '  - Narrating `@Worker should do X` without a tool call or a unique routable `@Role/@Model` mention is NOT a handoff and will re-summon you. If the needed tool is not listed, write one unambiguous @Role/@Model mention instead.',
+    '- Commit discipline (WIP marker + slices): claim the workspace write lock before any file edits — TaskWraith creates `.WORK-IN-PROGRESS-taskwraith-runtime-<instance>-<sha256>.md` (see WorkspaceLockMarkerProjection.ts:127 / RuntimeMarkerPattern.ts:8). Do not start writes without that marker. Commit in small path-scoped slices (one logical slice per commit) and keep the marker until the slice lands; the unlock/commit flow removes it. Report lock conflicts rather than retrying around the lock.'
+  ]
+}
+
 function isPlanWorkflowChat(chat: ChatRecord): boolean {
   return chat.workflowMode === 'plan'
 }
@@ -1275,6 +1295,7 @@ export function buildEnsembleParticipantPromptProjection(
       `You are ${participantLabel}. Your provider session from your previous turns on this panel has been resumed; the roster, rules, and your role instructions are unchanged from the full briefing you already received. Address peers exactly as before.`,
       `Round id: ${input.roundId}`,
       ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
+      ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
       ...(input.participant.stageRole
         ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
         : []),
@@ -1372,6 +1393,7 @@ export function buildEnsembleParticipantPromptProjection(
     roster || '- No other enabled participants.',
     ...(disambigNote ? ['', disambigNote] : []),
     ...(roleBoundaryLines.length > 0 ? ['', 'Role boundary contract:', ...roleBoundaryLines] : []),
+    ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
     '',
     'Your role instructions:',
     sanitizeText(
