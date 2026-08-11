@@ -100,6 +100,18 @@ export interface ChannelRuntimeOptions {
     expiresAt: number
     mode: ChannelHandshakeMode
   }) => void
+  /**
+   * Runs after Channel metadata binds an invite to a pending member but before
+   * a handshake can complete. Used to durably activate migration policy.
+   */
+  onAdmissionBound?: (info: {
+    channelId: string
+    inviteId: string
+    memberId: string
+    roomId: string
+    tokenHash: string
+    expiresAt: number
+  }) => void
   /** Fault-injection seam: the record is already fsynced when this runs. */
   afterDurableCommit?: (result: ChannelAppendResult) => void | Promise<void>
   onReplayBatch?: (info: {
@@ -604,6 +616,14 @@ export class ChannelRuntime {
       displayName: input.displayName,
       identityPublicKey: input.memberIdentityPubKeyB64,
       now
+    })
+    this.opts.onAdmissionBound?.({
+      channelId: input.channelId,
+      inviteId: admission.invite.inviteId,
+      memberId: admission.member.memberId,
+      roomId: admission.invite.roomId,
+      tokenHash: admission.invite.tokenHash,
+      expiresAt: admission.invite.expiresAt
     })
     const channel = this.opts.store.getChannel(input.channelId)
     if (!channel) throw new ChannelError('not_member', 'Channel was not found')

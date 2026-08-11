@@ -19,6 +19,7 @@ function admission(
     channelId: 'channel-a',
     purpose: 'pending-collaborator',
     sourceCollaboratorId: 'collaborator-a',
+    recipientLabel: 'Ada Pending',
     memberPresentation: { seatOrder: 3, colorIndex: 5, seatDisabled: true },
     policy: {
       sourceDigest: 'a'.repeat(64),
@@ -73,7 +74,8 @@ describe('PeopleToChannelMigrationHandoffService', () => {
     const retired = admission({
       purpose: 'open-invite',
       sourceCollaboratorId: undefined,
-      openInviteOrdinal: 0,
+      recipientLabel: undefined,
+      openInviteOrdinal: 1,
       inviteId: 'invite-retired',
       roomId: 'room-retired',
       inviteToken: 'private-token-retired'
@@ -83,7 +85,8 @@ describe('PeopleToChannelMigrationHandoffService', () => {
       channelId: 'channel-b',
       purpose: 'open-invite',
       sourceCollaboratorId: undefined,
-      openInviteOrdinal: 0,
+      recipientLabel: undefined,
+      openInviteOrdinal: 1,
       inviteId: 'invite-b',
       roomId: 'room-b',
       inviteToken: 'private-token-b',
@@ -112,7 +115,7 @@ describe('PeopleToChannelMigrationHandoffService', () => {
           channelId: 'channel-a',
           chatId: 'chat-a',
           purpose: 'pending-collaborator',
-          sourceCollaboratorId: 'collaborator-a',
+          recipientLabel: 'Ada Pending',
           status: 'ready',
           invite: { inviteToken: 'private-token-a', relayUrls: ['wss://relay.example'] }
         }
@@ -122,7 +125,7 @@ describe('PeopleToChannelMigrationHandoffService', () => {
     })
     const chatASerialized = JSON.stringify(chatA)
     expect(chatASerialized).not.toMatch(
-      /private_share|private-token-retired|memberPresentation|seatDisabled|sourceDigest|rules|requiresHostApproval|fullHistory/
+      /private_share|private-token-retired|collaborator-a|memberPresentation|seatDisabled|sourceDigest|rules|requiresHostApproval|fullHistory/
     )
 
     const chatB = service.snapshot({ chatId: 'chat-b' })
@@ -130,6 +133,7 @@ describe('PeopleToChannelMigrationHandoffService', () => {
       invitations: [
         {
           channelId: 'channel-b',
+          recipientLabel: 'Open invitation 1',
           status: 'relay_unavailable',
           invite: null
         }

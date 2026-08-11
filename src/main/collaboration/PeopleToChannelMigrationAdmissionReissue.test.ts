@@ -156,6 +156,10 @@ function fixture(
               sourceShareId: 'share_one',
               channelId: channel.channelId,
               pendingCollaboratorIds,
+              pendingCollaboratorLabels: pendingCollaboratorIds.map((sourceCollaboratorId) => ({
+                sourceCollaboratorId,
+                recipientLabel: `Recipient ${sourceCollaboratorId}`
+              })),
               pendingMemberPresentations: pendingCollaboratorIds.includes('collaborator_one')
                 ? [
                     {
@@ -243,6 +247,7 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
           channelId: built.channel.channelId,
           purpose: 'pending-collaborator',
           sourceCollaboratorId: 'collaborator_one',
+          recipientLabel: 'Recipient collaborator_one',
           memberPresentation: { seatOrder: 2, colorIndex: 5, seatDisabled: true },
           createdAt: 2_000,
           expiresAt: 2_000 + DEFAULT_CHANNEL_INVITE_TTL_MS
@@ -275,6 +280,7 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
     expect(serialized).toContain(`"schemaVersion": ${PEOPLE_TO_CHANNEL_ADMISSION_REISSUE_VERSION}`)
     for (const privateValue of [
       'collaborator_one',
+      'Recipient collaborator_one',
       '"policy"',
       '"providerDispatch"',
       built.base.pendingAdmissionReissues[0].policy.sourceDigest,
@@ -513,6 +519,20 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
       })
     )
     expect(existsSync(invalidPresentationBuilt.escrowPath)).toBe(false)
+
+    const invalidLabelBuilt = fixture()
+    const { materializationDigest: _labelDigest, ...labelDraft } = clone(invalidLabelBuilt.base)
+    labelDraft.pendingAdmissionReissues[0].pendingCollaboratorLabels[0].recipientLabel = '  Alex'
+    const invalidLabel = sealBase(labelDraft)
+    const { executionDigest: _labelHistoryDigest, ...labelHistoryDraft } = clone(
+      invalidLabelBuilt.history
+    )
+    labelHistoryDraft.baseMaterializationDigest = invalidLabel.materializationDigest
+    const invalidLabelHistory = sealHistory(labelHistoryDraft)
+    expectRecoveryBlocked(() =>
+      service(invalidLabelBuilt).apply({ base: invalidLabel, history: invalidLabelHistory })
+    )
+    expect(existsSync(invalidLabelBuilt.escrowPath)).toBe(false)
   })
 
   it('rejects a multiply-linked escrow before trusting its credential custody', () => {

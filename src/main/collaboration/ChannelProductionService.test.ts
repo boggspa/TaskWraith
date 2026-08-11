@@ -47,6 +47,8 @@ import {
 } from './ChannelAgentIdentityStore'
 import { ChannelMessageLog } from './ChannelMessageLog'
 import { ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
+import { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
+import type { PeopleToChannelReissuedAdmission } from './PeopleToChannelMigrationAdmissionReissue'
 import { ChannelHumanReviewStore } from './ChannelHumanReviewStore'
 import { ChannelError, ChannelStore, type ChannelErrorCode } from './ChannelStore'
 import {
@@ -163,6 +165,7 @@ function createService(
     now?: () => number
     logger?: (line: string) => void
     onChange?: ChannelProductionServiceOptions['onChange']
+    migratedAdmissionAuthority?: ChannelProductionServiceOptions['migratedAdmissionAuthority']
   } = {}
 ): {
   service: ChannelProductionService
@@ -188,7 +191,10 @@ function createService(
     socketFactory: args.socketFactory ?? sockets.factory,
     ...(args.now ? { now: args.now } : {}),
     ...(args.logger ? { logger: args.logger } : {}),
-    ...(args.onChange ? { onChange: args.onChange } : {})
+    ...(args.onChange ? { onChange: args.onChange } : {}),
+    ...(args.migratedAdmissionAuthority
+      ? { migratedAdmissionAuthority: args.migratedAdmissionAuthority }
+      : {})
   }
   const service = createChannelProductionService(options)
   services.add(service)
@@ -612,6 +618,210 @@ describe('ChannelProductionService', () => {
       expiringClient?.dispose()
       client.dispose()
     }
+  })
+
+  it('activates a migrated invitation policy before its remote admission can confirm', async () => {
+    const relay = new BlindTestRelay()
+    const userDataPath = temporaryUserData()
+    const hostIdentity = generateIdentityKeyPair()
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const created = store.createChannel({
+      chatId: 'chat-migrated-admission',
+      title: 'Migrated admission',
+      owner: {
+        displayName: 'Host',
+        identityPublicKey: exportRawEd25519PublicKey(hostIdentity.publicKey).toString('base64')
+      },
+      now: 1_000
+    })
+    const issued = store.createInvite({ channelId: created.channel.channelId, now: 2_000 })
+    const invitation: PeopleToChannelReissuedAdmission = {
+      sourceShareId: 'legacy_share',
+      channelId: created.channel.channelId,
+      purpose: 'pending-collaborator',
+      sourceCollaboratorId: 'legacy_alex',
+      recipientLabel: 'Alex Legacy',
+      policy: {
+        sourceDigest: 'a'.repeat(64),
+        rules: contributionRulesForPreset('readOnly'),
+        requiresHostApproval: false,
+        fullHistory: false
+      },
+      inviteId: issued.invite.inviteId,
+      roomId: issued.invite.roomId,
+      inviteToken: issued.inviteToken,
+      createdAt: issued.invite.createdAt,
+      expiresAt: issued.invite.expiresAt
+    }
+    const authority = new PeopleToChannelMigrationAdmissionAuthority({
+      migrationPlanId: 'f'.repeat(64),
+      invitations: [invitation]
+    })
+    const fixture = createService({
+      userDataPath,
+      identity: hostIdentity,
+      now: () => 2_100,
+      socketFactory: relay.socketFactory,
+      hostRelayUrl: () => 'ws://relay.test',
+      inviteRelayUrls: () => ['ws://relay.test'],
+      migratedAdmissionAuthority: authority
+    })
+    fixture.service.start()
+    const client = new ChannelMemberClient({
+      socketFactory: relay.socketFactory,
+      identity: generateIdentityKeyPair(),
+      requestTimeoutMs: 2_000
+    })
+
+    try {
+      client.connect('ws://relay.test', issued.invite.roomId)
+      await client.whenConnected(2_000)
+      const begin = await client.beginAdmission({
+        channelId: created.channel.channelId,
+        inviteId: issued.invite.inviteId,
+        inviteToken: issued.inviteToken,
+        displayName: 'Alex now',
+        expectedHostIdentityPubKeyB64: fixture.service.hostIdentityPublicKey()
+      })
+      const pending = fixture.service.readChannel({
+        channelId: created.channel.channelId,
+        resumeAfter: 0
+      }).pendingAdmissions[0]
+      expect(pending.confirmCode).toBe(begin.confirmCode)
+      const policy = new ChannelHumanPolicyStore(paths.humanPolicies).get(
+        created.channel.channelId,
+        pending.memberId
+      )
+      expect(policy).toMatchObject({
+        sourceShareId: 'legacy_share',
+        sourceCollaboratorId: 'legacy_alex',
+        rules: { appendComment: false }
+      })
+      expect(JSON.stringify(policy)).not.toContain('Alex Legacy')
+      await client.confirmAdmission()
+    } finally {
+      client.dispose()
+    }
+  })
+
+  it('repairs a migrated admission that crashed after Channel metadata was durable', () => {
+    const userDataPath = temporaryUserData()
+    const hostIdentity = generateIdentityKeyPair()
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const created = store.createChannel({
+      chatId: 'chat-admission-restart',
+      title: 'Restart admission',
+      owner: {
+        displayName: 'Host',
+        identityPublicKey: exportRawEd25519PublicKey(hostIdentity.publicKey).toString('base64')
+      },
+      now: 1_000
+    })
+    const issued = store.createInvite({ channelId: created.channel.channelId, now: 2_000 })
+    const pending = store.beginMemberAdmission({
+      channelId: created.channel.channelId,
+      inviteId: issued.invite.inviteId,
+      inviteToken: issued.inviteToken,
+      roomId: issued.invite.roomId,
+      displayName: 'Alex',
+      identityPublicKey: 'alex_identity',
+      now: 2_100
+    })
+    const authority = new PeopleToChannelMigrationAdmissionAuthority({
+      migrationPlanId: 'f'.repeat(64),
+      invitations: [
+        {
+          sourceShareId: 'legacy_share',
+          channelId: created.channel.channelId,
+          purpose: 'pending-collaborator',
+          sourceCollaboratorId: 'legacy_alex',
+          recipientLabel: 'Alex Legacy',
+          policy: {
+            sourceDigest: 'a'.repeat(64),
+            rules: contributionRulesForPreset('comments'),
+            requiresHostApproval: true,
+            fullHistory: false
+          },
+          inviteId: issued.invite.inviteId,
+          roomId: issued.invite.roomId,
+          inviteToken: issued.inviteToken,
+          createdAt: issued.invite.createdAt,
+          expiresAt: issued.invite.expiresAt
+        }
+      ]
+    })
+    const fixture = createService({
+      userDataPath,
+      identity: hostIdentity,
+      migratedAdmissionAuthority: authority
+    })
+
+    expect(fixture.service.start()).toMatchObject({
+      state: 'running',
+      recoveryBlockedChannelCount: 0
+    })
+    expect(
+      new ChannelHumanPolicyStore(paths.humanPolicies).get(
+        created.channel.channelId,
+        pending.member.memberId
+      )
+    ).toMatchObject({ sourceCollaboratorId: 'legacy_alex', requiresHostApproval: true })
+  })
+
+  it('recovery-blocks a Channel when its migrated admission authority diverges', () => {
+    const userDataPath = temporaryUserData()
+    const hostIdentity = generateIdentityKeyPair()
+    const paths = channelProductionDataPaths(userDataPath)
+    const store = new ChannelStore(paths.metadata)
+    const created = store.createChannel({
+      chatId: 'chat-admission-blocked',
+      title: 'Blocked admission',
+      owner: {
+        displayName: 'Host',
+        identityPublicKey: exportRawEd25519PublicKey(hostIdentity.publicKey).toString('base64')
+      },
+      now: 1_000
+    })
+    const issued = store.createInvite({ channelId: created.channel.channelId, now: 2_000 })
+    const authority = new PeopleToChannelMigrationAdmissionAuthority({
+      migrationPlanId: 'f'.repeat(64),
+      invitations: [
+        {
+          sourceShareId: 'legacy_share',
+          channelId: created.channel.channelId,
+          purpose: 'pending-collaborator',
+          sourceCollaboratorId: 'legacy_alex',
+          recipientLabel: 'Alex Legacy',
+          policy: {
+            sourceDigest: 'a'.repeat(64),
+            rules: contributionRulesForPreset('comments'),
+            requiresHostApproval: false,
+            fullHistory: false
+          },
+          inviteId: issued.invite.inviteId,
+          roomId: issued.invite.roomId,
+          inviteToken: 'x'.repeat(32),
+          createdAt: issued.invite.createdAt,
+          expiresAt: issued.invite.expiresAt
+        }
+      ]
+    })
+    const fixture = createService({
+      userDataPath,
+      identity: hostIdentity,
+      migratedAdmissionAuthority: authority
+    })
+
+    expect(fixture.service.start()).toMatchObject({
+      state: 'running',
+      recoveryBlockedChannelCount: 1,
+      openRoomCount: 0
+    })
+    expect(fixture.service.listChannels()).toMatchObject([
+      { channelId: created.channel.channelId, availability: 'recovery_blocked' }
+    ])
   })
 
   it('enforces and erases durable migrated-human policy on the real member transport', async () => {

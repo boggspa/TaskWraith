@@ -12,7 +12,7 @@ import {
   type PeopleToChannelMigrationProductionRunResult
 } from './PeopleToChannelMigrationProductionRunner'
 
-export const PEOPLE_TO_CHANNEL_HANDOFF_VERSION = 1
+export const PEOPLE_TO_CHANNEL_HANDOFF_VERSION = 2
 
 export type PeopleToChannelMigrationHandoffInput = Pick<
   PeopleToChannelMigrationProductionRunResult,
@@ -23,8 +23,8 @@ export interface PeopleToChannelMigrationHandoffInvitation {
   channelId: string
   chatId: string
   purpose: PeopleToChannelReissuedAdmission['purpose']
-  sourceCollaboratorId?: string
-  openInviteOrdinal?: number
+  /** Human-readable host label; legacy collaborator ids never cross this boundary. */
+  recipientLabel: string
   expiresAt: number
   status: 'ready' | 'relay_unavailable'
   /** Null deliberately withholds the token until a usable relay projection exists. */
@@ -71,6 +71,15 @@ function nonBlank(value: unknown): value is string {
   return typeof value === 'string' && Boolean(value) && value.trim() === value
 }
 
+function recipientLabel(value: unknown): value is string {
+  if (!nonBlank(value) || value.length > 120) return false
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) return false
+  }
+  return true
+}
+
 function validateRoute(value: PeopleToChannelCutoverRoute): void {
   if (
     !value ||
@@ -95,11 +104,15 @@ function validateInvitation(value: PeopleToChannelReissuedAdmission): void {
     !nonBlank(value.roomId) ||
     !Number.isSafeInteger(value.expiresAt) ||
     value.expiresAt < 0 ||
-    (pending && (!nonBlank(value.sourceCollaboratorId) || value.openInviteOrdinal !== undefined)) ||
+    (pending &&
+      (!nonBlank(value.sourceCollaboratorId) ||
+        !recipientLabel(value.recipientLabel) ||
+        value.openInviteOrdinal !== undefined)) ||
     (open &&
       (value.sourceCollaboratorId !== undefined ||
+        value.recipientLabel !== undefined ||
         !Number.isSafeInteger(value.openInviteOrdinal) ||
-        value.openInviteOrdinal! < 0))
+        value.openInviteOrdinal! < 1))
   ) {
     blocked('People migration handoff invitation is invalid')
   }
@@ -200,12 +213,10 @@ export class PeopleToChannelMigrationHandoffService {
         channelId: source.channelId,
         chatId: route.chatId,
         purpose: source.purpose,
-        ...(source.sourceCollaboratorId
-          ? { sourceCollaboratorId: source.sourceCollaboratorId }
-          : {}),
-        ...(source.openInviteOrdinal === undefined
-          ? {}
-          : { openInviteOrdinal: source.openInviteOrdinal }),
+        recipientLabel:
+          source.purpose === 'pending-collaborator'
+            ? source.recipientLabel!
+            : `Open invitation ${source.openInviteOrdinal!}`,
         expiresAt: source.expiresAt,
         status: relayUnavailable ? 'relay_unavailable' : 'ready',
         invite: relayUnavailable ? null : clone(projected)
@@ -214,8 +225,8 @@ export class PeopleToChannelMigrationHandoffService {
 
     invitations.sort((left, right) =>
       compareText(
-        `${left.chatId}\u0000${left.channelId}\u0000${left.purpose}\u0000${left.sourceCollaboratorId ?? ''}\u0000${left.openInviteOrdinal ?? -1}`,
-        `${right.chatId}\u0000${right.channelId}\u0000${right.purpose}\u0000${right.sourceCollaboratorId ?? ''}\u0000${right.openInviteOrdinal ?? -1}`
+        `${left.chatId}\u0000${left.channelId}\u0000${left.purpose}\u0000${left.recipientLabel}`,
+        `${right.chatId}\u0000${right.channelId}\u0000${right.purpose}\u0000${right.recipientLabel}`
       )
     )
     return {

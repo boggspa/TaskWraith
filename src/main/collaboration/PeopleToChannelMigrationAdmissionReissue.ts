@@ -41,7 +41,7 @@ import {
   type PeopleToChannelPendingAdmissionReissue
 } from './PeopleToChannelMigrationMaterializer'
 
-export const PEOPLE_TO_CHANNEL_ADMISSION_REISSUE_VERSION = 1
+export const PEOPLE_TO_CHANNEL_ADMISSION_REISSUE_VERSION = 2
 export const MAX_PEOPLE_TO_CHANNEL_REISSUES = 512
 export const MAX_PEOPLE_TO_CHANNEL_REISSUE_ESCROW_BYTES = 4 * 1024 * 1024
 
@@ -52,6 +52,8 @@ export interface PeopleToChannelReissuedAdmission {
   channelId: string
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
+  /** Host-only recipient label, protected by the encrypted admission escrow. */
+  recipientLabel?: string
   openInviteOrdinal?: number
   memberPresentation?: ChannelMemberPresentation
   policy: PeopleToChannelPendingAdmissionPolicy
@@ -92,6 +94,7 @@ interface ReissueTask {
   channelId: string
   purpose: PeopleToChannelReissuedAdmissionPurpose
   sourceCollaboratorId?: string
+  recipientLabel?: string
   openInviteOrdinal?: number
   memberPresentation?: ChannelMemberPresentation
   policy: PeopleToChannelPendingAdmissionPolicy
@@ -140,6 +143,7 @@ const PENDING_INVITATION_KEYS = new Set([
   'channelId',
   'purpose',
   'sourceCollaboratorId',
+  'recipientLabel',
   'policy',
   'inviteId',
   'roomId',
@@ -148,6 +152,7 @@ const PENDING_INVITATION_KEYS = new Set([
   'expiresAt'
 ])
 const PENDING_PRESENTATION_KEYS = new Set(['sourceCollaboratorId', 'presentation'])
+const PENDING_LABEL_KEYS = new Set(['sourceCollaboratorId', 'recipientLabel'])
 const OPEN_INVITATION_KEYS = new Set([
   'sourceShareId',
   'channelId',
@@ -176,6 +181,17 @@ function blocked(message: string): never {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function safeRecipientLabel(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.trim() !== value || value.length > 120) {
+    return false
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code === 0x7f) return false
+  }
+  return true
 }
 
 function compareText(left: string, right: string): number {
@@ -295,6 +311,10 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     sourceShareId: string
     channelId: string
     pendingCollaboratorIds: string[]
+    pendingCollaboratorLabels: Array<{
+      sourceCollaboratorId: string
+      recipientLabel: string
+    }>
     pendingMemberPresentations: Array<{
       sourceCollaboratorId: string
       presentation: ChannelMemberPresentation
@@ -305,6 +325,7 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
   for (const candidate of reissues as readonly unknown[]) {
     const reissue = objectRecord(candidate)
     const collaborators = reissue?.pendingCollaboratorIds
+    const labels = reissue?.pendingCollaboratorLabels
     const presentations = reissue?.pendingMemberPresentations
     const policy = strictPendingPolicy(reissue?.policy)
     if (
@@ -314,6 +335,8 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
       !Array.isArray(collaborators) ||
       collaborators.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       collaborators.some((collaboratorId) => !safeIdentifier(collaboratorId)) ||
+      !Array.isArray(labels) ||
+      labels.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       !Array.isArray(presentations) ||
       presentations.length > MAX_PEOPLE_TO_CHANNEL_REISSUES ||
       !safeCount(reissue.openInviteCount) ||
@@ -322,6 +345,21 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     ) {
       blocked('People migration admission manifest is invalid')
     }
+    const pendingCollaboratorLabels = labels.map((candidate) => {
+      const entry = objectRecord(candidate)
+      if (
+        !entry ||
+        !exactKeys(entry, PENDING_LABEL_KEYS) ||
+        !safeIdentifier(entry.sourceCollaboratorId) ||
+        !safeRecipientLabel(entry.recipientLabel)
+      ) {
+        blocked('People migration pending recipient label is invalid')
+      }
+      return {
+        sourceCollaboratorId: entry.sourceCollaboratorId,
+        recipientLabel: entry.recipientLabel
+      }
+    })
     const pendingMemberPresentations = presentations.map((candidate) => {
       const entry = objectRecord(candidate)
       if (
@@ -341,6 +379,7 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
       sourceShareId: reissue.sourceShareId,
       channelId: reissue.channelId,
       pendingCollaboratorIds: collaborators as string[],
+      pendingCollaboratorLabels,
       pendingMemberPresentations,
       openInviteCount: reissue.openInviteCount,
       policy
@@ -358,6 +397,9 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     shareIds.add(reissue.sourceShareId)
     channelIds.add(reissue.channelId)
     const collaborators = [...new Set(reissue.pendingCollaboratorIds)].sort(compareText)
+    const labelByCollaborator = new Map(
+      reissue.pendingCollaboratorLabels.map((entry) => [entry.sourceCollaboratorId, entry] as const)
+    )
     const presentationByCollaborator = new Map(
       reissue.pendingMemberPresentations.map(
         (entry) => [entry.sourceCollaboratorId, entry] as const
@@ -365,6 +407,10 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
     )
     if (
       collaborators.length !== reissue.pendingCollaboratorIds.length ||
+      labelByCollaborator.size !== reissue.pendingCollaboratorLabels.length ||
+      reissue.pendingCollaboratorLabels.some(
+        (entry) => !collaborators.includes(entry.sourceCollaboratorId)
+      ) ||
       presentationByCollaborator.size !== reissue.pendingMemberPresentations.length ||
       reissue.pendingMemberPresentations.some(
         (entry) => !collaborators.includes(entry.sourceCollaboratorId)
@@ -385,6 +431,7 @@ function reissueTasks(reissues: readonly PeopleToChannelPendingAdmissionReissue[
         channelId: reissue.channelId,
         purpose: 'pending-collaborator',
         sourceCollaboratorId,
+        recipientLabel: labelByCollaborator.get(sourceCollaboratorId)!.recipientLabel,
         ...(presentationByCollaborator.get(sourceCollaboratorId)
           ? {
               memberPresentation: copyChannelMemberPresentation(
@@ -556,6 +603,7 @@ function invitationMatchesTask(
     invitation.channelId !== task.channelId ||
     invitation.purpose !== task.purpose ||
     invitation.sourceCollaboratorId !== task.sourceCollaboratorId ||
+    invitation.recipientLabel !== task.recipientLabel ||
     invitation.openInviteOrdinal !== task.openInviteOrdinal ||
     canonicalJson(invitation.memberPresentation) !== canonicalJson(task.memberPresentation) ||
     canonicalJson(invitation.policy) !== canonicalJson(task.policy) ||

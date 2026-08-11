@@ -41,6 +41,7 @@ import {
   ChannelHumanPolicyStore,
   channelHumanPolicyPath
 } from './ChannelHumanPolicyStore'
+import { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
 import {
   ChannelHumanReviewError,
   ChannelHumanReviewStore,
@@ -103,6 +104,8 @@ export interface ChannelProductionServiceOptions {
   logger?: (line: string) => void
   now?: () => number
   onAdmissionBegan?: ChannelRuntimeOptions['onAdmissionBegan']
+  /** Main-only migration authority; ordinary Channel admissions remain unchanged when absent. */
+  migratedAdmissionAuthority?: PeopleToChannelMigrationAdmissionAuthority
   onChange?: (event: ChannelProductionChangeEvent) => void
   agentExecution?: ChannelProductionAgentExecutionOptions
 }
@@ -363,6 +366,15 @@ function validateOptions(options: ChannelProductionServiceOptions): void {
   if (options.onAdmissionBegan !== undefined && typeof options.onAdmissionBegan !== 'function') {
     throw new Error('ChannelProductionService onAdmissionBegan must be a function')
   }
+  if (
+    options.migratedAdmissionAuthority !== undefined &&
+    (!options.migratedAdmissionAuthority ||
+      typeof options.migratedAdmissionAuthority.reconcile !== 'function' ||
+      typeof options.migratedAdmissionAuthority.bind !== 'function' ||
+      typeof options.migratedAdmissionAuthority.affectedChannelIds !== 'function')
+  ) {
+    throw new Error('ChannelProductionService migrated admission authority is invalid')
+  }
   if (options.onChange !== undefined && typeof options.onChange !== 'function') {
     throw new Error('ChannelProductionService onChange must be a function')
   }
@@ -561,8 +573,26 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       now: this.now
     })
     const recoveryBlockedChannelIds = new Set<string>()
+    if (humanPoliciesHealthy && this.options.migratedAdmissionAuthority) {
+      try {
+        this.options.migratedAdmissionAuthority.reconcile({ store, policies: humanPolicies })
+      } catch (error) {
+        for (const channelId of this.options.migratedAdmissionAuthority.affectedChannelIds()) {
+          recoveryBlockedChannelIds.add(channelId)
+        }
+        this.options.logger?.(
+          `[channels] migrated admission policy recovery is blocked: ${
+            error instanceof Error ? error.message.slice(0, 160) : 'unknown error'
+          }`
+        )
+      }
+    }
     for (const channel of store.listChannels()) {
-      if (!humanPoliciesHealthy || !humanReviewsHealthy) {
+      if (
+        recoveryBlockedChannelIds.has(channel.channelId) ||
+        !humanPoliciesHealthy ||
+        !humanReviewsHealthy
+      ) {
         recoveryBlockedChannelIds.add(channel.channelId)
         continue
       }
@@ -596,6 +626,12 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       now: this.now,
       ...(this.options.logger ? { logger: this.options.logger } : {}),
       onAdmissionBegan: (info) => this.recordPendingAdmission(info, store),
+      onAdmissionBound: (info) =>
+        this.options.migratedAdmissionAuthority?.bind({
+          ...info,
+          store,
+          policies: humanPolicies
+        }),
       afterDurableCommit: (result) => {
         if (agentProduction) {
           this.scheduleAcceptedAgentAppend(agentProduction, result)

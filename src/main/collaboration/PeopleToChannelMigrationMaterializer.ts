@@ -18,7 +18,7 @@ import {
 
 export { channelStoreSubsetDigest as peopleToChannelChannelSubsetDigest } from './ChannelStoreSubsetDigest'
 
-export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 3
+export const PEOPLE_TO_CHANNEL_MATERIALIZATION_VERSION = 4
 
 export interface PeopleToChannelChannelMutation {
   mode: 'create' | 'merge'
@@ -39,6 +39,11 @@ export interface PeopleToChannelPendingAdmissionReissue {
   sourceShareId: string
   channelId: string
   pendingCollaboratorIds: string[]
+  /** Encrypted with the migration checkpoint/escrow; never a public collaborator id. */
+  pendingCollaboratorLabels: Array<{
+    sourceCollaboratorId: string
+    recipientLabel: string
+  }>
   pendingMemberPresentations: Array<{
     sourceCollaboratorId: string
     presentation: ChannelMemberPresentation
@@ -304,6 +309,8 @@ export function materializePeopleToChannels(input: {
     }
 
     const pendingCollaboratorIds: string[] = []
+    const pendingCollaboratorLabels: PeopleToChannelPendingAdmissionReissue['pendingCollaboratorLabels'] =
+      []
     const pendingMemberPresentations: PeopleToChannelPendingAdmissionReissue['pendingMemberPresentations'] =
       []
     let addedMembers = 0
@@ -325,6 +332,10 @@ export function materializePeopleToChannels(input: {
       if (participant.status === 'pending') {
         if (!mapping.reusedExistingMember) {
           pendingCollaboratorIds.push(participant.collaboratorId)
+          pendingCollaboratorLabels.push({
+            sourceCollaboratorId: participant.collaboratorId,
+            recipientLabel: boundedDisplayName(participant.displayName)
+          })
           const presentation = presentationFromSource(participant)
           if (presentation) {
             pendingMemberPresentations.push({
@@ -394,6 +405,7 @@ export function materializePeopleToChannels(input: {
         sourceShareId: share.shareId,
         channelId: target.channelId,
         pendingCollaboratorIds,
+        pendingCollaboratorLabels,
         pendingMemberPresentations,
         openInviteCount,
         policy: {

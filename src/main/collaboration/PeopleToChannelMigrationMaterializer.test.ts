@@ -203,6 +203,9 @@ describe('PeopleToChannelMigrationMaterializer', () => {
           sourceShareId: 'share_one',
           channelId: 'share_one',
           pendingCollaboratorIds: ['pending_person'],
+          pendingCollaboratorLabels: [
+            { sourceCollaboratorId: 'pending_person', recipientLabel: 'Pending Person' }
+          ],
           pendingMemberPresentations: [
             {
               sourceCollaboratorId: 'pending_person',
