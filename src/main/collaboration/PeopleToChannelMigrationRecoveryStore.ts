@@ -87,6 +87,8 @@ export interface PeopleToChannelMigrationRecoveryRecord {
   channelStateDigest?: string
   cutoverStateDigest?: string
   commitStartedAt?: number
+  /** Hash of the planned delta/retirement execution, durable before it runs. */
+  finalizationDigest?: string
   receiptSha256?: string
 }
 
@@ -101,6 +103,7 @@ export interface PeopleToChannelMigrationReceipt {
   channelStateDigest: string
   cutoverStateDigest: string
   committedAt: number
+  finalizationDigest?: string
 }
 
 export interface PeopleToChannelMigrationRecoveryPaths {
@@ -149,6 +152,7 @@ const RECORD_KEYS = new Set([
   'channelStateDigest',
   'cutoverStateDigest',
   'commitStartedAt',
+  'finalizationDigest',
   'receiptSha256'
 ])
 const SOURCE_KEYS = new Set(['exists', 'bytes', 'fileSha256', 'backupFile'])
@@ -167,7 +171,8 @@ const RECEIPT_KEYS = new Set([
   'decisions',
   'channelStateDigest',
   'cutoverStateDigest',
-  'committedAt'
+  'committedAt',
+  'finalizationDigest'
 ])
 
 function blocked(message: string): never {
@@ -307,11 +312,14 @@ function parseRecord(value: unknown): PeopleToChannelMigrationRecoveryRecord | n
   const channelStateDigest = raw.channelStateDigest
   const cutoverStateDigest = raw.cutoverStateDigest
   const commitStartedAt = raw.commitStartedAt
+  const finalizationDigest = raw.finalizationDigest
   const receiptSha256 = raw.receiptSha256
   if (rank >= 1 !== validDigest(channelStateDigest)) return null
   if (rank >= 2 !== validDigest(cutoverStateDigest)) return null
   if (rank >= 3 !== validTimestamp(commitStartedAt)) return null
   if (validTimestamp(commitStartedAt) && commitStartedAt < raw.updatedAt && rank === 3) return null
+  if (rank < 3 && finalizationDigest !== undefined) return null
+  if (finalizationDigest !== undefined && !validDigest(finalizationDigest)) return null
   if (rank >= 4 !== validDigest(receiptSha256)) return null
   return clone(raw) as unknown as PeopleToChannelMigrationRecoveryRecord
 }
@@ -322,7 +330,6 @@ function parseReceipt(value: unknown): PeopleToChannelMigrationReceipt | null {
   if (
     !raw ||
     !exactKeys(raw, RECEIPT_KEYS) ||
-    Object.keys(raw).length !== RECEIPT_KEYS.size ||
     raw.schemaVersion !== PEOPLE_TO_CHANNEL_MIGRATION_RECOVERY_VERSION ||
     raw.status !== 'committed' ||
     !validDigest(raw.planId) ||
@@ -332,7 +339,8 @@ function parseReceipt(value: unknown): PeopleToChannelMigrationReceipt | null {
     !decisions ||
     !validDigest(raw.channelStateDigest) ||
     !validDigest(raw.cutoverStateDigest) ||
-    !validTimestamp(raw.committedAt)
+    !validTimestamp(raw.committedAt) ||
+    (raw.finalizationDigest !== undefined && !validDigest(raw.finalizationDigest))
   ) {
     return null
   }
@@ -502,7 +510,8 @@ function receiptFor(
     decisions: clone(record.decisions),
     channelStateDigest: record.channelStateDigest,
     cutoverStateDigest: record.cutoverStateDigest,
-    committedAt: record.commitStartedAt
+    committedAt: record.commitStartedAt,
+    ...(record.finalizationDigest ? { finalizationDigest: record.finalizationDigest } : {})
   }
 }
 
@@ -660,19 +669,52 @@ export class PeopleToChannelMigrationRecoveryStore {
     return clone(next)
   }
 
-  finalize(input: { planId: string; now?: number }): PeopleToChannelMigrationRecoveryRecord {
+  /**
+   * Durably fences the terminal delta/retirement plan before any legacy People
+   * write occurs. A restart can only continue with the exact same digest.
+   */
+  beginFinalization(input: {
+    planId: string
+    finalizationDigest?: string
+    now?: number
+  }): PeopleToChannelMigrationRecoveryRecord {
     let record = this.requireRecord(input.planId)
-    if (record.phase === 'committed') return record
+    if (input.finalizationDigest !== undefined && !validDigest(input.finalizationDigest)) {
+      blocked('Migration finalization digest is invalid')
+    }
+    if (record.phase === 'committed') {
+      if (record.finalizationDigest !== input.finalizationDigest) {
+        blocked('Migration finalization evidence conflicts with the durable intent')
+      }
+      return record
+    }
     if (record.phase === 'cutover_applied') {
       const at = safeNow(input.now ?? this.now(), record.updatedAt)
       record = {
         ...record,
         phase: 'finalizing',
         commitStartedAt: at,
+        ...(input.finalizationDigest ? { finalizationDigest: input.finalizationDigest } : {}),
         updatedAt: at
       }
       this.writeIntent(record, 'intent:finalizing')
     } else if (record.phase !== 'finalizing') {
+      blocked('Migration finalization phase is out of order')
+    } else if (record.finalizationDigest !== input.finalizationDigest) {
+      blocked('Migration finalization evidence conflicts with the durable intent')
+    }
+
+    return clone(record)
+  }
+
+  /** Commits the immutable recovery receipt only after finalization side effects are durable. */
+  completeFinalization(input: {
+    planId: string
+    now?: number
+  }): PeopleToChannelMigrationRecoveryRecord {
+    const record = this.requireRecord(input.planId)
+    if (record.phase === 'committed') return record
+    if (record.phase !== 'finalizing') {
       blocked('Migration finalization phase is out of order')
     }
 
@@ -689,6 +731,12 @@ export class PeopleToChannelMigrationRecoveryStore {
     }
     this.writeIntent(next, 'intent:committed')
     return clone(next)
+  }
+
+  /** Legacy shorthand retained for recovery callers that have no terminal evidence. */
+  finalize(input: { planId: string; now?: number }): PeopleToChannelMigrationRecoveryRecord {
+    this.beginFinalization(input)
+    return this.completeFinalization(input)
   }
 
   private requireRecord(planId: string): PeopleToChannelMigrationRecoveryRecord {

@@ -18,6 +18,7 @@ const HOST_KEY = Buffer.alloc(32, 7).toString('base64')
 const MEMBER_KEY = Buffer.alloc(32, 8).toString('base64')
 const CHANNEL_DIGEST = 'a'.repeat(64)
 const CUTOVER_DIGEST = 'b'.repeat(64)
+const FINALIZATION_DIGEST = 'c'.repeat(64)
 const DECISIONS = RECORDED_PEOPLE_TO_CHANNEL_CUTOVER_DECISIONS
 
 function donor(): Record<string, unknown> {
@@ -288,6 +289,51 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
       crashAt = null
       expect(crashingStore().finalize({ planId: plan.planId }).phase).toBe('committed')
       expect(crashingStore().load()?.phase).toBe('committed')
+    })
+  })
+
+  it('fences a planned terminal delta before retirement and commits only matching evidence', () => {
+    withFixture(({ userDataPath, source, plan }) => {
+      const store = new PeopleToChannelMigrationRecoveryStore({ userDataPath, now: () => 1_000 })
+      store.prepare({ plan, source, decisions: DECISIONS })
+      store.markChannelsApplied({ planId: plan.planId, channelStateDigest: CHANNEL_DIGEST })
+      store.markCutoverApplied({ planId: plan.planId, cutoverStateDigest: CUTOVER_DIGEST })
+
+      const begun = store.beginFinalization({
+        planId: plan.planId,
+        finalizationDigest: FINALIZATION_DIGEST
+      })
+      expect(begun).toMatchObject({
+        phase: 'finalizing',
+        finalizationDigest: FINALIZATION_DIGEST
+      })
+      expect(store.load()).toEqual(begun)
+      expect(
+        store.beginFinalization({
+          planId: plan.planId,
+          finalizationDigest: FINALIZATION_DIGEST
+        })
+      ).toEqual(begun)
+      expect(() =>
+        store.beginFinalization({ planId: plan.planId, finalizationDigest: 'd'.repeat(64) })
+      ).toThrow(/finalization evidence conflicts/)
+
+      const committed = store.completeFinalization({ planId: plan.planId })
+      expect(committed).toMatchObject({
+        phase: 'committed',
+        finalizationDigest: FINALIZATION_DIGEST
+      })
+      const receipt = readFileSync(join(store.paths.receipts, `${plan.planId}.json`), 'utf8')
+      expect(receipt).toContain(`"finalizationDigest": "${FINALIZATION_DIGEST}"`)
+      expect(
+        store.beginFinalization({
+          planId: plan.planId,
+          finalizationDigest: FINALIZATION_DIGEST
+        })
+      ).toEqual(committed)
+      expect(() => store.beginFinalization({ planId: plan.planId })).toThrow(
+        /finalization evidence conflicts/
+      )
     })
   })
 
