@@ -246,6 +246,7 @@ export function normalizeAgentRunPayload(
     usagePromptText:
       typeof payload.usagePromptText === 'string' ? payload.usagePromptText : undefined,
     resumeFallbackPrompt: optionalString(payload.resumeFallbackPrompt),
+    instructionsDigest: optionalString(payload.instructionsDigest),
     activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
     appRunId,
     appChatId,

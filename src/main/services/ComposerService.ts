@@ -883,6 +883,7 @@ export class ComposerService {
       ...(resumeFallbackPrompt && resumeFallbackPrompt !== composed.contextualPrompt
         ? { resumeFallbackPrompt }
         : {}),
+      instructionsDigest: instructionContext?.digest || 'none',
       activeGoal,
       appRunId,
       appChatId: chatId,

@@ -529,6 +529,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'hooks:set-enabled',
   'hooks:reveal-root',
 
+  // Custom Instructions Settings (global document + per-run layer status).
+  'instructions:get-global',
+  'instructions:set-global',
+  'instructions:resolve-status',
+
   // Provider credentials, login processes, and host-wide provider bridges.
   'store-claude-api-key',
   'clear-claude-api-key',

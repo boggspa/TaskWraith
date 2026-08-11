@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
+import { emitWirePromptCapture } from '../run/WirePromptEvents'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import {
   normalizePortableEnsembleControlArguments,
@@ -3320,6 +3321,32 @@ export async function runOllamaProvider(
     const memoryKey = launchPlan.memoryKey ?? undefined
     let sessionMemory = JSON.parse(JSON.stringify(launchPlan.sessionMemory)) as OllamaSessionMemory
     const messages = JSON.parse(JSON.stringify(launchPlan.openingMessages)) as OllamaChatMessage[]
+    // Turn-0 wire capture: the host-constructed system/user/kickoff messages
+    // as the first /api/chat request will carry them. Later requests in the
+    // tool loop append tool results to this same array; the turn-0 shape is
+    // the host-authored part worth evidencing. The second user message, when
+    // present, is the harness kickoff (see buildOllamaOpeningMessages).
+    {
+      let userMessagesSeen = 0
+      for (const message of messages) {
+        const isKickoff = message.role === 'user' && userMessagesSeen > 0
+        if (message.role === 'user') userMessagesSeen += 1
+        emitWirePromptCapture({
+          appRunId: route.appRunId,
+          appChatId: chatId,
+          provider: 'ollama',
+          transport: 'ollama-api',
+          part: isKickoff ? 'kickoff' : message.role,
+          text: message.content,
+          transforms:
+            message.role === 'system'
+              ? ['local tool system prompt + capability gateway + workspace index block']
+              : isKickoff
+                ? ['harness kickoff construction']
+                : []
+        })
+      }
+    }
     // Cache the daemon's own context length for this model, keyed on the plain
     // model id (not the preflight key, which folds in a digest). Recorded on every
     // run rather than only inside the preflight gate below, because that gate is

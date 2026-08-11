@@ -98,6 +98,14 @@ export interface AgentRunPayload {
    * `prompt`; never selected by providers that do not implement this contract.
    */
   resumeFallbackPrompt?: string
+  /**
+   * Digest of the user-instruction layers this run's prompt was composed with
+   * (ResolvedInstructionContext.digest; 'none' when nothing applied). Advisory
+   * cache/seat evidence only — it joins the seat 'system' fingerprint so an
+   * instructions edit is honest prefix drift; it grants nothing and is not
+   * signed. Absent ≡ 'none' everywhere it is consumed.
+   */
+  instructionsDigest?: string
   activeGoal?: ActiveGoal | null
   appRunId?: string
   appChatId?: string

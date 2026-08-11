@@ -1911,6 +1911,12 @@ const api = {
   setHookEnabled: (request: unknown) => ipcRenderer.invoke('hooks:set-enabled', request),
   revealHooksRoot: (payload: { scope: 'user' | 'workspace'; workspacePath?: string }) =>
     ipcRenderer.invoke('hooks:reveal-root', payload),
+  // Custom Instructions Settings — global document + per-run layer status.
+  getGlobalInstructions: () => ipcRenderer.invoke('instructions:get-global'),
+  setGlobalInstructions: (payload: { content: string }) =>
+    ipcRenderer.invoke('instructions:set-global', payload),
+  resolveInstructionStatus: (payload: { workspacePath?: string }) =>
+    ipcRenderer.invoke('instructions:resolve-status', payload),
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   addOrUpdateWorkspace: (path: string, partial: any = {}) =>
     ipcRenderer.invoke('add-or-update-workspace', path, partial),

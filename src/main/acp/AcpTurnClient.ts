@@ -113,6 +113,15 @@ export interface AcpTurnOptions {
   /** Fail the turn instead of falling back to session/new after resume rejects. */
   allowResumeFallback?: boolean
   /**
+   * Wire-prompt observation hook: called with the EXACT text of every
+   * `session/prompt` this turn writes — the initial prompt, the
+   * resume-fallback recovery prompt when a resume rejects (selected INSIDE
+   * this client, invisible to the call site), and mid-turn steer injections.
+   * Evidence only: never awaited, and a throwing hook must not affect the
+   * turn (calls are wrapped).
+   */
+  onWirePrompt?: (text: string) => void
+  /**
    * Provider-supported ACP config selections to re-assert after a successful
    * session/resume and before the prompt. Kimi persists model/thinking in its
    * native session, so process-level defaults alone cannot change them on a
@@ -616,6 +625,13 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     if (nextPromptRpcId === ACP_ID.sessionResume) nextPromptRpcId += 1
     activePromptRpcId = promptRpcId
     inFlightPromptText = text
+    if (options.onWirePrompt) {
+      try {
+        options.onWirePrompt(text)
+      } catch {
+        // Evidence only — a capture failure must never affect the turn.
+      }
+    }
     writeRpc(promptRpcId, 'session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text }]

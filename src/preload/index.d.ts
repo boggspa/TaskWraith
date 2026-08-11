@@ -1945,6 +1945,19 @@ declare global {
         scope: 'user' | 'workspace'
         workspacePath?: string
       }) => Promise<{ ok: boolean; error?: string; path?: string }>
+      getGlobalInstructions: () => Promise<{
+        content: string
+        updatedAt: string | null
+        sizeBytes: number
+      }>
+      setGlobalInstructions: (payload: { content: string }) => Promise<{
+        content: string
+        updatedAt: string | null
+        sizeBytes: number
+      }>
+      resolveInstructionStatus: (payload: {
+        workspacePath?: string
+      }) => Promise<import('../shared/instructions/InstructionTypes').ResolvedInstructionContext>
       getWorkspaces: () => Promise<WorkspaceRecord[]>
       addOrUpdateWorkspace: (
         path: string,

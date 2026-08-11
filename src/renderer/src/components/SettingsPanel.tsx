@@ -95,6 +95,7 @@ import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
 import { SkillsSettingsPanelHost } from './SkillsSettingsPanel'
+import { InstructionsSettingsPanelHost } from './InstructionsSettingsPanel'
 import { HooksSettingsPanelHost } from './HooksSettingsPanel'
 // BridgeNetworkingPanel + ApnsConfigPanel were previously rendered
 // under the "Bridge Networking" tab. They now live inside `PairingPage`
@@ -2717,6 +2718,7 @@ export type SettingsTab =
   | 'mcp-servers'
   | 'runtime-profiles'
   | 'plugins'
+  | 'instructions'
   | 'skills'
   | 'hooks'
   | 'key-commands'
@@ -2986,6 +2988,23 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'capability bundles'
     ],
     scope: 'global'
+  },
+  {
+    id: 'instructions',
+    label: 'Custom Instructions',
+    group: 'integrations',
+    description:
+      'Standing prompt preferences: the global instructions document and the workspace TASKWRAITH.md layer.',
+    aliases: [
+      'custom instructions',
+      'instructions',
+      'taskwraith.md',
+      'system prompt',
+      'prompt layers',
+      'global instructions',
+      'workspace instructions'
+    ],
+    scope: 'workspace'
   },
   {
     id: 'skills',
@@ -11443,6 +11462,14 @@ export function SettingsPanel({
           <ThreadIntrospectionSettingsPanel
             workspaceId={currentWorkspace?.id ?? null}
             workspacePath={currentWorkspace?.path ?? null}
+          />
+        )}
+
+        {activeTab === 'instructions' && (
+          <InstructionsSettingsPanelHost
+            workspaceId={currentWorkspace?.id ?? null}
+            workspacePath={currentWorkspace?.path ?? null}
+            workspaceLabel={currentWorkspace?.displayName ?? currentWorkspace?.path ?? null}
           />
         )}
 

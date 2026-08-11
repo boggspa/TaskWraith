@@ -1404,6 +1404,10 @@ import {
   getInstructionsSubsystem
 } from './instructions/registerInstructionsSubsystem'
 import {
+  configureWirePromptCapture,
+  emitWirePromptCapture
+} from './run/WirePromptEvents'
+import {
   resolveRunSkillHookContext,
   setRunSkillHookHostDepsBuilder
 } from './skillsHooks/resolveRunSkillHookContext'
@@ -16779,7 +16783,12 @@ function providerSeatGenerationInputForPayload(args: {
     runtimeProfileId,
     runtimeProfileUpdatedAt: payload.runtimeProfile?.updatedAt || null,
     ollamaRunProfile: payload.ollamaRunProfile || null,
-    nativeSubAgentRequests: settings.nativeSubAgentRequests || null
+    nativeSubAgentRequests: settings.nativeSubAgentRequests || null,
+    // Bootstrap semantics match every other field here: reconstruct from the
+    // previous run's durable record when one exists, else the current payload.
+    instructionsDigest: seatInstructionsDigestComponent(
+      previousRun ? previousRun.promptEnvelope?.instructionsDigest : payload.instructionsDigest
+    )
   })
   const toolsFingerprint = fingerprintProviderSeatPrefix('tools', [
     args.taskWraithMcpProfileId,
@@ -16814,6 +16823,14 @@ function providerSeatGenerationInputForPayload(args: {
   }
 }
 
+/** Normalize the user-instructions digest into a seat-fingerprint component.
+ * 'none' (nothing applied), absent, and pre-feature runs (no recorded digest)
+ * must all hash IDENTICALLY, or shipping this feature would rotate every
+ * healthy API-lane session once for users with no instructions configured. */
+function seatInstructionsDigestComponent(digest: unknown): string | null {
+  return typeof digest === 'string' && digest && digest !== 'none' ? digest : null
+}
+
 /** Single source of the seat 'system' fingerprint component order. The strict
  * stored-session reconstruction below hashes the same tuple from recorded run
  * fields; adding a component here without threading it there re-opens the
@@ -16829,6 +16846,8 @@ function providerSeatSystemPromptFingerprint(args: {
   runtimeProfileUpdatedAt: unknown
   ollamaRunProfile: unknown
   nativeSubAgentRequests: unknown
+  /** Pre-normalized via seatInstructionsDigestComponent at every call site. */
+  instructionsDigest: string | null
 }): string {
   return fingerprintProviderSeatPrefix('system', [
     TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
@@ -16841,7 +16860,12 @@ function providerSeatSystemPromptFingerprint(args: {
     args.runtimeProfileId,
     args.runtimeProfileUpdatedAt,
     args.ollamaRunProfile,
-    args.nativeSubAgentRequests
+    args.nativeSubAgentRequests,
+    // Conditional, not a trailing null: the tuple is JSON.stringify'd, so a
+    // 12th null element would change EVERY existing fingerprint on upgrade
+    // and cold-start prompt caches fleet-wide. No instructions ⇒ the exact
+    // pre-feature 11-element tuple.
+    ...(args.instructionsDigest ? [args.instructionsDigest] : [])
   ])
 }
 
@@ -16884,7 +16908,13 @@ function storedSeatSessionObservationForPayload(args: {
       runtimeProfileId: previousRun.runtimeProfileId || null,
       runtimeProfileUpdatedAt: payload.runtimeProfile?.updatedAt || null,
       ollamaRunProfile: payload.ollamaRunProfile || null,
-      nativeSubAgentRequests: settings.nativeSubAgentRequests || null
+      nativeSubAgentRequests: settings.nativeSubAgentRequests || null,
+      // Recorded-observation contract: only what the previous run durably
+      // recorded. A pre-feature run has no envelope → null → hashes the same
+      // as 'none', so this addition alone never rotates an existing session.
+      instructionsDigest: seatInstructionsDigestComponent(
+        previousRun.promptEnvelope?.instructionsDigest
+      )
     })
   }
   return {
@@ -20602,6 +20632,18 @@ async function tryRunClaudeSdk(
       // drop the attachment. Loaded BEFORE the transport boundary so a bad
       // attachment never spawns a provider.
       let claudePromptInput: string | AsyncIterable<SDKUserMessage> = claudeDispatchPrompt(payload)
+      emitWirePromptCapture({
+        appRunId: route.appRunId,
+        appChatId: route.appChatId,
+        provider: 'claude',
+        transport: 'claude-sdk',
+        part: payload.imagePaths?.length ? 'user (image message stream)' : 'user',
+        text: claudeDispatchPrompt(payload),
+        transforms: [
+          'session-vs-recovery prompt selection (claudeDispatchPrompt)',
+          ...(payload.imagePaths?.length ? ['base64 image content blocks appended'] : [])
+        ]
+      })
       if (payload.imagePaths?.length) {
         const imageContents = await loadClaudeImageAttachmentContents(payload.imagePaths, {
           readFile: (imagePath) => fs.readFile(imagePath),
@@ -21041,6 +21083,15 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   }
 
   const model = normalizeCliProviderModel('claude', payload.model)
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'claude',
+    transport: 'claude-cli',
+    part: 'argv',
+    text: claudeDispatchPrompt(payload),
+    transforms: ['session-vs-recovery prompt selection (claudeDispatchPrompt)']
+  })
   const buildBaseArgs = (): string[] => [
     ...buildClaudeCliArgs({
       // Same selection as the SDK lane: a sessionless dispatch sends the
@@ -21605,6 +21656,15 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   payload.prompt = cursorLaunchPlan.prompt
   payload.taskWraithMcpAdvertised = cursorLaunchPlan.taskWraithMcpAdvertised
   payload.taskWraithMcpProfileId = cursorLaunchPlan.taskWraithMcpProfileId ?? undefined
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'cursor',
+    transport: 'cursor-path-b',
+    part: 'user',
+    text: cursorLaunchPlan.prompt,
+    transforms: ['Path-B broker/continuity receipts + MCP-claim sanitizer (launch plan)']
+  })
 
   // Cursor is ALWAYS enabled and contained by argv — there is no per-build
   // fingerprint gate (that was brittle: provider auto-updates broke the exact-SHA
@@ -22081,6 +22141,25 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     )
   }
 
+  if (!preparedTaskWraithTools) {
+    // No readiness gate on this path — the stdin line below is the wire text.
+    const piNoBrokerText =
+      exactFileToolsExpected || shellToolsExpected || ephemeralSession || meshToolsExpected
+        ? managedToolsFallbackPrompt
+        : payload.prompt
+    emitWirePromptCapture({
+      appRunId: route.appRunId,
+      appChatId: route.appChatId,
+      provider: 'pi',
+      transport: 'pi-rpc',
+      part: 'stdin',
+      text: piNoBrokerText,
+      transforms:
+        piNoBrokerText === payload.prompt
+          ? ['pi JSON-RPC prompt command wrap']
+          : ['managed-tools-unavailable appendix', 'pi JSON-RPC prompt command wrap']
+    })
+  }
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
@@ -22105,6 +22184,15 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
             timeoutMs: 3_000,
             fallbackInitialLines: [piPromptCommand(managedToolsFallbackPrompt)],
             onReady: () => {
+              emitWirePromptCapture({
+                appRunId: route.appRunId,
+                appChatId: route.appChatId,
+                provider: 'pi',
+                transport: 'pi-rpc',
+                part: 'stdin (tools ready)',
+                text: `${payload.prompt}\n\n${piTaskWraithToolsReadyPromptAppendix(preparedTaskWraithTools)}`,
+                transforms: ['managed-tools-ready appendix', 'pi JSON-RPC prompt command wrap']
+              })
               appendDurableRunEventForRoute(
                 'pi',
                 route,
@@ -22153,6 +22241,19 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
               // is written; the token string may remain visible in the child
               // environment, but it no longer authorizes any broker call.
               revokePiRunCredential()
+              emitWirePromptCapture({
+                appRunId: route.appRunId,
+                appChatId: route.appChatId,
+                provider: 'pi',
+                transport: 'pi-rpc',
+                part: 'stdin (tools unavailable)',
+                text: managedToolsFallbackPrompt,
+                attempt: 2,
+                transforms: [
+                  'managed-tools-unavailable appendix',
+                  'pi JSON-RPC prompt command wrap'
+                ]
+              })
               const detail =
                 reason === 'timeout'
                   ? 'The managed Pi extension did not prove ready within three seconds.'
@@ -22755,6 +22856,17 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
         grokMcpServers.length > 0 && grokWriteCapable(payload.approvalMode)
     }
   )
+  // Grok ACP never resumes (fresh session/new each turn), so this text is
+  // exact for both the seat-session and fresh-transport dispatch paths.
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'grok',
+    transport: 'grok-acp',
+    part: 'user',
+    text: grokProviderPrompt,
+    transforms: ['grok mode/tool/goal preambles (buildGrokProviderPrompt)']
+  })
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are
   // pending; never spawn a fresh ACP child after its exact authority is gone.
@@ -23747,6 +23859,18 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // Read-only seats get the recon steer (answer from reads rather than
   // attempting a write the host will refuse); write seats get the write steer.
   mistralProviderPrompt = applyMistralPromptPreamble(payload.prompt, mistralWriteSeat)
+  // Vibe ACP opens a fresh session each turn — no resume swap can change this.
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'mistral',
+    transport: 'mistral-vibe-acp',
+    part: 'user',
+    text: mistralProviderPrompt,
+    transforms: [
+      mistralWriteSeat ? 'mistral write-mode preamble' : 'mistral read-only preamble'
+    ]
+  })
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are
   // pending; never spawn a fresh ACP child after its exact authority is gone.
@@ -24370,6 +24494,25 @@ async function runKimiAcpProvider(
             prompt: production.session.prompt,
             resumeSessionId: production.session.resumeSessionId,
             resumeFallbackPrompt: payload.resumeFallbackPrompt,
+            // The recovery-prompt swap happens INSIDE AcpTurnClient when a
+            // resume rejects, so only this hook sees the true wire text —
+            // every session/prompt write (initial, recovery, steers).
+            onWirePrompt: (() => {
+              let attempt = 0
+              return (text: string): void => {
+                attempt += 1
+                emitWirePromptCapture({
+                  appRunId: route.appRunId,
+                  appChatId: route.appChatId,
+                  provider: 'kimi',
+                  transport: 'kimi-acp',
+                  part: 'session/prompt',
+                  text,
+                  attempt,
+                  transforms: ['session/new-vs-resume prompt selection (Kimi production plan)']
+                })
+              }
+            })(),
             // `/compact` only makes sense against the linked native history. Never
             // turn a stale compaction target into a new empty session.
             allowResumeFallback: production.session.prompt.trim() !== '/compact',
@@ -31568,6 +31711,17 @@ async function runCodexExecFallback(
     args.push('--image', imagePath)
   }
   args.push(payload.resumeFallbackPrompt || payload.prompt)
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'codex',
+    transport: 'codex-exec',
+    part: 'argv',
+    text: payload.resumeFallbackPrompt || payload.prompt,
+    transforms: payload.resumeFallbackPrompt
+      ? ['sessionless-recovery prompt selection (resumeFallbackPrompt)']
+      : []
+  })
 
   const resolvedCodex = await resolveCliProviderBinary('codex', payload.runtimeProfile)
   if (!providerTransportLaunchAuthorized('codex', payload, route)) {
@@ -32671,6 +32825,15 @@ async function runGeminiProvider(
   const geminiPromptForDispatch = payload.imagePaths?.length
     ? appendAttachedImageFilesNote(payload.prompt, payload.imagePaths)
     : payload.prompt
+  emitWirePromptCapture({
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    provider: 'gemini',
+    transport: 'gemini-cli',
+    part: 'user',
+    text: geminiPromptForDispatch,
+    transforms: payload.imagePaths?.length ? ['attached-image-files note'] : []
+  })
 
   args.push('--prompt', geminiPromptForDispatch, '--output-format', 'stream-json')
 
@@ -50399,6 +50562,14 @@ if (isGeminiMcpBridgeProcess) {
           workspacePath,
           operation: 'read'
         })
+    })
+    // Wire-prompt captures ride the durable run-event store as ordinary
+    // lifecycle/control events; content is included only while raw-event
+    // storage is on (same privacy split as the composed prompt envelope).
+    configureWirePromptCapture({
+      appendForRoute: (provider, route, summary, payload) =>
+        appendDurableRunEventForRoute(provider, route, 'lifecycle', 'control', summary, payload),
+      storeContent: () => AppStore.getSettings().storeRawEvents === true
     })
     const fireStopHooksForWorkspace = (
       workspacePath: string,

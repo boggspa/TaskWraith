@@ -38,10 +38,12 @@ import {
 } from '../lib/DelegationAudit'
 import { buildDelegationTree, type DelegationTimelineNode } from '../lib/DelegationTree'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
+import { InspectorPromptTab } from './InspectorPromptTab'
 
 type InspectorTab =
   | 'diff'
   | 'raw'
+  | 'prompt'
   | 'delegation'
   | 'timeline'
   | 'safety'
@@ -191,6 +193,7 @@ interface InspectorProps {
 export const INSPECTOR_TAB_META: { id: InspectorTab; label: string }[] = [
   { id: 'diff', label: 'Diff Studio' },
   { id: 'raw', label: 'Raw Events' },
+  { id: 'prompt', label: 'Prompt' },
   { id: 'delegation', label: 'Invocations' },
   { id: 'timeline', label: 'Invocation Timeline' },
   { id: 'safety', label: 'Safety' },
@@ -278,6 +281,7 @@ export function Inspector(props: InspectorProps) {
         <InspectorTabErrorBoundary resetKey={props.rightTab}>
           {props.rightTab === 'diff' && <DiffTab {...props} />}
           {props.rightTab === 'raw' && <RawTab {...props} />}
+          {props.rightTab === 'prompt' && <InspectorPromptTab currentChat={props.currentChat} />}
           {props.rightTab === 'delegation' && <DelegationTab {...props} />}
           {props.rightTab === 'timeline' && <DelegationTimelineTab {...props} />}
           {props.rightTab === 'safety' && <SafetyTab {...props} />}
