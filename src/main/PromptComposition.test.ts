@@ -10,6 +10,7 @@ import {
   buildConversationContextProjection,
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
+  promptNeedsBrowserCanvasHint,
   promptNeedsImageToolsHint,
   sanitizeTaskWraithMcpPromptClaims
 } from './PromptComposition'
@@ -1272,6 +1273,99 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
       if (prev === undefined) delete process.env.TASKWRAITH_GROK_ACP
       else process.env.TASKWRAITH_GROK_ACP = prev
     }
+  })
+})
+
+describe('Browser Canvas handoff', () => {
+  it('detects explicit requests to inspect or operate the Browser Canvas', () => {
+    for (const prompt of [
+      'Can you see the webpage in the browser canvas?',
+      'Inspect the web canvas.',
+      'Please click the login button in the browser.'
+    ]) {
+      expect(promptNeedsBrowserCanvasHint(prompt)).toBe(true)
+    }
+    expect(promptNeedsBrowserCanvasHint('Fix the canvas chart serializer.')).toBe(false)
+  })
+
+  it('re-injects live canvas identity and the gateway route on a resumed session', () => {
+    const liveCanvasSession = {
+      canvasId: 'canvas-live-1',
+      driver: 'web',
+      status: 'active',
+      url: 'https://private.example/account?token=secret',
+      title: 'Private account'
+    }
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Can you see it?',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-canvas',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+      openCanvasSessions: [
+        liveCanvasSession,
+        { canvasId: 'sketch-ignored', driver: 'sketch', status: 'active' },
+        { canvasId: 'closed-ignored', driver: 'web', status: 'closed' }
+      ]
+    })
+
+    expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
+    expect(result.contextualPrompt).toContain(
+      'A live Browser Canvas is attached to this chat (canvasId: "canvas-live-1")'
+    )
+    expect(result.contextualPrompt).toContain('The page is not copied into your prompt')
+    expect(result.contextualPrompt).toContain('capability_search')
+    expect(result.contextualPrompt).toContain('capability_invoke')
+    expect(result.contextualPrompt).toContain('canvas_snapshot')
+    expect(result.contextualPrompt).toContain('canvas_click')
+    expect(result.contextualPrompt).toContain('canvas_fill')
+    expect(result.contextualPrompt).toContain('canvas_navigate')
+    expect(result.contextualPrompt).not.toContain('sketch-ignored')
+    expect(result.contextualPrompt).not.toContain('closed-ignored')
+    expect(result.contextualPrompt).not.toContain('private.example')
+    expect(result.contextualPrompt).not.toContain('Private account')
+    expect(result.applicationLog).toContain('Browser Canvas context injected')
+  })
+
+  it('teaches the gateway route for an explicit Browser Canvas request before one is open', () => {
+    const result = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Navigate the browser canvas to example.com.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    })
+
+    expect(result.contextualPrompt).toContain('no live web canvas is currently attached')
+    expect(result.contextualPrompt).toContain('canvas_navigate')
+  })
+
+  it('does not promise Canvas tooling when the run has no TaskWraith MCP transport', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Can you see the webpage in the browser canvas?',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: false,
+      openCanvasSessions: [{ canvasId: 'canvas-live-1', driver: 'web', status: 'active' }]
+    })
+
+    expect(result.contextualPrompt).toBe('Can you see the webpage in the browser canvas?')
   })
 })
 

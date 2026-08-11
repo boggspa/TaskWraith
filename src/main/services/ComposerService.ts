@@ -6,7 +6,11 @@ import {
 } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
-import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
+import {
+  composeRunPrompt,
+  type ComposeRunPromptResult,
+  type OpenCanvasPromptContext
+} from '../PromptComposition'
 import { resolveRunSkillHookContext } from '../skillsHooks/resolveRunSkillHookContext'
 import {
   formatDiscordContextPromptAppendix,
@@ -260,6 +264,11 @@ export interface ComposerServiceDeps {
   resolveSessionStartContext?: (
     workspacePath: string
   ) => string | null | undefined | Promise<string | null | undefined>
+  /**
+   * Main-owned, chat-scoped Canvas presence for the outgoing turn. Prompt
+   * composition consumes only id/driver/status, never URL or page content.
+   */
+  listOpenCanvasSessions?: (chatId: string) => readonly OpenCanvasPromptContext[]
 }
 
 /**
@@ -649,6 +658,9 @@ export class ComposerService {
         sessionStartContext = skillHookContext.sessionStartContext
       }
     }
+    const openCanvasSessions = contextIsolated
+      ? []
+      : this.deps.listOpenCanvasSessions?.(chat.appChatId) || []
     const promptInput = {
       provider,
       verbatimPrompt: input.verbatimPrompt === true,
@@ -670,6 +682,7 @@ export class ComposerService {
       activeGoal,
       taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
       taskWraithMcpAdvertised,
+      ...(openCanvasSessions.length > 0 ? { openCanvasSessions } : {}),
       ...(skillDiscoverySkills ? { skillDiscoverySkills } : {}),
       ...(sessionStartContext ? { sessionStartContext } : {}),
       ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),

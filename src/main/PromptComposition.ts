@@ -87,6 +87,19 @@ export interface ConversationContextProjection {
   suppliedMessageIds: string[]
 }
 
+/**
+ * Minimal live Canvas state that may be disclosed to prompt composition.
+ *
+ * Deliberately excludes URL, title, page text, and pixels: an open surface is
+ * useful capability context, but its contents must still cross the normal
+ * canvas_snapshot / canvas_screenshot permission and audit boundary.
+ */
+export interface OpenCanvasPromptContext {
+  canvasId: string
+  driver: string
+  status: string
+}
+
 export interface ConversationCompactionProjection extends ConversationContextProjection {
   /**
    * Exact prior eligible-message prefix represented by the durable summary
@@ -325,6 +338,56 @@ const IMAGE_INTENT_PATTERN =
 
 export function promptNeedsImageToolsHint(prompt: string): boolean {
   return IMAGE_INTENT_PATTERN.test(prompt)
+}
+
+const BROWSER_CANVAS_INTENT_PATTERN =
+  /\b(?:browser\s+canvas|canvas\s+browser|web\s+canvas)\b|\b(?:see|inspect|interact(?:\s+with)?|click|fill|type|navigate|reload)\b[^\n]{0,48}\b(?:browser|web\s?page|website)\b/i
+
+export function promptNeedsBrowserCanvasHint(prompt: string): boolean {
+  return BROWSER_CANVAS_INTENT_PATTERN.test(prompt)
+}
+
+function safeOpenWebCanvasIds(sessions: readonly OpenCanvasPromptContext[]): string[] {
+  const ids = new Set<string>()
+  for (const session of sessions) {
+    if (session.driver !== 'web' || (session.status !== 'active' && session.status !== 'opening')) {
+      continue
+    }
+    const canvasId = String(session.canvasId || '').trim()
+    if (!canvasId || canvasId.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(canvasId)) continue
+    ids.add(canvasId)
+  }
+  return [...ids].slice(0, 4)
+}
+
+function buildBrowserCanvasToolsHint(args: {
+  prompt: string
+  sessions: readonly OpenCanvasPromptContext[]
+  advertised: boolean
+  coreProfile: boolean
+  gatewayProfile: boolean
+}): string {
+  if (!args.advertised) return ''
+  const ids = safeOpenWebCanvasIds(args.sessions)
+  if (ids.length === 0 && !promptNeedsBrowserCanvasHint(args.prompt)) return ''
+
+  const liveContext =
+    ids.length === 1
+      ? `A live Browser Canvas is attached to this chat (canvasId: ${JSON.stringify(ids[0])}).`
+      : ids.length > 1
+        ? `Live Browser Canvases are attached to this chat (canvasIds: ${ids.map((id) => JSON.stringify(id)).join(', ')}).`
+        : 'TaskWraith has an agent-operable Browser Canvas; no live web canvas is currently attached to this chat.'
+
+  if (args.coreProfile) {
+    return `${liveContext} This provider session is using the constrained core MCP profile, which cannot inspect or operate the TaskWraith Browser Canvas. Do not describe the browser as nonexistent; report this exact profile limitation if the user asks you to use it.`
+  }
+
+  const contentBoundary =
+    'The page is not copied into your prompt: you must use Canvas tools to observe or operate it.'
+  if (args.gatewayProfile) {
+    return `${liveContext} ${contentBoundary} Call capability_search({ query: "canvas snapshot click fill navigate", limit: 6 }), then capability_invoke({ name, arguments }) for canvas_snapshot, canvas_click, canvas_fill, or canvas_navigate using the canvasId above when present. Do not claim that no browser surface is connected before trying this governed route.`
+  }
+  return `${liveContext} ${contentBoundary} Use canvas_list when selection is needed, canvas_snapshot to read it, canvas_click / canvas_fill to interact, and canvas_open for a new URL. Do not claim that no browser surface is connected before trying these governed tools.`
 }
 
 function shouldInjectTaskWraithRuntimePreamble(args: {
@@ -943,6 +1006,11 @@ export interface ComposeRunPromptInput {
    * here; sync compose paths omit it.
    */
   sessionStartContext?: string | null
+  /**
+   * Live, chat-scoped Canvas presence. Only opaque identity/kind/status enter
+   * composition; URL, title, DOM, and pixels remain behind Canvas tools.
+   */
+  openCanvasSessions?: readonly OpenCanvasPromptContext[]
 }
 
 export interface ComposeRunPromptResult {
@@ -1339,6 +1407,23 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     promptNeedsImageToolsHint(finalPrompt)
   ) {
     contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`
+  }
+
+  // Browser Canvas is live desktop state, not provider-native history. Teach
+  // it on every relevant turn (including resumed sessions) so a canvas opened
+  // after seat birth is neither invisible nor mistaken for an attachment.
+  // Only existence + opaque ids cross here; page content still requires the
+  // ordinary permissioned/audited Canvas tool call.
+  const browserCanvasToolsHint = buildBrowserCanvasToolsHint({
+    prompt: finalPrompt,
+    sessions: input.openCanvasSessions || [],
+    advertised: taskWraithMcpAdvertised,
+    coreProfile: coreMcpProfile,
+    gatewayProfile: gatewayMcpProfile
+  })
+  if (browserCanvasToolsHint) {
+    contextualPrompt = `${browserCanvasToolsHint}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; Browser Canvas context injected`
   }
 
   if (provider === 'ollama' && !isGlobalRun) {

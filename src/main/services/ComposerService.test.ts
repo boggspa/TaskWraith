@@ -329,6 +329,31 @@ describe('ComposerService', () => {
     }
   })
 
+  it('projects live chat-scoped Browser Canvas presence into the outgoing prompt', async () => {
+    const chat = makeChat({ provider: 'claude' })
+    const { deps } = makeDeps(chat, { geminiMcpBridgeEnabled: true })
+    deps.listOpenCanvasSessions = vi.fn(() => [
+      { canvasId: 'canvas-chat-1', driver: 'web', status: 'active' }
+    ])
+    const service = new ComposerService(deps)
+
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: chat.workspacePath,
+      userInput: 'Can you see it?',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+
+    expect(deps.listOpenCanvasSessions).toHaveBeenCalledWith(chat.appChatId)
+    expect(payload.prompt).toContain(
+      'A live Browser Canvas is attached to this chat (canvasId: "canvas-chat-1")'
+    )
+    expect(payload.prompt).toContain('capability_search')
+    expect(payload.prompt).toContain('canvas_snapshot')
+  })
+
   it('does not claim MCP/gateway is active when the Claude bridge setting is disabled', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'

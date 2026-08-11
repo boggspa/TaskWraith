@@ -11055,6 +11055,7 @@ async function composeDelegatedProviderPrompts(args: {
     nativeSubAgentRequests: settings.nativeSubAgentRequests,
     taskWraithMcpAdvertised,
     taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
+    openCanvasSessions: canvasService.list({ chatId: args.subThread.appChatId }),
     ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
     ...skillHookContext
   } satisfies Parameters<typeof composeRunPrompt>[0]
@@ -46218,6 +46219,7 @@ if (isGeminiMcpBridgeProcess) {
             providerLabel: providerLabel(provider),
             taskWraithMcpAdvertised: bridgeTaskWraithMcpAdvertised,
             taskWraithMcpProfileId: bridgeTaskWraithMcpProfile.profileId,
+            openCanvasSessions: canvasService.list({ chatId: chat.appChatId }),
             // Ollama continuity is NOT a session id — it's the persisted
             // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
@@ -50879,6 +50881,7 @@ if (isGeminiMcpBridgeProcess) {
     const composerService = new ComposerService({
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
+      listOpenCanvasSessions: (chatId) => canvasService.list({ chatId }),
       projectReferenceExtractLoader: projectReferenceExtracts.extractLoader,
       // Skills + SessionStart resolve via resolveRunSkillHookContext (shared
       // cache + setRunSkillHookHostDepsBuilder registered above).
