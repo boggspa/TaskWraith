@@ -123,7 +123,8 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       'tree',
       'file',
       'hostname',
-      'date'
+      'date',
+      'sed'
     ]) {
       expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain(`command(${conditionalHead})`)
     }

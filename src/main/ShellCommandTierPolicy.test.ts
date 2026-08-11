@@ -18,6 +18,10 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       'tail -f logs.txt',
       'wc -l src/main/index.ts',
       'grep -rn TODO src',
+      'grep -i "canvas panel" src',
+      'git grep -i "canvas" src/',
+      'git grep -n -C 5 "isCanvasDockPanelOpen" src/renderer/src/App.tsx',
+      "sed -n '401,600p' src/renderer/src/components/CanvasDockPanel.tsx",
       'rg -n neverAutoAllow src/main',
       'diff a.txt b.txt',
       'stat -f %z package.json',
@@ -45,7 +49,8 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       'ls; rm -rf /', // separator (charset)
       'cat `whoami`', // backtick (charset)
       'cat $(pwd)/x', // subshell (charset)
-      "grep 'a b' file", // quotes (charset)
+      'grep "$(whoami)" file', // expansion inside double quotes
+      'grep `whoami` file',
       'cat ~/secrets', // tilde expansion
       'ls *.md', // glob (charset)
       '../bin/ls x', // path head outside standard bins
@@ -58,6 +63,27 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
     ]) {
       expect(isInspectionShellCommand(cmd), cmd).toBe(false)
     }
+  })
+
+  it('rejects the write- and exec-capable forms of git grep and sed', () => {
+    for (const cmd of [
+      'git grep -O canvas', // opens matching files in a pager
+      'git grep --open-files-in-pager canvas',
+      'git grep --textconv canvas', // may run a configured text-conversion filter
+      'git grep --ext-grep canvas', // may call external grep(1)
+      'git grep --no-index canvas /tmp', // arbitrary filesystem search
+      "sed -i '' 's/a/b/' file", // in-place write
+      "sed -n -e '1,3p;w out.txt' file", // arbitrary sed program / write command
+      "sed -n '1,3p; e touch-pwned' file", // arbitrary sed program / execute command
+      "sed -n '1,3p' -i file" // GNU sed accepts options after the program
+    ]) {
+      expect(isInspectionShellCommand(cmd), cmd).toBe(false)
+    }
+  })
+
+  it('normalizes quoted words before screening their semantic flags', () => {
+    expect(isInspectionShellCommand("rg --p''re cat needle file")).toBe(false)
+    expect(isInspectionShellCommand("git grep '--open-files-in-pager' canvas")).toBe(false)
   })
 
   it('rejects the write- and exec-capable completions of screened heads', () => {

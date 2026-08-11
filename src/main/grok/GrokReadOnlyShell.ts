@@ -1,3 +1,5 @@
+import { isInspectionShellCommand } from '../ShellCommandTierPolicy'
+
 // Fail-closed classifier for "is this shell command read-only?" — used to let a
 // READ-ONLY / recon Grok turn run genuine investigation commands (ls, cat,
 // git log, find, grep, …) instead of hard-denying every shell tool.
@@ -20,7 +22,8 @@
 //   - output redirection to anything but /dev/null|stdout|stderr → false
 //   - command substitution `$(…)` / backticks / process substitution → false
 //   - path/script execution (`./x`, `/bin/sh`) or `VAR=val cmd` prefixes → false
-//   - `git` → false (repo/user config can make nominal reads execute programs)
+//   - `git` → false except the shared, specifically screened `git grep` form
+//     (repo/user config can make nominal reads execute programs)
 //   - `find` with `-exec/-delete/…` → false
 // The allowlist is deliberately small; widen it only with matching tests.
 
@@ -77,6 +80,12 @@ const READ_ONLY_COMMANDS = new Set([
   'sha1sum',
   'sha256sum'
 ])
+
+// The general classifier below deliberately excludes native `git` and `sed`.
+// Reuse the shared all-tier proof only for the two constrained source-inspection
+// forms that need their own semantic flag/program screens.
+const SHARED_INSPECTION_EXCEPTION =
+  /^(?:(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?git\s+grep|(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?sed\s+(?:-n|--quiet|--silent))(?:\s|$)/
 
 /** `find` primaries that run a command or mutate the tree — any presence = deny. */
 const FIND_MUTATION_FLAGS = new Set([
@@ -419,9 +428,10 @@ function isReadOnlySegment(segment: string): boolean {
   // No path/script execution, no `VAR=val cmd` prefix, no bare-flag "command".
   if (command.includes('/') || command.includes('=') || command.startsWith('-')) return false
   if (command === 'find') return isReadOnlyFind(rest)
-  // Even nominal reads can execute inherited/repository-configured pagers,
-  // fsmonitor hooks, or external diff drivers. Native-shell Git stays outside
-  // the read-only proof boundary until it runs in a hardened host environment.
+  // The shared inspection classifier handles a deliberately screened `git
+  // grep` before this parser reaches a segment. Other native-shell Git stays
+  // outside the proof boundary: inherited/repository config can execute
+  // pagers, fsmonitor hooks, or external diff drivers.
   if (command === 'git') return false
   if (command === 'rg') return isReadOnlyRg(rest)
   if (command === 'uniq') return isReadOnlyUniq(rest)
@@ -438,6 +448,10 @@ export function isReadOnlyShellCommand(command: string | null | undefined): bool
   if (typeof command !== 'string') return false
   const trimmed = command.trim()
   if (!trimmed) return false
+  // Keep the all-tier inspection surface consistent for the two single-command
+  // forms that need stricter semantic flag/program screens than this general
+  // parser carries (`git grep` and narrow `sed -n`).
+  if (SHARED_INSPECTION_EXCEPTION.test(trimmed) && isInspectionShellCommand(trimmed)) return true
   if (hasUnsafeDynamicShellSyntax(trimmed)) return false
 
   const { ok, cleaned } = sanitizeRedirects(trimmed)

@@ -15,6 +15,8 @@ describe('isReadOnlyShellCommand — allows genuine read-only recon', () => {
     'tail -n 20 log.txt',
     'grep -rn "foo" src',
     'grep -o bar file',
+    'git grep -n "foo" src',
+    "sed -n '1,10p' file",
     'rg --files',
     'find . -maxdepth 3 -type f',
     "find . -maxdepth 3 -type f ! -path './.git/*'",

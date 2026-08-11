@@ -32,7 +32,7 @@ const AGY_WORKSPACE_STATUS_COMMAND = 'git status --porcelain'
  *  - only heads whose every completion the classifiers accept unconditionally
  *    are projected. The per-token/per-flag screened heads (`rg` `--pre`,
  *    `env`-with-args, and the ShellCommandTierPolicy screened set — `sort`,
- *    `uniq`, `tree`, `file`, `hostname`, `date`) are deliberately absent
+ *    `uniq`, `tree`, `file`, `hostname`, `date`, `sed`) are deliberately absent
  *    because a prefix rule cannot carry their screens. A test pins the subset
  *    relation and mechanically rejects flag-conditional heads.
  */

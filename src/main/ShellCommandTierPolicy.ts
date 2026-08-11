@@ -7,9 +7,10 @@ import { shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
  * 2026-08-04). Two POLARITIES live here and must never be mixed up:
  *
  *  - `isInspectionShellCommand` is an ALLOW-list (it widens automation), so it
- *    follows the ReadOnlyGitShellCommand discipline exactly: charset gate,
- *    length cap, `~` rejection, per-head flag screening — anything it cannot
- *    positively parse as a read-only inspection command FAILS CLOSED (prompts).
+ *    follows the ReadOnlyGitShellCommand discipline exactly: static shell-word
+ *    parsing, length cap, `~` rejection, per-head flag screening — anything it
+ *    cannot positively parse as a read-only inspection command FAILS CLOSED
+ *    (prompts).
  *  - The catastrophic-deletion / remote-egress / process-mutation classifiers
  *    are RESTRICTING holds (they force prompts), so they follow the
  *    IsolateSharedBranchHold polarity: no charset gate, match what parses,
@@ -23,13 +24,81 @@ const MAX_COMMAND_LENGTH = 400
 
 // Same charset the read-only git classifier uses: no quotes, $, backticks,
 // separators, redirects, globs, braces, parens, control chars, backslashes.
-// Only the ALLOW-polarity classifier and the inside-workspace PROOF use it.
+// The inside-workspace proof uses it directly. Inspection commands use this
+// grammar for unquoted text, plus strictly-literal quoted arguments so common
+// search patterns such as `grep "canvas panel"` do not spuriously prompt.
 const SAFE_CHARSET = /^[A-Za-z0-9 ._/=:,+@%~^-]+$/
+const SAFE_UNQUOTED_INSPECTION_CHARACTER = /^[A-Za-z0-9._/=:,+@%~^-]$/
 
 const STRIPPABLE_BIN_PREFIX = /^(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)/
 
 function tokensOf(command: string): string[] {
   return command.trim().split(/\s+/)
+}
+
+/**
+ * Shell words for the inspection allowlist. This deliberately understands
+ * only literal quoting: single quotes are wholly literal; double quotes reject
+ * `$`, backticks, and backslashes because all three can trigger or preserve
+ * shell expansion. Quote delimiters are removed and adjacent pieces join, so
+ * policy screens see the argv that the executable receives (`--p''re` becomes
+ * `--pre`). Anything beyond this small, static grammar fails closed.
+ */
+function inspectionTokensOf(command: string): string[] | null {
+  const tokens: string[] = []
+  let token = ''
+  let tokenStarted = false
+  let quote: 'single' | 'double' | null = null
+
+  const pushToken = (): void => {
+    if (tokenStarted) tokens.push(token)
+    token = ''
+    tokenStarted = false
+  }
+
+  for (const character of command.trim()) {
+    if (quote === 'single') {
+      if (character === "'") quote = null
+      else if (/[\u0000-\u001F\u007F]/.test(character)) return null
+      else token += character
+      tokenStarted = true
+      continue
+    }
+    if (quote === 'double') {
+      if (character === '"') quote = null
+      else if (
+        character === '$' ||
+        character === '`' ||
+        character === '\\' ||
+        /[\u0000-\u001F\u007F]/.test(character)
+      ) {
+        return null
+      } else token += character
+      tokenStarted = true
+      continue
+    }
+    if (character === "'") {
+      quote = 'single'
+      tokenStarted = true
+      continue
+    }
+    if (character === '"') {
+      quote = 'double'
+      tokenStarted = true
+      continue
+    }
+    if (character === ' ') {
+      pushToken()
+      continue
+    }
+    if (!SAFE_UNQUOTED_INSPECTION_CHARACTER.test(character)) return null
+    token += character
+    tokenStarted = true
+  }
+
+  if (quote !== null) return null
+  pushToken()
+  return tokens
 }
 
 function headOf(tokens: string[]): string {
@@ -38,14 +107,14 @@ function headOf(tokens: string[]): string {
 
 /**
  * Read-only inspection heads whose EVERY flag is harmless. Deliberately absent:
- * `find` (-delete/-exec/-fprintf write or execute), `sed`/`awk` (-i writes /
+ * `find` (-delete/-exec/-fprintf write or execute), `awk` (in-place writes /
  * system()), `xargs` (executes), `env` with arguments (executes), interpreters,
  * and anything that talks to the network (that's the remote-egress hold's
  * territory). Globs and redirects never reach these heads — the charset gate
  * rejects the whole command first. Heads that are read-only EXCEPT for
  * specific flag or operand shapes (`sort`, `uniq`, `tree`, `file`,
- * `hostname`, `date`) live in the screened dispatch below instead, beside
- * `rg`/`env` — membership here asserts the any-flags claim.
+ * `hostname`, `date`, `sed`) live in the screened dispatch below instead,
+ * beside `rg`/`env` — membership here asserts the any-flags claim.
  */
 const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
   'ls',
@@ -180,13 +249,180 @@ function dateArgsAreReadOnly(args: readonly string[]): boolean {
   return true
 }
 
+/**
+ * `sed` is inspection-safe only for the deliberately narrow source-view form
+ * used by agents: `sed -n '401,600p' path`. `-i`, arbitrary `-e` programs,
+ * `-f` scripts, and write/execute commands stay outside this allowlist.
+ */
+function sedArgsAreReadOnly(args: readonly string[]): boolean {
+  let index = 0
+  let quiet = false
+  while (index < args.length) {
+    const token = args[index]
+    if (token === '-n' || token === '--quiet' || token === '--silent') {
+      quiet = true
+      index += 1
+      continue
+    }
+    break
+  }
+  if (!quiet) return false
+
+  const program = args[index]
+  if (!program || !/^(?:[1-9]\d*|\$)(?:,(?:[1-9]\d*|\$))?p$/.test(program)) return false
+  index += 1
+
+  let literalPaths = false
+  for (; index < args.length; index += 1) {
+    const token = args[index]
+    if (!literalPaths && token === '--') {
+      literalPaths = true
+      continue
+    }
+    // GNU sed permits options after the program, so a leading `-` must be
+    // explicitly protected by `--` before it can be a source filename.
+    if (!literalPaths && token.startsWith('-') && token !== '-') return false
+  }
+  return true
+}
+
+const GIT_GREP_SIMPLE_FLAGS: ReadonlySet<string> = new Set([
+  '--cached',
+  '--no-cached',
+  '--index',
+  '--untracked',
+  '--no-untracked',
+  '--exclude-standard',
+  '--no-exclude-standard',
+  '--no-recurse-submodules',
+  '--invert-match',
+  '--no-invert-match',
+  '--ignore-case',
+  '--no-ignore-case',
+  '--word-regexp',
+  '--no-word-regexp',
+  '--text',
+  '--no-text',
+  '--no-textconv',
+  '--recursive',
+  '--no-recursive',
+  '--extended-regexp',
+  '--no-extended-regexp',
+  '--basic-regexp',
+  '--no-basic-regexp',
+  '--fixed-strings',
+  '--no-fixed-strings',
+  '--perl-regexp',
+  '--no-perl-regexp',
+  '--line-number',
+  '--no-line-number',
+  '--column',
+  '--no-column',
+  '--full-name',
+  '--no-full-name',
+  '--files-with-matches',
+  '--no-files-with-matches',
+  '--name-only',
+  '--files-without-match',
+  '--no-files-without-match',
+  '--null',
+  '--no-null',
+  '--only-matching',
+  '--no-only-matching',
+  '--count',
+  '--no-count',
+  '--break',
+  '--no-break',
+  '--heading',
+  '--no-heading',
+  '--show-function',
+  '--no-show-function',
+  '--function-context',
+  '--no-function-context',
+  '--and',
+  '--or',
+  '--not',
+  '--quiet',
+  '--no-quiet',
+  '--all-match',
+  '--no-all-match',
+  '--no-ext-grep'
+])
+
+const GIT_GREP_COMBINABLE_SHORT_FLAGS = /^[viwaIrEGFPnhHlLzocpWq]+$/
+const GIT_GREP_ATTACHED_NUMBER_FLAG = /^-(?:[CBAm]\d+|\d+)$/
+const GIT_GREP_NUMBER_FLAGS: ReadonlySet<string> = new Set([
+  '-C',
+  '-B',
+  '-A',
+  '-m',
+  '--context',
+  '--before-context',
+  '--after-context',
+  '--max-depth',
+  '--threads',
+  '--max-count'
+])
+const GIT_GREP_NUMBER_FLAG_PREFIXES = [
+  '--context=',
+  '--before-context=',
+  '--after-context=',
+  '--max-depth=',
+  '--threads=',
+  '--max-count='
+]
+
+/**
+ * `git grep` is a workspace inspection command except its pager, external
+ * grep, text-conversion, and no-index modes. The accepted flag surface is
+ * deliberately explicit: an unknown or future option prompts rather than
+ * becoming a zero-click shell capability.
+ */
+function gitGrepArgsAreReadOnly(args: readonly string[]): boolean {
+  if (args[0] !== 'grep') return false
+  let literalOperands = false
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index]
+    if (literalOperands) continue
+    if (token === '--') {
+      literalOperands = true
+      continue
+    }
+    if (!token.startsWith('-') || token === '-') continue
+    if (GIT_GREP_SIMPLE_FLAGS.has(token)) continue
+    if (GIT_GREP_COMBINABLE_SHORT_FLAGS.test(token.slice(1))) continue
+    if (GIT_GREP_ATTACHED_NUMBER_FLAG.test(token)) continue
+    if (GIT_GREP_NUMBER_FLAGS.has(token)) {
+      const value = args[index + 1]
+      if (!value || !/^\d+$/.test(value)) return false
+      index += 1
+      continue
+    }
+    if (
+      GIT_GREP_NUMBER_FLAG_PREFIXES.some((prefix) => token.startsWith(prefix)) &&
+      /^\d+$/.test(token.slice(token.indexOf('=') + 1))
+    ) {
+      continue
+    }
+    if (token === '-e') {
+      if (args[index + 1] === undefined) return false
+      index += 1
+      continue
+    }
+    if (token === '--color' || token.startsWith('--color=')) continue
+    return false
+  }
+  return true
+}
+
 const SCREENED_INSPECTION_HEADS: Readonly<Record<string, (args: readonly string[]) => boolean>> = {
   sort: sortArgsAreReadOnly,
   uniq: uniqArgsAreReadOnly,
   tree: treeArgsAreReadOnly,
   file: fileArgsAreReadOnly,
   hostname: hostnameArgsAreReadOnly,
-  date: dateArgsAreReadOnly
+  date: dateArgsAreReadOnly,
+  sed: sedArgsAreReadOnly
 }
 
 // rg is inspection-safe EXCEPT its preprocessor flags, which execute an
@@ -196,16 +432,17 @@ const RG_REJECT_FLAG_PREFIX = '--pre'
 
 /**
  * Is this exact shell string a pure read-only inspection command (`ls`, `cat`,
- * `grep`, …)? Allowed prompt-free under every posture — the shell twins of the
- * auto-allowed MCP read tools (read_file / list_directory / workspace_search),
- * mirroring the read-only git fast path. Fails closed on anything else.
+ * `grep`, `git grep`, or a narrow `sed -n` source range)? Allowed prompt-free
+ * under every posture — the shell twins of the auto-allowed MCP read tools
+ * (read_file / list_directory / workspace_search), mirroring the read-only git
+ * fast path. Fails closed on anything else.
  */
 export function isInspectionShellCommand(command: unknown): boolean {
   if (typeof command !== 'string') return false
   const trimmed = command.trim()
   if (!trimmed || trimmed.length > MAX_COMMAND_LENGTH) return false
-  if (!SAFE_CHARSET.test(trimmed)) return false
-  const tokens = tokensOf(trimmed)
+  const tokens = inspectionTokensOf(trimmed)
+  if (!tokens || tokens.length === 0) return false
   // Word-initial `~` is the one in-charset character the shell still expands.
   if (tokens.some((token) => token.startsWith('~'))) return false
   const head = headOf(tokens)
@@ -219,6 +456,7 @@ export function isInspectionShellCommand(command: unknown): boolean {
     // Bare `env` prints the environment; `env X=1 cmd` EXECUTES cmd.
     return tokens.length === 1
   }
+  if (head === 'git') return gitGrepArgsAreReadOnly(tokens.slice(1))
   const screened = Object.prototype.hasOwnProperty.call(SCREENED_INSPECTION_HEADS, head)
     ? SCREENED_INSPECTION_HEADS[head]
     : undefined

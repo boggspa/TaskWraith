@@ -639,6 +639,30 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('registerGeminiTool')
   })
 
+  it('(d3) auto-allows quoted grep, git grep, and constrained sed inspection', async () => {
+    for (const command of [
+      'grep -i "canvas" src/',
+      'git grep -n -C 5 "isCanvasDockPanelOpen" src/renderer/src/App.tsx',
+      "sed -n '401,600p' src/renderer/src/components/CanvasDockPanel.tsx"
+    ]) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'antigravity',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(true)
+      expect(order).toContain('audit:autoAllow:inspection_shell')
+      expect(order).not.toContain('registerGeminiTool')
+    }
+  })
+
   // (d4) FULL ACCESS IN-WORKSPACE DELETE — "always approve in workspace":
   // a provably in-workspace recursive rm keeps auto-allowing at full_access.
   it('(d4) provably in-workspace rm -rf auto-allows at full_access', async () => {
