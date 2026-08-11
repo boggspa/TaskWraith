@@ -100,6 +100,18 @@ describe('WelcomeUsageDashboard', () => {
     expect(nextWelcomeUsageTab('providers', [...visible])).toBe('overview')
   })
 
+  it('releases the tab swipe transform after the animation settles', () => {
+    const animatedBodiesRule = modelComparisonCss.match(
+      /\.welcome-usage-dashboard > \.welcome-usage-empty--range,[\s\S]*?\{([\s\S]*?)\}/
+    )?.[1]
+
+    expect(animatedBodiesRule).toContain(
+      'animation: welcome-slide-over 280ms cubic-bezier(0.22, 0.61, 0.36, 1);'
+    )
+    expect(animatedBodiesRule).toContain('animation-fill-mode: none;')
+    expect(animatedBodiesRule).not.toContain('will-change: transform;')
+  })
+
   it('renders all eleven stable provider identities in reporting cards and mix segments', () => {
     const now = Date.parse('2026-07-11T03:30:00.000Z')
     const record = (provider: ProviderId, index: number): UsageRecord => ({

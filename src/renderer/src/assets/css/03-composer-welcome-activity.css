@@ -1851,8 +1851,12 @@
 .welcome-usage-dashboard > .welcome-usage-workspaces,
 .welcome-usage-dashboard > .welcome-usage-providers,
 .welcome-usage-dashboard > .welcome-usage-agents {
-  animation: welcome-slide-over 280ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
-  will-change: transform;
+  animation: welcome-slide-over 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* The dashboard's parent is fractionally scaled. Do not retain a zero-value
+   * transform (or a permanent compositor hint) after the swipe: Chromium can
+   * otherwise leave the scaled child raster snapped a few pixels off-axis
+   * until the next pointer-driven repaint. */
+  animation-fill-mode: none;
 }
 
 @keyframes welcome-slide-over {
