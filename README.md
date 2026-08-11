@@ -191,9 +191,14 @@ user choices, and the exact data boundary.
   AntiGravity settings can also open the official user-installed `agy` updater;
   TaskWraith does not download or repackage that CLI, access its credentials, or
   change AntiGravity's separate consent and availability requirements.
-- **Multiview and Workflows**: Split the workbench into live panes, and run
-  Workflows as first-class chat/run objects with scheduled recovery, dedicated
-  sidebar space, and optional ensemble execution where enabled.
+- **Multiview and Workflows**: Every chat is a self-contained cockpit: it
+  owns its workspace terminal, branch and worktree controls, diff review,
+  pull-request and CI rollup, and in-place provider switching. Multiview
+  composes up to four of those cockpits — alongside live Canvas previews and
+  media players — into one resizable split view, each pane reporting its own
+  workspace's state. Workflows run as first-class chat/run objects with
+  scheduled recovery, dedicated sidebar space, and optional ensemble
+  execution where enabled.
 - **Thread-isolated Worktrees**: Selection-required runtime profiles allocate
   and persist a per-thread worktree before dispatch, then route the run and
   Diff Studio review through that effective workspace instead of the base
