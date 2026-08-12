@@ -40,7 +40,9 @@ public final class StudioViewerRenderer {
     public let device: MTLDevice
 
     private let patternRenderer: StudioTestPatternRenderer
-    private let videoRenderer: StudioVideoFrameRenderer
+    /// Internal rather than private so tests can seed and inspect the in-flight
+    /// ring directly; the present path is the only production writer.
+    let videoRenderer: StudioVideoFrameRenderer
     private var source: StudioVideoFrameSource?
 
     /// Bounded diagnostics for outcome 9.
@@ -52,6 +54,13 @@ public final class StudioViewerRenderer {
     public var presentedFrameCount: Int { decodedFrameCount + testPatternFrameCount }
 
     public var hasSource: Bool { source != nil }
+
+    /// Frames still held by the video renderer's in-flight ring.
+    ///
+    /// Outcome 9/11 diagnostic: these are IOSurface-backed buffers, so this
+    /// MUST return to zero whenever a source is detached or replaced. A
+    /// non-zero count with no live source means stranded surfaces.
+    public var retainedFrameCount: Int { videoRenderer.retainedFrameCount }
 
     public init(device: MTLDevice) throws {
         self.device = device
@@ -70,6 +79,13 @@ public final class StudioViewerRenderer {
     /// first, so switching sources cannot leak a decompression session.
     public func attach(source newSource: StudioVideoFrameSource) {
         source?.invalidate()
+        // The in-flight ring may still hold frames belonging to the session we
+        // just invalidated. Without this flush they survive until the NEW
+        // source presents enough frames to evict them — and if it never does
+        // (decode failure, or attached while paused) they are held for good.
+        // detachSource() has always done this; attach() must match it, or the
+        // two paths silently disagree about resource lifetime.
+        videoRenderer.releaseRetainedFrames()
         source = newSource
     }
 
@@ -132,6 +148,7 @@ public final class StudioViewerRenderer {
             decodedFrameCount: decodedFrameCount,
             testPatternFrameCount: testPatternFrameCount,
             failedFrameCount: failedFrameCount,
+            retainedFrameCount: retainedFrameCount,
             sourceDiagnostics: source?.diagnostics
         )
     }
@@ -141,6 +158,7 @@ public final class StudioViewerRenderer {
         public let decodedFrameCount: Int
         public let testPatternFrameCount: Int
         public let failedFrameCount: Int
+        public let retainedFrameCount: Int
         public let sourceDiagnostics: StudioVideoFrameSource.Diagnostics?
     }
 }

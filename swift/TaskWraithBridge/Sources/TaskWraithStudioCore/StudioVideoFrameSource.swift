@@ -53,7 +53,7 @@ public final class StudioVideoFrameSource {
     public private(set) var decodeCount = 0
     public private(set) var cacheHitCount = 0
 
-    public var usedHardwareDecoder: Bool { decoder.usedHardwareDecoder }
+    public var hardwareDecodeStatus: StudioHardwareDecodeStatus { decoder.hardwareDecodeStatus }
     public var isValid: Bool { !invalidated && decoder.isValid }
     public var sampleCount: Int { samples.count }
 
@@ -129,7 +129,7 @@ public final class StudioVideoFrameSource {
             failedBindCount: bridge.failedBindCount,
             decodedFrameCount: decoder.decodedFrameCount,
             failedDecodeCount: decoder.failedDecodeCount,
-            usedHardwareDecoder: decoder.usedHardwareDecoder,
+            hardwareDecodeStatus: decoder.hardwareDecodeStatus,
             isValid: isValid
         )
     }
@@ -142,7 +142,7 @@ public final class StudioVideoFrameSource {
         public let failedBindCount: Int
         public let decodedFrameCount: Int
         public let failedDecodeCount: Int
-        public let usedHardwareDecoder: Bool
+        public let hardwareDecodeStatus: StudioHardwareDecodeStatus
         public let isValid: Bool
     }
 }

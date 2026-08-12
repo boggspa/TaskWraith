@@ -33,6 +33,18 @@ import VideoToolbox
 /// given; decoding a mid-GOP P-frame in isolation is undefined without its
 /// preceding reference frames. Seeking that decodes forward from the nearest
 /// keyframe is a later slice, and StudioVideoFrameSource documents the same gap.
+/// Whether a decompression session is actually running on hardware.
+///
+/// Three states on purpose. A two-state Bool forces "we could not tell" to be
+/// reported as one of the definite answers, which is how a diagnostic starts
+/// lying — the exact defect this type replaced.
+public enum StudioHardwareDecodeStatus: Equatable, Sendable {
+    case hardware
+    case software
+    /// VideoToolbox did not report the property; nothing is being claimed.
+    case unknown
+}
+
 public enum StudioVideoDecoderError: Error, Equatable {
     case sessionCreationFailed(OSStatus)
     case sessionInvalidated
@@ -48,7 +60,16 @@ public final class StudioVideoDecoder {
     public static let outputPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
 
     public let formatDescription: CMVideoFormatDescription
-    public private(set) var usedHardwareDecoder = false
+    /// Whether VideoToolbox actually used a hardware decoder for this session.
+    ///
+    /// This is MEASURED from the session, never inferred from which creation
+    /// path succeeded. `EnableHardwareAcceleratedVideoDecoder` is a hint, not a
+    /// guarantee: VideoToolbox may hand back a software session anyway when the
+    /// hardware block is busy or the format is marginally out of spec, so a
+    /// successful hardware-spec create proves nothing about what is running.
+    /// `.unknown` means the property could not be read and is reported honestly
+    /// rather than guessed.
+    public private(set) var hardwareDecodeStatus: StudioHardwareDecodeStatus = .unknown
     public private(set) var decodedFrameCount = 0
     public private(set) var failedDecodeCount = 0
 
@@ -91,7 +112,7 @@ public final class StudioVideoDecoder {
         let hardware = create(preferHardware: true)
         if hardware.status == noErr, let created = hardware.session {
             session = created
-            usedHardwareDecoder = true
+            hardwareDecodeStatus = Self.measureHardwareDecodeStatus(of: created)
             return
         }
 
@@ -100,7 +121,37 @@ public final class StudioVideoDecoder {
             throw StudioVideoDecoderError.sessionCreationFailed(software.status)
         }
         session = created
-        usedHardwareDecoder = false
+        hardwareDecodeStatus = Self.measureHardwareDecodeStatus(of: created)
+    }
+
+    /// Asks the session what it is actually doing.
+    ///
+    /// Deliberately asked of BOTH creation paths: a session created without the
+    /// hardware hint may still get hardware, and one created with it may not.
+    /// An unreadable property yields `.unknown` rather than a convenient guess.
+    private static func measureHardwareDecodeStatus(
+        of session: VTDecompressionSession
+    ) -> StudioHardwareDecodeStatus {
+        // An explicitly typed out-pointer, not `&someOptional`: passing an
+        // Optional<AnyObject> inout to this API selects the raw-pointer
+        // overload and warns, and getting ownership wrong on a Copy-semantics
+        // call is a leak rather than a compile error.
+        let box = UnsafeMutablePointer<CFTypeRef?>.allocate(capacity: 1)
+        box.initialize(to: nil)
+        defer {
+            box.deinitialize(count: 1)
+            box.deallocate()
+        }
+
+        let status = VTSessionCopyProperty(
+            session,
+            key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+            allocator: kCFAllocatorDefault,
+            valueOut: box
+        )
+        guard status == noErr, let value = box.pointee else { return .unknown }
+        if let number = value as? NSNumber { return number.boolValue ? .hardware : .software }
+        return .unknown
     }
 
     deinit {
