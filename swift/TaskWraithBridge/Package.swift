@@ -20,13 +20,14 @@ let package = Package(
         .executable(
             name: "TaskWraithBridgeDaemon",
             targets: ["TaskWraithBridgeDaemon"]
+        ),
+        // NEW: Companion app bundle target (Mach-O → .app via assembly script)
+        .executable(
+            name: "TaskWraithStudioCompanion",
+            targets: ["TaskWraithStudioCompanion"]
         )
     ],
     targets: [
-        // Pure-C, framework-free offline-audio mix kernel for `audio.mixdown`.
-        // Sources live in Sources/TaskWraithAudioKernel/*.c; the public header
-        // in include/ is auto-exposed (SwiftPM synthesizes the modulemap), so
-        // the daemon does `import TaskWraithAudioKernel` to get `tw_mix`.
         .target(name: "TaskWraithAudioKernel"),
         .executableTarget(
             name: "TaskWraithBridgeDaemon",
@@ -39,6 +40,21 @@ let package = Package(
             // the daemon, but the test's `import TaskWraithAudioKernel` needs it
             // declared here).
             dependencies: ["TaskWraithBridgeDaemon", "TaskWraithAudioKernel"]
+        ),
+        // NEW: Core library (testable, no AppKit where avoidable)
+        .target(
+            name: "TaskWraithStudioCore",
+            dependencies: []
+        ),
+        // NEW: Companion executable (depends on Core)
+        .executableTarget(
+            name: "TaskWraithStudioCompanion",
+            dependencies: ["TaskWraithStudioCore"]
+        ),
+        // NEW: Core tests
+        .testTarget(
+            name: "TaskWraithStudioCoreTests",
+            dependencies: ["TaskWraithStudioCore"]
         )
     ]
 )
