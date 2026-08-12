@@ -6,6 +6,11 @@
 import SwiftUI
 import TaskWraithKit
 
+#if canImport(UIKit)
+    import PhotosUI
+    import UIKit
+#endif
+
 // MARK: - Pill
 // Chrome lives on ComposerFloatingPillChrome (TWSharedViews) so Tools +
 // Diff stay in lockstep: slightly taller padding + real liquid glass.
