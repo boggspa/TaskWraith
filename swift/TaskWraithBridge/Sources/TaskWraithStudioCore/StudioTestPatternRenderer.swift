@@ -163,10 +163,14 @@ public final class StudioTestPatternRenderer {
     ///   display-link callback on GPU completion is how a viewer starts
     ///   dropping frames. When nil the buffer is committed and waited on so the
     ///   texture is immediately readable, which is the offscreen/test path.
+    /// - Parameter chaining: when true a LATER pass in this queue owns
+    ///   presentation and readback, so this commits without presenting and
+    ///   without blocking.
     public func render(
         to texture: MTLTexture,
         frameIndex: Int64,
-        presenting drawable: MTLDrawable? = nil
+        presenting drawable: MTLDrawable? = nil,
+        chaining: Bool = false
     ) throws {
         guard texture.pixelFormat == Self.pixelFormat else {
             throw StudioRendererError.unsupportedPixelFormat(String(describing: texture.pixelFormat))
@@ -196,6 +200,11 @@ public final class StudioTestPatternRenderer {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
+
+        if chaining {
+            commandBuffer.commit()
+            return
+        }
 
         if let drawable {
             commandBuffer.present(drawable)

@@ -43,6 +43,7 @@ public final class StudioViewerRenderer {
     /// Internal rather than private so tests can seed and inspect the in-flight
     /// ring directly; the present path is the only production writer.
     let videoRenderer: StudioVideoFrameRenderer
+    private let overlayRenderer: StudioOverlayRenderer
     private var source: StudioVideoFrameSource?
 
     /// Bounded diagnostics for outcome 9.
@@ -66,6 +67,7 @@ public final class StudioViewerRenderer {
         self.device = device
         self.patternRenderer = try StudioTestPatternRenderer(device: device)
         self.videoRenderer = try StudioVideoFrameRenderer(device: device)
+        self.overlayRenderer = try StudioOverlayRenderer(device: device)
     }
 
     public static func makeDefault() throws -> StudioViewerRenderer {
@@ -97,16 +99,61 @@ public final class StudioViewerRenderer {
         videoRenderer.releaseRetainedFrames()
     }
 
-    /// Draws the frame the clock says is current.
+    /// Draws the frame the clock says is current, then the transport overlay.
     ///
     /// - Parameter drawable: supplied on the on-screen path so the command
     ///   buffer presents without waiting; nil offscreen so the target is
     ///   immediately readable.
+    /// - Parameter overlay: when supplied, the content pass runs in `chaining`
+    ///   mode and the OVERLAY pass owns presentation, because it must be last.
+    ///   Passing nil keeps the original single-pass behaviour byte for byte.
     @discardableResult
     public func render(
         snapshot: StudioTransportSnapshot,
         to target: MTLTexture,
-        presenting drawable: MTLDrawable? = nil
+        presenting drawable: MTLDrawable? = nil,
+        overlay: StudioOverlayModel? = nil
+    ) -> StudioViewerFrameOutcome {
+        let frameIndex = snapshot.frameIndex
+        let chaining = overlay != nil
+        // With an overlay the content pass must not present; the overlay does.
+        let outcome = renderContent(
+            snapshot: snapshot,
+            to: target,
+            presenting: chaining ? nil : drawable,
+            chaining: chaining
+        )
+
+        guard let overlay else { return outcome }
+
+        // The content pass encodes with loadAction .clear. When it FAILED it
+        // never ran, so the target still holds whatever was in it — a stale
+        // picture under a live HUD reads as frozen playback, which is exactly
+        // the dishonest green the fallback policy exists to prevent. Clearing
+        // in the overlay pass keeps a dropped frame visibly dropped.
+        do {
+            try overlayRenderer.render(
+                model: overlay,
+                to: target,
+                presenting: drawable,
+                clearingFirst: !outcome.didDraw
+            )
+        } catch {
+            failedFrameCount += 1
+            return .renderFailed(frameIndex: frameIndex, message: String(describing: error))
+        }
+        return outcome
+    }
+
+    /// The original single-pass content decision, unchanged apart from handing
+    /// presentation forward. Split out so the overlay wrapper cannot
+    /// accidentally reclassify a decode failure as a render failure: those are
+    /// different diagnoses and they stay in separate catch blocks.
+    private func renderContent(
+        snapshot: StudioTransportSnapshot,
+        to target: MTLTexture,
+        presenting drawable: MTLDrawable?,
+        chaining: Bool
     ) -> StudioViewerFrameOutcome {
         let frameIndex = snapshot.frameIndex
 
@@ -121,7 +168,12 @@ public final class StudioViewerRenderer {
                 return .decodeFailed(frameIndex: frameIndex, message: String(describing: error))
             }
             do {
-                try videoRenderer.render(frame: textures, to: target, presenting: drawable)
+                try videoRenderer.render(
+                    frame: textures,
+                    to: target,
+                    presenting: drawable,
+                    chaining: chaining
+                )
                 decodedFrameCount += 1
                 return .decodedFrame(frameIndex: frameIndex)
             } catch {
@@ -131,7 +183,12 @@ public final class StudioViewerRenderer {
         }
 
         do {
-            try patternRenderer.render(to: target, frameIndex: frameIndex, presenting: drawable)
+            try patternRenderer.render(
+                to: target,
+                frameIndex: frameIndex,
+                presenting: drawable,
+                chaining: chaining
+            )
             testPatternFrameCount += 1
             return .testPattern(frameIndex: frameIndex)
         } catch {
@@ -139,6 +196,9 @@ public final class StudioViewerRenderer {
             return .renderFailed(frameIndex: frameIndex, message: String(describing: error))
         }
     }
+
+    /// Vertices the last overlay pass emitted. Bounded outcome-9 diagnostic.
+    public var overlayVertexCount: Int { overlayRenderer.lastVertexCount }
 
     /// Bounded diagnostics snapshot, including the attached source's counters
     /// when there is one.

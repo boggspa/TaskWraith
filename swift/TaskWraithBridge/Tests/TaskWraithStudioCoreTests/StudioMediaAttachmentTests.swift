@@ -159,6 +159,106 @@ final class StudioMediaAttachmentTests: XCTestCase {
         XCTAssertEqual(attachment.failedCount, 0)
     }
 
+    /// THE ACCEPTANCE PATH, WITH THE TRANSPORT VISIBLE. Same chain as above, but
+    /// the frame is composited under the on-screen HUD, which is what the viewer
+    /// actually presents.
+    ///
+    /// Asserting both halves in ONE target is the point: the overlay draws in a
+    /// second pass into the same drawable, so a mistake there (clearing instead
+    /// of loading, presenting too early, the wrong y direction) destroys the
+    /// decoded picture. Separate tests for "video renders" and "HUD renders"
+    /// would both stay green through exactly that bug.
+    func testOpenedMediaRendersUnderneathAVisibleTransportOverlay() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [32, 96, 160, 224],
+            to: url,
+            forceKeyFrames: false
+        )
+
+        let renderer = try StudioViewerRenderer(device: device)
+        let attachment = StudioMediaAttachment(renderer: renderer)
+        // Wide enough for the HUD to lay out; 128 square is not.
+        let width = 512
+        let height = 256
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: width,
+            height: height
+        )
+
+        let session = StudioCompanionSession()
+        let step = session.consume(
+            chunk: try editCommittedLine(assetId: "overlay-acceptance", path: url.path)
+        )
+        let outcomes = await attachment.attach(openedAssets: step.openedAssets)
+        guard case .attached(_, _, let timebase, let durationTicks) =
+            try XCTUnwrap(outcomes.first)
+        else {
+            return XCTFail("expected the asset to attach, got \(outcomes)")
+        }
+
+        // Frame 3 is the brightest of the four, so the picture is unambiguous.
+        let frameSnapshot = snapshot(frame: 3, timebase: timebase)
+        let overlay = StudioOverlayLayout.build(
+            StudioOverlayState(
+                viewport: StudioOverlayViewport(
+                    width: Double(width),
+                    height: Double(height),
+                    scale: 1
+                ),
+                positionTicks: frameSnapshot.positionTicks,
+                durationTicks: durationTicks,
+                isPlaying: true,
+                inPointTicks: 0,
+                outPointTicks: durationTicks,
+                isLoopingRange: true,
+                timecodeText: "00:00:00:03",
+                sourceLabel: "overlay-acceptance"
+            )
+        )
+
+        let outcome = renderer.render(
+            snapshot: frameSnapshot,
+            to: target,
+            overlay: overlay
+        )
+        XCTAssertEqual(outcome, .decodedFrame(frameIndex: 3))
+
+        // 1. The DECODED picture survived the overlay pass.
+        let picture = try StudioTestPatternRenderer.readPixel(from: target, x: 256, y: 60)
+        XCTAssertGreaterThan(
+            Int(picture.green),
+            180,
+            "the overlay pass destroyed the decoded frame"
+        )
+
+        // 2. The playhead is drawn, and it is at the END of the track because
+        //    frame 3 is the last frame.
+        let trackMidY = Int(overlay.trackFrame.y + overlay.trackFrame.height / 2)
+        let playheadX = Int(overlay.trackFrame.maxX - 1)
+        let playhead = try StudioTestPatternRenderer.readPixel(
+            from: target,
+            x: playheadX,
+            y: trackMidY
+        )
+        let trackOnly = try StudioTestPatternRenderer.readPixel(
+            from: target,
+            x: Int(overlay.trackFrame.x) + 20,
+            y: trackMidY
+        )
+        XCTAssertGreaterThan(
+            Int(playhead.red) + Int(playhead.green) + Int(playhead.blue),
+            Int(trackOnly.red) + Int(trackOnly.green) + Int(trackOnly.blue),
+            "no visible playhead over decoded media"
+        )
+
+        // 3. The HUD emitted real geometry rather than an empty pass.
+        XCTAssertGreaterThan(renderer.overlayVertexCount, 100)
+    }
+
     /// A bad path from the host must not take the viewer down.
     func testAnUnopenableAssetLeavesTheViewerRunning() async throws {
         let device = try makeDevice()

@@ -102,10 +102,15 @@ public final class StudioVideoFrameRenderer {
     ///   in-flight ring. When nil the buffer is committed and waited on so the
     ///   target is immediately readable, and no retention is needed because the
     ///   caller's own reference outlives the wait.
+    /// - Parameter chaining: when true a LATER pass in this queue owns
+    ///   presentation and readback, so this commits without presenting and
+    ///   without blocking. Metal executes command buffers in commit order, so
+    ///   waiting here would stall the display link for no ordering benefit.
     public func render(
         frame: StudioVideoFrameTextures,
         to target: MTLTexture,
-        presenting drawable: MTLDrawable? = nil
+        presenting drawable: MTLDrawable? = nil,
+        chaining: Bool = false
     ) throws {
         guard target.pixelFormat == Self.pixelFormat else {
             throw StudioRendererError.unsupportedPixelFormat(String(describing: target.pixelFormat))
@@ -138,6 +143,16 @@ public final class StudioVideoFrameRenderer {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
+
+        if chaining {
+            // Retention is REQUIRED here for the same reason the drawable path
+            // needs it: the buffer is committed without waiting, so the GPU is
+            // still sampling these plane textures after this returns. Omitting
+            // it would let the CVMetalTexture wrappers die mid-flight.
+            retain(frame)
+            commandBuffer.commit()
+            return
+        }
 
         if let drawable {
             retain(frame)

@@ -27,6 +27,10 @@ final class StudioViewerView: NSView {
         static let space: UInt16 = 49
         static let leftArrow: UInt16 = 123
         static let rightArrow: UInt16 = 124
+        static let returnKey: UInt16 = 36
+        static let keypadEnter: UInt16 = 76
+        static let escape: UInt16 = 53
+        static let delete: UInt16 = 51
     }
 
     private let renderer: StudioViewerRenderer
@@ -34,6 +38,18 @@ final class StudioViewerView: NSView {
     /// it and draws whatever the resulting playhead selects.
     private var transport: StudioTransportController
     private var frameLink: CADisplayLink?
+
+    /// Timecode entry, also tested in Core. The view supplies keystrokes and
+    /// draws the field's own display text.
+    private var timecodeField = StudioTimecodeField()
+    private var sourceLabel = "No media"
+    private var message: String?
+    /// The overlay layout most recently drawn. Hit testing and accessibility
+    /// both read it, so neither re-derives geometry the renderer might disagree
+    /// with.
+    private var overlayModel: StudioOverlayModel?
+    private var publishedAccessibility: [StudioAccessibilityDescriptor] = []
+    private var accessibilityChildElements: [NSAccessibilityElement] = []
 
     /// Minimal viewer diagnostics (mission outcome 9 groundwork). Counted here
     /// because the display-link callback is the only place that can observe a
@@ -129,13 +145,20 @@ final class StudioViewerView: NSView {
             missedDrawableCount += 1
             return
         }
+        let overlay = StudioOverlayLayout.build(
+            overlayState(snapshot: snapshot, drawable: drawable.texture)
+        )
+        overlayModel = overlay
+        publishAccessibility(for: overlay)
+
         // All content selection and failure policy lives in StudioViewerRenderer
         // (Core) so it is covered by StudioViewerRendererTests; this stays glue.
         // Non-throwing by design: one bad frame must not take the viewer down.
         let outcome = renderer.render(
             snapshot: snapshot,
             to: drawable.texture,
-            presenting: drawable
+            presenting: drawable,
+            overlay: overlay
         )
         if outcome.didDraw {
             presentedFrameCount += 1
@@ -146,16 +169,68 @@ final class StudioViewerView: NSView {
         }
     }
 
+    /// Flattens the live transport into the value the overlay layout consumes.
+    /// Everything interesting about the result is asserted in
+    /// StudioOverlayModelTests; this is the only place the two worlds meet.
+    private func overlayState(
+        snapshot: StudioTransportSnapshot,
+        drawable: MTLTexture
+    ) -> StudioOverlayState {
+        StudioOverlayState(
+            viewport: StudioOverlayViewport(
+                width: Double(drawable.width),
+                height: Double(drawable.height),
+                scale: Double(window?.backingScaleFactor ?? 2.0)
+            ),
+            positionTicks: snapshot.positionTicks,
+            durationTicks: transport.clock.durationTicks,
+            isPlaying: snapshot.isPlaying,
+            inPointTicks: transport.inPointTicks,
+            outPointTicks: transport.outPointTicks,
+            isLoopingRange: transport.isLoopingRange,
+            isScrubbing: transport.isScrubbing,
+            timecodeText: currentTimecodeText,
+            sourceLabel: sourceLabel,
+            entry: timecodeField.snapshot,
+            message: message,
+            diagnostics: StudioOverlayDiagnostics(
+                presentedFrameCount: presentedFrameCount,
+                droppedFrameCount: droppedFrameCount,
+                retainedFrameCount: renderer.retainedFrameCount,
+                hardwareDecodeLabel: hardwareDecodeLabel
+            )
+        )
+    }
+
+    /// Measured, never inferred — the decoder reports what VideoToolbox actually
+    /// chose rather than what was requested.
+    private var hardwareDecodeLabel: String {
+        switch renderer.diagnostics.sourceDiagnostics?.hardwareDecodeStatus {
+        case .hardware: return "hw"
+        case .software: return "sw"
+        case .unknown, .none: return "hw?"
+        }
+    }
+
     /// Rebuilds the clock around a newly opened asset.
     ///
     /// The asset's timebase is authoritative: frame indices computed against a
     /// different rate address the wrong pictures, and the container's stored
     /// rate is the muxer's choice rather than anything the viewer can assume.
-    func adopt(timebase: StudioTimebase, durationTicks: Int64) {
+    func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
         transport = StudioTransportController(
             clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
         )
+        // A half-typed timecode belongs to the PREVIOUS asset's timebase, so
+        // carrying it across an open would resolve it against the wrong rate.
+        timecodeField.cancel()
+        sourceLabel = label
+        message = nil
         transport.play(atHost: CACurrentMediaTime())
+    }
+
+    func report(message text: String?) {
+        message = text
     }
 
     /// Current playhead as timecode, for diagnostics and for the on-screen
@@ -164,11 +239,74 @@ final class StudioViewerView: NSView {
         (try? transport.currentTimecode(atHost: CACurrentMediaTime()).text) ?? "--:--:--:--"
     }
 
+    // MARK: - Pointer scrubbing
+
+    /// View point (points, bottom-left origin) to the overlay's pixel space
+    /// (top-left origin). The overlay is laid out in DRAWABLE pixels, so this
+    /// has to scale as well as flip.
+    private func overlayPoint(from event: NSEvent) -> CGPoint {
+        let local = convert(event.locationInWindow, from: nil)
+        let scale = window?.backingScaleFactor ?? 2.0
+        return CGPoint(x: local.x * scale, y: (bounds.height - local.y) * scale)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let model = overlayModel, model.isVisible else {
+            super.mouseDown(with: event)
+            return
+        }
+        let point = overlayPoint(from: event)
+        // Only the track's grab area starts a scrub. A click anywhere else in
+        // the picture must not yank the playhead.
+        guard model.grabFrame.contains(x: point.x, y: point.y) else {
+            super.mouseDown(with: event)
+            return
+        }
+        let host = CACurrentMediaTime()
+        transport.beginScrub(atHost: host)
+        transport.updateScrub(
+            toTicks: StudioOverlayLayout.ticks(
+                atX: point.x,
+                in: model,
+                durationTicks: transport.clock.durationTicks
+            ),
+            atHost: host
+        )
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard transport.isScrubbing, let model = overlayModel else {
+            super.mouseDragged(with: event)
+            return
+        }
+        // Deliberately NOT re-checking the grab area: dragging off the bar and
+        // back is normal, and the hit test already clamps to both ends.
+        transport.updateScrub(
+            toTicks: StudioOverlayLayout.ticks(
+                atX: overlayPoint(from: event).x,
+                in: model,
+                durationTicks: transport.clock.durationTicks
+            ),
+            atHost: CACurrentMediaTime()
+        )
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard transport.isScrubbing else {
+            super.mouseUp(with: event)
+            return
+        }
+        // Restores whatever the transport was doing before the gesture.
+        transport.endScrub(atHost: CACurrentMediaTime())
+    }
+
     // MARK: - Transport keys
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        if handleTimecodeEntry(event) { return }
+
         let host = CACurrentMediaTime()
         switch event.keyCode {
         case Key.space:
@@ -213,6 +351,118 @@ final class StudioViewerView: NSView {
     private var shuttleFrames: Int64 {
         Int64(StudioTimecodeConverter.nominalRate(for: transport.clock.timebase))
     }
+
+    // MARK: - Timecode entry
+
+    /// Returns true when the keystroke belonged to timecode entry.
+    ///
+    /// A digit STARTS entry, which is how every NLE behaves: you type at the
+    /// timecode display, you do not first click into it. Non-digits fall
+    /// through so the transport keys keep working mid-entry rather than being
+    /// swallowed.
+    private func handleTimecodeEntry(_ event: NSEvent) -> Bool {
+        if timecodeField.isActive {
+            switch event.keyCode {
+            case Key.returnKey, Key.keypadEnter:
+                commitTimecodeEntry()
+                return true
+            case Key.escape:
+                timecodeField.cancel()
+                message = nil
+                return true
+            case Key.delete:
+                return timecodeField.backspace()
+            default:
+                break
+            }
+        }
+
+        guard let character = event.charactersIgnoringModifiers?.first,
+            character.isNumber,
+            character.isASCII
+        else {
+            return false
+        }
+        if !timecodeField.isActive {
+            // Drop-frame notation only where it is defined; a 25fps asset must
+            // never be addressed with a semicolon.
+            timecodeField = StudioTimecodeField(
+                usesDropFrame: StudioTimecodeConverter.supportsDropFrame(transport.clock.timebase)
+            )
+            timecodeField.begin()
+            message = nil
+        }
+        return timecodeField.input(character)
+    }
+
+    private func commitTimecodeEntry() {
+        defer { timecodeField.cancel() }
+        guard let text = timecodeField.commitText() else {
+            message = nil
+            return
+        }
+        do {
+            try transport.seek(toTimecodeText: text, atHost: CACurrentMediaTime())
+            message = nil
+        } catch {
+            // Reported, never approximated: seeking somewhere near a typo is a
+            // worse failure than refusing it, and the operator needs to see WHY.
+            message = "\(text) is not a valid timecode"
+        }
+    }
+
+    // MARK: - Accessibility (mission outcome 10 groundwork)
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "Studio viewer" }
+
+    override func accessibilityChildren() -> [Any]? { accessibilityChildElements }
+
+    /// Republishes accessibility children only when the DESCRIPTORS change.
+    ///
+    /// Rebuilding these every display-link tick would churn sixty times a second
+    /// and give assistive technology a moving target. The descriptors are
+    /// Equatable precisely so this comparison is cheap.
+    private func publishAccessibility(for model: StudioOverlayModel) {
+        guard model.accessibilityElements != publishedAccessibility else { return }
+        publishedAccessibility = model.accessibilityElements
+        let scale = window?.backingScaleFactor ?? 2.0
+
+        accessibilityChildElements = model.accessibilityElements.map { descriptor in
+            let element = NSAccessibilityElement()
+            element.setAccessibilityRole(Self.accessibilityRole(for: descriptor.role))
+            element.setAccessibilityLabel(descriptor.label)
+            element.setAccessibilityValue(descriptor.value)
+            element.setAccessibilityParent(self)
+            // Descriptor frames are drawable pixels, top-left origin; AppKit
+            // wants points in SCREEN space, bottom-left origin.
+            let localRect = NSRect(
+                x: descriptor.frame.x / scale,
+                y: bounds.height - descriptor.frame.maxY / scale,
+                width: descriptor.frame.width / scale,
+                height: descriptor.frame.height / scale
+            )
+            if let window {
+                element.setAccessibilityFrame(
+                    window.convertToScreen(convert(localRect, to: nil))
+                )
+            }
+            return element
+        }
+    }
+
+    private static func accessibilityRole(
+        for role: StudioAccessibilityDescriptor.Role
+    ) -> NSAccessibility.Role {
+        switch role {
+        case .slider: return .slider
+        case .staticText: return .staticText
+        case .checkbox: return .checkBox
+        }
+    }
 }
 
 /// Owns the viewer window. Held strongly by StudioViewerApp because
@@ -244,8 +494,12 @@ final class StudioViewerWindowController {
         window.makeFirstResponder(view)
     }
 
-    func adopt(timebase: StudioTimebase, durationTicks: Int64) {
-        view.adopt(timebase: timebase, durationTicks: durationTicks)
+    func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
+        view.adopt(timebase: timebase, durationTicks: durationTicks, label: label)
+    }
+
+    func report(message text: String?) {
+        view.report(message: text)
     }
 }
 
@@ -271,9 +525,17 @@ final class StudioViewerAppState {
         for outcome in await attachment.attach(openedAssets: assets) {
             switch outcome {
             case .attached(let assetId, let frameCount, let timebase, let durationTicks):
-                controller.adopt(timebase: timebase, durationTicks: durationTicks)
+                controller.adopt(
+                    timebase: timebase,
+                    durationTicks: durationTicks,
+                    label: "\(assetId) · \(frameCount) frames"
+                )
                 Self.report("opened \(assetId) (\(frameCount) frames)")
             case .failed(let assetId, let message):
+                // Surfaced ON SCREEN as well as on stderr: a viewer that fails
+                // to open something and says so only in a log the operator
+                // cannot see just looks broken.
+                controller.report(message: "could not open \(assetId): \(message)")
                 Self.report("could not open \(assetId): \(message)")
             }
         }
