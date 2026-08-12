@@ -12,6 +12,7 @@ import { resolveSubThreadJoinPolicy, type SubThreadJoinPolicyRequest } from './S
 import {
   normalizeFleetLifecycle,
   parseFleetWaveRole,
+  type EphemeralFleetLiveWave,
   type FleetWaveLifecycle,
   type FleetWaveRole
 } from './SubThreadEphemeralFleet'
@@ -548,6 +549,15 @@ export async function executeDelegateWaveTool(input: {
    * count reserved for this wave — never a different key's budget.
    */
   releaseBudgetSlots: (count: number) => void
+  /**
+   * One live ephemeral fleet per parent: probe for a still-live ephemeral
+   * wave among this parent's children, derived from durable child records
+   * (see findLiveEphemeralFleetWave — never a counter). Consulted only for
+   * lifecycle=ephemeral calls, BEFORE budget/approval/spawn, so a refusal
+   * consumes nothing. Durable waves are never blocked. Required so every
+   * producer wires it.
+   */
+  findLiveEphemeralFleet: () => EphemeralFleetLiveWave | null
   budgetCap: number
   /**
    * Workspace `subThreadDelegation` policy. Authority card-skip must still
@@ -610,6 +620,26 @@ export async function executeDelegateWaveTool(input: {
   }
 
   const { workers, joinPolicy, waveId, lifecycle, allowMultiProvider } = parsed.value
+
+  // One live ephemeral fleet per parent. Checked before resolve/reserve/
+  // approval so the refusal consumes no budget and asks nothing — mirroring
+  // the Ensemble fan-out cap, the refusal says the cap is on FLEETS, not
+  // workers, so a caller does not respond by shrinking its next roster.
+  if (lifecycle === 'ephemeral') {
+    const live = input.findLiveEphemeralFleet()
+    if (live) {
+      return {
+        ok: false,
+        text:
+          `delegate_wave: an ephemeral fleet from this parent is still in flight ` +
+          `(${live.waveId}: ${live.settled} of ${live.total} returned). One live fleet per ` +
+          `parent — wait for its workers to return (results land in this thread automatically, ` +
+          `and hung workers fail at the join deadline), then launch the next fleet. This caps ` +
+          `concurrent fleets, not workers; the next fleet may still carry a full roster.`
+      }
+    }
+  }
+
   const resolvedSettings: DelegateWaveResolvedWorkerSettings[] = []
   for (const worker of workers) {
     const settings = input.resolveWorkerSettings(worker)

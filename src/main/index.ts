@@ -2034,7 +2034,9 @@ import {
 } from './SubThreadDelegateWave'
 import {
   buildEphemeralFleetRoleFrame,
+  findLiveEphemeralFleetWave,
   resolveEphemeralFleetIsolationForWave,
+  selectHungEphemeralFleetWorkers,
   shouldArchiveEphemeralFleetAfterSettle,
   shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
@@ -9259,7 +9261,15 @@ function scheduleSubThreadJoinEvaluation(parentChatId: string, groupId: string):
       return
     }
     ensureSubThreadJoinDeadlineEvent(parentChatId, current)
-    void maybeDrainParentSubThreadMailbox(parentChatId).catch((error) => {
+    void (async () => {
+      if (current.status === 'deadline') {
+        // Die-BY-deadline: fail the wave's hung EPHEMERAL workers before the
+        // parent wake, so the drain observes settled workers and the fleet
+        // card flips in the same beat. Durable workers keep late returns.
+        await failHungEphemeralFleetWorkersOnJoinDeadline(parentChatId, groupId)
+      }
+      await maybeDrainParentSubThreadMailbox(parentChatId)
+    })().catch((error) => {
       console.warn(
         `[SubThreadJoin] wake failed for parentChatId=${parentChatId} groupId=${groupId}:`,
         error instanceof Error ? error.message : String(error)
@@ -9267,6 +9277,85 @@ function scheduleSubThreadJoinEvaluation(parentChatId: string, groupId: string):
     })
   }, delayMs)
   subThreadJoinWakeTimers.set(key, timer)
+}
+
+/**
+ * Die-BY-deadline for ephemeral fleets. When a join deadline fires, the
+ * wave's still-running EPHEMERAL workers are cancelled instead of burning
+ * tokens into a parent that has already proceeded with partials; the
+ * existing cancel → typed-return rails then discard the sole-writer
+ * worktree, stamp `resultReturnedAt`, archive (die-on-return), and enqueue
+ * the mailbox event that makes the worker terminal for the join. Durable
+ * wave workers are deliberately untouched — their late returns still land
+ * via the mailbox coalesce, exactly as before fleets existed.
+ * Idempotent: settled workers are filtered out, so a second deadline tick
+ * (or the lazy mailbox evaluation path) re-entering here is harmless.
+ */
+async function failHungEphemeralFleetWorkersOnJoinDeadline(
+  parentChatId: string,
+  groupId: string
+): Promise<void> {
+  const workers = collectSubThreadJoinWorkers(parentChatId, groupId)
+  const hung = selectHungEphemeralFleetWorkers(
+    workers.map((worker) => ({
+      subThreadId: worker.subThreadId,
+      terminal: worker.terminal,
+      child: AppStore.getChat(worker.subThreadId)
+    }))
+  )
+  for (const subThreadId of hung) {
+    const child = AppStore.getChat(subThreadId)
+    if (!child) continue
+    const reason = `Fleet worker cancelled at the join deadline (${groupId}).`
+    // Resolve the run to stop: live background-transcript run first (fleet
+    // workers run in that lane), then a registered RunManager session, then
+    // the last persisted row so the no-live-run fallback can still settle.
+    const backgroundRunId = [...backgroundSubThreadTranscripts.entries()].find(
+      ([, state]) => state.chatId === subThreadId && state.status === 'running'
+    )?.[0]
+    const sessionRunId = child.provider
+      ? runManager
+          .getActiveByProvider(child.provider)
+          .find((session) => session.appChatId === subThreadId)?.runId
+      : undefined
+    const runId = backgroundRunId || sessionRunId || (child.runs || []).at(-1)?.runId
+    if (!runId) continue
+    // Stamp `cancelled` on the persisted row BEFORE aborting: the background
+    // flusher settles 'cancelled' only when the row already says so, and
+    // stamping first cannot race the abort-triggered final flush.
+    saveAndBroadcastChat({
+      ...child,
+      runs: (child.runs || []).map((run) =>
+        run.runId === runId
+          ? {
+              ...run,
+              status: 'cancelled' as const,
+              cancelled: true,
+              endedAt: run.endedAt || new Date().toISOString()
+            }
+          : run
+      ),
+      updatedAt: Date.now()
+    })
+    let cancelled = false
+    try {
+      cancelled = child.provider ? await cancelProviderRun(child.provider, runId) : false
+    } catch {
+      cancelled = false
+    }
+    if (!cancelled) {
+      // No live session (crashed, or died before registration): the abort
+      // path will never flush a typed return, so settle + propagate here —
+      // propagation alone runs worktree settle, archive, and the mailbox
+      // enqueue.
+      settleSubThreadWorkerRun(subThreadId, runId, 'cancelled', reason)
+      await maybePropagateLinkedChildResult(subThreadId, {
+        outcome: 'cancelled',
+        sourceRunId: runId,
+        errorMessage: reason
+      })
+    }
+  }
 }
 
 function deliverableSubThreadMailboxEvents(
@@ -39751,6 +39840,14 @@ async function executeGeminiMcpTool(
         budgetRemaining: delegationApprovalBudget.remaining(delegationBudgetKey),
         tryConsumeBudgetSlot: () => delegationApprovalBudget.tryConsume(delegationBudgetKey),
         releaseBudgetSlots: (count) => delegationApprovalBudget.release(delegationBudgetKey, count),
+        // One live ephemeral fleet per parent — derived from durable child
+        // records at call time, never a counter (restart-safe; a wave whose
+        // join deadline has passed no longer blocks, the reaper fails it).
+        findLiveEphemeralFleet: () =>
+          findLiveEphemeralFleetWave({
+            children: AppStore.getChildChats(parentChatId),
+            nowMs: Date.now()
+          }),
         budgetCap: delegationApprovalBudget.cap(),
         subThreadDelegationPolicy:
           context.effectivePermissions?.agenticServices?.subThreadDelegation,

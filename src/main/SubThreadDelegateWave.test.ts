@@ -599,6 +599,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       budgetRemaining: 10,
       tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
       releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
       budgetCap: 20,
       requestApproval: async () => true,
       assertParentStillValid: () => undefined,
@@ -660,6 +661,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       budgetRemaining: 5,
       tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
       releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
       budgetCap: 20,
       subThreadDelegationPolicy: 'ask',
       requestApproval: async () => {
@@ -711,6 +713,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       budgetRemaining: 5,
       tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
       releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
       budgetCap: 20,
       subThreadDelegationPolicy: 'deny',
       requestApproval: async () => {
@@ -765,6 +768,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       budgetRemaining: 5,
       tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
       releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
       budgetCap: 20,
       subThreadDelegationPolicy: 'ask',
       requestApproval: async () => false,
@@ -935,6 +939,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
       budgetRemaining: 5,
       tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
       releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => null,
       budgetCap: 20,
       subThreadDelegationPolicy: 'ask',
       requestApproval: async (preview) => {
@@ -975,5 +980,101 @@ describe('SubThreadDelegateWave pure helpers', () => {
     // Decline still refunds — preserve budget invariant.
     expect(budget.consumed).toBe(2)
     expect(budget.netConsumed).toBe(0)
+  })
+
+  it('refuses a second live ephemeral fleet before budget, approval, or spawn', async () => {
+    const budget = trackingBudgetPorts()
+    let approvalAsked = false
+    let spawnCalls = 0
+    const outcome = await executeDelegateWaveTool({
+      args: { lifecycle: 'ephemeral', workers: [{ prompt: 'scout the flake', role: 'scout' }] },
+      parentChatId,
+      parentAppRunId,
+      parentProvider: 'codex',
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: true,
+      permissionPresetId: 'default',
+      budgetRemaining: 10,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => ({ waveId: 'wave-parent-earlier', total: 4, settled: 1 }),
+      budgetCap: 20,
+      requestApproval: async () => {
+        approvalAsked = true
+        return true
+      },
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: { requestedModel: 'cli-default', runPayload: {}, providerMetadataPatch: {} }
+      }),
+      spawnWorker: async ({ worker }) => {
+        spawnCalls += 1
+        return {
+          subThreadId: `sub-${worker.provider}`,
+          provider: worker.provider,
+          title: `Sub-thread (${worker.provider})`,
+          runId: `run-${worker.provider}`
+        }
+      },
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-second',
+      nowMs
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    // The refusal names the live wave, its progress, and says the cap is on
+    // fleets, not workers — mirroring the Ensemble fan-out refusal contract.
+    expect(outcome.text).toMatch(/wave-parent-earlier/)
+    expect(outcome.text).toMatch(/1 of 4 returned/)
+    expect(outcome.text).toMatch(/caps concurrent fleets, not workers/i)
+    // Refused BEFORE budget/approval/spawn — nothing consumed, nothing asked.
+    expect(budget.consumed).toBe(0)
+    expect(approvalAsked).toBe(false)
+    expect(spawnCalls).toBe(0)
+  })
+
+  it('durable waves are not blocked by a live ephemeral fleet', async () => {
+    const budget = trackingBudgetPorts()
+    let spawnCalls = 0
+    const outcome = await executeDelegateWaveTool({
+      args: twoWorkers(),
+      parentChatId,
+      parentAppRunId,
+      parentProviderLabel: 'Codex',
+      maxWorkers: 8,
+      isAllowedProvider,
+      isBossOrCaptain: true,
+      permissionPresetId: 'default',
+      budgetRemaining: 10,
+      tryConsumeBudgetSlot: budget.tryConsumeBudgetSlot,
+      releaseBudgetSlots: budget.releaseBudgetSlots,
+      findLiveEphemeralFleet: () => ({ waveId: 'wave-parent-earlier', total: 4, settled: 1 }),
+      budgetCap: 20,
+      requestApproval: async () => true,
+      assertParentStillValid: () => undefined,
+      resolveWorkerSettings: () => ({
+        ok: true,
+        value: { requestedModel: 'cli-default', runPayload: {}, providerMetadataPatch: {} }
+      }),
+      spawnWorker: async ({ worker }) => {
+        spawnCalls += 1
+        return {
+          subThreadId: `sub-${worker.provider}-${spawnCalls}`,
+          provider: worker.provider,
+          title: `Sub-thread (${worker.provider})`,
+          runId: `run-${worker.provider}-${spawnCalls}`
+        }
+      },
+      rollbackWorker: () => undefined,
+      providerLabel: (provider) => provider,
+      createWaveId: () => 'wave-durable-beside-fleet',
+      nowMs
+    })
+    expect(outcome.ok).toBe(true)
+    expect(spawnCalls).toBe(2)
   })
 })

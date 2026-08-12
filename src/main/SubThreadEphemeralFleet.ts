@@ -145,3 +145,109 @@ export function shouldArchiveEphemeralFleetAfterSettle(settle: { ok: boolean } |
   if (settle == null) return true
   return settle.ok
 }
+
+/** Minimal structural view of a wave child — ChatRecord satisfies it. */
+export interface EphemeralFleetWaveChildView {
+  archived?: boolean
+  delegationContext?: {
+    lifecycle?: 'ephemeral' | 'durable'
+    resultReturnedAt?: number
+    dispatchError?: { at: number; message: string }
+    joinPolicy?: { groupId?: string; deadlineAt?: string }
+  }
+}
+
+export interface EphemeralFleetLiveWave {
+  waveId: string
+  total: number
+  settled: number
+}
+
+/**
+ * A wave child is settled once it can no longer return: a typed return
+ * stamped `resultReturnedAt` (load-bearing — a failed worktree settle leaves
+ * the child unarchived ON PURPOSE, so `archived` alone is not sufficient),
+ * the die-on-return archive landed, or dispatch failed and the child will
+ * never run.
+ */
+export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView): boolean {
+  return (
+    child.archived === true ||
+    typeof child.delegationContext?.resultReturnedAt === 'number' ||
+    child.delegationContext?.dispatchError != null
+  )
+}
+
+/**
+ * One live ephemeral fleet per parent: find a still-live ephemeral wave among
+ * the parent's children, or null.
+ *
+ * Derived from durable child records, never a counter — a counter has to be
+ * right on every cancel, failure, timeout and restart path (see
+ * EnsembleFanoutConcurrency for the same principle). Wave identity is
+ * `delegationContext.joinPolicy.groupId`, which parse hard-binds to the
+ * waveId.
+ *
+ * An unsettled child only holds its wave open while its join deadline is
+ * still ahead. A missing or unparseable `deadlineAt` counts as EXPIRED (fail
+ * open) — an unreadable expiry claims nothing — so a wave orphaned by a crash
+ * can never wedge the parent shut; the deadline reaper fails its workers and
+ * settles them for real.
+ */
+export function findLiveEphemeralFleetWave(input: {
+  children: ReadonlyArray<EphemeralFleetWaveChildView>
+  nowMs: number
+}): EphemeralFleetLiveWave | null {
+  const waves = new Map<string, { total: number; settled: number; heldOpen: boolean }>()
+  for (const child of input.children) {
+    const context = child.delegationContext
+    if (context?.lifecycle !== 'ephemeral') continue
+    const waveId = context.joinPolicy?.groupId?.trim()
+    if (!waveId) continue
+    const wave = waves.get(waveId) || { total: 0, settled: 0, heldOpen: false }
+    wave.total += 1
+    if (isEphemeralFleetChildSettled(child)) {
+      wave.settled += 1
+    } else {
+      const deadlineMs = Date.parse(context.joinPolicy?.deadlineAt || '')
+      if (Number.isFinite(deadlineMs) && deadlineMs > input.nowMs) {
+        wave.heldOpen = true
+      }
+    }
+    waves.set(waveId, wave)
+  }
+  for (const [waveId, wave] of waves) {
+    if (wave.settled < wave.total && wave.heldOpen) {
+      return { waveId, total: wave.total, settled: wave.settled }
+    }
+  }
+  return null
+}
+
+/**
+ * Workers to fail when a join deadline fires: non-terminal EPHEMERAL wave
+ * members only. Durable wave workers keep their pre-fleet semantics — the
+ * parent already woke with partials and a late return still lands via the
+ * mailbox; only die-on-return fleets escalate the deadline to die-BY-deadline.
+ * Deduped; settled children are skipped (idempotent under a second tick).
+ */
+export function selectHungEphemeralFleetWorkers(
+  workers: ReadonlyArray<{
+    subThreadId: string
+    terminal?: unknown
+    child?: EphemeralFleetWaveChildView | null
+  }>
+): string[] {
+  const hung: string[] = []
+  const seen = new Set<string>()
+  for (const worker of workers) {
+    if (worker.terminal) continue
+    const child = worker.child
+    if (!child || child.delegationContext?.lifecycle !== 'ephemeral') continue
+    if (isEphemeralFleetChildSettled(child)) continue
+    if (seen.has(worker.subThreadId)) continue
+    seen.add(worker.subThreadId)
+    hung.push(worker.subThreadId)
+  }
+  return hung
+}
