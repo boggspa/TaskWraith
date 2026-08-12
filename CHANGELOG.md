@@ -12,23 +12,81 @@ Source-ahead work toward the next release. See the commits since the
 [v1.9.4](https://github.com/boggspa/TaskWraith/releases/tag/v1.9.4) tag for the
 current boundary; release notes will be compiled when 1.9.5 is tagged.
 
+### Meta Muse Code
+
+- **A Meta Muse Code seat.** Meta's Muse Code CLI joins the provider lineup alongside the other CLI seats, with its own containment, session metering, and fail-closed credential probe. Sign in, sign out, and run the official installer's upgrade path from Settings; TaskWraith never repackages the CLI or reads Meta credentials.
+- **Muse effort levels.** Meta's `/effort` setting maps onto the same reasoning ladder every other provider uses, so a Muse seat carries its effort through solo runs, Ensemble rounds, and the composer chip — Extra High included.
+- **Muse spend and Meta credits.** Model Usage gains a Muse spend card with an advisory $15 monthly soft cap that resets on the 1st, and Meta API Credits now reach the sidebar limit meters instead of being dropped.
+- **Muse work is visible in the transcript.** Muse's native edit, patch, delete, and shell tool calls project into the Activity stack from its own session log, with honest per-tool labelling rather than a generic verb.
+- **Correct Muse model resolution.** A Muse seat no longer resolves another provider's model list, a model-less start no longer labels the transcript "unknown", and Muse carries the Meta brand hue.
+
 ### Provider setup and run control
 
+- **Mid-turn steering.** A Steer control now sits beside Stop while a solo chat is running, and your interjection reaches the model inside the current turn. Four delivery strategies cover the provider families — live interrupt and re-prompt, tool-boundary injection, cooperative cancel-and-resume, and a natural-boundary fallback — and anything a transport cannot confirm falls back to boundary delivery rather than being lost.
+- **AntiGravity work is visible while it happens.** The `agy` CLI publishes no tool stream of its own, so headless runs used to finish with a blank transcript even though files changed on disk. Arbitrated shell and write calls now project live through the permission bridge, and read-side views, greps, and directory listings are recovered from AntiGravity's own transcript afterwards — bringing it to tool-call parity with the other seats.
+- **AntiGravity launch honesty.** Cold-start project launches report liveness instead of appearing hung, approved headless shell commands are honoured, and a launch aborts outright when its permission lease fails rather than proceeding with no allow rules.
 - **AntiGravity CLI maintenance.** Settings can open the official user-installed `agy` updater. TaskWraith does not download or repackage the CLI, access provider credentials, or change AntiGravity's separate consent and availability requirements.
-- **Mid-turn steering.** Solo chats can inject a steer into an active run with delivery-aware provider handling, scoped cancellation, and recovery for queued steering requests.
+- **New local models.** Ollama gains Nemotron 3.5 Lightning (30B-MLX) and Meta Muse Glimmer (30B-MLX) with correct context windows and brand tinting, and the New Additions card leads with the current Muse, Ollama, and Mistral Vibe rows.
 - **Write-capable Kimi permissions.** Kimi seats now properly honor write-capable file permissions instead of degrading.
+- **Kimi brokering fixes.** Kimi resolves TaskWraith MCP tools by identity before falling back on tool kind, defers broker tool approval to the main process, and collapses a Mesh approval into a single card.
+- **Steadier provider metadata.** Mistral Vibe's sparse broker tool metadata is recognised and correlated, image-attachment support is stated accurately per provider, and the opt-in compatibility prompt filter now covers the Pi upstreams that need it.
+
+### Permissions and approvals
+
+- **One ladder for the standard tools.** Shell, file changes, publishing, MCP, delegation, the canvases, media editing, and web browsing now follow a single permission ladder: Ask and Plan always present the approval modal, and Accept Edits and above authorize them for the run without a second decision — read-only search inspection included.
+- **A simpler permission picker.** Per-tool grant toggles are gone from the composer and participant permission pickers; the tier alone now says what a seat may do.
+- **Publishing still asks under Accept Edits.** Staging and committing inside the workspace are allowed at Accept Edits, but pushing and opening pull requests keep prompting until you move to a higher tier, and unattended runs lost their standing grant exceptions.
+- **The approval card names who is asking.** The "Requested by" row now renders the same seat element the close-out table and fan-out cards use — role in the seat's accent, provider, model, reasoning, and the permission tier, with Boss/Captain authority shown as a glyph.
+- **A posture override hatch in Settings.** Policy postures can be overridden from Settings behind a risk acknowledgement, and workspace edit-consent acknowledgements now persist correctly instead of being replaced wholesale.
+- **Failover keeps its posture.** Automatic provider failover preserves Accept Edits, verifies posture across reroutes, and binds retries to source proof.
+- **No impossible retries.** A lane blocked by a permission its seat can never obtain is no longer offered as a retry.
 
 ### Channels and collaboration
 
 - **Safer People-to-Channel migration.** Existing conversations can preserve member presentation and invitation handoffs while migrated posts remain available for host review. Startup migration is fenced, restart-safe, and completed before the channel serves the migrated data.
 - **Channels replaces People across the app.** The sidebar section, chat-header sharing controls, join flow, and Settings tab now speak the channel runtime directly: share any chat from its Channel panel, join by pasting an invite there, and manage every channel — members, revoke, close, audit — from Settings → Channels. The legacy People share surfaces are retired. A channel is reachable only while the host Mac is online.
+- **Agents can hold a Channel seat.** After an accepted security review, a Channel can admit agent members with stable, owner-signed identities. A durable message that mentions a granted agent starts it without a second local confirmation, bounded by an owner-signed grant that names the eligible mentioners, workspace, run posture, expiry, and dispatch budget. Manage, confirm, and revoke agent seats from the Channel host panel; the eight-member ceiling counts humans and agents together.
+- **Agent dispatch survives a restart.** Signed dispatches ride a crash-safe journal, so an agent turn triggered by a mention is recovered and finished after a restart rather than silently lost, and each agent's provider history stays isolated from the others.
+- **Host and member panels.** Channels ship a host panel and a primary member panel with durable member replicas, closed-member controls, host-shown admission codes, and readable history for members whose access was revoked.
+- **Erasable Channel history.** Deleting Channel history is replay-safe and settles globally after the runtime quiesces, so an erasure cannot be undone by a late write or a reconnecting member.
+- **A Channel fault no longer blocks launch.** A failed Channels bootstrap degrades to a reduced Channels experience instead of blocking the app, and expired invite checkpoints are recovered rather than stranding the invite.
+- **Blackboard images.** Ensemble blackboard entries can carry bounded image attachments — posted, inspected, and rendered in the panel — instead of text only.
 
 ### Ensemble and Orchestration
 
 - **Provider-aware starter rosters.** Fresh roster stores now include editable 3-, 4-, 5-, 6-, 8-, and 10-seat panels spanning Orchestrator, Advisor, Boardmaster, Scout, Worker, and Challenger roles. They use only the user's configured providers and those providers' default models, repeat providers as needed, and seed every seat at Accept Edits without Full WS Access, Full Access, or custom overrides.
 - **Boss post-Round 1 handoff rule.** Boss and Captain seats must make explicit routing decisions with `ensemble_yield` or `ensemble_fanout` after the first continuous pass instead of silently dropping the turn.
-- **Fence stale continuous drains.** Fences stale continuous drains and suppresses impossible lane retries during continuous orchestration.
-- **Read-only search inspection.** Read-only search inspection is now allowed under standard permission models.
+- **Ephemeral fleets from one delegation.** `delegate_wave` can spawn a short-lived fleet of up to 64 workers with roles, a shared provider default, and a die-on-return lifecycle, tracked in the transcript by a single live progress card. Only one ephemeral fleet runs per parent at a time, and a fleet that hangs is failed by its own join deadline rather than wedging the parent.
+- **Fleet approvals answer in bulk.** Pending approvals from fleet children surface on the wave card, and Allow-all accepts every request sharing one scope in dispatch order — including the shell command preview in the scope key, so unrelated requests are never swept in.
+- **Honest fleet posture, and isolation when it's safe.** Approval copy names the wave's lifecycle, role, and whether workers run read-only or under a demoted writer clamp. A sole ephemeral writer can be upgraded to its own isolated git worktree, promoted or discarded on return; waves with multiple writer seats stay read-only so they cannot race in one checkout.
+- **A wave says why a lane stopped.** Wave completion names skipped and failed lanes with their recorded terminal reasons, counts failures apart from returns, and reserves "stopped" for genuinely cancelled lanes — so an authority seat no longer re-dispatches a permission-walled seat into the same wall.
+- **Late roster trims are honoured.** A Boss keep-list that arrives after every named seat has already dispatched is queued and applied to the next Continuous pass instead of dead-ending.
+- **No stale Continuous passes.** A Continuous round no longer drains work queued by a pass that has already ended.
+- **Hop-limit changes are on the record.** Editing a round's continuation hop limit is persisted as a transcript event and animates in place, so the roster's remaining budget is visible rather than inferred.
+- **A richer add-participant picker.** Adding a seat mid-round offers a fuller provider/model picker inline in the participants row.
+- **Clearer seat guidance.** Captain role stages stay active through the round, and briefings carry advisory guidance on taking over another seat's work across every prompt transport.
+
+### Custom Instructions and the Prompt Inspector
+
+- **Custom Instructions.** A user-owned global instruction document and a provider-neutral `TASKWRAITH.md` per workspace now layer into every run, editable from Settings → Custom Instructions with an apply toggle, a byte meter, and a per-layer status preview that says plainly when a layer was applied, absent, or skipped and why. Session-carrying providers receive a replacement block when the text changes rather than a session restart; revoking sends an explicit disregard note.
+- **See the exact prompt.** The Inspector gains a Prompt tab: a Layers view over the run's composed envelope with per-layer digests, and a Wire view showing the text actually dispatched at each transport's launch boundary. Labels state precisely what is being shown — provider-owned native context is never claimed as TaskWraith's.
+
+### Git, commits, and pull requests
+
+- **A commits view in the Inspector.** The right dock gains a selectable commits view over your unpushed commit stack, with per-commit attribution, and the Task Complete stack links into it.
+- **Group commits into a pull request.** Selected commits can be assembled into a pull request and managed from the Inspector — open, update, and track a grouped PR through an audited GitHub lifecycle, with group membership persisted and every publish recorded on the external-publish receipt ledger.
+- **Open changed files straight into the diff studio.** The composer's workspace diff-stats control now opens the changed-file set in the Inspector instead of being a bare count.
+- **Git refusals say why.** A rejected workspace-scoped git action reports its cause instead of failing opaquely.
+
+### Workspace, panes, and startup
+
+- **Split panes are real threads.** Each Multiview pane now hydrates and runs as its own durable thread, independent of which pane has focus, so a background pane keeps streaming, keeps its composer, and keeps its own workspace context. Side chats and popouts hydrate independently too; sidebar chats open into the focused pane, and empty panes are explicit targets.
+- **Per-pane pull-request and CI status.** Every visible pane reports its own workspace's PR and CI rollup instead of both being suppressed in split mode.
+- **New Chat opens where you were.** Startup opens a new chat in your last workspace and project context, and the initial route is committed before the window paints rather than flickering through a default.
+- **Adding a workspace opens a new thread.** The sidebar `+` and Settings → Add workspace used to silently rebind whichever chat was focused, mid-round included. They now open the new workspace as its own fresh thread; only the composer's workspace switcher rebinds the current chat.
+- **Attach a folder.** The composer plus menu accepts folder references alongside files, with scoped reads carried through solo and Ensemble runs.
+- **Stable sidebar ordering.** Ensembles and every other thread list keep a stable recency fallback, so live rounds no longer make entries leapfrog each other.
+- **No tray-window flash at launch.** The iOS tray window stays hidden until its bridge is ready.
 
 ### Host authority and companion parity
 
@@ -39,7 +97,10 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 
 ### Simulator Canvas
 
-- **Companion gRPC for gestures.** Uses pinned fb-idb gRPC schema to handle gestures natively.
+- **Gestures land the first time.** Simulator taps, swipes, and typing go through the companion's pinned gRPC channel directly, with the companion pre-warmed and its invocations serialised — ending the races that made the first gesture of a session miss.
+- **Guided control setup.** Settings walks you through installing and enabling simulator control, detects a Homebrew 6 layout, and reports what is still missing rather than failing at first gesture.
+- **Explicit actuation gating.** Human and agent actuation of the simulator are gated separately, so the agent HID tools and your own taps can be authorized independently.
+- **Copy and paste across the bezel.** The host clipboard syncs with the simulator, and typed keystrokes are coalesced so text entry keeps up.
 
 ### Mesh Canvas topology authoring
 
@@ -47,6 +108,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Conflict-safe collaboration.** Topology edits carry expected revisions, idempotent mutation ids, and participant attribution, so solo and Ensemble seats refine the same chat-owned object without silent last-writer overwrites.
 - **Editable topology in the dock.** The Three.js viewer renders the current topology and exposes Surface, Edges, Vertices, and Rig overlays with live geometry counts.
 - **Permission parity across seats.** Ask and Plan remain per-call/request-only; Accept Edits, Full WS Access, and Full Access auto-allow Mesh work for all supported seats, including Pi's run-bound extension. Fresh v15 provider sessions receive direct topology tools; older frozen receipts keep their original catalogue.
+- **Mesh scenes are dismissed, not deleted.** Closing a Mesh canvas dismisses the view and leaves the scene intact — it can be recalled from another thread in the same workspace — and a scene that fails to load shows the actual error instead of an empty panel.
 
 ### First-class Canvas Browser
 
@@ -56,15 +118,55 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Human-only reset.** The new profile menu can close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache. It preserves Sketch, Mesh, Simulator, rendered HTML, image, and device canvases and is intentionally absent from the agent/MCP surface.
 - **Calmer browser-first dock.** The default Canvas view is now a focused New tab surface with compact surface and privacy menus instead of a stack of setup options, while Browser, Sketch, Mesh, and Simulator remain one control away.
 
+### Canvas charts and previews
+
+- **Charts, drawn in the transcript and the dock.** A validated chart document format renders as SVG from a fenced ```chart block inline in any reply, at every permission tier and with no round-trip. Agents can also render one through `canvas_render_chart`, which Ask and Plan seats meet as an approval modal rather than a hard deny, and multiple charts host as tabs in the Canvas dock.
+- **Agent previews land in the dock.** Canvas gains a presentation intent separate from embedding, so an agent preview or a running launch preview opens as a dock tab instead of being inlined, and composer-opened canvases follow the same path.
+- **Agents can see the live browser.** The composed prompt carries the current Canvas Browser state, so an agent knows what page is open instead of navigating blind.
+
+### Appearance
+
+- **See a theme before you pick it.** Settings → Appearance and the first-launch sheet show live visual previews of each theme instead of a list of names.
+- **One accent across the app.** A shared accent colour persists and drives the chat bubble and accent controls together, rather than being set in two places.
+- **Activity accents come from the provider.** Tool-call and activity accents are derived from provider branding, and the user-defined tool-call accent control is retired. Collapsed System notices keep neutral chrome, and provider hue survives grouped system summaries.
+- **A Light Monoline app icon.** A new app-icon variant ships, padded to the macOS icon grid so the Dock tile matches its neighbours.
+- **A consistent popover material.** Popovers across the app share one glass material and typographic grammar; the branch/worktree popover matches composer width, and Workspace Stats keeps its glass sampling and portal geometry.
+- **Diff previews in Settings.** Settings previews how diff stats and tool-call diff colours will render, including very large change counts.
+- **A tidier installer window.** The macOS DMG honours its explicit Finder window bounds and tolerates a resize without bleeding.
+
+### iOS companion
+
+- **A home-screen widget.** A small and medium Glance widget shows running and recently finished runs with provider accents and diff colours, dimming with a "no contact" caption when the Mac has been quiet.
+- **A workspace terminal from your phone, triple-gated.** A real interactive shell in a registered workspace's directory, reachable from the paired device only behind three independent gates: the workspace's remote write capability, the standard shell-command approval answered Mac-side and recorded in the ledger, and a per-device toggle with an explicit elevation acknowledgement.
+- **A read-only approval ledger.** Settings → Approvals lists each visible workspace's approval decisions — identity, outcome, decision source, granted scope, and clocks — so you can see why something auto-denied while you were away. Request parameters and previews never cross the wire.
+- **Safety & Capabilities.** A new inspector segment shows the permission tier, workflow mode, sandbox derivation, trusted-session state, and the full capability list in force — read-only by construction.
+- **Blackboard participation.** The phone can vote in ensemble polls and post camera-roll images to the blackboard, not just watch.
+- **Steer a live solo run.** A Steer chip appears during a live solo run, reaching the same live injection the desktop uses; a mid-run send no longer silently downgrades to boundary-only delivery.
+- **Transcript parity closes.** Agent questions are attributed to the seat that asked, the full seat-change vocabulary projects, close-out Sub-threads render in desktop order, context-compaction cards survive Mac-side rewording, and People contributions and peer messages no longer collapse into a "System · N notices" fold.
+- **Shared tasks survive the Channels migration.** The Home "Shared" section reads the active-channel set, so it no longer goes dark the moment the People-to-Channel migration commits.
+- **Mission control completes.** Round rows carry per-provider terminal outcomes and a recent question-receipts section, closing the last Host families the phone decoded but never rendered.
+- **Notifications without provider credentials.** Completion notifications can route through an optional project relay for users who have not configured their own push credentials, with signed, content-free triggers — engaged only when a gateway URL is configured.
+
 ### Performance
 
-- **Transcript ACK performance.** Preserves metadata-only array identity, reuses chat update ACK baseline metadata, acks chat updates before frame merge, and narrows chat delivery metadata types.
+- **A calmer renderer.** Chat hydration reads are shared across surfaces, byte accounting is cached, transcript layout measurement is gated, historical seat animations rest, provider metadata warms at idle, and pane focus changes no longer re-render the rest of the window.
+- **Less git and lock churn.** Git snapshot invalidation is isolated per pane and no longer feeds back on itself, work-lock projection polling is shared from cache, workspace-stats provenance refreshes only when asked, and late quota refreshes stop retrying forever.
+- **Faster transcript updates.** Chat updates acknowledge before the frame merges and reuse their baseline metadata, so a busy transcript stays responsive under streaming.
 
 ### Review and usage polish
 
 - **Richer close-out commit review.** Historical commit files and per-file change summaries now load into close-out views, with clearer loading-failure feedback and more room for change totals.
+- **File changes stop burying the commits table.** A close-out's File changes card opens on the first ten rows with a "Show N more…" toggle; the header still counts and sums every change, so the totals describe the whole close-out.
+- **Diff previews that hold still.** Hovering a changed file in Task Complete opens a sticky diff preview that survives the trip to it, with filename bubbles reconnected and a longer close delay.
+- **Commits found from shell receipts.** A close-out detects commits made through shell tool calls, not only those it made directly, with a run-window fallback for single-provider extraction.
 - **Readable usage summaries.** Compact usage and spend displays stay legible for larger currency values and provider lists.
-- **Mesh-canvas dismiss.** Mesh-canvas replaces delete with dismiss.
+- **Live token estimates keep moving.** The working-row telemetry no longer stalls mid-turn.
+- **Dashboard swipe settles.** Cycling dashboard tabs releases its swipe transform instead of leaving the pane offset.
+
+### Security and containment hardening
+
+- **Tighter run isolation.** Run events are delivered only to the audiences entitled to them, each delegated dispatch is authorized at its final launch boundary, and steering IPC is restricted to the main-renderer channel.
+- **Work claims recover honestly.** Stale workspace locks are recovered before they are projected, so an abandoned claim no longer blocks a live seat.
 
 ## 1.9.4 - 2026-08-08
 
