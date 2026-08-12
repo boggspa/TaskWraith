@@ -108,7 +108,12 @@ describe('CommitsInspector', () => {
     )
 
     expect(html).toContain('file-change-summary-card run-complete-epic-card')
-    expect(html).toContain('run-complete-epic-row is-header is-commits')
+    expect(html).toContain('run-complete-epic-row is-header is-commits has-commit-numbers')
+    expect(html).toContain(
+      '<span class="run-complete-epic-number" role="columnheader">#</span><span role="columnheader">Attribution</span>'
+    )
+    expect(html).toContain('aria-label="Commit 1">#1</span>')
+    expect(html).toContain('aria-label="Commit 2">#2</span>')
     expect(html).toContain('Attribution')
     expect(html).toContain('seat-change-message is-inline')
     expect(html).toContain('Pat Developer')

@@ -185,6 +185,7 @@ export function RunCompleteEpicStack({
   commitRowLimit = CLOSEOUT_COMMIT_TABLE_LIMIT,
   commitAttributionLabel = 'Seat',
   commitAttributionFallback,
+  commitNumbering = false,
   commitSelection,
   commitHashAdornment
 }: {
@@ -197,6 +198,7 @@ export function RunCompleteEpicStack({
   commitRowLimit?: number | null
   commitAttributionLabel?: string
   commitAttributionFallback?: (commit: CloseoutCommit) => CommitAttributionFallback | null
+  commitNumbering?: boolean
   commitSelection?: CommitSelectionState
   commitHashAdornment?: (commit: CloseoutCommit) => ReactNode
 }): ReactNode {
@@ -465,13 +467,21 @@ export function RunCompleteEpicStack({
             </div>
           </div>
           <div className="file-change-summary-list run-complete-epic-list" role="table">
-            <div className="run-complete-epic-row is-header is-commits" role="row">
+            <div
+              className={`run-complete-epic-row is-header is-commits${commitNumbering ? ' has-commit-numbers' : ''}`}
+              role="row"
+            >
+              {commitNumbering && (
+                <span className="run-complete-epic-number" role="columnheader">
+                  #
+                </span>
+              )}
               <span role="columnheader">{commitAttributionLabel}</span>
               <span role="columnheader">Changes</span>
               <span role="columnheader">Message</span>
               <span role="columnheader">Hash</span>
             </div>
-            {commitRows.map((commit) => {
+            {commitRows.map((commit, index) => {
               const seatLink = asSeatLink(commit.seatLink)
               const hasFiles = Boolean(commit.files?.length || loadCommitFiles)
               const fallbackAttribution = commitAttributionFallback?.(commit) || null
@@ -479,7 +489,7 @@ export function RunCompleteEpicStack({
               const selected = commitSelection?.selectedHashes.has(commit.hash) || false
               return (
                 <div
-                  className={`run-complete-epic-row is-commits${hasFiles ? ' has-commit-files' : ''}${selectable ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}
+                  className={`run-complete-epic-row is-commits${commitNumbering ? ' has-commit-numbers' : ''}${hasFiles ? ' has-commit-files' : ''}${selectable ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}
                   role="row"
                   key={commit.hash}
                   tabIndex={hasFiles || selectable ? 0 : undefined}
@@ -528,6 +538,15 @@ export function RunCompleteEpicStack({
                       : undefined
                   }
                 >
+                  {commitNumbering && (
+                    <span
+                      className="run-complete-epic-number"
+                      role="cell"
+                      aria-label={`Commit ${index + 1}`}
+                    >
+                      #{index + 1}
+                    </span>
+                  )}
                   <span className="run-complete-epic-seat" role="cell">
                     {selectable && (
                       <input

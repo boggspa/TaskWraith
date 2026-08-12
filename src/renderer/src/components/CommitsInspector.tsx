@@ -128,6 +128,7 @@ export function CommitsInspectorView({
             commits={rows}
             commitRowLimit={null}
             commitAttributionLabel="Attribution"
+            commitNumbering
             commitAttributionFallback={(row) => {
               const commit = commitsByHash.get(row.hash)
               return commit ? genericAttribution(commit) : null

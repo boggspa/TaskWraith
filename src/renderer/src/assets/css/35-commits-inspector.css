@@ -115,6 +115,18 @@
   min-width: 650px;
 }
 
+.commits-inspector .run-complete-epic-row.is-commits.has-commit-numbers {
+  grid-template-columns: 2.5rem minmax(0, 1.1fr) minmax(8rem, 0.9fr) minmax(0, 1.2fr) 5.5rem;
+  min-width: 700px;
+}
+
+.commits-inspector .run-complete-epic-number {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .run-complete-epic-row.is-commits.is-selectable {
   cursor: pointer;
 }

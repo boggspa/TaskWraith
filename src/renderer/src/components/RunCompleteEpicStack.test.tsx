@@ -171,12 +171,16 @@ describe('RunCompleteEpicStack', () => {
           text: 'Chris Izatt',
           title: 'Chris Izatt <chris@example.test>'
         })}
+        commitNumbering
         commitSelection={{ selectedHashes, onToggle: () => {} }}
         commitHashAdornment={(commit) => <span>PR for {commit.hash.slice(0, 9)}</span>}
       />
     )
 
     expect(html).toContain('Attribution')
+    expect(html).toContain('has-commit-numbers')
+    expect(html).toContain('aria-label="Commit 1">#1</span>')
+    expect(html).toContain('aria-label="Commit 10">#10</span>')
     expect(html).toContain('Chris Izatt')
     expect(html).toContain('Chris Izatt &lt;chris@example.test&gt;')
     expect(html).toContain('aria-selected="true"')
