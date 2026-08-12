@@ -959,6 +959,153 @@ describe('EnsembleOrchestrator', () => {
     expect(state?.reason).toContain('read_file')
   })
 
+  it('retries one unsupported AntiGravity permission refusal after process exit, then bounds recovery', async () => {
+    const initialChat = makeChat()
+    initialChat.workspacePath = '/Users/test/AGBench'
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      participants: [
+        {
+          id: 'antigravity',
+          provider: 'antigravity',
+          enabled: true,
+          role: 'Boardmaster',
+          instructions: 'Read the briefing and maintain BOARD.md.',
+          order: 1,
+          model: 'gemini-3.1-pro-high',
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Read /Users/test/AGBench/.local-only/docs/00-BRIEFING.md before updating BOARD.md.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const first = harness.dispatched[0]
+    const firstRoute = { appRunId: first.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', firstRoute, {
+      type: 'tool_use',
+      tool_id: 'df-1',
+      tool_name: 'run_command',
+      parameters: { command: 'df -h ~' }
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', firstRoute, {
+      type: 'tool_result',
+      tool_id: 'df-1',
+      status: 'success',
+      output: 'TaskWraith allowed this command.'
+    })
+    const falseRefusal =
+      'I cannot complete BOARD.md because my read access was denied. I require explicit host approval.'
+    harness.orchestrator.handleProviderOutput('antigravity', firstRoute, {
+      type: 'content',
+      text: falseRefusal
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', firstRoute, {
+      type: 'result',
+      status: 'success'
+    })
+
+    // The result alone cannot dispatch the retry: the first process still owns
+    // agy's temporary permission lease until its exact exit is observed.
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.orchestrator.markRunExited(first.appRunId, 0)).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+
+    const retry = harness.dispatched[1]
+    expect(retry.prompt).toContain('received an explicit denied/error tool result')
+    expect(retry.prompt).toContain('dot-prefixed children such as `.local-only`')
+    expect(retry.prompt).toContain('Host evidence correction: no permission-denied tool result')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Host evidence correction: no permission-denied tool result')
+      )
+    ).toBe(true)
+
+    // A second unsupported refusal is retained as the provider's answer rather
+    // than entering an infinite same-seat loop.
+    const retryRoute = { appRunId: retry.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', retryRoute, {
+      type: 'content',
+      text: falseRefusal
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', retryRoute, {
+      type: 'result',
+      status: 'success'
+    })
+    await Promise.resolve()
+    expect(harness.dispatched).toHaveLength(2)
+    const finalState = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'antigravity'
+    )
+    expect(finalState?.status).toBe('answered')
+  })
+
+  it('does not retry an AntiGravity refusal backed by an explicit denied tool result', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      participants: [
+        {
+          id: 'antigravity',
+          provider: 'antigravity',
+          enabled: true,
+          role: 'Boardmaster',
+          instructions: 'Read the briefing.',
+          order: 1,
+          model: 'gemini-3.1-pro-high',
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Read the briefing.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const dispatched = harness.dispatched[0]
+    const route = { appRunId: dispatched.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'tool_use',
+      tool_id: 'read-denied',
+      tool_name: 'read_file',
+      parameters: { path: '/outside/briefing.md' }
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'tool_result',
+      tool_id: 'read-denied',
+      status: 'error',
+      output: 'TaskWraith declined this read under the current permission tier.'
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: 'I cannot continue because read access was denied by the host.'
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+    await Promise.resolve()
+
+    expect(harness.dispatched).toHaveLength(1)
+    const state = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'antigravity'
+    )
+    expect(state?.status).toBe('answered')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Host evidence correction: no permission-denied tool result')
+      )
+    ).toBe(false)
+  })
+
   it('rejects a fresh-only start while an interactive round owns the chat without queueing or mutation', () => {
     const harness = makeHarness()
     const prepareFreshChat = vi.fn((chat: ChatRecord) => chat)

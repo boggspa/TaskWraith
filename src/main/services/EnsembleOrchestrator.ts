@@ -35,6 +35,10 @@ import {
   ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
   isAntigravityHeadlessPermissionNoOutput
 } from '../antigravity/AntigravityRunDiagnostics'
+import {
+  isUnsupportedAntigravityPermissionClaim,
+  qualifyUnsupportedAntigravityPermissionClaim
+} from '../antigravity/AntigravityPermissionClaimEvidence'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import {
   configuredEnsembleCaptainParticipantIds,
@@ -807,6 +811,14 @@ interface ActiveParticipantRun {
   transportDispatchState?: 'pending' | 'accepted' | 'rejected' | 'unknown'
   /** One silent remint+retry after a stale secondary-workspace grant refusal. */
   externalPathGrantRepairAttempted?: boolean
+  /**
+   * A successful official-agy turn ended with a first-person permission
+   * blocker but no matching denied tool result. Hold terminal settlement until
+   * the provider process exits, then retry this foreground seat exactly once.
+   */
+  antigravityFalseRefusalRecoveryPending?: boolean
+  /** Keep the round participant visibly running while the corrected retry is queued. */
+  antigravityFalseRefusalRecovery?: boolean
   /** At least one exact provider cancellation returned an affirmative receipt. */
   transportCancellationConfirmed?: boolean
   laneId?: string
@@ -3133,7 +3145,13 @@ function upsertEnsembleToolUseActivity(
 
 function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: string): ToolActivity {
   const status: ToolActivityStatus =
-    event?.success === false || event?.error || event?.is_error ? 'error' : 'success'
+    event?.success === false ||
+    event?.error ||
+    event?.is_error ||
+    event?.status === 'error' ||
+    event?.status === 'failed'
+      ? 'error'
+      : 'success'
   const durationMs = activity.startedAt
     ? new Date(endedAt).getTime() - new Date(activity.startedAt).getTime()
     : undefined
@@ -3332,6 +3350,10 @@ interface ActiveRoundRuntime {
   pendingCursorContextRecoveryParticipantId?: string
   /** At most one host recovery attempt per seat per round. */
   cursorContextRecoveryAttemptedParticipantIds?: Set<string>
+  /** Same-seat retry after an unsupported official-agy permission refusal. */
+  pendingAntigravityFalseRefusalParticipantId?: string
+  /** At most one false-refusal recovery attempt per AntiGravity seat per round. */
+  antigravityFalseRefusalRecoveryAttemptedParticipantIds?: Set<string>
   bossmanParticipantId?: string
   captainParticipantIds?: string[]
   secondInCommandParticipantId?: string
@@ -14048,10 +14070,73 @@ export class EnsembleOrchestrator {
     return true
   }
 
+  private stageAntigravityFalseRefusalRecovery(run: ActiveParticipantRun): boolean {
+    if (run.antigravityFalseRefusalRecoveryPending) return true
+    if (
+      run.participant.provider !== 'antigravity' ||
+      run.laneId ||
+      run.providerDiagnostic ||
+      run.terminalFinalized ||
+      !isUnsupportedAntigravityPermissionClaim(run.content, run.toolActivities)
+    ) {
+      return false
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (
+      !runtime ||
+      runtime.cancelled ||
+      runtime.roundId !== run.roundId ||
+      runtime.activeRunId !== run.runId
+    ) {
+      return false
+    }
+    runtime.antigravityFalseRefusalRecoveryAttemptedParticipantIds ??= new Set()
+    if (runtime.antigravityFalseRefusalRecoveryAttemptedParticipantIds.has(run.participant.id)) {
+      return false
+    }
+    runtime.antigravityFalseRefusalRecoveryAttemptedParticipantIds.add(run.participant.id)
+    run.antigravityFalseRefusalRecoveryPending = true
+    return true
+  }
+
+  private recoverAntigravityFalseRefusal(run: ActiveParticipantRun): boolean {
+    if (!run.antigravityFalseRefusalRecoveryPending || run.terminalFinalized) return false
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (
+      !runtime ||
+      runtime.cancelled ||
+      runtime.roundId !== run.roundId ||
+      runtime.activeRunId !== run.runId
+    ) {
+      return false
+    }
+    run.antigravityFalseRefusalRecoveryPending = false
+    run.antigravityFalseRefusalRecovery = true
+    run.invalidatePromptShellReceipt = true
+    run.invalidatePromptDynamicStateReceipt = true
+    runtime.pendingAntigravityFalseRefusalParticipantId = run.participant.id
+    const role = run.participant.role || 'AntiGravity'
+    const reason = `TaskWraith recorded no permission-denied tool result behind ${role}'s access refusal; retrying that seat once with corrected in-workspace evidence.`
+    this.appendRoundStatus(run.chatId, run.roundId, reason)
+    this.finalizeRun(run, 'cancelled', reason)
+    return true
+  }
+
   markRunExited(runId: string | undefined, exitCode: number): boolean {
     if (!runId) return false
     const run = this.actionableRunForTool(runId)
     if (!run || run.status === 'answered' || run.status === 'yielded') return false
+    // Official agy can prose-claim a host denial without attempting a tool.
+    // Wait for process exit before releasing serial completion so its temporary
+    // settings/hook lease is gone before the corrected same-seat launch starts.
+    if (
+      exitCode === 0 &&
+      (run.antigravityFalseRefusalRecoveryPending ||
+        this.stageAntigravityFalseRefusalRecovery(run)) &&
+      this.recoverAntigravityFalseRefusal(run)
+    ) {
+      return true
+    }
     // A clean exit (code 0) that already streamed content is a FINISHED turn,
     // not a skip — mirror the result-event path (which finalizes 'answered' when
     // run.content.trim() is non-empty). Without this, a seat that emitted its
@@ -14355,6 +14440,17 @@ export class EnsembleOrchestrator {
       }
       const emptyAfterProviderDiagnostic =
         Boolean(run.providerDiagnostic) && run.content.trim().length === 0
+      // A provider-authored permission blocker with no denied tool result is
+      // not a completed answer. Stage one bounded retry, but do not release the
+      // serial seat until markRunExited proves the first agy process (and its
+      // temporary permission lease) has actually closed.
+      if (
+        !failed &&
+        !emptyAfterProviderDiagnostic &&
+        this.stageAntigravityFalseRefusalRecovery(run)
+      ) {
+        return true
+      }
       // An empty-transcript success used to finalize 'skipped' with NO reason,
       // which downstream surfaces (seat chips, wave summaries, ensemble_await)
       // rendered as a bare "skipped" — the exact shape a permission-walled
@@ -15761,18 +15857,25 @@ export class EnsembleOrchestrator {
         // durable AppStore write gate, so no post-turn maintenance or routing
         // projection may run after that resolution.
         if (runtime.cancelled) break
-        if (
-          runtime.pendingCursorContextRecoveryParticipantId === participant.id &&
-          !runtime.cancelled
-        ) {
-          // Same-seat Path-B retry after discreet context recovery. Do not
-          // charge Continuous hops — this is maintenance, not a new answer.
-          runtime.pendingCursorContextRecoveryParticipantId = undefined
-          const refreshed = this.deps
-            .getChat(runtime.chatId)
-            ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
-          if (refreshed) {
-            Object.assign(participant, persistedSeatRuntimeState(refreshed))
+        const cursorContextRetry =
+          runtime.pendingCursorContextRecoveryParticipantId === participant.id
+        const antigravityFalseRefusalRetry =
+          runtime.pendingAntigravityFalseRefusalParticipantId === participant.id
+        if ((cursorContextRetry || antigravityFalseRefusalRetry) && !runtime.cancelled) {
+          // Same-seat maintenance retry. Neither path charges Continuous hops:
+          // Cursor has just pruned a hung context, while AntiGravity has not
+          // supplied an evidence-backed answer yet.
+          if (cursorContextRetry) {
+            runtime.pendingCursorContextRecoveryParticipantId = undefined
+            const refreshed = this.deps
+              .getChat(runtime.chatId)
+              ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
+            if (refreshed) {
+              Object.assign(participant, persistedSeatRuntimeState(refreshed))
+            }
+          }
+          if (antigravityFalseRefusalRetry) {
+            runtime.pendingAntigravityFalseRefusalParticipantId = undefined
           }
           remaining.unshift(participant)
           runtime.activeRunId = undefined
@@ -19130,7 +19233,10 @@ export class EnsembleOrchestrator {
       holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript
     const effectiveFinal =
       final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
-    const visibleStatus: EnsembleParticipantStatus = run.cursorContextPressureRecovery
+    const silentMaintenanceRecovery = Boolean(
+      run.cursorContextPressureRecovery || run.antigravityFalseRefusalRecovery
+    )
+    const visibleStatus: EnsembleParticipantStatus = silentMaintenanceRecovery
       ? 'running'
       : suppressingOwnedFanoutTranscript
         ? run.status
@@ -19182,7 +19288,13 @@ export class EnsembleOrchestrator {
                 status: previousPlan?.status || 'pending'
               }
             : previousPlan
-        const content = shouldStampPlan ? stripExplicitProposedPlanBlock(rawContent) : rawContent
+        const providerContent = shouldStampPlan
+          ? stripExplicitProposedPlanBlock(rawContent)
+          : rawContent
+        const content =
+          run.participant.provider === 'antigravity'
+            ? qualifyUnsupportedAntigravityPermissionClaim(providerContent, run.toolActivities)
+            : providerContent
         desiredMessages.push({
           id,
           role: 'assistant',
@@ -19498,16 +19610,16 @@ export class EnsembleOrchestrator {
         run.participant.id,
         {
           status: visibleStatus,
-          runId: run.cursorContextPressureRecovery ? undefined : run.runId,
-          ...(effectiveFinal && reason && !run.cursorContextPressureRecovery ? { reason } : {}),
-          ...(effectiveFinal && !run.cursorContextPressureRecovery ? { endedAt: timestamp } : {})
+          runId: silentMaintenanceRecovery ? undefined : run.runId,
+          ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
+          ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
         },
         { setActive: !run.laneId }
       ),
       run.laneId,
       visibleStatus,
       timestamp,
-      run.cursorContextPressureRecovery ? undefined : reason
+      silentMaintenanceRecovery ? undefined : reason
     )
     // Blackboard delta bookkeeping — the entries injected into this run's
     // prompt are now part of the seat's session memory. Idempotent + same-ref
