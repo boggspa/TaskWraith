@@ -15,6 +15,7 @@ import { PillCard } from './PillCard'
 
 export type RightDockHomeInspectorDestination =
   | 'diff'
+  | 'commits'
   | 'raw'
   | 'delegation'
   | 'timeline'
@@ -112,6 +113,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     target: { surface: 'inspector', inspectorTab: 'diff' }
   },
   {
+    id: 'commits',
+    label: 'Commits',
+    description: 'Group unpushed work into pull requests',
+    group: 'inspect',
+    target: { surface: 'inspector', inspectorTab: 'commits' },
+    requires: 'workspace'
+  },
+  {
     id: 'candidates',
     label: 'Fan-out Candidates',
     description: 'Compare isolated lanes & promote a winner',
@@ -197,10 +206,19 @@ interface HomeCardProps {
 function HomeGlyph({
   kind
 }: {
-  kind: 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'
+  kind:
+    | 'diff'
+    | 'commits'
+    | 'raw'
+    | 'invocations'
+    | 'timeline'
+    | 'live'
+    | 'safety'
+    | 'capabilities'
 }) {
   const path = {
     diff: 'M3 5h7M3 9h10M3 13h6',
+    commits: 'M4 3.5h8M4 8h8M4 12.5h8M2.5 3.5h.1M2.5 8h.1M2.5 12.5h.1',
     raw: 'm3 5 3 3-3 3M8 12h5',
     invocations: 'M4 4v3c0 1.2 1 2 2.2 2H12M9 6l3 3-3 3',
     timeline: 'M4 3v12M7 5h6M7 9h4M7 13h7',
@@ -235,7 +253,17 @@ function destinationIcon(id: string): ReactNode {
   if (id === 'peers') return <PeerThreadMessageSymbolIcon />
   return (
     <HomeGlyph
-      kind={id as 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'}
+      kind={
+        id as
+          | 'diff'
+          | 'commits'
+          | 'raw'
+          | 'invocations'
+          | 'timeline'
+          | 'live'
+          | 'safety'
+          | 'capabilities'
+      }
     />
   )
 }

@@ -1,0 +1,176 @@
+/* Commits Inspector — the Task Complete commit card, promoted into a full
+ * right-dock workflow without creating a second visual language. */
+
+.commits-inspector {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  overscroll-behavior: contain;
+}
+
+.commits-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.commits-inspector-header h2,
+.commits-inspector-header p {
+  margin: 0;
+}
+
+.commits-inspector-header h2 {
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  line-height: 1.25;
+}
+
+.commits-inspector-header p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.commits-inspector-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commits-inspector button,
+.commits-inspector-state button {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.commits-inspector button:hover:not(:disabled),
+.commits-inspector-state button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+.commits-inspector button:focus-visible,
+.commits-inspector-state button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.commits-inspector button:disabled {
+  opacity: 0.46;
+  cursor: default;
+}
+
+.commits-inspector-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-height: 36px;
+  padding: 4px 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.commits-inspector-selection > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.commits-inspector .commits-inspector-pr-action {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.commits-inspector .run-complete-epic-stack {
+  flex: 0 0 auto;
+}
+
+.commits-inspector .run-complete-epic-list {
+  overflow-x: auto;
+}
+
+.commits-inspector .run-complete-epic-row.is-commits {
+  min-width: 650px;
+}
+
+.run-complete-epic-row.is-commits.is-selectable {
+  cursor: pointer;
+}
+
+.run-complete-epic-row.is-commits.is-selected {
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel-elevated-bg));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 72%, transparent);
+}
+
+.run-complete-epic-row.is-commits.is-selectable .run-complete-epic-seat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.run-complete-epic-commit-checkbox {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.commits-inspector-empty {
+  padding: var(--space-lg);
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.commits-inspector-empty strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.commits-inspector-state {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.commits-inspector-state.is-error strong {
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .commits-inspector-selection {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .commits-inspector-selection > div {
+    justify-content: flex-start;
+  }
+}

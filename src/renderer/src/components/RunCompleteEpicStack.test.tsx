@@ -155,6 +155,35 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('2 more commits not shown.')
   })
 
+  it('renders the complete selectable stack with generic author attribution', () => {
+    const commits = Array.from({ length: 10 }, (_, index) => ({
+      hash: `${(index + 1).toString(16).padStart(40, '0')}`,
+      subject: `Commit ${index + 1}`,
+      stats: '1 file, +1'
+    }))
+    const selectedHashes = new Set([commits[0].hash])
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        commits={commits}
+        commitRowLimit={null}
+        commitAttributionLabel="Attribution"
+        commitAttributionFallback={() => ({
+          text: 'Chris Izatt',
+          title: 'Chris Izatt <chris@example.test>'
+        })}
+        commitSelection={{ selectedHashes, onToggle: () => {} }}
+      />
+    )
+
+    expect(html).toContain('Attribution')
+    expect(html).toContain('Chris Izatt')
+    expect(html).toContain('Chris Izatt &lt;chris@example.test&gt;')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toMatch(/type="checkbox"[^>]*checked=""/)
+    expect(html).toContain('Commit 10')
+    expect(html).not.toContain('more commits not shown')
+  })
+
   it('orders commit columns as Seat, Changes, Message, Hash and colors diff counts', () => {
     const html = renderToStaticMarkup(
       <RunCompleteEpicStack

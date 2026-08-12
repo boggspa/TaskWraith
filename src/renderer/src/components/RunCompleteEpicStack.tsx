@@ -156,6 +156,16 @@ export interface CommitFilePreviewLoadResult {
   totalFiles: number
 }
 
+export interface CommitAttributionFallback {
+  text: string
+  title?: string
+}
+
+export interface CommitSelectionState {
+  selectedHashes: ReadonlySet<string>
+  onToggle: (commit: CloseoutCommit) => void
+}
+
 type CommitFilePreviewCacheEntry =
   | { status: 'loading'; promise: Promise<CommitFilePreviewLoadResult | null> }
   | { status: 'loaded'; result: CommitFilePreviewLoadResult }
@@ -171,20 +181,32 @@ export function RunCompleteEpicStack({
   subagentDelegations,
   commits,
   fileChanges,
-  loadCommitFiles
+  loadCommitFiles,
+  commitRowLimit = CLOSEOUT_COMMIT_TABLE_LIMIT,
+  commitAttributionLabel = 'Seat',
+  commitAttributionFallback,
+  commitSelection
 }: {
   participantTable?: CloseoutParticipantTable | null
   subagentDelegations?: CloseoutSubagentDelegation[] | null
   commits?: CloseoutCommit[] | null
   fileChanges?: ReactNode
   loadCommitFiles?: (commit: CloseoutCommit) => Promise<CommitFilePreviewLoadResult | null>
+  /** `null` renders the complete stack; Task Complete keeps its bounded default. */
+  commitRowLimit?: number | null
+  commitAttributionLabel?: string
+  commitAttributionFallback?: (commit: CloseoutCommit) => CommitAttributionFallback | null
+  commitSelection?: CommitSelectionState
 }): ReactNode {
   const rows = participantTable?.rows || []
   const allSubagentRows = Array.isArray(subagentDelegations) ? subagentDelegations : []
   const subagentRows = allSubagentRows.slice(0, CLOSEOUT_SUBAGENT_TABLE_LIMIT)
   const subagentOverflow = Math.max(0, allSubagentRows.length - subagentRows.length)
   const allCommitRows = Array.isArray(commits) ? commits : []
-  const commitRows = allCommitRows.slice(0, CLOSEOUT_COMMIT_TABLE_LIMIT)
+  const commitRows =
+    commitRowLimit === null
+      ? allCommitRows
+      : allCommitRows.slice(0, Math.max(0, commitRowLimit))
   const commitOverflow = Math.max(0, allCommitRows.length - commitRows.length)
   const hasParticipants = rows.length > 0
   const hasSubagents = subagentRows.length > 0
@@ -442,7 +464,7 @@ export function RunCompleteEpicStack({
           </div>
           <div className="file-change-summary-list run-complete-epic-list" role="table">
             <div className="run-complete-epic-row is-header is-commits" role="row">
-              <span role="columnheader">Seat</span>
+              <span role="columnheader">{commitAttributionLabel}</span>
               <span role="columnheader">Changes</span>
               <span role="columnheader">Message</span>
               <span role="columnheader">Hash</span>
@@ -450,12 +472,16 @@ export function RunCompleteEpicStack({
             {commitRows.map((commit) => {
               const seatLink = asSeatLink(commit.seatLink)
               const hasFiles = Boolean(commit.files?.length || loadCommitFiles)
+              const fallbackAttribution = commitAttributionFallback?.(commit) || null
+              const selectable = Boolean(commitSelection)
+              const selected = commitSelection?.selectedHashes.has(commit.hash) || false
               return (
                 <div
-                  className={`run-complete-epic-row is-commits${hasFiles ? ' has-commit-files' : ''}`}
+                  className={`run-complete-epic-row is-commits${hasFiles ? ' has-commit-files' : ''}${selectable ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}
                   role="row"
                   key={commit.hash}
-                  tabIndex={hasFiles ? 0 : undefined}
+                  tabIndex={hasFiles || selectable ? 0 : undefined}
+                  aria-selected={selectable ? selected : undefined}
                   aria-describedby={
                     hasFiles &&
                     commitFilesPill?.summary.path ===
@@ -480,12 +506,46 @@ export function RunCompleteEpicStack({
                       : undefined
                   }
                   onBlur={hasFiles ? leaveCommitFilesRow : undefined}
+                  onClick={
+                    selectable
+                      ? (event) => {
+                          const target = event.target as HTMLElement
+                          if (target.closest('a, button, input')) return
+                          commitSelection?.onToggle(commit)
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    selectable
+                      ? (event) => {
+                          if (event.target !== event.currentTarget) return
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          commitSelection?.onToggle(commit)
+                        }
+                      : undefined
+                  }
                 >
                   <span className="run-complete-epic-seat" role="cell">
+                    {selectable && (
+                      <input
+                        className="run-complete-epic-commit-checkbox"
+                        type="checkbox"
+                        checked={selected}
+                        aria-label={`${selected ? 'Deselect' : 'Select'} commit ${commit.hash.slice(0, 9)}${commit.subject ? `: ${commit.subject}` : ''}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => commitSelection?.onToggle(commit)}
+                      />
+                    )}
                     {seatLink ? (
                       <SeatChangeInlineStrip link={seatLink} />
                     ) : (
-                      <span className="run-complete-epic-seat-fallback">—</span>
+                      <span
+                        className="run-complete-epic-seat-fallback"
+                        title={fallbackAttribution?.title}
+                      >
+                        {fallbackAttribution?.text || '—'}
+                      </span>
                     )}
                   </span>
                   <span className="run-complete-epic-stats" role="cell">

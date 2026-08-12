@@ -39,9 +39,11 @@ import {
 import { buildDelegationTree, type DelegationTimelineNode } from '../lib/DelegationTree'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import { InspectorPromptTab } from './InspectorPromptTab'
+import { CommitsInspector } from './CommitsInspector'
 
 type InspectorTab =
   | 'diff'
+  | 'commits'
   | 'raw'
   | 'prompt'
   | 'delegation'
@@ -192,6 +194,7 @@ interface InspectorProps {
  * the Home cards are now the visible navigation surface. */
 export const INSPECTOR_TAB_META: { id: InspectorTab; label: string }[] = [
   { id: 'diff', label: 'Diff Studio' },
+  { id: 'commits', label: 'Commits' },
   { id: 'raw', label: 'Raw Events' },
   { id: 'prompt', label: 'Prompt' },
   { id: 'delegation', label: 'Invocations' },
@@ -280,6 +283,13 @@ export function Inspector(props: InspectorProps) {
             forces a fresh mount and clears any previous failure state. */}
         <InspectorTabErrorBoundary resetKey={props.rightTab}>
           {props.rightTab === 'diff' && <DiffTab {...props} />}
+          {props.rightTab === 'commits' && (
+            <CommitsInspector
+              workspacePath={props.workspacePath}
+              chatId={props.currentChat?.appChatId}
+              chats={props.chats}
+            />
+          )}
           {props.rightTab === 'raw' && <RawTab {...props} />}
           {props.rightTab === 'prompt' && <InspectorPromptTab currentChat={props.currentChat} />}
           {props.rightTab === 'delegation' && <DelegationTab {...props} />}
