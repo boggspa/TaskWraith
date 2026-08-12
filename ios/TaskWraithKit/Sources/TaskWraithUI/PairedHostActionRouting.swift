@@ -105,8 +105,19 @@ enum PairedHostActionRouting {
         arguments: arguments))
   }
 
-  static func accepted(_ receipt: HostCommandReceipt) -> Bool {
+  /// The Host has durably accepted responsibility for this command. Pending is
+  /// intentionally included so optimistic UI is not rolled back while the
+  /// matching approval is open; it is not a terminal success.
+  static func acceptedForProcessing(_ receipt: HostCommandReceipt) -> Bool {
     receipt.status == .succeeded || receipt.status == .pending
+  }
+
+  static func succeeded(_ receipt: HostCommandReceipt) -> Bool {
+    receipt.status == .succeeded
+  }
+
+  static func isTerminal(_ receipt: HostCommandReceipt) -> Bool {
+    receipt.status != .pending
   }
 
   static func alreadyResolvedApproval(_ receipt: HostCommandReceipt) -> Bool {

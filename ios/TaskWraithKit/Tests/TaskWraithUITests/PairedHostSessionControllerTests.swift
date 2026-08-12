@@ -266,12 +266,62 @@ struct PairedHostSessionControllerTests {
     #expect(await transport.requests().isEmpty)
   }
 
+  @Test("a receipt for a different command is rejected before publication")
+  func mismatchedReceiptFailsClosed() async throws {
+    let identity = try #require(makeIdentity())
+    let receipt = HostCommandReceipt(
+      commandId: "different-command",
+      idempotencyKey: "idem-1",
+      name: .questionAnswer,
+      actor: HostActorIdentity(
+        actorId: identity.clientId,
+        clientId: identity.clientId,
+        clientClass: .ios),
+      authority: HostAuthorityDecision(decision: .allow),
+      status: .succeeded,
+      commandFingerprint: String(repeating: "a", count: 64),
+      generation: 7,
+      cursor: 0,
+      createdAt: "2026-08-09T20:00:00Z",
+      updatedAt: "2026-08-09T20:00:01Z")
+    let response = CommandResponseFixture(kind: .commandSubmit, receipt: receipt)
+    let transport = FakePairedHostTransport(
+      replies: [
+        AckResult(
+          ok: true,
+          result: try JSONEncoder().encode(response),
+          error: nil)
+      ])
+    let controller = PairedHostSessionController(snapshotStore: MemoryHostSnapshotStore())
+    try seedLive(controller, identity: identity, transport: transport)
+
+    do {
+      _ = try await controller.submitCommand(
+        name: .questionAnswer,
+        target: ["questionId": "question-1"],
+        arguments: ["answer": .string("Yes")],
+        commandId: "command-1",
+        idempotencyKey: "idem-1")
+      Issue.record("expected a mismatched receipt failure")
+    } catch {
+      #expect(
+        error as? PairedHostSessionError
+          == .invalidResponse("command receipt does not match the submitted Host command"))
+    }
+    #expect(controller.lastReceipt == nil)
+  }
+
   private struct SnapshotResponseFixture: Codable {
     let kind: PairedHostRequestKind
     let frame: HostSnapshotFrame
   }
 
   private struct ReceiptResponseFixture: Codable {
+    let kind: PairedHostRequestKind
+    let receipt: HostCommandReceipt
+  }
+
+  private struct CommandResponseFixture: Codable {
     let kind: PairedHostRequestKind
     let receipt: HostCommandReceipt
   }

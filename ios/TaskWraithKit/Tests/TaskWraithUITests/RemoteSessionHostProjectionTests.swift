@@ -10,10 +10,15 @@ private struct HostProjectionStaticSeed: IdentitySeedStore {
 
 private actor HostProjectionTestTransport: PairedHostRequestTransport {
   private var replies: [AckResult]
+  private let replyBuilder: (@Sendable (Data) throws -> AckResult)?
   private var recorded: [Data] = []
 
-  init(replies: [AckResult] = []) {
+  init(
+    replies: [AckResult] = [],
+    replyBuilder: (@Sendable (Data) throws -> AckResult)? = nil
+  ) {
     self.replies = replies
+    self.replyBuilder = replyBuilder
   }
 
   func requestSerialized(
@@ -22,6 +27,7 @@ private actor HostProjectionTestTransport: PairedHostRequestTransport {
     timeoutMs: Int
   ) async throws -> AckResult {
     recorded.append(paramsData)
+    if let replyBuilder { return try replyBuilder(paramsData) }
     guard !replies.isEmpty else {
       return AckResult(ok: false, result: nil, error: "not requested")
     }
@@ -94,32 +100,31 @@ struct RemoteSessionHostProjectionTests {
   func questionAnswerUsesHost() async throws {
     let store = HostProjectionMemoryStore()
     let model = makeModel(snapshotStore: store)
-    let identity = try #require(
-      pairedHostProjectionIdentity(
-        identityPublicKeyBase64: model.identityPublicKeyBase64))
-    let receipt = HostCommandReceipt(
-      commandId: "11111111-1111-4111-8111-111111111111",
-      idempotencyKey: "22222222-2222-4222-8222-222222222222",
-      name: .questionAnswer,
-      actor: HostActorIdentity(
-        actorId: identity.clientId,
-        clientId: identity.clientId,
-        clientClass: .ios),
-      authority: HostAuthorityDecision(decision: .allow),
-      status: .succeeded,
-      commandFingerprint: String(repeating: "a", count: 64),
-      generation: 7,
-      cursor: 0,
-      createdAt: "2026-08-09T20:00:00Z",
-      updatedAt: "2026-08-09T20:00:01Z")
-    let response = HostProjectionCommandResponse(kind: .commandSubmit, receipt: receipt)
     let transport = HostProjectionTestTransport(
-      replies: [
-        AckResult(
+      replyBuilder: { requestData in
+        let request = try JSONDecoder().decode(
+          HostProjectionCommandRequest.self,
+          from: requestData)
+        let receipt = HostCommandReceipt(
+          commandId: request.params.commandId,
+          idempotencyKey: request.params.idempotencyKey,
+          name: request.params.name,
+          actor: request.params.actor,
+          authority: HostAuthorityDecision(decision: .allow),
+          status: .succeeded,
+          commandFingerprint: String(repeating: "a", count: 64),
+          generation: 7,
+          cursor: 0,
+          createdAt: "2026-08-09T20:00:00Z",
+          updatedAt: "2026-08-09T20:00:01Z")
+        let response = HostProjectionCommandResponse(
+          kind: .commandSubmit,
+          receipt: receipt)
+        return AckResult(
           ok: true,
           result: try JSONEncoder().encode(response),
           error: nil)
-      ])
+      })
     var snapshot = createEmptyHostSnapshot(
       generation: 7,
       cursor: 0,
@@ -169,7 +174,9 @@ struct RemoteSessionHostProjectionTests {
     #expect(arguments["decision"] as? String == "answer")
     #expect(arguments["answer"] as? String == "Yes")
     #expect(arguments["isCustom"] as? Bool == false)
-    #expect(model.hostProjection.lastReceipt == receipt)
+    let receipt = try #require(model.hostProjection.lastReceipt)
+    #expect(receipt.name == .questionAnswer)
+    #expect(receipt.status == .succeeded)
     #expect(model.lastActionMessage == "Answer sent.")
 
     let resolvedQuestion = HostQuestionProjection(
@@ -281,5 +288,10 @@ struct RemoteSessionHostProjectionTests {
   private struct HostProjectionCommandResponse: Codable {
     let kind: PairedHostRequestKind
     let receipt: HostCommandReceipt
+  }
+
+  private struct HostProjectionCommandRequest: Codable {
+    let kind: PairedHostRequestKind
+    let params: HostCommand
   }
 }

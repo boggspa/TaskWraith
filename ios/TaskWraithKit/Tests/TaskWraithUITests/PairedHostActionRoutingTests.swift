@@ -106,17 +106,26 @@ struct PairedHostActionRoutingTests {
       ])
   }
 
-  @Test("receipt semantics distinguish accepted, resolved, and failed actions")
+  @Test("receipt semantics distinguish processing, terminal success, and failure")
   func receiptSemantics() {
-    #expect(PairedHostActionRouting.accepted(receipt(status: .succeeded)))
-    #expect(PairedHostActionRouting.accepted(receipt(status: .pending)))
-    #expect(!PairedHostActionRouting.accepted(receipt(status: .failed)))
+    let succeeded = receipt(status: .succeeded)
+    let pending = receipt(status: .pending)
+    let failed = receipt(status: .failed)
+    #expect(PairedHostActionRouting.acceptedForProcessing(succeeded))
+    #expect(PairedHostActionRouting.succeeded(succeeded))
+    #expect(PairedHostActionRouting.isTerminal(succeeded))
+    #expect(PairedHostActionRouting.acceptedForProcessing(pending))
+    #expect(!PairedHostActionRouting.succeeded(pending))
+    #expect(!PairedHostActionRouting.isTerminal(pending))
+    #expect(!PairedHostActionRouting.acceptedForProcessing(failed))
+    #expect(!PairedHostActionRouting.succeeded(failed))
+    #expect(PairedHostActionRouting.isTerminal(failed))
     #expect(
       PairedHostActionRouting.alreadyResolvedApproval(
         receipt(status: .failed, errorCode: "approval_already_resolved")))
     #expect(
       PairedHostActionRouting.message(
-        for: receipt(status: .pending),
+        for: pending,
         success: "Sent") == "Awaiting Host approval.")
   }
 

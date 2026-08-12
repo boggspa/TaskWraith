@@ -3347,13 +3347,16 @@ public final class RemoteSessionModel: ObservableObject {
 
     private func handle(method: String, params: Data?) async {
         guard let params else { return }
-        switch method {
-        case PairedHostProjectionMethods.welcome,
-            PairedHostProjectionMethods.snapshot,
-            PairedHostProjectionMethods.deltas,
-            PairedHostProjectionMethods.health,
-            PairedHostProjectionMethods.state:
+        switch PairedHostBridgeBoundary.lane(forServerMethod: method) {
+        case .hostAuthority:
             _ = hostProjection.receive(method: method, params: params)
+            return
+        case .bridgeExtension:
+            break
+        case .unsupported:
+            return
+        }
+        switch method {
         case "bridge.broadcastRemoteProjectionSnapshot":
             projectionSnapshotCoalescer.enqueue(params)
         case "bridge.broadcastWorkspaceList":
@@ -6708,7 +6711,7 @@ public final class RemoteSessionModel: ObservableObject {
                     if PairedHostActionRouting.alreadyResolvedApproval(receipt) {
                         self.repliedApprovalToolCallIds.remove(toolCallId)
                         self.approvals.removeAll { $0.toolCallId == toolCallId }
-                    } else if !PairedHostActionRouting.accepted(receipt) {
+                    } else if !PairedHostActionRouting.acceptedForProcessing(receipt) {
                         self.repliedApprovalToolCallIds.remove(toolCallId)
                         if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
                             self.approvals.insert(card, at: 0)
@@ -6803,7 +6806,7 @@ public final class RemoteSessionModel: ObservableObject {
                     arguments: command.arguments)
                 lastActionMessage = PairedHostActionRouting.message(
                     for: receipt, success: label)
-                return PairedHostActionRouting.accepted(receipt)
+                return PairedHostActionRouting.acceptedForProcessing(receipt)
                     || PairedHostActionRouting.alreadyResolvedApproval(receipt)
             } catch {
                 lastActionMessage = error.localizedDescription
@@ -6895,7 +6898,7 @@ public final class RemoteSessionModel: ObservableObject {
                         arguments: command.arguments)
                     self.lastActionMessage = PairedHostActionRouting.message(
                         for: receipt, success: "Answer sent.")
-                    if !PairedHostActionRouting.accepted(receipt) {
+                    if !PairedHostActionRouting.acceptedForProcessing(receipt) {
                         self.repliedQuestionIds.remove(promptId)
                         if !self.questions.contains(where: { $0.resolvedId == promptId }) {
                             self.questions.insert(card, at: 0)
@@ -6950,7 +6953,7 @@ public final class RemoteSessionModel: ObservableObject {
                         arguments: command.arguments)
                     self.lastActionMessage = PairedHostActionRouting.message(
                         for: receipt, success: "Question dismissed.")
-                    if !PairedHostActionRouting.accepted(receipt) {
+                    if !PairedHostActionRouting.acceptedForProcessing(receipt) {
                         self.repliedQuestionIds.remove(promptId)
                         if !self.questions.contains(where: { $0.resolvedId == promptId }) {
                             self.questions.insert(card, at: 0)
@@ -7535,7 +7538,7 @@ public final class RemoteSessionModel: ObservableObject {
                     self.lastActionMessage = PairedHostActionRouting.message(
                         for: receipt,
                         success: card.isEnsemble ? "Sent to ensemble." : "Sent.")
-                    guard PairedHostActionRouting.accepted(receipt) else {
+                    guard PairedHostActionRouting.acceptedForProcessing(receipt) else {
                         onActionUnsent?()
                         return
                     }

@@ -280,6 +280,7 @@ public final class PairedHostSessionController: ObservableObject {
       throw PairedHostSessionError.requestRejected(ack.error ?? "unknown error")
     }
 
+    try validate(receipt: receipt, for: command)
     lastReceipt = receipt
     convergeAfterReceipt(receipt)
     return receipt
@@ -451,6 +452,17 @@ public final class PairedHostSessionController: ObservableObject {
       throw PairedHostSessionError.invalidResponse("command receipt decode failed")
     }
     return receipt
+  }
+
+  private func validate(receipt: HostCommandReceipt, for command: HostCommand) throws {
+    guard receipt.commandId == command.commandId,
+      receipt.idempotencyKey == command.idempotencyKey,
+      receipt.name == command.name,
+      receipt.actor == command.actor
+    else {
+      throw PairedHostSessionError.invalidResponse(
+        "command receipt does not match the submitted Host command")
+    }
   }
 
   private func convergeAfterReceipt(_ receipt: HostCommandReceipt) {
