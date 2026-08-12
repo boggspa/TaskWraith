@@ -184,9 +184,22 @@ describe('ExternalPathAboveRow workspace name', () => {
   })
 
   it('surfaces a diverged secondary workspace through the shared Git sync chip', () => {
-    const html = renderWorkspaceRow({ snapshot: makeSnapshot({ ahead: 3, behind: 2 }) })
+    const html = renderToStaticMarkup(
+      createElement(ExternalPathAboveRow, {
+        grant: makeGrant({ path: '/Users/me/Documents/AGBench', kind: 'directory' }),
+        repoMetadata: {
+          isRepo: true,
+          repoRoot: '/Users/me/Documents/AGBench',
+          branch: 'master'
+        },
+        snapshot: makeSnapshot({ ahead: 3, behind: 2 }),
+        onOpenCommits: () => undefined
+      })
+    )
 
     expect(html).toContain('git-sync-diverged')
+    expect(html).toContain('git-status-push-clickable')
+    expect(html).toContain('role="button"')
     expect(html).toContain('git-status-drift-glyph')
     expect(html).toContain('<span class="sr-only">3 ahead</span>')
     expect(html).toContain('<span class="sr-only">2 behind</span>')

@@ -252,7 +252,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   chatMediaPromoteTarget:
     | { projectName: string; onPromote: (ref: { path?: string }) => void }
     | undefined
+  commitsInspectorWorkspacePath: string | null
   currentGeminiWorktree: any
+  currentGitPresentationPath: string | undefined
   currentPinnedMessages: any
   currentPreviewMenuOpen: any
   currentPreviewTargets: any
@@ -461,6 +463,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   openFileChangeInWorkbench: any
   openLinkedChatAsMain: any
   openMediaPane: any
+  openInspectorTab: any
   openWorkspacePopoutWindow: any
   overestimatePercent: MainAppLayoutSidebarProps['overestimatePercent']
   pendingAgentApproval: any
@@ -532,7 +535,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   setRawFilter: any
   setRawLogs: any
   setRightDockTab: any
-  setRightTab: any
   setSessionTrust: any
   setSettingsActiveTab: MainAppLayoutSidebarProps['setSettingsActiveTab']
   setShowBugReportSheet: any

@@ -1234,6 +1234,7 @@ type SideChatTypePickerOption = {
 }
 type InspectorRightTab =
   | 'diff'
+  | 'commits'
   | 'raw'
   | 'delegation'
   | 'timeline'
@@ -1934,6 +1935,9 @@ function App(): React.JSX.Element {
   const [rightTab, setRightTab] = useState<InspectorRightTab>('diff')
   const [rightDockTab, setRightDockTab] = useState<RightDockTab>('run')
   const [showRightDockHome, setShowRightDockHome] = useState(false)
+  const [commitsInspectorWorkspacePath, setCommitsInspectorWorkspacePath] = useState<string | null>(
+    null
+  )
 
   // Version Preflight
   const [geminiVersion, setGeminiVersion] = useState<string>('unknown')
@@ -1952,7 +1956,8 @@ function App(): React.JSX.Element {
     routeWasRevealed: initialRouteWasRevealed
   })
   const isBootMaskLeaving = isBootReady && bootMaskVisible
-  const openInspectorTab = (tab: InspectorRightTab) => {
+  const openInspectorTab = (tab: InspectorRightTab, workspacePath?: string) => {
+    if (tab === 'commits') setCommitsInspectorWorkspacePath(workspacePath?.trim() || null)
     setRightTab(tab)
     closeOtherRightDockPanels('inspector')
     appearance.update({ showInspector: true })
@@ -11215,6 +11220,12 @@ function App(): React.JSX.Element {
       },
       onError: setDiffRefreshStatus
     })
+  }
+
+  const openWorkspaceCommitsInInspector = (workspacePath?: string): void => {
+    const targetPath = workspacePath?.trim() || currentGitPresentationPath
+    if (!targetPath) return
+    openInspectorTab('commits', targetPath)
   }
 
   // ── Host-side fallback compaction (legacy/unmarked Kimi) ──────────────────
@@ -28708,6 +28719,7 @@ function App(): React.JSX.Element {
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openWorkspaceCommitsInInspector,
     openWorkspaceDiffInInspector,
     openPlanImportReview,
     openSideChatFromSlashCommand,
@@ -29522,6 +29534,12 @@ function App(): React.JSX.Element {
         },
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path || viewerChat.workspacePath || undefined,
+        openWorkspaceCommitsInInspector: (workspacePath?: string) => {
+          projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
+          composerHandlers.openWorkspaceCommitsInInspector(
+            workspacePath || viewerGitPresentationPath
+          )
+        },
         openWorkspaceDiffInInspector: (workspacePath?: string) => {
           projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
           void composerHandlers.openWorkspaceDiffInInspector(
@@ -30176,7 +30194,9 @@ function App(): React.JSX.Element {
     currentChatIdRef,
     currentChatMediaRefs,
     chatMediaPromoteTarget,
+    commitsInspectorWorkspacePath,
     currentGeminiWorktree,
+    currentGitPresentationPath,
     currentPinnedMessages,
     currentPreviewMenuOpen,
     currentPreviewTargets,
@@ -30405,6 +30425,7 @@ function App(): React.JSX.Element {
     openFileChangeInWorkbench,
     openLinkedChatAsMain,
     openMediaPane,
+    openInspectorTab,
     openWorkspacePopoutWindow,
     overestimatePercent,
     pendingAgentApproval,
@@ -30476,7 +30497,6 @@ function App(): React.JSX.Element {
     setRawFilter,
     setRawLogs,
     setRightDockTab,
-    setRightTab,
     setSessionTrust,
     setSettingsActiveTab,
     setShowBugReportSheet,

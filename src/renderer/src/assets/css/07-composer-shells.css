@@ -1883,6 +1883,18 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+.git-status-push.git-status-push-clickable {
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.git-status-push.git-status-push-clickable:hover {
+  opacity: 0.82;
+}
+.git-status-push.git-status-push-clickable:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .git-status-ahead,
 .git-status-behind {
   display: inline-flex;

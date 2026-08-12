@@ -28,7 +28,8 @@ describe('composer changed-files Diff Studio interaction', () => {
     )
 
     expect(primaryWorkspaceRow).toContain('<ComposerBranchWorktreePopover')
-    expect(primaryWorkspaceRow).toContain('<GitSyncChip snapshot={primaryGitSnapshot} />')
+    expect(primaryWorkspaceRow).toContain('<GitSyncChip')
+    expect(primaryWorkspaceRow).toContain('snapshot={primaryGitSnapshot}')
     expect(primaryWorkspaceRow).toContain('<WorkspaceDiffStatsButton')
     expect(primaryWorkspaceRow).toContain(
       'onOpen={() => openWorkspaceDiffInInspector(primaryGitActionPath)}'

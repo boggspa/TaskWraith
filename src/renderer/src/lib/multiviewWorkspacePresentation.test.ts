@@ -173,6 +173,12 @@ describe('Multiview focused workspace presentation', () => {
     expect(paneComposer).toContain(
       'composerHandlers.openWorkspaceDiffInInspector(\n            workspacePath || viewerGitPresentationPath'
     )
+    expect(paneComposer).toContain(
+      'openWorkspaceCommitsInInspector: (workspacePath?: string) => {'
+    )
+    expect(paneComposer).toContain(
+      'composerHandlers.openWorkspaceCommitsInInspector(\n            workspacePath || viewerGitPresentationPath'
+    )
 
     const screenWatch = slice(
       'const handleMultiviewPaneToggleScreenWatch =',

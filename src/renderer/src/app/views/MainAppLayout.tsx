@@ -198,7 +198,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentChatIdRef,
   currentChatMediaRefs,
   chatMediaPromoteTarget,
+  commitsInspectorWorkspacePath,
   currentGeminiWorktree,
+  currentGitPresentationPath,
   currentPinnedMessages,
   currentPreviewMenuOpen,
   currentPreviewTargets,
@@ -397,6 +399,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   openFileChangeInWorkbench,
   openLinkedChatAsMain,
   openMediaPane,
+  openInspectorTab,
   openWorkspacePopoutWindow,
   overestimatePercent,
   pendingAgentApproval,
@@ -458,7 +461,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   setPreviewChatMediaRef,
   setPreviewMenuTarget,
   setRawFilter,
-  setRightTab,
   setSessionTrust,
   setSettingsActiveTab,
   setShowBugReportSheet,
@@ -1136,6 +1138,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         handleDetachWindow: noSideComposerAction,
         openDiscordContextPicker: undefined,
         openInspectorTab: undefined,
+        openWorkspaceCommitsInInspector: undefined,
         isEnsembleModeEnabled: false,
         handleToggleWelcomeEnsemble: noSideComposerAction,
         handleCollapseEnsembleToSolo: noSideComposerAction,
@@ -2402,10 +2405,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onActivate={activateRightDockTab}
                 inspectorTabs={INSPECTOR_TAB_META}
                 activeInspectorTab={rightTab}
-                onSelectInspectorTab={(id) => {
-                  setRightTab(id as Parameters<typeof setRightTab>[0])
-                  activateRightDockTab('inspector')
-                }}
+                onSelectInspectorTab={(id) => openInspectorTab(id)}
                 onClose={() => {
                   if (activeRightDockTab === 'chat') hideSideChatPane()
                   else closeRightDockPanel(activeRightDockTab)
@@ -2426,10 +2426,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       }
                       activateRightDockTab(surface)
                     }}
-                    onOpenInspector={(destination) => {
-                      setRightTab(destination)
-                      activateRightDockTab('inspector')
-                    }}
+                    onOpenInspector={(destination) => openInspectorTab(destination)}
                   />
                 )}
 
@@ -2884,9 +2881,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               showTerminal={showTerminal}
               setShowTerminal={setShowTerminal}
               workspacePath={
-                (activeDiff as { workspacePath?: string } | null)?.workspacePath ||
-                currentGeminiWorktree?.effectivePath ||
-                currentWorkspace?.path
+                rightTab === 'commits'
+                  ? commitsInspectorWorkspacePath ||
+                    currentGitPresentationPath ||
+                    currentGeminiWorktree?.effectivePath ||
+                    currentWorkspace?.path
+                  : (activeDiff as { workspacePath?: string } | null)?.workspacePath ||
+                    currentGeminiWorktree?.effectivePath ||
+                    currentWorkspace?.path
               }
               provider={currentProvider}
               approvalMode={approvalMode}

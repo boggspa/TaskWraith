@@ -8,8 +8,8 @@ import { DigitOdometer } from './DigitOdometer'
  * drift between row instances — the unification the above-rows needed.
  *
  * They deliberately reuse the existing `.git-status-*` chip styles so there's a
- * single visual language (no parallel class system, no dead CSS). Every chip is
- * READ-ONLY except CI, which opens the run and carries the clickable affordance.
+ * single visual language (no parallel class system, no dead CSS). Sync can open
+ * the Commits Inspector when local-only work exists; CI and PR chips open GitHub.
  */
 
 /** Branch-name → tone bucket for Claude-app-style colour coding. */
@@ -232,16 +232,34 @@ export function GitMergeBadge({
  * repo stays quiet.
  */
 export function GitSyncChip({
-  snapshot
+  snapshot,
+  onOpenCommits
 }: {
   snapshot: GitRepositorySnapshot
+  onOpenCommits?: () => void
 }): React.JSX.Element | null {
   if (snapshot.detached || !snapshot.branch) return null
   if (!snapshot.upstream) {
+    const clickable = Boolean(onOpenCommits)
+    const open = (): void => onOpenCommits?.()
     return (
       <span
-        className="git-status-push git-status-unpublished"
-        title="No upstream — push to publish this branch"
+        className={`git-status-push git-status-unpublished${
+          clickable ? ' git-status-push-clickable' : ''
+        }`}
+        title={`No upstream — push to publish this branch${clickable ? ' · open unpushed commits' : ''}`}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? open : undefined}
+        onKeyDown={
+          clickable
+            ? (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                open()
+              }
+            : undefined
+        }
       >
         N/A
       </span>
@@ -257,17 +275,34 @@ export function GitSyncChip({
   }
   const diverged = ahead > 0 && behind > 0
   const syncState = diverged ? 'diverged' : behind > 0 ? 'behind' : 'ahead'
+  const clickable = ahead > 0 && Boolean(onOpenCommits)
+  const open = (): void => onOpenCommits?.()
   const commitLabel = (count: number): string => `${count} commit${count === 1 ? '' : 's'}`
-  const title = diverged
+  const statusTitle = diverged
     ? `Diverged from local tracking ref ${snapshot.upstream} · ${commitLabel(ahead)} local-only · ${commitLabel(behind)} upstream-only · fetch to refresh remote state.`
     : behind > 0
       ? `This checkout is ${commitLabel(behind)} behind local tracking ref ${snapshot.upstream}; fetch to refresh remote state.`
       : `${commitLabel(ahead)} ahead of local tracking ref ${snapshot.upstream}.`
+  const title = `${statusTitle}${clickable ? ` Open ${commitLabel(ahead)} in the Commits Inspector.` : ''}`
   return (
     <span
-      className={`git-status-push git-sync-${syncState}`}
+      className={`git-status-push git-sync-${syncState}${
+        clickable ? ' git-status-push-clickable' : ''
+      }`}
       data-sync-state={syncState}
       title={title}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? open : undefined}
+      onKeyDown={
+        clickable
+          ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              open()
+            }
+          : undefined
+      }
     >
       {ahead > 0 && (
         <span className="git-status-ahead">

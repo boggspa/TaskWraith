@@ -402,6 +402,7 @@ export interface ComposerProps {
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
+  openWorkspaceCommitsInInspector?: (workspacePath?: string) => void
   openWorkspaceDiffInInspector: (workspacePath?: string) => void
   openPlanImportReview: any
   openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => boolean | void
@@ -728,6 +729,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openWorkspaceCommitsInInspector,
     openWorkspaceDiffInInspector,
     openPlanImportReview,
     openSideChatFromSlashCommand,
@@ -2409,7 +2411,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </span>
                       </span>
                       {primaryGitSnapshot && <GitMergeBadge snapshot={primaryGitSnapshot} />}
-                      {primaryGitSnapshot && <GitSyncChip snapshot={primaryGitSnapshot} />}
+                      {primaryGitSnapshot && (
+                        <GitSyncChip
+                          snapshot={primaryGitSnapshot}
+                          onOpenCommits={
+                            openWorkspaceCommitsInInspector
+                              ? () => openWorkspaceCommitsInInspector(primaryGitActionPath)
+                              : undefined
+                          }
+                        />
+                      )}
                       </div>
                       {workspaceDiffStats.filesChanged > 0 && (
                         <div className="composer-above-bar-pill composer-above-bar-pill--changes">
@@ -2569,6 +2580,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             })
                           }
                           onOpenDiffStudio={() => openWorkspaceDiffInInspector(group.path)}
+                          onOpenCommits={
+                            openWorkspaceCommitsInInspector
+                              ? () => openWorkspaceCommitsInInspector(group.path)
+                              : undefined
+                          }
                           onSnapshotRefresh={(snapshot) =>
                             onExternalGitSnapshotRefresh?.(
                               group.path,

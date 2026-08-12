@@ -45,6 +45,38 @@ describe('GitSyncChip', () => {
     expect(html).not.toContain('synced')
   })
 
+  it('opens the Commits Inspector from a local-only count without changing its shape', () => {
+    const html = renderToStaticMarkup(
+      <GitSyncChip snapshot={snapshot({ ahead: 3 })} onOpenCommits={() => undefined} />
+    )
+
+    expect(html).toContain('git-sync-ahead git-status-push-clickable')
+    expect(html).toContain('role="button"')
+    expect(html).toContain('tabindex="0"')
+    expect(html).toContain('Open 3 commits in the Commits Inspector.')
+    expect(html).toContain('<span class="sr-only">3 ahead</span>')
+  })
+
+  it('keeps a behind-only count read-only because there are no local commits to inspect', () => {
+    const html = renderToStaticMarkup(
+      <GitSyncChip snapshot={snapshot({ behind: 2 })} onOpenCommits={() => undefined} />
+    )
+
+    expect(html).not.toContain('git-status-push-clickable')
+    expect(html).not.toContain('role="button"')
+    expect(html).not.toContain('Commits Inspector')
+  })
+
+  it('opens unpublished commits when no upstream exists', () => {
+    const html = renderToStaticMarkup(
+      <GitSyncChip snapshot={snapshot({ upstream: undefined })} onOpenCommits={() => undefined} />
+    )
+
+    expect(html).toContain('git-status-unpublished git-status-push-clickable')
+    expect(html).toContain('role="button"')
+    expect(html).toContain('open unpushed commits')
+  })
+
   it('renders an amber branch-drift glyph and traceable count when behind upstream', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ behind: 2 })} />)
 

@@ -118,6 +118,8 @@ interface ExternalPathAboveRowProps {
   onReviewChanges?: () => void
   /** Direct changed-files click — opens this path in the inspector Diff Studio. */
   onOpenDiffStudio?: () => void
+  /** Direct local-only commit count click — opens this path in the Commits Inspector. */
+  onOpenCommits?: () => void
   /** Branch/worktree popover refresh hook for this external repository. */
   onSnapshotRefresh?: (snapshot: GitRepositorySnapshot | null) => void
   /** Cursor shell — detached satellite pills above the merged stack. */
@@ -177,6 +179,7 @@ export function ExternalPathAboveRow({
   onCreatePr,
   onReviewChanges,
   onOpenDiffStudio,
+  onOpenCommits,
   onSnapshotRefresh,
   cursorLeadDetached = false,
   composerStyle
@@ -326,7 +329,7 @@ export function ExternalPathAboveRow({
           </span>
         </span>
         {snapshot && <GitMergeBadge snapshot={snapshot} />}
-        {snapshot && <GitSyncChip snapshot={snapshot} />}
+        {snapshot && <GitSyncChip snapshot={snapshot} onOpenCommits={onOpenCommits} />}
         <GitPrLifecycleChip pr={pr ?? null} snapshot={snapshot} />
       </div>
       {diffPill}
