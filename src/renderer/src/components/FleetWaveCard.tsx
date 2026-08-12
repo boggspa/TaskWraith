@@ -97,7 +97,7 @@ export function FleetWaveCard({
         ? 'Done'
         : status === 'failed'
           ? 'Failed'
-          : 'Working in parallel.'
+          : 'Working in parallel'
 
   const renderAgentChip = (
     agent: FleetWaveAgentState,
@@ -193,7 +193,22 @@ export function FleetWaveCard({
       useProviderAccent={!isClaude}
       glyph={
         <span className="fleet-wave-card-glyph" aria-hidden="true">
-          ⬡
+          {/* Mini ghost mark; stroke 7 user units ≈ 1.2px at the 14px slot
+           * render of the 128-unit paths (same equation as the strip cells). */}
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 128 128"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={7}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            {FLEET_WAVE_GHOST_PATHS}
+          </svg>
         </span>
       }
       name={count ? `Fleet · ${count} agents` : 'Fleet'}
