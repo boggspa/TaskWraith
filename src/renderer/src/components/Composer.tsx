@@ -5339,7 +5339,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         : null
                     }
                     onPickExisting={handleSelectExistingWorkspace}
-                    onAddNewWorkspace={handleSelectWorkspace}
+                    /*
+                        The composer switcher is the one surface allowed to
+                        rebind the current chat onto a workspace added via the
+                        native dialog — hence the explicit switch opt-in. Every
+                        other add-workspace surface (sidebar `+`, Settings)
+                        omits it and lands on a fresh thread instead
+                        (resolveWorkspaceAddDialogIntent).
+                      */
+                    onAddNewWorkspace={() => handleSelectWorkspace({ intent: 'switch' })}
                     onSelectNoWorkspace={handleNewGlobalChat}
                     /*
                         1.0.6-EW66 — multi-workspace manager. The
