@@ -79,6 +79,18 @@ function createDeps() {
         ok: true,
         data: { requestedPath: path } as any
       })),
+      unpushedCommits: vi.fn<GitHandlersDeps['gitService']['unpushedCommits']>(
+        async (path: string) => ({
+          ok: true,
+          data: {
+            repoRoot: path,
+            branch: 'main',
+            comparison: 'upstream',
+            observedAt: '2026-08-12T00:00:00.000Z',
+            commits: []
+          }
+        })
+      ),
       workspaceStats: vi.fn<GitHandlersDeps['gitService']['workspaceStats']>(
         async (path: string) => ({
           ok: true,
@@ -205,6 +217,7 @@ describe('registerGitHandlers', () => {
     registerGitHandlers(createDeps().deps)
 
     expect(handlerFor('git:snapshot')).toBeTypeOf('function')
+    expect(handlerFor('git:unpushed-commits')).toBeTypeOf('function')
     expect(handlerFor('git:workspace-stats')).toBeTypeOf('function')
     expect(handlerFor('git:work-provenance')).toBeTypeOf('function')
     expect(handlerFor('git:subscribe-snapshot')).toBeTypeOf('function')
@@ -249,6 +262,19 @@ describe('registerGitHandlers', () => {
       ok: true,
       data: { requestedPath: '/repo' }
     })
+    await expect(
+      handlerFor('git:unpushed-commits')({}, { workspacePath: '/repo' })
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        repoRoot: '/repo',
+        branch: 'main',
+        comparison: 'upstream',
+        observedAt: '2026-08-12T00:00:00.000Z',
+        commits: []
+      }
+    })
+    expect(deps.gitService.unpushedCommits).toHaveBeenCalledWith('/repo')
     await expect(
       handlerFor('git:workspace-stats')({}, { workspacePath: '/repo', chatId: 'chat-1' })
     ).resolves.toEqual({

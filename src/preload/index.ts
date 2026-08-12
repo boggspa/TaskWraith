@@ -41,6 +41,7 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
+import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
 import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
@@ -747,6 +748,14 @@ const api = {
   refreshMistralAdminUsage: () => ipcRenderer.invoke('mistral-quota:refresh-admin'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  gitUnpushedCommits: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
+    ipcRenderer.invoke('git:unpushed-commits', payload) as Promise<
+      GitResult<GitUnpushedCommitStack>
+    >,
   gitWorkspaceStats: (payload: {
     workspacePath?: string
     repoPath?: string

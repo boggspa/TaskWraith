@@ -229,6 +229,7 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
+import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
 import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
@@ -813,6 +814,11 @@ declare global {
         repoPath?: string
         chatId?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
+      gitUnpushedCommits: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+      }) => Promise<GitResult<GitUnpushedCommitStack>>
       gitWorkspaceStats: (payload: {
         workspacePath?: string
         repoPath?: string

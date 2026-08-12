@@ -21,6 +21,7 @@ import type {
   GitWorktreeList
 } from '../services/GitService'
 import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
+import type { GitUnpushedCommitStack } from '../services/GitCommitStack'
 import type { WorkProvenanceQueryService } from '../workProvenance/WorkProvenanceQueryService'
 import type { WorkProvenanceSnapshot } from '../../shared/workProvenance'
 import type {
@@ -74,6 +75,7 @@ export interface GitHandlersDeps {
   gitService: Pick<
     GitService,
     | 'snapshot'
+    | 'unpushedCommits'
     | 'workspaceStats'
     | 'stage'
     | 'unstage'
@@ -383,6 +385,17 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     return repo.ok ? deps.gitService.snapshot(repo.path) : repo
   })
+
+  ipcMain.handle(
+    'git:unpushed-commits',
+    async (
+      event,
+      payload?: GitIpcPayload
+    ): Promise<GitResult<GitUnpushedCommitStack> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
+      return repo.ok ? deps.gitService.unpushedCommits(repo.path) : repo
+    }
+  )
 
   ipcMain.handle(
     'git:workspace-stats',
