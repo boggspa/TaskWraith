@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, ChatMessage } from '../../../main/store/types'
 import type { GitUnpushedCommitStack } from '../../../main/services/GitCommitStack'
+import type { GitPrSummary } from '../../../main/services/GitService'
 import type { SeatChangeLink } from '../../../shared/seatChange'
 import { CommitsInspectorView, inspectorCommitRows } from './CommitsInspector'
 
@@ -87,6 +88,11 @@ describe('CommitsInspector', () => {
   it('reuses the Task Complete commit card and falls back to Git authors', () => {
     const snapshot = stack(commits)
     const rows = inspectorCommitRows(snapshot, [attributedChat()])
+    const linkedPullRequest: GitPrSummary = {
+      number: 42,
+      title: 'Grouped work',
+      url: 'https://github.com/example/repo/pull/42'
+    }
     const html = renderToStaticMarkup(
       <CommitsInspectorView
         stack={snapshot}
@@ -97,6 +103,7 @@ describe('CommitsInspector', () => {
         onClearSelection={vi.fn()}
         onRefresh={vi.fn()}
         onStartPrRequest={vi.fn()}
+        pullRequestsByCommit={new Map([[commits[0].hash, [linkedPullRequest]]])}
       />
     )
 
@@ -111,6 +118,8 @@ describe('CommitsInspector', () => {
     expect(html).toContain('<span class="composer-diff-del">−17</span>')
     expect(html).toContain('1 of 2 selected')
     expect(html).toContain('Create PR request')
+    expect(html).toContain('>#42</button>')
+    expect(html).toContain('Open Grouped work')
     expect(html).not.toMatch(/Create PR request[^>]*disabled/)
   })
 

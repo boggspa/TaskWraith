@@ -1,16 +1,19 @@
 /* Commits Inspector — the Task Complete commit card, promoted into a full
  * right-dock workflow without creating a second visual language. */
 
-.commits-inspector {
+.commits-inspector-scroll {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.commits-inspector {
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  overscroll-behavior: contain;
 }
 
 .commits-inspector-header {
@@ -164,6 +167,328 @@
   color: var(--danger);
 }
 
+.commits-inspector-pr-links {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.commits-inspector .commits-inspector-pr-link {
+  min-height: 20px;
+  padding: 1px 5px;
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.pull-request-workflow {
+  margin: 0 var(--space-md) var(--space-md);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 92%, transparent);
+  overflow: hidden;
+}
+
+.pull-request-workflow-header,
+.pull-request-form-heading,
+.pull-request-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.pull-request-workflow-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.pull-request-workflow-header > div,
+.pull-request-form-heading > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pull-request-workflow-header strong,
+.pull-request-form-heading strong,
+.pull-request-card strong,
+.pull-request-empty strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.pull-request-workflow-header span,
+.pull-request-form-heading span,
+.pull-request-empty span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.pull-request-workflow button,
+.pull-request-workflow input,
+.pull-request-workflow textarea,
+.pull-request-workflow select {
+  font: inherit;
+}
+
+.pull-request-workflow button {
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.pull-request-workflow button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+.pull-request-workflow button:disabled {
+  opacity: 0.46;
+  cursor: default;
+}
+
+.pull-request-workflow button.is-primary {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.pull-request-workflow button.is-danger {
+  color: var(--danger);
+}
+
+.pull-request-form,
+.pull-request-edit-form,
+.pull-request-merge-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pull-request-form {
+  padding: 12px;
+  border-bottom: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.pull-request-form label,
+.pull-request-edit-form label,
+.pull-request-merge-form label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.pull-request-workflow input[type='text'],
+.pull-request-workflow input:not([type]),
+.pull-request-workflow textarea,
+.pull-request-workflow select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--app-bg) 82%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.pull-request-workflow input[type='text'],
+.pull-request-workflow input:not([type]),
+.pull-request-workflow select {
+  min-height: 30px;
+  padding: 5px 7px;
+}
+
+.pull-request-workflow textarea {
+  resize: vertical;
+  padding: 7px;
+  line-height: 1.45;
+}
+
+.pull-request-workflow input:focus,
+.pull-request-workflow textarea:focus,
+.pull-request-workflow select:focus,
+.pull-request-workflow button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 1px;
+}
+
+.pull-request-form-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.55fr);
+  gap: 8px;
+}
+
+.pull-request-form-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.pull-request-form-options label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.pull-request-form-options input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.pull-request-form-note,
+.pull-request-inline-error,
+.pull-request-group-summary {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.pull-request-form-note,
+.pull-request-group-summary {
+  color: var(--text-secondary);
+}
+
+.pull-request-inline-error {
+  margin: 10px 12px;
+  color: var(--danger);
+}
+
+.pull-request-form .pull-request-inline-error {
+  margin: 0;
+}
+
+.pull-request-form-actions,
+.pull-request-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pull-request-warnings {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--warning);
+  font-size: var(--font-size-xs);
+}
+
+.pull-request-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pull-request-card {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.pull-request-card:last-child {
+  border-bottom: 0;
+}
+
+.pull-request-card-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pull-request-card-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-request-card-heading > code {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.pull-request-state {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.pull-request-state.is-open {
+  color: var(--success);
+}
+
+.pull-request-state.is-draft {
+  color: var(--text-secondary);
+}
+
+.pull-request-state.is-merged {
+  color: var(--accent);
+}
+
+.pull-request-state.is-closed {
+  color: var(--danger);
+}
+
+.pull-request-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.pull-request-edit-form,
+.pull-request-merge-form {
+  margin-top: 2px;
+  padding: 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--app-bg) 48%, transparent);
+}
+
+.pull-request-empty {
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.pull-request-group-summary {
+  padding: 8px 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
 @media (max-width: 720px) {
   .commits-inspector-selection {
     align-items: flex-start;
@@ -172,5 +497,9 @@
 
   .commits-inspector-selection > div {
     justify-content: flex-start;
+  }
+
+  .pull-request-form-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -4,6 +4,8 @@ import type {
   GitUnpushedCommit,
   GitUnpushedCommitStack
 } from '../../../main/services/GitCommitStack'
+import type { GitPullRequestWorkspaceSnapshot } from '../../../main/services/GitPullRequestWorkflow'
+import type { GitPrSummary } from '../../../main/services/GitService'
 import type { CloseoutCommit } from '../lib/taskWraithCloseoutMessage'
 import {
   collectTaskWraithCommitAttributions,
@@ -14,6 +16,7 @@ import {
   type CommitAttributionFallback,
   type CommitFilePreviewLoadResult
 } from './RunCompleteEpicStack'
+import { PullRequestWorkflowPanel, pullRequestsByOriginalCommit } from './PullRequestWorkflowPanel'
 
 function commitStats(commit: GitUnpushedCommit): string {
   const fileLabel = `${commit.filesChanged} file${commit.filesChanged === 1 ? '' : 's'}`
@@ -59,6 +62,7 @@ export interface CommitsInspectorViewProps {
   onRefresh: () => void
   refreshing?: boolean
   onStartPrRequest?: (commits: GitUnpushedCommit[]) => void
+  pullRequestsByCommit?: ReadonlyMap<string, GitPrSummary[]>
   loadCommitFiles?: (commit: CloseoutCommit) => Promise<CommitFilePreviewLoadResult | null>
 }
 
@@ -72,6 +76,7 @@ export function CommitsInspectorView({
   onRefresh,
   refreshing = false,
   onStartPrRequest,
+  pullRequestsByCommit,
   loadCommitFiles
 }: CommitsInspectorViewProps): ReactNode {
   const commitsByHash = new Map(stack.commits.map((commit) => [commit.hash, commit]))
@@ -128,6 +133,33 @@ export function CommitsInspectorView({
               return commit ? genericAttribution(commit) : null
             }}
             commitSelection={{ selectedHashes, onToggle: onToggleCommit }}
+            commitHashAdornment={(row) => {
+              const pullRequests = pullRequestsByCommit?.get(row.hash.toLowerCase()) || []
+              if (pullRequests.length === 0) return null
+              return (
+                <span className="commits-inspector-pr-links">
+                  {pullRequests.map((pullRequest, index) => (
+                    <button
+                      type="button"
+                      className="commits-inspector-pr-link"
+                      key={String(
+                        pullRequest.number || pullRequest.url || pullRequest.headRefName || index
+                      )}
+                      title={`Open ${pullRequest.title || `PR #${pullRequest.number || 'request'}`}`}
+                      disabled={!pullRequest.url}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        if (pullRequest.url) {
+                          void window.api.openExternalOrPath(pullRequest.url)
+                        }
+                      }}
+                    >
+                      #{pullRequest.number || 'PR'}
+                    </button>
+                  ))}
+                </span>
+              )
+            }}
             loadCommitFiles={loadCommitFiles}
           />
         </>
@@ -154,6 +186,9 @@ export function CommitsInspector({
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [requestOpen, setRequestOpen] = useState(false)
+  const [pullRequestWorkspace, setPullRequestWorkspace] =
+    useState<GitPullRequestWorkspaceSnapshot | null>(null)
   const requestIdRef = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -198,6 +233,14 @@ export function CommitsInspector({
   }, [stack])
 
   const rows = useMemo(() => (stack ? inspectorCommitRows(stack, chats) : []), [chats, stack])
+  const pullRequestsByCommit = useMemo(
+    () => pullRequestsByOriginalCommit(pullRequestWorkspace?.pullRequests || []),
+    [pullRequestWorkspace?.pullRequests]
+  )
+  const selectedCommits = useMemo(
+    () => stack?.commits.filter((commit) => selectedHashes.has(commit.hash)) || [],
+    [selectedHashes, stack]
+  )
   const loadCommitFiles = useCallback(
     async (commit: CloseoutCommit): Promise<CommitFilePreviewLoadResult | null> => {
       if (!workspacePath) return null
@@ -239,16 +282,37 @@ export function CommitsInspector({
   if (!stack) return null
 
   return (
-    <CommitsInspectorView
-      stack={stack}
-      rows={rows}
-      selectedHashes={selectedHashes}
-      onToggleCommit={toggleCommit}
-      onSelectAll={() => setSelectedHashes(new Set(stack.commits.map((commit) => commit.hash)))}
-      onClearSelection={() => setSelectedHashes(new Set())}
-      onRefresh={() => void refresh()}
-      refreshing={loading}
-      loadCommitFiles={loadCommitFiles}
-    />
+    <div className="commits-inspector-scroll">
+      <CommitsInspectorView
+        stack={stack}
+        rows={rows}
+        selectedHashes={selectedHashes}
+        onToggleCommit={toggleCommit}
+        onSelectAll={() => setSelectedHashes(new Set(stack.commits.map((commit) => commit.hash)))}
+        onClearSelection={() => setSelectedHashes(new Set())}
+        onStartPrRequest={() => setRequestOpen(true)}
+        onRefresh={() => void refresh()}
+        refreshing={loading}
+        pullRequestsByCommit={pullRequestsByCommit}
+        loadCommitFiles={loadCommitFiles}
+      />
+      <PullRequestWorkflowPanel
+        workspacePath={workspacePath}
+        chatId={chatId}
+        selectedCommits={selectedCommits}
+        requestOpen={requestOpen}
+        fallbackBaseBranch={
+          stack.upstream?.includes('/')
+            ? stack.upstream.slice(stack.upstream.indexOf('/') + 1)
+            : undefined
+        }
+        onRequestOpenChange={setRequestOpen}
+        onCreated={() => {
+          setSelectedHashes(new Set())
+          void refresh()
+        }}
+        onSnapshot={setPullRequestWorkspace}
+      />
+    </div>
   )
 }

@@ -172,6 +172,7 @@ describe('RunCompleteEpicStack', () => {
           title: 'Chris Izatt <chris@example.test>'
         })}
         commitSelection={{ selectedHashes, onToggle: () => {} }}
+        commitHashAdornment={(commit) => <span>PR for {commit.hash.slice(0, 9)}</span>}
       />
     )
 
@@ -181,6 +182,7 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('aria-selected="true"')
     expect(html).toMatch(/type="checkbox"[^>]*checked=""/)
     expect(html).toContain('Commit 10')
+    expect(html).toContain('PR for 000000000')
     expect(html).not.toContain('more commits not shown')
   })
 

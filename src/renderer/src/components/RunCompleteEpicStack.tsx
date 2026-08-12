@@ -185,7 +185,8 @@ export function RunCompleteEpicStack({
   commitRowLimit = CLOSEOUT_COMMIT_TABLE_LIMIT,
   commitAttributionLabel = 'Seat',
   commitAttributionFallback,
-  commitSelection
+  commitSelection,
+  commitHashAdornment
 }: {
   participantTable?: CloseoutParticipantTable | null
   subagentDelegations?: CloseoutSubagentDelegation[] | null
@@ -197,6 +198,7 @@ export function RunCompleteEpicStack({
   commitAttributionLabel?: string
   commitAttributionFallback?: (commit: CloseoutCommit) => CommitAttributionFallback | null
   commitSelection?: CommitSelectionState
+  commitHashAdornment?: (commit: CloseoutCommit) => ReactNode
 }): ReactNode {
   const rows = participantTable?.rows || []
   const allSubagentRows = Array.isArray(subagentDelegations) ? subagentDelegations : []
@@ -556,6 +558,7 @@ export function RunCompleteEpicStack({
                   </span>
                   <span className="run-complete-epic-hash" role="cell">
                     <code>{commit.hash.slice(0, 9)}</code>
+                    {commitHashAdornment?.(commit)}
                   </span>
                 </div>
               )
