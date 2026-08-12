@@ -6,11 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## 1.9.5 - Unreleased
-
-Source-ahead work toward the next release. See the commits since the
-[v1.9.4](https://github.com/boggspa/TaskWraith/releases/tag/v1.9.4) tag for the
-current boundary; release notes will be compiled when 1.9.5 is tagged.
+## 1.9.5 - 2026-08-12
 
 ### Meta Muse Code
 
@@ -25,6 +21,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Mid-turn steering.** A Steer control sits beside Stop while a solo chat is running, so a follow-up no longer has to wait for the turn to end. How far it reaches depends on the provider: Pi, Cursor, and Ollama take the text into the turn in progress; Kimi, Mistral, and Grok interrupt the in-flight prompt and immediately re-prompt with it; Claude, Codex, AntiGravity, and Muse deliver at the next turn boundary. Anything a transport cannot confirm falls back to boundary delivery rather than being lost.
 - **AntiGravity work is visible while it happens.** The `agy` CLI publishes no tool stream of its own, so headless runs used to finish with a blank transcript even though files changed on disk. Arbitrated shell and write calls now project live through the permission bridge, and read-side views, greps, and directory listings are recovered from AntiGravity's own transcript afterwards — bringing it to tool-call parity with the other seats.
 - **AntiGravity launch honesty.** Cold-start project launches report liveness instead of appearing hung, approved headless shell commands are honoured, and a launch aborts outright when its permission lease fails rather than proceeding with no allow rules.
+- **AntiGravity refuses only on evidence.** Ensemble treats a claimed permission block as real only when a failed tool result supports it; if official `agy` stops on an unsupported refusal, TaskWraith corrects its in-workspace context and retries that seat once instead of stalling the round.
 - **AntiGravity CLI maintenance.** Settings can open the official user-installed `agy` updater. TaskWraith does not download or repackage the CLI, access provider credentials, or change AntiGravity's separate consent and availability requirements.
 - **New local models.** Ollama gains Nemotron 3.5 Lightning (30B-MLX) and Meta Muse Glimmer (30B-MLX) with correct context windows and brand tinting, and the New Additions card leads with the current Muse, Ollama, and Mistral Vibe rows.
 - **Write-capable Kimi permissions.** Kimi seats now properly honor write-capable file permissions instead of degrading.
@@ -34,6 +31,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 ### Permissions and approvals
 
 - **One ladder for the standard tools.** Shell, file changes, publishing, MCP, delegation, the canvases, media editing, and web browsing now follow a single permission ladder: Ask and Plan always present the approval modal, and Accept Edits and above authorize them for the run without a second decision — read-only search inspection included.
+- **Read-only scouting stays prompt-free.** Strictly classified inspection commands and Git reads share one fail-closed proof across native and broker paths, so Codex scouts don't show duplicate approvals while mutations and ambiguous shell syntax still ask or deny.
 - **A simpler permission picker.** Per-tool grant toggles are gone from the composer and participant permission pickers; the tier alone now says what a seat may do.
 - **Publishing still asks under Accept Edits.** Staging and committing inside the workspace are allowed at Accept Edits, but pushing and opening pull requests keep prompting until you move to a higher tier, and unattended runs lost their standing grant exceptions.
 - **The approval card names who is asking.** The "Requested by" row now renders the same seat element the close-out table and fan-out cards use — role in the seat's accent, provider, model, reasoning, and the permission tier, with Boss/Captain authority shown as a glyph.
@@ -47,6 +45,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Channels replaces People across the app.** The sidebar section, chat-header sharing controls, join flow, and Settings tab now speak the channel runtime directly: share any chat from its Channel panel, join by pasting an invite there, and manage every channel — members, revoke, close, audit — from Settings → Channels. The legacy People share surfaces are retired. A channel is reachable only while the host Mac is online.
 - **Agents can hold a Channel seat.** After an accepted security review, a Channel can admit agent members with stable, owner-signed identities. A durable message that mentions a granted agent starts it without a second local confirmation, bounded by an owner-signed grant that names the eligible mentioners, workspace, run posture, expiry, and dispatch budget. Manage, confirm, and revoke agent seats from the Channel host panel; the eight-member ceiling counts humans and agents together.
 - **Agent dispatch survives a restart.** Signed dispatches ride a crash-safe journal, so an agent turn triggered by a mention is recovered and finished after a restart rather than silently lost, and each agent's provider history stays isolated from the others.
+- **Windows durability stays cross-platform.** Crash-safe Channel and authority writes now flush their temporary files correctly on Windows and avoid unsupported directory-fsync and POSIX-mode checks there, while retaining the stricter durability path on POSIX systems.
 - **Host and member panels.** Channels ship a host panel and a primary member panel with durable member replicas, closed-member controls, host-shown admission codes, and readable history for members whose access was revoked.
 - **Erasable Channel history.** Deleting Channel history is replay-safe and settles globally after the runtime quiesces, so an erasure cannot be undone by a late write or a reconnecting member.
 - **A Channel fault no longer blocks launch.** A failed Channels bootstrap degrades to a reduced Channels experience instead of blocking the app, and expired invite checkpoints are recovered rather than stranding the invite.
