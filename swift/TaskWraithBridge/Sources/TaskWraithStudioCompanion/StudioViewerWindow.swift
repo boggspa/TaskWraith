@@ -30,7 +30,9 @@ final class StudioViewerView: NSView {
     }
 
     private let renderer: StudioViewerRenderer
-    private var clock: StudioPlaybackClock
+    /// The tested transport lives in Core; this view only forwards gestures to
+    /// it and draws whatever the resulting playhead selects.
+    private var transport: StudioTransportController
     private var frameLink: CADisplayLink?
 
     /// Minimal viewer diagnostics (mission outcome 9 groundwork). Counted here
@@ -42,7 +44,7 @@ final class StudioViewerView: NSView {
 
     init(renderer: StudioViewerRenderer, clock: StudioPlaybackClock) {
         self.renderer = renderer
-        self.clock = clock
+        self.transport = StudioTransportController(clock: clock)
         super.init(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -106,7 +108,7 @@ final class StudioViewerView: NSView {
         }
 
         updateDrawableSize()
-        clock.play(atHost: CACurrentMediaTime())
+        transport.play(atHost: CACurrentMediaTime())
 
         let link = displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         link.add(to: .main, forMode: .common)
@@ -122,7 +124,7 @@ final class StudioViewerView: NSView {
     /// The view never keeps its own playhead.
     private func renderCurrentFrame() {
         guard let metalLayer else { return }
-        let snapshot = clock.snapshot(atHost: CACurrentMediaTime())
+        let snapshot = transport.clock.snapshot(atHost: CACurrentMediaTime())
         guard let drawable = metalLayer.nextDrawable() else {
             missedDrawableCount += 1
             return
@@ -150,8 +152,16 @@ final class StudioViewerView: NSView {
     /// different rate address the wrong pictures, and the container's stored
     /// rate is the muxer's choice rather than anything the viewer can assume.
     func adopt(timebase: StudioTimebase, durationTicks: Int64) {
-        clock = StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
-        clock.play(atHost: CACurrentMediaTime())
+        transport = StudioTransportController(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
+        )
+        transport.play(atHost: CACurrentMediaTime())
+    }
+
+    /// Current playhead as timecode, for diagnostics and for the on-screen
+    /// readout a later slice will draw.
+    var currentTimecodeText: String {
+        (try? transport.currentTimecode(atHost: CACurrentMediaTime()).text) ?? "--:--:--:--"
     }
 
     // MARK: - Transport keys
@@ -162,18 +172,46 @@ final class StudioViewerView: NSView {
         let host = CACurrentMediaTime()
         switch event.keyCode {
         case Key.space:
-            if clock.snapshot(atHost: host).isPlaying {
-                clock.pause(atHost: host)
-            } else {
-                clock.play(atHost: host)
-            }
+            transport.togglePlayback(atHost: host)
+            return
         case Key.leftArrow:
-            clock.stepFrames(-1, atHost: host)
+            // Shift steps a second at a time, matching the shuttle habit every
+            // NLE trains.
+            transport.stepFrames(
+                event.modifierFlags.contains(.shift) ? -shuttleFrames : -1,
+                atHost: host
+            )
+            return
         case Key.rightArrow:
-            clock.stepFrames(1, atHost: host)
+            transport.stepFrames(
+                event.modifierFlags.contains(.shift) ? shuttleFrames : 1,
+                atHost: host
+            )
+            return
+        default:
+            break
+        }
+
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "i":
+            transport.markIn(atHost: host)
+        case "o":
+            transport.markOut(atHost: host)
+        case "l":
+            transport.setLoopingRange(!transport.isLoopingRange, atHost: host)
+        case "p":
+            transport.playRange(atHost: host)
+        case "x":
+            transport.clearMarks(atHost: host)
         default:
             super.keyDown(with: event)
         }
+    }
+
+    /// Frames a shifted arrow moves: one second at the ASSET'S rate, derived
+    /// rather than assumed, so a 25fps clip shuttles 25 and a 29.97 clip 30.
+    private var shuttleFrames: Int64 {
+        Int64(StudioTimecodeConverter.nominalRate(for: transport.clock.timebase))
     }
 }
 
