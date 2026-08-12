@@ -77,7 +77,8 @@ describe('registerEnsembleChatHandlers', () => {
         chatId: '  chat-1  ',
         orchestrationMode: 'turn_bound',
         fanoutPolicy: 'off',
-        maxContinuationHops: 6
+        maxContinuationHops: 6,
+        previousMaxContinuationHops: 12
       })
     ).toEqual({
       ok: true,
@@ -91,7 +92,8 @@ describe('registerEnsembleChatHandlers', () => {
       chatId: 'chat-1',
       orchestrationMode: 'turn_bound',
       fanoutPolicy: 'off',
-      maxContinuationHops: 6
+      maxContinuationHops: 6,
+      previousMaxContinuationHops: 12
     })
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(chat)
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1', {
@@ -119,6 +121,21 @@ describe('registerEnsembleChatHandlers', () => {
     })
     expect(updateLiveRoundConfig).not.toHaveBeenCalled()
     expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+
+    expect(
+      handlerFor('ensemble:update-live-round-config')(
+        {},
+        {
+          chatId: 'chat-1',
+          maxContinuationHops: 6,
+          previousMaxContinuationHops: 'twelve'
+        }
+      )
+    ).toEqual({
+      ok: false,
+      error: 'invalid_config',
+      message: 'Previous continuation hops must be a finite number.'
+    })
   })
 
   it('checks popout ownership before changing the requested chat', () => {

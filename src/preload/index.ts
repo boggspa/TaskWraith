@@ -2072,6 +2072,7 @@ const api = {
     orchestrationMode?: EnsembleOrchestrationMode
     fanoutPolicy?: EnsembleFanoutPolicy
     maxContinuationHops?: number
+    previousMaxContinuationHops?: number
   }) =>
     ipcRenderer.invoke('ensemble:update-live-round-config', payload) as Promise<{
       ok: boolean

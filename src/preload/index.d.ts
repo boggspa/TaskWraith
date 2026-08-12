@@ -2144,6 +2144,7 @@ declare global {
         orchestrationMode?: EnsembleOrchestrationMode
         fanoutPolicy?: EnsembleFanoutPolicy
         maxContinuationHops?: number
+        previousMaxContinuationHops?: number
       }) => Promise<{
         ok: boolean
         orchestrationMode?: EnsembleOrchestrationMode

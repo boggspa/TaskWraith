@@ -179,6 +179,22 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
       concurrentMode: undefined,
       maxContinuationHops: 1
     })
+    expect(harness.chat.messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        content: 'User changed max handoff turns from 12 to 1.',
+        metadata: {
+          kind: 'ensembleContinuationHopsChange',
+          ensembleRoundId: 'round-1',
+          continuationHopsChange: {
+            before: 12,
+            after: 1,
+            actor: 'user',
+            changedAt: '2026-07-29T00:00:42.000Z'
+          }
+        }
+      })
+    ])
     expect(harness.saveChat).toHaveBeenCalledTimes(1)
     expect(harness.cancelRun).not.toHaveBeenCalled()
 
@@ -220,6 +236,29 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     expect(harness.chat.ensemble?.activeRound).toMatchObject({
       fanoutPolicy: 'read_only',
       concurrentMode: true
+    })
+  })
+
+  it('uses the renderer before-value when its optimistic save wins the IPC race', () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.maxContinuationHops = 76
+    harness.chat.ensemble!.activeRound!.maxContinuationHops = 76
+
+    expect(
+      harness.orchestrator.updateLiveRoundConfig({
+        chatId: 'ensemble-chat',
+        maxContinuationHops: 76,
+        previousMaxContinuationHops: 12
+      })
+    ).toMatchObject({ ok: true, maxContinuationHops: 76 })
+    expect(harness.chat.messages.at(-1)?.metadata).toMatchObject({
+      kind: 'ensembleContinuationHopsChange',
+      ensembleRoundId: 'round-1',
+      continuationHopsChange: {
+        before: 12,
+        after: 76,
+        actor: 'user'
+      }
     })
   })
 

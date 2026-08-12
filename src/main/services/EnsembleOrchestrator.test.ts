@@ -7867,6 +7867,55 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(5)
     expect(runtime.continuationLimitNotified).toBe(false)
     expect(runtime.continuationLimitPending).toBe(false)
+    expect(harness.chat.messages.at(-1)).toMatchObject({
+      role: 'system',
+      content: 'Boss changed max handoff turns from 2 to 5. Reason: Longer horizon task.',
+      metadata: {
+        kind: 'ensembleContinuationHopsChange',
+        ensembleRoundId: harness.chat.ensemble?.activeRound?.roundId,
+        continuationHopsChange: {
+          before: 2,
+          after: 5,
+          actor: 'boss',
+          actorParticipantId: 'claude',
+          actorRole: 'Reviewer',
+          reason: 'Longer horizon task.'
+        }
+      }
+    })
+  })
+
+  it('attributes a continuation hop decrease to the acting Captain', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants[0].enabled = false
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.secondInCommandParticipantId = 'codex'
+    initialChat.ensemble!.maxContinuationHops = 8
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Finish the release.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'adjust_hops',
+      roundId: harness.chat.ensemble?.activeRound?.roundId,
+      hopDelta: -3
+    })
+
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.maxContinuationHops).toBe(5)
+    expect(harness.chat.messages.at(-1)?.metadata?.continuationHopsChange).toMatchObject({
+      before: 8,
+      after: 5,
+      actor: 'captain',
+      actorParticipantId: 'codex',
+      actorRole: 'Worker'
+    })
   })
 
   it('returns quota bands and reset windows from Boss quota checks', async () => {

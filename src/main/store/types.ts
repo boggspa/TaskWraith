@@ -7,6 +7,11 @@ import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
+import type { ContinuationHopsChangePayload } from '../../shared/continuationHopsChange'
+export type {
+  ContinuationHopsChangeActor,
+  ContinuationHopsChangePayload
+} from '../../shared/continuationHopsChange'
 export type {
   SeatChangePayload,
   SeatChangeRowPayload,
@@ -3594,6 +3599,10 @@ export interface ChatMessage {
      * metadata kind would have to be taught to every one of them. Narrow with
      * `isSeatRosterPayload`. */
     seatChange?: SeatChangeRowPayload
+    /** Structured max-continuation-hops change promoted to the animated
+     * DigitOdometer transcript row. The carrier's plain `content` remains the
+     * fallback for TUI, iOS, export, and older renderers. */
+    continuationHopsChange?: ContinuationHopsChangePayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */

@@ -91,6 +91,7 @@ import {
   resolveSeatAuthority
 } from '../../shared/seatChange'
 import type { SeatRosterSeat } from '../../shared/seatChange'
+import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import {
   findAllMentions,
@@ -368,6 +369,10 @@ export interface EnsembleLiveRoundConfigUpdateInput {
   orchestrationMode?: EnsembleOrchestrationMode
   fanoutPolicy?: EnsembleFanoutPolicy
   maxContinuationHops?: number
+  /** Renderer-observed value before its optimistic write. Main uses this only
+   * when the canonical chat already contains the requested value, closing the
+   * save-vs-IPC race without letting the hint override a real durable before. */
+  previousMaxContinuationHops?: number
 }
 
 export type EnsembleLiveRoundConfigUpdateResult =
@@ -3598,7 +3603,9 @@ export class EnsembleOrchestrator {
         input.orchestrationMode !== 'continuous' &&
         input.orchestrationMode !== 'turn_bound') ||
       (input.fanoutPolicy !== undefined && !isEnsembleFanoutPolicy(input.fanoutPolicy)) ||
-      (input.maxContinuationHops !== undefined && !Number.isFinite(input.maxContinuationHops))
+      (input.maxContinuationHops !== undefined && !Number.isFinite(input.maxContinuationHops)) ||
+      (input.previousMaxContinuationHops !== undefined &&
+        !Number.isFinite(input.previousMaxContinuationHops))
     ) {
       return {
         ok: false,
@@ -3607,6 +3614,12 @@ export class EnsembleOrchestrator {
       }
     }
 
+    const activeRound = chat.ensemble.activeRound
+    const canonicalPreviousMaxContinuationHops = resolveMaxContinuationHops(
+      Number.isFinite(chat.ensemble.maxContinuationHops)
+        ? chat.ensemble
+        : { maxContinuationHops: activeRound?.maxContinuationHops }
+    )
     const orchestrationMode =
       input.orchestrationMode ?? resolveEnsembleOrchestrationMode(chat.ensemble)
     const fanoutPolicy = input.fanoutPolicy ?? resolveEnsembleFanoutPolicy(chat.ensemble)
@@ -3614,7 +3627,6 @@ export class EnsembleOrchestrator {
       input.maxContinuationHops === undefined
         ? resolveMaxContinuationHops(chat.ensemble)
         : Math.max(1, Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(input.maxContinuationHops)))
-    const activeRound = chat.ensemble.activeRound
     const activeRoundUpdated = activeRound?.status === 'running'
     const runtime = this.roundsByChatId.get(input.chatId)
 
@@ -3634,7 +3646,9 @@ export class EnsembleOrchestrator {
       runtime.continuationLimitPending = false
     }
 
-    const updated: ChatRecord = {
+    const changedAt = this.deps.nowIso()
+    const changedAtMs = this.deps.now()
+    const updatedConfig: ChatRecord = {
       ...chat,
       ensemble: {
         ...chat.ensemble,
@@ -3653,10 +3667,37 @@ export class EnsembleOrchestrator {
               }
             }
           : {}),
-        updatedAt: this.deps.nowIso()
+        updatedAt: changedAt
       },
-      updatedAt: this.deps.now()
+      updatedAt: changedAtMs
     }
+    const hintedPreviousMaxContinuationHops =
+      input.previousMaxContinuationHops === undefined
+        ? canonicalPreviousMaxContinuationHops
+        : Math.max(
+            1,
+            Math.min(
+              MAX_CONTINUATION_HOP_LIMIT,
+              Math.floor(input.previousMaxContinuationHops)
+            )
+          )
+    const previousMaxContinuationHops =
+      canonicalPreviousMaxContinuationHops === maxContinuationHops
+        ? hintedPreviousMaxContinuationHops
+        : canonicalPreviousMaxContinuationHops
+    const updated =
+      input.maxContinuationHops !== undefined &&
+      previousMaxContinuationHops !== maxContinuationHops
+        ? appendContinuationHopsChangeTranscriptEvent(updatedConfig, {
+            id: `ensemble-continuation-hops-change-${activeRound?.roundId || 'idle'}-${changedAtMs}-${this.nextStatusSeq()}`,
+            before: previousMaxContinuationHops,
+            after: maxContinuationHops,
+            actor: 'user',
+            changedAt,
+            changedAtMs,
+            ...(activeRoundUpdated && activeRound ? { roundId: activeRound.roundId } : {})
+          })
+        : updatedConfig
     this.saveChatWithCheckpoint(
       updated,
       activeRoundUpdated ? 'round-updated' : 'participant-updated'
@@ -9051,6 +9092,7 @@ export class EnsembleOrchestrator {
     }
 
     if (action === 'adjust_hops') {
+      const previousMax = runtime.maxContinuationHops
       const requested =
         typeof input.maxContinuationHops === 'number'
           ? input.maxContinuationHops
@@ -9092,11 +9134,23 @@ export class EnsembleOrchestrator {
         )
       }
       const reason = normalizeBossmanText(input.reason, 300)
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `${authorityLabel} adjusted the continuous handoff budget to ${runtime.continuationHops}/${nextMax}.${reason ? ` Reason: ${reason}` : ''}`
-      )
+      if (previousMax !== nextMax) {
+        this.appendContinuationHopsChange(
+          runtime.chatId,
+          runtime.roundId,
+          previousMax,
+          nextMax,
+          authorityRole === 'second_in_command' ? 'captain' : 'boss',
+          caller,
+          reason
+        )
+      } else {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${authorityLabel} kept the continuous handoff budget at ${runtime.continuationHops}/${nextMax}.${reason ? ` Reason: ${reason}` : ''}`
+        )
+      }
       return {
         ok: true,
         tool: 'ensemble_bossman_control',
@@ -19851,6 +19905,43 @@ export class EnsembleOrchestrator {
     // swallows its own errors, so it cannot throw. A catch here would be
     // unreachable code implying a failure mode that does not exist.
     for (const entry of settled) queue.markMaterialised(entry.entryId)
+  }
+
+  /**
+   * Max-continuation-hops change -> structured DigitOdometer transcript event.
+   * The pure builder lives outside this composition root; this method only
+   * provides current chat state, identity, time, and the durable save.
+   */
+  private appendContinuationHopsChange(
+    chatId: string,
+    roundId: string,
+    before: number,
+    after: number,
+    actor: 'boss' | 'captain',
+    participant: EnsembleParticipant,
+    reason?: string
+  ): string | null {
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble || before === after) return null
+    const changedAt = this.deps.nowIso()
+    const changedAtMs = this.deps.now()
+    const id = `ensemble-continuation-hops-change-${roundId}-${changedAtMs}-${this.nextStatusSeq()}`
+    this.saveChatWithCheckpoint(
+      appendContinuationHopsChangeTranscriptEvent(chat, {
+        id,
+        before,
+        after,
+        actor,
+        actorParticipantId: participant.id,
+        actorRole: participant.role,
+        ...(reason ? { reason } : {}),
+        changedAt,
+        changedAtMs,
+        roundId
+      }),
+      'round-updated'
+    )
+    return id
   }
 
   /**

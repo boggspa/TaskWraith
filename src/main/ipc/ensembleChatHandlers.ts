@@ -51,6 +51,7 @@ export function registerEnsembleChatHandlers(deps: EnsembleChatHandlerDeps): voi
         orchestrationMode?: unknown
         fanoutPolicy?: unknown
         maxContinuationHops?: unknown
+        previousMaxContinuationHops?: unknown
       }
     ): EnsembleLiveRoundConfigUpdateResult => {
       const chatId = typeof payload?.chatId === 'string' ? payload.chatId.trim() : ''
@@ -84,6 +85,13 @@ export function registerEnsembleChatHandlers(deps: EnsembleChatHandlerDeps): voi
       ) {
         return invalidConfig('Continuation hops must be a finite number.')
       }
+      if (
+        payload?.previousMaxContinuationHops !== undefined &&
+        (typeof payload.previousMaxContinuationHops !== 'number' ||
+          !Number.isFinite(payload.previousMaxContinuationHops))
+      ) {
+        return invalidConfig('Previous continuation hops must be a finite number.')
+      }
 
       const orchestrator = deps.getEnsembleOrchestrator()
       if (!orchestrator) {
@@ -97,6 +105,9 @@ export function registerEnsembleChatHandlers(deps: EnsembleChatHandlerDeps): voi
         ...(hasFanoutPolicy ? { fanoutPolicy: payload?.fanoutPolicy as EnsembleFanoutPolicy } : {}),
         ...(hasMaxContinuationHops
           ? { maxContinuationHops: payload?.maxContinuationHops as number }
+          : {}),
+        ...(payload?.previousMaxContinuationHops !== undefined
+          ? { previousMaxContinuationHops: payload.previousMaxContinuationHops as number }
           : {})
       }
       const result = orchestrator.updateLiveRoundConfig(input)
