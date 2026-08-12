@@ -39,7 +39,7 @@ describe('commitAttribution', () => {
           id: 'closeout',
           role: 'assistant',
           content: 'Task complete',
-          timestamp: Date.now(),
+          timestamp: new Date().toISOString(),
           metadata: {
             closeoutCommits: [
               { hash: 'abc1234', seatLink, participantId: 'seat-1' },

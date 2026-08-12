@@ -75,7 +75,7 @@ function attributedChat(): ChatRecord {
         id: 'closeout',
         role: 'assistant',
         content: 'Task complete',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
         metadata: {
           closeoutCommits: [{ hash: commits[0].hash.slice(0, 9), seatLink }]
         }

@@ -295,7 +295,7 @@ export function PullRequestWorkflowPanel({
   )
   const unavailable = snapshot && !snapshot.available ? snapshot : null
   const creationDisabled =
-    busyAction !== null || loading || unavailable || selectedCommits.length === 0
+    busyAction !== null || loading || Boolean(unavailable) || selectedCommits.length === 0
 
   return (
     <section className="pull-request-workflow" aria-label="Pull request workflow">
