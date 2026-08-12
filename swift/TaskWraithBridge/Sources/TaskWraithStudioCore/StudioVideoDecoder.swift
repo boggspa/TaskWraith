@@ -29,10 +29,14 @@ import VideoToolbox
 /// fails on Macs with no hardware path for the codec, so this enables hardware
 /// and retries once in software rather than refusing to play the file.
 ///
-/// NOT IN SCOPE: GOP-aware seeking. `decode` handles whatever sample it is
-/// given; decoding a mid-GOP P-frame in isolation is undefined without its
-/// preceding reference frames. Seeking that decodes forward from the nearest
-/// keyframe is a later slice, and StudioVideoFrameSource documents the same gap.
+/// THIS TYPE IS DELIBERATELY ORDER-NAIVE. `decode` submits exactly the sample it
+/// is given and returns exactly the picture VideoToolbox produced for it,
+/// including that picture's presentation time. Choosing WHICH samples to submit,
+/// and in what order, belongs to StudioVideoFrameSource, which preserves decode
+/// order and walks forward from the nearest keyframe. Decoding a mid-GOP
+/// P-frame in isolation is still undefined here — that is the caller's contract
+/// to keep, and the returned presentation time is what lets the caller verify it
+/// kept it rather than assume so.
 /// Whether a decompression session is actually running on hardware.
 ///
 /// Three states on purpose. A two-state Bool forces "we could not tell" to be

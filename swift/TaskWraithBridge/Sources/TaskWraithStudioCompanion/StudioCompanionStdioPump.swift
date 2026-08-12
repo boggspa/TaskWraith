@@ -12,7 +12,15 @@ import TaskWraithStudioCore
 enum StudioCompanionStdioPump {
     /// Runs until the session asks to exit or stdin reaches EOF, and returns the
     /// process exit code the caller should use.
-    static func run(hydrateOnce: Bool) -> Int32 {
+    ///
+    /// - Parameter onOpenedAssets: called on the PUMP THREAD whenever the host
+    ///   commits an open_media. Only Sendable identities cross; loading and
+    ///   attaching happen on whichever isolation the handler chooses, because
+    ///   the viewer's renderer is main-thread state.
+    static func run(
+        hydrateOnce: Bool,
+        onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil
+    ) -> Int32 {
         let session = StudioCompanionSession(hydrateOnce: hydrateOnce)
         let standardInput = FileHandle.standardInput
         let standardOutput = FileHandle.standardOutput
@@ -42,6 +50,9 @@ enum StudioCompanionStdioPump {
             let step = session.consume(chunk: chunk)
             reportProtocolErrors(step.protocolErrors)
             writeLines(step.outboundLines)
+            if !step.openedAssets.isEmpty {
+                onOpenedAssets?(step.openedAssets)
+            }
             if let code = step.exitCode {
                 return code
             }

@@ -144,6 +144,16 @@ final class StudioViewerView: NSView {
         }
     }
 
+    /// Rebuilds the clock around a newly opened asset.
+    ///
+    /// The asset's timebase is authoritative: frame indices computed against a
+    /// different rate address the wrong pictures, and the container's stored
+    /// rate is the muxer's choice rather than anything the viewer can assume.
+    func adopt(timebase: StudioTimebase, durationTicks: Int64) {
+        clock = StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
+        clock.play(atHost: CACurrentMediaTime())
+    }
+
     // MARK: - Transport keys
 
     override var acceptsFirstResponder: Bool { true }
@@ -195,6 +205,47 @@ final class StudioViewerWindowController {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
     }
+
+    func adopt(timebase: StudioTimebase, durationTicks: Int64) {
+        view.adopt(timebase: timebase, durationTicks: durationTicks)
+    }
+}
+
+/// Main-thread home for the live viewer, so the stdio pump can hand over an
+/// opened asset without any non-Sendable state crossing a thread boundary: only
+/// StudioMediaAsset values travel, and everything else is looked up here.
+@MainActor
+final class StudioViewerAppState {
+    static var shared: StudioViewerAppState?
+
+    let controller: StudioViewerWindowController
+    let attachment: StudioMediaAttachment
+
+    init(controller: StudioViewerWindowController, renderer: StudioViewerRenderer) {
+        self.controller = controller
+        self.attachment = StudioMediaAttachment(renderer: renderer)
+    }
+
+    /// Opens each asset the host committed and points the clock at the last one
+    /// that actually loaded. Failures are reported to stderr rather than being
+    /// swallowed or crashing the viewer.
+    func open(assets: [StudioMediaAsset]) async {
+        for outcome in await attachment.attach(openedAssets: assets) {
+            switch outcome {
+            case .attached(let assetId, let frameCount, let timebase, let durationTicks):
+                controller.adopt(timebase: timebase, durationTicks: durationTicks)
+                Self.report("opened \(assetId) (\(frameCount) frames)")
+            case .failed(let assetId, let message):
+                Self.report("could not open \(assetId): \(message)")
+            }
+        }
+    }
+
+    private static func report(_ note: String) {
+        if let data = "taskwraith-studio-companion: \(note)\n".data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+    }
 }
 
 /// Entry point for `--viewer`. Production launch still uses the headless stdio
@@ -220,8 +271,16 @@ enum StudioViewerApp {
 
         // AppKit must own the main thread, so the protocol pump moves to its own
         // thread. It exits the process on EOF exactly as the headless path does.
+        // Opened assets hop to the main actor as plain Sendable identities; the
+        // renderer itself never crosses a thread boundary.
         let pumpThread = Thread {
-            exit(StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce))
+            exit(
+                StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { assets in
+                    Task { @MainActor in
+                        await StudioViewerAppState.shared?.open(assets: assets)
+                    }
+                }
+            )
         }
         pumpThread.name = "taskwraith-studio-stdio"
         pumpThread.start()
@@ -230,6 +289,10 @@ enum StudioViewerApp {
         application.setActivationPolicy(.regular)
         let controller = StudioViewerWindowController(renderer: renderer)
         retainedController = controller
+        StudioViewerAppState.shared = StudioViewerAppState(
+            controller: controller,
+            renderer: renderer
+        )
         controller.show()
         application.activate()
         application.run()
