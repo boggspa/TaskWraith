@@ -391,6 +391,20 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('registers every Commits Inspector and pull request workflow channel', () => {
+    for (const channel of [
+      'git:unpushed-commits',
+      'github:pr-workspace',
+      'github:create-commit-group-pr',
+      'github:manage-pr'
+    ]) {
+      expect(channel in IPC_ARGUMENT_SCHEMAS, `${channel} must be registered`).toBe(true)
+      expect(() => validateIpcArgs(channel, [])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [{ workspacePath: '/repo' }])).not.toThrow()
+      expect(() => validateIpcArgs(channel, ['not-an-object'])).toThrow(/object/)
+    }
+  })
+
   it('accepts optional provider usage refresh options', () => {
     expect(() => validateIpcArgs('get-agent-rate-limits', ['claude'])).not.toThrow()
     expect(() =>

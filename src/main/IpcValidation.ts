@@ -503,6 +503,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
+  'git:unpushed-commits': ['optionalObject'],
   'git:workspace-stats': ['optionalObject'],
   'git:work-provenance': ['optionalObject'],
   'git:subscribe-snapshot': ['optionalObject'],
@@ -528,7 +529,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'fanout-candidates:promote': ['string', 'string'],
   'fanout-candidates:discard': ['string', 'string'],
   'github:pr-status': ['optionalObject'],
+  'github:pr-workspace': ['optionalObject'],
   'github:pr-readiness': ['optionalObject'],
+  'github:create-commit-group-pr': ['optionalObject'],
+  'github:manage-pr': ['optionalObject'],
   'github:ci-status': ['optionalObject'],
   'github:set-watched-pr': ['optionalObject'],
   'github:watch-pr-notify-ack': ['optionalObject'],
