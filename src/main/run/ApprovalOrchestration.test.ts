@@ -663,6 +663,56 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     }
   })
 
+  it('(d3) auto-allows safe find, null redirects, and read-only sequences for scouts', async () => {
+    for (const command of [
+      "find . -maxdepth 1 -type f \\( -name '.WORK-IN-PROGRESS-*' -o -name 'SHIP-HOLD*' \\) -print",
+      'find .local-only -maxdepth 4 -type f -print 2>/dev/null',
+      "ls -l /opt/homebrew/bin 2>/dev/null\nfind /opt/homebrew/Cellar -maxdepth 2 -iname 'rust*' -print 2>/dev/null",
+      'ls -la && git status --short'
+    ]) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'codex',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(true)
+      expect(order).toContain('audit:autoAllow:inspection_shell')
+      expect(order).not.toContain('registerGeminiTool')
+    }
+  })
+
+  it('(d3) keeps destructive find and mixed mutations on the normal permission path', async () => {
+    for (const command of [
+      'find . -delete',
+      'find . -exec touch {} +',
+      'find . -type f > inventory.txt',
+      'ls -la && rm -rf build'
+    ]) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'codex',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(false)
+      expect(order).toContain('audit:autoDeny:policy')
+      expect(order).not.toContain('audit:autoAllow:inspection_shell')
+    }
+  })
+
   // (d4) FULL ACCESS IN-WORKSPACE DELETE — "always approve in workspace":
   // a provably in-workspace recursive rm keeps auto-allowing at full_access.
   it('(d4) provably in-workspace rm -rf auto-allows at full_access', async () => {

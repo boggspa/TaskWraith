@@ -1,4 +1,5 @@
 import { isInspectionShellCommand } from '../ShellCommandTierPolicy'
+import { isReadOnlyGitShellCommand } from '../ReadOnlyGitShellCommand'
 
 // Fail-closed classifier for "is this shell command read-only?" — used to let a
 // READ-ONLY / recon Grok turn run genuine investigation commands (ls, cat,
@@ -22,8 +23,8 @@ import { isInspectionShellCommand } from '../ShellCommandTierPolicy'
 //   - output redirection to anything but /dev/null|stdout|stderr → false
 //   - command substitution `$(…)` / backticks / process substitution → false
 //   - path/script execution (`./x`, `/bin/sh`) or `VAR=val cmd` prefixes → false
-//   - `git` → false except the shared, specifically screened `git grep` form
-//     (repo/user config can make nominal reads execute programs)
+//   - `git` → only the shared fail-closed status/diff/log classifier plus the
+//     specifically screened `git grep` form
 //   - `find` with `-exec/-delete/…` → false
 // The allowlist is deliberately small; widen it only with matching tests.
 
@@ -99,7 +100,7 @@ const FIND_MUTATION_FLAGS = new Set([
   '-fprintf',
   '-fls'
 ])
-
+const FIND_EXACT_READ_FLAGS = new Set(['-o', '-or'])
 
 function isSafeRedirectTarget(target: string): boolean {
   const unquoted = target.replace(/^['"]|['"]$/g, '')
@@ -191,9 +192,11 @@ function sanitizeRedirects(command: string): { ok: boolean; cleaned: string } {
 /** Validate a single `find …` segment (tokens after `find`). */
 function isReadOnlyFind(args: string[]): boolean {
   return !args.some((token) =>
-    [...FIND_MUTATION_FLAGS].some(
-      (dangerous) => token === dangerous || (token.length > 1 && dangerous.startsWith(token))
-    )
+    FIND_EXACT_READ_FLAGS.has(token)
+      ? false
+      : [...FIND_MUTATION_FLAGS].some(
+          (dangerous) => token === dangerous || (token.length > 1 && dangerous.startsWith(token))
+        )
   )
 }
 
@@ -412,13 +415,12 @@ function isReadOnlySegment(segment: string): boolean {
   // glob can expand into both INPUT and OUTPUT positionals, causing a write.
   if (words[0].pathnameExpansionPrefix !== undefined) return false
   const command = words[0].value
-  const expandedArguments = words.slice(1).filter(
-    (word) => word.pathnameExpansionPrefix !== undefined
-  )
+  const expandedArguments = words
+    .slice(1)
+    .filter((word) => word.pathnameExpansionPrefix !== undefined)
   if (
     expandedArguments.some(
-      (word) =>
-        word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
+      (word) => word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
     ) ||
     (command === 'uniq' && expandedArguments.length > 0)
   ) {
@@ -428,11 +430,11 @@ function isReadOnlySegment(segment: string): boolean {
   // No path/script execution, no `VAR=val cmd` prefix, no bare-flag "command".
   if (command.includes('/') || command.includes('=') || command.startsWith('-')) return false
   if (command === 'find') return isReadOnlyFind(rest)
-  // The shared inspection classifier handles a deliberately screened `git
-  // grep` before this parser reaches a segment. Other native-shell Git stays
-  // outside the proof boundary: inherited/repository config can execute
-  // pagers, fsmonitor hooks, or external diff drivers.
-  if (command === 'git') return false
+  // The shared inspection classifier handles screened `git grep` before this
+  // parser reaches a segment. The strict Git classifier admits only its
+  // fail-closed status/diff/log surface, including in otherwise-safe command
+  // sequences; mutating and unknown subcommands still fail closed.
+  if (command === 'git') return isReadOnlyGitShellCommand(segment)
   if (command === 'rg') return isReadOnlyRg(rest)
   if (command === 'uniq') return isReadOnlyUniq(rest)
   if (command === 'date' || command === 'hostname') return isBareSystemRead(rest)

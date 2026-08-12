@@ -105,12 +105,9 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'git remote set-url origin https://x',
     'git -C /other log',
     'git -c core.pager=touch\\ pwned log',
-    // Native-shell Git is denied entirely: inherited/repository config can
-    // execute pagers, fsmonitor hooks, or external diff drivers on reads.
+    // Git stays on the shared fail-closed read surface.
     'git',
     'git --version',
-    'git status --short',
-    'git log --oneline -10',
     'git branch -a',
     'git branch -mnew-name',
     'git branch -uorigin/master',
@@ -305,7 +302,7 @@ describe('extractShellCommandFromToolCall', () => {
 })
 
 describe('grokReadOnlyShellRequestAllowed', () => {
-  it('denies native-shell Git even when the argv appears read-only', () => {
+  it('allows shared-classifier Git reads inside a safe recon sequence', () => {
     expect(
       grokReadOnlyShellRequestAllowed({
         toolKind: 'execute',
@@ -313,11 +310,11 @@ describe('grokReadOnlyShellRequestAllowed', () => {
         rawToolCall: {
           rawInput: {
             command:
-              "ls -la && git log --oneline -10 2>/dev/null; git remote -v 2>/dev/null; find . -maxdepth 3 -type f ! -path './.git/*' 2>/dev/null | head -80"
+              "ls -la && git log --oneline -10 2>/dev/null; git status --short; find . -maxdepth 3 -type f ! -path './.git/*' 2>/dev/null | head -80"
           }
         }
       })
-    ).toBe(false)
+    ).toBe(true)
   })
   it('allows the exact read-only shell sequence from the July 12 QA denial', () => {
     expect(

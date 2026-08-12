@@ -16,12 +16,10 @@ import type {
   RunEventInput
 } from '../store/types'
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
-import {
-  isReadOnlyGitShellCommand,
-  shellCommandFromApprovalPreview
-} from '../ReadOnlyGitShellCommand'
+import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
-import { isInspectionShellCommand, shellCommandTierHold } from '../ShellCommandTierPolicy'
+import { shellCommandTierHold } from '../ShellCommandTierPolicy'
+import { promptFreeReadOnlyShellReason } from '../PromptFreeReadOnlyShell'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -459,28 +457,15 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       requestSurfaceId
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
-    // Universal read-only shell fast path: a pure `git status` / `git diff` /
-    // `git log` — the shell twins of the auto-allowed MCP git read tools — is
-    // allowed under EVERY posture (read_only / plan deny shell; default
-    // prompts). The classifier fails closed on anything beyond those exact
-    // read invocations, so this cannot widen into a general shell bypass.
+    // Universal read-only shell fast path: strict Git reads and commands the
+    // canonical shell proof classifies as inspection-only are allowed under
+    // EVERY posture (read_only / plan deny shell; default prompts).
     // forcePrompt (caller-demanded human review) still prompts, and
     // policy-'allow' resolutions keep flowing through the ordinary audited
     // path below.
     if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
-      // Slice D widens the read fast path: pure inspection commands (`ls`,
-      // `cat`, `grep`…) join the read-only git twins — both classifiers fail
-      // closed, and neither overlaps the tier holds below (rm/ssh/kill heads
-      // are structurally outside the inspection allowlist).
-      const shellFastPathReason =
-        readOnlyShellCommand === null
-          ? null
-          : isReadOnlyGitShellCommand(readOnlyShellCommand)
-            ? ('readonly_shell' as const)
-            : isInspectionShellCommand(readOnlyShellCommand)
-              ? ('inspection_shell' as const)
-              : null
+      const shellFastPathReason = promptFreeReadOnlyShellReason(readOnlyShellCommand)
       if (shellFastPathReason) {
         deps.auditService.recordAutomaticApprovalDecision(
           provider,
