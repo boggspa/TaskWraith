@@ -27,6 +27,32 @@ Responsible for the UI:
 - Communicates exclusively via `window.api` IPC APIs defined in preload.
 - Stream parsing adapters normalize provider events into shared activity, diff, usage, and approval records.
 
+## TaskWraith Host (app-only)
+
+Host v2 is TaskWraith's authenticated, bounded control and projection boundary.
+It runs inside the Electron main process; it is not an installed daemon or a
+cloud service. TaskWraith starts it with the app, exposes visible Stop Host /
+Start Host controls in the Approvals popover, and tears it down when the app
+quits. A failed start does not trigger a hidden restart loop.
+
+Clients share the transport-independent protocol in `src/shared/hostProtocol.ts`:
+
+- Desktop uses a main-owned authenticated local client behind preload IPC.
+- The TUI uses the authenticated local Host socket directly.
+- Paired iOS uses the existing E2EE remote bridge and a paired-identity Host
+  gateway for snapshots, deltas, governed commands, and durable receipts.
+- Multi-human Channels contribute a compact lifecycle/member projection and
+  owner-only governed administration; Channel messages and secrets stay in the
+  dedicated Channel runtime.
+
+Host snapshots are intentionally bounded metadata, not a replacement for every
+local store. AppStore and scoped resource services remain canonical for full
+transcripts, media, arbitrary file content, native window state, and other
+heavyweight resources. Host-aware mutations go through typed commands,
+authority evaluation, idempotency, and reconnect-safe receipts. Ordered deltas
+share one generation/cursor journal and require a full resnapshot when
+continuity cannot be proven.
+
 ## Data Flow (Provider Runtime)
 
 1. User clicks "Run" -> Renderer sends a provider run request with the prompt.

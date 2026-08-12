@@ -89,6 +89,8 @@ to answer.
 
 ### Host authority and companion parity
 
+- **A Host you control.** TaskWraith now says plainly that Host runs only while the app is open and offers visible Stop Host / Start Host controls. An intentional stop reads “Stopped by you,” restart obtains a fresh supervised owner, failures stay visible, and nothing installs or silently respawns as a background daemon.
+- **Governed Channel administration.** Mission Control carries compact Channel/member state and routes owner revoke/close actions through Host commands and durable receipts without copying invite secrets or message history into Host.
 - **Mission Control everywhere.** Desktop, the terminal, and paired iOS now consume coherent Host generations/cursors for live missions, rounds, participants, outcomes, and reconnect state instead of independently reconstructing them.
 - **One question receipt across clients.** Answers and dismissals carry the exact durable Host command ID through the paired bridge, registry transition, ordered delta, Desktop Mission Control, terminal JSON, and iOS projection without exposing answer bodies.
 - **Terminal flight recorder.** `tw` gains an 80×24-friendly live mission view, filters, stable JSON projection, and deterministic `.twmission` export/replay with integrity and corruption checks.
