@@ -230,6 +230,12 @@ import type {
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
 import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
+import type {
+  GitCommitGroupPullRequestResult,
+  GitPullRequestLifecycleAction,
+  GitPullRequestLifecycleResult,
+  GitPullRequestWorkspaceSnapshot
+} from '../main/services/GitPullRequestWorkflow'
 import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
@@ -946,6 +952,30 @@ declare global {
         repoPath?: string
         chatId?: string
       }) => Promise<GitResult<GitPrSummary>>
+      githubPrWorkspace: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+      }) => Promise<GitResult<GitPullRequestWorkspaceSnapshot>>
+      githubCreateCommitGroupPr: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+        commits: string[]
+        branch: string
+        baseBranch: string
+        title: string
+        body?: string
+        draft?: boolean
+        openInBrowser?: boolean
+      }) => Promise<GitResult<GitCommitGroupPullRequestResult>>
+      githubManagePr: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+        pullRequestNumber: number
+        lifecycle: GitPullRequestLifecycleAction
+      }) => Promise<GitResult<GitPullRequestLifecycleResult>>
       githubPrReadiness: (payload: {
         workspacePath?: string
         repoPath?: string

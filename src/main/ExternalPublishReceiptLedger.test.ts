@@ -100,6 +100,29 @@ describe('ExternalPublishReceiptLedger', () => {
     expect(ledger.list()[1].metadata?.count).toBe(2)
   })
 
+  it('persists audited manual pull request lifecycle actions', () => {
+    const ledger = new ExternalPublishReceiptLedger({
+      storagePath,
+      now: () => '2026-08-12T00:00:00.000Z',
+      idFactory: () => 'receipt-manage-pr'
+    })
+
+    ledger.begin({
+      origin: 'desktop-ui',
+      action: 'githubManagePr',
+      decision: 'allowed',
+      reason: 'Desktop user initiated external publishing.',
+      repoPath: '/repo',
+      metadata: { pullRequestNumber: 42, lifecycleAction: 'merge', strategy: 'squash' }
+    })
+
+    expect(ledger.list()[0]).toMatchObject({
+      action: 'githubManagePr',
+      metadata: { pullRequestNumber: 42, lifecycleAction: 'merge', strategy: 'squash' }
+    })
+    expect(new ExternalPublishReceiptLedger({ storagePath }).list()).toHaveLength(1)
+  })
+
   it('caps the ledger to the newest records', () => {
     const ledger = new ExternalPublishReceiptLedger({
       now: () => '2026-07-03T00:00:00.000Z'

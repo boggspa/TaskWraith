@@ -42,6 +42,12 @@ import type {
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
 import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
+import type {
+  GitCommitGroupPullRequestResult,
+  GitPullRequestLifecycleAction,
+  GitPullRequestLifecycleResult,
+  GitPullRequestWorkspaceSnapshot
+} from '../main/services/GitPullRequestWorkflow'
 import type { CommitFilePreviewResult } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
@@ -938,6 +944,39 @@ const api = {
     ipcRenderer.invoke('fanout-candidates:discard', chatId, candidateId),
   githubPrStatus: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
+  githubPrWorkspace: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+  }) =>
+    ipcRenderer.invoke('github:pr-workspace', payload) as Promise<
+      GitResult<GitPullRequestWorkspaceSnapshot>
+    >,
+  githubCreateCommitGroupPr: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    commits: string[]
+    branch: string
+    baseBranch: string
+    title: string
+    body?: string
+    draft?: boolean
+    openInBrowser?: boolean
+  }) =>
+    ipcRenderer.invoke('github:create-commit-group-pr', payload) as Promise<
+      GitResult<GitCommitGroupPullRequestResult>
+    >,
+  githubManagePr: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    chatId?: string
+    pullRequestNumber: number
+    lifecycle: GitPullRequestLifecycleAction
+  }) =>
+    ipcRenderer.invoke('github:manage-pr', payload) as Promise<
+      GitResult<GitPullRequestLifecycleResult>
+    >,
   githubPrReadiness: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-readiness', payload) as Promise<GitResult<GitPrReadiness>>,
   githubCiStatus: (payload: {

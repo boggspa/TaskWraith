@@ -40,6 +40,8 @@ export interface CreateGitCommitGroupPullRequestInput {
 
 export interface GitCommitGroupPullRequestInput extends CreateGitCommitGroupPullRequestInput {
   repoPath: string
+  /** True when authority came from a signed per-chat external-path grant. */
+  externalRepository?: boolean
 }
 
 export interface GitCommitGroupPullRequestResult {

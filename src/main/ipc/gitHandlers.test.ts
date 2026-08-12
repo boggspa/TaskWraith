@@ -91,6 +91,50 @@ function createDeps() {
           }
         })
       ),
+      pullRequestWorkspace: vi.fn<GitHandlersDeps['gitService']['pullRequestWorkspace']>(
+        async (path: string) => ({
+          ok: true,
+          data: {
+            repoRoot: path,
+            available: true,
+            defaultBaseBranch: 'master',
+            pullRequests: [],
+            warnings: []
+          }
+        })
+      ),
+      createCommitGroupPullRequest: vi.fn<
+        GitHandlersDeps['gitService']['createCommitGroupPullRequest']
+      >(async (input) => ({
+        ok: true,
+        data: {
+          branch: input.branch,
+          baseBranch: input.baseBranch,
+          commitHashes: input.commits,
+          headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          pullRequest: {
+            number: 42,
+            url: 'https://example.test/pr/42',
+            state: 'OPEN',
+            headRefName: input.branch,
+            baseRefName: input.baseBranch
+          },
+          warnings: []
+        }
+      })),
+      managePullRequest: vi.fn<GitHandlersDeps['gitService']['managePullRequest']>(
+        async (input) => ({
+          ok: true,
+          data: {
+            pullRequest: {
+              number: input.pullRequestNumber,
+              url: `https://example.test/pr/${input.pullRequestNumber}`,
+              state: input.lifecycle.action === 'close' ? 'CLOSED' : 'OPEN'
+            },
+            warnings: []
+          }
+        })
+      ),
       workspaceStats: vi.fn<GitHandlersDeps['gitService']['workspaceStats']>(
         async (path: string) => ({
           ok: true,
@@ -218,6 +262,9 @@ describe('registerGitHandlers', () => {
 
     expect(handlerFor('git:snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:unpushed-commits')).toBeTypeOf('function')
+    expect(handlerFor('github:pr-workspace')).toBeTypeOf('function')
+    expect(handlerFor('github:create-commit-group-pr')).toBeTypeOf('function')
+    expect(handlerFor('github:manage-pr')).toBeTypeOf('function')
     expect(handlerFor('git:workspace-stats')).toBeTypeOf('function')
     expect(handlerFor('git:work-provenance')).toBeTypeOf('function')
     expect(handlerFor('git:subscribe-snapshot')).toBeTypeOf('function')
@@ -1417,5 +1464,91 @@ describe('registerGitHandlers', () => {
         title: 'Ship it'
       })
     )
+  })
+
+  it('audits commit-group creation and manual PR lifecycle actions', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
+    deps.externalPublishReceipts = {
+      begin: vi.fn(async (input) => ({
+        schemaVersion: 1,
+        id: `receipt-${input.action}`,
+        requestedAt: '2026-08-12T00:00:00.000Z',
+        ...input
+      }) as any),
+      complete: vi.fn(async () => null)
+    }
+    registerGitHandlers(deps)
+
+    await expect(
+      handlerFor('github:pr-workspace')({}, { workspacePath: '/repo' })
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { available: true, defaultBaseBranch: 'master' }
+    })
+    await expect(
+      handlerFor('github:create-commit-group-pr')({}, {
+        workspacePath: '/repo',
+        commits: ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+        branch: 'pr/focused',
+        baseBranch: 'master',
+        title: 'Focused PR',
+        draft: true,
+        openInBrowser: true
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { branch: 'pr/focused', pullRequest: { number: 42 } }
+    })
+    expect(deps.gitService.createCommitGroupPullRequest).toHaveBeenCalledWith({
+      repoPath: '/repo',
+      commits: ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+      branch: 'pr/focused',
+      baseBranch: 'master',
+      title: 'Focused PR',
+      draft: true
+    })
+    expect(deps.openSafeShellTarget).toHaveBeenCalledWith('https://example.test/pr/42')
+
+    await expect(
+      handlerFor('github:manage-pr')({}, {
+        workspacePath: '/repo',
+        pullRequestNumber: 42,
+        lifecycle: {
+          action: 'merge',
+          strategy: 'squash',
+          expectedHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        }
+      })
+    ).resolves.toMatchObject({ ok: true, data: { pullRequest: { number: 42 } } })
+    expect(deps.gitService.managePullRequest).toHaveBeenCalledWith({
+      repoPath: '/repo',
+      pullRequestNumber: 42,
+      lifecycle: {
+        action: 'merge',
+        strategy: 'squash',
+        expectedHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
+    })
+    expect(deps.externalPublishReceipts.begin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'githubManagePr',
+        metadata: {
+          pullRequestNumber: 42,
+          lifecycleAction: 'merge',
+          strategy: 'squash'
+        }
+      })
+    )
+    expect(deps.externalPublishReceipts.complete).toHaveBeenCalledTimes(2)
+
+    await expect(
+      handlerFor('github:manage-pr')({}, {
+        workspacePath: '/repo',
+        pullRequestNumber: 42,
+        lifecycle: { action: 'merge', strategy: 'explode' }
+      })
+    ).resolves.toEqual({ ok: false, error: 'Choose a valid pull request action.' })
+    expect(deps.gitService.managePullRequest).toHaveBeenCalledTimes(1)
   })
 })

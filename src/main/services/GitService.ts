@@ -441,7 +441,17 @@ export class GitService {
         run: this.run,
         timeoutMs: this.timeoutMs
       })
-      const { repoPath: _repoPath, ...request } = input
+      if (input.externalRepository) {
+        await this.assertSafeExternalPushRemote(
+          snapshot.repoRoot,
+          snapshot.remoteName || 'origin'
+        )
+      }
+      const {
+        repoPath: _repoPath,
+        externalRepository: _externalRepository,
+        ...request
+      } = input
       return {
         ok: true,
         data: await createGitCommitGroupPullRequest(

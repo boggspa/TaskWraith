@@ -10,7 +10,7 @@ export const EXTERNAL_PUBLISH_RECEIPT_LEDGER_FILENAME = 'external-publish-receip
 export const MAX_EXTERNAL_PUBLISH_RECEIPTS = 2000
 
 export type ExternalPublishOrigin = 'desktop-ui' | 'ios-bridge' | 'agent'
-export type ExternalPublishAction = 'gitPush' | 'githubCreatePr'
+export type ExternalPublishAction = 'gitPush' | 'githubCreatePr' | 'githubManagePr'
 export type ExternalPublishDecision = 'allowed' | 'denied'
 export type ExternalPublishOutcome = 'completed' | 'failed'
 
@@ -248,7 +248,9 @@ function isExternalPublishReceipt(value: unknown): value is ExternalPublishRecei
     (record.origin === 'desktop-ui' ||
       record.origin === 'ios-bridge' ||
       record.origin === 'agent') &&
-    (record.action === 'gitPush' || record.action === 'githubCreatePr') &&
+    (record.action === 'gitPush' ||
+      record.action === 'githubCreatePr' ||
+      record.action === 'githubManagePr') &&
     (record.decision === 'allowed' || record.decision === 'denied') &&
     typeof record.reason === 'string' &&
     typeof record.requestedAt === 'string' &&

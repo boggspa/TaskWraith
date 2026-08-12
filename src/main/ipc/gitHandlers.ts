@@ -22,6 +22,14 @@ import type {
 } from '../services/GitService'
 import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
 import type { GitUnpushedCommitStack } from '../services/GitCommitStack'
+import type {
+  GitCommitGroupPullRequestInput,
+  GitCommitGroupPullRequestResult,
+  GitPullRequestLifecycleAction,
+  GitPullRequestLifecycleResult,
+  GitPullRequestManagementInput,
+  GitPullRequestWorkspaceSnapshot
+} from '../services/GitPullRequestWorkflow'
 import type { WorkProvenanceQueryService } from '../workProvenance/WorkProvenanceQueryService'
 import type { WorkProvenanceSnapshot } from '../../shared/workProvenance'
 import type {
@@ -76,6 +84,9 @@ export interface GitHandlersDeps {
     GitService,
     | 'snapshot'
     | 'unpushedCommits'
+    | 'pullRequestWorkspace'
+    | 'createCommitGroupPullRequest'
+    | 'managePullRequest'
     | 'workspaceStats'
     | 'stage'
     | 'unstage'
@@ -325,6 +336,41 @@ function gitSnapshotInvalidationReason(value: unknown): GitSnapshotInvalidationR
     : 'manual'
 }
 
+function gitPullRequestLifecycleAction(value: unknown): GitPullRequestLifecycleAction | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  switch (record.action) {
+    case 'edit':
+      return {
+        action: 'edit',
+        ...(typeof record.title === 'string' ? { title: record.title } : {}),
+        ...(typeof record.body === 'string' ? { body: record.body } : {}),
+        ...(typeof record.baseBranch === 'string' ? { baseBranch: record.baseBranch } : {})
+      }
+    case 'mark-ready':
+      return { action: 'mark-ready' }
+    case 'convert-to-draft':
+      return { action: 'convert-to-draft' }
+    case 'close':
+      return { action: 'close' }
+    case 'reopen':
+      return { action: 'reopen' }
+    case 'merge':
+      if (!['merge', 'squash', 'rebase'].includes(String(record.strategy))) return null
+      return {
+        action: 'merge',
+        strategy: record.strategy as 'merge' | 'squash' | 'rebase',
+        ...(record.auto === true ? { auto: true } : {}),
+        ...(record.deleteBranch === true ? { deleteBranch: true } : {}),
+        ...(typeof record.expectedHeadSha === 'string'
+          ? { expectedHeadSha: record.expectedHeadSha }
+          : {})
+      }
+    default:
+      return null
+  }
+}
+
 async function beginDesktopExternalPublishReceipt(
   deps: GitHandlersDeps,
   input: ExternalPublishReceiptStart
@@ -394,6 +440,127 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     ): Promise<GitResult<GitUnpushedCommitStack> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
       return repo.ok ? deps.gitService.unpushedCommits(repo.path) : repo
+    }
+  )
+
+  ipcMain.handle(
+    'github:pr-workspace',
+    async (
+      event,
+      payload?: GitIpcPayload
+    ): Promise<GitResult<GitPullRequestWorkspaceSnapshot> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
+      return repo.ok ? deps.gitService.pullRequestWorkspace(repo.path) : repo
+    }
+  )
+
+  ipcMain.handle(
+    'github:create-commit-group-pr',
+    async (
+      event,
+      payload?: GitIpcPayload &
+        Partial<Omit<GitCommitGroupPullRequestInput, 'repoPath' | 'externalRepository'>> & {
+          openInBrowser?: boolean
+        }
+    ): Promise<
+      GitResult<GitCommitGroupPullRequestResult> | { ok: false; error: string }
+    > => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
+      if (!repo.ok) return repo
+      const commits = Array.isArray(payload?.commits)
+        ? payload.commits.filter((hash): hash is string => typeof hash === 'string')
+        : []
+      const input: GitCommitGroupPullRequestInput = {
+        repoPath: repo.path,
+        commits,
+        branch: typeof payload?.branch === 'string' ? payload.branch : '',
+        baseBranch: typeof payload?.baseBranch === 'string' ? payload.baseBranch : '',
+        title: typeof payload?.title === 'string' ? payload.title : '',
+        ...(typeof payload?.body === 'string' ? { body: payload.body } : {}),
+        ...(payload?.draft === true ? { draft: true } : {}),
+        ...(repo.source === 'external' ? { externalRepository: true } : {})
+      }
+      const receipt = await beginDesktopExternalPublishReceipt(deps, {
+        action: 'githubCreatePr',
+        workspacePath: repo.path,
+        repoPath: repo.path,
+        title: input.title,
+        draft: input.draft,
+        metadata: {
+          commitCount: input.commits.length,
+          branch: input.branch,
+          baseBranch: input.baseBranch
+        }
+      })
+      if (!receipt.ok) return { ok: false, error: receipt.error }
+      const result = await deps.gitService.createCommitGroupPullRequest(input)
+      await completeExternalPublishReceipt(deps, receipt.receiptId, {
+        outcome: result.ok ? 'completed' : 'failed',
+        ...(result.ok
+          ? {
+              commitSha: result.data.headSha,
+              prUrl: result.data.pullRequest.url,
+              metadata: {
+                pullRequestNumber: result.data.pullRequest.number ?? null,
+                branch: result.data.branch,
+                commitCount: result.data.commitHashes.length
+              }
+            }
+          : { error: result.error })
+      })
+      if (result.ok) {
+        deps.gitSnapshotPublisher?.invalidatePath(repo.path, 'git-action')
+        if (payload?.openInBrowser === true && result.data.pullRequest.url) {
+          void deps.openSafeShellTarget(result.data.pullRequest.url).catch(() => {})
+        }
+      }
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'github:manage-pr',
+    async (
+      event,
+      payload?: GitIpcPayload & {
+        pullRequestNumber?: number
+        lifecycle?: unknown
+      }
+    ): Promise<GitResult<GitPullRequestLifecycleResult> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-write')
+      if (!repo.ok) return repo
+      const lifecycle = gitPullRequestLifecycleAction(payload?.lifecycle)
+      if (!lifecycle) return { ok: false, error: 'Choose a valid pull request action.' }
+      const input: GitPullRequestManagementInput = {
+        repoPath: repo.path,
+        pullRequestNumber: Number(payload?.pullRequestNumber),
+        lifecycle
+      }
+      const receipt = await beginDesktopExternalPublishReceipt(deps, {
+        action: 'githubManagePr',
+        workspacePath: repo.path,
+        repoPath: repo.path,
+        metadata: {
+          pullRequestNumber: input.pullRequestNumber,
+          lifecycleAction: lifecycle.action,
+          ...(lifecycle.action === 'merge' ? { strategy: lifecycle.strategy } : {})
+        }
+      })
+      if (!receipt.ok) return { ok: false, error: receipt.error }
+      const result = await deps.gitService.managePullRequest(input)
+      await completeExternalPublishReceipt(deps, receipt.receiptId, {
+        outcome: result.ok ? 'completed' : 'failed',
+        ...(result.ok
+          ? {
+              prUrl: result.data.pullRequest.url,
+              metadata: {
+                pullRequestNumber: result.data.pullRequest.number ?? input.pullRequestNumber,
+                lifecycleAction: lifecycle.action
+              }
+            }
+          : { error: result.error })
+      })
+      return result
     }
   )
 
