@@ -9,6 +9,10 @@ import type {
 } from './GitService'
 import type { GitUnpushedCommit } from './GitCommitStack'
 import { isSafeGitRemoteName } from './GitCommandSecurity'
+import {
+  taskWraithCommitGroupHashes,
+  withTaskWraithCommitGroup
+} from '../../shared/gitPullRequestGroups'
 
 const PULL_REQUEST_JSON_FIELDS =
   'number,title,body,url,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup,updatedAt'
@@ -384,6 +388,10 @@ export async function createGitCommitGroupPullRequest(
     if (push.code !== 0) throw commandFailure(push, 'Could not push the assembled PR branch.')
     pushed = true
 
+    const pullRequestBody = withTaskWraithCommitGroup(
+      input.body,
+      orderedCommits.map((commit) => commit.hash)
+    )
     const create = await runGh(context, [
       'pr',
       'create',
@@ -394,7 +402,7 @@ export async function createGitCommitGroupPullRequest(
       '--title',
       title,
       '--body',
-      input.body || '',
+      pullRequestBody,
       ...(input.draft ? ['--draft'] : [])
     ])
     if (create.code !== 0) throw commandFailure(create, 'Could not create the pull request.')
@@ -419,7 +427,7 @@ export async function createGitCommitGroupPullRequest(
         headRefOid: headSha,
         baseRefName: baseBranch,
         title,
-        body: input.body || ''
+        body: pullRequestBody
       }
     }
     result = {
@@ -499,12 +507,16 @@ export async function manageGitPullRequest(
       if (baseBranch !== undefined) {
         await assertBranchName(context, baseBranch.trim(), 'Base branch')
       }
+      const preservedBody =
+        body === undefined
+          ? undefined
+          : withTaskWraithCommitGroup(body, taskWraithCommitGroupHashes(current.body))
       args = [
         'pr',
         'edit',
         selector,
         ...(title !== undefined ? ['--title', title.trim()] : []),
-        ...(body !== undefined ? ['--body', body] : []),
+        ...(preservedBody !== undefined ? ['--body', preservedBody] : []),
         ...(baseBranch !== undefined ? ['--base', baseBranch.trim()] : [])
       ]
       break

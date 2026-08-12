@@ -176,6 +176,13 @@ describe('Git pull request workflow', () => {
         '--draft'
       ])
     )
+    const createArgs = calls.find(
+      (call) => call.command === 'gh' && call.args[1] === 'create'
+    )?.args
+    const body = createArgs?.[Number(createArgs?.indexOf('--body')) + 1]
+    expect(body).toContain('<!-- taskwraith-commit-group:v1')
+    expect(body).toContain(first)
+    expect(body).toContain(third)
   }, 30_000)
 
   it('rolls back its local and remote branch if GitHub creation fails', async () => {
