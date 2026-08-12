@@ -780,6 +780,7 @@ import { buildProjectThreadGraphProjection } from './lib/projectThreadGraphProje
 import { summarizeReferenceAttention } from './lib/projectReferencePresentation'
 import { planPendingHomeClaims, resolveStartProjectHomeTarget } from './lib/projectHomeClaims'
 import {
+  resolveWorkspaceAddDialogIntent,
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
@@ -9116,14 +9117,23 @@ function App(): React.JSX.Element {
 
   refreshUsageSummaryRef.current = refreshUsageSummary
 
-  const handleSelectWorkspace = async () => {
+  const handleSelectWorkspace = async (options?: unknown) => {
+    // Adding a workspace lands on a fresh thread for it ('navigate') unless
+    // the composer switcher explicitly opted into rebinding the current chat
+    // ('switch'). The sidebar `+` / Settings buttons reach here straight from
+    // onClick, so `options` may be a MouseEvent — the resolver treats anything
+    // but the exact opt-in as 'navigate', which is why it takes `unknown`.
+    const intent = resolveWorkspaceAddDialogIntent(options)
     const ws = await window.api.selectWorkspace()
     if (ws) {
       setWorkspaces(await window.api.getWorkspaces())
       remoteAccessNavRanRef.current = false
       setPendingRemoteAccessWorkspace({
         workspace: ws,
-        next: () => handleSelectExistingWorkspace(ws)
+        next: () =>
+          intent === 'switch'
+            ? handleSelectExistingWorkspace(ws)
+            : handleNavigateToWorkspace(ws)
       })
     }
   }
@@ -27363,7 +27373,9 @@ function App(): React.JSX.Element {
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
       projectMultiviewPaneToHost(paneIndex, chatId)
-      void handleSelectWorkspace()
+      // Only reachable from the pane composer's workspace switcher — the same
+      // explicit gesture as the main-view switcher, so it keeps 'switch'.
+      void handleSelectWorkspace({ intent: 'switch' })
     },
     [handleSelectWorkspace, projectMultiviewPaneToHost]
   )
