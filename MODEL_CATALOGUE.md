@@ -158,11 +158,13 @@ for the upstream lifecycle.
 
 | Model                                             | Reasoning                                       | Fast | Notes                              |
 | ------------------------------------------------- | ----------------------------------------------- | ---- | ---------------------------------- |
-| **Muse Spark 1.2** `muse-spark-1.2` **(Default)** | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok. |
+| **Muse Spark 1.2** `muse-spark-1.2` **(Default)** | Light · Medium · High · Extra · Ultracode | —    | 200K context · $1.25/$4.25 per Mtok. |
 
 Muse's model lifecycle is provider-published from the local Muse CLI catalogue,
 so the live picker follows the CLI's own current-model set; the row above is
-TaskWraith's curated fallback.
+TaskWraith's curated fallback. Muse's own picker labels its stops **Minimal ·
+Low · Medium · High · Extra High · Ultra**; the Reasoning column above maps
+them onto the shared ladder vocabulary.
 
 <table>
   <tr>

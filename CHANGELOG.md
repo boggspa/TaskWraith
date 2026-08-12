@@ -22,7 +22,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 
 ### Provider setup and run control
 
-- **Mid-turn steering.** A Steer control now sits beside Stop while a solo chat is running, and your interjection reaches the model inside the current turn. Four delivery strategies cover the provider families — live interrupt and re-prompt, tool-boundary injection, cooperative cancel-and-resume, and a natural-boundary fallback — and anything a transport cannot confirm falls back to boundary delivery rather than being lost.
+- **Mid-turn steering.** A Steer control sits beside Stop while a solo chat is running, so a follow-up no longer has to wait for the turn to end. How far it reaches depends on the provider: Pi, Cursor, and Ollama take the text into the turn in progress; Kimi, Mistral, and Grok interrupt the in-flight prompt and immediately re-prompt with it; Claude, Codex, AntiGravity, and Muse deliver at the next turn boundary. Anything a transport cannot confirm falls back to boundary delivery rather than being lost.
 - **AntiGravity work is visible while it happens.** The `agy` CLI publishes no tool stream of its own, so headless runs used to finish with a blank transcript even though files changed on disk. Arbitrated shell and write calls now project live through the permission bridge, and read-side views, greps, and directory listings are recovered from AntiGravity's own transcript afterwards — bringing it to tool-call parity with the other seats.
 - **AntiGravity launch honesty.** Cold-start project launches report liveness instead of appearing hung, approved headless shell commands are honoured, and a launch aborts outright when its permission lease fails rather than proceeding with no allow rules.
 - **AntiGravity CLI maintenance.** Settings can open the official user-installed `agy` updater. TaskWraith does not download or repackage the CLI, access provider credentials, or change AntiGravity's separate consent and availability requirements.
@@ -86,7 +86,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Adding a workspace opens a new thread.** The sidebar `+` and Settings → Add workspace used to silently rebind whichever chat was focused, mid-round included. They now open the new workspace as its own fresh thread; only the composer's workspace switcher rebinds the current chat.
 - **Attach a folder.** The composer plus menu accepts folder references alongside files, with scoped reads carried through solo and Ensemble runs.
 - **Stable sidebar ordering.** Ensembles and every other thread list keep a stable recency fallback, so live rounds no longer make entries leapfrog each other.
-- **No tray-window flash at launch.** The iOS tray window stays hidden until its bridge is ready.
+- **Reopening the window during startup is safe.** Relaunching TaskWraith, or choosing Show TaskWraith from the menu-bar icon while the app is still finishing startup, no longer opens a window before the main process can serve it — the window opens as soon as startup completes.
 
 ### Host authority and companion parity
 
@@ -141,7 +141,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **A read-only approval ledger.** Settings → Approvals lists each visible workspace's approval decisions — identity, outcome, decision source, granted scope, and clocks — so you can see why something auto-denied while you were away. Request parameters and previews never cross the wire.
 - **Safety & Capabilities.** A new inspector segment shows the permission tier, workflow mode, sandbox derivation, trusted-session state, and the full capability list in force — read-only by construction.
 - **Blackboard participation.** The phone can vote in ensemble polls and post camera-roll images to the blackboard, not just watch.
-- **Steer a live solo run.** A Steer chip appears during a live solo run, reaching the same live injection the desktop uses; a mid-run send no longer silently downgrades to boundary-only delivery.
+- **Steer a live solo run.** A Steer chip appears during a live solo run, using the same per-provider delivery strategies as the desktop; a mid-run send no longer silently downgrades to boundary-only delivery.
 - **Transcript parity closes.** Agent questions are attributed to the seat that asked, the full seat-change vocabulary projects, close-out Sub-threads render in desktop order, context-compaction cards survive Mac-side rewording, and People contributions and peer messages no longer collapse into a "System · N notices" fold.
 - **Shared tasks survive the Channels migration.** The Home "Shared" section reads the active-channel set, so it no longer goes dark the moment the People-to-Channel migration commits.
 - **Mission control completes.** Round rows carry per-provider terminal outcomes and a recent question-receipts section, closing the last Host families the phone decoded but never rendered.

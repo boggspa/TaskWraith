@@ -76,7 +76,7 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `footer-control-row__approvals-popover.png` | Electron | Sidebar footer red shield and expanded Approvals popover | In the **Sidebar footer control row** — click the **red shield** icon. |
 | `footer-control-row__devices-popover.png` | Electron | Sidebar footer green devices icon and expanded Devices popover | In the **Sidebar footer control row** — click the **green devices** icon (when iOS remote is enabled). |
-| `footer-control-row__shares-popover.png` | Electron | Sidebar footer yellow shares icon and expanded Shares popover | In the **Sidebar footer control row** — click the **yellow shares** icon. |
+| ~~`footer-control-row__shares-popover.png`~~ | Electron | RETIRED 2026-08-12 — the footer Shares popover no longer exists (Channels cutover); its how-to page was removed. | n/a |
 
 ### getting-started
 

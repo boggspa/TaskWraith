@@ -12,9 +12,11 @@ Map are projections of that same state.
   queue and surfaces it in `QueuedMessagesAboveRow` with Edit / Delete / Steer.
   Steer on a queued row still cancels the live turn and dispatches (or
   re-queues) the follow-up. The separate composer-level Steer control is a
-  different path: it delivers a message into the live turn **without**
-  cancelling it (mid-turn steering, provider-strategy-dependent) and is not a
-  RunQueue path. The Execution Graph **does not** intercept ordinary busy-sends
+  different path and not a RunQueue one: depending on the provider it injects
+  the text into the live turn without interrupting it, cancels the in-flight
+  prompt and immediately re-prompts the same session with it, or falls back to
+  delivery at the natural turn boundary. The Execution Graph **does not**
+  intercept ordinary busy-sends
   and **does not** render a Stack strip above the Composer.
 - **Execution Graph, Stack, and Map remain Work-tab / map tooling.** They inspect
   and formalize main-owned multi-step run structure (serial `solo_agent` chains,
