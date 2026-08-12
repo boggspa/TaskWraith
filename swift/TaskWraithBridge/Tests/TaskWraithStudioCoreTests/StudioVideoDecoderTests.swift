@@ -30,138 +30,6 @@ final class StudioVideoDecoderTests: XCTestCase {
         return device
     }
 
-    /// Flat full-range bi-planar source frame. CPU writes here are fixture
-    /// construction, not a presentation path.
-    private func makeFlatPixelBuffer(luma: UInt8) throws -> CVPixelBuffer {
-        var buffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-            [
-                kCVPixelBufferMetalCompatibilityKey: true,
-                kCVPixelBufferIOSurfacePropertiesKey: [CFString: Any]() as CFDictionary,
-            ] as CFDictionary,
-            &buffer
-        )
-        let pixelBuffer = try XCTUnwrap(buffer, "CVPixelBufferCreate failed: \(status)")
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-        if let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) {
-            let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-            let pointer = base.assumingMemoryBound(to: UInt8.self)
-            for y in 0..<CVPixelBufferGetHeightOfPlane(pixelBuffer, 0) {
-                for x in 0..<CVPixelBufferGetWidthOfPlane(pixelBuffer, 0) {
-                    pointer[y * stride + x] = luma
-                }
-            }
-        }
-        if let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) {
-            let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
-            let pointer = base.assumingMemoryBound(to: UInt8.self)
-            for y in 0..<CVPixelBufferGetHeightOfPlane(pixelBuffer, 1) {
-                for x in 0..<CVPixelBufferGetWidthOfPlane(pixelBuffer, 1) {
-                    pointer[y * stride + x * 2] = 128
-                    pointer[y * stride + x * 2 + 1] = 128
-                }
-            }
-        }
-        return pixelBuffer
-    }
-
-    private final class EncodeCollector: @unchecked Sendable {
-        var encoded: [(pts: CMTime, sample: CMSampleBuffer)] = []
-        var failure: OSStatus = noErr
-    }
-
-    /// Encodes one flat frame per level, every frame forced to a keyframe so each
-    /// sample is independently decodable (GOP-aware seek is a later slice).
-    private func encodeFlatFrames(
-        lumaLevels: [UInt8]
-    ) throws -> (CMVideoFormatDescription, [StudioCompressedSample]) {
-        var session: VTCompressionSession?
-        let createStatus = VTCompressionSessionCreate(
-            allocator: kCFAllocatorDefault,
-            width: Int32(width),
-            height: Int32(height),
-            codecType: kCMVideoCodecType_H264,
-            encoderSpecification: nil,
-            imageBufferAttributes: nil,
-            compressedDataAllocator: nil,
-            outputCallback: nil,
-            refcon: nil,
-            compressionSessionOut: &session
-        )
-        let compression = try XCTUnwrap(
-            session,
-            "VTCompressionSessionCreate failed: \(createStatus)"
-        )
-        defer { VTCompressionSessionInvalidate(compression) }
-
-        VTSessionSetProperty(
-            compression,
-            key: kVTCompressionPropertyKey_RealTime,
-            value: kCFBooleanTrue
-        )
-        // No B-frames, so encoded order matches presentation order.
-        VTSessionSetProperty(
-            compression,
-            key: kVTCompressionPropertyKey_AllowFrameReordering,
-            value: kCFBooleanFalse
-        )
-        VTSessionSetProperty(
-            compression,
-            key: kVTCompressionPropertyKey_ProfileLevel,
-            value: kVTProfileLevel_H264_Baseline_AutoLevel
-        )
-
-        let collector = EncodeCollector()
-        for (index, level) in lumaLevels.enumerated() {
-            let frame = try makeFlatPixelBuffer(luma: level)
-            let presentationTime = CMTime(value: Int64(index), timescale: 30)
-            let status = VTCompressionSessionEncodeFrame(
-                compression,
-                imageBuffer: frame,
-                presentationTimeStamp: presentationTime,
-                duration: CMTime(value: 1, timescale: 30),
-                frameProperties: [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary,
-                infoFlagsOut: nil
-            ) { status, _, sampleBuffer in
-                if status != noErr {
-                    collector.failure = status
-                    return
-                }
-                if let sampleBuffer {
-                    collector.encoded.append(
-                        (CMSampleBufferGetPresentationTimeStamp(sampleBuffer), sampleBuffer)
-                    )
-                }
-            }
-            XCTAssertEqual(status, noErr, "encode submission failed for level \(level)")
-        }
-        // Barrier: every output handler has run once this returns.
-        VTCompressionSessionCompleteFrames(compression, untilPresentationTimeStamp: .invalid)
-
-        XCTAssertEqual(collector.failure, noErr, "encoder reported a failure")
-        guard collector.encoded.count == lumaLevels.count else {
-            throw XCTSkip(
-                "encoder produced \(collector.encoded.count) of \(lumaLevels.count) frames"
-            )
-        }
-
-        let ordered = collector.encoded.sorted { $0.pts.value < $1.pts.value }
-        let formatDescription = try XCTUnwrap(
-            CMSampleBufferGetFormatDescription(ordered[0].sample),
-            "encoded sample carried no format description"
-        )
-        let samples = ordered.map {
-            StudioCompressedSample(frameIndex: $0.pts.value, sampleBuffer: $0.sample)
-        }
-        return (formatDescription, samples)
-    }
-
     private func renderedGreen(
         _ textures: StudioVideoFrameTextures,
         renderer: StudioVideoFrameRenderer
@@ -180,7 +48,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testDecodedBuffersAreBiPlanarIoSurfaceBackedAndMetalBindable() throws {
         let device = try makeDevice()
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [128])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [128])
         let decoder = try StudioVideoDecoder(formatDescription: formatDescription)
         defer { decoder.invalidate() }
 
@@ -212,7 +80,7 @@ final class StudioVideoDecoderTests: XCTestCase {
     func testDecodedFrameRendersThroughTheZeroCopyPath() throws {
         let device = try makeDevice()
         let renderer = try StudioVideoFrameRenderer(device: device)
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [32, 224])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [32, 224])
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,
@@ -234,7 +102,7 @@ final class StudioVideoDecoderTests: XCTestCase {
         let device = try makeDevice()
         let renderer = try StudioVideoFrameRenderer(device: device)
         let levels: [UInt8] = [32, 96, 160, 224]
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: levels)
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: levels)
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,
@@ -270,7 +138,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testSampleSelectionHoldsThePreviousFrame() throws {
         let device = try makeDevice()
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [32, 224])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [32, 224])
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,
@@ -288,7 +156,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testRepeatedRequestsForOneFrameHitTheCache() throws {
         let device = try makeDevice()
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [128])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [128])
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,
@@ -308,7 +176,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testInvalidateTearsDownAndIsIdempotent() throws {
         let device = try makeDevice()
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [128])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [128])
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,
@@ -328,7 +196,7 @@ final class StudioVideoDecoderTests: XCTestCase {
     }
 
     func testDecoderRejectsUseAfterInvalidate() throws {
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [128])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [128])
         let decoder = try StudioVideoDecoder(formatDescription: formatDescription)
         _ = try decoder.decode(samples[0].sampleBuffer)
 
@@ -341,7 +209,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testEmptySampleListIsRejected() throws {
         let device = try makeDevice()
-        let (formatDescription, _) = try encodeFlatFrames(lumaLevels: [128])
+        let (formatDescription, _) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [128])
         XCTAssertThrowsError(
             try StudioVideoFrameSource(
                 formatDescription: formatDescription,
@@ -355,7 +223,7 @@ final class StudioVideoDecoderTests: XCTestCase {
 
     func testDiagnosticsReportDecodeAndBindActivity() throws {
         let device = try makeDevice()
-        let (formatDescription, samples) = try encodeFlatFrames(lumaLevels: [32, 224])
+        let (formatDescription, samples) = try StudioTestMedia.encodeFlatFrames(lumaLevels: [32, 224])
         let source = try StudioVideoFrameSource(
             formatDescription: formatDescription,
             samples: samples,

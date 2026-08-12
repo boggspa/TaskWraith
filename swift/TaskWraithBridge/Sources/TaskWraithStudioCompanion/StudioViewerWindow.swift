@@ -14,7 +14,7 @@ import TaskWraithStudioCore
 /// implementation.
 ///
 /// The window path is intentionally NOT unit-tested: correctness of the render
-/// path is proven headlessly by StudioTestPatternRendererTests, which asserts
+/// path is proven headlessly by StudioViewerRendererTests, which asserts
 /// actual rendered pixel values. This file is the thin glue that cannot be
 /// asserted without a GUI session.
 
@@ -29,17 +29,18 @@ final class StudioViewerView: NSView {
         static let rightArrow: UInt16 = 124
     }
 
-    private let renderer: StudioTestPatternRenderer
+    private let renderer: StudioViewerRenderer
     private var clock: StudioPlaybackClock
     private var frameLink: CADisplayLink?
 
     /// Minimal viewer diagnostics (mission outcome 9 groundwork). Counted here
     /// because the display-link callback is the only place that can observe a
-    /// missed drawable.
+    /// missed drawable. Content-level counters live on StudioViewerRenderer.
     private(set) var presentedFrameCount: Int = 0
     private(set) var missedDrawableCount: Int = 0
+    private(set) var droppedFrameCount: Int = 0
 
-    init(renderer: StudioTestPatternRenderer, clock: StudioPlaybackClock) {
+    init(renderer: StudioViewerRenderer, clock: StudioPlaybackClock) {
         self.renderer = renderer
         self.clock = clock
         super.init(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
@@ -96,7 +97,13 @@ final class StudioViewerView: NSView {
         super.viewDidMoveToWindow()
         frameLink?.invalidate()
         frameLink = nil
-        guard window != nil else { return }
+        guard window != nil else {
+            // Viewer closed: release the decoder and its texture cache now
+            // rather than waiting for ARC, so close/reopen cycles cannot
+            // accumulate decompression sessions.
+            renderer.detachSource()
+            return
+        }
 
         updateDrawableSize()
         clock.play(atHost: CACurrentMediaTime())
@@ -120,15 +127,20 @@ final class StudioViewerView: NSView {
             missedDrawableCount += 1
             return
         }
-        do {
-            try renderer.render(
-                to: drawable.texture,
-                frameIndex: snapshot.frameIndex,
-                presenting: drawable
-            )
+        // All content selection and failure policy lives in StudioViewerRenderer
+        // (Core) so it is covered by StudioViewerRendererTests; this stays glue.
+        // Non-throwing by design: one bad frame must not take the viewer down.
+        let outcome = renderer.render(
+            snapshot: snapshot,
+            to: drawable.texture,
+            presenting: drawable
+        )
+        if outcome.didDraw {
             presentedFrameCount += 1
-        } catch {
-            missedDrawableCount += 1
+        } else {
+            // Nothing was encoded, so the drawable is released unpresented —
+            // a genuine dropped frame rather than a stale or synthetic one.
+            droppedFrameCount += 1
         }
     }
 
@@ -162,7 +174,7 @@ final class StudioViewerWindowController {
     let window: NSWindow
     private let view: StudioViewerView
 
-    init(renderer: StudioTestPatternRenderer) {
+    init(renderer: StudioViewerRenderer) {
         // durationTicks 0 means "unbounded": the synthetic pattern has no end.
         // A real source replaces this with the decoded asset's duration.
         let clock = StudioPlaybackClock(timebase: .ntsc2997, durationTicks: 0)
@@ -193,9 +205,9 @@ enum StudioViewerApp {
 
     @MainActor
     static func run(hydrateOnce: Bool) -> Never {
-        let renderer: StudioTestPatternRenderer
+        let renderer: StudioViewerRenderer
         do {
-            renderer = try StudioTestPatternRenderer.makeDefault()
+            renderer = try StudioViewerRenderer.makeDefault()
         } catch {
             // No Metal device, or the shader/pipeline failed: fall back to the
             // proven headless behaviour rather than dying, and say why.
