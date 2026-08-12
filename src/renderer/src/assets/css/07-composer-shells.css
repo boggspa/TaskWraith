@@ -3424,7 +3424,12 @@
   color: color-mix(in srgb, var(--text-primary) 26%, transparent);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.25;
+  /* USER-SPACE stroke against the mark's 128-unit viewBox (FleetWaveCard.tsx
+   * renders the full monoline paths). Effective px = stroke × 13 / 128, so
+   * 12 ≈ 1.22px. The original 1.25 was calibrated for a 16-unit mini glyph
+   * and rendered ≈0.13px here — every outline state was invisible.
+   * fleetWaveGhostStripCss.test.ts pins both sides of the equation. */
+  stroke-width: 12;
   stroke-linejoin: round;
   stroke-linecap: round;
   overflow: visible;
@@ -3434,7 +3439,7 @@
 }
 .fleet-wave-card-cell.status-needs_approval {
   color: var(--tool-warning);
-  stroke-width: 1.6;
+  stroke-width: 16;
 }
 .fleet-wave-card-cell.status-completed,
 .fleet-wave-card-cell.status-failed {
