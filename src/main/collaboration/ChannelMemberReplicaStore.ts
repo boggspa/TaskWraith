@@ -333,7 +333,7 @@ function validateRecord(
 }
 
 function syncFile(path: string): void {
-  const fd = openSync(path, 'r')
+  const fd = openSync(path, 'r+')
   try {
     fsyncSync(fd)
   } finally {

@@ -1144,7 +1144,7 @@ export class ChannelStore {
     mkdirSync(dirname(this.storagePath), { recursive: true })
     const temporary = `${this.storagePath}.${randomUUID()}.tmp`
     writeFileSync(temporary, JSON.stringify(this.snapshot), { encoding: 'utf8', mode: 0o600 })
-    const descriptor = openSync(temporary, 'r')
+    const descriptor = openSync(temporary, 'r+')
     try {
       fsyncSync(descriptor)
     } finally {

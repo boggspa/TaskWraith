@@ -8,7 +8,7 @@ import {
   writeFileSync
 } from 'fs'
 import { createHash } from 'crypto'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -176,12 +176,13 @@ afterEach(() => {
 
 describe('ChannelMemberReplicaStore', () => {
   it('keeps joined memberships outside the hosted-Channel authority tree', () => {
-    const paths = channelMemberReplicaPaths('/tmp/taskwraith-user-data')
+    const userDataPath = resolve('/tmp/taskwraith-user-data')
+    const paths = channelMemberReplicaPaths(userDataPath)
 
-    expect(paths.root).toBe('/tmp/taskwraith-user-data/channel-memberships')
-    expect(paths.identity).toBe('/tmp/taskwraith-user-data/channel-memberships/identity.json')
-    expect(paths.memberships).toBe('/tmp/taskwraith-user-data/channel-memberships/memberships.json')
-    expect(paths.records).toBe('/tmp/taskwraith-user-data/channel-memberships/records')
+    expect(paths.root).toBe(join(userDataPath, 'channel-memberships'))
+    expect(paths.identity).toBe(join(userDataPath, 'channel-memberships', 'identity.json'))
+    expect(paths.memberships).toBe(join(userDataPath, 'channel-memberships', 'memberships.json'))
+    expect(paths.records).toBe(join(userDataPath, 'channel-memberships', 'records'))
   })
 
   it('durably retains multiple memberships and contiguous deduplicated history', () => {

@@ -812,7 +812,7 @@ export class ChannelAgentIdentityStore {
   }
 
   private syncFile(path: string): void {
-    const descriptor = openSync(path, 'r')
+    const descriptor = openSync(path, 'r+')
     try {
       fsyncSync(descriptor)
     } finally {

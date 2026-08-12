@@ -194,7 +194,7 @@ export class ChannelAuditLog implements ChannelAuditLike {
       encoding: 'utf8',
       mode: 0o600
     })
-    const descriptor = openSync(temporary, 'r')
+    const descriptor = openSync(temporary, 'r+')
     try {
       fsyncSync(descriptor)
     } finally {

@@ -276,7 +276,7 @@ function readManifestBytes(path: string): Buffer | null {
       before.isSymbolicLink() ||
       before.nlink !== 1 ||
       before.size > MAX_PEOPLE_TO_CHANNEL_CUTOVER_MANIFEST_BYTES ||
-      (before.mode & 0o077) !== 0
+      (process.platform !== 'win32' && (before.mode & 0o077) !== 0)
     ) {
       blocked('People migration cutover manifest path is unsafe')
     }

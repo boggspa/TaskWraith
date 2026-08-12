@@ -221,7 +221,7 @@ function readRegularFile(path: string): Buffer | null {
       !before.isFile() ||
       before.isSymbolicLink() ||
       before.nlink !== 1 ||
-      (before.mode & 0o077) !== 0 ||
+      (process.platform !== 'win32' && (before.mode & 0o077) !== 0) ||
       before.size > MAX_PEOPLE_TO_CHANNEL_EXECUTION_FILE_BYTES
     ) {
       blocked('People migration execution checkpoint path is unsafe')

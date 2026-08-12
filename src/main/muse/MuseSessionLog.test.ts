@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,38 +26,21 @@ function tempDir(): string {
   return dir
 }
 
-function writeIndexDb(
-  dataHome: string,
-  row: {
-    sessionId: string
-    sessionLogPath: string
-    sessionDir: string
-    modelId?: string
-  }
-): string {
+function writeIndexDb(dataHome: string): string {
   const museRoot = join(dataHome, 'muse')
   mkdirSync(museRoot, { recursive: true })
   const dbPath = museSessionIndexDbPath(dataHome)
-  const sql = `
-CREATE TABLE sessions (
-  session_id TEXT PRIMARY KEY,
-  session_stream_id TEXT,
-  session_dir TEXT,
-  session_log_path TEXT UNIQUE,
-  layout TEXT,
-  model_id TEXT,
-  status TEXT,
-  latest_segment_terminated INTEGER
-);
-INSERT INTO sessions (
-  session_id, session_stream_id, session_dir, session_log_path, layout, model_id, status, latest_segment_terminated
-) VALUES (
-  '${row.sessionId}', '${row.sessionId}', '${row.sessionDir}', '${row.sessionLogPath}',
-  'session_jsonl', '${row.modelId || 'muse-spark-1.2'}', 'valid', 0
-);
-`
-  execFileSync('sqlite3', [dbPath], { input: sql })
+  writeFileSync(dbPath, '')
   return dbPath
+}
+
+function queryIndexRow(row: {
+  sessionLogPath: string
+  sessionDir: string
+  modelId?: string
+}): () => Promise<string> {
+  return async () =>
+    [row.sessionLogPath, row.sessionDir, row.modelId || 'muse-spark-1.2', 'valid', '0'].join('|')
 }
 
 describe('resolveMuseSessionLogPath', () => {
@@ -69,9 +51,14 @@ describe('resolveMuseSessionLogPath', () => {
     mkdirSync(sessionDir, { recursive: true })
     const logPath = join(sessionDir, 'session.jsonl')
     writeFileSync(logPath, '')
-    writeIndexDb(dataHome, { sessionId, sessionLogPath: logPath, sessionDir })
+    const row = { sessionId, sessionLogPath: logPath, sessionDir }
+    writeIndexDb(dataHome)
 
-    const result = await resolveMuseSessionLogOnce({ dataHome, sessionId })
+    const result = await resolveMuseSessionLogOnce({
+      dataHome,
+      sessionId,
+      querySqlite: queryIndexRow(row)
+    })
     expect(result.source).toBe('session-index')
     expect(result.sessionLogPath).toBe(logPath)
     expect(result.row?.model_id).toBe('muse-spark-1.2')
@@ -106,13 +93,14 @@ describe('resolveMuseSessionLogPath', () => {
     const sleep = async () => {
       ticks += 1
       if (ticks === 2) {
-        writeIndexDb(dataHome, { sessionId, sessionLogPath: logPath, sessionDir })
+        writeIndexDb(dataHome)
       }
     }
 
     const result = await resolveMuseSessionLogPath({
       dataHome,
       sessionId,
+      querySqlite: queryIndexRow({ sessionLogPath: logPath, sessionDir }),
       timeoutMs: 5_000,
       initialBackoffMs: 1,
       maxBackoffMs: 1,

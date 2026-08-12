@@ -207,9 +207,9 @@ describe('PeopleToChannelMigrationExecutionStore', () => {
     expect(() => store.load()).toThrow(/path is unsafe/)
     unlinkSync(alias)
 
-    chmodSync(store.path, 0o644)
-    expect(() => store.load()).toThrow(/path is unsafe/)
     if (process.platform !== 'win32') {
+      chmodSync(store.path, 0o644)
+      expect(() => store.load()).toThrow(/path is unsafe/)
       expect(statSync(store.path).mode & 0o777).toBe(0o644)
     }
   })

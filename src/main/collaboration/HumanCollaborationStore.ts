@@ -880,11 +880,16 @@ export class HumanCollaborationStore {
       closeSync(fd)
     }
     renameSync(tmp, this.storagePath)
-    const dir = openSync(dirname(this.storagePath), 'r')
     try {
-      fsyncSync(dir)
-    } finally {
-      closeSync(dir)
+      const dir = openSync(dirname(this.storagePath), 'r')
+      try {
+        fsyncSync(dir)
+      } finally {
+        closeSync(dir)
+      }
+    } catch {
+      // Windows and some filesystems reject directory fsync. The file itself
+      // was synced before the atomic rename.
     }
   }
 }
