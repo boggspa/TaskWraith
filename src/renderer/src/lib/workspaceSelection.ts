@@ -45,3 +45,37 @@ export function shouldRebindCurrentChatOnWorkspaceSelect(
   if (input.intent !== 'switch') return false
   return input.isCurrentEnsembleChat
 }
+
+/**
+ * Options for the native "add a workspace" dialog (App's
+ * `handleSelectWorkspace`). Only the composer workspace switcher passes
+ * `{ intent: 'switch' }`; every other surface omits options.
+ */
+export interface WorkspaceAddDialogOptions {
+  intent?: WorkspaceSelectIntent
+}
+
+/**
+ * Resolve the {@link WorkspaceSelectIntent} for the add-workspace dialog.
+ *
+ * Adding a workspace defaults to `'navigate'`: the newly added workspace
+ * opens as its own fresh thread, and the chat the user is looking at keeps
+ * its workspace. Rebinding the current chat is reserved for the composer
+ * workspace switcher, which opts in with an explicit `{ intent: 'switch' }`.
+ *
+ * The argument is typed `unknown` deliberately. The sidebar `+` and the
+ * Settings "Add workspace" button both wire the dialog straight into
+ * `onClick`, so React passes a MouseEvent as the first argument; a truthy
+ * but unrelated object must resolve to `'navigate'`, never to `'switch'`.
+ * Only the exact literal opt-in escalates.
+ */
+export function resolveWorkspaceAddDialogIntent(options?: unknown): WorkspaceSelectIntent {
+  if (
+    typeof options === 'object' &&
+    options !== null &&
+    (options as WorkspaceAddDialogOptions).intent === 'switch'
+  ) {
+    return 'switch'
+  }
+  return 'navigate'
+}
