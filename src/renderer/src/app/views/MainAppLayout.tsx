@@ -24,6 +24,7 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from '../../lib/ensembleFanoutPolicy'
+import { buildContinuationHopsChangeRequest } from '../../lib/continuationHopsChangeRequest'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../../../shared/ensembleFanoutIsolation'
 import { activeGoalModeLabel } from '../../../../shared/activeGoalPresentation'
 import { isImageAttachmentPath } from '../../lib/imageAttachments'
@@ -795,6 +796,36 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       updatedAt: new Date().getTime()
     })
   }
+  const updateSideMaxContinuationHops = (value: number): void => {
+    if (!sideChat?.ensemble) return
+    const change = buildContinuationHopsChangeRequest(
+      sideChat.appChatId,
+      sideChat.ensemble,
+      value
+    )
+    if (!change) return
+    patchSideEnsemble({
+      maxContinuationHops: change.maxContinuationHops,
+      ...(sideActiveRound
+        ? {
+            activeRound: {
+              ...sideActiveRound,
+              maxContinuationHops: change.maxContinuationHops
+            }
+          }
+        : {})
+    })
+    void window.api
+      .updateLiveEnsembleRoundConfig(change)
+      .then((result) => {
+        if (!result.ok) {
+          window.alert(result.message || result.error || 'Ensemble turn-limit update failed.')
+        }
+      })
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Ensemble turn-limit update failed.')
+      })
+  }
   const patchSideParticipant = (
     participantId: string,
     patch: Record<string, unknown>
@@ -1167,10 +1198,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               Math.min(256_000, Math.round(Number(value) || 0))
             )
           }),
-        updateCurrentEnsembleMaxContinuationHops: (value: number) =>
-          patchSideEnsemble({
-            maxContinuationHops: Math.max(1, Math.min(1200, Math.round(Number(value) || 0)))
-          }),
+        updateCurrentEnsembleMaxContinuationHops: updateSideMaxContinuationHops,
         setCurrentChat: (next: any) => {
           const updated = typeof next === 'function' ? next(sideChat) : next
           if (updated) persistSideChat(updated)

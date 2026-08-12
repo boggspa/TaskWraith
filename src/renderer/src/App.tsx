@@ -244,6 +244,7 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from './lib/ensembleFanoutPolicy'
+import { buildContinuationHopsChangeRequest } from './lib/continuationHopsChangeRequest'
 import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
 import {
   PLAN_LABEL,
@@ -20986,10 +20987,19 @@ function App(): React.JSX.Element {
         orchestrationMode?: EnsembleOrchestrationMode
         fanoutPolicy?: EnsembleFanoutPolicy
         maxContinuationHops?: number
+        previousMaxContinuationHops?: number
       }
     ): void => {
       const source = chatByIdRef.current.get(chatId)
-      if (!isEnsembleActiveRoundDispatchLive(source?.ensemble?.activeRound)) return
+      // Mode/fan-out retain their live-round-only behavior. A hop-limit edit
+      // also applies while idle because its durable transcript event is born
+      // through this authoritative main-process path.
+      if (
+        patch.maxContinuationHops === undefined &&
+        !isEnsembleActiveRoundDispatchLive(source?.ensemble?.activeRound)
+      ) {
+        return
+      }
       void window.api
         .updateLiveEnsembleRoundConfig({ chatId, ...patch })
         .then((result) => {
@@ -21114,8 +21124,10 @@ function App(): React.JSX.Element {
   )
   const updateEnsembleMaxContinuationHopsForChat = useCallback(
     (chatId: string, nextMax: number): void => {
-      const safeMax = Math.max(1, Math.min(1200, Math.round(Number(nextMax) || 0)))
-      if (!Number.isFinite(safeMax) || safeMax <= 0) return
+      const source = chatByIdRef.current.get(chatId)
+      if (!source?.ensemble) return
+      const change = buildContinuationHopsChangeRequest(chatId, source.ensemble, nextMax)
+      if (!change) return
       updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const activeRound = source.ensemble.activeRound
@@ -21123,12 +21135,12 @@ function App(): React.JSX.Element {
           ...source,
           ensemble: {
             ...source.ensemble,
-            maxContinuationHops: safeMax,
+            maxContinuationHops: change.maxContinuationHops,
             ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
               ? {
                   activeRound: {
                     ...activeRound,
-                    maxContinuationHops: safeMax
+                    maxContinuationHops: change.maxContinuationHops
                   }
                 }
               : {}),
@@ -21138,7 +21150,10 @@ function App(): React.JSX.Element {
         }
         return withSessionActivityLedger(source, patched)
       })
-      requestLiveEnsembleRoundConfigUpdate(chatId, { maxContinuationHops: safeMax })
+      requestLiveEnsembleRoundConfigUpdate(chatId, {
+        maxContinuationHops: change.maxContinuationHops,
+        previousMaxContinuationHops: change.previousMaxContinuationHops
+      })
     },
     [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
@@ -21259,7 +21274,7 @@ function App(): React.JSX.Element {
 
   // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
   // chat.ensemble.maxContinuationHops. Range-clamped at the call site
-  // (ContinuousHopsLimitChip enforces 1–500); we still guard here so a malformed
+  // (ContinuousHopsLimitChip enforces 1–1200); we still guard here so a malformed
   // value never lands in the store. Also mirror onto activeRound when a round is
   // in flight so the hops meter and persisted round snapshot stay in sync.
   const updateCurrentEnsembleMaxContinuationHops = useCallback(
