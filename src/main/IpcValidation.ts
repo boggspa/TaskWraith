@@ -1055,6 +1055,10 @@ function validateSettingsPatch(channel: string, value: unknown): void {
     if (typeof value.bridgeDaemonEnabled !== 'boolean')
       throw new Error(`${channel} bridgeDaemonEnabled must be a boolean.`)
   }
+  if (value.studioCompanionEnabled !== undefined) {
+    if (typeof value.studioCompanionEnabled !== 'boolean')
+      throw new Error(`${channel} studioCompanionEnabled must be a boolean.`)
+  }
   if (value.funFxMode !== undefined) {
     const mode = String(value.funFxMode)
     if (!['off', 'subtle', 'cinematic', 'epic'].includes(mode)) {

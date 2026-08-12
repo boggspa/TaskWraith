@@ -220,6 +220,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'geminiMcpBridgeEnabled',
   'geminiMcpBridgeLastStatus',
   'bridgeDaemonEnabled',
+  'studioCompanionEnabled',
   'localServersDetachSpawns',
   'localServersStopOnQuit',
   'codexSandboxFallback',
@@ -2145,6 +2146,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('bridgeDaemonEnabled' in sanitized) {
       const value = sanitized.bridgeDaemonEnabled
       sanitized.bridgeDaemonEnabled = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('studioCompanionEnabled' in sanitized) {
+      const value = sanitized.studioCompanionEnabled
+      sanitized.studioCompanionEnabled = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('localServersDetachSpawns' in sanitized) {
       const value = sanitized.localServersDetachSpawns

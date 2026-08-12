@@ -2318,6 +2318,7 @@ const defaultSettings: AppSettings = {
   geminiMcpBridgeLastStatus: undefined,
   approvalModeElevationAcknowledgements: {},
   bridgeDaemonEnabled: true,
+  studioCompanionEnabled: true,
   iosRemoteEnabled: true,
   iosRemoteManualRelayUrl: '',
   codexSandboxFallback: 'ask_rerun',
