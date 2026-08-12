@@ -10,9 +10,12 @@ Map are projections of that same state.
 - **Composer / above-row queue / Steer are classic RunQueue paths.** Sending
   another message while a chat is busy enqueues it on the durable desktop run
   queue and surfaces it in `QueuedMessagesAboveRow` with Edit / Delete / Steer.
-  Steer still cancels the live turn and dispatches (or re-queues) the follow-up.
-  The Execution Graph **does not** intercept ordinary busy-sends and **does not**
-  render a Stack strip above the Composer.
+  Steer on a queued row still cancels the live turn and dispatches (or
+  re-queues) the follow-up. The separate composer-level Steer control is a
+  different path: it delivers a message into the live turn **without**
+  cancelling it (mid-turn steering, provider-strategy-dependent) and is not a
+  RunQueue path. The Execution Graph **does not** intercept ordinary busy-sends
+  and **does not** render a Stack strip above the Composer.
 - **Execution Graph, Stack, and Map remain Work-tab / map tooling.** They inspect
   and formalize main-owned multi-step run structure (serial `solo_agent` chains,
   success-only control edges, permission ceilings, recovery). They are not the

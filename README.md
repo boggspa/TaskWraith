@@ -45,8 +45,9 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
 of living in separate tabs. A thread can include up to fifty named participants
-across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, Mistral Vibe, and
-local Ollama, each with its own model, role, order, and permission posture.
+across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, Mistral Vibe,
+Muse Code, and local Ollama, each with its own model, role, order, and
+permission posture.
 
 Kimi seats additionally require runtime admission: structural checks (stable
 binary identity, bounded probes, the ACP-only posture) that are always
@@ -169,8 +170,9 @@ user choices, and the exact data boundary.
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
 - **Provider Runs**: Integrated run surfaces for Codex, Claude, AntiGravity
-  (bring-your-own Gemini API key), Kimi, Cursor, Grok, Pi, Mistral Vibe, and
-  **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside presets).
+  (bring-your-own Gemini API key), Kimi, Cursor, Grok, Pi, Mistral Vibe, Muse
+  Code, and **local Ollama** (curated Qwen, Gemma, GPT-OSS, Nemotron, and
+  Poolside presets).
   Kimi's integrated surface is admission-dependent: every build applies
   structural identity, bounded-probe, and ACP-posture checks. The current
   source-ahead reviewed roster is empty, so structurally admitted runs are
@@ -180,7 +182,7 @@ user choices, and the exact data boundary.
   Ensembles, and delegated runs with native tools plus TaskWraith tools. The
   historical standalone Gemini provider remains readable but retired for new
   runs; it is distinct from the live, opt-in AntiGravity integration.
-  Run management is provider-neutral: the lifecycle inventory covers all ten
+  Run management is provider-neutral: the lifecycle inventory covers all eleven
   stable provider identities and every admitted turn crosses the shared signed
   posture boundary. Availability remains a separate product decision; missing
   broker, provenance, or scheduled-seal evidence is reported as a limited or

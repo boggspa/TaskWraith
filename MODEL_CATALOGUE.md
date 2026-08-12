@@ -6,7 +6,7 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 10 August 2026.** Your actual picker is still governed by the
+> **Snapshot: 12 August 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
@@ -151,6 +151,21 @@ for the upstream lifecycle.
 
 <table>
   <tr>
+    <td width="10" bgcolor="#1671EA"></td>
+    <td valign="middle"><strong>Muse Code / Meta</strong><br /><sub>Meta blue provider hue · active for new runs</sub></td>
+  </tr>
+</table>
+
+| Model                                             | Reasoning                                       | Fast | Notes                              |
+| ------------------------------------------------- | ----------------------------------------------- | ---- | ---------------------------------- |
+| **Muse Spark 1.2** `muse-spark-1.2` **(Default)** | Light · Medium · High · Extra · Max · Ultracode | —    | 1M context · $1.25/$4.25 per Mtok. |
+
+Muse's model lifecycle is provider-published from the local Muse CLI catalogue,
+so the live picker follows the CLI's own current-model set; the row above is
+TaskWraith's curated fallback.
+
+<table>
+  <tr>
     <td width="10" bgcolor="#1A8562"></td>
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-ollama.png" alt="Ollama logo" width="28" />
@@ -179,6 +194,8 @@ capabilities remain model-specific.
 | Granite 4.1 (3B)           | `granite4.1:3b`      | 131K; tools.                                    |
 | Granite 4.1 (30B)          | `granite4.1:30b`     | 131K; tools.                                    |
 | Nemotron 3 Nano Omni (33B) | `nemotron3:33b`      | 131K; vision, tools, thinking.                  |
+| Nemotron 3.5 Lightning (30B-MLX) | `nemotron-3.5-lightning:30b-mlx` | 262K; tools, thinking; 3B active. |
+| Muse Glimmer (30B-MLX)     | `muse-glimmer:30b-mlx` | 131K; vision, tools, thinking.                |
 | Custom model ID            | `custom`             | Enter a compatible locally installed model tag. |
 
 ## Historical standalone provider

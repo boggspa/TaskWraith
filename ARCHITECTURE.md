@@ -35,7 +35,7 @@ Responsible for the UI:
    active goal context, and starts the selected provider command, SDK,
    app-server, or Ollama harness. Architecturally supported selectable provider
    ids are Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, Mistral Vibe,
-   and local Ollama, but a run still requires provider-specific admission. The older standalone
+   Muse Code, and local Ollama, but a run still requires provider-specific admission. The older standalone
    Gemini provider id is retained for historical chats/configuration and decode
    paths only; AntiGravity is the live Gemini API/CLI integration. Managed
    Cursor uses Path-B: the shared CLI transport always-enables `cursor-agent`

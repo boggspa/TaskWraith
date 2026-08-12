@@ -561,14 +561,14 @@ capability without explicit consent commits the same class of violation as an
 agent that acts without consent. The 2026-07-19 overnight incident is the
 canonical precedent: an autonomous security session unilaterally removed a live
 provider and gated another, and the cleanup took days (see
-[`papercuts/2026-07-19-retro.md`](papercuts/2026-07-19-retro.md) and
-[`SECURITY_ENGINEERING_LEDGER.md`](SECURITY_ENGINEERING_LEDGER.md)).
+[`papercuts/2026-07-19-retro.md`](papercuts/2026-07-19-retro.md) and the
+local-only, gitignored `SECURITY_ENGINEERING_LEDGER.md`).
 
 Rules, in priority order:
 
 1. **Security work proposes; the user disposes.** If you identify a risk in a
    provider, tool, grant, permission tier, or transport: record the finding in
-   [`SECURITY_ENGINEERING_LEDGER.md`](SECURITY_ENGINEERING_LEDGER.md), propose
+   the local-only `SECURITY_ENGINEERING_LEDGER.md` (gitignored, repo root), propose
    a bounded mitigation, and stop. Do not land code, config, CI, or doctrine
    that narrows user-facing capability without the user approving that exact
    narrowing in the current session. "The user would surely want this blocked"
@@ -606,7 +606,7 @@ Rules, in priority order:
    `isLiveSelectableProvider(p) || (p === '<id>' && <condition>)`, so promoting
    one short-circuits its condition and silently deletes the wall.
 5. **Run management is additive assurance, never provider admission.** Measure
-   lifecycle and signed-posture coverage across all ten stable `ProviderId`
+   lifecycle and signed-posture coverage across all eleven stable `ProviderId`
    identities, independently of whether a provider is live, conditional, or
    retired. Missing broker mediation, launch-seal evidence, provenance, or
    another stronger management layer must produce an honest per-run
@@ -1268,9 +1268,10 @@ pipeline.
   The v1.8.4 release did not clear the separate approval ledger.
 
 Release-sensitive code findings and bounded containment hypotheses belong in
-the tracked [Security Engineering Ledger](SECURITY_ENGINEERING_LEDGER.md), not
-only in ignored `papercuts/` or `.local-only/` notes. Preserve an entry when a
-fix lands, then add owner, status, regression evidence, and release disposition.
+the Security Engineering Ledger (`SECURITY_ENGINEERING_LEDGER.md` — local-only
+and gitignored at the repo root since 2026-08-11), not only in `papercuts/` or
+`.local-only/` notes. Preserve an entry when a fix lands, then add owner,
+status, regression evidence, and release disposition.
 
 ---
 
