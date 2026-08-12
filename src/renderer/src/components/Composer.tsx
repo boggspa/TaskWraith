@@ -43,7 +43,7 @@ import {
 } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
 import { TrustedSessionConfirmSheet } from '../components/TrustedSessionConfirmSheet'
-import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
+import { WorkspaceDiffStatsButton } from '../components/WorkspaceDiffStatsButton'
 import {
   ComposerTextareaContextMenu,
   useComposerTextareaContextMenu
@@ -405,6 +405,7 @@ export interface ComposerProps {
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
+  openWorkspaceDiffInInspector: (workspacePath?: string) => void
   openPlanImportReview: any
   openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => boolean | void
   overestimatePercent: any
@@ -731,6 +732,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openWorkspaceDiffInInspector,
     openPlanImportReview,
     openSideChatFromSlashCommand,
     overestimatePercent,
@@ -2415,29 +2417,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       </div>
                       {workspaceDiffStats.filesChanged > 0 && (
                         <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-                        <span className="composer-above-bar-files-cluster">
-                          <span
-                            className="composer-above-bar-files"
-                            title={`${workspaceDiffStats.filesChanged} uncommitted ${workspaceDiffStats.filesChanged === 1 ? 'file' : 'files'} in the working tree`}
-                          >
-                            <AnimatedDiffNumber value={workspaceDiffStats.filesChanged} strong />{' '}
-                            {workspaceDiffStats.filesChanged === 1 ? 'file changed' : 'files changed'}
-                          </span>
-                          {(workspaceDiffStats.additions > 0 || workspaceDiffStats.deletions > 0) && (
-                            <span className="composer-above-bar-stats">
-                              <AnimatedDiffNumber
-                                value={workspaceDiffStats.additions}
-                                prefix="+"
-                                className="composer-diff-add"
-                              />
-                              <AnimatedDiffNumber
-                                value={workspaceDiffStats.deletions}
-                                prefix="-"
-                                className="composer-diff-del"
-                              />
-                            </span>
-                          )}
-                        </span>
+                        <WorkspaceDiffStatsButton
+                          filesChanged={workspaceDiffStats.filesChanged}
+                          additions={workspaceDiffStats.additions}
+                          deletions={workspaceDiffStats.deletions}
+                          onOpen={() => openWorkspaceDiffInInspector(primaryGitActionPath)}
+                        />
                         </div>
                       )}
                       <div className="composer-above-bar-pill composer-above-bar-pill--action">
@@ -2587,6 +2572,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               chatId: group.representative.chatId
                             })
                           }
+                          onOpenDiffStudio={() => openWorkspaceDiffInInspector(group.path)}
                           onSnapshotRefresh={(snapshot) =>
                             onExternalGitSnapshotRefresh?.(
                               group.path,

@@ -17,12 +17,12 @@ import { getProviderName } from './Sidebar'
 import { useState } from 'react'
 import { GitMergeBadge, GitPrLifecycleChip, GitSyncChip } from './GitStatusChips'
 import { GitCommitControls } from './GitCommitControls'
-import { AnimatedDiffNumber } from './AnimatedDiffNumber'
 import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { GitCommitSymbolIcon } from './AppChromeSymbols'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import { WorkspaceDiffStatsButton } from './WorkspaceDiffStatsButton'
 
 /**
  * 1.0.5-EW42b — Derive a human-readable "where did this grant
@@ -116,6 +116,8 @@ interface ExternalPathAboveRowProps {
   onCreatePr?: (grant: ExternalPathGrant) => void
   /** Per-path "Review changes" — opens Diff Studio scoped to this path. */
   onReviewChanges?: () => void
+  /** Direct changed-files click — opens this path in the inspector Diff Studio. */
+  onOpenDiffStudio?: () => void
   /** Branch/worktree popover refresh hook for this external repository. */
   onSnapshotRefresh?: (snapshot: GitRepositorySnapshot | null) => void
   /** Cursor shell — detached satellite pills above the merged stack. */
@@ -174,6 +176,7 @@ export function ExternalPathAboveRow({
   createPrState,
   onCreatePr,
   onReviewChanges,
+  onOpenDiffStudio,
   onSnapshotRefresh,
   cursorLeadDetached = false,
   composerStyle
@@ -247,33 +250,15 @@ export function ExternalPathAboveRow({
 
   const diffPill = hasDiff ? (
     <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-      {/* Match the primary workspace row exactly: one direct changes pill
-          containing the file count and add/del stats. */}
-      <span className="composer-above-bar-files-cluster">
-        <span
-          className="composer-above-bar-files"
-          title={`${diffStats!.filesChanged} ${
-            diffStats!.filesChanged === 1 ? 'file' : 'files'
-          } changed in this path`}
-        >
-          <AnimatedDiffNumber value={diffStats!.filesChanged} strong />{' '}
-          {diffStats!.filesChanged === 1 ? 'file changed' : 'files changed'}
-        </span>
-        {(diffStats!.additions > 0 || diffStats!.deletions > 0) && (
-          <span className="composer-above-bar-stats">
-            <AnimatedDiffNumber
-              value={diffStats!.additions}
-              prefix="+"
-              className="composer-diff-add"
-            />
-            <AnimatedDiffNumber
-              value={diffStats!.deletions}
-              prefix="-"
-              className="composer-diff-del"
-            />
-          </span>
-        )}
-      </span>
+      <WorkspaceDiffStatsButton
+        filesChanged={diffStats!.filesChanged}
+        additions={diffStats!.additions}
+        deletions={diffStats!.deletions}
+        onOpen={() => onOpenDiffStudio?.()}
+        title={`Open Diff Studio for ${diffStats!.filesChanged} changed ${
+          diffStats!.filesChanged === 1 ? 'file' : 'files'
+        } in ${displayName}`}
+      />
     </div>
   ) : null
 

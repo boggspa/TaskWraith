@@ -164,6 +164,7 @@ describe('ExternalPathAboveRow workspace name', () => {
         diffStats: { filesChanged: 2, additions: 7, deletions: 3 },
         createPrState: { status: 'idle' },
         onCreatePr: () => undefined,
+        onOpenDiffStudio: () => undefined,
         composerStyle: 'cursor'
       })
     )
@@ -178,6 +179,8 @@ describe('ExternalPathAboveRow workspace name', () => {
     expect(gitPill).toBeGreaterThan(-1)
     expect(changesPill).toBeGreaterThan(gitPill)
     expect(actionPill).toBeGreaterThan(changesPill)
+    expect(html).toContain('composer-above-bar-stat-clickable')
+    expect(html).toContain('Open Diff Studio for 2 changed files in TaskWraith')
   })
 
   it('surfaces a diverged secondary workspace through the shared Git sync chip', () => {

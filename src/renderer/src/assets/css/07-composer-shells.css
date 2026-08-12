@@ -1055,6 +1055,28 @@
   align-items: center;
   gap: 6px;
 }
+.composer-above-bar-stat-clickable {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.composer-above-bar-stat-clickable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, #ffffff 28%);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.composer-above-bar-stat-clickable:hover > .composer-above-bar-files,
+.composer-above-bar-stat-clickable:focus-visible > .composer-above-bar-files {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
 /* Cursor shell groups the Create-PR row into three pills via wrappers in
  * App.tsx. Other shells keep `display: contents` so children flatten into
  * the row — flex `order` below restores the legacy branch-first sequence. */

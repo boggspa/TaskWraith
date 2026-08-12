@@ -262,6 +262,10 @@ import {
 } from './lib/chatScope'
 import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
 import { resolveComposerFocusedWorkspace, resolveAppChatChromeWorkspacePath } from './lib/composerFocusedWorkspace'
+import {
+  openWorkspaceDiffInspector,
+  withWorkspaceDiffPath
+} from './lib/workspaceDiffInspector'
 import { resolveRemoveWorkspaceFocusTeardown } from './lib/removeWorkspaceFocusTeardown'
 import {
   WorkspaceGitSnapshotStore,
@@ -1914,6 +1918,7 @@ function App(): React.JSX.Element {
   const [diffView, setDiffView] = useState<'this_run' | 'workspace'>('workspace')
   const [diffRefreshStatus, setDiffRefreshStatus] = useState<string>('')
   const [isPreparingDiffReview, setIsPreparingDiffReview] = useState(false)
+  const workspaceDiffInspectorRequestRef = useRef(0)
   const [auditRuns, setAuditRuns] = useState<AuditRunRecord[]>([])
   const [auditRunNotice, setAuditRunNotice] = useState<AuditRunNoticeState | null>(null)
   const [dismissedAuditRunIds, setDismissedAuditRunIds] = useState<Set<string>>(
@@ -11097,12 +11102,14 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', resizeSession)
   }, [isPersistentSessionEnabled])
 
-  const refreshDiff = async () => {
+  const refreshDiff = async (workspacePathOverride?: string) => {
     const workspaceForDiff = currentChatWorkspace || currentWorkspace
     const presentationPath = currentGitPresentationPath || chromeWorkspacePath
-    if (!workspaceForDiff && !presentationPath) return
+    const explicitWorkspacePath =
+      typeof workspacePathOverride === 'string' ? workspacePathOverride.trim() : undefined
+    if (!explicitWorkspacePath && !workspaceForDiff && !presentationPath) return
     const worktree =
-      workspaceForDiff && currentProvider === 'gemini'
+      !explicitWorkspacePath && workspaceForDiff && currentProvider === 'gemini'
         ? resolveGeminiWorktreeConfig(workspaceForDiff)
         : undefined
     if (isGeminiWorktreeDiffUnavailable(worktree)) {
@@ -11113,13 +11120,35 @@ function App(): React.JSX.Element {
       return
     }
 
-    const diffWorkspacePath = currentComposerWorktreeSelection
-      ? currentGitPresentationPath
-      : presentationPath ||
-        (workspaceForDiff ? getDiffWorkspacePath(workspaceForDiff, worktree) : undefined)
+    const diffWorkspacePath =
+      explicitWorkspacePath ||
+      (currentComposerWorktreeSelection
+        ? currentGitPresentationPath
+        : presentationPath ||
+          (workspaceForDiff ? getDiffWorkspacePath(workspaceForDiff, worktree) : undefined))
     if (!diffWorkspacePath) return
     const diffObj = await window.api.getDiff(diffWorkspacePath)
-    setDiff(diffObj)
+    setDiff(withWorkspaceDiffPath(diffObj, diffWorkspacePath))
+  }
+
+  const openWorkspaceDiffInInspector = async (workspacePath?: string): Promise<void> => {
+    const targetPath = workspacePath?.trim() || currentGitPresentationPath
+    const requestId = ++workspaceDiffInspectorRequestRef.current
+    await openWorkspaceDiffInspector(targetPath, {
+      loadDiff: (path) => window.api.getDiff(path),
+      isCurrent: () => workspaceDiffInspectorRequestRef.current === requestId,
+      onOpen: () => {
+        setDiff(null)
+        setDiffView('workspace')
+        setDiffRefreshStatus('Loading workspace changes…')
+        openInspectorTab('diff')
+      },
+      onLoaded: (diffObj, loadedPath) => {
+        setDiff(withWorkspaceDiffPath(diffObj, loadedPath))
+        setDiffRefreshStatus('')
+      },
+      onError: setDiffRefreshStatus
+    })
   }
 
   // ── Host-side fallback compaction (legacy/unmarked Kimi) ──────────────────
@@ -28604,6 +28633,7 @@ function App(): React.JSX.Element {
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openWorkspaceDiffInInspector,
     openPlanImportReview,
     openSideChatFromSlashCommand,
     persistExternalPathGrantPrompt,
@@ -29423,6 +29453,12 @@ function App(): React.JSX.Element {
         },
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path || viewerChat.workspacePath || undefined,
+        openWorkspaceDiffInInspector: (workspacePath?: string) => {
+          projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
+          void composerHandlers.openWorkspaceDiffInInspector(
+            workspacePath || viewerGitPresentationPath
+          )
+        },
         pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
         externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
         externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,

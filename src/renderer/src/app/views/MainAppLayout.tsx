@@ -2890,7 +2890,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               setSessionTrust={setSessionTrust}
               showTerminal={showTerminal}
               setShowTerminal={setShowTerminal}
-              workspacePath={currentGeminiWorktree?.effectivePath || currentWorkspace?.path}
+              workspacePath={
+                (activeDiff as { workspacePath?: string } | null)?.workspacePath ||
+                currentGeminiWorktree?.effectivePath ||
+                currentWorkspace?.path
+              }
               provider={currentProvider}
               approvalMode={approvalMode}
               codexStatus={currentAgentStatus}

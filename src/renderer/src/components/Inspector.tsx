@@ -113,7 +113,7 @@ const PROVIDER_TRANSPORT: Record<ProviderId, ProviderAdapterTransport> = {
 interface InspectorProps {
   rightTab: InspectorTab
   activeDiff: any
-  refreshDiff: () => void
+  refreshDiff: (workspacePath?: string) => void
   currentWorkspace: any
   diffView: 'this_run' | 'workspace'
   setDiffView: (v: 'this_run' | 'workspace') => void
@@ -455,7 +455,7 @@ function DiffTab(props: InspectorProps) {
       if (result.ok) {
         setGitSnapshot(result.data)
         setActionStatus(`Staged ${path}`)
-        props.refreshDiff()
+        props.refreshDiff(effectiveWorkspacePath)
       } else {
         setActionStatus(result.error)
       }
@@ -478,7 +478,7 @@ function DiffTab(props: InspectorProps) {
       if (result.ok) {
         setGitSnapshot(result.data)
         setActionStatus(`Unstaged ${path}`)
-        props.refreshDiff()
+        props.refreshDiff(effectiveWorkspacePath)
       } else {
         setActionStatus(result.error)
       }
@@ -537,7 +537,7 @@ function DiffTab(props: InspectorProps) {
         <PillButton
           variant="ghost"
           size="compact"
-          onClick={props.refreshDiff}
+          onClick={() => props.refreshDiff(effectiveWorkspacePath)}
           disabled={!props.currentWorkspace}
         >
           Refresh

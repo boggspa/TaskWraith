@@ -164,6 +164,15 @@ describe('Multiview focused workspace presentation', () => {
     expect(paneComposer).toContain(
       'paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId)'
     )
+    expect(paneComposer).toContain(
+      'openWorkspaceDiffInInspector: (workspacePath?: string) => {'
+    )
+    expect(paneComposer).toContain(
+      'projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)'
+    )
+    expect(paneComposer).toContain(
+      'composerHandlers.openWorkspaceDiffInInspector(\n            workspacePath || viewerGitPresentationPath'
+    )
 
     const screenWatch = slice(
       'const handleMultiviewPaneToggleScreenWatch =',
