@@ -34,6 +34,10 @@ import {
   summarizeGitCommitActivity,
   type GitWorkspaceStats
 } from './GitWorkspaceStats'
+import {
+  readGitUnpushedCommitStack,
+  type GitUnpushedCommitStack
+} from './GitCommitStack'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const WORKSPACE_STATS_CACHE_TTL_MS = 30_000
@@ -372,6 +376,23 @@ export class GitService {
   async snapshot(inputPath: string): Promise<GitResult<GitRepositorySnapshot>> {
     try {
       return { ok: true, data: await this.buildSnapshot(inputPath) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async unpushedCommits(inputPath: string): Promise<GitResult<GitUnpushedCommitStack>> {
+    try {
+      const snapshot = await this.buildSnapshot(inputPath)
+      return {
+        ok: true,
+        data: await readGitUnpushedCommitStack({
+          repoRoot: snapshot.repoRoot,
+          snapshot,
+          run: this.run,
+          timeoutMs: this.timeoutMs
+        })
+      }
     } catch (error) {
       return failure(error)
     }
