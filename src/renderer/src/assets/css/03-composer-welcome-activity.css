@@ -14285,6 +14285,9 @@ button.diff-file-row {
 .notification-newadditions-model.provider-meta {
   color: var(--provider-meta-color, #1671ea);
 }
+.notification-newadditions-model.provider-nvidia {
+  color: var(--provider-nvidia-color, #538200);
+}
 .notification-newadditions-model.provider-cohere {
   color: var(--provider-cohere-color, #5e7c6f);
 }

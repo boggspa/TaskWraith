@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { NotificationZone, notificationDirectionForDrag } from './NotificationZone'
 import { PINNED_APP_NOTIFICATIONS, type AppNotification } from '../../../shared/appNotifications'
+import { TASKWRAITH_PROVIDER_ACCENTS } from '../../../shared/taskWraithProviderPresentation'
 
 /**
  * Server-rendered smoke tests (the codebase uses renderToStaticMarkup, no
@@ -10,6 +12,11 @@ import { PINNED_APP_NOTIFICATIONS, type AppNotification } from '../../../shared/
  * the danger-vs-default tone, and that the dismiss affordance respects
  * `dismissible`.
  */
+
+const notificationCss = readFileSync(
+  new URL('../assets/css/03-composer-welcome-activity.css', import.meta.url),
+  'utf8'
+)
 
 const deprecation: AppNotification = {
   id: 'dep-1',
@@ -216,6 +223,21 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-newadditions-model provider-meta')
     expect(html).toContain('notification-newadditions-model provider-nvidia')
     expect(html).not.toContain('notification-newadditions-provider provider-meta')
+  })
+
+  it('paints Nemotron 3.5 Lightning with the NVIDIA brand hue', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={PINNED_APP_NOTIFICATIONS} />)
+    expect(html).toContain(
+      'notification-newadditions-model provider-nvidia">Nemotron 3.5 Lightning (30B-MLX)'
+    )
+
+    const selector = '.notification-newadditions-model.provider-nvidia {'
+    const ruleStart = notificationCss.indexOf(selector)
+    expect(ruleStart).toBeGreaterThanOrEqual(0)
+    const rule = notificationCss.slice(ruleStart, notificationCss.indexOf('}', ruleStart))
+    expect(rule.toLowerCase()).toContain(
+      `var(--provider-nvidia-color, ${TASKWRAITH_PROVIDER_ACCENTS.nvidia.toLowerCase()})`
+    )
   })
 
   it('drops expired notifications when now is past expiresAt', () => {
