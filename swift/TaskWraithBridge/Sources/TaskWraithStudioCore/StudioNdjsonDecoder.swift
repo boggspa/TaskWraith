@@ -15,20 +15,28 @@ public enum StudioErrorCode: String, Codable {
     case storeFailure = "store_failure"
 }
 
-public let studioErrorNumbers: [StudioErrorCode: Int] = [
-    .parseError: -32700,
-    .invalidRequest: -32600,
-    .methodNotFound: -32601,
-    .invalidParams: -32602,
-    .staleBase: 4001,  // Normative spec: StudioProtocol.ts
-    .invalidOp: 4002,
-    .insertionInsideItem: 4003,
-    .duplicateItem: 4004,
-    .unrepresentableTime: 4005,
-    .misalignedTime: 4006,
-    .unsupportedProtocolVersion: 4007,
-    .storeFailure: 4008
-]
+public actor StudioErrorCodeProvider {
+    public static let shared = StudioErrorCodeProvider()
+    
+    private let errorNumbers: [StudioErrorCode: Int] = [
+        .parseError: -32700,
+        .invalidRequest: -32600,
+        .methodNotFound: -32601,
+        .invalidParams: -32602,
+        .staleBase: 4001,  // Normative spec: StudioProtocol.ts
+        .invalidOp: 4002,
+        .insertionInsideItem: 4003,
+        .duplicateItem: 4004,
+        .unrepresentableTime: 4005,
+        .misalignedTime: 4006,
+        .unsupportedProtocolVersion: 4007,
+        .storeFailure: 4008
+    ]
+    
+    public func errorNumber(for code: StudioErrorCode) -> Int {
+        return errorNumbers[code] ?? -32000
+    }
+}
 
 public struct StudioMessage: Codable {
     public let jsonrpc: String
@@ -63,7 +71,7 @@ public class StudioNdjsonDecoder {
         buffer.append(chunk)
         var events: [StudioDecodeEvent] = []
         while let lineEnd = buffer.firstIndex(of: 0x0A) {
-            let lineData = buffer.subarray(in: 0..<lineEnd)
+            let lineData = buffer.subdata(in: 0..<lineEnd)
             buffer.removeSubrange(0...lineEnd)
             if skippingOversizedLine {
                 skippingOversizedLine = false
