@@ -316,6 +316,10 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // the primary app surface. Read-only projection continuity is safe above.
   'host-projection:command-submit',
   'host-projection:receipt-lookup',
+  // Process-wide Host lifecycle is visible and mutable only from the primary
+  // app surface. Popouts never gain an independent start/stop authority.
+  'host-lifecycle:status',
+  'host-lifecycle:set',
   // Owner-signed agent membership and zero-click mention authority always
   // require the primary renderer plus a main-owned native confirmation sheet.
   'channels:agent:overview',

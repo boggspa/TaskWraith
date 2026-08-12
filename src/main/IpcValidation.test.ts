@@ -106,6 +106,14 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('host-projection:receipt-lookup', [[]])).toThrow(/object/)
   })
 
+  it('shape-gates the in-app Host lifecycle bridge', () => {
+    expect(() => validateIpcArgs('host-lifecycle:status', [])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:status', [{}])).toThrow(/too many arguments/)
+    expect(() => validateIpcArgs('host-lifecycle:set', [{ action: 'start' }])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:set', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('host-lifecycle:set', ['stop'])).toThrow(/object/)
+  })
+
   it('shape-gates the closed Channels host contract and rejects trailing data', () => {
     expect(() => validateIpcArgs('channels:list', [])).not.toThrow()
     expect(() => validateIpcArgs('channels:list', [{}])).toThrow(/too many arguments/)

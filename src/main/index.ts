@@ -932,6 +932,7 @@ import { createHostProductionArtifactShadow } from './host/HostProductionArtifac
 import { createHostProductionChannelAdapter } from './host/HostProductionChannelAdapter'
 import { createHostProjectionBroker } from './host/HostProjectionBroker'
 import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandClient'
+import { HostLifecycleController } from './host/HostLifecycleController'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -1769,6 +1770,10 @@ import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerHostProjectionHandlers } from './ipc/hostProjectionHandlers'
+import {
+  HOST_LIFECYCLE_CHANGED_CHANNEL,
+  registerHostLifecycleHandlers
+} from './ipc/hostLifecycleHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerArchivedChatHandlers } from './ipc/archivedChatHandlers'
@@ -50106,9 +50111,8 @@ if (isGeminiMcpBridgeProcess) {
           getService: () => channelProductionBootstrap?.service ?? null
         })
       : undefined
-    let hostSupervisor: ReturnType<typeof createHostProductionBootstrap> | undefined
-    try {
-      hostSupervisor = createHostProductionBootstrap({
+    const createProductionHost = () =>
+      createHostProductionBootstrap({
         userDataPath: app.getPath('userData'),
         host: {
           hostId: resolveHostInstallId({ userDataPath: app.getPath('userData') }),
@@ -50333,24 +50337,24 @@ if (isGeminiMcpBridgeProcess) {
         }),
         ...(hostChannels ? { channels: hostChannels } : {})
       })
-    } catch (error) {
-      // Construction runs BEFORE `.start()` exists, so the start catch below can
-      // never observe a throw from here - the statement carrying it never runs.
-      // Wave 4.8 measured exactly that: identity file written, no socket dir, no
-      // log line, app healthy. Argument expressions evaluate before the call, so
-      // this also covers a throw from `AppStore` or `createBridgeActionExecutor()`.
-      console.error('[host] production Host failed to construct', error)
-    }
-    hostSupervisor?.start().catch((error) => {
-      // Never `void` this. A discarded rejection would leave the app looking
-      // healthy while Host is silently dead — unavailable telemetry is not zero.
-      console.error('[host] production Host failed to start', error)
+    const hostLifecycle = new HostLifecycleController({
+      createSupervisor: createProductionHost,
+      onOffline: () => desktopHostBroker.close(),
+      log: (line) => console.log(line)
     })
+    void hostLifecycle.start('app-start').then(
+      (result) => {
+        if (!result.ok) {
+          console.error('[host] production Host failed to start', result.error)
+        }
+      },
+      (error) => {
+        console.error('[host] production Host lifecycle failed unexpectedly', error)
+      }
+    )
 
     app.on('will-quit', () => {
-      // Guarded: if bootstrap construction ever throws, an unguarded call here
-      // would raise a TypeError that masks the original startup failure.
-      hostSupervisor?.stopSync()
+      hostLifecycle.stopSync()
       desktopHostBroker.close()
       void simulatorHostService.dispose()
       teardownCanvasSurfacesForWindowClose()
@@ -50951,6 +50955,12 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion(),
       broker: desktopHostBroker
+    })
+    registerHostLifecycleHandlers({
+      controller: hostLifecycle,
+      assertMainRendererSender,
+      publishChanged: (snapshot) =>
+        safeSendToWebContents(mainWindow, HOST_LIFECYCLE_CHANGED_CHANNEL, snapshot)
     })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),

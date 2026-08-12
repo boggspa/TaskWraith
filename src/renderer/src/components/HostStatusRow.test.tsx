@@ -29,7 +29,9 @@ import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
 import {
   HostStatusRow,
+  applyHostLifecycleToProjectionState,
   describeHostConnection,
+  describeHostLifecycleControl,
   describeHostProviders,
   describeHostAwaitingApprovals
 } from './HostStatusRow'
@@ -41,6 +43,7 @@ import {
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type { HostSnapshot } from '../../../shared/hostProtocol'
+import type { HostLifecycleSnapshot } from '../../../shared/hostLifecycle'
 
 function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
@@ -76,6 +79,15 @@ function snapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
 
 const state = (partial: Partial<HostProjectionState>): HostProjectionState =>
   ({ status: 'idle', ...partial }) as HostProjectionState
+
+const lifecycle = (partial: Partial<HostLifecycleSnapshot> = {}): HostLifecycleSnapshot => ({
+  revision: 2,
+  phase: 'running',
+  desired: 'running',
+  reason: 'user-start',
+  changedAt: '2026-08-12T12:00:00.000Z',
+  ...partial
+})
 
 /* ------------------------------------------------------------------ */
 /*  The distinction this row exists to preserve                       */
@@ -127,6 +139,67 @@ describe('describeHostConnection · cached and unreachable are different claims'
     expect(describeHostConnection(state({ status: 'loading' })).status).toBe('Checking…')
     // "Not checked" must not be dressed up as a problem.
     expect(describeHostConnection(state({ status: 'idle' })).status).not.toBe('Unreachable')
+  })
+})
+
+describe('HostStatusRow · visible in-app lifecycle', () => {
+  it('distinguishes an intentional stop from an unexplained unreachable Host', () => {
+    const stopped = lifecycle({
+      phase: 'stopped',
+      desired: 'stopped',
+      reason: 'user-stop'
+    })
+    expect(describeHostConnection(state({ status: 'unavailable' }), stopped)).toEqual({
+      connected: false,
+      status: 'Stopped by you'
+    })
+  })
+
+  it('immediately demotes a live projection to cached while Host is stopped', () => {
+    const projected = state({
+      status: 'live',
+      projection: { freshness: 'live' } as never
+    })
+    const fenced = applyHostLifecycleToProjectionState(
+      projected,
+      lifecycle({ phase: 'stopped', desired: 'stopped', reason: 'user-stop' })
+    )
+    expect(fenced.status).toBe('unavailable')
+    expect(fenced.projection?.freshness).toBe('cached')
+  })
+
+  it('offers stop while running, start after a user stop, and explicit retry after failure', () => {
+    expect(describeHostLifecycleControl(lifecycle())).toMatchObject({
+      action: 'stop',
+      actionLabel: 'Stop Host',
+      disabled: false
+    })
+    expect(
+      describeHostLifecycleControl(
+        lifecycle({ phase: 'stopped', desired: 'stopped', reason: 'user-stop' })
+      )
+    ).toMatchObject({ action: 'start', actionLabel: 'Start Host' })
+    expect(
+      describeHostLifecycleControl(
+        lifecycle({
+          phase: 'failed',
+          desired: 'running',
+          reason: 'start-failed',
+          error: 'socket bind failed'
+        })
+      )
+    ).toMatchObject({
+      stateLabel: 'Start failed',
+      action: 'start',
+      actionLabel: 'Retry Host',
+      detail: 'socket bind failed'
+    })
+  })
+
+  it('states the no-daemon boundary in the rendered surface', () => {
+    const markup = renderRow()
+    expect(markup).toContain('Runs only while TaskWraith is open')
+    expect(markup).toContain('Checking control')
   })
 })
 

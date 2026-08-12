@@ -121,6 +121,14 @@ describe('RendererIpcPolicy', () => {
     }
   })
 
+  it('keeps the process-wide Host lifecycle main-renderer-only', () => {
+    for (const channel of ['host-lifecycle:status', 'host-lifecycle:set']) {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+    }
+  })
+
   it.each([
     'channels:append',
     'channels:approve-human-review',

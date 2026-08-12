@@ -100,6 +100,12 @@ import type {
   HostSnapshot
 } from '../shared/hostProtocol'
 import type {
+  HostLifecycleActionRequest,
+  HostLifecycleActionResult,
+  HostLifecycleSnapshot,
+  HostLifecycleStatusResult
+} from '../shared/hostLifecycle'
+import type {
   LicenseNoticeKind,
   LicenseNoticeStatus,
   OpenLicenseNoticeResult
@@ -1228,6 +1234,12 @@ declare global {
       hostProjectionReceiptLookup: (params: {
         commandId: string
       }) => Promise<{ ok: true; receipt: HostCommandReceipt } | { ok: false; error: string }>
+      /** Visible lifecycle of Host inside the current TaskWraith process. */
+      hostLifecycleStatus: () => Promise<HostLifecycleStatusResult>
+      hostLifecycleSet: (request: HostLifecycleActionRequest) => Promise<HostLifecycleActionResult>
+      onHostLifecycleChanged: (
+        handler: (snapshot: HostLifecycleSnapshot) => void
+      ) => () => void
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string
       ) => Promise<boolean>

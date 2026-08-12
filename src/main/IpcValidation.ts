@@ -340,6 +340,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'host-projection:deltas-since': ['object'],
   'host-projection:command-submit': ['object'],
   'host-projection:receipt-lookup': ['object'],
+  // The visible Host lifecycle belongs to the current app process. Deep
+  // action validation and main-window authorization live in its handler.
+  'host-lifecycle:status': [],
+  'host-lifecycle:set': ['object'],
   'set-appearance-mode': ['any'],
   'get-host-weather': [],
   'native-capabilities:snapshot': [],
@@ -1122,14 +1126,15 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
     throw new Error(`No IPC schema registered for ${channel}.`)
   }
   // Detach is a generation-bound revoke operation, Browser-profile reset is an
-  // app-wide destructive human action, and Channels is a new closed contract,
-  // so trailing renderer data must not be silently ignored. Preserve legacy
-  // optional-tail behavior elsewhere.
+  // app-wide destructive human action, and Channels plus Host lifecycle are
+  // closed contracts, so trailing renderer data must not be silently ignored.
+  // Preserve legacy optional-tail behavior elsewhere.
   if (
     (channel === 'attach-window:detach' ||
       channel === 'attach-window:control-session' ||
       channel === 'canvas:clear-browser-profile' ||
-      channel.startsWith('channels:')) &&
+      channel.startsWith('channels:') ||
+      channel.startsWith('host-lifecycle:')) &&
     args.length > schema.length
   ) {
     throw new Error(`${channel} received too many arguments.`)

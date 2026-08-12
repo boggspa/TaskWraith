@@ -29,11 +29,15 @@
  * receipts remain Host-owned.
  */
 
+import { useEffect, useRef, useState } from 'react'
+
 import { useHostProjection } from '../hooks/useHostProjection'
 import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
 import { HostMissionControl } from './HostMissionControl'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import { HostLifecycleIpcClient } from '../lib/host/hostLifecycleIpcClient'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
+import type { HostLifecycleAction, HostLifecycleSnapshot } from '../../../shared/hostLifecycle'
 
 /** What the row should show. Pure data so it can be tested without React. */
 export interface HostConnectionView {
@@ -59,7 +63,29 @@ export interface HostConnectionView {
  *                      never be rendered as an empty-but-fine world.
  * - `Not checked` / `Checking…`  Honest pre-fetch states, not failures.
  */
-export function describeHostConnection(state: HostProjectionState): HostConnectionView {
+export function describeHostConnection(
+  state: HostProjectionState,
+  lifecycle?: HostLifecycleSnapshot | null
+): HostConnectionView {
+  if (lifecycle?.phase === 'starting') {
+    return { connected: false, status: 'Starting…' }
+  }
+  if (lifecycle?.phase === 'stopping') {
+    return { connected: false, status: 'Stopping…' }
+  }
+  if (lifecycle?.phase === 'stopped') {
+    return {
+      connected: false,
+      status: lifecycle.reason === 'user-stop' ? 'Stopped by you' : 'Stopped'
+    }
+  }
+  if (lifecycle?.phase === 'failed') {
+    return {
+      connected: false,
+      status: lifecycle.desired === 'running' ? 'Start failed' : 'Stop failed',
+      ...(lifecycle.error ? { detail: lifecycle.error } : {})
+    }
+  }
   if (state.status === 'live') {
     return { connected: true, status: 'Connected' }
   }
@@ -91,6 +117,108 @@ export function describeHostConnection(state: HostProjectionState): HostConnecti
   // idle — a provider is mounted but nothing has asked Host yet. Distinct from
   // a failure, and never dressed up as one.
   return { connected: false, status: 'Not checked' }
+}
+
+/**
+ * Lifecycle state fences cached projection authority immediately. The socket
+ * store catches up asynchronously, so without this adapter a just-stopped Host
+ * could leave Mission Control buttons enabled for one render.
+ */
+export function applyHostLifecycleToProjectionState(
+  state: HostProjectionState,
+  lifecycle?: HostLifecycleSnapshot | null
+): HostProjectionState {
+  if (!lifecycle || lifecycle.phase === 'running') return state
+  return {
+    ...state,
+    status: 'unavailable',
+    unavailableReason:
+      lifecycle.error ??
+      (lifecycle.phase === 'stopped'
+        ? 'Host is stopped inside TaskWraith.'
+        : `Host is ${lifecycle.phase}.`),
+    ...(state.projection
+      ? { projection: { ...state.projection, freshness: 'cached' as const } }
+      : {})
+  }
+}
+
+export interface HostLifecycleControlView {
+  readonly note: string
+  readonly stateLabel: string
+  readonly action?: HostLifecycleAction
+  readonly actionLabel?: string
+  readonly disabled: boolean
+  readonly detail?: string
+}
+
+/** Pure copy/action mapping for the visible in-app lifecycle control. */
+export function describeHostLifecycleControl(
+  lifecycle: HostLifecycleSnapshot | null,
+  pending = false,
+  unavailableReason?: string
+): HostLifecycleControlView {
+  const note = 'Runs only while TaskWraith is open'
+  if (!lifecycle) {
+    return {
+      note,
+      stateLabel: unavailableReason ? 'Control unavailable' : 'Checking control…',
+      disabled: true,
+      ...(unavailableReason ? { detail: unavailableReason } : {})
+    }
+  }
+  if (lifecycle.phase === 'running') {
+    return {
+      note,
+      stateLabel: 'Running in this app',
+      action: 'stop',
+      actionLabel: pending ? 'Stopping…' : 'Stop Host',
+      disabled: pending
+    }
+  }
+  if (lifecycle.phase === 'starting') {
+    return {
+      note,
+      stateLabel: 'Starting in this app',
+      action: 'start',
+      actionLabel: 'Starting…',
+      disabled: true
+    }
+  }
+  if (lifecycle.phase === 'stopping') {
+    return {
+      note,
+      stateLabel: 'Stopping',
+      action: 'stop',
+      actionLabel: 'Stopping…',
+      disabled: true
+    }
+  }
+  if (lifecycle.phase === 'failed') {
+    const action = lifecycle.desired === 'running' ? 'start' : 'stop'
+    return {
+      note,
+      stateLabel: lifecycle.desired === 'running' ? 'Start failed' : 'Stop failed',
+      action,
+      actionLabel:
+        action === 'start'
+          ? pending
+            ? 'Starting…'
+            : 'Retry Host'
+          : pending
+            ? 'Stopping…'
+            : 'Retry stop',
+      disabled: pending,
+      ...(lifecycle.error ? { detail: lifecycle.error } : {})
+    }
+  }
+  return {
+    note,
+    stateLabel: lifecycle.reason === 'user-stop' ? 'Stopped by you' : 'Stopped',
+    action: 'start',
+    actionLabel: pending ? 'Starting…' : 'Start Host',
+    disabled: pending
+  }
 }
 
 /** Providers as Host reports them, or an honest absence. */
@@ -209,13 +337,73 @@ export function describeHostAwaitingApprovals(
  * hook reports `idle`, which renders as "Not checked" rather than inventing a
  * connection state.
  */
-export function HostStatusRow() {
+export interface HostStatusRowProps {
+  /** Injected only by tests; production resolves the preload conduit lazily. */
+  readonly lifecycleClient?: HostLifecycleIpcClient
+}
+
+export function HostStatusRow({
+  lifecycleClient: injectedLifecycleClient
+}: HostStatusRowProps = {}) {
   const store = useHostProjectionStore()
   const commands = useHostCommandController()
-  const state = useHostProjection(store)
-  const view = describeHostConnection(state)
+  const sourceState = useHostProjection(store)
+  const [lifecycleClient] = useState(() => injectedLifecycleClient ?? new HostLifecycleIpcClient())
+  const [lifecycle, setLifecycle] = useState<HostLifecycleSnapshot | null>(null)
+  const [lifecycleError, setLifecycleError] = useState<string>()
+  const [lifecyclePending, setLifecyclePending] = useState(false)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    const adopt = (next: HostLifecycleSnapshot): void => {
+      if (!mounted.current) return
+      setLifecycle((current) => (!current || next.revision >= current.revision ? next : current))
+      setLifecycleError(undefined)
+    }
+    const unsubscribe = lifecycleClient.subscribe(adopt)
+    void lifecycleClient.status().then(adopt, (error: unknown) => {
+      if (!mounted.current) return
+      setLifecycleError(error instanceof Error ? error.message : String(error))
+    })
+    return () => {
+      mounted.current = false
+      unsubscribe()
+    }
+  }, [lifecycleClient])
+
+  const state = applyHostLifecycleToProjectionState(sourceState, lifecycle)
+  const view = describeHostConnection(state, lifecycle)
   const providers = describeHostProviders(state)
   const approvals = describeHostAwaitingApprovals(state)
+  const lifecycleControl = describeHostLifecycleControl(lifecycle, lifecyclePending, lifecycleError)
+
+  const runLifecycleAction = (): void => {
+    const action = lifecycleControl.action
+    if (!action || lifecycleControl.disabled) return
+    setLifecyclePending(true)
+    setLifecycleError(undefined)
+    void lifecycleClient
+      .set(action)
+      .then((result) => {
+        if (!mounted.current) return
+        if (result.snapshot) {
+          setLifecycle((current) =>
+            !current || result.snapshot!.revision >= current.revision ? result.snapshot! : current
+          )
+        }
+        if (!result.ok) setLifecycleError(result.error)
+        void store?.refresh()
+      })
+      .catch((error: unknown) => {
+        if (mounted.current) {
+          setLifecycleError(error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (mounted.current) setLifecyclePending(false)
+      })
+  }
 
   return (
     <>
@@ -223,6 +411,28 @@ export function HostStatusRow() {
         <span className={`sidebar-footer-led${view.connected ? ' is-on' : ''}`} aria-hidden />
         <span className="sidebar-footer-device-name">TaskWraith Host</span>
         <span className="sidebar-footer-device-status">{view.status}</span>
+      </div>
+      <div
+        className="host-lifecycle-control"
+        {...(lifecycleControl.detail ? { title: lifecycleControl.detail } : {})}
+      >
+        <span className="host-lifecycle-copy">
+          <span>{lifecycleControl.note}</span>
+          <span className="host-lifecycle-state" role="status" aria-live="polite">
+            {lifecycleControl.stateLabel}
+          </span>
+        </span>
+        {lifecycleControl.action ? (
+          <button
+            type="button"
+            className="host-lifecycle-toggle"
+            disabled={lifecycleControl.disabled}
+            onClick={runLifecycleAction}
+            aria-label={`${lifecycleControl.actionLabel}. Host runs only while TaskWraith is open.`}
+          >
+            {lifecycleControl.actionLabel}
+          </button>
+        ) : null}
       </div>
       {/* Wave 5a. Reuses the same status-row markup. The LED
           stays unlit here: it means "this client reached Host", which is the

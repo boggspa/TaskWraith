@@ -1189,6 +1189,16 @@ const api = {
     ipcRenderer.invoke('host-projection:command-submit', command),
   hostProjectionReceiptLookup: (params: { commandId: string }) =>
     ipcRenderer.invoke('host-projection:receipt-lookup', params),
+  // Host remains an in-process app capability: these channels expose its
+  // visible start/stop state without granting the renderer a process handle.
+  hostLifecycleStatus: () => ipcRenderer.invoke('host-lifecycle:status'),
+  hostLifecycleSet: (request: { action: 'start' | 'stop' }) =>
+    ipcRenderer.invoke('host-lifecycle:set', request),
+  onHostLifecycleChanged: (callback: (snapshot: unknown) => void) => {
+    const wrapped = (_event: unknown, snapshot: unknown) => callback(snapshot)
+    ipcRenderer.on('host-lifecycle:changed', wrapped)
+    return () => ipcRenderer.removeListener('host-lifecycle:changed', wrapped)
+  },
   setAppearanceMode: (payload: { mode?: string; reduceTransparency?: boolean } | string) =>
     ipcRenderer.invoke('set-appearance-mode', payload),
   getNativeCapabilities: () =>
@@ -3055,6 +3065,7 @@ const api = {
     ipcRenderer.removeAllListeners('human-collaboration-collaborator-status')
     ipcRenderer.removeAllListeners('channels:changed')
     ipcRenderer.removeAllListeners('channels:member:changed')
+    ipcRenderer.removeAllListeners('host-lifecycle:changed')
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
