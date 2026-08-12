@@ -30,9 +30,31 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Fence stale continuous drains.** Fences stale continuous drains and suppresses impossible lane retries during continuous orchestration.
 - **Read-only search inspection.** Read-only search inspection is now allowed under standard permission models.
 
+### Host authority and companion parity
+
+- **Mission Control everywhere.** Desktop, the terminal, and paired iOS now consume coherent Host generations/cursors for live missions, rounds, participants, outcomes, and reconnect state instead of independently reconstructing them.
+- **One question receipt across clients.** Answers and dismissals carry the exact durable Host command ID through the paired bridge, registry transition, ordered delta, Desktop Mission Control, terminal JSON, and iOS projection without exposing answer bodies.
+- **Terminal flight recorder.** `tw` gains an 80×24-friendly live mission view, filters, stable JSON projection, and deterministic `.twmission` export/replay with integrity and corruption checks.
+- **Production Host hardening.** Real-socket mutation tests cover authority, Bridge execution, receipts, snapshots, and deltas; slow-client isolation, turn-scoped chat-list coalescing, and port-backed capability offers keep the service responsive and honest.
+
 ### Simulator Canvas
 
 - **Companion gRPC for gestures.** Uses pinned fb-idb gRPC schema to handle gestures natively.
+
+### Mesh Canvas topology authoring
+
+- **Create and remodel geometry directly.** Agents can start from Mesh Canvas primitives or safely convert an imported OBJ/glTF/GLB node, then atomically edit stable vertices, edges, face loops, per-loop UVs, sculpt strokes, bones, weights, and poses. Complete internal geometry replacement is validated and never mutates the imported workspace source.
+- **Conflict-safe collaboration.** Topology edits carry expected revisions, idempotent mutation ids, and participant attribution, so solo and Ensemble seats refine the same chat-owned object without silent last-writer overwrites.
+- **Editable topology in the dock.** The Three.js viewer renders the current topology and exposes Surface, Edges, Vertices, and Rig overlays with live geometry counts.
+- **Permission parity across seats.** Ask and Plan remain per-call/request-only; Accept Edits, Full WS Access, and Full Access auto-allow Mesh work for all supported seats, including Pi's run-bound extension. Fresh v15 provider sessions receive direct topology tools; older frozen receipts keep their original catalogue.
+
+### First-class Canvas Browser
+
+- **Ask once, then watch it happen.** A request such as “search Google for Cambridge weather and open the BBC forecast” now opens the Canvas Browser in the active task's dock. Under Accept Edits and higher, ordinary navigation, clicks, and non-secret typing run without per-action approval cards; Ask and Plan remain attended per invocation.
+- **A durable TaskWraith profile.** Cookies, sign-ins, and site storage now survive app restarts in one TaskWraith-owned browser profile. It stays isolated from Safari, Chrome, and provider credentials, while shared Electron-session routing preserves the existing SSRF, permission, download, and containment policy for every Canvas surface.
+- **Human credential handoff.** Password, one-time-code, and credential-marked fields remain non-actuatable by agents. The Canvas stays open for the user to complete sign-in, and ordinary agent work can resume afterward without accessing a credential store.
+- **Human-only reset.** The new profile menu can close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache. It preserves Sketch, Mesh, Simulator, rendered HTML, image, and device canvases and is intentionally absent from the agent/MCP surface.
+- **Calmer browser-first dock.** The default Canvas view is now a focused New tab surface with compact surface and privacy menus instead of a stack of setup options, while Browser, Sketch, Mesh, and Simulator remain one control away.
 
 ### Performance
 
@@ -59,10 +81,6 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 - **Host Arc capture and export.** The production Host path now exposes authenticated transport, durable command/receipt routing, and `.twmission` capture/export with redacted, fail-closed bundles.
 - **Swift protocol parity.** TaskWraithKit gains the Host protocol's full family of frames and bounded decoders, keeping the companion aligned with the desktop Host contract.
 - **Lifecycle and projection honesty.** Host supervision preserves prototype authority methods, reports offline/connecting health accurately, and keeps malformed or unavailable Host data out of projections.
-- **Mission Control everywhere.** Desktop, the terminal, and paired iOS now consume coherent Host generations/cursors for live missions, rounds, participants, outcomes, and reconnect state instead of independently reconstructing them.
-- **One question receipt across clients.** Answers and dismissals carry the exact durable Host command ID through the paired bridge, registry transition, ordered delta, Desktop Mission Control, terminal JSON, and iOS projection without exposing answer bodies.
-- **Terminal flight recorder.** `tw` gains an 80×24-friendly live mission view, filters, stable JSON projection, and deterministic `.twmission` export/replay with integrity and corruption checks.
-- **Production Host hardening.** Real-socket mutation tests cover authority, Bridge execution, receipts, snapshots, and deltas; slow-client isolation, turn-scoped chat-list coalescing, and port-backed capability offers keep the service responsive and honest.
 
 ### Skills, Hooks, and harness posture
 
@@ -84,21 +102,6 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 ### Simulator Canvas
 
 - **Simulator Canvas dock.** Optional chat-owned iOS Simulator preview via Composer → Canvas → Open Simulator Canvas; `simctl` screenshots for the bezel; human tap/type/swipe and Home/Lock/Rotate via idb when a controller lease is held and idb is ready; agent HID tools (`simulator_tap` / `type` / `scroll` / `button` / `rotate`) under the `simulatorCanvas` policy; absolute orientations (`PORTRAIT` / `PORTRAIT_UPSIDE_DOWN` / `LANDSCAPE_LEFT` / `LANDSCAPE_RIGHT`); human lease release on dock close (see `ADVANCED_OPTIONAL_SETUP.md`).
-
-### Mesh Canvas topology authoring
-
-- **Create and remodel geometry directly.** Agents can start from Mesh Canvas primitives or safely convert an imported OBJ/glTF/GLB node, then atomically edit stable vertices, edges, face loops, per-loop UVs, sculpt strokes, bones, weights, and poses. Complete internal geometry replacement is validated and never mutates the imported workspace source.
-- **Conflict-safe collaboration.** Topology edits carry expected revisions, idempotent mutation ids, and participant attribution, so solo and Ensemble seats refine the same chat-owned object without silent last-writer overwrites.
-- **Editable topology in the dock.** The Three.js viewer renders the current topology and exposes Surface, Edges, Vertices, and Rig overlays with live geometry counts.
-- **Permission parity across seats.** Ask and Plan remain per-call/request-only; Accept Edits, Full WS Access, and Full Access auto-allow Mesh work for all supported seats, including Pi's run-bound extension. Fresh v15 provider sessions receive direct topology tools; older frozen receipts keep their original catalogue.
-
-### First-class Canvas Browser
-
-- **Ask once, then watch it happen.** A request such as “search Google for Cambridge weather and open the BBC forecast” now opens the Canvas Browser in the active task's dock. Under Accept Edits and higher, ordinary navigation, clicks, and non-secret typing run without per-action approval cards; Ask and Plan remain attended per invocation.
-- **A durable TaskWraith profile.** Cookies, sign-ins, and site storage now survive app restarts in one TaskWraith-owned browser profile. It stays isolated from Safari, Chrome, and provider credentials, while shared Electron-session routing preserves the existing SSRF, permission, download, and containment policy for every Canvas surface.
-- **Human credential handoff.** Password, one-time-code, and credential-marked fields remain non-actuatable by agents. The Canvas stays open for the user to complete sign-in, and ordinary agent work can resume afterward without accessing a credential store.
-- **Human-only reset.** The new profile menu can close browser tabs across all tasks and clear cookies, sign-ins, site data, and cache. It preserves Sketch, Mesh, Simulator, rendered HTML, image, and device canvases and is intentionally absent from the agent/MCP surface.
-- **Calmer browser-first dock.** The default Canvas view is now a focused New tab surface with compact surface and privacy menus instead of a stack of setup options, while Browser, Sketch, Mesh, and Simulator remain one control away.
 
 ## 1.9.3 - 2026-08-07
 
