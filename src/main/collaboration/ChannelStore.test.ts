@@ -137,8 +137,7 @@ function agentLogFixture() {
       resolveOwnerPublicKey: (channelId, ownerMemberId) =>
         channelId === fixture.channel.channelId && ownerMemberId === fixture.owner.memberId
           ? fixture.ownerKeys.publicKey
-          : null,
-      platform: 'darwin'
+          : null
     })
   const authority = makeAuthority()
   authority.registerDelegation(signedDelegation)

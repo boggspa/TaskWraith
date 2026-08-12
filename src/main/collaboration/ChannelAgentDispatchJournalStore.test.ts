@@ -13,7 +13,7 @@ import {
   writeFileSync
 } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -396,7 +396,7 @@ describe('ChannelAgentDispatchJournalStore', () => {
 
     expect(first.created).toBe(true)
     expect(second).toEqual({ created: false, snapshot: first.snapshot })
-    expect(readdirSync(directory)).toEqual([path.split('/').at(-1)])
+    expect(readdirSync(directory)).toEqual([basename(path)])
     expect(path).not.toContain(CHANNEL_ID)
     expect(path).not.toContain(value.plan.triggerMessageId)
     expect(raw).not.toContain(RAW_TRIGGER)

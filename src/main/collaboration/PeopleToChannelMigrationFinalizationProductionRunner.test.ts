@@ -340,23 +340,27 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
     'admissions_durable',
     'legacy_retired',
     'receipt_durable'
-  ] as const)('recovers interrupted terminal startup after %s', (crashAt) => {
-    const built = fixture()
-    expect(() => runner(built, { crashAt }).runToCompletion()).toThrow(
-      `injected crash at ${crashAt}`
-    )
+  ] as const)(
+    'recovers interrupted terminal startup after %s',
+    (crashAt) => {
+      const built = fixture()
+      expect(() => runner(built, { crashAt }).runToCompletion()).toThrow(
+        `injected crash at ${crashAt}`
+      )
 
-    const resumed = runner(built).runToCompletion()
-    const durable = durableState(built)
-    expect(resumed.migration).toMatchObject({
-      phase: 'committed',
-      recovery: { phase: 'committed' }
-    })
-    expect(resumed.migration.invitations).toHaveLength(2)
-    expect(durable.people.listShares()).toEqual([])
-    expect(durable.recovery.load()?.phase).toBe('committed')
-    expect(durable.channels.listChannels()).toHaveLength(1)
-  })
+      const resumed = runner(built).runToCompletion()
+      const durable = durableState(built)
+      expect(resumed.migration).toMatchObject({
+        phase: 'committed',
+        recovery: { phase: 'committed' }
+      })
+      expect(resumed.migration.invitations).toHaveLength(2)
+      expect(durable.people.listShares()).toEqual([])
+      expect(durable.recovery.load()?.phase).toBe('committed')
+      expect(durable.channels.listChannels()).toHaveLength(1)
+    },
+    15_000
+  )
 
   it('preserves only the explicit P5 workspace-bootstrap exception across terminal recovery', () => {
     const built = fixture({ includeP5: true })

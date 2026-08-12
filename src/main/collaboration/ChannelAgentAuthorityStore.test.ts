@@ -98,7 +98,7 @@ function makeStore(
 ): ChannelAgentAuthorityStore {
   return new ChannelAgentAuthorityStore({
     resolveOwnerPublicKey: resolveOwner,
-    platform: 'darwin',
+    platform: process.platform,
     now: () => clock,
     randomId: () => `test-${++nonce}`,
     ...overrides,

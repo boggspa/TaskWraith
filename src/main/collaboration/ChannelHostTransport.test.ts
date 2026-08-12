@@ -135,8 +135,7 @@ async function createFixture(): Promise<Fixture> {
     resolveOwnerPublicKey: (channelId, ownerMemberId) =>
       channelId === authorityChannelId && ownerMemberId === authorityOwnerMemberId
         ? hostIdentity.publicKey
-        : null,
-    platform: 'darwin'
+        : null
   })
   const log = new ChannelMessageLog(join(directory, 'logs'), store, undefined, authority)
   const admissions: Fixture['admissions'] = []
