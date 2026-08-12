@@ -1,6 +1,6 @@
 import Foundation
 
-public enum StudioErrorCode: String, Codable {
+public enum StudioErrorCode: String, Codable, Sendable {
     case parseError = "parse_error"
     case invalidRequest = "invalid_request"
     case methodNotFound = "method_not_found"
