@@ -71,7 +71,9 @@ describe('ChannelHumanPolicyStore', () => {
         createdAt: 1_000,
         updatedAt: 1_000
       })
-      expect(statSync(path).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect(statSync(path).mode & 0o777).toBe(0o600)
+      }
       expect(new ChannelHumanPolicyStore(path).list()).toEqual(applied)
 
       const before = readFileSync(path)

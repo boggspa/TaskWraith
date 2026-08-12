@@ -3,7 +3,7 @@ import {
   MAX_ROSTER_PRESET_PARTICIPANTS,
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
-} from '../../../main/EnsembleRosterPresetContract'
+} from '../../../shared/EnsembleRosterPresetContract'
 import { isEnsembleSeatProvider } from '../../../shared/retiredProviders'
 import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
 

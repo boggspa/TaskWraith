@@ -454,9 +454,13 @@ function validateReviewRequirementSources(read = (file) => readFileSync(join(ROO
 }
 
 function trackedSourceFiles() {
-  return execFileSync('git', ['ls-files', 'src'], { cwd: ROOT, encoding: 'utf8' })
+  return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'src'], {
+    cwd: ROOT,
+    encoding: 'utf8'
+  })
     .split('\n')
     .filter((file) => file.endsWith('.ts') || file.endsWith('.tsx'))
+    .filter((file) => existsSync(join(ROOT, file)))
 }
 
 function verifySourceBoundary(overrides = {}) {

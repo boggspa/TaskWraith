@@ -5,10 +5,7 @@ import { join } from 'path'
 import { createRelayServer } from '../src/server'
 import { createApnsGateway } from '../src/apnsGateway'
 import { b64, exportRawEd25519PublicKey, generateIdentityKeyPair } from '../../src/shared/e2ee/keys'
-import {
-  signApnsDeregisterRequest,
-  signApnsRegisterRequest
-} from '../../src/shared/e2ee/push'
+import { signApnsDeregisterRequest, signApnsRegisterRequest } from '../../src/shared/e2ee/push'
 
 const nonce = () => b64.encode(Buffer.from(crypto.getRandomValues(new Uint8Array(16))))
 

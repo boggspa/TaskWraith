@@ -2333,9 +2333,7 @@ describe('composeRun prompt envelope', () => {
     expect(envelope?.contentStored).toBe(false)
     expect(envelope?.instructionsDigest).toBe('digest-abc')
     expect(envelope?.composedSha256).toMatch(/^[0-9a-f]{64}$/)
-    const instructionLayer = envelope?.layers.find(
-      (layer) => layer.id === 'instructions_global'
-    )
+    const instructionLayer = envelope?.layers.find((layer) => layer.id === 'instructions_global')
     expect(instructionLayer?.state).toBe('applied')
     expect(instructionLayer?.content).toBeUndefined()
     const requestLayer = envelope?.layers.find((layer) => layer.id === 'current_request')
@@ -2372,8 +2370,8 @@ describe('composeRun prompt envelope', () => {
     })
     const envelope = payload.composer.promptEnvelope
     expect(envelope?.contentStored).toBe(true)
-    expect(
-      envelope?.layers.find((layer) => layer.id === 'instructions_global')?.content
-    ).toBe('Be terse.')
+    expect(envelope?.layers.find((layer) => layer.id === 'instructions_global')?.content).toBe(
+      'Be terse.'
+    )
   })
 })

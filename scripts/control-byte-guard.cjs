@@ -194,7 +194,13 @@ function listScannableFiles() {
     ['ls-files', '-z', '--cached', '--others', '--exclude-standard', ...SCANNED_EXTENSIONS],
     { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 }
   )
-  return [...new Set(out.split('\0').filter(Boolean))]
+  const deletedOut = execFileSync('git', ['ls-files', '-z', '--deleted', ...SCANNED_EXTENSIONS], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    maxBuffer: 128 * 1024 * 1024
+  })
+  const deleted = new Set(deletedOut.split('\0').filter(Boolean))
+  return [...new Set(out.split('\0').filter(Boolean))].filter((repoPath) => !deleted.has(repoPath))
 }
 
 /**

@@ -682,13 +682,18 @@ function isOptionalString(
   return value === undefined || isNonEmptyString(value, max)
 }
 
-const HOST_UNSAFE_IDENTIFIER_CONTROL_RE = /[\u0000-\u001f\u007f]/
+function hasUnsafeHostIdentifierControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+}
 
 function isSafeHostEntityIdComponent(value: unknown): value is string {
   return (
     isNonEmptyString(value, HOST_PROTOCOL_MAX_ID) &&
     value.trim() === value &&
-    !HOST_UNSAFE_IDENTIFIER_CONTROL_RE.test(value)
+    !hasUnsafeHostIdentifierControlCharacter(value)
   )
 }
 

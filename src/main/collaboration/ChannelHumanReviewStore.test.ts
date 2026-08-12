@@ -62,7 +62,9 @@ describe('ChannelHumanReviewStore', () => {
           resolvedAt: null
         }
       })
-      expect(statSync(path).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect(statSync(path).mode & 0o777).toBe(0o600)
+      }
       expect(new ChannelHumanReviewStore(path).list()).toEqual([queued.entry])
 
       const before = readFileSync(path)
@@ -293,7 +295,9 @@ describe('ChannelHumanReviewStore', () => {
       expect(existsSync(path)).toBe(false)
       expect(corrupt.list()).toEqual([])
       expect(corrupt.enqueue(request()).outcome).toBe('queued')
-      expect(statSync(path).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') {
+        expect(statSync(path).mode & 0o777).toBe(0o600)
+      }
     } finally {
       rmSync(root, { recursive: true, force: true })
       roots.delete(root)

@@ -307,7 +307,7 @@ function normaliseQuotaWindowText(windowEntry: UsageWindowAggregate): string {
  * always keeps the full original string.
  */
 function compactCurrencyCellValue(valueText: string): string {
-  const match = valueText.match(/^([~]?)(US\$|[\$£€])(\d[\d,]*\.?\d*)$/)
+  const match = valueText.match(/^([~]?)(US\$|[$£€])(\d[\d,]*\.?\d*)$/)
   if (!match) return valueText
   const [, hedge, symbol, digits] = match
   const num = Number(digits.replace(/,/g, ''))

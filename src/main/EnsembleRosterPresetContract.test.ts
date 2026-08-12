@@ -6,7 +6,7 @@ import {
   MAX_ROSTER_PRESET_PARTICIPANTS,
   parseEnsembleRosterPresetJson,
   type EnsembleRosterPreset
-} from './EnsembleRosterPresetContract'
+} from '../shared/EnsembleRosterPresetContract'
 
 function preset(): EnsembleRosterPreset {
   return {

@@ -165,10 +165,12 @@ describe('PeopleToChannelMigrationFinalizationExecutionStore', () => {
     })
     expect(store.load()).toEqual(replacement)
     expect(durableWrites).toBe(2)
-    expect(statSync(store.path).mode & 0o777).toBe(0o600)
-    expect(statSync(join(userDataPath, 'channels', 'people-to-channel-v1')).mode & 0o777).toBe(
-      0o700
-    )
+    if (process.platform !== 'win32') {
+      expect(statSync(store.path).mode & 0o777).toBe(0o600)
+      expect(statSync(join(userDataPath, 'channels', 'people-to-channel-v1')).mode & 0o777).toBe(
+        0o700
+      )
+    }
 
     expect(
       store.loadForRecoveryFence({
@@ -258,6 +260,8 @@ describe('PeopleToChannelMigrationFinalizationExecutionStore', () => {
 
     chmodSync(store.path, 0o644)
     expect(() => store.load()).toThrow(/path is unsafe/)
-    expect(statSync(store.path).mode & 0o777).toBe(0o644)
+    if (process.platform !== 'win32') {
+      expect(statSync(store.path).mode & 0o777).toBe(0o644)
+    }
   })
 })

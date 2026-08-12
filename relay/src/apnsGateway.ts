@@ -257,9 +257,7 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
         log('[apns-gateway] BadDeviceToken (kept; possible env mismatch)')
       }
     } catch (error) {
-      log(
-        `[apns-gateway] send failed: ${error instanceof Error ? error.message : String(error)}`
-      )
+      log(`[apns-gateway] send failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

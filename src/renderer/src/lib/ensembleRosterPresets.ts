@@ -18,7 +18,7 @@ import {
   type EnsembleRosterPreset,
   type EnsembleRosterPresetsExportPayload,
   type EnsembleRosterPresetsImportResult
-} from '../../../main/EnsembleRosterPresetContract'
+} from '../../../shared/EnsembleRosterPresetContract'
 import {
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName
@@ -33,7 +33,7 @@ export {
   type EnsembleRosterPreset,
   type EnsembleRosterPresetsExportPayload,
   type EnsembleRosterPresetsImportResult
-} from '../../../main/EnsembleRosterPresetContract'
+} from '../../../shared/EnsembleRosterPresetContract'
 
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([

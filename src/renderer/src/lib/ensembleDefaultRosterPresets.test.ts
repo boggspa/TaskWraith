@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEnsembleRosterPreset } from '../../../main/EnsembleRosterPresetContract'
+import { isEnsembleRosterPreset } from '../../../shared/EnsembleRosterPresetContract'
 import type { ProviderId } from '../../../main/store/types'
 import {
   buildDefaultEnsembleRosterPresets,

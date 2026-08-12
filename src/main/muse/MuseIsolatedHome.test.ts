@@ -124,6 +124,7 @@ describe('Muse isolated home', () => {
       XDG_CONFIG_HOME: '/Users/someone/.config'
     })
 
+    // @portability-ok: verifies opaque caller-supplied shell environment values are preserved.
     expect(lease.env.PATH).toBe('/usr/bin')
     expect(lease.env.SHELL).toBe('/bin/zsh')
     expect(lease.env.HOME).toBe(lease.homePath)

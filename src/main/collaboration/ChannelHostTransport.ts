@@ -158,7 +158,7 @@ export class ChannelHostTransport implements ChannelRuntimeTransport {
   private connectRoom(room: RoomState): void {
     if (this.disposed || this.rooms.get(room.roomId) !== room) return
     const url = `${room.relayUrl.replace(/\/$/, '')}/v1/session/${room.roomId}`
-    let socket: TransportSocket
+    let socket: TransportSocket | undefined = undefined
     socket = this.opts.socketFactory(
       url,
       {

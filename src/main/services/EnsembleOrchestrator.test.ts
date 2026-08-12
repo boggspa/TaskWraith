@@ -41,7 +41,7 @@ import {
 } from '../../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../shared/contextUsage'
-import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
+import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
 

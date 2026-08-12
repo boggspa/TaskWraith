@@ -269,7 +269,10 @@ describe('Multiview pane Composer context parity', () => {
       'requestLiveEnsembleRoundConfigUpdate(chatId, { fanoutPolicy: nextPolicy })'
     )
     expect(liveRoundConfig).toContain(
-      'requestLiveEnsembleRoundConfigUpdate(chatId, { maxContinuationHops: safeMax })'
+      'const change = buildContinuationHopsChangeRequest(chatId, source.ensemble, nextMax)'
+    )
+    expect(liveRoundConfig).toContain(
+      'previousMaxContinuationHops: change.previousMaxContinuationHops'
     )
     expect(liveRoundConfig).toContain('isEnsembleActiveRoundDispatchLive(activeRound)')
     expect(source).toContain("'stageRole',")

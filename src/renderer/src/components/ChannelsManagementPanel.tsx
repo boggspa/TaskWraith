@@ -150,9 +150,9 @@ export function ChannelsManagementPanel(): React.JSX.Element {
   return (
     <div className="shares-panel">
       <p className="settings-hint shares-panel-note">
-        Channels are chats you share. Invites, admissions, and message review live on each chat's
-        Channel panel; this page is the overview. A channel is reachable only while this Mac is
-        online.
+        Channels are chats you share. Invites, admissions, and message review live on each
+        chat&apos;s Channel panel; this page is the overview. A channel is reachable only while this
+        Mac is online.
       </p>
       {error && <p className="settings-error">{error}</p>}
       {channels !== null && active.length === 0 && (

@@ -29,7 +29,10 @@ function trigger(overrides: Partial<Parameters<typeof signTriggerRequest>[1]> = 
   })
 }
 
-async function startGateway(sender: ApnsGatewaySender, bucket?: { capacity: number; refillPerMinute: number }) {
+async function startGateway(
+  sender: ApnsGatewaySender,
+  bucket?: { capacity: number; refillPerMinute: number }
+) {
   const relay = await createRelayServer({
     port: 0,
     apnsGateway: createApnsGateway({ sender, ...(bucket ? { triggerBucket: bucket } : {}) })
@@ -100,7 +103,10 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
     try {
       const first = trigger({ threadId: 'thread-co' })
       const second = trigger({ threadId: 'thread-co' })
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(first) })).status).toBe(200)
+      expect(
+        (await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(first) }))
+          .status
+      ).toBe(200)
       const repeat = await fetch(`${base}/v1/push/trigger`, {
         method: 'POST',
         body: JSON.stringify(second)
@@ -135,19 +141,47 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
     const send = vi.fn(async () => ({ delivered: false, reason }))
     const { relay, base } = await startGateway({ send })
     try {
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(trigger()) })).status).toBe(200)
+      expect(
+        (
+          await fetch(`${base}/v1/push/trigger`, {
+            method: 'POST',
+            body: JSON.stringify(trigger())
+          })
+        ).status
+      ).toBe(200)
       await settle()
       // BadDeviceToken kept the entry — a second trigger still sends.
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(trigger()) })).status).toBe(200)
+      expect(
+        (
+          await fetch(`${base}/v1/push/trigger`, {
+            method: 'POST',
+            body: JSON.stringify(trigger())
+          })
+        ).status
+      ).toBe(200)
       await settle()
       expect(send).toHaveBeenCalledTimes(2)
 
       reason = 'Unregistered'
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(trigger()) })).status).toBe(200)
+      expect(
+        (
+          await fetch(`${base}/v1/push/trigger`, {
+            method: 'POST',
+            body: JSON.stringify(trigger())
+          })
+        ).status
+      ).toBe(200)
       await settle()
       expect(send).toHaveBeenCalledTimes(3)
       // Unregistered reaped it: the next trigger accepts (uniform) but sends nothing.
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(trigger()) })).status).toBe(200)
+      expect(
+        (
+          await fetch(`${base}/v1/push/trigger`, {
+            method: 'POST',
+            body: JSON.stringify(trigger())
+          })
+        ).status
+      ).toBe(200)
       await settle()
       expect(send).toHaveBeenCalledTimes(3)
     } finally {
@@ -176,7 +210,14 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
           })
         )
       })
-      expect((await fetch(`${base}/v1/push/trigger`, { method: 'POST', body: JSON.stringify(trigger()) })).status).toBe(200)
+      expect(
+        (
+          await fetch(`${base}/v1/push/trigger`, {
+            method: 'POST',
+            body: JSON.stringify(trigger())
+          })
+        ).status
+      ).toBe(200)
       await settle()
       expect(send).not.toHaveBeenCalled()
     } finally {

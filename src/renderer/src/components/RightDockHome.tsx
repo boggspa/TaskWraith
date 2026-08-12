@@ -206,15 +206,7 @@ interface HomeCardProps {
 function HomeGlyph({
   kind
 }: {
-  kind:
-    | 'diff'
-    | 'commits'
-    | 'raw'
-    | 'invocations'
-    | 'timeline'
-    | 'live'
-    | 'safety'
-    | 'capabilities'
+  kind: 'diff' | 'commits' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'
 }) {
   const path = {
     diff: 'M3 5h7M3 9h10M3 13h6',

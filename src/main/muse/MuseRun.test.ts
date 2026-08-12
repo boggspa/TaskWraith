@@ -40,11 +40,15 @@ function fakeSpawn(stdoutLines: string[], code = 0): MuseRunSpawnHandle {
   let stdoutListener: ((chunk: string) => void) | null = null
   return {
     pid: 99,
-    kill() {},
+    kill() {
+      // Test double does not own a process.
+    },
     onStdout(listener) {
       stdoutListener = listener
     },
-    onStderr() {},
+    onStderr() {
+      // This test double does not emit stderr.
+    },
     async wait() {
       stdoutListener?.(stdoutLines.map((line) => `${line}\n`).join(''))
       return { code, signal: null }
@@ -274,9 +278,15 @@ describe('runMuseProvider', () => {
       }),
       spawn: () => ({
         pid: 1,
-        kill() {},
-        onStdout() {},
-        onStderr() {},
+        kill() {
+          // Test double does not own a process.
+        },
+        onStdout() {
+          // This test double does not emit stdout.
+        },
+        onStderr() {
+          // This test double does not emit stderr.
+        },
         async wait() {
           cancelled = true
           return { code: null, signal: 'SIGTERM' }

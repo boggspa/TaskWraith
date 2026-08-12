@@ -339,11 +339,7 @@ export function verifyApnsRegisterRequest(request: ApnsRegisterRequest): boolean
 }
 
 export function verifyApnsDeregisterRequest(request: ApnsDeregisterRequest): boolean {
-  return verifyWith(
-    request.iphoneIdentityPubKey,
-    apnsDeregisterSigningString(request),
-    request.sig
-  )
+  return verifyWith(request.iphoneIdentityPubKey, apnsDeregisterSigningString(request), request.sig)
 }
 
 /**

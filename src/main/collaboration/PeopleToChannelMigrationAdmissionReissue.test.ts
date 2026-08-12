@@ -274,7 +274,9 @@ describe('PeopleToChannelMigrationAdmissionReissue', () => {
       built.base.pendingAdmissionReissues[0].policy,
       built.base.pendingAdmissionReissues[0].policy
     ])
-    expect(statSync(built.escrowPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(built.escrowPath).mode & 0o777).toBe(0o600)
+    }
     const escrowBytes = readFileSync(built.escrowPath)
     const serialized = escrowBytes.toString('utf8')
     expect(serialized).toContain(`"schemaVersion": ${PEOPLE_TO_CHANNEL_ADMISSION_REISSUE_VERSION}`)

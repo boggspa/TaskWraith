@@ -1979,8 +1979,15 @@ function isOptionalQuestionReceiptId(value: unknown): boolean {
       value.length > 0 &&
       value.length <= BRIDGE_QUESTION_RECEIPT_ID_MAX_CHARS &&
       value.trim() === value &&
-      !/[\u0000-\u001f\u007f]/.test(value))
+      !hasAsciiControlCharacter(value))
   )
+}
+
+function hasAsciiControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
 }
 
 const MAX_IMAGE_ATTACHMENTS = 15

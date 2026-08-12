@@ -31,7 +31,13 @@ import type { HostProductionQuestionListPort } from './HostProductionSuppliers'
 const HOST_QUESTION_ID_MAX = 512
 /** Compact prompt preview bound — matches decode ceiling HOST_PROTOCOL_MAX_WARNING. */
 const HOST_QUESTION_PROMPT_PREVIEW_MAX = 1_000
-const HOST_UNSAFE_ID_CONTROL_RE = /[\u0000-\u001f\u007f]/
+
+function hasUnsafeHostQuestionIdControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+}
 
 export type HostQuestionShadowStatus = 'pending' | 'answered' | 'rejected' | 'expired' | 'cancelled'
 
@@ -66,7 +72,7 @@ function isUsableId(value: unknown): value is string {
     typeof value === 'string' &&
     value.length > 0 &&
     value.trim() === value &&
-    !HOST_UNSAFE_ID_CONTROL_RE.test(value)
+    !hasUnsafeHostQuestionIdControlCharacter(value)
   )
 }
 

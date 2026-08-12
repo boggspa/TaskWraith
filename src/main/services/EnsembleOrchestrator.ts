@@ -281,7 +281,7 @@ import {
   buildEnsembleParticipantProviderCatalog,
   type EnsembleParticipantProviderCatalogEntry
 } from '../EnsembleParticipantCatalog'
-import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
+import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
   buildEnsembleRosterPresetApply,

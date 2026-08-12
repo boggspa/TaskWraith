@@ -57,7 +57,7 @@ INSERT INTO sessions (
   'session_jsonl', '${row.modelId || 'muse-spark-1.2'}', 'valid', 0
 );
 `
-  execFileSync('/usr/bin/sqlite3', [dbPath], { input: sql })
+  execFileSync('sqlite3', [dbPath], { input: sql })
   return dbPath
 }
 

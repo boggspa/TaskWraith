@@ -200,10 +200,7 @@ describe('Channels production main integration', () => {
     // finalization, so a task card whose isShared reads only
     // getShareForChat goes permanently dark on iOS the moment migration
     // commits — the phone's channel-membership section silently empties.
-    const card = between(
-      'const buildRemoteTaskCardForChat = (',
-      'const leanRemoteDiffSummary = ('
-    )
+    const card = between('const buildRemoteTaskCardForChat = (', 'const leanRemoteDiffSummary = (')
     expect(card).toContain('resolveActiveChannelChatIds()')
     expect(card).toContain('isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||')
     expect(card).toContain(

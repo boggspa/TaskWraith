@@ -11,7 +11,7 @@ describe('canvas chart index createDriver wiring', () => {
   it('registers CanvasChartDriver for kind === chart in main index createDriver', () => {
     const src = readFileSync(join(__dirname, '../index.ts'), 'utf8')
     expect(src).toMatch(
-      /import\s+\{\s*CanvasChartDriver\s*\}\s+from\s+['.\/]*canvas\/CanvasChartDriver['"]/
+      /import\s+\{\s*CanvasChartDriver\s*\}\s+from\s+['./]*canvas\/CanvasChartDriver['"]/
     )
     expect(src).toMatch(/kind\s*===\s*['"]chart['"]/)
     expect(src).toMatch(/new\s+CanvasChartDriver\s*\(/)

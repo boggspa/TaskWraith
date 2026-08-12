@@ -107,7 +107,15 @@ async function waitForWalAcquire(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (walHasAcquireForRun(persistence, runId)) return
+    try {
+      if (walHasAcquireForRun(persistence, runId)) return
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('changed size while reading')) {
+        throw error
+      }
+      // The child may append between the persistence layer's two consistency
+      // checks. This is a polling handshake, so retry that transient snapshot.
+    }
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   const kinds = walKinds(persistence)

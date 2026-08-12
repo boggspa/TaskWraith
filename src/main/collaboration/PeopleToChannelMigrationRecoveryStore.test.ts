@@ -89,8 +89,10 @@ function withFixture(
   }
 }
 
-function privateMode(path: string): number {
-  return statSync(path).mode & 0o777
+function expectPrivateMode(path: string, expected: number): void {
+  if (process.platform !== 'win32') {
+    expect(statSync(path).mode & 0o777).toBe(expected)
+  }
 }
 
 describe('PeopleToChannelMigrationRecoveryStore', () => {
@@ -117,9 +119,9 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
       })
       const backupPath = join(store.paths.backups, prepared.source.backupFile!)
       expect(readFileSync(backupPath)).toEqual(readFileSync(source.path))
-      expect(privateMode(store.paths.root)).toBe(0o700)
-      expect(privateMode(store.paths.intent)).toBe(0o600)
-      expect(privateMode(backupPath)).toBe(0o600)
+      expectPrivateMode(store.paths.root, 0o700)
+      expectPrivateMode(store.paths.intent, 0o600)
+      expectPrivateMode(backupPath, 0o600)
 
       const intent = readFileSync(store.paths.intent, 'utf8')
       expect(intent).not.toContain('Private Migration Person')
@@ -238,7 +240,7 @@ describe('PeopleToChannelMigrationRecoveryStore', () => {
 
       const receiptPath = join(store.paths.receipts, `${plan.planId}.json`)
       const receipt = readFileSync(receiptPath, 'utf8')
-      expect(privateMode(receiptPath)).toBe(0o600)
+      expectPrivateMode(receiptPath, 0o600)
       expect(receipt).toContain('"status": "committed"')
       expect(receipt).not.toContain('Private Migration Person')
       expect(receipt).not.toContain('Private Migration Chat')

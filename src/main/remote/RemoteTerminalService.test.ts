@@ -76,14 +76,10 @@ describe('RemoteTerminalService', () => {
     const service = new RemoteTerminalService({ spawn })
     const opened = service.open({ workspaceId: 'ws-1', workspacePath: '/tmp/ws' })
     if (!opened.ok) throw new Error('open failed')
-    expect(
-      service.input(opened.terminalId, Buffer.from('ls\n').toString('base64')).ok
-    ).toBe(true)
+    expect(service.input(opened.terminalId, Buffer.from('ls\n').toString('base64')).ok).toBe(true)
     expect(spawned[0].write).toHaveBeenCalledWith('ls\n')
     expect(service.input(opened.terminalId, 'not-base64-!!!').ok).toBe(false)
-    expect(
-      service.input(opened.terminalId, Buffer.alloc(9000).toString('base64')).ok
-    ).toBe(false)
+    expect(service.input(opened.terminalId, Buffer.alloc(9000).toString('base64')).ok).toBe(false)
     spawned[0].emitExit({ exitCode: 0 })
     expect(service.input(opened.terminalId, Buffer.from('x').toString('base64'))).toEqual({
       ok: false,

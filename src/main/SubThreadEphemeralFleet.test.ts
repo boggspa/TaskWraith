@@ -235,9 +235,7 @@ describe('SubThreadEphemeralFleet', () => {
           ? {
               joinPolicy: {
                 ...(overrides.groupId !== undefined ? { groupId: overrides.groupId } : {}),
-                ...(overrides.deadlineAt !== undefined
-                  ? { deadlineAt: overrides.deadlineAt }
-                  : {})
+                ...(overrides.deadlineAt !== undefined ? { deadlineAt: overrides.deadlineAt } : {})
               }
             }
           : { joinPolicy: { groupId: 'wave-p-1', deadlineAt: future } })

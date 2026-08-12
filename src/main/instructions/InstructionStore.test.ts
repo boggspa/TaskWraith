@@ -36,8 +36,10 @@ describe('InstructionStore', () => {
 
   it('creates the instructions directory with owner-only permissions', () => {
     store.writeGlobalDocument('x')
-    const mode = fs.statSync(store.instructionsRoot()).mode & 0o777
-    expect(mode).toBe(0o700)
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(store.instructionsRoot()).mode & 0o777
+      expect(mode).toBe(0o700)
+    }
   })
 
   it('rejects an over-cap write outright', () => {

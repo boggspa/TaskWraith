@@ -232,9 +232,11 @@ describe('PeopleToChannelMigrationCutoverCoordinator', () => {
       peoplePosture: PEOPLE_TO_CHANNEL_SOAK_POSTURE
     })
     expect(readFileSync(built.sourcePath)).toEqual(sourceBefore)
-    expect(lstatSync(peopleToChannelCutoverManifestPath(built.userDataPath)).mode & 0o777).toBe(
-      0o600
-    )
+    if (process.platform !== 'win32') {
+      expect(lstatSync(peopleToChannelCutoverManifestPath(built.userDataPath)).mode & 0o777).toBe(
+        0o600
+      )
+    }
     const persisted = readFileSync(peopleToChannelCutoverManifestPath(built.userDataPath), 'utf8')
     expect(persisted).not.toContain(HOST_KEY)
     expect(persisted).not.toContain('Host')

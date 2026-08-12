@@ -6,9 +6,9 @@ import type {
   PermissionPresetId,
   PooledAgentIdentitySnapshot,
   ProviderId
-} from './store/types'
-import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
-import { MAX_ENSEMBLE_CAPTAINS } from '../shared/ensembleAuthority'
+} from '../main/store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from './ensembleLimits'
+import { MAX_ENSEMBLE_CAPTAINS } from './ensembleAuthority'
 
 /**
  * Portable Ensemble roster-preset interchange contract.
@@ -103,9 +103,7 @@ export type EnsembleRosterPresetImportAcknowledgement = {
   error?: string
 }
 
-export function safeRosterPermissionPresetId(
-  value: unknown
-): PermissionPresetId | undefined {
+export function safeRosterPermissionPresetId(value: unknown): PermissionPresetId | undefined {
   if (
     value === 'read_only' ||
     value === 'plan' ||
@@ -216,9 +214,7 @@ export function parseEnsembleRosterPresetJson(json: string): {
   }
 }
 
-export function cloneEnsembleRosterPreset(
-  preset: EnsembleRosterPreset
-): EnsembleRosterPreset {
+export function cloneEnsembleRosterPreset(preset: EnsembleRosterPreset): EnsembleRosterPreset {
   return {
     ...preset,
     participants: preset.participants.map((participant) => ({
@@ -236,10 +232,11 @@ export function cloneEnsembleRosterPreset(
                 : {}),
               ...(participant.permissionOverrides.externalPathGrants
                 ? {
-                    externalPathGrants:
-                      participant.permissionOverrides.externalPathGrants.map((grant) => ({
+                    externalPathGrants: participant.permissionOverrides.externalPathGrants.map(
+                      (grant) => ({
                         ...grant
-                      }))
+                      })
+                    )
                   }
                 : {})
             }

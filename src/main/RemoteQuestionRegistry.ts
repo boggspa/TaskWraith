@@ -101,7 +101,13 @@ export const REMOTE_QUESTION_MAX_ANSWER_CHARS = 8000
 export const REMOTE_QUESTION_MAX_RECEIPT_ID_CHARS = 512
 
 const DEFAULT_RESOLVED_HISTORY_LIMIT = 100
-const UNSAFE_RECEIPT_ID_CONTROL_RE = /[\u0000-\u001f\u007f]/
+
+function hasUnsafeReceiptIdControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+}
 
 export class RemoteQuestionRegistry {
   private readonly now: () => number
@@ -468,6 +474,6 @@ function normalizeHistoryLimit(value: unknown): number {
 function normalizeReceiptId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   if (value.length === 0 || value.length > REMOTE_QUESTION_MAX_RECEIPT_ID_CHARS) return undefined
-  if (value.trim() !== value || UNSAFE_RECEIPT_ID_CONTROL_RE.test(value)) return undefined
+  if (value.trim() !== value || hasUnsafeReceiptIdControlCharacter(value)) return undefined
   return value
 }

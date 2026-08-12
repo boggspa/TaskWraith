@@ -341,7 +341,7 @@ function ThemeDiffCodePreview({
             <span className="theme-appearance-preview-diff-mark">−</span>
             <span>
               <span className="theme-appearance-preview-code-property">surface</span>:{' '}
-              <span className="theme-appearance-preview-code-string">'sidebar'</span>,
+              <span className="theme-appearance-preview-code-string">&apos;sidebar&apos;</span>,
             </span>
           </span>
           <span className="theme-appearance-preview-code-line is-addition">
@@ -349,7 +349,10 @@ function ThemeDiffCodePreview({
             <span className="theme-appearance-preview-diff-mark">+</span>
             <span>
               <span className="theme-appearance-preview-code-property">surface</span>:{' '}
-              <span className="theme-appearance-preview-code-string">'sidebar-elevated'</span>,
+              <span className="theme-appearance-preview-code-string">
+                &apos;sidebar-elevated&apos;
+              </span>
+              ,
             </span>
           </span>
           <span className="theme-appearance-preview-code-line is-deletion">
@@ -357,7 +360,9 @@ function ThemeDiffCodePreview({
             <span className="theme-appearance-preview-diff-mark">−</span>
             <span>
               <span className="theme-appearance-preview-code-property">accent</span>:{' '}
-              <span className="theme-appearance-preview-code-string">'follow-system'</span>
+              <span className="theme-appearance-preview-code-string">
+                &apos;follow-system&apos;
+              </span>
             </span>
           </span>
           <span className="theme-appearance-preview-code-line is-addition">
@@ -365,7 +370,9 @@ function ThemeDiffCodePreview({
             <span className="theme-appearance-preview-diff-mark">+</span>
             <span>
               <span className="theme-appearance-preview-code-property">accent</span>:{' '}
-              <span className="theme-appearance-preview-code-string">'show-my-colors'</span>
+              <span className="theme-appearance-preview-code-string">
+                &apos;show-my-colors&apos;
+              </span>
             </span>
           </span>
           <span className="theme-appearance-preview-code-line">

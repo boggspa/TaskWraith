@@ -228,7 +228,9 @@ describe('PeopleToChannelMigrationPolicyWriter', () => {
         }
       ]
     })
-    expect(statSync(built.policyPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(built.policyPath).mode & 0o777).toBe(0o600)
+    }
     expect(
       built.policies.evaluate({
         channelId: built.channel.channelId,

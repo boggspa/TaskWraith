@@ -95,10 +95,6 @@
       "to": "src/main/collaboration/HumanCollaboratorMessages"
     },
     {
-      "from": "src/renderer/src/lib/ensembleRosterPresets.ts",
-      "to": "src/main/EnsembleRosterPresetContract"
-    },
-    {
       "from": "src/renderer/src/lib/ensembleWelcomeWorkspace.ts",
       "to": "src/main/store/ExternalPathGrants"
     },

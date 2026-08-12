@@ -183,8 +183,17 @@ function createBoundedThumbnail(
 }
 
 function safeImageName(value: string | undefined, index: number): string {
-  const basename = value ? path.basename(value.replace(/[\u0000-\u001f\u007f]/g, '')) : ''
+  const basename = value ? path.basename(stripAsciiControlCharacters(value)) : ''
   return basename.trim().slice(0, 256) || `Blackboard image ${index + 1}`
+}
+
+function stripAsciiControlCharacters(value: string): string {
+  return Array.from(value)
+    .filter((character) => {
+      const code = character.charCodeAt(0)
+      return code > 0x1f && code !== 0x7f
+    })
+    .join('')
 }
 
 /**

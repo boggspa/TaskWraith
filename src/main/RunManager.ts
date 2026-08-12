@@ -499,7 +499,9 @@ export class RunManager<TState = unknown> {
       if (session.liveSteerTransport?.cancel) {
         try {
           session.liveSteerTransport.cancel()
-        } catch {}
+        } catch {
+          // Transport cleanup is best-effort during terminalization.
+        }
       }
       session.liveSteerTransport = undefined
       session.pendingSteerText = undefined
@@ -543,7 +545,9 @@ export class RunManager<TState = unknown> {
     if (session.liveSteerTransport?.cancel) {
       try {
         session.liveSteerTransport.cancel()
-      } catch {}
+      } catch {
+        // Transport cleanup is best-effort during removal.
+      }
     }
     this.runIdsByProvider.get(session.provider)?.delete(runId)
     if (session.providerSessionId) {
@@ -565,7 +569,9 @@ export class RunManager<TState = unknown> {
     if (session.liveSteerTransport?.cancel) {
       try {
         session.liveSteerTransport.cancel()
-      } catch {}
+      } catch {
+        // Transport cleanup is best-effort during cancellation.
+      }
     }
     session.liveSteerTransport = undefined
     session.pendingSteerText = undefined
@@ -618,7 +624,9 @@ export class RunManager<TState = unknown> {
     if (session.liveSteerTransport && session.liveSteerTransport !== transport) {
       try {
         session.liveSteerTransport.cancel()
-      } catch {}
+      } catch {
+        // Replacing an obsolete transport remains best-effort.
+      }
     }
     session.liveSteerTransport = transport
     session.updatedAt = Date.now()
@@ -632,7 +640,9 @@ export class RunManager<TState = unknown> {
     if (session.liveSteerTransport?.cancel) {
       try {
         session.liveSteerTransport.cancel()
-      } catch {}
+      } catch {
+        // Transport cleanup is best-effort during unregister.
+      }
     }
     session.liveSteerTransport = undefined
     session.pendingSteerText = undefined

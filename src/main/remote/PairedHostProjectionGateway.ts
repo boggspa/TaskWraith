@@ -98,8 +98,15 @@ function isSafeIdentity(value: string): boolean {
     value.length > 0 &&
     value.length <= 512 &&
     value.trim() === value &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
+    !hasAsciiControlCharacter(value)
   )
+}
+
+function hasAsciiControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
 }
 
 function defaultScheduleRetry(

@@ -136,10 +136,12 @@ describe('PeopleToChannelMigrationExecutionStore', () => {
     expect(store.load()).toEqual(expected)
     expect(store.persist(expected)).toMatchObject({ created: false })
     expect(durableWrites).toBe(1)
-    expect(statSync(store.path).mode & 0o777).toBe(0o600)
-    expect(statSync(join(userDataPath, 'channels', 'people-to-channel-v1')).mode & 0o777).toBe(
-      0o700
-    )
+    if (process.platform !== 'win32') {
+      expect(statSync(store.path).mode & 0o777).toBe(0o600)
+      expect(statSync(join(userDataPath, 'channels', 'people-to-channel-v1')).mode & 0o777).toBe(
+        0o700
+      )
+    }
 
     const atRest = readFileSync(store.path, 'utf8')
     for (const secret of [
@@ -207,6 +209,8 @@ describe('PeopleToChannelMigrationExecutionStore', () => {
 
     chmodSync(store.path, 0o644)
     expect(() => store.load()).toThrow(/path is unsafe/)
-    expect(statSync(store.path).mode & 0o777).toBe(0o644)
+    if (process.platform !== 'win32') {
+      expect(statSync(store.path).mode & 0o777).toBe(0o644)
+    }
   })
 })

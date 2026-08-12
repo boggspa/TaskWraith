@@ -404,8 +404,10 @@ describe('ChannelAgentDispatchJournalStore', () => {
     expect(raw).not.toContain(value.plan.member.identityPublicKey)
     expect(raw).not.toContain(value.plan.delegation.ownerSignatureB64)
     expect(raw).not.toContain(value.plan.dispatchGrant.ownerSignatureB64)
-    expect(statSync(directory).mode & 0o777).toBe(0o700)
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(directory).mode & 0o777).toBe(0o700)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
     expect(store(directory).snapshot(CHANNEL_ID, first.snapshot.binding.dispatchId)).toEqual(
       first.snapshot
     )
@@ -749,8 +751,10 @@ describe('ChannelAgentDispatchJournalStore', () => {
     chmodSync(path, 0o644)
 
     expect(journal.snapshot(CHANNEL_ID, reserved.binding.dispatchId)).toEqual(reserved)
-    expect(statSync(directory).mode & 0o777).toBe(0o700)
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(directory).mode & 0o777).toBe(0o700)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
 
     const regularFile = join(temporaryDirectory('file-root'), 'journal-file')
     writeFileSync(regularFile, 'not a directory')

@@ -199,8 +199,10 @@ describe('ChannelAgentIdentityStore', () => {
     expect(rawEnvelope).not.toContain(SEAT_ID)
     expect(rawEnvelope).not.toContain(first.publicKeyB64)
     expect(rawEnvelope).not.toContain(privateDer(first))
-    expect(statSync(storageDirectory).mode & 0o777).toBe(0o700)
-    expect(statSync(identityPath(storageDirectory)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(storageDirectory).mode & 0o777).toBe(0o700)
+      expect(statSync(identityPath(storageDirectory)).mode & 0o777).toBe(0o600)
+    }
     expect(firstStore.publicHistory(SEAT_ID)).toEqual({
       current: expect.objectContaining({
         agentSeatId: SEAT_ID,
@@ -533,8 +535,10 @@ describe('ChannelAgentIdentityStore', () => {
     chmodSync(path, 0o644)
 
     expect(makeStore(storageDirectory).load(SEAT_ID)).not.toBeNull()
-    expect(statSync(storageDirectory).mode & 0o777).toBe(0o700)
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(storageDirectory).mode & 0o777).toBe(0o700)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
 
     const external = join(tempRoot(), 'external-ciphertext.json')
     const original = readFileSync(path, 'utf8')

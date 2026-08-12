@@ -267,7 +267,9 @@ describe('People-to-Channel migration log writer', () => {
     const path = join(logs, 'channel_new.jsonl')
     const source = readFileSync(path, 'utf8')
     expect(source.endsWith('\n')).toBe(true)
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
     expect(readdirSync(logs).filter((entry) => entry.endsWith('.tmp'))).toEqual([])
     const stored = JSON.parse(source) as Record<string, unknown>
     const { checksum, ...withoutChecksum } = stored

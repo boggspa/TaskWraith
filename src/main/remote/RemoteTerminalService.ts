@@ -65,8 +65,7 @@ export class RemoteTerminalService {
     }
     const cols = boundedDim(input.cols, 20, 400, 80)
     const rows = boundedDim(input.rows, 5, 200, 24)
-    const shellCommand =
-      os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash'
+    const shellCommand = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash'
     let processHandle: pty.IPty
     try {
       processHandle = this.spawn(shellCommand, [], {
@@ -194,12 +193,7 @@ export class RemoteTerminalService {
   }
 }
 
-function boundedDim(
-  value: number | undefined,
-  min: number,
-  max: number,
-  fallback: number
-): number {
+function boundedDim(value: number | undefined, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.max(min, Math.min(max, Math.trunc(value)))
 }

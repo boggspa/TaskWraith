@@ -2362,7 +2362,7 @@ function extractCommitsFromText(text: string, requireGitReceipt = false): Closeo
     // Scan forward from the bracket line end for the stats summary line
     // (past possible --stat file lines between the subject and summary).
     const afterBracket = normalized.slice(bracketLineEnd)
-    const summaryMatch = afterBracket.match(/^[^\n\[\]]*?(\d+\s+files?\s+changed[^\n]*)/im)
+    const summaryMatch = afterBracket.match(/^[^\n[\]]*?(\d+\s+files?\s+changed[^\n]*)/im)
     const statsLine = summaryMatch ? summaryMatch[1].trim() : undefined
     const stats = statsLine ? formatCommitStats(statsLine) : undefined
     mergeCloseoutCommit(commits, {
@@ -2374,7 +2374,7 @@ function extractCommitsFromText(text: string, requireGitReceipt = false): Closeo
   }
   // Harvest --stat per-file lines and associate them with the nearest
   // preceding commit bracket receipt (by position in the output text).
-  const statFilePattern = /^\s{1,4}([^|\n]+?)\s*\|\s*(\d+)\s+([+\-]+)\s*$/gm
+  const statFilePattern = /^\s{1,4}([^|\n]+?)\s*\|\s*(\d+)\s+([+-]+)\s*$/gm
   while ((match = statFilePattern.exec(normalized)) !== null) {
     const fileStart = match.index
     // Skip file lines that fall inside an already-claimed bracket span.

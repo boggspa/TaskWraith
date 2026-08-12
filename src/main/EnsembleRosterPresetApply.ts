@@ -7,7 +7,7 @@ import {
   parseEnsembleRosterPresetJson,
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
-} from './EnsembleRosterPresetContract'
+} from '../shared/EnsembleRosterPresetContract'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
 import { isLiveSelectableProvider } from '../shared/retiredProviders'
 import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'

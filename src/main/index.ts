@@ -1096,7 +1096,7 @@ import { parseEnsembleUserRosterMutationInput } from './EnsembleUserRosterMutati
 import type {
   EnsembleRosterPreset,
   EnsembleRosterPresetImportAcknowledgement
-} from './EnsembleRosterPresetContract'
+} from '../shared/EnsembleRosterPresetContract'
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,

@@ -83,7 +83,13 @@ function makeApi(): {
     ciCalls.push(request)
     return request.promise
   })
-  return { api: { githubPrStatus, githubCiStatus }, prCalls, ciCalls, githubPrStatus, githubCiStatus }
+  return {
+    api: { githubPrStatus, githubCiStatus },
+    prCalls,
+    ciCalls,
+    githubPrStatus,
+    githubCiStatus
+  }
 }
 
 describe('WorkspacePrCiStore', () => {

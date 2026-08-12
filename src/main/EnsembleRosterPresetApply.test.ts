@@ -13,7 +13,7 @@ import {
 import {
   MAX_ROSTER_PRESET_PARTICIPANTS,
   type EnsembleRosterPreset
-} from './EnsembleRosterPresetContract'
+} from '../shared/EnsembleRosterPresetContract'
 import type { ChatRecord, EnsembleParticipant } from './store/types'
 
 function participant(

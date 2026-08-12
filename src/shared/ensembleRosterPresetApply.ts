@@ -1,5 +1,5 @@
 import type { ChatRecord, EnsembleFanoutPolicy, EnsembleParticipant } from '../main/store/types'
-import type { EnsembleRosterPreset } from '../main/EnsembleRosterPresetContract'
+import type { EnsembleRosterPreset } from './EnsembleRosterPresetContract'
 import { normalizeEnsembleAuthority } from './ensembleAuthority'
 import { MAX_ENSEMBLE_PARTICIPANTS } from './ensembleLimits'
 

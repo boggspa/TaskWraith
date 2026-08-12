@@ -56,10 +56,15 @@ function inspectionTokensOf(command: string): string[] | null {
     tokenStarted = false
   }
 
+  const isAsciiControlCharacter = (character: string): boolean => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  }
+
   for (const character of command.trim()) {
     if (quote === 'single') {
       if (character === "'") quote = null
-      else if (/[\u0000-\u001F\u007F]/.test(character)) return null
+      else if (isAsciiControlCharacter(character)) return null
       else token += character
       tokenStarted = true
       continue
@@ -70,7 +75,7 @@ function inspectionTokensOf(command: string): string[] | null {
         character === '$' ||
         character === '`' ||
         character === '\\' ||
-        /[\u0000-\u001F\u007F]/.test(character)
+        isAsciiControlCharacter(character)
       ) {
         return null
       } else token += character

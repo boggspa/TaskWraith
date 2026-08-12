@@ -45,8 +45,6 @@ const H = layout.background.height
 const ART_W = layout.artwork.width
 const ART_H = layout.artwork.height
 const ICON_Y = layout.icons.y // vertical centre of both Finder icons
-const APP_X = layout.icons.appX // centre of the app icon (left)
-const APPS_X = layout.icons.applicationsX // centre of the /Applications drop (right)
 
 const ICY = '#9fc6de'
 const GRN = '#00ff88'

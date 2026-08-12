@@ -239,6 +239,7 @@ describe('buildMuseSeatEnv', () => {
     expect(env.HOME).toBe(homes.home)
     expect(env.MUSE_AUTH_PATH).toBe(homes.museAuthPath)
     expect(env.MUSE_NO_AUTO_UPDATE).toBe('1')
+    // @portability-ok: verifies an opaque caller-supplied PATH is preserved byte-for-byte.
     expect(env.PATH).toBe('/usr/bin')
   })
 

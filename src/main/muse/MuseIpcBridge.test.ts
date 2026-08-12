@@ -32,9 +32,15 @@ function tempDir(prefix: string): string {
 function fakeSpawnHandle(code = 0): MuseRunSpawnHandle {
   return {
     pid: 42,
-    kill() {},
-    onStdout() {},
-    onStderr() {},
+    kill() {
+      // Test double does not own a process.
+    },
+    onStdout() {
+      // This test double does not emit stdout.
+    },
+    onStderr() {
+      // This test double does not emit stderr.
+    },
     async wait() {
       return { code, signal: null }
     }

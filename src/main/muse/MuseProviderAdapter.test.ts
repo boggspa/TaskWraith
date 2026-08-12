@@ -14,11 +14,15 @@ function fakeSpawn(stdoutLines: string[], code = 0): MuseSpawnHandle {
   let stdoutListener: ((chunk: string) => void) | null = null
   return {
     pid: 4242,
-    kill() {},
+    kill() {
+      // Test double does not own a process.
+    },
     onStdout(listener) {
       stdoutListener = listener
     },
-    onStderr() {},
+    onStderr() {
+      // This test double does not emit stderr.
+    },
     async wait() {
       stdoutListener?.(stdoutLines.map((line) => `${line}\n`).join(''))
       return { code, signal: null }
