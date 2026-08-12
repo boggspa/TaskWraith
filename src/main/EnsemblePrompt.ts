@@ -92,6 +92,7 @@ import {
   resolveEnsemblePromptTransportProfile,
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
+import { qualifyUnsupportedAntigravityPermissionClaim } from './antigravity/AntigravityPermissionClaimEvidence'
 import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
 import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/SkillPromptInjection'
 
@@ -2061,6 +2062,18 @@ function projectTaggedTranscript(
   const baseWindow = Math.max(1, contextTurns * 2)
   let windowSize =
     maxChars > MAX_TRANSCRIPT_CHARS ? Math.max(baseWindow, Math.ceil(maxChars / 600)) : baseWindow
+  // Timeline-backed Ensemble runs store tool rows separately from assistant
+  // prose. Keep a run-indexed view before filtering those rows so a later
+  // provider-authored permission claim can be checked against the actual tool
+  // outcomes from the same run rather than accepted as unaudited prose.
+  const toolActivitiesByRunId = new Map<string, ToolActivity[]>()
+  for (const message of messages) {
+    if (!message.runId || !message.toolActivities?.length) continue
+    const prior = toolActivitiesByRunId.get(message.runId) || []
+    const byId = new Map(prior.map((activity) => [activity.id, activity]))
+    for (const activity of message.toolActivities) byId.set(activity.id, activity)
+    toolActivitiesByRunId.set(message.runId, [...byId.values()])
+  }
   const filtered = messages.filter(
     (message) =>
       message.role !== 'tool' &&
@@ -2131,7 +2144,15 @@ function projectTaggedTranscript(
     // block can't silently leak it into the panel's shared transcript.
     const authoringProvider = message.metadata?.ensembleProvider as ProviderId | undefined
     const ephemeral = stripReasoningChains(message.content, authoringProvider)
-    const text = sanitizeText(ephemeral).slice(0, MAX_MESSAGE_CHARS)
+    const sanitized = sanitizeText(ephemeral)
+    const evidenceQualified =
+      authoringProvider === 'antigravity'
+        ? qualifyUnsupportedAntigravityPermissionClaim(
+            sanitized,
+            message.runId ? toolActivitiesByRunId.get(message.runId) : message.toolActivities
+          )
+        : sanitized
+    const text = evidenceQualified.slice(0, MAX_MESSAGE_CHARS)
     // 1.0.4-AR7 — surface a compact tool-trace summary on every
     // message that has one, prepended to the content so downstream
     // participants can see at a glance what tools were used to

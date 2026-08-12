@@ -43,8 +43,10 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
     expect(prompt).toContain('Current assignment:')
     expect(prompt).toContain('Host-owned Blackboard snapshot:')
-    expect(prompt).toContain('read_file is listed')
-    expect(prompt).toContain('outside-workspace path requires an explicit host grant/approval')
+    expect(prompt).toContain('attempt `read_file` when listed')
+    expect(prompt).toContain('dot-prefixed children such as `.local-only`')
+    expect(prompt).toContain('received an explicit denied/error tool result')
+    expect(prompt).toContain('No tool attempt, an unavailable tool, or an absolute path spelling')
     expect(prompt).not.toContain('call blackboard_read')
     expect(prompt).not.toContain('Recent tagged transcript:')
   })
@@ -113,6 +115,7 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(boundaryAt).toBeGreaterThan(prompt.indexOf('Current assignment:'))
     expect(lifecycleAt).toBeGreaterThan(boundaryAt)
     expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
+    expect(prompt).not.toContain('The Workspace subject above is host-authoritative')
   })
 
   it('drops evidence for a row cut by the outer capsule budget', () => {

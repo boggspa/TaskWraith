@@ -36,6 +36,7 @@ import type {
 } from './store/types'
 import { createActiveGoal } from './GoalState'
 import { ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS } from './antigravity/AntigravityEnsemblePromptProfile'
+import { ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE } from './antigravity/AntigravityPermissionClaimEvidence'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -390,7 +391,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Current assignment:')
     expect(prompt).toContain('Host-owned Blackboard snapshot:')
     expect(prompt).toContain('decision: Use the exact broker path.')
-    expect(prompt).toContain('outside-workspace path requires an explicit host grant/approval')
+    expect(prompt).toContain('received an explicit denied/error tool result')
     expect(prompt).not.toContain('call blackboard_read')
     expect(prompt).not.toContain('Recent tagged transcript:')
     expect(projection.suppliedMessageIds).toContain('agy-current-request')
@@ -2267,6 +2268,72 @@ describe('formatToolTraceSummary', () => {
       ta('edit')
     ])
     expect(summary).toBe('(tools: edit)')
+  })
+})
+
+describe('AntiGravity transcript permission evidence', () => {
+  it('qualifies a permission refusal when the same run recorded no denied tool result', () => {
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [
+        ...ensemble.participants,
+        {
+          id: 'agy',
+          provider: 'antigravity',
+          enabled: true,
+          role: 'Boardmaster',
+          instructions: 'Maintain the board from verified workspace evidence.',
+          model: 'gemini-3.1-pro-high',
+          order: 4,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+    }
+    const chatRecord = chat()
+    chatRecord.ensemble = config
+    chatRecord.messages = [
+      {
+        id: 'agy-tool',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-08-12T09:37:26.000Z',
+        runId: 'agy-run',
+        toolActivities: [
+          {
+            id: 'df-1',
+            toolName: 'run_command',
+            displayName: 'Disk space',
+            category: 'shell',
+            status: 'success',
+            resultSummary: 'TaskWraith allowed this command.'
+          }
+        ]
+      },
+      {
+        id: 'agy-answer',
+        role: 'assistant',
+        content:
+          'I cannot complete BOARD.md because my read access was denied. I require explicit host approval.',
+        timestamp: '2026-08-12T09:37:27.000Z',
+        runId: 'agy-run',
+        metadata: {
+          ensembleProvider: 'antigravity',
+          ensembleParticipantId: 'agy',
+          ensembleRole: 'Boardmaster'
+        }
+      }
+    ]
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chatRecord,
+      config,
+      participant: config.participants[0],
+      currentPrompt: 'Continue from verified evidence.',
+      roundId: 'round-permission-evidence'
+    })
+
+    expect(prompt).toContain(ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE)
+    expect(prompt).toContain('I cannot complete BOARD.md because my read access was denied.')
   })
 })
 

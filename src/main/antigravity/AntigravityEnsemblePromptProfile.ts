@@ -147,8 +147,10 @@ function compactLines(lines: readonly string[], maxChars: number): string {
  * Official `agy` is a one-shot native CLI lane with no TaskWraith MCP bridge.
  * Keep its host handoff useful but bounded, and never describe a Blackboard
  * tool that the child cannot actually call. The native read rule is
- * deliberately conditional: read_file is usable only when agy advertises it,
- * while an outside-workspace path still requires an explicit host grant.
+ * deliberately conditional: read_file is usable only when agy advertises it.
+ * The host-provided workspace stanza is the path-classification authority;
+ * provider prose must not turn an absolute or dot-prefixed child back into an
+ * outside-workspace path without first attempting a listed tool.
  */
 export function buildAntigravityOfficialAgyPromptCapsule(
   input: AntigravityOfficialAgyPromptCapsuleInput
@@ -234,11 +236,21 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
     { text: '' },
     { text: 'Permission and native-tool boundary:' },
     { text: boundedText(input.permissionRule, 900) },
+    ...(input.workspaceStanza
+      ? [
+          {
+            text: '- The Workspace subject above is host-authoritative. Any relative or absolute path that resolves beneath that bound root is in-workspace, including dot-prefixed children such as `.local-only`; never classify one as outside-workspace merely because it is absolute or hidden.'
+          }
+        ]
+      : []),
     {
-      text: '- Use only native read/search tools that official agy actually lists. If read_file is listed, use it for the required in-workspace read; an outside-workspace path requires an explicit host grant/approval and must not be inferred from workspace access.'
+      text: '- Use only native read/search tools that official agy actually lists. For a required in-workspace read, attempt `read_file` when listed; otherwise use a listed inspection-only command such as `cat`.'
     },
     {
-      text: '- If the required outside-workspace read is not granted, report the exact path and wait for the user rather than bypassing the boundary.'
+      text: '- Permission-denial evidence rule: do not claim that TaskWraith or the host denied, blocked, or failed to grant access unless you invoked a listed tool during this turn and received an explicit denied/error tool result. No tool attempt, an unavailable tool, or an absolute path spelling is not a denial.'
+    },
+    {
+      text: '- Only after an explicit denied/error result may you report the exact blocked path and wait for the user. Do not invent a host grant request or bypass the boundary.'
     },
     ...(input.turnBoundary ? [{ text: '' }, { text: boundedText(input.turnBoundary, 1_000) }] : []),
     { text: '' },
