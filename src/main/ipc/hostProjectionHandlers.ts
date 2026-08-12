@@ -42,6 +42,10 @@ import type {
   HostDeltasSinceResult,
   HostSnapshot
 } from '../../shared/hostProtocol'
+import {
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CLIENT_ID
+} from '../../shared/hostProtocol'
 import { HostProjectionClient } from '../host/HostProjectionClient'
 
 /** Read channel — HostSnapshot. */
@@ -153,7 +157,7 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
     ((): HostProjectionClientPort =>
       new HostProjectionClient({
         client: {
-          clientId: 'taskwraith-desktop-renderer',
+          clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
           clientClass: 'desktop',
           clientVersion: deps.appVersion
         },
@@ -238,7 +242,14 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
       if (!isHostCommandShape(command)) {
         return { ok: false, error: 'host projection command payload is invalid' }
       }
-      const outcome = await withClient((active) => active.submitCommand(command))
+      // The sandboxed renderer proposes the action, never its identity. Stamp
+      // the actor from this broker's authenticated transport identity; Host's
+      // socket binding independently derives the matching call context.
+      const authenticatedCommand: HostCommand = {
+        ...command,
+        actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
+      }
+      const outcome = await withClient((active) => active.submitCommand(authenticatedCommand))
       if (!outcome.ok) return { ok: false, error: outcome.error }
       return { ok: true, receipt: outcome.value }
     }

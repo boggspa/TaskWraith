@@ -24,12 +24,13 @@
  * lying by omission, so `unavailable` and `cached` get different words —
  * enforced by a test, not by convention.
  *
- * READ-ONLY. No commands or mutations are authored here. Every mission fact is
- * a bounded Host projection; the component never reconstructs lifecycle state.
+ * Mission Control also receives the renderer-lifetime governed command
+ * controller. It authors only Host command intents; authority and durable
+ * receipts remain Host-owned.
  */
 
 import { useHostProjection } from '../hooks/useHostProjection'
-import { useHostProjectionStore } from './HostProjectionProvider'
+import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
 import { HostMissionControl } from './HostMissionControl'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
@@ -210,6 +211,7 @@ export function describeHostAwaitingApprovals(
  */
 export function HostStatusRow() {
   const store = useHostProjectionStore()
+  const commands = useHostCommandController()
   const state = useHostProjection(store)
   const view = describeHostConnection(state)
   const providers = describeHostProviders(state)
@@ -238,7 +240,7 @@ export function HostStatusRow() {
         <span className="sidebar-footer-device-name">Host approvals</span>
         <span className="sidebar-footer-device-status">{approvals.label}</span>
       </div>
-      <HostMissionControl state={state} />
+      <HostMissionControl state={state} commands={commands} />
     </>
   )
 }

@@ -13,7 +13,7 @@
  */
 
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_PROJECTION_VERSION,
@@ -22,7 +22,12 @@ import {
 } from '../../../shared/hostProtocol'
 import { useHostProjection } from '../hooks/useHostProjection'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
-import { HostProjectionProvider, useHostProjectionStore } from './HostProjectionProvider'
+import { HostCommandController } from '../lib/host/HostCommandController'
+import {
+  HostProjectionProvider,
+  useHostCommandController,
+  useHostProjectionStore
+} from './HostProjectionProvider'
 
 function snapshot(): HostSnapshot {
   return {
@@ -86,12 +91,14 @@ function storeThatWorks(): HostProjectionStore {
  */
 function Probe() {
   const store = useHostProjectionStore()
+  const commands = useHostCommandController()
   const state = useHostProjection(store, false)
 
   return (
     <div>
       <span id="status">{state.status}</span>
       <span id="freshness">{state.projection?.freshness ?? 'none'}</span>
+      <span id="commands">{commands ? 'available' : 'none'}</span>
       <span id="workspaces">
         {state.projection
           ? state.projection.workspaces.map((w) => w.name).join(',')
@@ -126,6 +133,22 @@ describe('HostProjectionProvider · wiring', () => {
     // null-context path. The distinction matters: null context is a wiring
     // bug, idle is an honest pre-fetch state.
     expect(markup).toContain('<span id="status">idle</span>')
+    expect(markup).toContain('<span id="commands">available</span>')
+  })
+
+  it('delivers an injected governed-command controller to descendants', () => {
+    const commandController = new HostCommandController({
+      client: {
+        submitAndResolve: vi.fn(),
+        decideApproval: vi.fn()
+      }
+    })
+    const markup = renderToStaticMarkup(
+      <HostProjectionProvider store={storeThatWorks()} commandController={commandController}>
+        <Probe />
+      </HostProjectionProvider>
+    )
+    expect(markup).toContain('<span id="commands">available</span>')
   })
 
   it('builds the real chain when no store is injected', () => {

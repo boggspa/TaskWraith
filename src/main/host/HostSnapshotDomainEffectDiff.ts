@@ -32,6 +32,7 @@ import {
   HOST_PROTOCOL_MAX_ID,
   decodeHostSnapshot,
   encodeHostParticipantEntityId,
+  encodeHostProviderEntityId,
   type HostApprovalProjection,
   type HostArtifactProjection,
   type HostDeltaFamily,
@@ -400,7 +401,18 @@ function entityIdOf(
   }
 
   if (family === 'provider') {
-    return providerCompositeEntityId(entity as HostProviderModelProjection)
+    const provider = entity as HostProviderModelProjection
+    const encoded = encodeHostProviderEntityId(provider.providerId, provider.modelId)
+    if (encoded.ok) return { ok: true, entityId: encoded.value }
+    return {
+      ok: false,
+      failure: {
+        reason: encoded.error.includes('exceeds')
+          ? 'provider_composite_overlong'
+          : 'unsafe_entity_id',
+        detail: encoded.error
+      }
+    }
   }
   if (family === 'participant') {
     const participant = entity as HostParticipantProjection
@@ -487,97 +499,6 @@ function entityIdOf(
   // Keep record touch so TypeScript exhaustiveness on family stays honest.
   void record
   return { ok: true, entityId: raw }
-}
-
-/**
- * Provider entity ids are a reversible tagged length-prefixed encoding:
- *   model absent  → `p0:<len>:<providerId>`
- *   model present → `p1:<len>:<providerId>:<len>:<modelId>`
- *
- * Length prefixes make embedded ':' bytes unambiguous. The tag always
- * distinguishes no-model from model-present so a providerId of `a:b` cannot
- * alias provider `a` + model `b` across before/after snapshots. Final
- * entityId must fit HOST_PROTOCOL_MAX_ID — never hash or truncate.
- */
-function providerCompositeEntityId(
-  provider: HostProviderModelProjection
-): { ok: true; entityId: string } | { ok: false; failure: IndexFailure } {
-  const providerIdResult = validateProviderComponent(provider.providerId, 'provider.providerId')
-  if (!providerIdResult.ok) return providerIdResult
-  const providerId = providerIdResult.value
-
-  if (provider.modelId === undefined) {
-    return finalizeProviderEntityId(`p0:${providerId.length}:${providerId}`)
-  }
-
-  const modelIdResult = validateProviderComponent(provider.modelId, 'provider.modelId')
-  if (!modelIdResult.ok) return modelIdResult
-  const modelId = modelIdResult.value
-
-  return finalizeProviderEntityId(
-    `p1:${providerId.length}:${providerId}:${modelId.length}:${modelId}`
-  )
-}
-
-function validateProviderComponent(
-  value: unknown,
-  label: 'provider.providerId' | 'provider.modelId'
-): { ok: true; value: string } | { ok: false; failure: IndexFailure } {
-  if (typeof value !== 'string') {
-    return {
-      ok: false,
-      failure: {
-        reason: 'ambiguous_entity_id',
-        detail:
-          label === 'provider.providerId'
-            ? 'provider.providerId is missing or non-string'
-            : 'provider.modelId is present but non-string'
-      }
-    }
-  }
-  if (value.length > HOST_PROTOCOL_MAX_ID) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'overlong_entity_id',
-        detail: `${label} exceeds HOST_PROTOCOL_MAX_ID without truncation`
-      }
-    }
-  }
-  if (!isSafeHostIdentifier(value, HOST_PROTOCOL_MAX_ID)) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'unsafe_entity_id',
-        detail: `${label} is empty, whitespace-padded, or contains controls`
-      }
-    }
-  }
-  return { ok: true, value }
-}
-
-function finalizeProviderEntityId(
-  entityId: string
-): { ok: true; entityId: string } | { ok: false; failure: IndexFailure } {
-  if (entityId.length > HOST_PROTOCOL_MAX_ID) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'provider_composite_overlong',
-        detail: `provider composite length ${entityId.length} exceeds HOST_PROTOCOL_MAX_ID without truncation`
-      }
-    }
-  }
-  if (!isSafeHostIdentifier(entityId, HOST_PROTOCOL_MAX_ID)) {
-    return {
-      ok: false,
-      failure: {
-        reason: 'unsafe_entity_id',
-        detail: 'provider composite entity id is unsafe'
-      }
-    }
-  }
-  return { ok: true, entityId }
 }
 
 function uniqueSortedIds(

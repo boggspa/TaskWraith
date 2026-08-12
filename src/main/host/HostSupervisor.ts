@@ -2,8 +2,9 @@
  * Host Arc Wave 3.5 — HostSupervisor (in-main lifecycle owner).
  *
  * WHAT THIS IS. The HostSupervisor is the single lifecycle owner for the
- * composed in-main Host. It builds the composition and local server on
- * start(), tears them down on stop(), and exposes an honest supervised-health
+ * composed in-main Host. It builds the composition, establishes the central
+ * projection reconciler, and only then opens the local server on start(). It
+ * tears all three down on stop() and exposes an honest supervised-health
  * provider that the composition's own health passthrough routes to clients.
  *
  * WHY IT LOOKS LIKE THIS. Per the placement ruling the Host lives IN-MAIN
@@ -16,8 +17,6 @@
  * - zero `electron` imports;
  * - zero AppStore / BridgeActionExecutor / provider / resolver / pipeline
  *   VALUE imports;
- * - zero edits to HostMainComposition, HostLocalServer, hostProtocol,
- *   or any peer file;
  * - zero composition-root edits.
  */
 
@@ -75,7 +74,7 @@ export interface HostSupervisorInput {
 
 /** Public surface the composition root (Wave 3.6) wires. */
 export interface HostSupervisor {
-  /** Build the composition, start the local server.  Idempotent when running. */
+  /** Build composition, establish convergence, then listen. Idempotent when running. */
   start(): Promise<void>
   /** Graceful async stop.  Persistent — only an explicit start() revives. */
   stop(): Promise<void>
@@ -176,6 +175,10 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
       now
     })
 
+    // Establish a coherent Host projection before any client can connect.
+    // This turns legacy/AppStore-side mutations into the same ordered journal
+    // used by governed Host commands, without exposing another cursor.
+    await builtComposition.startProjectionReconciliation()
     await server.start()
     log?.('[host-supervisor] Host started')
   }
@@ -211,9 +214,10 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
         await firstAttempt()
         return // success
       } catch (err) {
-        // Clean up any partial state from the failed attempt.
-        server = null
-        composition = null
+        // Clean up any partial composition, reconciliation timer or listener
+        // before deciding whether a fresh attempt is allowed.
+        running = false
+        await teardown()
 
         if (!allowCrashRestart || stopped) {
           log?.('[host-supervisor] crash-restart disabled — not retrying')

@@ -3656,6 +3656,30 @@
   overflow-wrap: anywhere;
 }
 
+.host-mission-control-notice {
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 68%, transparent);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.35;
+}
+
+.host-mission-control-notice.is-good {
+  border-color: color-mix(in srgb, var(--success, #34d399) 45%, transparent);
+  color: var(--success, #34d399);
+}
+
+.host-mission-control-notice.is-warning {
+  border-color: color-mix(in srgb, var(--warning, #f5b14c) 45%, transparent);
+  color: var(--warning, #f5b14c);
+}
+
+.host-mission-control-notice.is-error {
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 45%, transparent);
+  color: var(--danger, #e2554f);
+}
+
 .host-mission-control-chevron {
   color: var(--text-secondary);
   font-size: 19px;
@@ -3759,6 +3783,54 @@
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
+.host-mission-control-command-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs, 11px);
+}
+
+.host-mission-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.host-mission-control-command-card button,
+.host-mission-control-seat-toggle {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.host-mission-control-command-card button:hover:not(:disabled),
+.host-mission-control-seat-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
+}
+
+.host-mission-control-command-card button.is-danger {
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 50%, transparent);
+  color: var(--danger, #e2554f);
+}
+
+.host-mission-control-command-card button:disabled,
+.host-mission-control-seat-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .host-mission-control-row > .host-mission-control-dot,
 .host-mission-control-participant > .host-mission-control-dot {
   margin-top: 4px;
@@ -3766,6 +3838,10 @@
 
 .host-mission-control-participant.is-disabled {
   opacity: 0.58;
+}
+
+.host-mission-control-participant.is-disabled .host-mission-control-seat-toggle {
+  opacity: 1;
 }
 
 .host-mission-control-empty {

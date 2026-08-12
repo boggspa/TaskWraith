@@ -81,6 +81,22 @@ export interface HostActorIdentity {
   clientClass: HostClientClass
 }
 
+/**
+ * Stable identity of the app's local Desktop Host transport.
+ *
+ * Renderer command bodies carry this value for deterministic fingerprints,
+ * but the main-process broker re-stamps it before transport. The renderer is
+ * therefore never trusted to select its actor; Host still derives the call
+ * context from the authenticated socket binding and evaluates action
+ * authority independently.
+ */
+export const TASKWRAITH_DESKTOP_HOST_CLIENT_ID = 'taskwraith-desktop-renderer'
+export const TASKWRAITH_DESKTOP_HOST_ACTOR = {
+  actorId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+  clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+  clientClass: 'desktop'
+} as const satisfies HostActorIdentity
+
 /** Generation is bumped on discontinuity/reset; not monotonic across resets. */
 export type HostGeneration = number
 /** Cursor is monotonic only within a single generation. */
@@ -718,6 +734,39 @@ export function encodeHostParticipantEntityId(
   const entityId = `pt1:${threadId.length}:${threadId}:${participantId.length}:${participantId}`
   if (entityId.length > HOST_PROTOCOL_MAX_ID) {
     return { ok: false, error: 'participant composite entity id exceeds Host id bound' }
+  }
+  return { ok: true, value: entityId }
+}
+
+/**
+ * Stable provider/model delta identity.
+ *
+ * A provider can advertise a provider-wide row and any number of model rows.
+ * `providerId` alone therefore cannot key the collection. The tagged,
+ * length-prefixed encoding keeps the model-absent row distinct from every
+ * model-present row and remains reversible when either component contains
+ * `:`. It intentionally matches the entity id carried by Host deltas.
+ */
+export function encodeHostProviderEntityId(
+  providerId: unknown,
+  modelId: unknown
+): HostDecodeResult<string> {
+  if (!isSafeHostEntityIdComponent(providerId)) {
+    return { ok: false, error: 'provider id is empty, oversized, or unsafe' }
+  }
+  if (modelId === undefined) {
+    const entityId = `p0:${providerId.length}:${providerId}`
+    if (entityId.length > HOST_PROTOCOL_MAX_ID) {
+      return { ok: false, error: 'provider composite entity id exceeds Host id bound' }
+    }
+    return { ok: true, value: entityId }
+  }
+  if (!isSafeHostEntityIdComponent(modelId)) {
+    return { ok: false, error: 'provider model id is empty, oversized, or unsafe' }
+  }
+  const entityId = `p1:${providerId.length}:${providerId}:${modelId.length}:${modelId}`
+  if (entityId.length > HOST_PROTOCOL_MAX_ID) {
+    return { ok: false, error: 'provider composite entity id exceeds Host id bound' }
   }
   return { ok: true, value: entityId }
 }

@@ -221,6 +221,56 @@ describe('HostCommandClient · Wave 4.3b receipt honesty', () => {
     expect(submitted[0]?.arguments.decision).toBe('accept')
   })
 
+  it('allows an approval response while the original mutation polls its receipt', async () => {
+    let releaseLookup!: () => void
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve
+    })
+    let pendingReady!: () => void
+    const pending = new Promise<void>((resolve) => {
+      pendingReady = resolve
+    })
+    const submitted: HostCommand[] = []
+    const client = new HostCommandClient({
+      actor,
+      bridge: bridgeOf({
+        submit: async (hostCommand) => {
+          submitted.push(hostCommand)
+          if (hostCommand.name === 'approval.decide') {
+            return receipt({
+              commandId: hostCommand.commandId,
+              name: 'approval.decide',
+              status: 'succeeded',
+              authority: { decision: 'allow' }
+            })
+          }
+          return receipt({
+            commandId: hostCommand.commandId,
+            status: 'pending',
+            authority: { decision: 'ask' }
+          })
+        },
+        lookup: async () => {
+          await lookupGate
+          return receipt({ status: 'succeeded', authority: { decision: 'allow' } })
+        }
+      })
+    })
+
+    const original = client.submitAndResolve(
+      { name: 'run.cancel', target: { threadId: 't1' } },
+      { onPending: () => pendingReady() }
+    )
+    await pending
+
+    const decision = await client.decideApproval({ approvalId: 'apr-1', decision: 'accept' })
+    expect(decision.kind).toBe('terminal')
+    expect(submitted.map((command) => command.name)).toEqual(['run.cancel', 'approval.decide'])
+
+    releaseLookup()
+    await expect(original).resolves.toMatchObject({ kind: 'terminal' })
+  })
+
   it('rejects a second concurrent mutation', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

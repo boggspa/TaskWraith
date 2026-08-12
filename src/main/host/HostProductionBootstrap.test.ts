@@ -77,6 +77,12 @@ function fakeComposition(): HostMainComposition {
     session: {},
     getPosition: () => ({ generation: 1, cursor: 0 }),
     getRecoverySummary: () => ({}),
+    startProjectionReconciliation: async () => {},
+    reconcileProjection: async () => ({
+      kind: 'unchanged',
+      position: { generation: 1, cursor: 0 }
+    }),
+    stopProjectionReconciliation: async () => {},
     shutdown: async () => {}
   } as unknown as HostMainComposition
 }

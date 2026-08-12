@@ -26,6 +26,7 @@ import {
   decodeHostHealthProjection,
   decodeHostSnapshot,
   encodeHostParticipantEntityId,
+  encodeHostProviderEntityId,
   type HostApprovalProjection,
   type HostArtifactProjection,
   type HostCursor,
@@ -122,8 +123,10 @@ function entityIdOf(family: HostDeltaFamily, entity: unknown): string | null {
       return typeof record.missionId === 'string' ? record.missionId : null
     case 'round':
       return typeof record.roundId === 'string' ? record.roundId : null
-    case 'provider':
-      return typeof record.providerId === 'string' ? record.providerId : null
+    case 'provider': {
+      const encoded = encodeHostProviderEntityId(record.providerId, record.modelId)
+      return encoded.ok ? encoded.value : null
+    }
     case 'question':
       return typeof record.questionId === 'string' ? record.questionId : null
     case 'approval':

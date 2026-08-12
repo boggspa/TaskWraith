@@ -107,7 +107,7 @@ const COLLECTION_CASES: Array<{
   },
   {
     family: 'provider',
-    entityId: 'cursor',
+    entityId: 'p0:6:cursor',
     payload: {
       providerId: 'cursor',
       displayProvider: 'Cursor',
@@ -364,6 +364,49 @@ describe('applyHostSnapshotDeltas', () => {
     expect(result.snapshot.participants).toEqual([
       expect.objectContaining({ threadId: 'thread-b', id: 'shared-seat', active: true })
     ])
+  })
+
+  it('applies provider-wide and model rows without key collisions', () => {
+    const cache = baseCache(0)
+    const result = applyHostSnapshotDeltas(cache, [
+      envelope({
+        cursor: 1,
+        previousCursor: 0,
+        kind: 'upsert',
+        family: 'provider',
+        entityId: 'p0:6:cursor',
+        payload: {
+          providerId: 'cursor',
+          displayProvider: 'Cursor',
+          shortCode: 'cur',
+          available: true
+        }
+      }),
+      envelope({
+        cursor: 2,
+        previousCursor: 1,
+        kind: 'upsert',
+        family: 'provider',
+        entityId: 'p1:6:cursor:8:grok-4.5',
+        payload: {
+          providerId: 'cursor',
+          modelId: 'grok-4.5',
+          displayProvider: 'Cursor',
+          displayModel: 'Grok 4.5',
+          shortCode: 'cur',
+          available: true
+        }
+      })
+    ])
+
+    expect(result.outcome).toBe('applied')
+    if (result.outcome === 'applied') {
+      expect(result.snapshot.providers).toHaveLength(2)
+      expect(result.snapshot.providers.map((provider) => provider.modelId ?? null)).toEqual([
+        null,
+        'grok-4.5'
+      ])
+    }
   })
 
   it('requires full resnapshot on generation mismatch, reset, gap, and projection mismatch', () => {

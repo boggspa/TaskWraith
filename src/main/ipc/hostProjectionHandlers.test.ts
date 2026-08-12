@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 
 import type { HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
-import { HOST_PROTOCOL_VERSION } from '../../shared/hostProtocol'
+import { HOST_PROTOCOL_VERSION, TASKWRAITH_DESKTOP_HOST_ACTOR } from '../../shared/hostProtocol'
 import {
   HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL,
   HOST_PROJECTION_DELTAS_SINCE_CHANNEL,
@@ -345,6 +345,22 @@ describe('registerHostProjectionHandlers · Wave 4.3b commands', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toMatch(/invalid/i)
     expect(submitCommand).not.toHaveBeenCalled()
+  })
+
+  it('binds command actor to the authenticated Desktop transport identity', async () => {
+    const submitCommand = vi.fn(async () => receipt())
+    const { submit } = register(() => clientPort({ submitCommand }))
+
+    await submit(
+      {},
+      command({
+        actor: { actorId: 'spoofed', clientId: 'spoofed', clientClass: 'ios' }
+      })
+    )
+
+    expect(submitCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: TASKWRAITH_DESKTOP_HOST_ACTOR })
+    )
   })
 
   it('looks up a receipt by commandId', async () => {

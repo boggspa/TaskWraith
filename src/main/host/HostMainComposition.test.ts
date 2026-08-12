@@ -9,7 +9,8 @@ import {
   type HostAuthenticatedClientIdentity,
   type HostCapability,
   type HostCommand,
-  type HostHealthProjection
+  type HostHealthProjection,
+  type HostThreadProjection
 } from '../../shared/hostProtocol'
 import {
   TASKWRAITH_HOST_DISCOVERY_FILE,
@@ -677,6 +678,53 @@ describe('HostMainComposition', () => {
       // Wave 3.1 control artifacts belong to the supervisor slice, not here.
       expect(existsSync(join(userDataPath, TASKWRAITH_HOST_DISCOVERY_FILE))).toBe(false)
       expect(existsSync(join(userDataPath, TASKWRAITH_HOST_TOKEN_FILE))).toBe(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // App-owned projection convergence
+  // -----------------------------------------------------------------------
+
+  describe('projection reconciliation', () => {
+    it('journals a mutation observed outside the governed command path', async () => {
+      let families = donorFamilies()
+      composition = open({ snapshotDonor: () => families })
+      const seen: string[] = []
+      const unsubscribe = composition.subscribeDeltas((event) => {
+        seen.push(`${event.record.envelope.family}:${event.record.envelope.entityId}`)
+      })
+
+      await composition.startProjectionReconciliation()
+      const thread: HostThreadProjection = {
+        id: 'thread-external',
+        workspaceId: null,
+        title: 'Legacy-side update',
+        chatKind: 'single',
+        archived: false,
+        pinned: false,
+        updatedAt: 1,
+        messageCount: 1
+      }
+      families = { ...families, threads: [thread] }
+
+      await expect(composition.reconcileProjection()).resolves.toEqual({
+        kind: 'published',
+        position: { generation: 1, cursor: 1 },
+        count: 1
+      })
+      expect(seen).toEqual(['thread:thread-external'])
+
+      unsubscribe()
+      await composition.stopProjectionReconciliation()
+    })
+
+    it('stops convergence before the final durable flush', async () => {
+      composition = open()
+      await composition.startProjectionReconciliation()
+
+      await composition.shutdown()
+
+      await expect(composition.reconcileProjection()).resolves.toEqual({ kind: 'stopped' })
     })
   })
 

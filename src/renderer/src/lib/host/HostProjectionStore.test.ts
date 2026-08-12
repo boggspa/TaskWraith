@@ -89,6 +89,17 @@ describe('HostProjectionStore · live fetch', () => {
     expect(state.lastGeneration).toBe(3)
   })
 
+  it('exposes a defensive wire-snapshot clone for command correlation', async () => {
+    const store = new HostProjectionStore(transportOf(async () => snapshot()))
+    await store.refresh()
+
+    const first = store.getSourceSnapshot()
+    expect(first?.threads[0]?.id).toBe('t1')
+    first?.threads.splice(0)
+
+    expect(store.getSourceSnapshot()?.threads[0]?.id).toBe('t1')
+  })
+
   it('notifies subscribers and stops after unsubscribe', async () => {
     const store = new HostProjectionStore(transportOf(async () => snapshot()))
     const seen: string[] = []

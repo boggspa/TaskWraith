@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_PROJECTION_VERSION,
@@ -7,6 +7,8 @@ import {
   type HostSnapshot
 } from '../../../shared/hostProtocol'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import { HostCommandController } from '../lib/host/HostCommandController'
+import type { HostCommandRunOutcome } from '../lib/host/HostCommandClient'
 import { projectHostSnapshot } from '../lib/host/hostSnapshotProjection'
 import { HostMissionControl, projectHostMissionControl } from './HostMissionControl'
 
@@ -277,5 +279,63 @@ describe('HostMissionControl', () => {
     expect(markup).toContain('Unavailable')
     expect(markup).toContain('No coherent Host projection is available.')
     expect(markup).not.toContain('No Host missions yet.')
+  })
+
+  it('renders governed cancel and seat controls from the live Host projection', () => {
+    const source = missionFixture()
+    source.runs = [
+      {
+        runId: 'run-active',
+        threadId: 'thread-a',
+        providerId: 'codex',
+        providerOutcome: 'running'
+      }
+    ]
+    const terminal: HostCommandRunOutcome = {
+      kind: 'terminal',
+      receipt: {} as never,
+      description: { text: 'Host accepted run.cancel', tone: 'good' }
+    }
+    const commands = new HostCommandController({
+      client: {
+        submitAndResolve: vi.fn(async () => terminal),
+        decideApproval: vi.fn(async () => terminal)
+      }
+    })
+
+    const markup = renderToStaticMarkup(
+      <HostMissionControl state={stateFromSnapshot(source)} commands={commands} />
+    )
+
+    expect(markup).toContain('Governed actions')
+    expect(markup).toContain('Cancel run')
+    expect(markup).toContain('Disable')
+    expect(markup).toContain('Enable')
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Cancel run<\/button>/)
+  })
+
+  it('disables governed mutations when the projection is cached', () => {
+    const source = missionFixture()
+    source.runs = [
+      {
+        runId: 'run-active',
+        threadId: 'thread-a',
+        providerId: 'codex',
+        providerOutcome: 'running'
+      }
+    ]
+    const commands = new HostCommandController({
+      client: {
+        submitAndResolve: vi.fn(),
+        decideApproval: vi.fn()
+      }
+    })
+    const projection = projectHostSnapshot(source, 'cached')
+
+    const markup = renderToStaticMarkup(
+      <HostMissionControl state={{ status: 'unavailable', projection }} commands={commands} />
+    )
+
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Cancel run<\/button>/)
   })
 })

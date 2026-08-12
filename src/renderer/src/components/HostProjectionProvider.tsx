@@ -9,10 +9,10 @@
  * `useHostProjection` had zero consumers outside their own tests: Desktop was
  * capable of projecting Host state but never actually did.
  *
- * SCOPE — READ-ONLY, AND IT RETIRES NOTHING. This makes real Host state
- * available to the renderer. It does NOT cut any existing AppStore-backed view
- * over, and it introduces no command surface. Desktop command cutover is a
- * later slice.
+ * The provider also owns one governed Host command controller for the same
+ * renderer lifetime. Projection and mutation remain separate ports, but a
+ * pending receipt can refresh this exact store and correlate its approval by
+ * commandId. Native-only Desktop actions remain outside this context.
  *
  * ONE STORE PER RENDERER, AND THAT IS PER WINDOW. The store is created once
  * via a `useState` initialiser, so a re-render never rebuilds it and never
@@ -36,6 +36,9 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
+import { TASKWRAITH_DESKTOP_HOST_ACTOR } from '../../../shared/hostProtocol'
+import { HostCommandClient } from '../lib/host/HostCommandClient'
+import { HostCommandController } from '../lib/host/HostCommandController'
 import { createHostProjectionIpcTransport } from '../lib/host/hostProjectionIpcTransport'
 import { HostProjectionStore } from '../lib/host/HostProjectionStore'
 
@@ -47,11 +50,14 @@ import { HostProjectionStore } from '../lib/host/HostProjectionStore'
  * apart would report a wiring mistake as a Host outage.
  */
 const HostProjectionContext = createContext<HostProjectionStore | null>(null)
+const HostCommandContext = createContext<HostCommandController | null>(null)
 
 export interface HostProjectionProviderProps {
   readonly children: ReactNode
   /** Injected store for tests. Omit in production to build the real chain. */
   readonly store?: HostProjectionStore
+  /** Injected governed-command controller for tests. */
+  readonly commandController?: HostCommandController
 }
 
 /**
@@ -60,17 +66,40 @@ export interface HostProjectionProviderProps {
  * Mount this INSIDE the app's ErrorBoundary: a provider that throws outside
  * the boundary would take down the very thing meant to catch it.
  */
-export function HostProjectionProvider({ children, store }: HostProjectionProviderProps) {
+export function HostProjectionProvider({
+  children,
+  store,
+  commandController
+}: HostProjectionProviderProps) {
   // Initialiser form: runs once for the life of this provider. Constructing
   // inline in the render body would build a fresh store — and drop the
   // accumulated cursor — on every re-render.
   const [value] = useState(
     () => store ?? new HostProjectionStore(createHostProjectionIpcTransport())
   )
+  const [commands] = useState(
+    () =>
+      commandController ??
+      new HostCommandController({
+        client: new HostCommandClient({
+          actor: TASKWRAITH_DESKTOP_HOST_ACTOR,
+          refreshSnapshot: async () => {
+            await value.refresh()
+            const source = value.getSourceSnapshot()
+            if (!source) throw new Error('Host snapshot refresh did not produce a live snapshot.')
+            return source
+          }
+        })
+      })
+  )
 
   useEffect(() => value.startSync(), [value])
 
-  return <HostProjectionContext.Provider value={value}>{children}</HostProjectionContext.Provider>
+  return (
+    <HostProjectionContext.Provider value={value}>
+      <HostCommandContext.Provider value={commands}>{children}</HostCommandContext.Provider>
+    </HostProjectionContext.Provider>
+  )
 }
 
 /**
@@ -81,4 +110,9 @@ export function HostProjectionProvider({ children, store }: HostProjectionProvid
  */
 export function useHostProjectionStore(): HostProjectionStore | null {
   return useContext(HostProjectionContext)
+}
+
+/** Read the renderer-lifetime governed Host command controller. */
+export function useHostCommandController(): HostCommandController | null {
+  return useContext(HostCommandContext)
 }

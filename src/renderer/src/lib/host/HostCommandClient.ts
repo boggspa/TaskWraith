@@ -68,6 +68,19 @@ export type HostCommandRunOutcome =
 export const HOST_COMMAND_BRIDGE_UNAVAILABLE = 'host command bridge unavailable'
 export const HOST_COMMAND_BRIDGE_MALFORMED = 'host command bridge returned an invalid result'
 
+export interface HostCommandSubmitInput {
+  name: HostCommandName
+  target: Record<string, string>
+  arguments?: Record<string, unknown>
+  commandId?: string
+  idempotencyKey?: string
+}
+
+export interface HostCommandSubmitHooks {
+  onPending?: (receipt: HostCommandReceipt, approvalId?: string) => void
+  onTick?: (receipt: HostCommandReceipt) => void
+}
+
 function defaultBridge(): HostCommandBridge | null {
   const api = (globalThis as { window?: { api?: unknown } }).window?.api as
     | Partial<HostCommandBridge>
@@ -129,7 +142,8 @@ export class HostCommandClient {
   private readonly timeoutMs: number
   private readonly sleep?: (ms: number) => Promise<void>
   private readonly shouldAbort?: () => boolean
-  private inFlight = false
+  private mutationInFlight = false
+  private activeRequests = 0
 
   constructor(options: HostCommandClientOptions) {
     if (!options || typeof options !== 'object') {
@@ -148,23 +162,19 @@ export class HostCommandClient {
   }
 
   get busy(): boolean {
-    return this.inFlight
+    return this.activeRequests > 0
   }
 
   async submitAndResolve(
-    input: {
-      name: HostCommandName
-      target: Record<string, string>
-      arguments?: Record<string, unknown>
-      commandId?: string
-      idempotencyKey?: string
-    },
-    hooks: {
-      onPending?: (receipt: HostCommandReceipt, approvalId?: string) => void
-      onTick?: (receipt: HostCommandReceipt) => void
-    } = {}
+    input: HostCommandSubmitInput,
+    hooks: HostCommandSubmitHooks = {}
   ): Promise<HostCommandRunOutcome> {
-    if (this.inFlight) {
+    // Response commands resolve an existing Host ask. They must be allowed
+    // while the original mutation is polling its pending receipt; otherwise
+    // Desktop can display an approval and can never answer it. Ordinary
+    // mutations remain serialized.
+    const isResponse = input.name === 'approval.decide' || input.name === 'question.answer'
+    if (!isResponse && this.mutationInFlight) {
       return { kind: 'error', error: 'A Host command is already in flight.' }
     }
     const bridge = this.resolveBridge()
@@ -181,7 +191,8 @@ export class HostCommandClient {
       idempotencyKey: input.idempotencyKey
     })
 
-    this.inFlight = true
+    if (!isResponse) this.mutationInFlight = true
+    this.activeRequests += 1
     try {
       const initial = unwrapReceipt(await bridge.hostProjectionCommandSubmit(command))
 
@@ -234,7 +245,8 @@ export class HostCommandClient {
         error: error instanceof Error ? error.message : String(error)
       }
     } finally {
-      this.inFlight = false
+      this.activeRequests = Math.max(0, this.activeRequests - 1)
+      if (!isResponse) this.mutationInFlight = false
     }
   }
 

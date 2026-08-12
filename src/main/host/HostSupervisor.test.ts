@@ -65,6 +65,9 @@ interface MockComposition {
   hostDataDir: string
   getPosition: ReturnType<typeof vi.fn>
   getRecoverySummary: ReturnType<typeof vi.fn>
+  startProjectionReconciliation: ReturnType<typeof vi.fn>
+  reconcileProjection: ReturnType<typeof vi.fn>
+  stopProjectionReconciliation: ReturnType<typeof vi.fn>
   shutdown: ReturnType<typeof vi.fn>
 }
 
@@ -135,6 +138,9 @@ function mockComposition(): MockComposition & HostMainComposition {
       deadChallenges: 0,
       deferredEnvelopes: 0
     }),
+    startProjectionReconciliation: vi.fn().mockResolvedValue(undefined),
+    reconcileProjection: vi.fn().mockResolvedValue({ kind: 'unchanged' }),
+    stopProjectionReconciliation: vi.fn().mockResolvedValue(undefined),
     shutdown: vi.fn().mockResolvedValue(undefined)
   } as unknown as MockComposition & HostMainComposition
 }
@@ -253,7 +259,8 @@ describe('HostSupervisor', () => {
 
   describe('start and stop', () => {
     it('start builds composition then starts server', async () => {
-      const createComposition = vi.fn().mockReturnValue(mockComposition())
+      const composition = mockComposition()
+      const createComposition = vi.fn().mockReturnValue(composition)
       const createServer = vi.fn().mockReturnValue(mockServer())
       const { input } = buildInput({ createComposition, createServer })
 
@@ -261,6 +268,7 @@ describe('HostSupervisor', () => {
       await supervisor.start()
 
       expect(createComposition).toHaveBeenCalledWith(input.compositionInput)
+      expect(composition.startProjectionReconciliation).toHaveBeenCalledOnce()
       expect(createServer).toHaveBeenCalledOnce()
       const serverOptions = createServer.mock.calls[0][0]
       expect(typeof serverOptions.subscribeDeltas).toBe('function')
@@ -280,6 +288,40 @@ describe('HostSupervisor', () => {
       }
       expect(supervisor.isRunning).toBe(true)
       expect(supervisor.isStopped).toBe(false)
+    })
+
+    it('establishes projection convergence before opening the listener', async () => {
+      const order: string[] = []
+      const composition = mockComposition()
+      composition.startProjectionReconciliation.mockImplementation(async () => {
+        order.push('projection-start')
+      })
+      const server = mockServer()
+      server.start.mockImplementation(async () => {
+        order.push('server-start')
+      })
+
+      const { supervisor } = makeSupervisor({ composition, server })
+      await supervisor.start()
+
+      expect(order).toEqual(['projection-start', 'server-start'])
+    })
+
+    it('does not open the listener when the projection baseline is unavailable', async () => {
+      const composition = mockComposition()
+      composition.startProjectionReconciliation.mockRejectedValue(
+        new Error('host_projection_reconcile_baseline_unavailable')
+      )
+      const server = mockServer()
+      const { supervisor } = makeSupervisor({ composition, server })
+
+      await expect(supervisor.start()).rejects.toThrow(
+        'host_projection_reconcile_baseline_unavailable'
+      )
+      expect(server.start).not.toHaveBeenCalled()
+      expect(server.stop).toHaveBeenCalledOnce()
+      expect(composition.shutdown).toHaveBeenCalledOnce()
+      expect(supervisor.isRunning).toBe(false)
     })
 
     it('start is idempotent when already running', async () => {

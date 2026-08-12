@@ -60,7 +60,12 @@ import {
   HostRuntimeBootstrap,
   type HostRuntimeRecoverySummaryWithDeferred
 } from './HostRuntimeBootstrap'
+import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import type { HostDeltaAppendListener } from './HostDeltaStore'
+import {
+  HostProjectionReconciler,
+  type HostProjectionReconcileResult
+} from './HostProjectionReconciler'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 
 /**
@@ -181,6 +186,15 @@ export interface HostMainComposition {
   /** Body-free recovery summary passthrough — counts and availability only. */
   getRecoverySummary(): HostRuntimeRecoverySummaryWithDeferred
   /**
+   * Establish the app-owned projection baseline and start reconciliation.
+   * The supervisor calls this before opening the client listener.
+   */
+  startProjectionReconciliation(): Promise<void>
+  /** Run one serialized convergence pass, primarily for lifecycle verification. */
+  reconcileProjection(): Promise<HostProjectionReconcileResult>
+  /** Stop the convergence loop and drain an in-flight pass. */
+  stopProjectionReconciliation(): Promise<void>
+  /**
    * Wave 5 next-slice — export a privacy-safe `.twmission` bundle from the
    * live Host snapshot (authority.snapshot → capture). Read-only; does not
    * mutate Host journals. Import remains detached via importTwMissionBundleBytes.
@@ -218,6 +232,27 @@ function requirePipeline(
   }
   requireFunction(candidate.execute, 'pipeline.execute')
   return candidate
+}
+
+/**
+ * In-process identity used only to observe the Host's own bounded projection.
+ * Transport identity never reaches this context and this context never issues
+ * commands, so it cannot mint authority for a client.
+ *
+ * HostClientClass has no host-internal member yet. Keep the migration-local
+ * desktop class explicit until the protocol grows that identity deliberately.
+ */
+const HOST_RECONCILER_CONTEXT: HostAuthorityCallContext = {
+  actor: {
+    actorId: 'host-reconciler',
+    clientId: 'host-reconciler',
+    clientClass: 'desktop'
+  },
+  client: {
+    clientId: 'host-reconciler',
+    clientClass: 'desktop',
+    clientVersion: '0.0.0'
+  }
 }
 
 /**
@@ -367,10 +402,14 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
 
   // Idempotent so an authoritative host shutdown and a supervisor stop cannot
   // double-flush, and so shutdown can never re-enter through the Authority.
+  // The reconciler is assigned after Authority construction; its shutdown is
+  // awaited before flushing so it cannot append behind the final flush.
+  let projectionReconciler: HostProjectionReconciler | null = null
   let stopped = false
   const flushDurableState = async (): Promise<void> => {
     if (stopped) return
     stopped = true
+    await projectionReconciler?.stop()
     runtime.flush()
     await input.onShutdown?.()
   }
@@ -398,6 +437,18 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     }
   })
 
+  const projectionPublisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })
+  const reconciler = new HostProjectionReconciler({
+    captureSnapshot: async () => {
+      const result = await authority.snapshot(HOST_RECONCILER_CONTEXT)
+      if (!result.ok) throw new Error(`host_projection_snapshot_${result.error}`)
+      return result.value
+    },
+    fetchDeltas: (position) => runtime.deltaStore.since(position),
+    publishEffects: (effects) => projectionPublisher.publish(effects)
+  })
+  projectionReconciler = reconciler
+
   const session = new HostSession({
     host: input.host,
     runtime,
@@ -412,6 +463,9 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     getPosition: () => runtime.getPosition(),
     subscribeDeltas: (listener) => runtime.deltaStore.subscribe(listener),
     getRecoverySummary: () => runtime.getRecoverySummary(),
+    startProjectionReconciliation: () => reconciler.start(),
+    reconcileProjection: () => reconciler.reconcileNow(),
+    stopProjectionReconciliation: () => reconciler.stop(),
     exportTwMission: async (context, options) => {
       const snap = await authority.snapshot(context)
       if (!snap.ok) {

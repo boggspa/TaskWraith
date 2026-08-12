@@ -1,4 +1,10 @@
+import { useEffect, useState } from 'react'
+
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import type {
+  HostCommandController,
+  HostCommandControllerState
+} from '../lib/host/HostCommandController'
 import type {
   HostProjectedMission,
   HostProjectedParticipant,
@@ -24,6 +30,11 @@ export interface HostMissionControlModel {
   readonly participantGroups: readonly HostMissionControlParticipantGroup[]
   readonly activeMissionCount: number
   readonly participantCount: number
+}
+
+export interface HostMissionControlProps {
+  readonly state: HostProjectionState
+  readonly commands?: HostCommandController | null
 }
 
 function missionPriority(status: HostProjectedMission['status']): number {
@@ -138,12 +149,49 @@ function roundProviderOutcomes(
     .join(' · ')
 }
 
-export function HostMissionControl({ state }: { readonly state: HostProjectionState }) {
+function commandStateFor(commands: HostCommandController | null | undefined) {
+  return (
+    commands?.getState() ??
+    ({ busy: false, approvalBusy: false } satisfies HostCommandControllerState)
+  )
+}
+
+export function HostMissionControl({ state, commands }: HostMissionControlProps) {
+  const [commandState, setCommandState] = useState<HostCommandControllerState>(() =>
+    commandStateFor(commands)
+  )
+  useEffect(() => {
+    setCommandState(commandStateFor(commands))
+    return commands?.subscribe(setCommandState)
+  }, [commands])
+
   const model = projectHostMissionControl(state)
   const summary = `${model.activeMissionCount} active · ${model.participantCount} participant${
     model.participantCount === 1 ? '' : 's'
   }`
   const runById = new Map(model.runs.map((run) => [run.runId, run]))
+  const activeRunThreadIds = [
+    ...new Set(
+      model.runs.filter((run) => run.providerOutcome === 'running').map((run) => run.threadId)
+    )
+  ]
+  const canMutate =
+    Boolean(commands) && state.status === 'live' && state.projection?.freshness === 'live'
+  const threadTitle = new Map(state.projection?.threads.map((thread) => [thread.id, thread.title]))
+
+  const submitRunCancel = (threadId: string): void => {
+    if (!commands || !canMutate) return
+    void commands.submit({ name: 'run.cancel', target: { threadId } })
+  }
+
+  const submitSeatToggle = (participant: HostProjectedParticipant): void => {
+    if (!commands || !canMutate) return
+    void commands.submit({
+      name: 'ensemble.seat.toggle',
+      target: { threadId: participant.threadId },
+      arguments: { participantId: participant.id, enabled: !participant.enabled }
+    })
+  }
 
   return (
     <details className="host-mission-control" aria-label="Mission Control">
@@ -173,12 +221,85 @@ export function HostMissionControl({ state }: { readonly state: HostProjectionSt
           )}
         </div>
 
+        {commandState.notice ? (
+          <div
+            className={`host-mission-control-notice is-${commandState.notice.tone}`}
+            role="status"
+            aria-live="polite"
+          >
+            {commandState.notice.text}
+          </div>
+        ) : null}
+
+        {commandState.pending ? (
+          <section className="host-mission-control-section" aria-labelledby="host-command-title">
+            <h3 id="host-command-title">Host approval</h3>
+            <div className="host-mission-control-command-card">
+              <span>
+                {commandState.pending.approvalId
+                  ? `Approve ${commandState.pending.name}`
+                  : `Waiting for ${commandState.pending.name} approval card`}
+              </span>
+              {commandState.pending.approvalId && commands ? (
+                <div className="host-mission-control-actions">
+                  <button
+                    type="button"
+                    disabled={commandState.approvalBusy}
+                    onClick={() => void commands.decidePendingApproval('accept')}
+                  >
+                    Allow once
+                  </button>
+                  <button
+                    type="button"
+                    disabled={commandState.approvalBusy}
+                    onClick={() => void commands.decidePendingApproval('acceptForSession')}
+                  >
+                    Allow session
+                  </button>
+                  <button
+                    type="button"
+                    className="is-danger"
+                    disabled={commandState.approvalBusy}
+                    onClick={() => void commands.decidePendingApproval('decline')}
+                  >
+                    Deny
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         {!state.projection ? (
           <div className="host-mission-control-empty">
             No coherent Host projection is available.
           </div>
         ) : (
           <>
+            {activeRunThreadIds.length > 0 ? (
+              <section
+                className="host-mission-control-section"
+                aria-labelledby="host-actions-title"
+              >
+                <h3 id="host-actions-title">Governed actions</h3>
+                <div className="host-mission-control-timeline">
+                  {activeRunThreadIds.map((threadId) => (
+                    <div className="host-mission-control-command-card" key={threadId}>
+                      <span>{threadTitle.get(threadId) ?? 'Active thread'}</span>
+                      <button
+                        type="button"
+                        className="is-danger"
+                        disabled={!canMutate || commandState.busy}
+                        onClick={() => submitRunCancel(threadId)}
+                      >
+                        Cancel run
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
             <section className="host-mission-control-section" aria-labelledby="host-missions-title">
               <h3 id="host-missions-title">Mission timeline</h3>
               {model.missions.length === 0 ? (
@@ -308,6 +429,16 @@ export function HostMissionControl({ state }: { readonly state: HostProjectionSt
                         <strong>{participant.role}</strong>
                         <span>{participantDetail(participant)}</span>
                       </span>
+                      {commands ? (
+                        <button
+                          type="button"
+                          className="host-mission-control-seat-toggle"
+                          disabled={!canMutate || commandState.busy}
+                          onClick={() => submitSeatToggle(participant)}
+                        >
+                          {participant.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>

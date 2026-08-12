@@ -27,6 +27,7 @@ import {
   evaluateHostIdempotencyFingerprints,
   evaluateHostIdempotencyReplay,
   encodeHostParticipantEntityId,
+  encodeHostProviderEntityId,
   intersectHostCapabilities,
   isHostCommandFingerprint,
   normalizeHostCommandFingerprint,
@@ -752,6 +753,22 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       ok: false,
       error: expect.stringContaining('exceeds')
     })
+  })
+
+  it('encodes provider identity without provider/model aliases', () => {
+    expect(encodeHostProviderEntityId('cursor', undefined)).toEqual({
+      ok: true,
+      value: 'p0:6:cursor'
+    })
+    expect(encodeHostProviderEntityId('cursor', 'grok:4')).toEqual({
+      ok: true,
+      value: 'p1:6:cursor:6:grok:4'
+    })
+    expect(encodeHostProviderEntityId('cursor:grok', '4')).not.toEqual(
+      encodeHostProviderEntityId('cursor', 'grok:4')
+    )
+    expect(encodeHostProviderEntityId(' cursor', undefined)).toMatchObject({ ok: false })
+    expect(encodeHostProviderEntityId('cursor', '')).toMatchObject({ ok: false })
   })
 
   it('round-trips decodeHostSnapshot for empty and populated compact snapshots', () => {

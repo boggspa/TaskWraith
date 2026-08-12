@@ -145,6 +145,16 @@ export class HostProjectionStore {
     return this.state
   }
 
+  /**
+   * Current validated Host wire snapshot for command/approval correlation.
+   * Returned as a clone so renderer consumers cannot mutate store state.
+   */
+  getSourceSnapshot(): HostSnapshot | null {
+    return this.sourceSnapshot
+      ? (JSON.parse(JSON.stringify(this.sourceSnapshot)) as HostSnapshot)
+      : null
+  }
+
   /** Subscribe to state changes. Returns an unsubscribe function. */
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
