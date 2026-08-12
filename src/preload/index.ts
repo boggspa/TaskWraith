@@ -1579,6 +1579,11 @@ const api = {
   // Main resolves the asset by content hash + mime into a real on-disk file,
   // then reveals / returns / save-as-copies it. Channels are LOCKED — a
   // parallel agent owns the main-side handlers.
+  openMediaAssetInStudio: (sha256: string, mimeType: string) =>
+    ipcRenderer.invoke('media-asset:open-in-studio', { sha256, mimeType }) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
   revealMediaAsset: (sha256: string, mimeType: string) =>
     ipcRenderer.invoke('media-asset:reveal', { sha256, mimeType }) as Promise<{ ok: boolean }>,
   getMediaAssetPath: (sha256: string, mimeType: string) =>

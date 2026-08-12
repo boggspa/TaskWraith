@@ -220,6 +220,58 @@ describe('StudioCompanionSupervisor', () => {
     await harness.supervisor.stop()
   })
 
+  it('opens host-authorized media only after hydration and pushes the durable commit', async () => {
+    const harness = await createHarness({ allowMediaRoot: true })
+    const mediaPath = nodePath.join(harness.directory, 'host-owned.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+    harness.supervisor.start()
+    const child = harness.children[0]
+
+    await expect(
+      harness.supervisor.openMedia({
+        assetId: 'host-owned',
+        path: mediaPath,
+        mediaKind: 'video'
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'companion_not_ready', currentRevision: 0 })
+    expect(harness.store.revision).toBe(0)
+
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    await until(() => child.messages.length >= 1)
+    child.send({ jsonrpc: '2.0', id: 2, method: STUDIO_METHODS.getDocument })
+    await until(() => child.messages.length >= 2)
+
+    await expect(
+      harness.supervisor.openMedia({
+        assetId: 'host-owned',
+        path: mediaPath,
+        mediaKind: 'video'
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      revision: 1,
+      asset: { assetId: 'host-owned', mediaKind: 'video' }
+    })
+    await until(() => child.messages.length >= 3)
+    expect(child.messages[2]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 1,
+        op: {
+          type: 'open_media',
+          asset: { assetId: 'host-owned', mediaKind: 'video' }
+        }
+      }
+    })
+    expect(harness.store.revision).toBe(1)
+    await harness.supervisor.stop()
+  })
+
   it('pushes studio/editCommitted after a committed media open', async () => {
     const harness = await createHarness({ allowMediaRoot: true })
     const mediaPath = nodePath.join(harness.directory, 'clip.mov')

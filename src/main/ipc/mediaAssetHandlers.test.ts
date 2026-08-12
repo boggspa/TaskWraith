@@ -76,7 +76,8 @@ function createDeps() {
       })
     ),
     copyFile: vi.fn(async () => undefined),
-    copyOpenedAsset: vi.fn(async () => undefined)
+    copyOpenedAsset: vi.fn(async () => undefined),
+    openInStudio: vi.fn(async () => ({ ok: true }))
   }
 
   return {
@@ -91,10 +92,43 @@ describe('registerMediaAssetHandlers', () => {
   it('registers media-asset IPC channels', () => {
     registerMediaAssetHandlers(createDeps().deps)
 
+    expect(handlerFor('media-asset:open-in-studio')).toBeTypeOf('function')
     expect(handlerFor('media-asset:reveal')).toBeTypeOf('function')
     expect(handlerFor('media-asset:get-path')).toBeTypeOf('function')
     expect(handlerFor('media-asset:save-as')).toBeTypeOf('function')
     expect(handlerFor('media-asset:copy-image')).toBeTypeOf('function')
+  })
+
+  it('opens only an authorized host-owned video in Studio', async () => {
+    const { deps } = createDeps()
+    const videoSha = 'videoHash_abcdefghijklmnopqrstuvwxyz0123456789-ABCDEFGH'
+    const store = new TranscriptMediaAssetStore(join(currentUserData, TRANSCRIPT_MEDIA_ASSET_DIR))
+    expect(
+      store.write({ sha256: videoSha, mimeType: 'video/mp4', buffer: Buffer.from('video') })
+    ).toEqual({ ok: true })
+    registerMediaAssetHandlers(deps)
+
+    await expect(
+      handlerFor('media-asset:open-in-studio')({}, { sha256: videoSha, mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: true })
+    expect(deps.openInStudio).toHaveBeenCalledWith({
+      assetId: videoSha,
+      path: transcriptMediaAssetPath(
+        fs.realpathSync.native(join(currentUserData, TRANSCRIPT_MEDIA_ASSET_DIR)),
+        videoSha,
+        'video/mp4'
+      ),
+      mediaKind: 'video'
+    })
+
+    await expect(
+      handlerFor('media-asset:open-in-studio')({}, { sha256: VALID_SHA, mimeType: 'image/png' })
+    ).resolves.toEqual({ ok: false })
+    deps.authorizeSender.mockReturnValueOnce(false)
+    await expect(
+      handlerFor('media-asset:open-in-studio')({}, { sha256: videoSha, mimeType: 'video/mp4' })
+    ).resolves.toEqual({ ok: false })
+    expect(deps.openInStudio).toHaveBeenCalledTimes(1)
   })
 
   it('resolver returns null for invalid input, path-jail failures, and missing assets', async () => {

@@ -820,6 +820,41 @@ describe('ChatMediaPanel attachment rendering', () => {
   })
 })
 
+describe('buildMediaCardActions Studio launch', () => {
+  it('offers TaskWraith-owned videos and invokes the sha-addressed Studio channel', () => {
+    const openMediaAssetInStudio = vi.fn(async () => ({ ok: true }))
+    vi.stubGlobal('window', { api: { openMediaAssetInStudio } })
+    try {
+      const video: ChatMediaRef = {
+        id: 'studio-video',
+        kind: 'video',
+        source: 'tool_result',
+        name: 'owned.mov',
+        path: '',
+        sha256: 'owned-video-sha',
+        mimeType: 'video/quicktime'
+      }
+      const action = buildMediaCardActions(video, () => {}).find(
+        (candidate) => candidate.id === 'open-in-studio'
+      )
+      expect(action?.label).toBe('Open in Studio')
+      action?.onSelect()
+      expect(openMediaAssetInStudio).toHaveBeenCalledWith(
+        'owned-video-sha',
+        'video/quicktime'
+      )
+
+      expect(
+        buildMediaCardActions({ ...video, kind: 'audio', mimeType: 'audio/mp4' }, () => {}).some(
+          (candidate) => candidate.id === 'open-in-studio'
+        )
+      ).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('buildMediaCardActions project-library promotion', () => {
   const pathRef = {
     id: 'ref-1',

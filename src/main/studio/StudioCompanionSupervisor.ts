@@ -37,13 +37,14 @@ import {
   type StudioApplyEditParams,
   type StudioApplyEditResult,
   type StudioDocumentOperation,
+  type StudioMediaAsset,
   type StudioMessage,
   type StudioOpenMediaResult,
   type StudioResponseMessage,
   type StudioSuccessResponseMessage
 } from './StudioProtocol'
 import { buildEditCommittedNotification, handleStudioMessage } from './StudioDispatcher'
-import type { StudioRevisionStore } from './StudioRevisionStore'
+import type { StudioOpenMediaOutcome, StudioRevisionStore } from './StudioRevisionStore'
 
 /**
  * Narrow structural view of a spawned companion process. node:child_process
@@ -86,6 +87,15 @@ export interface StudioSupervisorStatus {
   restartsInWindow: number
   lastExit: { code: number | null; signal: NodeJS.Signals | null } | null
 }
+
+export type StudioHostOpenMediaOutcome =
+  | StudioOpenMediaOutcome
+  | {
+      ok: false
+      code: 'companion_not_ready' | 'delivery_failed'
+      message: string
+      currentRevision: number
+    }
 
 export class StudioSupervisorError extends Error {
   readonly code: 'already_running'
@@ -180,6 +190,7 @@ export class StudioCompanionSupervisor {
 
   private currentState: StudioSupervisorState = 'idle'
   private child: StudioCompanionChild | null = null
+  private hydratedChild: StudioCompanionChild | null = null
   private childSettled = false
   private decoder: StudioNdjsonDecoder | null = null
   private inbound: Promise<void> = Promise.resolve()
@@ -268,6 +279,46 @@ export class StudioCompanionSupervisor {
     return settled
   }
 
+  /**
+   * Commit a host-authorized media asset at the current durable revision and
+   * notify the hydrated companion. The same serial lane as inbound RPC keeps
+   * the commit ordered with companion-originated edits.
+   */
+  openMedia(asset: StudioMediaAsset): Promise<StudioHostOpenMediaOutcome> {
+    return this.enqueueSerialized(async () => {
+      const child = this.child
+      if (child === null || this.hydratedChild !== child) {
+        return {
+          ok: false,
+          code: 'companion_not_ready',
+          message: 'Studio companion has not completed document hydration',
+          currentRevision: this.store.revision
+        }
+      }
+      const outcome = await this.store.openMedia(this.store.revision, asset)
+      if (!outcome.ok) return outcome
+      if (
+        this.child !== child ||
+        this.hydratedChild !== child ||
+        !this.writeToChild(
+          child,
+          buildEditCommittedNotification(outcome.revision, {
+            type: 'open_media',
+            asset: outcome.asset
+          })
+        )
+      ) {
+        return {
+          ok: false,
+          code: 'delivery_failed',
+          message: 'Studio media open committed but the companion disconnected before delivery',
+          currentRevision: outcome.revision
+        }
+      }
+      return outcome
+    })
+  }
+
   private spawnChild(): void {
     let child: StudioCompanionChild
     try {
@@ -278,6 +329,7 @@ export class StudioCompanionSupervisor {
       return
     }
     this.child = child
+    this.hydratedChild = null
     this.childSettled = false
     // Fresh decoder per companion instance: partial bytes from a dead
     // companion must never leak into the next one's stream.
@@ -317,6 +369,7 @@ export class StudioCompanionSupervisor {
     if (child !== this.child || this.childSettled) return
     this.childSettled = true
     this.child = null
+    this.hydratedChild = null
     this.decoder = null
     this.lastExit = { code, signal }
     for (const timer of this.stopTimers) clearTimeout(timer)
@@ -377,7 +430,16 @@ export class StudioCompanionSupervisor {
   private enqueueInbound(child: StudioCompanionChild, value: unknown): void {
     // Serialise handling so responses and editCommitted pushes leave in a
     // deterministic order relative to their requests.
-    this.inbound = this.inbound.then(() => this.handleInboundMessage(child, value))
+    void this.enqueueSerialized(() => this.handleInboundMessage(child, value))
+  }
+
+  private enqueueSerialized<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.inbound.then(operation)
+    this.inbound = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   private async handleInboundMessage(child: StudioCompanionChild, value: unknown): Promise<void> {
@@ -393,6 +455,7 @@ export class StudioCompanionSupervisor {
     this.writeToChild(child, response)
     const hydratedRevision = extractHydrationRevision(value, response)
     if (hydratedRevision !== null) {
+      if (this.child === child) this.hydratedChild = child
       this.emit({ type: 'hydration_served', revision: hydratedRevision })
     }
     const committed = extractCommittedEdit(value, response)
@@ -401,12 +464,14 @@ export class StudioCompanionSupervisor {
     }
   }
 
-  private writeToChild(child: StudioCompanionChild, message: StudioMessage): void {
-    if (this.child !== child || child.stdin === null) return
+  private writeToChild(child: StudioCompanionChild, message: StudioMessage): boolean {
+    if (this.child !== child || child.stdin === null) return false
     try {
       child.stdin.write(encodeStudioMessage(message))
+      return true
     } catch (error) {
       this.emit({ type: 'write_failed', message: describeError(error) })
+      return false
     }
   }
 

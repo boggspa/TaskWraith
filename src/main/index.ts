@@ -53828,6 +53828,12 @@ if (isGeminiMcpBridgeProcess) {
           })
         )
       },
+      openInStudio: async (asset) => {
+        const lifecycle = studioProductionLifecycleRef
+        if (!lifecycle) return { ok: false, error: 'Studio companion is unavailable.' }
+        const outcome = await lifecycle.openMedia(asset)
+        return outcome.ok ? { ok: true } : { ok: false, error: outcome.message }
+      },
       getRequestingWindow: (event) => {
         const requestingWindow = BrowserWindow.fromWebContents(event.sender)
         return requestingWindow && !requestingWindow.isDestroyed() ? requestingWindow : null

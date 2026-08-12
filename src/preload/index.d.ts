@@ -1529,6 +1529,10 @@ declare global {
       getLicenseNoticeStatus: () => Promise<LicenseNoticeStatus>
       openLicenseNotice: (kind: LicenseNoticeKind) => Promise<OpenLicenseNoticeResult>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
+      openMediaAssetInStudio: (
+        sha256: string,
+        mimeType: string
+      ) => Promise<{ ok: boolean; error?: string }>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
       getMediaAssetPath: (sha256: string, mimeType: string) => Promise<string | null>
       saveMediaAssetAs: (

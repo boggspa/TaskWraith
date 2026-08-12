@@ -366,6 +366,9 @@ export function buildMediaCardActions(
   const sha256 = mediaRef.sha256
   const mimeType = mediaRef.mimeType
   const canUseAssetChannels = Boolean(sha256 && mimeType)
+  const canOpenInStudio = Boolean(
+    mediaRef.kind === 'video' && canUseAssetChannels && mimeType?.startsWith('video/')
+  )
   const canCopyImage = Boolean(
     canUseAssetChannels && mimeType && mimeType.startsWith('image/')
   )
@@ -374,6 +377,18 @@ export function buildMediaCardActions(
   const canDetach = Boolean(onDetachToPane && isAvMediaKind(mediaRef.kind))
 
   return [
+    ...(canOpenInStudio
+      ? [
+          {
+            id: 'open-in-studio',
+            label: 'Open in Studio',
+            onSelect: () => {
+              if (typeof window === 'undefined' || !sha256 || !mimeType) return
+              void window.api?.openMediaAssetInStudio?.(sha256, mimeType)
+            }
+          } as MediaActionMenuItem
+        ]
+      : []),
     ...(canDetach
       ? [
           {

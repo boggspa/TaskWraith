@@ -6,6 +6,7 @@ import {
   StudioCompanionSupervisor,
   spawnStudioCompanionProcess,
   type StudioCompanionChild,
+  type StudioHostOpenMediaOutcome,
   type StudioSupervisorEvent,
   type StudioSupervisorStatus
 } from './StudioCompanionSupervisor'
@@ -13,6 +14,7 @@ import {
   resolveStudioCompanionShouldRun,
   type StudioCompanionResolution
 } from './StudioCompanionSettings'
+import type { StudioMediaAsset } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 export const STUDIO_PRODUCTION_STATE_DIR = 'studio-companion'
@@ -151,6 +153,11 @@ export class StudioProductionLifecycle {
 
   stopCompanion(): Promise<void> {
     return this.supervisor.stop()
+  }
+
+  openMedia(asset: StudioMediaAsset): Promise<StudioHostOpenMediaOutcome> {
+    if (this.disposed) throw new Error('StudioProductionLifecycle is disposed')
+    return this.supervisor.openMedia(asset)
   }
 
   async dispose(): Promise<void> {

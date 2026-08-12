@@ -31,6 +31,12 @@ export interface MediaAssetHandlersDeps {
   copyFile: (src: string, dest: string) => Promise<void>
   /** Test seam; production defaults to the descriptor-backed streaming copy. */
   copyOpenedAsset?: (asset: ResolvedTwMediaAsset, dest: string) => Promise<void>
+  /** Open an already-authorized host-owned video in the Studio companion. */
+  openInStudio: (asset: {
+    assetId: string
+    path: string
+    mediaKind: 'video'
+  }) => Promise<{ ok: boolean; error?: string }>
   /** Copy a native image bitmap to the system clipboard. */
   writeImageToClipboard?: (image: Electron.NativeImage) => void
   createNativeImageFromPath?: (path: string) => Electron.NativeImage
@@ -182,6 +188,27 @@ export async function copyOpenedMediaAssetToPath(
 }
 
 export function registerMediaAssetHandlers(deps: MediaAssetHandlersDeps): void {
+  ipcMain.handle(
+    'media-asset:open-in-studio',
+    async (event, input: unknown): Promise<{ ok: boolean; error?: string }> => {
+      const identity = resolveMediaAssetIdentity(deps, input)
+      if (!identity?.mimeType.toLowerCase().startsWith('video/')) return { ok: false }
+      const asset = openAuthorizedMediaAsset(deps, event, input)
+      if (!asset) return { ok: false }
+      try {
+        return await deps.openInStudio({
+          assetId: identity.sha256,
+          path: asset.realPath,
+          mediaKind: 'video'
+        })
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      } finally {
+        asset.close()
+      }
+    }
+  )
+
   ipcMain.handle('media-asset:reveal', async (event, input: unknown): Promise<{ ok: boolean }> => {
     const asset = openAuthorizedMediaAsset(deps, event, input)
     if (!asset) return { ok: false }
