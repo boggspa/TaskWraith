@@ -47,6 +47,61 @@ final class StudioViewerRendererTests: XCTestCase {
         try StudioTestPatternRenderer.readPixel(from: texture, x: x, y: y)
     }
 
+    // MARK: - Pass ordering contract
+
+    /// THE OVERLAY-ORDERING CONTRACT, asserted structurally.
+    ///
+    /// The content pass clears and draws; the overlay pass LOADS that result and
+    /// presents. Metal serialises command buffers within one queue by commit
+    /// order and guarantees nothing across queues without an MTLEvent or fence.
+    /// These three renderers used to build a queue each, so "the overlay runs
+    /// last" was intent that happened to hold because the driver serialised
+    /// them — deterministic on this Apple-silicon machine, unproven on the
+    /// Intel/discrete-GPU half of the universal build.
+    ///
+    /// This test is STRUCTURAL rather than red-first on purpose. A cross-queue
+    /// race does not fail on demand, and the compositing test passing proves the
+    /// ordering happened once, not that it is guaranteed. The only honest
+    /// assertion is the invariant itself: one queue, shared by every pass.
+    func testEveryViewerPassSharesOneCommandQueue() throws {
+        let renderer = try makeRenderer()
+        XCTAssertTrue(
+            renderer.patternRenderer.commandQueue === renderer.commandQueue,
+            "test-pattern pass is on a different queue; ordering is not guaranteed"
+        )
+        XCTAssertTrue(
+            renderer.videoRenderer.commandQueue === renderer.commandQueue,
+            "video pass is on a different queue; ordering is not guaranteed"
+        )
+        XCTAssertTrue(
+            renderer.overlayRenderer.commandQueue === renderer.commandQueue,
+            "overlay pass is on a different queue; ordering is not guaranteed"
+        )
+    }
+
+    /// Two viewers must NOT share a queue: they present to different drawables
+    /// and have no ordering relationship, so sharing would serialise them for
+    /// nothing.
+    func testSeparateViewersDoNotShareACommandQueue() throws {
+        let first = try makeRenderer()
+        let second = try StudioViewerRenderer(device: first.device)
+        XCTAssertFalse(first.commandQueue === second.commandQueue)
+    }
+
+    /// A standalone renderer still works without an injected queue, so the
+    /// injection is a viewer-level contract rather than a construction burden.
+    func testAStandaloneRendererStillProvidesItsOwnQueue() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device available on this machine")
+        }
+        let standalone = try StudioTestPatternRenderer(device: device)
+        let injected = try StudioTestPatternRenderer(
+            device: device,
+            commandQueue: try XCTUnwrap(device.makeCommandQueue())
+        )
+        XCTAssertFalse(standalone.commandQueue === injected.commandQueue)
+    }
+
     // MARK: - Fallback (no source)
 
     func testNoSourceRendersTheTestPattern() throws {

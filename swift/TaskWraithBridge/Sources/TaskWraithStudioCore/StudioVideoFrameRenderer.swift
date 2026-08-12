@@ -37,7 +37,8 @@ public final class StudioVideoFrameRenderer {
     }
 
     public let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
+    /// Internal so tests can assert the viewer shares ONE queue across passes.
+    let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let sampler: MTLSamplerState
 
@@ -45,10 +46,14 @@ public final class StudioVideoFrameRenderer {
     /// buffer. Bounded to `inFlightRetentionDepth`, so this cannot grow.
     private var retainedFrames: [StudioVideoFrameTextures] = []
 
-    public init(device: MTLDevice) throws {
+    /// - Parameter commandQueue: inject the OWNING VIEWER'S queue so passes that
+    ///   composite into one drawable are ordered. Metal serialises command
+    ///   buffers within a queue by commit order; it guarantees NOTHING across
+    ///   queues. Defaults to a private queue for standalone use.
+    public init(device: MTLDevice, commandQueue: MTLCommandQueue? = nil) throws {
         self.device = device
 
-        guard let queue = device.makeCommandQueue() else {
+        guard let queue = commandQueue ?? device.makeCommandQueue() else {
             throw StudioRendererError.commandQueueUnavailable
         }
         self.commandQueue = queue
@@ -104,8 +109,11 @@ public final class StudioVideoFrameRenderer {
     ///   caller's own reference outlives the wait.
     /// - Parameter chaining: when true a LATER pass in this queue owns
     ///   presentation and readback, so this commits without presenting and
-    ///   without blocking. Metal executes command buffers in commit order, so
-    ///   waiting here would stall the display link for no ordering benefit.
+    ///   without blocking. Metal executes command buffers committed to the SAME
+    ///   QUEUE in commit order, so waiting here would stall the display link for
+    ///   no ordering benefit — but only because the follow-up pass shares this
+    ///   renderer's queue. Across queues there is no such guarantee, which is
+    ///   why StudioViewerRenderer injects one queue into every pass.
     public func render(
         frame: StudioVideoFrameTextures,
         to target: MTLTexture,

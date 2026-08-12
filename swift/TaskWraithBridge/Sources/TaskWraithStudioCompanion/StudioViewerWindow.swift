@@ -421,17 +421,40 @@ final class StudioViewerView: NSView {
 
     override func accessibilityChildren() -> [Any]? { accessibilityChildElements }
 
-    /// Republishes accessibility children only when the DESCRIPTORS change.
+    /// Rebuilds accessibility children only when the CONTROLS change; otherwise
+    /// updates spoken values in place.
     ///
-    /// Rebuilding these every display-link tick would churn sixty times a second
-    /// and give assistive technology a moving target. The descriptors are
-    /// Equatable precisely so this comparison is cheap.
+    /// The distinction is load-bearing and I got it wrong first time. A plain
+    /// `!=` on the descriptors looks like it prevents churn, and does while
+    /// paused — but the playhead and readout descriptors carry the RUNNING
+    /// timecode, so during playback the comparison fails on every display-link
+    /// tick and this allocated a fresh NSAccessibilityElement per child at frame
+    /// rate. Playback is the one state where that matters.
+    ///
+    /// Throttling the value was the other option and it is worse: it would make
+    /// the timecode VoiceOver reads lag the picture. Values are cheap to set;
+    /// only the elements are expensive to build.
     private func publishAccessibility(for model: StudioOverlayModel) {
-        guard model.accessibilityElements != publishedAccessibility else { return }
-        publishedAccessibility = model.accessibilityElements
+        let incoming = model.accessibilityElements
+        let sameControls =
+            incoming.count == accessibilityChildElements.count
+            && incoming.count == publishedAccessibility.count
+            && zip(incoming, publishedAccessibility).allSatisfy { $0.matchesStructure(of: $1) }
+
+        if sameControls {
+            // No allocation: update only the values that actually moved.
+            for (index, descriptor) in incoming.enumerated()
+            where descriptor.value != publishedAccessibility[index].value {
+                accessibilityChildElements[index].setAccessibilityValue(descriptor.value)
+            }
+            publishedAccessibility = incoming
+            return
+        }
+
+        publishedAccessibility = incoming
         let scale = window?.backingScaleFactor ?? 2.0
 
-        accessibilityChildElements = model.accessibilityElements.map { descriptor in
+        accessibilityChildElements = incoming.map { descriptor in
             let element = NSAccessibilityElement()
             element.setAccessibilityRole(Self.accessibilityRole(for: descriptor.role))
             element.setAccessibilityLabel(descriptor.label)
@@ -460,7 +483,6 @@ final class StudioViewerView: NSView {
         switch role {
         case .slider: return .slider
         case .staticText: return .staticText
-        case .checkbox: return .checkBox
         }
     }
 }

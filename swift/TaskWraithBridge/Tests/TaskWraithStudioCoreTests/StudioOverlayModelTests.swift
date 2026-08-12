@@ -279,6 +279,75 @@ final class StudioOverlayModelTests: XCTestCase {
         XCTAssertEqual(slider.frame, model.grabFrame)
     }
 
+    /// THE ACCESSIBILITY CHURN BUG, asserted from both sides.
+    ///
+    /// Descriptors at two playback positions are NOT equal — the playhead and
+    /// readout carry the running timecode — so a viewer republishing on plain
+    /// inequality reallocates every child on every display-link tick during
+    /// playback. They ARE structurally identical, which is what lets the caller
+    /// update spoken values in place instead. The first assertion is the bug;
+    /// the second is the fix.
+    func testDescriptorsAreStructurallyStableAcrossPlaybackButNotEqual() {
+        let early = StudioOverlayLayout.build(state(position: 30))
+        var laterState = state(position: 90)
+        laterState.timecodeText = "00:00:03:00"
+        let later = StudioOverlayLayout.build(laterState)
+
+        XCTAssertNotEqual(
+            early.accessibilityElements,
+            later.accessibilityElements,
+            "if these were equal the churn bug could not have existed"
+        )
+        XCTAssertEqual(early.accessibilityElements.count, later.accessibilityElements.count)
+        for (a, b) in zip(early.accessibilityElements, later.accessibilityElements) {
+            XCTAssertTrue(
+                a.matchesStructure(of: b),
+                "\(a.label) changed structurally between frames, forcing a rebuild"
+            )
+        }
+    }
+
+    /// Structural identity must still notice a control genuinely moving or
+    /// changing, or the viewer would keep stale frames forever.
+    func testStructuralMatchDetectsRealControlChanges() {
+        let base = StudioAccessibilityDescriptor(
+            role: .slider,
+            label: "Playhead",
+            value: "00:00:01:00",
+            frame: StudioOverlayFrame(x: 0, y: 0, width: 10, height: 10)
+        )
+        let valueOnly = StudioAccessibilityDescriptor(
+            role: .slider,
+            label: "Playhead",
+            value: "00:00:09:00",
+            frame: StudioOverlayFrame(x: 0, y: 0, width: 10, height: 10)
+        )
+        XCTAssertTrue(base.matchesStructure(of: valueOnly))
+
+        let moved = StudioAccessibilityDescriptor(
+            role: .slider,
+            label: "Playhead",
+            value: "00:00:01:00",
+            frame: StudioOverlayFrame(x: 40, y: 0, width: 10, height: 10)
+        )
+        XCTAssertFalse(base.matchesStructure(of: moved), "a resized control must rebuild")
+
+        let relabelled = StudioAccessibilityDescriptor(
+            role: .staticText,
+            label: "Playhead",
+            value: "00:00:01:00",
+            frame: StudioOverlayFrame(x: 0, y: 0, width: 10, height: 10)
+        )
+        XCTAssertFalse(base.matchesStructure(of: relabelled), "a role change must rebuild")
+    }
+
+    /// Marking In/Out ADDS controls, so that genuinely must rebuild.
+    func testAddingMarksIsAStructuralChange() {
+        let bare = StudioOverlayLayout.build(state())
+        let marked = StudioOverlayLayout.build(state(inPoint: 30, outPoint: 90))
+        XCTAssertNotEqual(bare.accessibilityElements.count, marked.accessibilityElements.count)
+    }
+
     func testMarksAndLoopStateAreDescribed() {
         let model = StudioOverlayLayout.build(
             state(inPoint: 30, outPoint: 90, looping: true)
@@ -288,8 +357,11 @@ final class StudioOverlayModelTests: XCTestCase {
         XCTAssertTrue(labels.contains("Out point"))
         XCTAssertTrue(labels.contains("Timecode"))
         let loop = model.accessibilityElements.first { $0.label == "Loop marked range" }
-        XCTAssertEqual(loop?.role, .checkbox)
-        XCTAssertEqual(loop?.value, "1")
+        // Static text, not a checkbox: nothing in the HUD can be clicked to
+        // toggle looping, and announcing an inoperable control is worse than
+        // describing the state.
+        XCTAssertEqual(loop?.role, .staticText)
+        XCTAssertEqual(loop?.value, "on")
     }
 
     func testEveryAccessibilityElementHasANonEmptyLabel() {

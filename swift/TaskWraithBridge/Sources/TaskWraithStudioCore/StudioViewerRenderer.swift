@@ -39,11 +39,32 @@ public enum StudioViewerFrameOutcome: Equatable, Sendable {
 public final class StudioViewerRenderer {
     public let device: MTLDevice
 
-    private let patternRenderer: StudioTestPatternRenderer
-    /// Internal rather than private so tests can seed and inspect the in-flight
-    /// ring directly; the present path is the only production writer.
+    /// ONE command queue for every pass this viewer runs.
+    ///
+    /// THIS IS THE ORDERING CONTRACT, not a resource optimisation. The content
+    /// pass and the overlay pass composite into the SAME drawable: the content
+    /// pass clears and draws, the overlay pass loads that result and presents.
+    /// Metal serialises command buffers within a queue by commit order, and
+    /// guarantees NOTHING across queues without an MTLEvent or MTLFence. These
+    /// three renderers each created their own queue, so "the overlay is last"
+    /// was intent rather than contract — it held because the driver happened to
+    /// serialise them, which is exactly the kind of works-on-this-machine
+    /// reasoning the kCVPixelBufferMetalCompatibilityKey correction already
+    /// caught me making once.
+    ///
+    /// A shared queue cannot be proven by a red-first test: a race does not fail
+    /// on demand, and a passing composite proves ordering HAPPENED, not that it
+    /// is guaranteed. The honest test is structural — assert the passes share
+    /// one queue instance — and that is what StudioViewerRendererTests does.
+    let commandQueue: MTLCommandQueue
+
+    /// Internal rather than private so tests can assert all three passes were
+    /// built against `commandQueue`.
+    let patternRenderer: StudioTestPatternRenderer
+    /// Also lets tests seed and inspect the in-flight ring directly; the present
+    /// path is the only production writer.
     let videoRenderer: StudioVideoFrameRenderer
-    private let overlayRenderer: StudioOverlayRenderer
+    let overlayRenderer: StudioOverlayRenderer
     private var source: StudioVideoFrameSource?
 
     /// Bounded diagnostics for outcome 9.
@@ -65,9 +86,14 @@ public final class StudioViewerRenderer {
 
     public init(device: MTLDevice) throws {
         self.device = device
-        self.patternRenderer = try StudioTestPatternRenderer(device: device)
-        self.videoRenderer = try StudioVideoFrameRenderer(device: device)
-        self.overlayRenderer = try StudioOverlayRenderer(device: device)
+        guard let queue = device.makeCommandQueue() else {
+            throw StudioRendererError.commandQueueUnavailable
+        }
+        self.commandQueue = queue
+        // Every pass shares it — see the note on `commandQueue`.
+        self.patternRenderer = try StudioTestPatternRenderer(device: device, commandQueue: queue)
+        self.videoRenderer = try StudioVideoFrameRenderer(device: device, commandQueue: queue)
+        self.overlayRenderer = try StudioOverlayRenderer(device: device, commandQueue: queue)
     }
 
     public static func makeDefault() throws -> StudioViewerRenderer {

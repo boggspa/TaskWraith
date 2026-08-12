@@ -87,13 +87,18 @@ public final class StudioTestPatternRenderer {
     }
 
     public let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
+    /// Internal so tests can assert the viewer shares ONE queue across passes.
+    let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
 
-    public init(device: MTLDevice) throws {
+    /// - Parameter commandQueue: inject the OWNING VIEWER'S queue so passes that
+    ///   composite into one drawable are ordered. Metal serialises command
+    ///   buffers within a queue by commit order; it guarantees NOTHING across
+    ///   queues. Defaults to a private queue for standalone use.
+    public init(device: MTLDevice, commandQueue: MTLCommandQueue? = nil) throws {
         self.device = device
 
-        guard let queue = device.makeCommandQueue() else {
+        guard let queue = commandQueue ?? device.makeCommandQueue() else {
             throw StudioRendererError.commandQueueUnavailable
         }
         self.commandQueue = queue

@@ -114,11 +114,13 @@ public struct StudioAccessibilityDescriptor: Equatable, Sendable {
     public enum Role: String, Equatable, Sendable {
         case slider
         case staticText
-        case checkbox
     }
 
     public let role: Role
     public let label: String
+    /// VOLATILE. The playhead and readout descriptors carry the RUNNING
+    /// timecode, so this changes every frame during playback while everything
+    /// else stays put — see `matchesStructure(of:)`.
     public let value: String
     public let frame: StudioOverlayFrame
 
@@ -127,6 +129,21 @@ public struct StudioAccessibilityDescriptor: Equatable, Sendable {
         self.label = label
         self.value = value
         self.frame = frame
+    }
+
+    /// True when two descriptors describe the SAME control and differ at most in
+    /// their value.
+    ///
+    /// WHY THIS EXISTS. A viewer republishing accessibility children on plain
+    /// inequality rebuilds and reallocates an NSAccessibilityElement every
+    /// display-link tick during playback, because `value` carries the running
+    /// timecode. That is churn precisely in the state where it costs most, and
+    /// it hands assistive technology a moving target. Splitting identity
+    /// (role/label/frame) from value lets the caller allocate elements only when
+    /// the CONTROLS change and update the spoken value in place otherwise —
+    /// which keeps the live timecode readable rather than throttling it away.
+    public func matchesStructure(of other: StudioAccessibilityDescriptor) -> Bool {
+        role == other.role && label == other.label && frame == other.frame
     }
 }
 
@@ -480,11 +497,15 @@ public enum StudioOverlayLayout {
                 color: .dimText
             )
         )
+        // STATIC TEXT, NOT A CHECKBOX. There is no toggleable loop control in
+        // the HUD — looping is a status token and an "L" key. Announcing it as
+        // a checkbox would offer VoiceOver a control that cannot be operated,
+        // which is a worse experience than describing the state plainly.
         accessibility.append(
             StudioAccessibilityDescriptor(
-                role: .checkbox,
+                role: .staticText,
                 label: "Loop marked range",
-                value: state.isLoopingRange ? "1" : "0",
+                value: state.isLoopingRange ? "on" : "off",
                 frame: StudioOverlayFrame(
                     x: max(margin, width - margin - statusWidth),
                     y: statusY,

@@ -41,7 +41,8 @@ public final class StudioOverlayRenderer {
     public let device: MTLDevice
     public let atlas: StudioTextAtlas
 
-    private let commandQueue: MTLCommandQueue
+    /// Internal so tests can assert the viewer shares ONE queue across passes.
+    let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let samplerState: MTLSamplerState
     private var bufferRing: [MTLBuffer?]
@@ -51,11 +52,15 @@ public final class StudioOverlayRenderer {
     /// that silently grows its vertex count is a HUD that is leaking strings.
     public private(set) var lastVertexCount = 0
 
-    public init(device: MTLDevice) throws {
+    /// - Parameter commandQueue: inject the OWNING VIEWER'S queue so passes that
+    ///   composite into one drawable are ordered. Metal serialises command
+    ///   buffers within a queue by commit order; it guarantees NOTHING across
+    ///   queues. Defaults to a private queue for standalone use.
+    public init(device: MTLDevice, commandQueue: MTLCommandQueue? = nil) throws {
         self.device = device
         self.atlas = try StudioTextAtlas(device: device)
 
-        guard let queue = device.makeCommandQueue() else {
+        guard let queue = commandQueue ?? device.makeCommandQueue() else {
             throw StudioRendererError.commandQueueUnavailable
         }
         self.commandQueue = queue
