@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import CoreVideo
 import VideoToolbox
@@ -169,5 +170,86 @@ enum StudioTestMedia {
             samples: encoded.samples,
             device: device
         )
+    }
+
+    static func makeTemporaryMovieURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("studio-test-\(UUID().uuidString).mov")
+    }
+
+    /// Writes a REAL .mov container with an H.264 video track.
+    ///
+    /// Ingest tests must exercise actual demux, not a second synthesized-sample
+    /// path — the whole point of the loader is that samples come from a file.
+    /// - Parameter forceKeyFrames: when true every frame is an IDR, which is
+    ///   what makes isolated per-sample decoding valid. Left false, the encoder
+    ///   emits a normal GOP and the loader is expected to REFUSE the asset —
+    ///   measured behaviour, see StudioMediaSourceLoader's header.
+    static func writeFlatMovie(
+        lumaLevels: [UInt8],
+        to url: URL,
+        width: Int = defaultWidth,
+        height: Int = defaultHeight,
+        frameRate: Int32 = 30,
+        forceKeyFrames: Bool = true
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        var outputSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+        ]
+        if forceKeyFrames {
+            outputSettings[AVVideoCompressionPropertiesKey] = [
+                AVVideoMaxKeyFrameIntervalKey: 1,
+                AVVideoAllowFrameReorderingKey: false,
+            ]
+        }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+        input.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                ),
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [CFString: Any]() as CFDictionary,
+            ]
+        )
+
+        guard writer.canAdd(input) else {
+            throw XCTSkip("asset writer rejected the video input on this machine")
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw XCTSkip("asset writer could not start: \(String(describing: writer.error))")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        for (index, level) in lumaLevels.enumerated() {
+            let buffer = try flatPixelBuffer(luma: level, width: width, height: height)
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            let appended = adaptor.append(
+                buffer,
+                withPresentationTime: CMTime(value: Int64(index), timescale: frameRate)
+            )
+            XCTAssertTrue(
+                appended,
+                "append failed for level \(level): \(String(describing: writer.error))"
+            )
+        }
+
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw XCTSkip(
+                "asset writer finished \(writer.status): \(String(describing: writer.error))"
+            )
+        }
     }
 }
