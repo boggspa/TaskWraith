@@ -107,13 +107,14 @@ enum ProviderModelPickerPreviewData {
             provider: "grok",
             models: [
                 .init(
-                    id: "grok-4.5",
-                    label: "Grok 4.5 Fast",
+                    id: "grok-4.6",
+                    label: "Grok 4.6 Fast",
                     isDefault: true,
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),
                         .init(reasoningEffort: "high"),
+                        .init(reasoningEffort: "xhigh"),
                     ],
                     defaultReasoningEffort: "high"),
             ]),

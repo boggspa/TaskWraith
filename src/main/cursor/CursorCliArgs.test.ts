@@ -214,6 +214,20 @@ describe('buildCursorCliArgs', () => {
     ).toContain('--model grok-4.5-fast-xhigh')
   })
 
+  it('maps Cursor Grok 4.6 reasoning directly and places Fast last', () => {
+    expect(
+      buildCursorCliArgs({ ...base, model: 'grok-4.6', reasoningEffort: 'low' }).join(' ')
+    ).toContain('--model cursor-grok-4.6-low')
+    expect(
+      buildCursorCliArgs({
+        ...base,
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh',
+        fastModeEnabled: true
+      }).join(' ')
+    ).toContain('--model cursor-grok-4.6-xhigh-fast')
+  })
+
   it('drops non-Cursor / sentinel / leaked model ids', () => {
     for (const m of ['gpt-5', 'cli-default', 'flash-lite', 'sonnet-4', '']) {
       expect(buildCursorCliArgs({ ...base, model: m })).not.toContain('--model')
@@ -425,6 +439,15 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
     expect(leaked).not.toContain('gpt-5')
   })
 
+  it('preserves exact Cursor Grok 4.6 wire ids', () => {
+    expect(
+      buildContainedCursorReadOnlyArgv({
+        ...base,
+        model: 'cursor-grok-4.6-medium-fast'
+      }).join(' ')
+    ).toContain('--model cursor-grok-4.6-medium-fast')
+  })
+
   it('omits --model entirely when no model is requested (falls back to the account default)', () => {
     for (const model of [undefined, null, '']) {
       const args = buildContainedCursorReadOnlyArgv({ ...base, model })
@@ -472,5 +495,11 @@ describe('buildContainedCursorWriteArgv (Path B contained WRITE runtime)', () =>
       '--model composer-2.5-fast'
     )
     expect(buildContainedCursorWriteArgv({ ...base, model: undefined })).not.toContain('--model')
+  })
+
+  it('preserves an exact Cursor Grok 4.6 wire id', () => {
+    expect(
+      buildContainedCursorWriteArgv({ ...base, model: 'cursor-grok-4.6-xhigh-fast' }).join(' ')
+    ).toContain('--model cursor-grok-4.6-xhigh-fast')
   })
 })

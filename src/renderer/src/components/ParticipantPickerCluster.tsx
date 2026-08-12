@@ -28,7 +28,7 @@ import {
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
 import { resolveProviderRows } from './ComposerProviderPicker'
 import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
-import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
+import { isCursorGrokModelId } from '../../../shared/grok45Models'
 import {
   antigravityEffortForModelId,
   antigravityVariantGroupForModel,
@@ -221,7 +221,7 @@ export function ParticipantPickerCluster({
                   })
                   return
                 }
-                if (!isCursorGrok45ModelId(selectedModelId)) return
+                if (!isCursorGrokModelId(selectedModelId)) return
                 onPatch({ fastModeEnabled: !resolved.fastModeEnabled })
               }
             : undefined

@@ -149,7 +149,7 @@ import type {
 } from '../../shared/projects'
 import { createDefaultEnsembleConfig, withMinimumEnsembleRoster } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
 import {
   buildScheduledTaskDispatchReceipt,
@@ -6355,11 +6355,11 @@ export class AppStore {
           derived.codexReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'claude') {
           derived.claudeReasoningEffort = participant.reasoningEffort
-        } else if (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) {
+        } else if (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) {
           derived.grokReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'muse') {
           derived.museReasoningEffort = participant.reasoningEffort
-        } else if (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)) {
+        } else if (participant.provider === 'cursor' && isCursorGrokModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
         }
       }

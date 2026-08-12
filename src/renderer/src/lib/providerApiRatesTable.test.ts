@@ -21,6 +21,10 @@ describe('buildProviderApiRateGroups', () => {
               inputUsdPerMillion: 5,
               cachedInputUsdPerMillion: 0.5,
               outputUsdPerMillion: 30,
+              longContextThresholdTokens: 200_000,
+              longContextInputUsdPerMillion: 10,
+              longContextCachedInputUsdPerMillion: 1,
+              longContextOutputUsdPerMillion: 60,
               sourceUrl: 'https://openai.com/api/pricing',
               lastVerified: '2026-06-23',
               notes: 'Codex CLI projection.'
@@ -41,6 +45,10 @@ describe('buildProviderApiRateGroups', () => {
                 baseline: {
                   inputUsdPerMillion: 5,
                   outputUsdPerMillion: 30,
+                  longContextThresholdTokens: 200_000,
+                  longContextInputUsdPerMillion: 10,
+                  longContextCachedInputUsdPerMillion: 1,
+                  longContextOutputUsdPerMillion: 60,
                   confidence: 'baked-in'
                 }
               }
@@ -58,6 +66,10 @@ describe('buildProviderApiRateGroups', () => {
       inputUsdPerMillion: 5,
       cachedInputUsdPerMillion: 0.5,
       outputUsdPerMillion: 30,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 10,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 60,
       sourceUrl: 'https://openai.com/api/pricing',
       lastVerified: '2026-06-23',
       notes: 'Codex CLI projection.',
@@ -166,6 +178,35 @@ describe('buildProviderApiRateGroups', () => {
     expect(groups[0].rows[0].statusMessage).toContain('predates this rate table')
   })
 
+  it('omits incomplete long-context metadata instead of exposing a partial tier', () => {
+    const groups = buildProviderApiRateGroups({
+      rateTableVersion: '2026-08-12',
+      baseline: {
+        grok: {
+          provider: 'grok',
+          pricingUrl: 'https://docs.x.ai/developers/pricing',
+          models: [
+            {
+              modelId: 'grok-4.6',
+              inputUsdPerMillion: 2,
+              cachedInputUsdPerMillion: 0.5,
+              outputUsdPerMillion: 6,
+              longContextThresholdTokens: 200_000,
+              longContextInputUsdPerMillion: 4,
+              sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+              lastVerified: '2026-08-12'
+            }
+          ]
+        }
+      }
+    })
+
+    expect(groups[0].rows[0]).not.toHaveProperty('longContextThresholdTokens')
+    expect(groups[0].rows[0]).not.toHaveProperty('longContextInputUsdPerMillion')
+    expect(groups[0].rows[0]).not.toHaveProperty('longContextCachedInputUsdPerMillion')
+    expect(groups[0].rows[0]).not.toHaveProperty('longContextOutputUsdPerMillion')
+  })
+
   it('omits local Ollama rows from the API rates list', () => {
     const groups = buildProviderApiRateGroups({
       rateTableVersion: '2026-06-23',
@@ -210,6 +251,41 @@ describe('buildProviderApiRateGroups', () => {
     })
 
     expect(groups[0].provider).toBe('gemini')
+  })
+
+  it('projects the baked-in Grok 4.6 direct and Cursor rows without losing tiers', () => {
+    const groups = buildProviderApiRateGroups({
+      rateTableVersion: RATE_TABLE_VERSION,
+      baseline: BAKED_IN_RATES
+    })
+    const direct = groups
+      .find((group) => group.provider === 'grok')
+      ?.rows.find((row) => row.modelId === 'grok-4.6')
+    const cursor = groups.find((group) => group.provider === 'cursor')
+
+    expect(direct).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 12,
+      lastVerified: '2026-08-12',
+      status: 'baseline'
+    })
+    expect(cursor?.rows.find((row) => row.modelId === 'grok-4.6')).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      sourceUrl: 'https://cursor.com/docs/models/grok-4-6'
+    })
+    expect(cursor?.rows.find((row) => row.modelId === 'grok-4.6-fast')).toMatchObject({
+      inputUsdPerMillion: 4,
+      cachedInputUsdPerMillion: 1,
+      outputUsdPerMillion: 12,
+      sourceUrl: 'https://cursor.com/docs/models/grok-4-6'
+    })
   })
 })
 

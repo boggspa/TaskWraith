@@ -17,7 +17,19 @@ const RATES: RendererProviderRates = {
   ],
   cursor: [
     { modelId: 'composer-2.5-fast', inputUsdPerMillion: 3.0, outputUsdPerMillion: 15.0 },
-    { modelId: 'composer-2.5', inputUsdPerMillion: 0.5, outputUsdPerMillion: 2.5 }
+    { modelId: 'composer-2.5', inputUsdPerMillion: 0.5, outputUsdPerMillion: 2.5 },
+    {
+      modelId: 'grok-4.6',
+      inputUsdPerMillion: 2,
+      outputUsdPerMillion: 6,
+      cachedInputUsdPerMillion: 0.5
+    },
+    {
+      modelId: 'grok-4.6-fast',
+      inputUsdPerMillion: 4,
+      outputUsdPerMillion: 12,
+      cachedInputUsdPerMillion: 1
+    }
   ]
 }
 
@@ -35,6 +47,10 @@ describe('normalizeProviderRates', () => {
               inputUsdPerMillion: 1.25,
               outputUsdPerMillion: 10.0,
               cachedInputUsdPerMillion: 0.125,
+              longContextThresholdTokens: 200_000,
+              longContextInputUsdPerMillion: 2.5,
+              longContextOutputUsdPerMillion: 20,
+              longContextCachedInputUsdPerMillion: 0.25,
               sourceUrl: 'x',
               lastVerified: '2026-05-29'
             }
@@ -68,7 +84,11 @@ describe('normalizeProviderRates', () => {
         modelId: 'gpt-5.5',
         inputUsdPerMillion: 1.25,
         outputUsdPerMillion: 10.0,
-        cachedInputUsdPerMillion: 0.125
+        cachedInputUsdPerMillion: 0.125,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 2.5,
+        longContextOutputUsdPerMillion: 20,
+        longContextCachedInputUsdPerMillion: 0.25
       }
     ])
     // Empty model lists are dropped entirely.
@@ -97,6 +117,31 @@ describe('normalizeProviderRates', () => {
         codex: { models: [{ modelId: 'x', inputUsdPerMillion: 'bad', outputUsdPerMillion: 1 }] }
       })
     ).toEqual({})
+  })
+
+  it('drops an incomplete long-context tier without dropping the base rate', () => {
+    const out = normalizeProviderRates({
+      grok: {
+        models: [
+          {
+            modelId: 'grok-4.6',
+            inputUsdPerMillion: 2,
+            outputUsdPerMillion: 6,
+            cachedInputUsdPerMillion: 0.5,
+            longContextThresholdTokens: 200_000,
+            longContextInputUsdPerMillion: 4
+          }
+        ]
+      }
+    })
+    expect(out.grok).toEqual([
+      {
+        modelId: 'grok-4.6',
+        inputUsdPerMillion: 2,
+        outputUsdPerMillion: 6,
+        cachedInputUsdPerMillion: 0.5
+      }
+    ])
   })
 })
 
@@ -138,6 +183,17 @@ describe('resolveModelRate', () => {
       'composer-2.5-fast'
     )
     expect(resolveModelRate(RATES, 'cursor', 'composer-2.5')?.modelId).toBe('composer-2.5')
+  })
+
+  it('keeps Cursor Grok 4.6 standard and Fast wire ids on distinct rate rows', () => {
+    expect(resolveModelRate(RATES, 'cursor', 'cursor-grok-4.6-low')?.modelId).toBe('grok-4.6')
+    expect(resolveModelRate(RATES, 'cursor', 'cursor-grok-4.6-xhigh')?.modelId).toBe('grok-4.6')
+    expect(resolveModelRate(RATES, 'cursor', 'cursor-grok-4.6-low-fast')?.modelId).toBe(
+      'grok-4.6-fast'
+    )
+    expect(resolveModelRate(RATES, 'cursor', 'cursor-grok-4.6-xhigh-fast')?.modelId).toBe(
+      'grok-4.6-fast'
+    )
   })
 })
 
@@ -199,6 +255,51 @@ describe('estimateRunCostUsd', () => {
     )
     // 1M normal input * $5/M + 4M cache read * $0.5/M = $7.
     expect(usd).toBeCloseTo(7, 6)
+  })
+
+  it('switches all Grok 4.6 tokens to long-context rates at 200k prompt tokens', () => {
+    const rates: RendererProviderRates = {
+      grok: [
+        {
+          modelId: 'grok-4.6',
+          inputUsdPerMillion: 2,
+          cachedInputUsdPerMillion: 0.5,
+          outputUsdPerMillion: 6,
+          longContextThresholdTokens: 200_000,
+          longContextInputUsdPerMillion: 4,
+          longContextCachedInputUsdPerMillion: 1,
+          longContextOutputUsdPerMillion: 12
+        }
+      ]
+    }
+
+    // 99,999 fresh + 50k cached + 50k cache creation = 199,999 prompt tokens.
+    expect(
+      estimateRunCostUsd(rates, 'grok', 'grok-4.6', 99_999, 1_000_000, {
+        cacheReadInputTokens: 50_000,
+        cacheCreationInputTokens: 50_000
+      })
+    ).toBeCloseTo(6.324998, 6)
+
+    // At 200k the long tier applies to fresh input, cached input, cache creation, and output.
+    expect(
+      estimateRunCostUsd(rates, 'grok', 'grok-4.6', 100_000, 1_000_000, {
+        cacheReadInputTokens: 50_000,
+        cacheCreationInputTokens: 50_000
+      })
+    ).toBeCloseTo(12.65, 6)
+
+    // Output tokens do not contribute to the prompt threshold.
+    expect(estimateRunCostUsd(rates, 'grok', 'grok-4.6', 0, 1_000_000)).toBeCloseTo(6, 6)
+  })
+
+  it('projects Cursor Grok 4.6 Fast against its permanently higher rate row', () => {
+    expect(
+      estimateRunCostUsd(RATES, 'cursor', 'cursor-grok-4.6-high', 1_000_000, 1_000_000)
+    ).toBeCloseTo(8, 6)
+    expect(
+      estimateRunCostUsd(RATES, 'cursor', 'cursor-grok-4.6-high-fast', 1_000_000, 1_000_000)
+    ).toBeCloseTo(16, 6)
   })
 })
 

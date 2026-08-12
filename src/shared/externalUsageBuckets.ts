@@ -108,6 +108,7 @@ export class ExternalUsageBucketAccumulator {
     const key = [
       record.provider ?? '',
       record.model ?? '',
+      record.costRateModel || record.model || '',
       record.workspaceId ?? '',
       record.chatId ?? '',
       record.runId ?? '',
@@ -166,7 +167,8 @@ export class ExternalUsageBucketAccumulator {
 
 /**
  * Collapse external usage records into wall-clock buckets per
- * (provider, model, synthetic ids, zero-marker flag).
+ * (provider, display model, effective cost-rate model, synthetic ids,
+ * zero-marker flag).
  *
  * Contract notes:
  * - `totalTokens` accumulates the EFFECTIVE per-record value

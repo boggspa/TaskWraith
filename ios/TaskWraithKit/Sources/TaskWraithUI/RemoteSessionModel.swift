@@ -2093,7 +2093,7 @@ public final class RemoteSessionModel: ObservableObject {
         // combined picker's ladder / Fast pill / bolt markers all light up in
         // the demo (they'd otherwise be invisible until a Mac pairs).
         let providerModelsJSON = """
-        {"claude":[{"id":"claude-opus-5","label":"Opus 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"claude-fable-5","label":"Fable 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"},{"id":"claude-sonnet-5","label":"Sonnet 5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"}],"codex":[{"id":"gpt-5.5","label":"GPT-5.5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"medium"},{"id":"gpt-5.6-sol","label":"GPT-5.6-Sol","supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"}],"kimi":[{"id":"kimi-k3","label":"K3","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"low"},{"id":"kimi-k2.7-code","label":"K2.7 Coding","supportedReasoningEfforts":[{"reasoningEffort":"on"}],"defaultReasoningEffort":"on"}],"antigravity":[{"id":"gemini-api:gemini-3.1-pro","label":"Gemini 3.1 Pro","isDefault":true},{"id":"gemini-api:gemini-3.1-flash-lite","label":"Gemini 3.1 Flash-Lite"},{"id":"gemini-api:gemini-2.5-pro","label":"Gemini 2.5 Pro"},{"id":"gemini-api:gemini-2.5-flash","label":"Gemini 2.5 Flash"}],"cursor":[{"id":"composer-2.5","label":"Composer 2.5","isDefault":true},{"id":"composer-2.5-fast","label":"Composer 2.5 Fast"},{"id":"cursor-grok-4.5","label":"Grok 4.5"}],"grok":[{"id":"grok-4.5","label":"Grok 4.5","isDefault":true},{"id":"grok-4.5-mini","label":"Grok 4.5 Mini"}],"ollama":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)","isDefault":true}]}
+        {"claude":[{"id":"claude-opus-5","label":"Opus 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"claude-fable-5","label":"Fable 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"},{"id":"claude-sonnet-5","label":"Sonnet 5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"}],"codex":[{"id":"gpt-5.5","label":"GPT-5.5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"medium"},{"id":"gpt-5.6-sol","label":"GPT-5.6-Sol","supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"}],"kimi":[{"id":"kimi-k3","label":"K3","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"low"},{"id":"kimi-k2.7-code","label":"K2.7 Coding","supportedReasoningEfforts":[{"reasoningEffort":"on"}],"defaultReasoningEffort":"on"}],"antigravity":[{"id":"gemini-api:gemini-3.1-pro","label":"Gemini 3.1 Pro","isDefault":true},{"id":"gemini-api:gemini-3.1-flash-lite","label":"Gemini 3.1 Flash-Lite"},{"id":"gemini-api:gemini-2.5-pro","label":"Gemini 2.5 Pro"},{"id":"gemini-api:gemini-2.5-flash","label":"Gemini 2.5 Flash"}],"cursor":[{"id":"composer-2.5","label":"Composer 2.5","isDefault":true},{"id":"composer-2.5-fast","label":"Composer 2.5 Fast"},{"id":"grok-4.6","label":"Cursor Grok 4.6","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"},{"id":"cursor-grok-4.5","label":"Grok 4.5"}],"grok":[{"id":"grok-4.6","label":"Grok 4.6 Fast","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"},{"id":"grok-4.5","label":"Grok 4.5"},{"id":"grok-4.5-mini","label":"Grok 4.5 Mini"}],"ollama":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)","isDefault":true}]}
         """
         let workflowsJSON = """
         [
@@ -2107,7 +2107,59 @@ public final class RemoteSessionModel: ObservableObject {
         if let s1 = Self.decodeDemo(RemoteThreadSnapshot.self, snap1JSON) { threadSnapshots["demo-1"] = s1 }
         if let s2 = Self.decodeDemo(RemoteThreadSnapshot.self, snap2JSON) { threadSnapshots["demo-2"] = s2 }
         if let s3 = Self.decodeDemo(RemoteThreadSnapshot.self, snap3JSON) { threadSnapshots["demo-3"] = s3 }
-        if let pm = Self.decodeDemo([String: [ModelOption]].self, providerModelsJSON) { providerModels = pm }
+        if var pm = Self.decodeDemo([String: [ModelOption]].self, providerModelsJSON) {
+            // Keep the offline demo on the same provider-facing ids as the Mac
+            // fallback catalogue. The canned JSON predates Cursor's base-id
+            // normalization and the current direct Grok catalogue, so replace
+            // only those two groups after decoding.
+            pm["cursor"] = [
+                ModelOption(id: "composer-2.5-fast", label: "Composer 2.5 Fast", isDefault: true),
+                ModelOption(id: "composer-2.5", label: "Composer 2.5"),
+                ModelOption(
+                    id: "grok-4.6",
+                    label: "Cursor Grok 4.6",
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                ModelOption(
+                    id: "grok-4.5",
+                    label: "Cursor Grok 4.5",
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                    ],
+                    defaultReasoningEffort: "high"),
+            ]
+            pm["grok"] = [
+                ModelOption(
+                    id: "grok-4.6",
+                    label: "Grok 4.6 Fast",
+                    isDefault: true,
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                ModelOption(
+                    id: "grok-4.5",
+                    label: "Grok 4.5 Fast",
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                ModelOption(id: "grok-composer-2.5-fast", label: "Grok Composer 2.5 Fast"),
+            ]
+            providerModels = pm
+        }
         let approvalsJSON = """
         [{"toolCallId":"demo-appr-1","title":"Run the auth test suite","body":"npm test -- auth/TokenService","provider":"claude","actions":["accept","decline"],"workspaceId":"demo-ws","threadId":"demo-1","runId":"demo-run-1","requestedAt":"2026-06-19T10:43:00Z"}]
         """

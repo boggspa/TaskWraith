@@ -23,10 +23,13 @@
 // In NO mode is `--always-approve` ever emitted.
 
 import type { ActiveGoal } from '../store/types'
-import { isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import {
+  isGrok45ReasoningModelId,
+  isGrokReasoningModelId
+} from '../../shared/grok45Models'
 import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
 
-const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high'])
+const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh'])
 
 export function normalizeGrokEffortFlag(value: string | null | undefined): string | null {
   if (!value) return null
@@ -288,9 +291,11 @@ function appendGrokModelAndEffortArgs(
   if (input.model && input.model.startsWith('grok')) {
     args.push('--model', input.model)
   }
-  const allowsReasoning = !input.model || isGrok45ReasoningModelId(input.model)
+  const allowsReasoning = !input.model || isGrokReasoningModelId(input.model)
   const effort = allowsReasoning ? normalizeGrokEffortFlag(input.reasoningEffort) : null
-  if (effort) {
+  // Extra High is a Grok 4.6 capability; retained 4.5 aliases still expose
+  // only low/medium/high in the catalogue and must not receive `xhigh` argv.
+  if (effort && !(effort === 'xhigh' && isGrok45ReasoningModelId(input.model))) {
     args.push('--effort', effort)
   }
 }

@@ -42,11 +42,11 @@ describe('normalizeGrokEffortFlag', () => {
   })
 
   it('passes through documented effort levels case-insensitively', () => {
-    for (const level of ['low', 'medium', 'high']) {
+    for (const level of ['low', 'medium', 'high', 'xhigh']) {
       expect(normalizeGrokEffortFlag(level)).toBe(level)
     }
     expect(normalizeGrokEffortFlag('HIGH')).toBe('high')
-    expect(normalizeGrokEffortFlag('xhigh')).toBeNull()
+    expect(normalizeGrokEffortFlag('XHIGH')).toBe('xhigh')
     expect(normalizeGrokEffortFlag('max')).toBeNull()
   })
 
@@ -183,6 +183,36 @@ describe('buildGrokCliArgs', () => {
         .map((value, index) => (value === '--deny' ? args[index + 1] : null))
         .filter(Boolean)
     ).toEqual([...GROK_ACP_READ_ONLY_DENY_RULES])
+  })
+
+  it('forwards Grok 4.6 with Extra High reasoning in headless and ACP argv', () => {
+    const headless = buildGrokCliArgs({
+      ...base,
+      model: 'grok-4.6',
+      reasoningEffort: 'xhigh'
+    })
+    expect(headless[headless.indexOf('--model') + 1]).toBe('grok-4.6')
+    expect(headless[headless.indexOf('--effort') + 1]).toBe('xhigh')
+
+    const acp = buildGrokAcpCliArgs({
+      model: 'grok-4.6',
+      reasoningEffort: 'xhigh',
+      readOnlySeat: true
+    })
+    expect(acp[acp.indexOf('--model') + 1]).toBe('grok-4.6')
+    expect(acp[acp.indexOf('--effort') + 1]).toBe('xhigh')
+    expect(acp.indexOf('--model')).toBeLessThan(acp.indexOf('agent'))
+    expect(acp.indexOf('--effort')).toBeLessThan(acp.indexOf('agent'))
+  })
+
+  it('does not pass the Grok 4.6-only Extra High effort to Grok 4.5', () => {
+    const args = buildGrokCliArgs({
+      ...base,
+      model: 'grok-4.5',
+      reasoningEffort: 'xhigh'
+    })
+    expect(args[args.indexOf('--model') + 1]).toBe('grok-4.5')
+    expect(args).not.toContain('--effort')
   })
 
   it('lets ACP native file reads reach the workspace preflight on read-only seats', () => {

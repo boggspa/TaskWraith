@@ -202,6 +202,9 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   appRunId?: string
   appChatId?: string
   tokenUsage?: any
+  /** Published rate-table row used for projected cost when the provider's
+   * selected service tier is not encoded in its display model id. */
+  costRateModel?: string
   /**
    * 1.0.6-G5e — Grok's terminal stopReason when it is NOT a normal end (e.g.
    * 'Cancelled', 'MaxTokens'). Grok exits 0 even when it self-cancels a turn

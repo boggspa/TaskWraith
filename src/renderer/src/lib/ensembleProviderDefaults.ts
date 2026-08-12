@@ -35,9 +35,16 @@ import {
 } from './providerModelDefaults'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
+  CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
-  isGrok45ReasoningModelId
+  GROK_45_REASONING_EFFORTS,
+  GROK_46_DEFAULT_REASONING_EFFORT,
+  GROK_46_MODEL_ID,
+  GROK_46_REASONING_EFFORTS,
+  cursorGrokBaseModelId,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
 } from '../../../shared/grok45Models'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
 
@@ -113,13 +120,21 @@ const KIMI_K3_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: 'Max' }
 ]
 
-// Grok 4.5 exposes low/medium/high only; GrokCliArgs.normalizeGrokEffortFlag
-// is the dispatch-side guard.
-const GROK_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' }
-]
+const grokReasoningOptions = (
+  efforts: readonly { reasoningEffort: string }[]
+): CombinedModelPickerReasoningOption[] =>
+  efforts.map(({ reasoningEffort }) => ({
+    value: reasoningEffort,
+    label:
+      reasoningEffort === 'xhigh'
+        ? 'Extra High'
+        : reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1)
+  }))
+
+// Grok 4.5 stops at High; Grok 4.6 adds the verified Extra High (`xhigh`)
+// tier. GrokCliArgs remains the dispatch-side guard for the wire token.
+const GROK_45_REASONING = grokReasoningOptions(GROK_45_REASONING_EFFORTS)
+const GROK_46_REASONING = grokReasoningOptions(GROK_46_REASONING_EFFORTS)
 
 // Mistral Medium 3.5 thinks at exactly one level — vibe-acp's own schema pins
 // `thinking="high"` for it (devstral-small runs thinking off and gets no
@@ -213,7 +228,18 @@ const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
 // from the Cursor catalog below.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
-  { id: GROK_45_MODEL_ID, label: 'Grok 4.5 Fast' },
+  {
+    id: GROK_46_MODEL_ID,
+    label: 'Grok 4.6 Fast',
+    supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_45_MODEL_ID,
+    label: 'Grok 4.5 Fast',
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
+  },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
@@ -231,7 +257,20 @@ const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },
-  { id: CURSOR_GROK_45_BASE_MODEL_ID, label: 'Cursor Grok 4.5' }
+  {
+    id: CURSOR_GROK_46_BASE_MODEL_ID,
+    label: 'Cursor Grok 4.6',
+    supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: CURSOR_GROK_45_BASE_MODEL_ID,
+    label: 'Cursor Grok 4.5',
+    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+    additionalSpeedTiers: ['fast']
+  }
 ]
 
 /** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
@@ -324,12 +363,46 @@ const CLAUDE_FAST_CAPABLE = new Set<string>([
 const CURSOR_FAST_CAPABLE = new Set<string>([
   'composer-2.5',
   'composer-2.5-fast',
+  CURSOR_GROK_46_BASE_MODEL_ID,
   CURSOR_GROK_45_BASE_MODEL_ID
 ])
-// Both Grok models run permanently in Fast mode. This set only drives the
+// All Grok CLI models run permanently in Fast mode. This set only drives the
 // picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
 // renders and no fast-clearing runs on model switch.
-const GROK_FAST_CAPABLE = new Set<string>([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+const GROK_FAST_CAPABLE = new Set<string>([
+  GROK_46_MODEL_ID,
+  GROK_45_MODEL_ID,
+  'grok-composer-2.5-fast'
+])
+
+function isDirectGrok46ModelId(modelId?: string | null): boolean {
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return id === GROK_46_MODEL_ID
+}
+
+function grokReasoningDefaultForModel(
+  provider: ProviderId,
+  modelId?: string | null
+): string | undefined {
+  if (provider === 'grok') {
+    if (!isGrokReasoningModelId(modelId)) return undefined
+    return isDirectGrok46ModelId(modelId)
+      ? GROK_46_DEFAULT_REASONING_EFFORT
+      : GROK_45_DEFAULT_REASONING_EFFORT
+  }
+  if (provider === 'cursor') {
+    const baseModelId = cursorGrokBaseModelId(modelId)
+    if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) {
+      return GROK_46_DEFAULT_REASONING_EFFORT
+    }
+    if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) {
+      return GROK_45_DEFAULT_REASONING_EFFORT
+    }
+  }
+  return undefined
+}
 
 function isClaudeFullReasoningModel(modelId?: string | null): boolean {
   const normalized = String(modelId || '').toLowerCase()
@@ -388,9 +461,14 @@ export function getEnsembleReasoningOptions(
         ? KIMI_K3_REASONING
         : KIMI_ALWAYS_ON_REASONING
     case 'grok':
-      return isGrok45ReasoningModelId(modelId) ? GROK_REASONING : []
-    case 'cursor':
-      return modelId === CURSOR_GROK_45_BASE_MODEL_ID ? GROK_REASONING : []
+      if (!isGrokReasoningModelId(modelId)) return []
+      return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
+    case 'cursor': {
+      const baseModelId = cursorGrokBaseModelId(modelId)
+      if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) return GROK_46_REASONING
+      if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) return GROK_45_REASONING
+      return []
+    }
     case 'mistral':
       return modelId === 'mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
     case 'pi':
@@ -485,9 +563,9 @@ export function getDefaultEnsembleParticipantConfig(
       // still toolless at dispatch, so the preset only matters if the user
       // later swaps the row to a tool-capable provider config.
       return {
-        model: GROK_45_MODEL_ID,
+        model: GROK_46_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
+        reasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
       }
     case 'cursor':
       return {
@@ -821,12 +899,10 @@ export function resolveReasoningEffortForSeatChange(options: {
     if (best) return best
   }
 
-  // Fresh Grok 4.5 (native or Cursor) seeds High even though Medium is enabled.
-  if (
-    !normalizedPrevious &&
-    (isGrok45ReasoningModelId(model) || model === CURSOR_GROK_45_BASE_MODEL_ID)
-  ) {
-    const grokDefault = normalizeReasoningEffortToken(GROK_45_DEFAULT_REASONING_EFFORT)
+  // Fresh native/hosted Grok models seed their version-specific default even
+  // though lower effort stops are enabled.
+  if (!normalizedPrevious) {
+    const grokDefault = normalizeReasoningEffortToken(grokReasoningDefaultForModel(provider, model))
     if (grokDefault && enabled.includes(grokDefault)) return grokDefault
   }
 
@@ -912,15 +988,15 @@ export function normalizeProviderModelSelection(
     case 'grok':
       return {
         ...cleared,
-        reasoningEffort: isGrok45ReasoningModelId(model)
-          ? (reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT)
+        reasoningEffort: isGrokReasoningModelId(model)
+          ? (reasoningEffort ?? grokReasoningDefaultForModel(provider, model))
           : undefined
       }
     case 'cursor':
-      if (model === CURSOR_GROK_45_BASE_MODEL_ID) {
+      if (isCursorGrokModelId(model)) {
         return {
           ...cleared,
-          reasoningEffort: reasoningEffort ?? GROK_45_DEFAULT_REASONING_EFFORT,
+          reasoningEffort: reasoningEffort ?? grokReasoningDefaultForModel(provider, model),
           fastModeEnabled: carryFast && modelSupportsFastTier(provider, model, modelMetadata)
         }
       }
@@ -1116,16 +1192,16 @@ export function getEnsembleModelDefaults(
     case 'grok':
       return {
         modelOptions: GROK_MODELS,
-        reasoningOptions: GROK_REASONING,
-        defaultReasoning: GROK_45_DEFAULT_REASONING_EFFORT,
+        reasoningOptions: GROK_46_REASONING,
+        defaultReasoning: GROK_46_DEFAULT_REASONING_EFFORT,
         fastModeCapableModelIds: GROK_FAST_CAPABLE,
-        defaultModelId: GROK_45_MODEL_ID
+        defaultModelId: GROK_46_MODEL_ID
       }
     case 'cursor':
       return {
         modelOptions: CURSOR_MODELS,
         reasoningOptions: [],
-        defaultReasoning: GROK_45_DEFAULT_REASONING_EFFORT,
+        defaultReasoning: GROK_46_DEFAULT_REASONING_EFFORT,
         fastModeCapableModelIds: CURSOR_FAST_CAPABLE,
         defaultModelId: 'composer-2.5-fast'
       }

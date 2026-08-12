@@ -48,7 +48,8 @@ Commands:
   resume                       Resume the latest chat session
   help [command]               Display help for command`
 
-// Representative subset of `cursor-agent models` (logged in).
+// Representative subset of `cursor-agent models` (logged in), including the
+// exact Grok 4.6 rows captured from Cursor Agent 2026.08.04.
 const MODELS_FIXTURE = `Available models
 
 auto - Auto
@@ -56,7 +57,15 @@ gpt-5.2 - GPT-5.2
 composer-2.5 - Composer 2.5 (current)
 claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking
 composer-2.5-fast - Composer 2.5 Fast (default)
-claude-4.6-sonnet-medium - Sonnet 4.6 1M`
+claude-4.6-sonnet-medium - Sonnet 4.6 1M
+cursor-grok-4.6-low - Cursor Grok 4.6 Low
+cursor-grok-4.6-low-fast - Cursor Grok 4.6 Low Fast
+cursor-grok-4.6-medium - Cursor Grok 4.6 Medium
+cursor-grok-4.6-medium-fast - Cursor Grok 4.6 Medium Fast
+cursor-grok-4.6-high - Cursor Grok 4.6
+cursor-grok-4.6-high-fast - Cursor Grok 4.6 Fast
+cursor-grok-4.6-xhigh - Cursor Grok 4.6 Extra High
+cursor-grok-4.6-xhigh-fast - Cursor Grok 4.6 Extra High Fast`
 
 const STATUS_LOGGED_OUT = 'Not logged in'
 const STATUS_LOGGED_IN = 'Logged in as dev@example.com'
@@ -133,6 +142,14 @@ describe('CursorCliProbe', () => {
         id: 'composer-2.5-fast',
         label: 'Composer 2.5 Fast (default)'
       })
+      expect(models).toContainEqual({
+        id: 'cursor-grok-4.6-high',
+        label: 'Cursor Grok 4.6'
+      })
+      expect(models).toContainEqual({
+        id: 'cursor-grok-4.6-xhigh-fast',
+        label: 'Cursor Grok 4.6 Extra High Fast'
+      })
       expect(models.find((m) => m.id === 'Available')).toBeUndefined()
     })
     it('returns [] when logged out', () => {
@@ -202,7 +219,7 @@ describe('CursorCliProbe', () => {
     })
   })
 
-  it('exposes Composer 2.5 and Cursor Grok 4.5 concrete ids', () => {
+  it('exposes Composer 2.5 and exact Cursor Grok concrete ids', () => {
     expect(CURSOR_COMPOSER_MODEL_IDS).toEqual([
       'composer-2.5',
       'composer-2.5-fast',
@@ -211,7 +228,15 @@ describe('CursorCliProbe', () => {
       'grok-4.5-high',
       'grok-4.5-fast-high',
       'grok-4.5-xhigh',
-      'grok-4.5-fast-xhigh'
+      'grok-4.5-fast-xhigh',
+      'cursor-grok-4.6-low',
+      'cursor-grok-4.6-low-fast',
+      'cursor-grok-4.6-medium',
+      'cursor-grok-4.6-medium-fast',
+      'cursor-grok-4.6-high',
+      'cursor-grok-4.6-high-fast',
+      'cursor-grok-4.6-xhigh',
+      'cursor-grok-4.6-xhigh-fast'
     ])
   })
 })

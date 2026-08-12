@@ -88,6 +88,28 @@ describe('usageStats', () => {
     ])
   })
 
+  it('preserves the projected cost-rate model on a Cursor usage entry', () => {
+    expect(
+      extractModelUsageEntriesFromStats(
+        {
+          input_tokens: 20,
+          output_tokens: 5,
+          total_tokens: 25,
+          _taskwraith_cost_rate_model: ' grok-4.6-fast '
+        },
+        'grok-4.6'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        model: 'grok-4.6',
+        costRateModel: 'grok-4.6-fast',
+        inputTokens: 20,
+        outputTokens: 5,
+        totalTokens: 25
+      })
+    ])
+  })
+
   it('treats Codex cachedInputTokens as part of reported input', () => {
     expect(
       extractModelUsageEntriesFromStats(

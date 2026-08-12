@@ -169,10 +169,13 @@ import {
 } from '../../../shared/antigravityAgyModelGrouping'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
+  CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
+  GROK_46_MODEL_ID,
+  cursorGrokBaseModelId,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
 } from '../../../shared/grok45Models'
 
 /** Matches `MUSE_DEFAULT_REASONING_EFFORT` in main muse/MuseCliArgs.ts. */
@@ -1124,10 +1127,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       )
     }
     if (targetProvider === 'cursor') {
-      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_45_BASE_MODEL_ID])
+      return new Set([
+        'composer-2.5',
+        'composer-2.5-fast',
+        CURSOR_GROK_46_BASE_MODEL_ID,
+        CURSOR_GROK_45_BASE_MODEL_ID
+      ])
     }
     if (targetProvider === 'grok') {
-      return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
     }
     return new Set<string>()
   }
@@ -3793,23 +3801,39 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             combinedSelectedReasoning = effectiveKimiReasoning
                           } else if (
                             effectiveProvider === 'grok' &&
-                            isGrok45ReasoningModelId(effectiveSelectedModel)
+                            isGrokReasoningModelId(effectiveSelectedModel)
                           ) {
                             combinedReasoningOptions = [
                               { value: 'low', label: grokReasoningDisplayLabel('low') },
                               { value: 'medium', label: grokReasoningDisplayLabel('medium') },
-                              { value: 'high', label: grokReasoningDisplayLabel('high') }
+                              { value: 'high', label: grokReasoningDisplayLabel('high') },
+                              ...(effectiveSelectedModel === GROK_46_MODEL_ID
+                                ? [
+                                    {
+                                      value: 'xhigh',
+                                      label: grokReasoningDisplayLabel('xhigh')
+                                    }
+                                  ]
+                                : [])
                             ]
                             combinedSelectedReasoning =
                               effectiveGrokReasoning || GROK_45_DEFAULT_REASONING_EFFORT
                           } else if (
                             effectiveProvider === 'cursor' &&
-                            isCursorGrok45ModelId(effectiveSelectedModel)
+                            isCursorGrokModelId(effectiveSelectedModel)
                           ) {
                             combinedReasoningOptions = [
                               { value: 'low', label: grokReasoningDisplayLabel('low') },
                               { value: 'medium', label: grokReasoningDisplayLabel('medium') },
-                              { value: 'high', label: grokReasoningDisplayLabel('high') }
+                              { value: 'high', label: grokReasoningDisplayLabel('high') },
+                              ...(cursorGrokBaseModelId(effectiveSelectedModel) === GROK_46_MODEL_ID
+                                ? [
+                                    {
+                                      value: 'xhigh',
+                                      label: grokReasoningDisplayLabel('xhigh')
+                                    }
+                                  ]
+                                : [])
                             ]
                             combinedSelectedReasoning =
                               effectiveCursorReasoning || GROK_45_DEFAULT_REASONING_EFFORT
@@ -3958,7 +3982,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             }
                             if (effectiveProvider === 'grok') {
-                              if (isGrok45ReasoningModelId(nextModel)) {
+                              if (isGrokReasoningModelId(nextModel)) {
                                 if (shouldUpdateLiveComposerState) {
                                   setGrokReasoningEffort(GROK_45_DEFAULT_REASONING_EFFORT)
                                 }
@@ -3972,14 +3996,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                             }
                             if (effectiveProvider === 'cursor') {
-                              if (isCursorGrok45ModelId(nextModel)) {
+                              if (isCursorGrokModelId(nextModel)) {
                                 if (shouldUpdateLiveComposerState) {
                                   setCursorReasoningEffort(GROK_45_DEFAULT_REASONING_EFFORT)
                                 }
                                 metadataPatch.cursorReasoningEffort =
                                   GROK_45_DEFAULT_REASONING_EFFORT
                               }
-                              if (!isCursorGrok45ModelId(nextModel)) {
+                              if (!isCursorGrokModelId(nextModel)) {
                                 if (shouldUpdateLiveComposerState) {
                                   setCursorFastMode(nextModel === 'composer-2.5-fast')
                                   setCursorReasoningEffort('')
@@ -4040,7 +4064,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 : effectiveProvider === 'kimi'
                                   ? effectiveKimiFastMode
                                 : effectiveProvider === 'cursor'
-                                  ? isCursorGrok45ModelId(effectiveSelectedModel)
+                                  ? isCursorGrokModelId(effectiveSelectedModel)
                                     ? effectiveCursorFastMode
                                     : effectiveSelectedModel === 'composer-2.5-fast'
                                   : false
@@ -4096,7 +4120,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     }
                                   : effectiveProvider === 'cursor'
                                     ? () => {
-                                        if (isCursorGrok45ModelId(effectiveSelectedModel)) {
+                                        if (isCursorGrokModelId(effectiveSelectedModel)) {
                                           const nextFast = !effectiveCursorFastMode
                                           if (ensembleBinding) {
                                             updateSelectedParticipant({

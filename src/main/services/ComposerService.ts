@@ -74,7 +74,11 @@ import {
   type ProjectReferenceExtractLoader
 } from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import {
+  GROK_46_MODEL_ID,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
+} from '../../shared/grok45Models'
 import {
   isTaskWraithMcpProfileReceiptForSession,
   resolveTaskWraithMcpProfile,
@@ -897,9 +901,9 @@ export class ComposerService {
       reasoningEffort:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexReasoningEffort) || null
-          : provider === 'grok' && isGrok45ReasoningModelId(requestedModel)
+          : provider === 'grok' && isGrokReasoningModelId(requestedModel)
             ? optionalStringOrNull(effectiveInput.grokReasoningEffort) || null
-            : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
+            : provider === 'cursor' && isCursorGrokModelId(requestedModel)
               ? optionalStringOrNull(effectiveInput.cursorReasoningEffort) || null
               : provider === 'kimi'
                 ? normalizeKimiReasoningEffort(
@@ -920,7 +924,7 @@ export class ComposerService {
               (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
               ? 'fast'
               : 'standard'
-            : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
+            : provider === 'cursor' && isCursorGrokModelId(requestedModel)
               ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
                 ? 'fast'
                 : null
@@ -1465,7 +1469,7 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
     case 'kimi':
       return 'kimi-k2.7-code'
     case 'grok':
-      return 'grok-4.5'
+      return GROK_46_MODEL_ID
     case 'cursor':
       return 'composer-2.5-fast'
     case 'ollama':

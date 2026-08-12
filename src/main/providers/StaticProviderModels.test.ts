@@ -189,35 +189,67 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(antigravity.every((id) => id.startsWith('gemini-api:'))).toBe(true)
     expect(gemini).toContain('flash')
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
-    expect(grok).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
-    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
+    expect(grok).toEqual(['grok-4.6', 'grok-4.5', 'grok-composer-2.5-fast'])
+    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6', 'grok-4.5'])
   })
 
-  it('prefixes the resold Grok 4.5 label in Cursor model metadata', () => {
-    // Keep in lockstep with CURSOR_DEFAULT_MODELS in the renderer: the resale
-    // row reads "Cursor Grok 4.5" so it cannot be confused with the Grok
-    // provider's own grok-4.5 ("Grok 4.5 Fast") in a flat picker scan.
-    expect(getStaticProviderModels('cursor').find((model) => model.id === 'grok-4.5')).toMatchObject({
+  it('publishes Grok 4.6 as the 500K Extra High-capable default', () => {
+    const grok = getStaticProviderModels('grok') as StaticModelShape[]
+    expect(grok.find((model) => model.id === 'grok-4.6')).toMatchObject({
+      label: 'Grok 4.6 Fast',
+      description: '500K context - low/medium/high/extra-high reasoning',
+      isDefault: true,
+      defaultReasoningEffort: 'high'
+    })
+    expect(
+      grok
+        .find((model) => model.id === 'grok-4.6')
+        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(grok.find((model) => model.id === 'grok-4.5')?.isDefault).not.toBe(true)
+  })
+
+  it('prefixes the resold Grok rows in Cursor model metadata', () => {
+    // Keep in lockstep with CURSOR_DEFAULT_MODELS in the renderer: resale rows
+    // carry the Cursor prefix so they cannot be confused with Grok-provider
+    // rows in a flat picker scan.
+    const cursor = getStaticProviderModels('cursor') as StaticModelShape[]
+    expect(cursor.find((model) => model.id === 'grok-4.6')).toMatchObject({
+      label: 'Cursor Grok 4.6',
+      description: 'First-party Cursor model pool - 256K context',
+      defaultReasoningEffort: 'high',
+      additionalSpeedTiers: ['fast']
+    })
+    expect(
+      cursor
+        .find((model) => model.id === 'grok-4.6')
+        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(cursor.find((model) => model.id === 'grok-4.5')).toMatchObject({
       label: 'Cursor Grok 4.5'
     })
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
     expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
   })
 
-  it('uses Grok 4.5 as the default while keeping Grok Composer selectable', () => {
-    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.5')
-    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.5')
+  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'grok-4.6')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
     expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
       'grok-composer-2.5-fast'
     )
-    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.5')
-    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'grok-4.5-fast-xhigh')).toBe('grok-4.5')
+    expect(normalizeCliProviderModel('cursor', 'grok-4.6')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('cursor', 'cursor-grok-4.6-xhigh-fast')).toBe('grok-4.6')
   })
 
   it('exposes the curated optional Ollama model tags', () => {

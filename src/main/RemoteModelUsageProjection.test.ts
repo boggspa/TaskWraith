@@ -118,4 +118,104 @@ describe('projectRemoteModelUsageExtras', () => {
       resetAt: new Date(2026, 7, 1).toISOString()
     })
   })
+
+  it('keeps Cursor Grok 4.6 standard and Fast projections on distinct rate rows', () => {
+    const cursorRates = {
+      baseline: {
+        cursor: {
+          models: [
+            {
+              modelId: 'grok-4.6',
+              inputUsdPerMillion: 2,
+              outputUsdPerMillion: 6,
+              cachedInputUsdPerMillion: 0.5
+            },
+            {
+              modelId: 'grok-4.6-fast',
+              inputUsdPerMillion: 4,
+              outputUsdPerMillion: 12,
+              cachedInputUsdPerMillion: 1
+            }
+          ]
+        }
+      }
+    }
+    const extras = projectRemoteModelUsageExtras({
+      records: [
+        record({
+          id: 'cursor-standard',
+          provider: 'cursor',
+          model: 'cursor-grok-4.6-high',
+          inputTokens: 1_000_000,
+          cacheReadInputTokens: 0,
+          outputTokens: 1_000_000,
+          totalTokens: 2_000_000
+        }),
+        record({
+          id: 'cursor-fast',
+          provider: 'cursor',
+          model: 'cursor-grok-4.6-high-fast',
+          inputTokens: 1_000_000,
+          cacheReadInputTokens: 0,
+          outputTokens: 1_000_000,
+          totalTokens: 2_000_000
+        })
+      ],
+      settings: { currency: 'USD' },
+      providerRates: cursorRates,
+      fxRates: { rates: { USD: 1 } },
+      now: NOW
+    })
+
+    const cursor = extras.spend?.providers.find((entry) => entry.provider === 'cursor')
+    expect(cursor?.windows[0]).toEqual({
+      id: 'day',
+      label: 'Day',
+      totalTokens: 4_000_000,
+      runs: 2,
+      costText: '$24.00'
+    })
+  })
+
+  it('uses Grok 4.6 long-context rates for the entire request at 200k prompt tokens', () => {
+    const grokRates = {
+      baseline: {
+        grok: {
+          models: [
+            {
+              modelId: 'grok-4.6',
+              inputUsdPerMillion: 2,
+              outputUsdPerMillion: 6,
+              cachedInputUsdPerMillion: 0.5,
+              longContextThresholdTokens: 200_000,
+              longContextInputUsdPerMillion: 4,
+              longContextOutputUsdPerMillion: 12,
+              longContextCachedInputUsdPerMillion: 1
+            }
+          ]
+        }
+      }
+    }
+    const extras = projectRemoteModelUsageExtras({
+      records: [
+        record({
+          id: 'grok-long-context',
+          provider: 'grok',
+          model: 'grok-build',
+          inputTokens: 100_000,
+          cacheReadInputTokens: 50_000,
+          cacheCreationInputTokens: 50_000,
+          outputTokens: 1_000_000,
+          totalTokens: 1_200_000
+        })
+      ],
+      settings: { currency: 'USD' },
+      providerRates: grokRates,
+      fxRates: { rates: { USD: 1 } },
+      now: NOW
+    })
+
+    const grok = extras.spend?.providers.find((entry) => entry.provider === 'grok')
+    expect(grok?.windows[0].costText).toBe('$12.65')
+  })
 })

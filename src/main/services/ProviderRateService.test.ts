@@ -170,6 +170,53 @@ describe('BAKED_IN_RATES', () => {
     expect(cursorComposer).toBeDefined()
   })
 
+  it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
+    const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
+    expect(RATE_TABLE_VERSION).toBe('2026-08-12')
+    expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
+    expect(direct).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 12,
+      sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+      lastVerified: '2026-08-12'
+    })
+
+    expect(
+      BAKED_IN_RATES.cursor.models.find((model) => model.modelId === 'grok-4.6')
+    ).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
+      lastVerified: '2026-08-12'
+    })
+    expect(
+      BAKED_IN_RATES.cursor.models.find((model) => model.modelId === 'grok-4.6-fast')
+    ).toMatchObject({
+      inputUsdPerMillion: 4,
+      cachedInputUsdPerMillion: 1,
+      outputUsdPerMillion: 12,
+      sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
+      lastVerified: '2026-08-12'
+    })
+  })
+
+  it('does not change the existing Grok 4.5 pricing row', () => {
+    const grok45 = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.5')
+    expect(grok45).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      sourceUrl: 'https://docs.x.ai/developers/models/grok-4.5'
+    })
+    expect(grok45?.longContextThresholdTokens).toBeUndefined()
+  })
+
   it('tracks current published API-equivalent rates for visible model defaults', () => {
     // GPT-5.6 trio — official model pages (developers.openai.com), 2026-07-10.
     expect(
@@ -317,6 +364,35 @@ describe('BAKED_IN_RATES', () => {
         if (model.cachedInputUsdPerMillion !== undefined) {
           expect(model.cachedInputUsdPerMillion).toBeLessThan(model.inputUsdPerMillion)
         }
+      }
+    }
+  })
+
+  it('long-context tiers are complete and internally ordered', () => {
+    for (const table of Object.values(BAKED_IN_RATES)) {
+      for (const model of table.models) {
+        const tier = [
+          model.longContextThresholdTokens,
+          model.longContextInputUsdPerMillion,
+          model.longContextCachedInputUsdPerMillion,
+          model.longContextOutputUsdPerMillion
+        ]
+        if (tier.every((value) => value === undefined)) continue
+
+        expect(
+          tier.every((value) => value !== undefined),
+          model.modelId
+        ).toBe(true)
+        expect(Number.isInteger(model.longContextThresholdTokens), model.modelId).toBe(true)
+        expect(model.longContextThresholdTokens, model.modelId).toBeGreaterThan(0)
+        expect(model.longContextInputUsdPerMillion, model.modelId).toBeGreaterThan(0)
+        expect(model.longContextCachedInputUsdPerMillion, model.modelId).toBeGreaterThan(0)
+        expect(model.longContextOutputUsdPerMillion, model.modelId).toBeGreaterThanOrEqual(
+          model.longContextInputUsdPerMillion!
+        )
+        expect(model.longContextCachedInputUsdPerMillion, model.modelId).toBeLessThan(
+          model.longContextInputUsdPerMillion!
+        )
       }
     }
   })
@@ -531,6 +607,73 @@ describe('parsePersistedProviderRateProbe', () => {
 
     expect(parsed?.results.gemini.models[0]?.baseline.confidence).toBe('manual-override')
     expect(parsed?.results.gemini.models[1]?.baseline.confidence).toBe('baked-in')
+  })
+
+  it('preserves a complete long-context tier in persisted probe baselines', () => {
+    const parsed = parsePersistedProviderRateProbe(
+      JSON.stringify({
+        runAt: '2026-08-12T12:00:00.000Z',
+        results: {
+          grok: {
+            provider: 'grok',
+            pricingUrl: 'https://docs.x.ai/developers/pricing',
+            models: [
+              {
+                modelId: 'grok-4.6',
+                status: 'verified',
+                baseline: {
+                  inputUsdPerMillion: 2,
+                  outputUsdPerMillion: 6,
+                  longContextThresholdTokens: 200_000,
+                  longContextInputUsdPerMillion: 4,
+                  longContextCachedInputUsdPerMillion: 1,
+                  longContextOutputUsdPerMillion: 12,
+                  confidence: 'baked-in'
+                }
+              }
+            ]
+          }
+        }
+      })
+    )
+
+    expect(parsed?.results.grok.models[0]?.baseline).toMatchObject({
+      inputUsdPerMillion: 2,
+      outputUsdPerMillion: 6,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 12,
+      confidence: 'baked-in'
+    })
+  })
+
+  it('rejects incomplete persisted long-context rate metadata', () => {
+    expect(
+      parsePersistedProviderRateProbe(
+        JSON.stringify({
+          runAt: '2026-08-12T12:00:00.000Z',
+          results: {
+            grok: {
+              provider: 'grok',
+              pricingUrl: 'https://docs.x.ai/developers/pricing',
+              models: [
+                {
+                  modelId: 'grok-4.6',
+                  status: 'verified',
+                  baseline: {
+                    inputUsdPerMillion: 2,
+                    outputUsdPerMillion: 6,
+                    longContextThresholdTokens: 200_000,
+                    longContextInputUsdPerMillion: 4
+                  }
+                }
+              ]
+            }
+          }
+        })
+      )
+    ).toBeNull()
   })
 
   it('rejects malformed persisted probe data instead of trusting bad scrape output', () => {

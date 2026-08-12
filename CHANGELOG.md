@@ -18,6 +18,10 @@ to answer.
 
 ### Provider setup and run control
 
+- **Grok 4.6 in Grok and Cursor.** Direct Grok now follows the CLI's advertised
+  4.6 default with Low through Extra High reasoning, while Cursor exposes its
+  exact 4.6 Standard/Fast variants behind one provider-facing row. Grok 4.5 is
+  retained on both providers; plan and quota eligibility remains provider-owned.
 - **Mid-turn steering.** A Steer control sits beside Stop while a solo chat is running, so a follow-up no longer has to wait for the turn to end. How far it reaches depends on the provider: Pi, Cursor, and Ollama take the text into the turn in progress; Kimi, Mistral, and Grok interrupt the in-flight prompt and immediately re-prompt with it; Claude, Codex, AntiGravity, and Muse deliver at the next turn boundary. Anything a transport cannot confirm falls back to boundary delivery rather than being lost.
 - **AntiGravity work is visible while it happens.** The `agy` CLI publishes no tool stream of its own, so headless runs used to finish with a blank transcript even though files changed on disk. Arbitrated shell and write calls now project live through the permission bridge, and read-side views, greps, and directory listings are recovered from AntiGravity's own transcript afterwards — bringing it to tool-call parity with the other seats.
 - **AntiGravity launch honesty.** Cold-start project launches report liveness instead of appearing hung, approved headless shell commands are honoured, and a launch aborts outright when its permission lease fails rather than proceeding with no allow rules.

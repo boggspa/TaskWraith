@@ -101,8 +101,9 @@ public enum ModelContextLengths {
             ]
         case "grok":
             return [
-                // Grok's CLI models are permanently Fast-mode (Cursor's grok-4.5
-                // keeps a separate Fast toggle and stays "Cursor Grok 4.5").
+                // Grok's CLI models are permanently Fast-mode. Cursor's
+                // provider-scoped Grok rows keep a separate Fast toggle.
+                (id: "grok-4.6",                label: "Grok 4.6 Fast"),
                 (id: "grok-4.5",                label: "Grok 4.5 Fast"),
                 (id: "grok-composer-2.5-fast",  label: "Grok Composer 2.5 Fast"),
             ]
@@ -110,6 +111,7 @@ public enum ModelContextLengths {
             return [
                 (id: "composer-2.5",       label: "Composer 2.5"),
                 (id: "composer-2.5-fast",  label: "Composer 2.5 Fast"),
+                (id: "grok-4.6",           label: "Cursor Grok 4.6"),
                 (id: "grok-4.5",           label: "Cursor Grok 4.5"),
             ]
         case "antigravity":

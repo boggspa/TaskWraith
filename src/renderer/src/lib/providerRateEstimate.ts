@@ -41,6 +41,11 @@ export interface RendererModelRate {
   inputUsdPerMillion: number
   outputUsdPerMillion: number
   cachedInputUsdPerMillion?: number
+  /** Prompt-token threshold at which every token in the request uses the long-context tier. */
+  longContextThresholdTokens?: number
+  longContextInputUsdPerMillion?: number
+  longContextOutputUsdPerMillion?: number
+  longContextCachedInputUsdPerMillion?: number
 }
 
 /** Per-provider rate table, keyed by provider id. Partial because a snapshot
@@ -55,7 +60,7 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   claude: 'claude-sonnet-5',
   gemini: 'gemini-3.1-flash-lite',
   kimi: 'kimi-k2.7-code',
-  grok: 'grok-4.5',
+  grok: 'grok-4.6',
   cursor: 'composer-2.5-fast',
   ollama: 'qwen3:4b-instruct',
   antigravity: 'gemini-api:gemini-2.5-flash'
@@ -76,6 +81,20 @@ function canonicalRateModelId(
   if (provider === 'codex' && CODEX_DEFAULT_SENTINELS.has(key)) return fallback
   if (provider === 'gemini' && key === 'flash-lite') return fallback
   if (provider === 'grok' && (key === 'grok-build' || key === 'grok-build-0.1')) return fallback
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6-fast' || /^cursor-grok-4\.6-(?:low|medium|high|xhigh)-fast$/.test(key))
+  ) {
+    return 'grok-4.6-fast'
+  }
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6' ||
+      key === 'cursor-grok-4.6' ||
+      /^cursor-grok-4\.6-(?:low|medium|high|xhigh)$/.test(key))
+  ) {
+    return 'grok-4.6'
+  }
   if (
     provider === 'cursor' &&
     (key === 'cursor-grok-4.5' || key.startsWith('grok-4.5-fast-') || key.startsWith('grok-4.5-'))
@@ -135,6 +154,19 @@ export function normalizeProviderRates(raw: unknown): RendererProviderRates {
           m.cachedInputUsdPerMillion < m.inputUsdPerMillion
         ) {
           entry.cachedInputUsdPerMillion = m.cachedInputUsdPerMillion
+        }
+        if (
+          isFiniteNonNeg(m.longContextThresholdTokens) &&
+          m.longContextThresholdTokens > 0 &&
+          isFiniteNonNeg(m.longContextInputUsdPerMillion) &&
+          isFiniteNonNeg(m.longContextOutputUsdPerMillion) &&
+          isFiniteNonNeg(m.longContextCachedInputUsdPerMillion) &&
+          m.longContextCachedInputUsdPerMillion < m.longContextInputUsdPerMillion
+        ) {
+          entry.longContextThresholdTokens = m.longContextThresholdTokens
+          entry.longContextInputUsdPerMillion = m.longContextInputUsdPerMillion
+          entry.longContextOutputUsdPerMillion = m.longContextOutputUsdPerMillion
+          entry.longContextCachedInputUsdPerMillion = m.longContextCachedInputUsdPerMillion
         }
         entries.push(entry)
       }
@@ -231,12 +263,31 @@ export function estimateRunCostUsd(
     ? Math.max(0, inTok - cacheRead - cacheCreation)
     : inTok
   if (billedInputTok === 0 && cacheRead === 0 && cacheCreation === 0 && outTok === 0) return 0
-  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
+  // xAI's threshold is based on prompt tokens (fresh + cached + cache creation),
+  // and the selected tier applies to every token in that request. Persisted run
+  // totals may aggregate multiple requests, so this remains an API-equivalent
+  // projection rather than provider-billed spend.
+  const promptTokens = billedInputTok + cacheRead + cacheCreation
+  const useLongContextTier =
+    typeof rate.longContextThresholdTokens === 'number' &&
+    promptTokens >= rate.longContextThresholdTokens &&
+    typeof rate.longContextInputUsdPerMillion === 'number' &&
+    typeof rate.longContextOutputUsdPerMillion === 'number' &&
+    typeof rate.longContextCachedInputUsdPerMillion === 'number'
+  const inputRate = useLongContextTier
+    ? rate.longContextInputUsdPerMillion!
+    : rate.inputUsdPerMillion
+  const outputRate = useLongContextTier
+    ? rate.longContextOutputUsdPerMillion!
+    : rate.outputUsdPerMillion
+  const cachedInputRate = useLongContextTier
+    ? rate.longContextCachedInputUsdPerMillion!
+    : (rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion)
   const usd =
-    (billedInputTok / 1_000_000) * rate.inputUsdPerMillion +
+    (billedInputTok / 1_000_000) * inputRate +
     (cacheRead / 1_000_000) * cachedInputRate +
-    (cacheCreation / 1_000_000) * rate.inputUsdPerMillion +
-    (outTok / 1_000_000) * rate.outputUsdPerMillion
+    (cacheCreation / 1_000_000) * inputRate +
+    (outTok / 1_000_000) * outputRate
   return Number.isFinite(usd) && usd > 0 ? usd : 0
 }
 

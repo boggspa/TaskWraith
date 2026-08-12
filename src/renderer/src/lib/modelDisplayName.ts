@@ -4,6 +4,11 @@ import {
   antigravityEffortForModelId
 } from '../../../shared/antigravityAgyModelGrouping'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
+import {
+  CURSOR_GROK_46_BASE_MODEL_ID,
+  GROK_46_MODEL_ID,
+  cursorGrokBaseModelId
+} from '../../../shared/grok45Models'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 
 /**
@@ -109,10 +114,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
 
   // ── Grok ─────────────────────────────────────────────────
   // Grok's CLI models are permanently Fast-mode; the Grok-only ids read
-  // "Grok 4.5 Fast". The bare `grok-4.5` key stays "Grok 4.5" because it is
-  // SHARED with Cursor's base Grok row (Fast is a toggle there); `humaniseModelId`
-  // upgrades it to "Grok 4.5 Fast" only when the provider is Grok.
+  // "Grok 4.x Fast". The bare reasoning-model keys omit "Fast" because they
+  // are SHARED with Cursor's base Grok rows (Fast is a toggle there);
+  // `humaniseModelId` adds it only when the provider is Grok.
   'grok-composer-2.5-fast': 'Grok Composer 2.5 Fast',
+  'grok-4.6': 'Grok 4.6',
   'grok-4.5': 'Grok 4.5',
   'grok-4.5-latest': 'Grok 4.5 Fast',
   'grok-build-latest': 'Grok 4.5 Fast',
@@ -122,6 +128,14 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // ── Cursor ────────────────────────────────────────────────
   'composer-2.5': 'Composer 2.5',
   'composer-2.5-fast': 'Composer 2.5 Fast',
+  'cursor-grok-4.6-low': 'Grok 4.6',
+  'cursor-grok-4.6-low-fast': 'Grok 4.6 Fast',
+  'cursor-grok-4.6-medium': 'Grok 4.6',
+  'cursor-grok-4.6-medium-fast': 'Grok 4.6 Fast',
+  'cursor-grok-4.6-high': 'Grok 4.6',
+  'cursor-grok-4.6-high-fast': 'Grok 4.6 Fast',
+  'cursor-grok-4.6-xhigh': 'Grok 4.6',
+  'cursor-grok-4.6-xhigh-fast': 'Grok 4.6 Fast',
   'cursor-grok-4.5': 'Grok 4.5',
   'grok-4.5-medium': 'Grok 4.5',
   'grok-4.5-fast-medium': 'Grok 4.5 Fast',
@@ -222,7 +236,7 @@ export function canonicalModelIdForProvider(
     if (provider === 'claude') return 'claude-sonnet-5'
     if (provider === 'gemini') return 'flash-lite'
     if (provider === 'kimi') return 'kimi-k2.7-code'
-    if (provider === 'grok') return 'grok-4.5'
+    if (provider === 'grok') return GROK_46_MODEL_ID
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'
     // The three newest seats had no branch here, so a run recorded with the
@@ -253,9 +267,9 @@ export function canonicalModelIdForProvider(
     }
   }
   if (provider === 'grok') {
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-4.5'
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return GROK_46_MODEL_ID
     if (!key || key === 'grok') {
-      return 'grok-4.5'
+      return GROK_46_MODEL_ID
     }
     if (
       key === 'grok composer 2.5 fast' ||
@@ -265,8 +279,12 @@ export function canonicalModelIdForProvider(
     ) {
       return 'grok-composer-2.5-fast'
     }
+    if (key === 'grok 4.6' || key === 'grok 4.6 fast' || key === GROK_46_MODEL_ID) {
+      return GROK_46_MODEL_ID
+    }
     if (
       key === 'grok 4.5' ||
+      key === 'grok 4.5 fast' ||
       key === 'grok-4.5' ||
       key === 'grok-4.5-latest' ||
       key === 'grok-build-latest' ||
@@ -281,6 +299,14 @@ export function canonicalModelIdForProvider(
   if (provider === 'cursor') {
     if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'composer-2.5-fast'
     if (!key || key === 'cursor' || key === 'composer') return 'composer-2.5-fast'
+    const cursorGrokBase = cursorGrokBaseModelId(key)
+    if (cursorGrokBase) return cursorGrokBase
+    const cursorGrokLabel = key.match(
+      /^(?:cursor )?grok 4\.(5|6)(?: (?:low|medium|high|xhigh|extra high))?(?: fast)?$/
+    )
+    if (cursorGrokLabel) {
+      return cursorGrokLabel[1] === '6' ? CURSOR_GROK_46_BASE_MODEL_ID : 'grok-4.5'
+    }
     if (
       key === 'cursor-grok-4.5' ||
       key === 'grok 4.5' ||
@@ -419,12 +445,11 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('llama3.2:3b-')) {
     return 'Llama 3.2 (3B Param)'
   }
-  // Both Grok CLI models run permanently in Fast mode. The canonicaliser has
-  // collapsed every Grok reasoning id to 'grok-4.5' by here, so label the Grok
-  // seat "Grok 4.5 Fast". Cursor's grok-4.5 (separate Fast toggle) is untouched
-  // and keeps the flat-map "Grok 4.5".
-  if (provider === 'grok' && key === 'grok-4.5') {
-    return 'Grok 4.5 Fast'
+  // Grok CLI reasoning models run permanently in Fast mode. Cursor shares
+  // these base ids but owns a separate Fast toggle, so only the Grok provider
+  // receives the suffix here.
+  if (provider === 'grok' && (key === GROK_46_MODEL_ID || key === 'grok-4.5')) {
+    return `${KNOWN_MODEL_LABELS[key]} Fast`
   }
   // AntiGravity has two deliberately distinct lanes. Key-lane ids derive their
   // curated catalog label (`gemini-api:gemini-2.5-flash` → `2.5 Flash`), while

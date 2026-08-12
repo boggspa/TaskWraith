@@ -9,6 +9,10 @@ interface ModelRate {
   inputUsdPerMillion: number
   outputUsdPerMillion: number
   cachedInputUsdPerMillion?: number
+  longContextThresholdTokens?: number
+  longContextInputUsdPerMillion?: number
+  longContextOutputUsdPerMillion?: number
+  longContextCachedInputUsdPerMillion?: number
 }
 
 type ProviderRates = Partial<Record<ProviderId, ModelRate[]>>
@@ -103,7 +107,7 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   claude: 'claude-sonnet-5',
   gemini: 'gemini-3.1-flash-lite',
   kimi: 'kimi-k2.7-code',
-  grok: 'grok-4.5',
+  grok: 'grok-4.6',
   cursor: 'composer-2.5-fast',
   antigravity: 'gemini-api:gemini-2.5-flash',
   muse: 'muse-spark-1.2'
@@ -158,6 +162,12 @@ function normaliseProviderRates(raw: unknown): ProviderRates {
       const outputUsdPerMillion = positiveNumber(row.outputUsdPerMillion)
       if (inputUsdPerMillion === 0 || outputUsdPerMillion === 0) return []
       const cachedInputUsdPerMillion = positiveNumber(row.cachedInputUsdPerMillion)
+      const longContextThresholdTokens = positiveNumber(row.longContextThresholdTokens)
+      const longContextInputUsdPerMillion = positiveNumber(row.longContextInputUsdPerMillion)
+      const longContextOutputUsdPerMillion = positiveNumber(row.longContextOutputUsdPerMillion)
+      const longContextCachedInputUsdPerMillion = positiveNumber(
+        row.longContextCachedInputUsdPerMillion
+      )
       return [
         {
           modelId: row.modelId,
@@ -165,6 +175,18 @@ function normaliseProviderRates(raw: unknown): ProviderRates {
           outputUsdPerMillion,
           ...(cachedInputUsdPerMillion > 0 && cachedInputUsdPerMillion < inputUsdPerMillion
             ? { cachedInputUsdPerMillion }
+            : {}),
+          ...(longContextThresholdTokens > 0 &&
+          longContextInputUsdPerMillion > 0 &&
+          longContextOutputUsdPerMillion > 0 &&
+          longContextCachedInputUsdPerMillion > 0 &&
+          longContextCachedInputUsdPerMillion < longContextInputUsdPerMillion
+            ? {
+                longContextThresholdTokens,
+                longContextInputUsdPerMillion,
+                longContextOutputUsdPerMillion,
+                longContextCachedInputUsdPerMillion
+              }
             : {})
         }
       ]
@@ -182,7 +204,21 @@ function canonicalRateModelId(provider: ProviderId, model: string | undefined): 
   if (DEFAULT_MODEL_SENTINELS.has(key)) return fallback
   if (provider === 'codex' && CODEX_DEFAULT_SENTINELS.has(key)) return fallback
   if (provider === 'gemini' && key === 'flash-lite') return fallback
-  if (provider === 'grok' && (key === 'grok-build' || key === 'grok-build-0.1')) return 'grok-4.5'
+  if (provider === 'grok' && (key === 'grok-build' || key === 'grok-build-0.1')) return fallback
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6-fast' || /^cursor-grok-4\.6-(?:low|medium|high|xhigh)-fast$/.test(key))
+  ) {
+    return 'grok-4.6-fast'
+  }
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6' ||
+      key === 'cursor-grok-4.6' ||
+      /^cursor-grok-4\.6-(?:low|medium|high|xhigh)$/.test(key))
+  ) {
+    return 'grok-4.6'
+  }
   if (
     provider === 'cursor' &&
     (key === 'cursor-grok-4.5' || key.startsWith('grok-4.5-fast-') || key.startsWith('grok-4.5-'))
@@ -223,12 +259,27 @@ function recordCostUsd(record: UsageRecord, rates: ProviderRates): number {
   const cacheRead = positiveNumber(record.cacheReadInputTokens)
   const cacheCreation = positiveNumber(record.cacheCreationInputTokens)
   const outputTokens = positiveNumber(record.outputTokens)
-  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
+  const promptTokens = inputTokens + cacheRead + cacheCreation
+  const useLongContextTier =
+    typeof rate.longContextThresholdTokens === 'number' &&
+    promptTokens >= rate.longContextThresholdTokens &&
+    typeof rate.longContextInputUsdPerMillion === 'number' &&
+    typeof rate.longContextOutputUsdPerMillion === 'number' &&
+    typeof rate.longContextCachedInputUsdPerMillion === 'number'
+  const inputRate = useLongContextTier
+    ? rate.longContextInputUsdPerMillion!
+    : rate.inputUsdPerMillion
+  const outputRate = useLongContextTier
+    ? rate.longContextOutputUsdPerMillion!
+    : rate.outputUsdPerMillion
+  const cachedInputRate = useLongContextTier
+    ? rate.longContextCachedInputUsdPerMillion!
+    : (rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion)
   const cost =
-    (inputTokens / 1_000_000) * rate.inputUsdPerMillion +
+    (inputTokens / 1_000_000) * inputRate +
     (cacheRead / 1_000_000) * cachedInputRate +
-    (cacheCreation / 1_000_000) * rate.inputUsdPerMillion +
-    (outputTokens / 1_000_000) * rate.outputUsdPerMillion
+    (cacheCreation / 1_000_000) * inputRate +
+    (outputTokens / 1_000_000) * outputRate
   return Number.isFinite(cost) && cost > 0 ? cost : 0
 }
 

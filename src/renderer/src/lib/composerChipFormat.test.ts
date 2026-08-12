@@ -5,6 +5,7 @@ import {
   reasoningDisplayLabel,
   shortModelName
 } from './composerChipFormat'
+import { CURSOR_GROK_46_WIRE_MODEL_IDS } from '../../../shared/grok45Models'
 import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
 
 describe('shortModelName', () => {
@@ -56,11 +57,16 @@ describe('shortModelName', () => {
     expect(shortModelName('cursor', '', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(shortModelName('cursor', '', 'composer-2.5')).toBe('Composer 2.5')
     expect(shortModelName('cursor', 'Cursor Grok 4.5', 'grok-4.5')).toBe('Grok 4.5')
+    expect(shortModelName('cursor', 'Cursor Grok 4.6', 'grok-4.6')).toBe('Grok 4.6')
+    for (const modelId of CURSOR_GROK_46_WIRE_MODEL_IDS) {
+      expect(shortModelName('cursor', '', modelId)).toBe('Grok 4.6')
+    }
   })
 
   it('renders Grok CLI model ids as Grok model labels', () => {
     expect(shortModelName('grok', '', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
     expect(shortModelName('grok', '', 'grok-build')).toBe('Grok 4.5 Fast')
+    expect(shortModelName('grok', '', 'grok-4.6')).toBe('Grok 4.6 Fast')
     expect(shortModelName('grok', '', 'grok-4.5')).toBe('Grok 4.5 Fast')
   })
 
@@ -141,7 +147,7 @@ describe('shortModelName', () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
     expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Coding')
-    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.5 Fast')
+    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.6 Fast')
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
     expect(shortModelName('ollama', '', 'cli-default')).toBe('Qwen 3 (4B Param)')
@@ -288,7 +294,7 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('')
   })
 
-  it('Grok and Cursor reasoning only display for Grok 4.5 models', () => {
+  it('Grok and Cursor reasoning display for both Grok reasoning-model families', () => {
     expect(
       reasoningDisplayLabel({
         provider: 'grok',
@@ -298,6 +304,15 @@ describe('reasoningDisplayLabel', () => {
         grokReasoningEffort: 'high'
       })
     ).toBe('High')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'grok',
+        composerStyle: 'grok',
+        modelId: 'grok-4.6',
+        modelLabel: 'Grok 4.6 Fast',
+        grokReasoningEffort: 'xhigh'
+      })
+    ).toBe('Extra High')
     expect(
       reasoningDisplayLabel({
         provider: 'grok',
@@ -316,6 +331,15 @@ describe('reasoningDisplayLabel', () => {
         cursorReasoningEffort: 'medium'
       })
     ).toBe('Medium')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'cursor-grok-4.6-xhigh-fast',
+        modelLabel: 'Cursor Grok 4.6',
+        cursorReasoningEffort: 'xhigh'
+      })
+    ).toBe('Extra High')
     expect(
       reasoningDisplayLabel({
         provider: 'cursor',
@@ -530,6 +554,17 @@ describe('formatComposerModelChip', () => {
         shellFastModeActive: true
       })
     ).toBe('Grok 4.5 · High Fast')
+
+    expect(
+      formatComposerModelChip({
+        provider: 'cursor',
+        composerStyle: 'default',
+        modelId: 'grok-4.6',
+        modelLabel: 'Cursor Grok 4.6',
+        cursorReasoningEffort: 'xhigh',
+        shellFastModeActive: true
+      })
+    ).toBe('Grok 4.6 · Extra High Fast')
   })
 
   it('Creative shells use the default format (no shell-specific match)', () => {

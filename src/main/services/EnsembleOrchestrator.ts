@@ -249,7 +249,7 @@ import {
   contextUsageSnapshotsEqual,
   type ContextUsageSnapshot
 } from '../../shared/contextUsage'
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { isKimiK3Model } from '../providers/StaticProviderModels'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
@@ -15627,8 +15627,8 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
         participant.provider === 'muse' ||
-        (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
-        (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
+        (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
+        (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
           ? participant.reasoningEffort
           : undefined
       const sharedServiceTier =
@@ -15638,7 +15638,7 @@ export class EnsembleOrchestrator {
             ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
               ? 'fast'
               : 'standard'
-            : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+            : participant.provider === 'cursor' && isCursorGrokModelId(participant.model)
               ? participant.fastModeEnabled
                 ? 'fast'
                 : ''
@@ -17781,8 +17781,8 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
         participant.provider === 'muse' ||
-        (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
-        (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
+        (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
+        (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
           ? participant.reasoningEffort
           : undefined
       const sharedServiceTier =
@@ -17792,7 +17792,7 @@ export class EnsembleOrchestrator {
             ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
               ? 'fast'
               : 'standard'
-            : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
+            : participant.provider === 'cursor' && isCursorGrokModelId(participant.model)
               ? participant.fastModeEnabled
                 ? 'fast'
                 : ''
@@ -21007,8 +21007,8 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
   if (
     participant.provider === 'codex' ||
     participant.provider === 'claude' ||
-    (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
-    (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
+    (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
+    (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
   ) {
     return participant.reasoningEffort
       ? { ensembleReasoningEffort: participant.reasoningEffort }

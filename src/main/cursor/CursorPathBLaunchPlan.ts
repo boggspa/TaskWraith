@@ -5,7 +5,7 @@ import {
 } from '../mcp/McpSessionProfileFence'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
-import { isCursorGrok45ModelId, resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
+import { isCursorGrokModelId, resolveCursorGrokCliModelId } from '../../shared/grok45Models'
 import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import {
   CURSOR_BROKER_MCP_ALLOW_RULES,
@@ -148,7 +148,7 @@ export function buildCursorPathBLaunchPlan(
       : basePrompt
   const requestedModel = typeof input.model === 'string' ? input.model.trim() : ''
   const cursorGrokModel = requestedModel
-    ? resolveCursorGrok45CliModelId({
+    ? resolveCursorGrokCliModelId({
         model: requestedModel,
         reasoningEffort: input.reasoningEffort,
         fastModeEnabled: input.fastMode
@@ -157,7 +157,7 @@ export function buildCursorPathBLaunchPlan(
   const wireModel = requestedModel
     ? cursorGrokModel || normalizeCliProviderModel('cursor', requestedModel)
     : null
-  const grokControlsApplied = isCursorGrok45ModelId(requestedModel)
+  const grokControlsApplied = isCursorGrokModelId(requestedModel)
   const argvInput = {
     workspace: input.workspacePath,
     prompt,

@@ -134,6 +134,36 @@ describe('aggregateExternalUsageRecords', () => {
     expect(out.reduce((sum, r) => sum + r.totalTokens, 0)).toBe(7)
   })
 
+  it('separates billing tiers that share one normalized display model', () => {
+    const ts = new Date(2026, 6, 20, 9, 0, 0, 0).getTime()
+    const out = aggregateExternalUsageRecords(
+      [
+        record({
+          timestamp: ts,
+          provider: 'cursor',
+          model: 'grok-4.6',
+          costRateModel: 'grok-4.6',
+          totalTokens: 10
+        }),
+        record({
+          timestamp: ts + 60_000,
+          provider: 'cursor',
+          model: 'grok-4.6',
+          costRateModel: 'grok-4.6-fast',
+          totalTokens: 20
+        })
+      ],
+      NOW
+    )
+
+    expect(out).toHaveLength(2)
+    expect(out.map((entry) => [entry.costRateModel, entry.totalTokens]).sort()).toEqual([
+      ['grok-4.6', 10],
+      ['grok-4.6-fast', 20]
+    ])
+    expect(out.every((entry) => entry.model === 'grok-4.6')).toBe(true)
+  })
+
   it('passes reset_hint and non-finite-timestamp records through untouched', () => {
     const hint = record({ usageKind: 'reset_hint', totalTokens: 999, timestamp: NOW - 1000 })
     const broken = record({ timestamp: Number.NaN, totalTokens: 5 })

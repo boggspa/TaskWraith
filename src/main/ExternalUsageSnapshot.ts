@@ -59,6 +59,8 @@ function normalizeRecord(value: unknown): UsageRecord | null {
   const cacheReadInputTokens = finiteNonNegative(record.cacheReadInputTokens)
   const cacheCreationInputTokens = finiteNonNegative(record.cacheCreationInputTokens)
   const runCount = finiteNonNegative(record.runCount)
+  const costRateModel = typeof record.costRateModel === 'string' ? record.costRateModel.trim() : ''
+  if (costRateModel.length > 512) return null
   return {
     id: record.id,
     provider: record.provider as ProviderId,
@@ -67,6 +69,7 @@ function normalizeRecord(value: unknown): UsageRecord | null {
     runId: record.runId,
     usageKind: 'run',
     model: record.model,
+    ...(costRateModel ? { costRateModel } : {}),
     inputTokens,
     outputTokens,
     totalTokens,

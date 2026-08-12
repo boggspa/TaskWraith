@@ -1,4 +1,4 @@
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import type { ProviderId } from '../store/types'
 import type { TaskWraithMcpProfileId } from '../store/types'
 import {
@@ -197,8 +197,8 @@ export const FULL_V2_MCP_ADVERTISE_TOOLS = Object.freeze([
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
 /**
- * The Cursor-hosted Grok 4.5 catalogue rejects large MCP surfaces before a turn
- * starts. Managed Cursor Path-B runs therefore use this named core profile for
+ * Grok reasoning and Cursor-hosted Grok catalogues reject large MCP surfaces
+ * before a turn starts. Managed runs therefore use this named core profile for
  * those constrained models when the governed broker attaches; compatible
  * constrained-model routes and historical pinned receipts use the same stable
  * definition.
@@ -1192,10 +1192,10 @@ export function shouldUseCoreMcpProfile(
   provider: ProviderId,
   modelId: string | null | undefined
 ): boolean {
-  if (provider === 'cursor') return isCursorGrok45ModelId(modelId)
+  if (provider === 'cursor') return isCursorGrokModelId(modelId)
   if (provider === 'grok') {
     if (!String(modelId || '').trim()) return true
-    return isGrok45ReasoningModelId(modelId) || isCursorGrok45ModelId(modelId)
+    return isGrokReasoningModelId(modelId) || isCursorGrokModelId(modelId)
   }
   return false
 }

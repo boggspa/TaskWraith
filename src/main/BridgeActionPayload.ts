@@ -154,17 +154,17 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   permissionPresetId?: string
   /** Optional model override (provider-specific). */
   model?: string
-  /** Shared reasoning effort override. Used by Codex, K3, and Grok 4.5. */
+  /** Shared reasoning effort override. Used by Codex, K3, and supported Grok models. */
   reasoningEffort?: string | null
   /** Claude-specific reasoning effort override. */
   claudeReasoningEffort?: string | null
-  /** Grok-specific reasoning effort override. Valid only for Grok 4.5. */
+  /** Grok-specific reasoning effort override. Valid only for supported Grok models. */
   grokReasoningEffort?: string | null
   /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|ultra). */
   museReasoningEffort?: string | null
-  /** Cursor-specific reasoning effort override. Valid only for Cursor Grok 4.5. */
+  /** Cursor-specific reasoning effort override. Valid only for supported Cursor Grok models. */
   cursorReasoningEffort?: string | null
-  /** Cursor Fast tier toggle. Valid only for Cursor Grok 4.5. */
+  /** Cursor Fast tier toggle. Valid only for supported Cursor Grok models. */
   cursorFastMode?: boolean
   /** Claude Fast-mode toggle (SDK/CLI `--settings {fastMode}`). Supported Opus models only. */
   claudeFastMode?: boolean

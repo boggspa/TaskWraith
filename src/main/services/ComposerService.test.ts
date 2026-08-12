@@ -1060,7 +1060,7 @@ describe('ComposerService', () => {
     ])
   })
 
-  it('uses Grok 4.5 as the Grok fallback instead of Gemini defaults', async () => {
+  it('uses Grok 4.6 as the Grok fallback instead of Gemini defaults', async () => {
     const payload = await compose(
       {
         provider: 'grok',
@@ -1075,7 +1075,31 @@ describe('ComposerService', () => {
     )
 
     expect(payload.provider).toBe('grok')
-    expect(payload.model).toBe('grok-4.5')
+    expect(payload.model).toBe('grok-4.6')
+  })
+
+  it('carries Grok 4.6 Extra High reasoning through direct and Cursor runs', async () => {
+    const direct = await compose(
+      { provider: 'grok' },
+      {
+        provider: 'grok',
+        selectedModelType: 'grok-4.6',
+        grokReasoningEffort: 'xhigh'
+      }
+    )
+    const cursor = await compose(
+      { provider: 'cursor' },
+      {
+        provider: 'cursor',
+        selectedModelType: 'grok-4.6',
+        cursorReasoningEffort: 'xhigh',
+        cursorFastMode: true
+      }
+    )
+
+    expect(direct.reasoningEffort).toBe('xhigh')
+    expect(cursor.reasoningEffort).toBe('xhigh')
+    expect(cursor.serviceTier).toBe('fast')
   })
 
   it('passes provider-filtered workspace access and path context to non-Codex providers', async () => {

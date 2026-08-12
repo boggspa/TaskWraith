@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   codexUsageToStats,
+  cursorCostRateModel,
   cursorUsageToStats,
   extractProviderUsage,
   geminiUsageMetadataToStats,
@@ -121,6 +122,28 @@ describe('ProviderRunStats', () => {
       cache_creation_input_tokens: 12,
       duration_ms: 900,
       _taskwraith_input_includes_cache: true
+    })
+  })
+
+  it('stamps Cursor Grok 4.6 usage with its standard or Fast cost-rate row', () => {
+    expect(cursorCostRateModel('grok-4.6')).toBe('grok-4.6')
+    expect(cursorCostRateModel('grok-4.6', true)).toBe('grok-4.6-fast')
+    expect(cursorCostRateModel('cursor-grok-4.6-xhigh-fast')).toBe('grok-4.6-fast')
+    expect(cursorCostRateModel('cursor-grok-4.6-high', true)).toBe('grok-4.6-fast')
+    expect(cursorCostRateModel('grok-4.5', true)).toBeUndefined()
+    expect(cursorCostRateModel('composer-2.5-fast', true)).toBeUndefined()
+
+    expect(
+      cursorUsageToStats(
+        { inputTokens: 20, outputTokens: 5 },
+        100,
+        cursorCostRateModel('grok-4.6', true)
+      )
+    ).toMatchObject({
+      input_tokens: 20,
+      output_tokens: 5,
+      total_tokens: 25,
+      _taskwraith_cost_rate_model: 'grok-4.6-fast'
     })
   })
 

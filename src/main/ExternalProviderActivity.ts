@@ -51,6 +51,9 @@ export interface ExternalProviderActivityOptions {
 
 interface ExternalUsageEvent extends ExternalActivityFileCacheEvent {
   provider: ExternalActivityProvider
+  /** Rate-table identity when it intentionally differs from the normalized
+   * display model (for example Cursor Grok 4.6 Fast). */
+  costRateModel?: string
   /** Cross-file dedupe key (claude/gemini). Stored with cached per-file
    * events so assembly-time dedupe survives the incremental cache. */
   dedupeKey?: string
@@ -329,6 +332,7 @@ function replaceCachedCursorExternalRecords(
     provider: 'cursor'
     timestamp: number
     model: string
+    costRateModel?: string
     inputTokens?: number
     outputTokens?: number
     totalTokens: number
@@ -609,6 +613,7 @@ function eventToUsageRecord(event: ExternalUsageEvent): UsageRecord | null {
         totalTokens - inputTokens - cacheReadInputTokens - cacheCreationInputTokens
     )
   )
+  const costRateModel = String(event.costRateModel || '').trim()
   const id = `external-${event.provider}-${stableHash(
     `${event.timestamp}|${event.model}|${totalTokens}|${event.sourceKey}`
   )}`
@@ -621,6 +626,7 @@ function eventToUsageRecord(event: ExternalUsageEvent): UsageRecord | null {
     runId: `external-${event.provider}`,
     usageKind: 'run',
     model: event.model || event.provider,
+    ...(costRateModel ? { costRateModel } : {}),
     inputTokens,
     outputTokens,
     totalTokens,

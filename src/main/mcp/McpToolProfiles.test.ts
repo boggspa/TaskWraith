@@ -676,14 +676,17 @@ describe('CORE_MCP_ADVERTISE_TOOLS', () => {
 })
 
 describe('shouldUseCoreMcpProfile', () => {
-  it('constrains Cursor Grok 4.5 while leaving Composer 2.5 on the full profile', () => {
+  it('constrains Cursor Grok families while leaving Composer 2.5 on the full profile', () => {
     expect(shouldUseCoreMcpProfile('cursor', 'grok-4.5')).toBe(true)
     expect(shouldUseCoreMcpProfile('cursor', 'grok-4.5-fast-xhigh')).toBe(true)
+    expect(shouldUseCoreMcpProfile('cursor', 'grok-4.6')).toBe(true)
+    expect(shouldUseCoreMcpProfile('cursor', 'cursor-grok-4.6-xhigh-fast')).toBe(true)
     expect(shouldUseCoreMcpProfile('cursor', 'composer-2.5-fast')).toBe(false)
   })
 
-  it('constrains standalone Grok 4.5 aliases while leaving Grok Composer full', () => {
+  it('constrains standalone Grok reasoning models while leaving Grok Composer full', () => {
     expect(shouldUseCoreMcpProfile('grok', undefined)).toBe(true)
+    expect(shouldUseCoreMcpProfile('grok', 'grok-4.6')).toBe(true)
     expect(shouldUseCoreMcpProfile('grok', 'grok-4.5')).toBe(true)
     expect(shouldUseCoreMcpProfile('grok', 'grok-4.5-latest')).toBe(true)
     expect(shouldUseCoreMcpProfile('grok', 'grok-4.5-fast-xhigh')).toBe(true)

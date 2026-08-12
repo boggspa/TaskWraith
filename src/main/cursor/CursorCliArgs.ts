@@ -15,7 +15,7 @@
 //     native-provider models are still dropped unless explicitly listed here.
 
 import { CURSOR_COMPOSER_MODEL_IDS } from './CursorCliProbe'
-import { resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
+import { resolveCursorGrokCliModelId } from '../../shared/grok45Models'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import type { EffectiveRunPermissions } from '../store/types'
 import { cursorMcpToolsDenied } from './CursorMcpPolicy'
@@ -103,8 +103,8 @@ function resolveCursorModelArg(input: {
   reasoningEffort?: string | null
   fastModeEnabled?: boolean | null
 }): string | null {
-  const grok45 = resolveCursorGrok45CliModelId(input)
-  if (grok45) return grok45
+  const cursorGrok = resolveCursorGrokCliModelId(input)
+  if (cursorGrok) return cursorGrok
   return typeof input.model === 'string' && CURSOR_COMPOSER_MODEL_IDS.includes(input.model)
     ? input.model
     : null
@@ -255,10 +255,10 @@ function buildContainedCursorArgv(
 ): string[] {
   // Preserve an already-resolved concrete Cursor Grok variant from the shared
   // Path-B launch plan. The generic provider normalizer intentionally collapses
-  // such variants to the base `grok-4.5` id, but remains the fallback that
+  // such variants to their base Grok id, but remains the fallback that
   // coerces leaked foreign ids onto Cursor's concrete default.
   const modelArg = input.model
-    ? resolveCursorGrok45CliModelId({ model: input.model }) ||
+    ? resolveCursorGrokCliModelId({ model: input.model }) ||
       normalizeCliProviderModel('cursor', input.model)
     : null
   return [

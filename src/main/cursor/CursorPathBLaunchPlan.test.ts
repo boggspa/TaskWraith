@@ -188,6 +188,21 @@ describe('CursorPathBLaunchPlan', () => {
     expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'grok-4.5-fast-xhigh']))
   })
 
+  it('resolves Cursor Grok 4.6 Extra High Fast to its exact wire model', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh',
+        fastMode: true
+      })
+    )
+
+    expect(plan.wireModel).toBe('cursor-grok-4.6-xhigh-fast')
+    expect(plan.reasoningEffort).toBe('xhigh')
+    expect(plan.fastMode).toBe(true)
+    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'cursor-grok-4.6-xhigh-fast']))
+  })
+
   it('rejects contradictory broker outcomes and freezes the final plan', () => {
     expect(() =>
       buildCursorPathBLaunchPlan(

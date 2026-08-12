@@ -8,6 +8,7 @@ import {
 
 export type UsageModelEntry = {
   model: string
+  costRateModel?: string
   inputTokens: number
   outputTokens: number
   totalTokens: number
@@ -460,6 +461,10 @@ const buildUsageModelEntry = (
   const limits = extractUsageLimits(candidate)
   const reset = extractUsageReset(candidate)
   const durationMs = extractUsageCount(candidate, [['duration_ms'], ['durationMs']])
+  const costRateModel =
+    typeof candidate._taskwraith_cost_rate_model === 'string'
+      ? candidate._taskwraith_cost_rate_model.trim()
+      : ''
 
   const hasAnyCount = counts.inputTokens > 0 || counts.outputTokens > 0 || counts.totalTokens > 0
   const hasAnyLimit = Boolean(
@@ -474,6 +479,7 @@ const buildUsageModelEntry = (
 
   return {
     model: resolvedModel,
+    ...(costRateModel ? { costRateModel } : {}),
     ...counts,
     inputTokens,
     ...(cacheCounts.cacheReadInputTokens > 0

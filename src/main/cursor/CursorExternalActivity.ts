@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { join } from 'path'
+import { cursorGrokBaseModelId, cursorGrokFastFromModelId } from '../../shared/grok45Models'
 import { cursorStateDbCandidates } from './CursorUsage'
 import {
   CURSOR_TRANSCRIPT_CHUNK_SIZE,
@@ -19,6 +20,9 @@ export interface CursorExternalUsageEvent {
   provider: 'cursor'
   timestamp: number
   model: string
+  /** Rate-table identity when display normalization intentionally collapses
+   * several concrete Cursor wire ids into one catalogue model. */
+  costRateModel?: string
   inputTokens: number
   outputTokens: number
   totalTokens: number
@@ -61,6 +65,12 @@ export function normalizeCursorExternalModelId(raw: string | undefined | null): 
   const trimmed = String(raw || '').trim()
   const key = trimmed.toLowerCase()
   if (!key || key === 'cursor' || key === 'composer') return 'composer-2.5-fast'
+  const cursorGrokBase = cursorGrokBaseModelId(key)
+  if (cursorGrokBase) return cursorGrokBase
+  const cursorGrokLabel = key.match(
+    /^(?:cursor[ -])?grok[ -]4\.(5|6)(?:[ -](?:low|medium|high|xhigh|extra[ -]high))?(?:[ -]fast)?$/
+  )
+  if (cursorGrokLabel) return `grok-4.${cursorGrokLabel[1]}`
   if (
     key === 'cursor grok 4.5' ||
     key === 'cursor-grok-4.5' ||
@@ -76,6 +86,23 @@ export function normalizeCursorExternalModelId(raw: string | undefined | null): 
   if (key.includes('fast')) return 'composer-2.5-fast'
   if (key.includes('composer')) return 'composer-2.5'
   return 'composer-2.5-fast'
+}
+
+/** Keep Cursor's concrete billing tier separate from its catalogue display
+ * model. Grok 4.6 wire ids all display under `grok-4.6`, while `-fast` ids
+ * must continue to resolve against the higher `grok-4.6-fast` rate row. */
+export function cursorExternalCostRateModelId(raw: string | undefined | null): string | undefined {
+  if (cursorGrokBaseModelId(raw) !== 'grok-4.6') return undefined
+  return cursorGrokFastFromModelId(raw) ? 'grok-4.6-fast' : 'grok-4.6'
+}
+
+function inferCursorExternalCostRateModelFromText(text: string): string | undefined {
+  const wireId = text
+    .toLowerCase()
+    .match(
+      /(?:^|[^a-z0-9-])(cursor-grok-4\.6-(?:low|medium|high|xhigh)(?:-fast)?)(?=$|[^a-z0-9-])/
+    )?.[1]
+  return cursorExternalCostRateModelId(wireId)
 }
 
 export function isCursorSandboxProjectDir(projectDirName: string): boolean {
@@ -106,6 +133,14 @@ export function extractTranscriptMessageText(content: unknown): string {
 export function inferCursorModelFromText(text: string): string {
   const haystack = text.toLowerCase()
   if (
+    haystack.includes('cursor grok 4.6') ||
+    haystack.includes('cursor-grok-4.6') ||
+    haystack.includes('grok 4.6') ||
+    haystack.includes('grok-4.6')
+  ) {
+    return 'grok-4.6'
+  }
+  if (
     haystack.includes('cursor grok 4.5') ||
     haystack.includes('cursor-grok-4.5') ||
     haystack.includes('grok 4.5') ||
@@ -127,6 +162,7 @@ export interface ParsedCursorAgentTranscript {
   inputTokens: number
   outputTokens: number
   model: string
+  costRateModel?: string
   timestamp: number
   sourceKey: string
 }
@@ -152,6 +188,7 @@ export function parseCursorAgentTranscript(
   let inputTokens = 0
   let outputTokens = 0
   let model = modelHint ? normalizeCursorExternalModelId(modelHint) : ''
+  let costRateModel = cursorExternalCostRateModelId(modelHint)
   let lastTimestamp = 0
 
   for (const line of text.split(/\r?\n/)) {
@@ -179,6 +216,13 @@ export function parseCursorAgentTranscript(
     else outputTokens += tokens
 
     if (!model) model = inferCursorModelFromText(contentText)
+    if (!costRateModel) {
+      const inferredCostRateModel = inferCursorExternalCostRateModelFromText(contentText)
+      if (inferredCostRateModel) {
+        model = 'grok-4.6'
+        costRateModel = inferredCostRateModel
+      }
+    }
     const createdAt = parseTimestamp(message?.createdAt ?? parsed.timestamp)
     if (createdAt && createdAt > lastTimestamp) lastTimestamp = createdAt
   }
@@ -191,6 +235,7 @@ export function parseCursorAgentTranscript(
     inputTokens,
     outputTokens,
     model: normalizeCursorExternalModelId(model),
+    ...(costRateModel ? { costRateModel } : {}),
     timestamp: lastTimestamp > 0 ? lastTimestamp : mtimeMs,
     sourceKey: `cursor-ide-transcript:${composerId}:${normalizedPath}`
   }
@@ -242,14 +287,15 @@ export function parseCursorBubbleValue(
     parsed.modelInfo && typeof parsed.modelInfo === 'object'
       ? (parsed.modelInfo as Record<string, unknown>)
       : null
-  const model = normalizeCursorExternalModelId(
-    typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined
-  )
+  const rawModel = typeof modelInfo?.modelName === 'string' ? modelInfo.modelName : undefined
+  const model = normalizeCursorExternalModelId(rawModel)
+  const costRateModel = cursorExternalCostRateModelId(rawModel)
 
   return {
     provider: 'cursor',
     timestamp,
     model,
+    ...(costRateModel ? { costRateModel } : {}),
     inputTokens,
     outputTokens,
     totalTokens,
@@ -416,6 +462,7 @@ export async function loadCursorIdeUsageEvents(
           provider: 'cursor',
           timestamp: parsed.timestamp,
           model: parsed.model,
+          ...(parsed.costRateModel ? { costRateModel: parsed.costRateModel } : {}),
           inputTokens: parsed.inputTokens,
           outputTokens: parsed.outputTokens,
           totalTokens: parsed.inputTokens + parsed.outputTokens,

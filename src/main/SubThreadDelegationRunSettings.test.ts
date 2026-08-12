@@ -147,6 +147,43 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
+  it('supports Extra High for Grok 4.6 while retaining Grok 4.5 limits', () => {
+    expect(
+      resolveSubThreadDelegationRunSettings({
+        provider: 'grok',
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh'
+      })
+    ).toMatchObject({
+      ok: true,
+      requestedModel: 'grok-4.6',
+      runPayload: { model: 'grok-4.6', reasoningEffort: 'xhigh' },
+      providerMetadataPatch: { grokReasoningEffort: 'xhigh' }
+    })
+    expect(
+      resolveSubThreadDelegationRunSettings({
+        provider: 'cursor',
+        model: 'grok-4.6',
+        reasoningEffort: 'xhigh'
+      })
+    ).toMatchObject({
+      ok: true,
+      requestedModel: 'grok-4.6',
+      runPayload: { model: 'grok-4.6', reasoningEffort: 'xhigh' },
+      providerMetadataPatch: { cursorReasoningEffort: 'xhigh' }
+    })
+    expect(
+      resolveSubThreadDelegationRunSettings({
+        provider: 'grok',
+        model: 'grok-4.5',
+        reasoningEffort: 'xhigh'
+      })
+    ).toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/grok-4\.5.*does not expose/i)
+    })
+  })
+
   it('inherits the latest seat settings on recall', () => {
     const recallChat = makeSubThread({
       requestedModel: 'gpt-5.6-sol',

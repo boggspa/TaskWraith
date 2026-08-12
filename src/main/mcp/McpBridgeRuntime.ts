@@ -117,9 +117,9 @@ export const GEMINI_MCP_SAFE_SUBSET_ARG = '--safe-subset'
 // translates it to TASKWRAITH_MCP_PLAN_SUBSET=1 (read by the tools/list + call
 // guard). Absent → the seat stays scoped to the strict read-only subset.
 export const GEMINI_MCP_PLAN_SUBSET_ARG = '--plan-subset'
-// Model-capability scope flag. Cursor's Grok 4.5 catalogue currently rejects
-// the full TaskWraith MCP surface before a turn starts, so write-capable Grok
-// 4.5 seats advertise the explicit general-purpose core profile instead.
+// Model-capability scope flag. Grok reasoning and Cursor Grok catalogues
+// currently reject the full TaskWraith MCP surface before a turn starts, so
+// write-capable seats advertise the explicit general-purpose core profile.
 // Carried in argv so each transient bridge process owns its immutable profile.
 export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // Progressive-disclosure profile flag. A bridge launched with this flag has an
@@ -1692,7 +1692,7 @@ export function handleMcpJsonRpcMessage(
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
     const isAdvertisedForSeat = planSubset ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
-    // Tool-count constrained model profile (currently Cursor/Grok 4.5). Unlike
+    // Tool-count constrained Grok reasoning / Cursor Grok model profile. Unlike
     // the read-only scope this includes mutating coding tools, which still pass
     // through the normal main-side approvals and path/workspace guards.
     const coreSubsetOnly =

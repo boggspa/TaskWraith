@@ -2062,7 +2062,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     // MARK: Fast toggle (sidecar, under the ladder)
 
     /// How Fast is expressed for the current (provider, model): a Bool toggle
-    /// (Cursor Grok 4.5 / capable Claude+Codex), a model swap (Cursor Composer
+    /// (Cursor Grok / capable Claude+Codex), a model swap (Cursor Composer
     /// 2.5 ↔ 2.5 Fast), or permanently-on + locked (Grok). Nil hides the control.
     private enum FastControl: Equatable {
         case toggle(on: Bool)
@@ -2071,7 +2071,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     }
     private var fastControlState: FastControl? {
         let p = provider.lowercased()
-        if p == "grok" { return .locked }  // both Grok models run permanently Fast
+        if p == "grok" { return .locked }  // Grok CLI models run permanently Fast
         let mid = (modelId ?? resolvedDefaultModel?.id ?? "").lowercased()
         if p == "cursor" && (mid == "composer-2.5" || mid == "composer-2.5-fast") {
             return .modelSwap(
@@ -2210,8 +2210,8 @@ private let twFastToggleModelIds: Set<String> = [
     "claude-opus-4-8", "claude-opus-4-8-1m",
     "claude-opus-4-7", "claude-opus-4-7-1m",
     "claude-opus-4-6", "claude-opus-4-6-1m",
-    // Cursor Grok 4.5
-    "cursor-grok-4.5", "grok-4.5",
+    // Cursor Grok
+    "grok-4.6", "cursor-grok-4.5", "grok-4.5",
     // Kimi K2.7 Coding Highspeed
     "kimi-k2.7-code",
 ]

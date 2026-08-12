@@ -39,7 +39,7 @@ const CODEX_REASONING_EFFORTS = new Set([
 ])
 const CLAUDE_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 const KIMI_REASONING_EFFORTS = new Set(['low', 'high', 'max'])
-const GROK_REASONING_EFFORTS = new Set(['low', 'medium', 'high'])
+const GROK_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh'])
 
 const CODEX_EFFORT_ALIASES: Readonly<Record<string, string>> = {
   light: 'low',

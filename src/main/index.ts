@@ -885,6 +885,7 @@ import type {
 import {
   buildAgentExitStats,
   codexUsageToStats,
+  cursorCostRateModel,
   cursorUsageToStats,
   extractProviderUsage,
   mergeProviderUsage
@@ -1144,9 +1145,9 @@ import {
   previewModelCatalogEnabledForProvider
 } from '../shared/previewModelCatalog'
 import {
-  GROK_45_MODEL_ID,
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
+  GROK_46_MODEL_ID,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
 } from '../shared/grok45Models'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import {
@@ -18466,11 +18467,11 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
     )
   } else if (evt.type === 'result') {
     // Real usage from the terminal result event — record it so the run surfaces
-    // in the token dashboard. Cost stays 0 until a verified composer-2.5 rate
-    // lands (BAKED_IN_RATES ships an empty models list for now).
+    // in the token dashboard. Provider-reported cost stays 0; verified model
+    // rows can still project cost from the stamped rate-model id.
     if (evt.usage) {
       state.tokenUsage = {
-        ...cursorUsageToStats(evt.usage),
+        ...cursorUsageToStats(evt.usage, 0, state.costRateModel),
         total_cost_usd: 0
       }
       // Flip the working-telemetry lane from the stream estimate to Cursor's
@@ -19234,6 +19235,9 @@ async function runCliProviderProcess(
     fallback: boolean
     requireExistingRun?: boolean
     warning?: string
+    /** Published rate row for a launch-time service tier that is not retained
+     * in the normalized display model. */
+    costRateModel?: string
     onComplete?: () => Promise<void> | void
     /**
      * RPC-style providers (pi) submit the prompt over stdin and terminate on
@@ -19371,6 +19375,7 @@ async function runCliProviderProcess(
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
+    costRateModel: options.costRateModel,
     ...route
   }
   const registeredSession = registerRunSession(
@@ -19854,7 +19859,8 @@ async function runCliProviderProcess(
           state.tokenUsage = estimateProjectedTokenUsage(
             payload.prompt,
             state.assistantText,
-            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0),
+            model
           )
         }
         const grokStopped =
@@ -21775,6 +21781,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   payload.prompt = cursorLaunchPlan.prompt
   payload.taskWraithMcpAdvertised = cursorLaunchPlan.taskWraithMcpAdvertised
   payload.taskWraithMcpProfileId = cursorLaunchPlan.taskWraithMcpProfileId ?? undefined
+  const cursorRunCostRateModel = cursorCostRateModel(
+    cursorLaunchPlan.wireModel,
+    cursorLaunchPlan.fastMode
+  )
   emitWirePromptCapture({
     appRunId: route.appRunId,
     appChatId: route.appChatId,
@@ -21811,6 +21821,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   try {
     await runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
       fallback: false,
+      costRateModel: cursorRunCostRateModel,
       extraEnv: cursorMcpBridgeEnv,
       onComplete: releaseCursorConfigurationLeases
     })
@@ -22912,7 +22923,8 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
           state.tokenUsage = estimateProjectedTokenUsage(
             payload.prompt,
             state.assistantText,
-            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0),
+            model
           )
         }
         safelyProject(() =>
@@ -43523,11 +43535,11 @@ if (isGeminiMcpBridgeProcess) {
         const selectedModelType = action.model || 'default'
         const grokCapabilityModel =
           selectedModelType === 'default' || selectedModelType === 'cli-default'
-            ? GROK_45_MODEL_ID
+            ? GROK_46_MODEL_ID
             : selectedModelType
         const queueCodexReasoning = provider === 'codex' ? action.reasoningEffort : undefined
         const queueGrokReasoning =
-          provider === 'grok' && isGrok45ReasoningModelId(grokCapabilityModel)
+          provider === 'grok' && isGrokReasoningModelId(grokCapabilityModel)
             ? (action.grokReasoningEffort ?? action.reasoningEffort)
             : undefined
         const queueMuseReasoning =
@@ -43535,11 +43547,11 @@ if (isGeminiMcpBridgeProcess) {
             ? (action.museReasoningEffort ?? action.reasoningEffort)
             : undefined
         const queueCursorReasoning =
-          provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
+          provider === 'cursor' && isCursorGrokModelId(selectedModelType)
             ? (action.cursorReasoningEffort ?? action.reasoningEffort)
             : undefined
         const queueCursorFastMode =
-          provider === 'cursor' && isCursorGrok45ModelId(selectedModelType)
+          provider === 'cursor' && isCursorGrokModelId(selectedModelType)
             ? action.cursorFastMode
             : undefined
         const queueClaudeFastMode = provider === 'claude' ? action.claudeFastMode : undefined
@@ -46171,11 +46183,11 @@ if (isGeminiMcpBridgeProcess) {
             const workflowSelectedModel = action.model || 'default'
             const workflowGrokCapabilityModel =
               workflowSelectedModel === 'default' || workflowSelectedModel === 'cli-default'
-                ? GROK_45_MODEL_ID
+                ? GROK_46_MODEL_ID
                 : workflowSelectedModel
             const workflowCodexReasoning = provider === 'codex' ? action.reasoningEffort : undefined
             const workflowGrokReasoning =
-              provider === 'grok' && isGrok45ReasoningModelId(workflowGrokCapabilityModel)
+              provider === 'grok' && isGrokReasoningModelId(workflowGrokCapabilityModel)
                 ? (action.grokReasoningEffort ?? action.reasoningEffort)
                 : undefined
             const workflowMuseReasoning =
@@ -46183,11 +46195,11 @@ if (isGeminiMcpBridgeProcess) {
                 ? (action.museReasoningEffort ?? action.reasoningEffort)
                 : undefined
             const workflowCursorReasoning =
-              provider === 'cursor' && isCursorGrok45ModelId(workflowSelectedModel)
+              provider === 'cursor' && isCursorGrokModelId(workflowSelectedModel)
                 ? (action.cursorReasoningEffort ?? action.reasoningEffort)
                 : undefined
             const workflowCursorFastMode =
-              provider === 'cursor' && isCursorGrok45ModelId(workflowSelectedModel)
+              provider === 'cursor' && isCursorGrokModelId(workflowSelectedModel)
                 ? action.cursorFastMode
                 : undefined
             AppStore.saveWorkflowDefinition({
@@ -46469,13 +46481,13 @@ if (isGeminiMcpBridgeProcess) {
             lastProviderRun?.requestedModel ||
             undefined
           const inheritedReasoningCapabilityModel =
-            inheritedModel || (provider === 'grok' ? GROK_45_MODEL_ID : undefined)
+            inheritedModel || (provider === 'grok' ? GROK_46_MODEL_ID : undefined)
           const inheritedReasoningEffort =
             provider === 'codex'
               ? action.reasoningEffort || metadataReasoningEffort || undefined
               : provider === 'kimi'
                 ? action.reasoningEffort || metadataKimiReasoningEffort || undefined
-                : provider === 'grok' && isGrok45ReasoningModelId(inheritedReasoningCapabilityModel)
+                : provider === 'grok' && isGrokReasoningModelId(inheritedReasoningCapabilityModel)
                   ? action.grokReasoningEffort ||
                     action.reasoningEffort ||
                     metadataGrokReasoningEffort ||
@@ -46486,7 +46498,7 @@ if (isGeminiMcpBridgeProcess) {
                       metadataMuseReasoningEffort ||
                       undefined
                     : provider === 'cursor' &&
-                        isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+                        isCursorGrokModelId(inheritedReasoningCapabilityModel)
                       ? action.cursorReasoningEffort ||
                         action.reasoningEffort ||
                         metadataCursorReasoningEffort ||
@@ -46495,7 +46507,7 @@ if (isGeminiMcpBridgeProcess) {
           const inheritedClaudeReasoningEffort =
             action.claudeReasoningEffort || metadataClaudeReasoningEffort || undefined
           const inheritedCursorFastMode =
-            provider === 'cursor' && isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+            provider === 'cursor' && isCursorGrokModelId(inheritedReasoningCapabilityModel)
               ? (action.cursorFastMode ?? metadataCursorFastMode ?? false)
               : undefined
           // Claude Fast + Codex/Kimi service tiers + Kimi thinking, phone-sent (with

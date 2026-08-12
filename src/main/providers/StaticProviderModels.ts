@@ -8,10 +8,15 @@ import {
 } from '../../shared/previewModelCatalog'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
+  CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
   GROK_45_REASONING_EFFORTS,
-  isCursorGrok45ModelId
+  GROK_46_DEFAULT_REASONING_EFFORT,
+  GROK_46_MODEL_ID,
+  GROK_46_REASONING_EFFORTS,
+  cursorGrokBaseModelId,
+  isCursorGrokModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
 import { activePiModelRows } from '../../shared/piModelLifecycle'
@@ -776,14 +781,22 @@ const GEMINI_STATIC_MODELS = [
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-const GROK_DEFAULT_MODEL = GROK_45_MODEL_ID
+const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
 const GROK_STATIC_MODELS = [
   {
     id: GROK_DEFAULT_MODEL,
-    // Grok's CLI models are permanently Fast-mode, so the label reflects that.
+    // Direct Grok CLI models run permanently in Fast mode, so the label
+    // distinguishes them from Cursor's separately toggled resale rows.
+    label: 'Grok 4.6 Fast',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_45_MODEL_ID,
     label: 'Grok 4.5 Fast',
     description: '500K context - low/medium/high reasoning',
-    isDefault: true,
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
   },
@@ -837,6 +850,14 @@ const MUSE_STATIC_MODELS = [
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
+  {
+    id: CURSOR_GROK_46_BASE_MODEL_ID,
+    label: 'Cursor Grok 4.6',
+    description: 'First-party Cursor model pool - 256K context',
+    supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
+    additionalSpeedTiers: ['fast']
+  },
   {
     id: CURSOR_GROK_45_BASE_MODEL_ID,
     label: 'Cursor Grok 4.5',
@@ -1036,7 +1057,9 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'cursor') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'composer-2.5-fast'
     if (trimmed.startsWith('composer-')) return trimmed
-    if (isCursorGrok45ModelId(trimmed)) return CURSOR_GROK_45_BASE_MODEL_ID
+    if (isCursorGrokModelId(trimmed)) {
+      return cursorGrokBaseModelId(trimmed) || 'composer-2.5-fast'
+    }
     return 'composer-2.5-fast'
   }
   if (provider === 'gemini') {

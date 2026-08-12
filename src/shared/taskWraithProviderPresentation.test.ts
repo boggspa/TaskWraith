@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { OLLAMA_DISPLAY_BRANDS } from './ollamaBrandTable'
+import { CURSOR_GROK_46_WIRE_MODEL_IDS } from './grok45Models'
 import { PI_UPSTREAM_BRANDS } from './piBrandTable'
 import {
   TASKWRAITH_PROVIDER_ACCENTS,
@@ -59,6 +60,12 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(taskWraithModelLabel('claude', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
     expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3')
+    expect(taskWraithModelLabel('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')
+    expect(taskWraithModelLabel('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
+    expect(taskWraithModelLabel('cursor', 'grok-4.6')).toBe('Grok 4.6')
+    for (const modelId of CURSOR_GROK_46_WIRE_MODEL_IDS) {
+      expect(taskWraithModelLabel('cursor', modelId)).toBe('Grok 4.6')
+    }
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(taskWraithModelLabel('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
@@ -85,5 +92,18 @@ describe('TaskWraith TUI provider presentation', () => {
     ]) {
       expect(taskWraithModelLabel('ollama', modelId)).toBe(label)
     }
+  })
+
+  it('keeps direct and Cursor Grok transport presentation provider-aware', () => {
+    expect(resolveTaskWraithProviderPresentation('grok', 'grok-4.6')).toMatchObject({
+      displayProvider: 'Grok',
+      modelLabel: 'Grok 4.6 Fast'
+    })
+    expect(
+      resolveTaskWraithProviderPresentation('cursor', 'cursor-grok-4.6-xhigh-fast')
+    ).toMatchObject({
+      displayProvider: 'Cursor',
+      modelLabel: 'Grok 4.6'
+    })
   })
 })

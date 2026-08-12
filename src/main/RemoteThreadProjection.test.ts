@@ -3035,6 +3035,86 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('~$5.90')
     })
 
+    it('keeps Cursor Grok 4.6 standard and Fast wire ids on distinct rate rows', () => {
+      const providerRates = {
+        baseline: {
+          cursor: {
+            models: [
+              {
+                modelId: 'grok-4.6',
+                inputUsdPerMillion: 2,
+                outputUsdPerMillion: 6,
+                cachedInputUsdPerMillion: 0.5
+              },
+              {
+                modelId: 'grok-4.6-fast',
+                inputUsdPerMillion: 4,
+                outputUsdPerMillion: 12,
+                cachedInputUsdPerMillion: 1
+              }
+            ]
+          }
+        }
+      }
+      const summarize = (model: string) =>
+        buildRunSummary(
+          [
+            {
+              runId: `run-${model}`,
+              provider: 'cursor',
+              actualModel: model,
+              stats: { input_tokens: 1_000_000, output_tokens: 1_000_000 }
+            } as unknown as ChatRun
+          ],
+          { currency: 'USD', providerRates }
+        )
+
+      expect(summarize('cursor-grok-4.6-high')?.costText).toBe('~$8.00')
+      expect(summarize('cursor-grok-4.6-high-fast')?.costText).toBe('~$16.00')
+    })
+
+    it('applies Grok 4.6 long-context rates to every token at the 200k prompt threshold', () => {
+      const summary = buildRunSummary(
+        [
+          {
+            runId: 'run-grok-long-context',
+            provider: 'grok',
+            actualModel: 'grok-build',
+            stats: {
+              input_tokens: 100_000,
+              cache_read_input_tokens: 50_000,
+              cache_creation_input_tokens: 50_000,
+              output_tokens: 1_000_000
+            }
+          } as unknown as ChatRun
+        ],
+        {
+          currency: 'USD',
+          providerRates: {
+            baseline: {
+              grok: {
+                models: [
+                  {
+                    modelId: 'grok-4.6',
+                    inputUsdPerMillion: 2,
+                    outputUsdPerMillion: 6,
+                    cachedInputUsdPerMillion: 0.5,
+                    longContextThresholdTokens: 200_000,
+                    longContextInputUsdPerMillion: 4,
+                    longContextOutputUsdPerMillion: 12,
+                    longContextCachedInputUsdPerMillion: 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+
+      expect(summary?.tokensIn).toBe(200_000)
+      expect(summary?.costText).toBe('~$12.65')
+    })
+
     it('does not double-count historical Codex cache-subset aliases on iOS', () => {
       const summary = buildRunSummary(
         [

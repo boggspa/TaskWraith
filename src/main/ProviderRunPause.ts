@@ -8,10 +8,7 @@ import type {
 } from './store/types'
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
 import { resolveActiveGoalForProvider } from './GoalState'
-import {
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
-} from '../shared/grok45Models'
+import { isCursorGrokModelId, isGrokReasoningModelId } from '../shared/grok45Models'
 
 const PROVIDER_IDS: readonly ProviderId[] = [
   'gemini',
@@ -149,7 +146,7 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       : {}),
     ...(resolution.provider === 'grok'
       ? {
-          reasoningEffort: isGrok45ReasoningModelId(plan.selectedModelType)
+          reasoningEffort: isGrokReasoningModelId(plan.selectedModelType)
             ? plan.grokReasoningEffort ?? null
             : null
         }
@@ -161,11 +158,11 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       : {}),
     ...(resolution.provider === 'cursor'
       ? {
-          reasoningEffort: isCursorGrok45ModelId(plan.selectedModelType)
+          reasoningEffort: isCursorGrokModelId(plan.selectedModelType)
             ? plan.cursorReasoningEffort ?? null
             : null,
           serviceTier:
-            isCursorGrok45ModelId(plan.selectedModelType) && plan.cursorFastMode ? 'fast' : null
+            isCursorGrokModelId(plan.selectedModelType) && plan.cursorFastMode ? 'fast' : null
         }
       : {}),
     ...(resolution.provider === 'claude'

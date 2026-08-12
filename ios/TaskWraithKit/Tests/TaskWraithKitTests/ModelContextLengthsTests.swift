@@ -144,6 +144,28 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "200k")
     }
 
+    @Test("cursor grok-4.6: provider-scoped 256_000 / 256k")
+    func cursorGrok46() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "cursor" }?
+            .models.first { $0.modelId == "grok-4.6" }
+        #expect(row != nil)
+        #expect(row?.label == "Cursor Grok 4.6")
+        #expect(row?.contextWindow == 256_000)
+        #expect(row?.formatted == "256k")
+    }
+
+    @Test("cursor grok-4.5 retains its established 500_000 / 500k window")
+    func cursorGrok45() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "cursor" }?
+            .models.first { $0.modelId == "grok-4.5" }
+        #expect(row != nil)
+        #expect(row?.label == "Cursor Grok 4.5")
+        #expect(row?.contextWindow == 500_000)
+        #expect(row?.formatted == "500k")
+    }
+
     // MARK: - Kimi group
 
     @Test("kimi kimi-k2.7-code: 256_000 / 256k")
@@ -176,10 +198,21 @@ struct ModelContextLengthsTests {
 
     // MARK: - Grok group
 
+    @Test("grok grok-4.6: 500_000 / 500k")
+    func grok46() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "grok" }?
+            .models.first { $0.modelId == "grok-4.6" }
+        #expect(row != nil)
+        #expect(row?.label == "Grok 4.6 Fast")
+        #expect(row?.contextWindow == 500_000)
+        #expect(row?.formatted == "500k")
+    }
+
     @Test("grok grok-4.5: 500_000 / 500k")
     func grok45() {
-        // The primary grok CLI model is Grok 4.5 (500k); it replaced grok-build in
-        // buildGroups when Grok 4.5 landed (1db1f1d8c).
+        // The retained Grok 4.5 catalogue row remains 500k; its legacy aliases
+        // also remain available in ContextWindows.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "grok" }?
             .models.first { $0.modelId == "grok-4.5" }

@@ -1,5 +1,5 @@
 import type { AgentRunPayload } from '../run/AgentRunTypes'
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import type {
   ChannelAgentComposerAuthority,
@@ -212,9 +212,9 @@ function assertComposedPayload(
   const expectedReasoningEffort =
     seat.provider === 'codex'
       ? (seat.reasoningEffort ?? null)
-      : seat.provider === 'grok' && isGrok45ReasoningModelId(composed.model)
+      : seat.provider === 'grok' && isGrokReasoningModelId(composed.model)
         ? (seat.reasoningEffort ?? null)
-        : seat.provider === 'cursor' && isCursorGrok45ModelId(composed.model)
+        : seat.provider === 'cursor' && isCursorGrokModelId(composed.model)
           ? (seat.reasoningEffort ?? null)
           : seat.provider === 'kimi'
             ? normalizeKimiReasoningEffort(composed.model, seat.reasoningEffort)
@@ -226,7 +226,7 @@ function assertComposedPayload(
         ? !isKimiK3Model(composed.model) && (seat.fastModeEnabled ?? false)
           ? 'fast'
           : 'standard'
-        : seat.provider === 'cursor' && isCursorGrok45ModelId(composed.model)
+        : seat.provider === 'cursor' && isCursorGrokModelId(composed.model)
           ? seat.fastModeEnabled
             ? 'fast'
             : null

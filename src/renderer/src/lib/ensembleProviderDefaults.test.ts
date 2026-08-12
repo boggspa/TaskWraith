@@ -78,9 +78,9 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns grok defaults: Grok 4.5 model, default approval, high reasoning', () => {
+  it('returns grok defaults: Grok 4.6 model, default approval, high reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
-      model: 'grok-4.5',
+      model: 'grok-4.6',
       permissionPresetId: 'default',
       reasoningEffort: 'high'
     })
@@ -196,7 +196,14 @@ describe('normalizeProviderModelSelection', () => {
     })
   })
 
-  it('keeps Grok 4.5 reasoning but treats permanent Fast as model/provider encoded', () => {
+  it('keeps Grok 4.6 and 4.5 reasoning but treats permanent Fast as provider encoded', () => {
+    expect(normalizeProviderModelSelection('grok', 'grok-4.6')).toEqual({
+      model: 'grok-4.6',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
     expect(normalizeProviderModelSelection('grok', 'grok-4.5')).toEqual({
       model: 'grok-4.5',
       reasoningEffort: 'high',
@@ -225,6 +232,13 @@ describe('normalizeProviderModelSelection', () => {
       model: 'composer-2.5-fast',
       reasoningEffort: undefined,
       fastModeEnabled: true,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('cursor', 'grok-4.6')).toEqual({
+      model: 'grok-4.6',
+      reasoningEffort: 'high',
+      fastModeEnabled: false,
       thinkingEnabled: undefined,
       serviceTier: undefined
     })
@@ -395,6 +409,30 @@ describe('resolveReasoningEffortForSeatChange', () => {
         modelMetadata: { defaultReasoningEffort: 'ultra' }
       })
     ).toBe('ultracode')
+  })
+
+  it('keeps Grok 4.6 Extra High and snaps it to High when moving back to 4.5', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'grok',
+        model: 'grok-4.6',
+        previousEffort: 'xhigh'
+      })
+    ).toBe('xhigh')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'grok',
+        model: 'grok-4.5',
+        previousEffort: 'xhigh'
+      })
+    ).toBe('high')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'cursor',
+        model: 'grok-4.6',
+        previousEffort: 'xhigh'
+      })
+    ).toBe('xhigh')
   })
 })
 
@@ -736,34 +774,69 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(haiku.every((o) => o.disabled)).toBe(true)
   })
 
-  it('exposes grok preferred model id as Grok 4.5 with the effort reasoning axis', () => {
+  it('defaults Grok to 4.6 while retaining 4.5 with its narrower effort ladder', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-4.5')
-    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
+    expect(grok.defaultModelId).toBe('grok-4.6')
+    expect(grok.modelOptions.map((o) => o.id)).toEqual([
+      'grok-4.6',
+      'grok-4.5',
+      'grok-composer-2.5-fast'
+    ])
     expect(grok.defaultReasoning).toBe('high')
-    expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high'])
+    expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.6').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.5').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
+    for (const alias of ['grok-build', 'grok-build-0.1', 'grok-build-latest']) {
+      expect(getEnsembleReasoningOptions('grok', alias).map((o) => o.value)).toEqual([
+        'low',
+        'medium',
+        'high'
+      ])
+    }
     expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
+    expect(grok.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
+    expect(grok.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })
 
-  it('exposes Cursor Composer without reasoning and Grok 4.5 with reasoning/Fast', () => {
+  it('keeps Cursor Composer default while exposing Grok 4.6 and 4.5 with reasoning/Fast', () => {
     const cursor = getEnsembleModelDefaults('cursor')
     expect(cursor.defaultModelId).toBe('composer-2.5-fast')
     expect(cursor.modelOptions.map((o) => o.id)).toEqual([
       'composer-2.5-fast',
       'composer-2.5',
+      'grok-4.6',
       'grok-4.5'
     ])
+    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.6')?.label).toBe(
+      'Cursor Grok 4.6'
+    )
     expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe(
       'Cursor Grok 4.5'
     )
     expect(cursor.reasoningOptions).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])
+    expect(getEnsembleReasoningOptions('cursor', 'grok-4.6').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
     expect(getEnsembleReasoningOptions('cursor', 'grok-4.5').map((o) => o.value)).toEqual([
       'low',
       'medium',
       'high'
     ])
+    expect(cursor.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
     expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })
 

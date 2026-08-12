@@ -13,6 +13,50 @@ struct IosParityFixesTests {
         #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
     }
 
+    @MainActor
+    @Test func grok46UsesProviderAwareLabelsAndCursorFastMode() {
+        #expect(
+            twModelVariantLabel(provider: "grok", model: "grok-4.6")
+                == "Grok 4.6 Fast")
+        #expect(
+            twModelVariantLabel(provider: "cursor", model: "grok-4.6")
+                == "Cursor Grok 4.6")
+        #expect(twModelUsesFastToggle("grok-4.6"))
+    }
+
+    @MainActor
+    @Test func offlineDemoGrokCatalogsMatchDesktopFallback() {
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+
+        let cursor = model.providerModels["cursor"] ?? []
+        #expect(cursor.map(\.id) == [
+            "composer-2.5-fast", "composer-2.5", "grok-4.6", "grok-4.5",
+        ])
+        #expect(cursor.first(where: { $0.isDefault == true })?.id == "composer-2.5-fast")
+        #expect(cursor.first(where: { $0.id == "grok-4.6" })?.label == "Cursor Grok 4.6")
+        #expect(
+            cursor.first(where: { $0.id == "grok-4.6" })?
+                .supportedReasoningEfforts?.map(\.reasoningEffort)
+                == ["low", "medium", "high", "xhigh"])
+        #expect(cursor.first(where: { $0.id == "grok-4.5" })?.label == "Cursor Grok 4.5")
+
+        let grok = model.providerModels["grok"] ?? []
+        #expect(grok.map(\.id) == ["grok-4.6", "grok-4.5", "grok-composer-2.5-fast"])
+        #expect(grok.first(where: { $0.isDefault == true })?.id == "grok-4.6")
+        #expect(grok.first(where: { $0.id == "grok-4.6" })?.label == "Grok 4.6 Fast")
+        #expect(
+            grok.first(where: { $0.id == "grok-4.6" })?
+                .supportedReasoningEfforts?.map(\.reasoningEffort)
+                == ["low", "medium", "high", "xhigh"])
+        #expect(grok.first(where: { $0.id == "grok-4.5" })?.label == "Grok 4.5 Fast")
+        #expect(
+            grok.first(where: { $0.id == "grok-4.5" })?
+                .supportedReasoningEfforts?.map(\.reasoningEffort)
+                == ["low", "medium", "high"])
+        #expect(!grok.contains(where: { $0.id == "grok-4.5-mini" }))
+    }
+
     @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {
         #expect(
             TranscriptTouchTrackingPolicy.dragMinimumDistance(isPadInterface: false) == 0)

@@ -106,6 +106,13 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     }
   })
 
+  it('seeds a Grok panel with the current Grok 4.6 default', () => {
+    const grok = createDefaultEnsembleConfig('grok').participants.find(
+      (participant) => participant.provider === 'grok'
+    )
+    expect(grok?.model).toBe('grok-4.6')
+  })
+
   it('keeps exported config constants stable', () => {
     const config = createDefaultEnsembleConfig('codex' satisfies ProviderId)
 

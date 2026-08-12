@@ -54,6 +54,25 @@ describe('ExternalUsageSnapshot', () => {
     expect(await readFile(snapshotPath, 'utf8')).not.toContain('/Users/')
   })
 
+  it('round-trips a cost-rate model that differs from the normalized display model', async () => {
+    const snapshotPath = await temporaryPath()
+    const scannedAt = Date.now() - 500
+    const records = [
+      usageRecord({
+        id: 'external-agg-cursor-grok-46-fast',
+        provider: 'cursor',
+        chatId: 'external-cursor',
+        runId: 'external-cursor',
+        model: 'grok-4.6',
+        costRateModel: 'grok-4.6-fast'
+      })
+    ]
+
+    await persistExternalUsageSnapshot(snapshotPath, { scannedAt, records })
+
+    await expect(loadExternalUsageSnapshot(snapshotPath)).resolves.toEqual({ scannedAt, records })
+  })
+
   it('rejects malformed records instead of projecting untrusted cache data', async () => {
     const snapshotPath = await temporaryPath()
     await writeFile(

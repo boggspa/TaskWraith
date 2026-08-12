@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-07-17'
+export const RATE_TABLE_VERSION = '2026-08-12'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -65,6 +65,12 @@ export interface ModelRateEntry {
    * full input rate). Several providers expose a cached-prompt
    * tier; when present we record it here. */
   cachedInputUsdPerMillion?: number
+  /** Prompt-token threshold at which every token in the request is billed at
+   * the optional long-context tier. The three long-context rates are all-or-none. */
+  longContextThresholdTokens?: number
+  longContextInputUsdPerMillion?: number
+  longContextOutputUsdPerMillion?: number
+  longContextCachedInputUsdPerMillion?: number
   /** Where this rate lives in the canonical docs. */
   sourceUrl: string
   /** Date the rate was last hand-verified (ISO 8601). */
@@ -98,7 +104,7 @@ export interface ProviderRateTable {
 
 /**
  * 1.0.5-EW38 — Baked-in provider rate snapshot. Last manually
- * reviewed 2026-06-23.
+ * reviewed 2026-08-12.
  *
  * Values are USD per 1M tokens (input / output). When provider
  * pricing pages drift the probe surfaces a `not-verified` status
@@ -129,11 +135,25 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // subscription (a credit pool — see GrokUsage's "Subscription credits"
   // meter), NOT the xAI per-token API. These rates are therefore a PROJECTED
   // API-equivalent ("what this run would have cost on the xAI API"), not actual
-  // billing. Captured from xAI model docs 2026-07-08.
+  // billing. Captured from xAI model docs 2026-08-12.
   grok: {
     provider: 'grok',
     pricingUrl: 'https://docs.x.ai/developers/pricing',
     models: [
+      {
+        modelId: 'grok-4.6',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 12.0,
+        longContextCachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'xAI API pricing for Grok 4.6 (500K ctx). Prompts at or above 200K tokens bill every token at the long-context tier. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
       {
         modelId: 'grok-4.5',
         inputUsdPerMillion: 2.0,
@@ -199,6 +219,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Composer 2.5 Standard tier. PROJECTED API-equivalent — exact rows should use this lower standard-tier rate instead of the Fast proxy.'
+      },
+      {
+        modelId: 'grok-4.6',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Cursor Grok 4.6 standard tier. PROJECTED API-equivalent; individual plans draw from Cursor included/auto quota.'
+      },
+      {
+        modelId: 'grok-4.6-fast',
+        inputUsdPerMillion: 4.0,
+        outputUsdPerMillion: 12.0,
+        cachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Internal Cursor cost-rate id for Grok 4.6 Fast mode (2x standard). PROJECTED API-equivalent; not a separate picker model.'
       },
       {
         modelId: 'grok-4.5',
@@ -1261,6 +1301,10 @@ export interface ModelRateProbeResult {
   baseline: {
     inputUsdPerMillion: number
     outputUsdPerMillion: number
+    longContextThresholdTokens?: number
+    longContextInputUsdPerMillion?: number
+    longContextOutputUsdPerMillion?: number
+    longContextCachedInputUsdPerMillion?: number
     confidence: ProviderRateConfidence
   }
   /** When status is 'verified', the dollar string we found that
@@ -1443,6 +1487,14 @@ function modelProbeBaseline(model: ModelRateEntry): ModelRateProbeResult['baseli
   return {
     inputUsdPerMillion: model.inputUsdPerMillion,
     outputUsdPerMillion: model.outputUsdPerMillion,
+    ...(model.longContextThresholdTokens !== undefined
+      ? {
+          longContextThresholdTokens: model.longContextThresholdTokens,
+          longContextInputUsdPerMillion: model.longContextInputUsdPerMillion,
+          longContextOutputUsdPerMillion: model.longContextOutputUsdPerMillion,
+          longContextCachedInputUsdPerMillion: model.longContextCachedInputUsdPerMillion
+        }
+      : {}),
     confidence: modelRateConfidence(model)
   }
 }
@@ -1588,6 +1640,27 @@ export function parsePersistedProviderRateProbe(
       if (model.errorMessage !== undefined && typeof model.errorMessage !== 'string') return null
       const inputUsdPerMillion = baseline.inputUsdPerMillion
       const outputUsdPerMillion = baseline.outputUsdPerMillion
+      const longContextThresholdTokens = baseline.longContextThresholdTokens
+      const longContextInputUsdPerMillion = baseline.longContextInputUsdPerMillion
+      const longContextOutputUsdPerMillion = baseline.longContextOutputUsdPerMillion
+      const longContextCachedInputUsdPerMillion = baseline.longContextCachedInputUsdPerMillion
+      const hasLongContextMetadata =
+        longContextThresholdTokens !== undefined ||
+        longContextInputUsdPerMillion !== undefined ||
+        longContextOutputUsdPerMillion !== undefined ||
+        longContextCachedInputUsdPerMillion !== undefined
+      if (
+        hasLongContextMetadata &&
+        (!Number.isInteger(longContextThresholdTokens) ||
+          !(typeof longContextThresholdTokens === 'number' && longContextThresholdTokens > 0) ||
+          !validUsdRate(longContextInputUsdPerMillion) ||
+          !validUsdRate(longContextOutputUsdPerMillion) ||
+          longContextOutputUsdPerMillion < longContextInputUsdPerMillion ||
+          !validUsdRate(longContextCachedInputUsdPerMillion) ||
+          longContextCachedInputUsdPerMillion >= longContextInputUsdPerMillion)
+      ) {
+        return null
+      }
       const matchedDollarStrings = Array.isArray(model.matchedDollarStrings)
         ? (model.matchedDollarStrings as string[])
         : undefined
@@ -1597,6 +1670,14 @@ export function parsePersistedProviderRateProbe(
         baseline: {
           inputUsdPerMillion,
           outputUsdPerMillion,
+          ...(hasLongContextMetadata
+            ? {
+                longContextThresholdTokens: longContextThresholdTokens as number,
+                longContextInputUsdPerMillion: longContextInputUsdPerMillion as number,
+                longContextOutputUsdPerMillion: longContextOutputUsdPerMillion as number,
+                longContextCachedInputUsdPerMillion: longContextCachedInputUsdPerMillion as number
+              }
+            : {}),
           confidence: confidence || 'baked-in'
         },
         matchedDollarStrings,

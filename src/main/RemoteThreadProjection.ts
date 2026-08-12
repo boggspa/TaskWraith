@@ -137,6 +137,10 @@ interface RemoteModelRate {
   inputUsdPerMillion: number
   outputUsdPerMillion: number
   cachedInputUsdPerMillion?: number
+  longContextThresholdTokens?: number
+  longContextInputUsdPerMillion?: number
+  longContextOutputUsdPerMillion?: number
+  longContextCachedInputUsdPerMillion?: number
 }
 
 type RemoteProviderRates = Partial<Record<ProviderId, RemoteModelRate[]>>
@@ -158,7 +162,7 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   claude: 'claude-sonnet-5',
   gemini: 'gemini-3.1-flash-lite',
   kimi: 'kimi-k2.7-code',
-  grok: 'grok-4.5',
+  grok: 'grok-4.6',
   cursor: 'composer-2.5-fast',
   ollama: 'qwen3:4b-instruct'
 }
@@ -178,6 +182,20 @@ function canonicalRateModelId(
   if (provider === 'codex' && CODEX_DEFAULT_SENTINELS.has(key)) return fallback
   if (provider === 'gemini' && key === 'flash-lite') return fallback
   if (provider === 'grok' && (key === 'grok-build' || key === 'grok-build-0.1')) return fallback
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6-fast' || /^cursor-grok-4\.6-(?:low|medium|high|xhigh)-fast$/.test(key))
+  ) {
+    return 'grok-4.6-fast'
+  }
+  if (
+    provider === 'cursor' &&
+    (key === 'grok-4.6' ||
+      key === 'cursor-grok-4.6' ||
+      /^cursor-grok-4\.6-(?:low|medium|high|xhigh)$/.test(key))
+  ) {
+    return 'grok-4.6'
+  }
   if (
     provider === 'cursor' &&
     (key === 'cursor-grok-4.5' || key.startsWith('grok-4.5-fast-') || key.startsWith('grok-4.5-'))
@@ -239,6 +257,19 @@ function normalizeRemoteProviderRates(raw: unknown): RemoteProviderRates {
           m.cachedInputUsdPerMillion < m.inputUsdPerMillion
         ) {
           entry.cachedInputUsdPerMillion = m.cachedInputUsdPerMillion
+        }
+        if (
+          isFiniteNonNegative(m.longContextThresholdTokens) &&
+          m.longContextThresholdTokens > 0 &&
+          isFiniteNonNegative(m.longContextInputUsdPerMillion) &&
+          isFiniteNonNegative(m.longContextOutputUsdPerMillion) &&
+          isFiniteNonNegative(m.longContextCachedInputUsdPerMillion) &&
+          m.longContextCachedInputUsdPerMillion < m.longContextInputUsdPerMillion
+        ) {
+          entry.longContextThresholdTokens = m.longContextThresholdTokens
+          entry.longContextInputUsdPerMillion = m.longContextInputUsdPerMillion
+          entry.longContextOutputUsdPerMillion = m.longContextOutputUsdPerMillion
+          entry.longContextCachedInputUsdPerMillion = m.longContextCachedInputUsdPerMillion
         }
         entries.push(entry)
       }
@@ -359,12 +390,28 @@ function estimateRemoteRunCostUsd(
   const rates = normalizeRemoteProviderRates(costDisplay?.providerRates)
   const rate = resolveRemoteModelRate(rates, provider, model)
   if (!rate) return 0
-  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
+  const promptTokens =
+    usage.billableInputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens
+  const useLongContextTier =
+    typeof rate.longContextThresholdTokens === 'number' &&
+    promptTokens >= rate.longContextThresholdTokens &&
+    typeof rate.longContextInputUsdPerMillion === 'number' &&
+    typeof rate.longContextOutputUsdPerMillion === 'number' &&
+    typeof rate.longContextCachedInputUsdPerMillion === 'number'
+  const inputRate = useLongContextTier
+    ? rate.longContextInputUsdPerMillion!
+    : rate.inputUsdPerMillion
+  const outputRate = useLongContextTier
+    ? rate.longContextOutputUsdPerMillion!
+    : rate.outputUsdPerMillion
+  const cachedInputRate = useLongContextTier
+    ? rate.longContextCachedInputUsdPerMillion!
+    : (rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion)
   const usd =
-    (usage.billableInputTokens / 1_000_000) * rate.inputUsdPerMillion +
+    (usage.billableInputTokens / 1_000_000) * inputRate +
     (usage.cacheReadInputTokens / 1_000_000) * cachedInputRate +
-    (usage.cacheCreationInputTokens / 1_000_000) * rate.inputUsdPerMillion +
-    (usage.outputTokens / 1_000_000) * rate.outputUsdPerMillion
+    (usage.cacheCreationInputTokens / 1_000_000) * inputRate +
+    (usage.outputTokens / 1_000_000) * outputRate
   return Number.isFinite(usd) && usd > 0 ? usd : 0
 }
 

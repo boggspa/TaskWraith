@@ -6,6 +6,11 @@ import {
   usageInputIncludesCache
 } from '../shared/usageAccounting'
 import { withContextUsageSnapshot } from '../shared/contextUsage'
+import {
+  GROK_46_MODEL_ID,
+  cursorGrokBaseModelId,
+  cursorGrokFastFromModelId
+} from '../shared/grok45Models'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -240,16 +245,35 @@ export function codexUsageToStats(
 
 export function cursorUsageToStats(
   tokenUsage: unknown,
-  fallbackDurationMs = 0
+  fallbackDurationMs = 0,
+  costRateModel?: string
 ): Record<string, unknown> {
   const raw = isRecord(tokenUsage) ? tokenUsage : {}
-  return normalizeProviderUsage('cursor', {
-    input_tokens: canonicalUsageCount(raw, 'inputTokens'),
-    output_tokens: canonicalUsageCount(raw, 'outputTokens'),
-    cache_read_input_tokens: canonicalUsageCount(raw, 'cacheReadTokens'),
-    cache_creation_input_tokens: canonicalUsageCount(raw, 'cacheWriteTokens'),
-    duration_ms: fallbackDurationMs
-  })
+  return {
+    ...normalizeProviderUsage('cursor', {
+      input_tokens: canonicalUsageCount(raw, 'inputTokens'),
+      output_tokens: canonicalUsageCount(raw, 'outputTokens'),
+      cache_read_input_tokens: canonicalUsageCount(raw, 'cacheReadTokens'),
+      cache_creation_input_tokens: canonicalUsageCount(raw, 'cacheWriteTokens'),
+      duration_ms: fallbackDurationMs
+    }),
+    ...(costRateModel ? { _taskwraith_cost_rate_model: costRateModel } : {})
+  }
+}
+
+/**
+ * Cursor reports the selected Grok family as its base catalogue id even when
+ * Fast is a separate launch control. Preserve the equivalent published rate
+ * row without changing the model shown in the transcript or picker.
+ */
+export function cursorCostRateModel(
+  model: string | null | undefined,
+  fastMode = false
+): string | undefined {
+  if (cursorGrokBaseModelId(model) !== GROK_46_MODEL_ID) return undefined
+  return fastMode || cursorGrokFastFromModelId(model)
+    ? `${GROK_46_MODEL_ID}-fast`
+    : GROK_46_MODEL_ID
 }
 
 export function geminiUsageMetadataToStats(

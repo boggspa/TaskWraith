@@ -28,9 +28,16 @@ export const MAX_SCHEDULE_TIMER_DELAY_MS = 2_147_000_000
 
 export const GROK_USAGE_FRESH_TTL_MS = 2 * 60_000
 
-export const GROK_PROJECTED_INPUT_USD_PER_MILLION = 3.0
-
-export const GROK_PROJECTED_OUTPUT_USD_PER_MILLION = 15.0
+/**
+ * Grok 4.5/4.6 API-equivalent rates used only for projected CLI cost. Grok
+ * 4.6 prices the entire request at the long-context rate once prompt input
+ * reaches 200K tokens; this chars-based projection has no cached-input signal.
+ */
+export const GROK_PROJECTED_LONG_CONTEXT_THRESHOLD_TOKENS = 200_000
+export const GROK_PROJECTED_SHORT_INPUT_USD_PER_MILLION = 2.0
+export const GROK_PROJECTED_SHORT_OUTPUT_USD_PER_MILLION = 6.0
+export const GROK_PROJECTED_LONG_INPUT_USD_PER_MILLION = 4.0
+export const GROK_PROJECTED_LONG_OUTPUT_USD_PER_MILLION = 12.0
 
 export const GROK_SCOPED_MCP_SERVER_NAME = 'taskwraith-grok'
 

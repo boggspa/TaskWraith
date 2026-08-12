@@ -1,9 +1,16 @@
-import { GROK_PROJECTED_INPUT_USD_PER_MILLION, GROK_PROJECTED_OUTPUT_USD_PER_MILLION } from '../index.constants'
+import {
+  GROK_PROJECTED_LONG_CONTEXT_THRESHOLD_TOKENS,
+  GROK_PROJECTED_LONG_INPUT_USD_PER_MILLION,
+  GROK_PROJECTED_LONG_OUTPUT_USD_PER_MILLION,
+  GROK_PROJECTED_SHORT_INPUT_USD_PER_MILLION,
+  GROK_PROJECTED_SHORT_OUTPUT_USD_PER_MILLION
+} from '../index.constants'
 import {
   estimateTokensFromChars,
   TOKEN_COUNT_CONFIDENCE_KEY,
   TOKEN_COUNT_ESTIMATED
 } from '../../shared/tokenEstimate'
+import { GROK_46_MODEL_ID, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 // Grok SUBSCRIPTION-LIMIT usage — distinct from token/cost usage.
 //
 // SuperGrok/grok.com CLI auth bills against a subscription pool (a percent +
@@ -48,6 +55,9 @@ export interface GrokUsageSnapshot {
 
 export const GROK_CREDIT_WINDOW_SECONDS = 30 * 24 * 60 * 60
 export const GROK_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
+
+const GROK_COMPOSER_25_FAST_INPUT_USD_PER_MILLION = 3.0
+const GROK_COMPOSER_25_FAST_OUTPUT_USD_PER_MILLION = 15.0
 
 /** Strip ANSI/VT control sequences while preserving printable text + spaces. */
 export function stripGrokAnsi(input: string): string {
@@ -363,7 +373,10 @@ export function estimateProjectedTokenUsage(
   /** Chars streamed BEYOND the visible answer (thinking + tool payloads) —
    * without them the sealed projection undercounted every lane the Working
    * indicator's live estimate now includes. */
-  extraOutputChars = 0
+  extraOutputChars = 0,
+  /** Normalized Grok model id. Omitted callers retain the historical Composer
+   * projection instead of silently inheriting the current default model's rate. */
+  modelId?: string | null
 ): {
   input_tokens: number
   output_tokens: number
@@ -375,9 +388,30 @@ export function estimateProjectedTokenUsage(
   const output_tokens = estimateTokensFromChars(
     (responseText || '').length + Math.max(0, extraOutputChars)
   )
+  const normalizedModelId = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  const usesGrok46LongContextRates =
+    normalizedModelId === GROK_46_MODEL_ID &&
+    input_tokens >= GROK_PROJECTED_LONG_CONTEXT_THRESHOLD_TOKENS
+  // The 200K long-context tier belongs only to Grok 4.6. Retained Grok 4.5
+  // aliases keep their flat xAI rate, while Composer 2.5 Fast (and omitted or
+  // unknown legacy callers) keep the pre-4.6 projected Composer rate.
+  const usesGrok45Rates = isGrok45ReasoningModelId(normalizedModelId)
+  const usesGrok46Rates = normalizedModelId === GROK_46_MODEL_ID
+  let inputUsdPerMillion = GROK_COMPOSER_25_FAST_INPUT_USD_PER_MILLION
+  let outputUsdPerMillion = GROK_COMPOSER_25_FAST_OUTPUT_USD_PER_MILLION
+  if (usesGrok45Rates || usesGrok46Rates) {
+    inputUsdPerMillion = GROK_PROJECTED_SHORT_INPUT_USD_PER_MILLION
+    outputUsdPerMillion = GROK_PROJECTED_SHORT_OUTPUT_USD_PER_MILLION
+  }
+  if (usesGrok46LongContextRates) {
+    inputUsdPerMillion = GROK_PROJECTED_LONG_INPUT_USD_PER_MILLION
+    outputUsdPerMillion = GROK_PROJECTED_LONG_OUTPUT_USD_PER_MILLION
+  }
   const total_cost_usd =
-    (input_tokens / 1_000_000) * GROK_PROJECTED_INPUT_USD_PER_MILLION +
-    (output_tokens / 1_000_000) * GROK_PROJECTED_OUTPUT_USD_PER_MILLION
+    (input_tokens / 1_000_000) * inputUsdPerMillion +
+    (output_tokens / 1_000_000) * outputUsdPerMillion
   return {
     input_tokens,
     output_tokens,

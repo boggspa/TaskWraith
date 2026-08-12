@@ -125,17 +125,26 @@ describe('main/renderer model-catalogue agreement', () => {
     // not typecheck. Narrowed with an `in` check rather than cast through
     // `any`: a cast would keep the test green while quietly removing the thing
     // that makes it meaningful.
-    const defaultIdOf = (models: readonly { id: string }[]): string | undefined => {
-      for (const model of models) {
-        if ('isDefault' in model && model.isDefault === true) return model.id
-      }
-      return undefined
+    const defaultIdsOf = (models: readonly { id: string }[]): string[] => {
+      return models
+        .filter((model) => 'isDefault' in model && model.isDefault === true)
+        .map((model) => model.id)
     }
 
-    const mainDefault = defaultIdOf(getStaticProviderModels('mistral'))
-    const rendererDefault = defaultIdOf(MISTRAL_DEFAULT_MODELS)
-    expect(mainDefault).toBeTruthy()
-    expect(rendererDefault).toBe(mainDefault)
+    for (const provider of STATIC_CATALOGUE_PROVIDER_IDS) {
+      const mainDefaults = defaultIdsOf(getStaticProviderModels(provider))
+      const rendererDefaults = defaultIdsOf(getStaticProviderModelOptions(provider))
+      expect(mainDefaults, `${provider} main catalogue must have exactly one default`).toHaveLength(
+        1
+      )
+      expect(
+        rendererDefaults,
+        `${provider} renderer catalogue must have exactly one default`
+      ).toHaveLength(1)
+      expect(rendererDefaults[0], `${provider} main/renderer defaults diverge`).toBe(
+        mainDefaults[0]
+      )
+    }
   })
 })
 

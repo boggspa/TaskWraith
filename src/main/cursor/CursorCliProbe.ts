@@ -74,7 +74,15 @@ export const CURSOR_COMPOSER_MODELS: readonly CursorModel[] = [
   { id: 'grok-4.5-high', label: 'Grok 4.5 Medium' },
   { id: 'grok-4.5-fast-high', label: 'Grok 4.5 Medium Fast' },
   { id: 'grok-4.5-xhigh', label: 'Grok 4.5 High' },
-  { id: 'grok-4.5-fast-xhigh', label: 'Grok 4.5 High Fast' }
+  { id: 'grok-4.5-fast-xhigh', label: 'Grok 4.5 High Fast' },
+  { id: 'cursor-grok-4.6-low', label: 'Cursor Grok 4.6 Low' },
+  { id: 'cursor-grok-4.6-low-fast', label: 'Cursor Grok 4.6 Low Fast' },
+  { id: 'cursor-grok-4.6-medium', label: 'Cursor Grok 4.6 Medium' },
+  { id: 'cursor-grok-4.6-medium-fast', label: 'Cursor Grok 4.6 Medium Fast' },
+  { id: 'cursor-grok-4.6-high', label: 'Cursor Grok 4.6' },
+  { id: 'cursor-grok-4.6-high-fast', label: 'Cursor Grok 4.6 Fast' },
+  { id: 'cursor-grok-4.6-xhigh', label: 'Cursor Grok 4.6 Extra High' },
+  { id: 'cursor-grok-4.6-xhigh-fast', label: 'Cursor Grok 4.6 Extra High Fast' }
 ]
 
 export const CURSOR_COMPOSER_MODEL_IDS: readonly string[] = CURSOR_COMPOSER_MODELS.map((m) => m.id)

@@ -59,6 +59,30 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "muse", model: "muse-spark-1.2") == 200_000)
     }
 
+    @Test("Grok 4.6 ids use provider-scoped direct and Cursor windows")
+    func grokProviderWindows() {
+        #expect(ContextWindows.resolve(provider: "grok", model: "grok-4.6") == 500_000)
+        #expect(ContextWindows.resolve(provider: "cursor", model: "grok-4.6") == 256_000)
+
+        let cursorWireIds = [
+            "cursor-grok-4.6-low",
+            "cursor-grok-4.6-low-fast",
+            "cursor-grok-4.6-medium",
+            "cursor-grok-4.6-medium-fast",
+            "cursor-grok-4.6-high",
+            "cursor-grok-4.6-high-fast",
+            "cursor-grok-4.6-xhigh",
+            "cursor-grok-4.6-xhigh-fast",
+        ]
+        for modelId in cursorWireIds {
+            #expect(ContextWindows.resolve(provider: "cursor", model: modelId) == 256_000)
+        }
+
+        // Grok 4.5 retains its established provider-agnostic 500k behavior.
+        #expect(ContextWindows.resolve(provider: "cursor", model: "grok-4.5") == 500_000)
+        #expect(ContextWindows.resolve(provider: "cursor", model: "cursor-grok-4.5") == 500_000)
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)

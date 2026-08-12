@@ -1,4 +1,5 @@
 import { matchOllamaBrand } from './ollamaBrandTable'
+import { cursorGrokBaseModelId, isGrokReasoningModelId } from './grok45Models'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
 
@@ -116,6 +117,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'kimi-k3': 'K3',
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
+  'grok-4.6': 'Grok 4.6',
   'grok-4.5': 'Grok 4.5',
   'grok-build': 'Grok 4.5 Fast',
   'grok-build-0.1': 'Grok 4.5 Fast',
@@ -185,6 +187,13 @@ export function taskWraithModelLabel(
   if (runtimeProvider === 'pi') return resolvePiModelLabel(raw) || raw
   if (runtimeProvider === 'ollama') return ollamaModelLabel(raw) || raw
   const key = raw.toLowerCase()
+  if (runtimeProvider === 'cursor') {
+    const base = cursorGrokBaseModelId(key)
+    if (base) return base === 'grok-4.6' ? 'Grok 4.6' : 'Grok 4.5'
+  }
+  if (runtimeProvider === 'grok' && isGrokReasoningModelId(key)) {
+    return key === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
+  }
   if (KNOWN_MODEL_LABELS[key]) return KNOWN_MODEL_LABELS[key]
   const claude = key
     .replace(/^preview:anthropic:/, '')

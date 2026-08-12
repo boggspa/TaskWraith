@@ -901,6 +901,49 @@ describe('loadExternalProviderUsageRecords', () => {
       await rm(homeDir, { recursive: true, force: true })
     }
   })
+
+  it('retains Cursor Grok 4.6 Fast billing identity after external normalization', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-cursor-grok-46-'))
+    try {
+      const transcriptDir = join(
+        homeDir,
+        '.cursor',
+        'projects',
+        'Users-me-Documents-sample',
+        'agent-transcripts',
+        'composer-grok-46'
+      )
+      await mkdir(transcriptDir, { recursive: true })
+      await writeFile(
+        join(transcriptDir, 'composer-grok-46.jsonl'),
+        JSON.stringify({
+          role: 'assistant',
+          message: {
+            createdAt: '2026-08-12T10:00:00.000Z',
+            content: [
+              {
+                type: 'text',
+                text: 'active model: cursor-grok-4.6-high-fast; completed the requested change'
+              }
+            ]
+          }
+        })
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-08-12T13:00:00.000Z'),
+        cursorCachePath: join(homeDir, 'cursor-external-activity-cache.json')
+      })
+      const cursor = records.find((record) => record.provider === 'cursor')
+      expect(cursor).toMatchObject({
+        model: 'grok-4.6',
+        costRateModel: 'grok-4.6-fast'
+      })
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('external activity per-file incremental cache', () => {

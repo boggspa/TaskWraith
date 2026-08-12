@@ -2,11 +2,12 @@ import Foundation
 
 /// Per-model / per-provider context-window sizes.
 ///
-/// Ported from the desktop renderer's single source of truth,
-/// `src/renderer/src/lib/contextWindows.ts` — keep the two tables in sync when
+/// Ported from the desktop's single source of truth,
+/// `src/shared/contextWindows.ts` — keep the two tables in sync when
 /// the desktop list changes. The phone only receives raw token counts in the
 /// thread snapshot (no run-reported `totalTokenLimit` / live-Ollama metadata),
-/// so `resolve` covers just the model-id → provider-fallback → default chain.
+/// so `resolve` covers the provider-model override → model-id → provider-
+/// fallback → default chain.
 public enum ContextWindows {
     /// Model id → context window (tokens). Mirrors `CONTEXT_WINDOWS_BY_MODEL`.
     static let byModel: [String: Int] = [
@@ -90,6 +91,7 @@ public enum ContextWindows {
         "kimi-k2.6": 256_000,
         // Grok
         "grok-composer-2.5-fast": 200_000,
+        "grok-4.6": 500_000,
         "grok-4.5": 500_000,
         "grok-4.5-latest": 500_000,
         "grok-build-latest": 500_000,
@@ -106,6 +108,14 @@ public enum ContextWindows {
         "grok-4.5-fast-high": 500_000,
         "grok-4.5-xhigh": 500_000,
         "grok-4.5-fast-xhigh": 500_000,
+        "cursor-grok-4.6-low": 256_000,
+        "cursor-grok-4.6-low-fast": 256_000,
+        "cursor-grok-4.6-medium": 256_000,
+        "cursor-grok-4.6-medium-fast": 256_000,
+        "cursor-grok-4.6-high": 256_000,
+        "cursor-grok-4.6-high-fast": 256_000,
+        "cursor-grok-4.6-xhigh": 256_000,
+        "cursor-grok-4.6-xhigh-fast": 256_000,
         // Ollama local defaults — conservative UI fallbacks when no live limit
         // is known.
         "qwen3:4b-instruct": 262_144,
@@ -164,6 +174,18 @@ public enum ContextWindows {
         "llama3.2:3b": 131_072,
     ]
 
+    /// Provider + model id → context window (tokens). Kept outside `byModel`
+    /// because Cursor hosts the same semantic Grok ids with a smaller window.
+    /// Mirrors desktop `PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES`.
+    static let providerModelOverrides: [String: [String: Int]] = [
+        "grok": [
+            "grok-4.6": 500_000,
+        ],
+        "cursor": [
+            "grok-4.6": 256_000,
+        ],
+    ]
+
     /// Provider id (lowercased) → fallback window. Mirrors
     /// `PROVIDER_FALLBACK_WINDOW`.
     static let providerFallback: [String: Int] = [
@@ -185,9 +207,14 @@ public enum ContextWindows {
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's
-    /// `resolveContextWindow`: exact model id wins, then the provider fallback,
-    /// then a universal 200k default.
+    /// `resolveContextWindow`: provider-scoped model id wins, then global model
+    /// id, then the provider fallback, then a universal 200k default.
     public static func resolve(provider: String?, model: String?) -> Int {
+        if let provider, let model,
+            let hit = providerModelOverrides[provider.lowercased()]?[model.lowercased()]
+        {
+            return hit
+        }
         if let model, let hit = byModel[model] {
             return hit
         }

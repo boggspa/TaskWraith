@@ -66,13 +66,21 @@ describe('Codex provider model defaults', () => {
 })
 
 describe('Cursor provider model defaults', () => {
-  it('prefixes the resold Grok 4.5 row so it cannot be confused with Grok-provider rows', () => {
-    // 2026-07-29 QA: two identically-labeled "Grok 4.5" rows (Cursor's resale
-    // vs the Grok provider family) proved mis-selectable in a flat scan of the
-    // combined picker, so the resale row carries the host prefix again
-    // (reverses the 98c63e047 simplification). Chips stay short — the
-    // composer chip formatter resolves cursor grok ids to "Grok 4.5" by id,
-    // not by this label.
+  it('prefixes resold Grok rows so they cannot be confused with Grok-provider rows', () => {
+    // Resold Cursor rows carry the host prefix in a flat picker scan. Chips
+    // remain short because the composer formatter resolves them by model id.
+    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.6')).toMatchObject({
+      label: 'Cursor Grok 4.6',
+      description: 'First-party Cursor model pool - 256K context',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'xhigh' }
+      ],
+      defaultReasoningEffort: 'high',
+      additionalSpeedTiers: ['fast']
+    })
     expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toMatchObject({
       label: 'Cursor Grok 4.5'
     })
@@ -222,20 +230,26 @@ describe('Ollama provider model defaults', () => {
 })
 
 describe('Grok provider model defaults', () => {
-  it('uses Grok 4.5 as the concrete Grok default while keeping Composer reasoning-free', () => {
+  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
     expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'grok-4.5',
-      label: 'Grok 4.5 Fast',
+      id: 'grok-4.6',
+      label: 'Grok 4.6 Fast',
+      description: '500K context - low/medium/high/extra-high reasoning',
       isDefault: true
     })
     expect(
       GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)
-    ).toEqual(['low', 'medium', 'high'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'grok-4.6',
       'grok-4.5',
       'grok-composer-2.5-fast'
     ])
-    expect(GROK_DEFAULT_MODELS[1].supportedReasoningEfforts).toBeUndefined()
+    expect(GROK_DEFAULT_MODELS[1]).toMatchObject({
+      id: 'grok-4.5',
+      label: 'Grok 4.5 Fast'
+    })
+    expect(GROK_DEFAULT_MODELS[2].supportedReasoningEfforts).toBeUndefined()
   })
 })
 

@@ -14,7 +14,11 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
-import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../../shared/grok45Models'
+import {
+  cursorGrokBaseModelId,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
+} from '../../../shared/grok45Models'
 import { humaniseModelId } from './modelDisplayName'
 
 export interface ComposerChipContext {
@@ -28,9 +32,9 @@ export interface ComposerChipContext {
   codexReasoningEffort?: string
   /** Claude reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh" | "max" | "ultracode"). */
   claudeReasoningEffort?: string
-  /** Grok reasoning effort token (e.g. "low" | "medium" | "high"). */
+  /** Grok reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh"). */
   grokReasoningEffort?: string
-  /** Cursor Grok reasoning effort token (e.g. "low" | "medium" | "high"). */
+  /** Cursor Grok reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh"). */
   cursorReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
@@ -51,8 +55,8 @@ export interface ComposerChipContext {
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
  * Kimi (`kimi-k3`)                         → `K3`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
- * Cursor (`grok-4.5`)                      → `Grok 4.5`
- * Grok (`grok-4.5`)                        → `Grok 4.5 Fast` (permanently Fast-mode)
+ * Cursor (`grok-4.6`)                      → `Grok 4.6`
+ * Grok (`grok-4.6`)                        → `Grok 4.6 Fast` (permanently Fast-mode)
  * Ollama (`qwen3:4b-instruct`)             → `Qwen 3 (4B Param)`
  *
  * Falls back to the full label when no provider-specific pattern matches.
@@ -67,7 +71,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (provider === 'codex') return '5.5'
     if (provider === 'claude') return 'Sonnet 4.6'
     if (provider === 'kimi') return 'K2.7 Coding'
-    if (provider === 'grok') return 'Grok 4.5 Fast'
+    if (provider === 'grok') return 'Grok 4.6 Fast'
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
     if (provider === 'gemini') return 'Flash Lite'
@@ -139,18 +143,18 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     // composer-2.5-fast (Cursor's default = Fast mode) / composer-2.5 → human label.
     if (id === 'composer-2.5-fast') return 'Composer 2.5 Fast'
     if (id === 'composer-2.5') return 'Composer 2.5'
-    if (id === 'grok-4.5' || id === 'cursor-grok-4.5' || id.startsWith('grok-4.5')) {
-      return 'Grok 4.5'
+    const grokBase = cursorGrokBaseModelId(id)
+    if (grokBase && isCursorGrokModelId(id)) {
+      return grokBase === 'grok-4.6' ? 'Grok 4.6' : 'Grok 4.5'
     }
   }
 
   if (provider === 'grok') {
     // Grok's CLI models are permanently Fast-mode, so "Fast" is part of the name.
-    if (id === 'grok-4.5' || id === 'grok-4.5-latest' || id === 'grok-build-latest') {
-      return 'Grok 4.5 Fast'
-    }
     if (id === 'grok-composer-2.5-fast') return 'Grok Composer 2.5 Fast'
-    if (id === 'grok-build' || id === 'grok-build-0.1') return 'Grok 4.5 Fast'
+    if (isGrokReasoningModelId(id)) {
+      return id === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
+    }
   }
 
   if (provider === 'ollama') {
@@ -292,7 +296,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
  *
  * Codex: `Light` / `Medium` / `High` / `Extra High` (low/light → "Light"; xhigh → "Extra High")
  * Claude: `Low` / `Medium` / `High` / `Extra` / `Max` / `Ultracode`
- * Grok/Cursor Grok: `Low` / `Medium` / `High`
+ * Grok/Cursor Grok: `Low` / `Medium` / `High` / `Extra High`
  * Kimi: K3's `Low`/`High`/`Max`; K2.7 Coding's fixed `Thinking`
  * Gemini: no reasoning concept today — returns empty
  *
@@ -317,13 +321,13 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   if (provider === 'grok') {
-    return isGrok45ReasoningModelId(ctx.modelId)
+    return isGrokReasoningModelId(ctx.modelId)
       ? grokReasoningDisplayLabel(ctx.grokReasoningEffort)
       : ''
   }
 
   if (provider === 'cursor') {
-    return isCursorGrok45ModelId(ctx.modelId)
+    return isCursorGrokModelId(ctx.modelId)
       ? grokReasoningDisplayLabel(ctx.cursorReasoningEffort)
       : ''
   }
@@ -404,6 +408,7 @@ export function grokReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'low') return 'Low'
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
+  if (effort === 'xhigh' || effort === 'extra') return 'Extra High'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 

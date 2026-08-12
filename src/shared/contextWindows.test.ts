@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { resolveContextWindow } from './contextWindows'
 
 interface ParsedEntry {
   key: string
@@ -91,5 +92,33 @@ describe('ContextWindows.swift drift guard', () => {
     expectUnique(typescriptFallbacks, 'PROVIDER_FALLBACK_WINDOW')
     expectUnique(swiftFallbacks, 'ContextWindows.providerFallback')
     expect(sorted(swiftFallbacks)).toEqual(sorted(typescriptFallbacks))
+  })
+})
+
+describe('resolveContextWindow provider-specific Grok windows', () => {
+  it('uses the direct Grok 4.6 500K window', () => {
+    expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)
+  })
+
+  it.each([
+    'grok-4.6',
+    'cursor-grok-4.6-low',
+    'cursor-grok-4.6-low-fast',
+    'cursor-grok-4.6-medium',
+    'cursor-grok-4.6-medium-fast',
+    'cursor-grok-4.6-high',
+    'cursor-grok-4.6-high-fast',
+    'cursor-grok-4.6-xhigh',
+    'cursor-grok-4.6-xhigh-fast'
+  ])('uses the Cursor-hosted 256K Grok 4.6 window for %s', (modelId) => {
+    expect(resolveContextWindow('cursor', modelId)).toBe(256_000)
+  })
+
+  it('keeps explicit run stats ahead of provider-specific overrides', () => {
+    expect(resolveContextWindow('cursor', 'grok-4.6', 384_000)).toBe(384_000)
+  })
+
+  it('keeps live Ollama limits ahead of the global model table', () => {
+    expect(resolveContextWindow('ollama', 'grok-4.5', undefined, 192_000)).toBe(192_000)
   })
 })

@@ -510,10 +510,13 @@ import {
 } from './lib/composerChipFormat'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
+  CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
+  GROK_46_MODEL_ID,
+  cursorGrokBaseModelId,
+  isCursorGrokModelId,
+  isGrokReasoningModelId
 } from '../../shared/grok45Models'
 
 import {
@@ -4320,7 +4323,7 @@ function App(): React.JSX.Element {
           }
         : {}),
       ...(provider === 'grok'
-        ? isGrok45ReasoningModelId(providerModel)
+        ? isGrokReasoningModelId(providerModel)
           ? {
               grokReasoningEffort:
                 participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
@@ -4335,7 +4338,7 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'cursor'
         ? {
-            ...(isCursorGrok45ModelId(providerModel)
+            ...(isCursorGrokModelId(providerModel)
               ? {
                   cursorReasoningEffort:
                     participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
@@ -5940,9 +5943,9 @@ function App(): React.JSX.Element {
     if (provider === 'kimi') return isKimiModelId(modelId)
     // Grok: only a genuine grok* model id is valid - never a model
     // carried over from another provider. A legacy 'cli-default' coerces to the
-    // provider default so the picker shows Grok 4.5, not blank.
+    // provider default so the picker shows Grok 4.6, not blank.
     if (provider === 'grok') return modelId.startsWith('grok')
-    if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
+    if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrokModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
     if (provider === 'pi') {
       return getProviderModelOptions('pi').some((model) => model.id === modelId)
@@ -6284,7 +6287,7 @@ function App(): React.JSX.Element {
           }
         : {}),
       ...(provider === 'grok'
-        ? isGrok45ReasoningModelId(selection.selectedModelType)
+        ? isGrokReasoningModelId(selection.selectedModelType)
           ? { reasoningEffort: selection.grokReasoningEffort || defaults.reasoningEffort }
           : {}
         : {}),
@@ -6298,10 +6301,10 @@ function App(): React.JSX.Element {
         : {}),
       ...(provider === 'cursor'
         ? {
-            ...(isCursorGrok45ModelId(selection.selectedModelType)
+            ...(isCursorGrokModelId(selection.selectedModelType)
               ? { reasoningEffort: selection.cursorReasoningEffort || defaults.reasoningEffort }
               : {}),
-            fastModeEnabled: isCursorGrok45ModelId(selection.selectedModelType)
+            fastModeEnabled: isCursorGrokModelId(selection.selectedModelType)
               ? Boolean(selection.cursorFastMode)
               : selection.selectedModelType === 'composer-2.5-fast'
           }
@@ -15115,6 +15118,7 @@ function App(): React.JSX.Element {
               : runUsageEntries.map((usageEntry) => {
                   const {
                     model,
+                    costRateModel,
                     inputTokens,
                     outputTokens,
                     totalTokens,
@@ -15137,6 +15141,7 @@ function App(): React.JSX.Element {
                     runId: currentRunId,
                     usageKind: 'run',
                     model,
+                    costRateModel,
                     inputTokens,
                     outputTokens,
                     totalTokens,
@@ -21811,22 +21816,28 @@ function App(): React.JSX.Element {
     sideComposerSelectedReasoning = sideKimiReasoning
   } else if (
     sideComposerProvider === 'grok' &&
-    isGrok45ReasoningModelId(sideComposerSelectedModel)
+    isGrokReasoningModelId(sideComposerSelectedModel)
   ) {
     sideComposerReasoningOptions = [
       { value: 'low', label: grokReasoningDisplayLabel('low') },
       { value: 'medium', label: grokReasoningDisplayLabel('medium') },
-      { value: 'high', label: grokReasoningDisplayLabel('high') }
+      { value: 'high', label: grokReasoningDisplayLabel('high') },
+      ...(sideComposerSelectedModel === GROK_46_MODEL_ID
+        ? [{ value: 'xhigh', label: grokReasoningDisplayLabel('xhigh') }]
+        : [])
     ]
     sideComposerSelectedReasoning = sideGrokReasoning
   } else if (
     sideComposerProvider === 'cursor' &&
-    isCursorGrok45ModelId(sideComposerSelectedModel)
+    isCursorGrokModelId(sideComposerSelectedModel)
   ) {
     sideComposerReasoningOptions = [
       { value: 'low', label: grokReasoningDisplayLabel('low') },
       { value: 'medium', label: grokReasoningDisplayLabel('medium') },
-      { value: 'high', label: grokReasoningDisplayLabel('high') }
+      { value: 'high', label: grokReasoningDisplayLabel('high') },
+      ...(cursorGrokBaseModelId(sideComposerSelectedModel) === GROK_46_MODEL_ID
+        ? [{ value: 'xhigh', label: grokReasoningDisplayLabel('xhigh') }]
+        : [])
     ]
     sideComposerSelectedReasoning = sideCursorReasoning
   } else if (sideComposerProvider === 'muse') {
@@ -21863,12 +21874,17 @@ function App(): React.JSX.Element {
       )
     }
     if (sideComposerProvider === 'cursor') {
-      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_45_BASE_MODEL_ID])
+      return new Set([
+        'composer-2.5',
+        'composer-2.5-fast',
+        CURSOR_GROK_46_BASE_MODEL_ID,
+        CURSOR_GROK_45_BASE_MODEL_ID
+      ])
     }
     if (sideComposerProvider === 'grok') {
-      // Both Grok models are permanently Fast-mode → Fast ⚡ glyph on both
-      // rows. No onToggleFastMode is passed for grok, so no toggle renders.
-      return new Set([GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+      // All Grok CLI models are permanently Fast-mode → Fast ⚡ glyph on every
+      // row. No onToggleFastMode is passed for grok, so no toggle renders.
+      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
     }
     return new Set<string>()
   })()
@@ -21880,7 +21896,7 @@ function App(): React.JSX.Element {
         : sideComposerProvider === 'kimi'
           ? sideKimiFastMode
           : sideComposerProvider === 'cursor'
-            ? isCursorGrok45ModelId(sideComposerSelectedModel)
+            ? isCursorGrokModelId(sideComposerSelectedModel)
               ? sideCursorFastMode
               : sideComposerSelectedModel === 'composer-2.5-fast'
             : false
@@ -22018,7 +22034,7 @@ function App(): React.JSX.Element {
       }
     }
     if (sideComposerProvider === 'grok') {
-      metadataPatch.grokReasoningEffort = isGrok45ReasoningModelId(nextModel)
+      metadataPatch.grokReasoningEffort = isGrokReasoningModelId(nextModel)
         ? GROK_45_DEFAULT_REASONING_EFFORT
         : ''
     }
@@ -22026,7 +22042,7 @@ function App(): React.JSX.Element {
       metadataPatch.museReasoningEffort = MUSE_DEFAULT_REASONING_EFFORT
     }
     if (sideComposerProvider === 'cursor') {
-      if (isCursorGrok45ModelId(nextModel)) {
+      if (isCursorGrokModelId(nextModel)) {
         metadataPatch.cursorReasoningEffort = GROK_45_DEFAULT_REASONING_EFFORT
       } else {
         metadataPatch.cursorReasoningEffort = ''
@@ -22072,7 +22088,7 @@ function App(): React.JSX.Element {
               })
           : sideComposerProvider === 'cursor'
             ? () => {
-                if (isCursorGrok45ModelId(sideComposerSelectedModel)) {
+                if (isCursorGrokModelId(sideComposerSelectedModel)) {
                   rememberSideChatComposerSelection({ cursorFastMode: !sideCursorFastMode })
                   return
                 }

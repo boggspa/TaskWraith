@@ -232,12 +232,88 @@ describe('stripGrokAnsi', () => {
 })
 
 describe('estimateProjectedTokenUsage', () => {
-  it('uses the current Grok CLI default projected Composer rate', () => {
-    const usage = estimateProjectedTokenUsage('a'.repeat(4_000_000), 'b'.repeat(4_000_000))
+  it('uses the Grok 4.6 short-context rates below 200K prompt tokens', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(400_000),
+      'b'.repeat(400_000),
+      0,
+      'grok-4.6'
+    )
+
+    expect(usage.input_tokens).toBe(100_000)
+    expect(usage.output_tokens).toBe(100_000)
+    expect(usage.total_cost_usd).toBe(0.8)
+  })
+
+  it('uses short-context rates immediately below the 200K input-token threshold', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(799_996),
+      'b'.repeat(400_000),
+      0,
+      'grok-4.6'
+    )
+
+    expect(usage.input_tokens).toBe(199_999)
+    expect(usage.output_tokens).toBe(100_000)
+    expect(usage.total_cost_usd).toBeCloseTo(0.999998, 8)
+  })
+
+  it('prices the entire request at long-context rates at the 200K input-token boundary', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(800_000),
+      'b'.repeat(400_000),
+      0,
+      'grok-4.6'
+    )
+
+    expect(usage.input_tokens).toBe(200_000)
+    expect(usage.output_tokens).toBe(100_000)
+    expect(usage.total_cost_usd).toBe(2)
+  })
+
+  it('keeps using long-context rates above the threshold', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(4_000_000),
+      'b'.repeat(4_000_000),
+      0,
+      'grok-4.6'
+    )
 
     expect(usage.input_tokens).toBe(1_000_000)
     expect(usage.output_tokens).toBe(1_000_000)
-    expect(usage.total_cost_usd).toBe(18)
+    expect(usage.total_cost_usd).toBe(16)
+  })
+
+  it('keeps Grok 4.5 on its flat rate above the Grok 4.6 long-context threshold', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(800_000),
+      'b'.repeat(400_000),
+      0,
+      'grok-4.5'
+    )
+
+    expect(usage.input_tokens).toBe(200_000)
+    expect(usage.output_tokens).toBe(100_000)
+    expect(usage.total_cost_usd).toBe(1)
+  })
+
+  it('keeps Grok Composer 2.5 Fast on its distinct projected rate', () => {
+    const usage = estimateProjectedTokenUsage(
+      'a'.repeat(400_000),
+      'b'.repeat(400_000),
+      0,
+      'grok-composer-2.5-fast'
+    )
+
+    expect(usage.input_tokens).toBe(100_000)
+    expect(usage.output_tokens).toBe(100_000)
+    expect(usage.total_cost_usd).toBe(1.8)
+  })
+
+  it('preserves the historical Composer projection when the caller omits the model', () => {
+    const usage = estimateProjectedTokenUsage('a'.repeat(400_000), 'b'.repeat(400_000))
+
+    expect(usage.total_cost_usd).toBe(1.8)
   })
 })
 

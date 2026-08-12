@@ -101,7 +101,7 @@ function row(
 export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiState {
   const claude = resolveTaskWraithProviderPresentation('claude', 'claude-opus-4-8-1m')
   const codex = resolveTaskWraithProviderPresentation('codex', 'gpt-5.6')
-  const grok = resolveTaskWraithProviderPresentation('grok', 'grok-4.5')
+  const grok = resolveTaskWraithProviderPresentation('grok', 'grok-4.6')
   const kimi = resolveTaskWraithProviderPresentation('kimi', 'kimi-k3')
   const startedAt = now - 2_000
   const ensemble = {
@@ -137,7 +137,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
         accent: grok.accent,
         shortCode: grok.shortCode,
         role: 'Explorer',
-        model: 'Grok 4.5',
+        model: grok.modelLabel ?? 'Grok 4.6 Fast',
         order: 2,
         stage: 'scout' as const,
         status: 'completed',

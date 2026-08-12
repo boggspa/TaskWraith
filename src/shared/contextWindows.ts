@@ -100,6 +100,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'grok-composer-2.5-fast': 200_000,
   'grok-4.5': 500_000,
   'grok-4.5-latest': 500_000,
+  'grok-4.6': 500_000,
   'grok-build-latest': 500_000,
   'grok-build': 500_000,
   'grok-build-0.1': 500_000,
@@ -114,6 +115,14 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'grok-4.5-fast-high': 500_000,
   'grok-4.5-xhigh': 500_000,
   'grok-4.5-fast-xhigh': 500_000,
+  'cursor-grok-4.6-low': 256_000,
+  'cursor-grok-4.6-low-fast': 256_000,
+  'cursor-grok-4.6-medium': 256_000,
+  'cursor-grok-4.6-medium-fast': 256_000,
+  'cursor-grok-4.6-high': 256_000,
+  'cursor-grok-4.6-high-fast': 256_000,
+  'cursor-grok-4.6-xhigh': 256_000,
+  'cursor-grok-4.6-xhigh-fast': 256_000,
   // Ollama local defaults. qwen3:4b advertises a large context in Ollama
   // metadata, but use a conservative UI fallback when no live limit is known.
   'qwen3:4b-instruct': 262_144,
@@ -177,6 +186,27 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'llama3.2:3b': 131_072
 }
 
+// Provider-specific windows live outside the hand-mirrored global table because
+// the same semantic Grok id has a smaller hosted window through Cursor.
+const PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES: Readonly<
+  Partial<Record<ContextWindowProviderId, Readonly<Record<string, number>>>>
+> = {
+  grok: {
+    'grok-4.6': 500_000
+  },
+  cursor: {
+    'grok-4.6': 256_000,
+    'cursor-grok-4.6-low': 256_000,
+    'cursor-grok-4.6-low-fast': 256_000,
+    'cursor-grok-4.6-medium': 256_000,
+    'cursor-grok-4.6-medium-fast': 256_000,
+    'cursor-grok-4.6-high': 256_000,
+    'cursor-grok-4.6-high-fast': 256_000,
+    'cursor-grok-4.6-xhigh': 256_000,
+    'cursor-grok-4.6-xhigh-fast': 256_000
+  }
+}
+
 const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   gemini: 1_048_576,
   codex: 1_050_000,
@@ -233,6 +263,11 @@ export function resolveContextWindow(
     liveModelContextLength > 0
   ) {
     return liveModelContextLength
+  }
+  const providerModelOverride =
+    provider && modelId ? PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES[provider]?.[modelId] : undefined
+  if (providerModelOverride) {
+    return providerModelOverride
   }
   if (modelId && CONTEXT_WINDOWS_BY_MODEL[modelId]) {
     return CONTEXT_WINDOWS_BY_MODEL[modelId]

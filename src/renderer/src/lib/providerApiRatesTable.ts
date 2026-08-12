@@ -15,6 +15,10 @@ export interface ProviderApiRateRow {
   inputUsdPerMillion: number
   cachedInputUsdPerMillion?: number
   outputUsdPerMillion: number
+  longContextThresholdTokens?: number
+  longContextInputUsdPerMillion?: number
+  longContextCachedInputUsdPerMillion?: number
+  longContextOutputUsdPerMillion?: number
   sourceUrl: string
   lastVerified: string
   notes?: string
@@ -50,6 +54,10 @@ function probeMatchesCurrentRate(probe: Record<string, unknown>, row: ProviderAp
   return (
     b.inputUsdPerMillion === row.inputUsdPerMillion &&
     b.outputUsdPerMillion === row.outputUsdPerMillion &&
+    b.longContextThresholdTokens === row.longContextThresholdTokens &&
+    b.longContextInputUsdPerMillion === row.longContextInputUsdPerMillion &&
+    b.longContextCachedInputUsdPerMillion === row.longContextCachedInputUsdPerMillion &&
+    b.longContextOutputUsdPerMillion === row.longContextOutputUsdPerMillion &&
     confidenceOf(b.confidence) === row.confidence
   )
 }
@@ -174,12 +182,30 @@ export function buildProviderApiRateGroups(raw: unknown): ProviderApiRateGroup[]
         model.cachedInputUsdPerMillion < model.inputUsdPerMillion
           ? model.cachedInputUsdPerMillion
           : undefined
+      const hasLongContextTier =
+        isFiniteNonNeg(model.longContextThresholdTokens) &&
+        Number.isInteger(model.longContextThresholdTokens) &&
+        model.longContextThresholdTokens > 0 &&
+        isFiniteNonNeg(model.longContextInputUsdPerMillion) &&
+        isFiniteNonNeg(model.longContextCachedInputUsdPerMillion) &&
+        model.longContextCachedInputUsdPerMillion < model.longContextInputUsdPerMillion &&
+        isFiniteNonNeg(model.longContextOutputUsdPerMillion) &&
+        model.longContextOutputUsdPerMillion >= model.longContextInputUsdPerMillion
       const row: ProviderApiRateRow = {
         provider,
         modelId: model.modelId,
         inputUsdPerMillion: model.inputUsdPerMillion,
         ...(cached !== undefined ? { cachedInputUsdPerMillion: cached } : {}),
         outputUsdPerMillion: model.outputUsdPerMillion,
+        ...(hasLongContextTier
+          ? {
+              longContextThresholdTokens: model.longContextThresholdTokens as number,
+              longContextInputUsdPerMillion: model.longContextInputUsdPerMillion as number,
+              longContextCachedInputUsdPerMillion:
+                model.longContextCachedInputUsdPerMillion as number,
+              longContextOutputUsdPerMillion: model.longContextOutputUsdPerMillion as number
+            }
+          : {}),
         sourceUrl: typeof model.sourceUrl === 'string' ? model.sourceUrl : pricingUrl,
         lastVerified: typeof model.lastVerified === 'string' ? model.lastVerified : '',
         notes: typeof model.notes === 'string' ? model.notes : undefined,
