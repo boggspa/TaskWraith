@@ -17,20 +17,16 @@ import Metal
 /// AVAssetReaderSampleReferenceOutput, which yields offsets instead of bytes)
 /// is a later slice. Do not present this as a general media loader.
 ///
-/// INTER-CODED MEDIA IS REFUSED, AND THAT IS MEASURED RATHER THAN CAUTIOUS.
-/// StudioVideoFrameSource decodes the selected sample in isolation, which is
-/// only valid when every sample is independently decodable. The first real .mov
-/// written through AVAssetWriter proved what that costs: with a normal GOP the
-/// rendered frames came out [32, 32, 160, 224] for source levels
-/// [32, 96, 160, 224] — frame 1 silently showed frame 0's picture. Presentation
-/// order is not decode order once an encoder reorders, and a lone P-frame has no
-/// reference.
+/// SAMPLES ARE KEPT IN DECODE ORDER. They are never sorted by presentation
+/// time, because StudioVideoFrameSource now walks GOPs and needs the order the
+/// container stored. Sorting by PTS is what made the first real .mov render
+/// frame 0's picture for frame 1.
 ///
-/// So `load` REFUSES an asset containing dependent samples instead of quietly
-/// presenting wrong pictures. Showing the wrong frame is worse than showing
-/// none: it looks like working playback. Lifting this needs decode-order
-/// submission plus decode-forward-from-keyframe seeking — a later slice — and
-/// until then the refusal is the honest behaviour, not a placeholder.
+/// The previous blanket refusal of inter-coded media is LIFTED: decode-order
+/// submission and decode-forward-from-keyframe now exist, so ordinary camera
+/// and delivery media is supported. `requireAllSyncSamples` remains available
+/// for callers that genuinely need all-intra input, and the sync-sample flags
+/// travel with each sample so the frame source can find keyframes.
 public enum StudioMediaLoadError: Error, Equatable {
     /// The asset contains samples that depend on other samples. Correct
     /// presentation needs GOP-aware decoding, which does not exist yet.
@@ -67,7 +63,7 @@ public enum StudioMediaSourceLoader {
     public static func load(
         asset: StudioMediaAsset,
         maxSampleCount: Int = defaultMaxSampleCount,
-        requireAllSyncSamples: Bool = true
+        requireAllSyncSamples: Bool = false
     ) async throws -> StudioLoadedMedia {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: asset.path, isDirectory: &isDirectory) else {
@@ -114,12 +110,15 @@ public enum StudioMediaSourceLoader {
 
         var presentationTimes: [CMTime] = []
         var buffers: [CMSampleBuffer] = []
+        var syncFlags: [Bool] = []
         var dependentSampleCount = 0
         while let sampleBuffer = output.copyNextSampleBuffer() {
             guard CMSampleBufferGetDataBuffer(sampleBuffer) != nil else { continue }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard presentationTime.isValid else { continue }
-            if !Self.isSyncSample(sampleBuffer) { dependentSampleCount += 1 }
+            let isSync = Self.isSyncSample(sampleBuffer)
+            if !isSync { dependentSampleCount += 1 }
+            syncFlags.append(isSync)
             presentationTimes.append(presentationTime)
             buffers.append(sampleBuffer)
             if buffers.count > maxSampleCount {
@@ -170,9 +169,15 @@ public enum StudioMediaSourceLoader {
             else {
                 throw StudioMediaLoadError.indeterminateFrameDuration
             }
-            samples.append(StudioCompressedSample(frameIndex: frameIndex, sampleBuffer: buffer))
+            samples.append(
+                StudioCompressedSample(
+                    frameIndex: frameIndex,
+                    isSyncSample: syncFlags[index],
+                    sampleBuffer: buffer
+                )
+            )
         }
-        samples.sort { $0.frameIndex < $1.frameIndex }
+        // NOT sorted: decode order is preserved deliberately. See the header.
 
         let durationTicks = CMTimeConvertScale(
             duration,
@@ -216,7 +221,7 @@ public enum StudioMediaSourceLoader {
         asset: StudioMediaAsset,
         device: MTLDevice,
         maxSampleCount: Int = defaultMaxSampleCount,
-        requireAllSyncSamples: Bool = true
+        requireAllSyncSamples: Bool = false
     ) async throws -> (source: StudioVideoFrameSource, media: StudioLoadedMedia) {
         let media = try await load(
             asset: asset,

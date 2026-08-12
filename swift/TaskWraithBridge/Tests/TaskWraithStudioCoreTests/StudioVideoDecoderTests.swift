@@ -52,7 +52,16 @@ final class StudioVideoDecoderTests: XCTestCase {
         let decoder = try StudioVideoDecoder(formatDescription: formatDescription)
         defer { decoder.invalidate() }
 
-        let pixelBuffer = try decoder.decode(samples[0].sampleBuffer)
+        let decoded = try decoder.decode(samples[0].sampleBuffer)
+        let pixelBuffer = decoded.pixelBuffer
+
+        // The decoder reports WHICH instant it produced, so a GOP walk can
+        // verify it received the frame it asked for rather than assuming.
+        XCTAssertTrue(decoded.presentationTime.isValid)
+        XCTAssertEqual(
+            CMTimeCompare(decoded.presentationTime, samples[0].presentationTime),
+            0
+        )
 
         let formatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
         XCTAssertTrue(

@@ -45,6 +45,19 @@ public enum StudioHardwareDecodeStatus: Equatable, Sendable {
     case unknown
 }
 
+/// One decoded picture and the instant it presents.
+///
+/// The presentation time is carried out of the decoder deliberately: with GOP
+/// decoding the caller submits several samples to reach one target frame, and
+/// the only way to know it received the picture it asked for — rather than a
+/// reordered neighbour — is to compare timestamps. Assuming would be exactly
+/// the class of mistake that produced a silently wrong frame on the first real
+/// file this project opened.
+public struct StudioDecodedFrame {
+    public let pixelBuffer: CVPixelBuffer
+    public let presentationTime: CMTime
+}
+
 public enum StudioVideoDecoderError: Error, Equatable {
     case sessionCreationFailed(OSStatus)
     case sessionInvalidated
@@ -166,7 +179,7 @@ public final class StudioVideoDecoder {
     /// and `VTDecompressionSessionWaitForAsynchronousFrames` acts as the barrier
     /// before the result is read, so a caller never observes a half-written
     /// outcome.
-    public func decode(_ sampleBuffer: CMSampleBuffer) throws -> CVPixelBuffer {
+    public func decode(_ sampleBuffer: CMSampleBuffer) throws -> StudioDecodedFrame {
         guard let session else {
             throw StudioVideoDecoderError.sessionInvalidated
         }
@@ -177,9 +190,10 @@ public final class StudioVideoDecoder {
             sampleBuffer: sampleBuffer,
             flags: [],
             infoFlagsOut: nil
-        ) { status, _, imageBuffer, _, _ in
+        ) { status, _, imageBuffer, presentationTime, _ in
             outcome.status = status
             outcome.imageBuffer = imageBuffer
+            outcome.presentationTime = presentationTime
         }
         guard submission == noErr else {
             failedDecodeCount += 1
@@ -210,7 +224,10 @@ public final class StudioVideoDecoder {
         }
 
         decodedFrameCount += 1
-        return pixelBuffer
+        return StudioDecodedFrame(
+            pixelBuffer: pixelBuffer,
+            presentationTime: outcome.presentationTime
+        )
     }
 
     /// Explicit teardown. Idempotent, and `deinit` calls it too, but viewers
@@ -230,5 +247,6 @@ public final class StudioVideoDecoder {
     private final class DecodeOutcome: @unchecked Sendable {
         var status: OSStatus = noErr
         var imageBuffer: CVImageBuffer?
+        var presentationTime: CMTime = .invalid
     }
 }

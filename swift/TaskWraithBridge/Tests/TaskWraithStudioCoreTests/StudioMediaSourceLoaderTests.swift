@@ -174,39 +174,84 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
         XCTAssertNotEqual(loaded.source.hardwareDecodeStatus, .unknown)
     }
 
-    /// THE MEASURED REASON THE REFUSAL EXISTS.
+    /// THE EXACT CASE THAT USED TO CORRUPT.
     ///
     /// A normal-GOP .mov (the AVAssetWriter default) is inter-coded. Decoding
     /// its samples in isolation rendered [32, 32, 160, 224] for source levels
-    /// [32, 96, 160, 224] — frame 1 silently showed frame 0's picture. That is
-    /// worse than failing, because it looks like working playback, so the
-    /// loader now refuses the asset outright.
-    func testInterCodedMediaIsRefusedRatherThanRenderedWrong() async throws {
+    /// [32, 96, 160, 224] — frame 1 silently showed frame 0's picture. With
+    /// decode-order submission and decode-forward-from-keyframe, the SAME media
+    /// must now render correctly. This is the regression test for the defect,
+    /// not a new happy path.
+    func testInterCodedMediaNowDecodesCorrectly() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let levels: [UInt8] = [32, 96, 160, 224]
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: levels,
+            to: url,
+            forceKeyFrames: false
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+            asset: asset(at: url),
+            device: device
+        )
+        defer { loaded.source.invalidate() }
+
+        // This is genuinely inter-coded media, not an all-intra fixture.
+        XCTAssertFalse(
+            loaded.media.allSamplesAreSyncSamples,
+            "fixture must be inter-coded or this test proves nothing"
+        )
+
+        let renderer = try StudioVideoFrameRenderer(device: device)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: size,
+            height: size
+        )
+
+        var greens: [Int] = []
+        for frame in 0..<levels.count {
+            let textures = try loaded.source.textures(forFrameIndex: Int64(frame))
+            try renderer.render(frame: textures, to: target)
+            greens.append(
+                Int(try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64).green)
+            )
+        }
+
+        for index in 1..<greens.count {
+            XCTAssertGreaterThan(
+                greens[index],
+                greens[index - 1],
+                "inter-coded frame \(index) must be brighter than \(index - 1): \(greens)"
+            )
+        }
+    }
+
+    /// Strict mode still exists for callers that genuinely need all-intra input.
+    func testAllIntraCanStillBeRequiredExplicitly() async throws {
         let url = StudioTestMedia.makeTemporaryMovieURL()
         defer { try? FileManager.default.removeItem(at: url) }
         try await StudioTestMedia.writeFlatMovie(
-            lumaLevels: [32, 96, 160, 224],
+            lumaLevels: [32, 96],
             to: url,
             forceKeyFrames: false
         )
 
         do {
-            _ = try await StudioMediaSourceLoader.load(asset: asset(at: url))
-            XCTFail("inter-coded media must be refused until GOP-aware decoding exists")
+            _ = try await StudioMediaSourceLoader.load(
+                asset: asset(at: url),
+                requireAllSyncSamples: true
+            )
+            XCTFail("expected interCodedMediaUnsupported under strict mode")
         } catch let error as StudioMediaLoadError {
-            guard case .interCodedMediaUnsupported(let dependentSampleCount) = error else {
+            guard case .interCodedMediaUnsupported = error else {
                 return XCTFail("expected interCodedMediaUnsupported, got \(error)")
             }
-            XCTAssertGreaterThan(dependentSampleCount, 0)
         }
-
-        // The escape hatch exists for the future GOP-aware path and for
-        // diagnostics; it must still surface the truth about the asset.
-        let unchecked = try await StudioMediaSourceLoader.load(
-            asset: asset(at: url),
-            requireAllSyncSamples: false
-        )
-        XCTAssertFalse(unchecked.allSamplesAreSyncSamples)
     }
 
     // MARK: - Failure modes
