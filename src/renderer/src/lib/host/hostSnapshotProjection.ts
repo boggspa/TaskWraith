@@ -36,6 +36,7 @@ import type {
   HostHealthProjection,
   HostSnapshot,
   HostApprovalProjection,
+  HostChannelProjection,
   HostMissionProjection,
   HostParticipantProjection,
   HostProviderModelProjection,
@@ -214,6 +215,30 @@ export interface HostProjectedParticipant {
   readonly active: boolean
 }
 
+export interface HostProjectedChannelMember {
+  readonly memberId: string
+  readonly kind: 'human' | 'agent'
+  readonly displayName: string
+  readonly status: 'pending' | 'active'
+}
+
+/** Compact Channel lifecycle only; resource bodies and invite credentials never enter this model. */
+export interface HostProjectedChannel {
+  readonly channelId: string
+  readonly threadId: string
+  readonly ownerMemberId: string
+  readonly title: string
+  readonly status: 'active' | 'closed'
+  readonly availability: 'ready' | 'recovery_blocked'
+  readonly membershipRevision: number
+  readonly memberCount: number
+  readonly messageCount: number
+  readonly updatedAt: number
+  readonly members?: readonly HostProjectedChannelMember[]
+  readonly pendingAdmissionCount?: number
+  readonly pendingHumanReviewCount?: number
+}
+
 /**
  * Host health as Desktop should render it.
  *
@@ -258,6 +283,8 @@ export interface HostProjectedSnapshot {
   readonly questions: readonly HostProjectedQuestion[]
   /** AWAITING approval cards only — never the decided/ledger history. */
   readonly approvals: readonly HostProjectedApproval[]
+  /** Undefined means this Host did not advertise a Channels source. */
+  readonly channels?: readonly HostProjectedChannel[]
   readonly usage: HostProjectedUsage
   /**
    * Wave 5d — the typed `code` of every Host warning, in wire order.
@@ -275,6 +302,7 @@ export interface HostProjectedSnapshot {
     readonly rounds: number
     readonly questions: number
     readonly approvals: number
+    readonly channels?: number
     readonly warnings: number
   }
 }
@@ -472,6 +500,37 @@ function projectParticipant(participant: HostParticipantProjection): HostProject
   }
 }
 
+function projectChannel(channel: HostChannelProjection): HostProjectedChannel {
+  return {
+    channelId: channel.channelId,
+    threadId: channel.threadId,
+    ownerMemberId: channel.ownerMemberId,
+    title: channel.title,
+    status: channel.status,
+    availability: channel.availability,
+    membershipRevision: channel.membershipRevision,
+    memberCount: channel.memberCount,
+    messageCount: channel.messageCount,
+    updatedAt: channel.updatedAt,
+    ...(channel.members
+      ? {
+          members: channel.members.map((member) => ({
+            memberId: member.memberId,
+            kind: member.kind,
+            displayName: member.displayName,
+            status: member.status
+          }))
+        }
+      : {}),
+    ...(channel.pendingAdmissionCount !== undefined
+      ? { pendingAdmissionCount: channel.pendingAdmissionCount }
+      : {}),
+    ...(channel.pendingHumanReviewCount !== undefined
+      ? { pendingHumanReviewCount: channel.pendingHumanReviewCount }
+      : {})
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Snapshot mapper                                                   */
 /* ------------------------------------------------------------------ */
@@ -511,6 +570,7 @@ export function projectHostSnapshot(
     ...(snapshot.routing ? { routing: projectRouting(snapshot.routing) } : {}),
     questions: snapshot.questions.map(projectQuestion),
     approvals: snapshot.approvals.map(projectApproval),
+    ...(snapshot.channels ? { channels: snapshot.channels.map(projectChannel) } : {}),
     usage: projectUsage(snapshot.usage),
     warningCodes: snapshot.warnings.map((warning) => warning.code),
     counts: {
@@ -519,6 +579,7 @@ export function projectHostSnapshot(
       rounds: snapshot.rounds.length,
       questions: snapshot.questions.length,
       approvals: snapshot.approvals.length,
+      ...(snapshot.channels ? { channels: snapshot.channels.length } : {}),
       warnings: snapshot.warnings.length
     }
   }

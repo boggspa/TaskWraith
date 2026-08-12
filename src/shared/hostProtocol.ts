@@ -34,6 +34,8 @@ export const HOST_PROTOCOL_MAX_COLLECTION = 2_000
 export const HOST_PROTOCOL_MAX_DELTAS = 500
 export const HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW = 2_000
 export const HOST_PROTOCOL_MAX_WARNING = 1_000
+/** Channels currently cap live/pending seats at eight members. */
+export const HOST_PROTOCOL_MAX_CHANNEL_MEMBERS = 8
 /** Lowercase SHA-256 hex digest length for command fingerprints on the wire. */
 export const HOST_COMMAND_FINGERPRINT_HEX_LENGTH = 64
 
@@ -57,6 +59,7 @@ export type HostCapability =
   | 'schedules'
   | 'usage'
   | 'artifacts'
+  | 'channels'
   | 'recovery'
   | 'compact-export'
 
@@ -333,6 +336,39 @@ export interface HostArtifactProjection {
   sha256?: string
 }
 
+/** Compact Channel membership metadata. Never carries identity keys or room bindings. */
+export interface HostChannelMemberProjection {
+  memberId: string
+  kind: 'human' | 'agent'
+  displayName: string
+  status: 'pending' | 'active'
+}
+
+/**
+ * Compact multi-human Channel state.
+ *
+ * Message bodies, invite credentials, relay room ids, public keys and human
+ * review bodies deliberately remain on the authenticated Channel resource
+ * API. Host carries only enough state for shared lifecycle and administration.
+ */
+export interface HostChannelProjection {
+  channelId: string
+  /** ChannelStore chatId expressed in Host vocabulary. */
+  threadId: string
+  ownerMemberId: string
+  title: string
+  status: 'active' | 'closed'
+  availability: 'ready' | 'recovery_blocked'
+  membershipRevision: number
+  memberCount: number
+  messageCount: number
+  updatedAt: number
+  /** Omitted when membership detail is unavailable (for example recovery-blocked). */
+  members?: HostChannelMemberProjection[]
+  pendingAdmissionCount?: number
+  pendingHumanReviewCount?: number
+}
+
 /**
  * Wave 5d — stable warning codes.
  *
@@ -391,6 +427,8 @@ export interface HostSnapshot {
   questions: HostQuestionProjection[]
   approvals: HostApprovalProjection[]
   schedules: HostScheduleProjection[]
+  /** Optional until the production Channels source is installed. */
+  channels?: HostChannelProjection[]
   usage: HostUsageObservation
   artifacts: HostArtifactProjection[]
   warnings: HostWarningProjection[]
@@ -479,6 +517,7 @@ export type HostDeltaFamily =
   | 'schedule'
   | 'usage'
   | 'artifact'
+  | 'channel'
   | 'warning'
   | 'recovery'
   | 'health'
@@ -600,6 +639,8 @@ export type HostCommandName =
   | 'question.answer'
   | 'approval.decide'
   | 'ensemble.seat.toggle'
+  | 'channel.member.revoke'
+  | 'channel.close'
   | 'thread.select'
   | 'ping'
 
@@ -797,6 +838,7 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'schedules',
   'usage',
   'artifacts',
+  'channels',
   'recovery',
   'compact-export'
 ] as const
@@ -815,6 +857,8 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select',
   'ping'
 ])
@@ -835,6 +879,7 @@ const HOST_DELTA_FAMILIES = new Set<string>([
   'schedule',
   'usage',
   'artifact',
+  'channel',
   'warning',
   'recovery',
   'health',
@@ -1383,6 +1428,18 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     const approvalArgs = decodeApprovalDecideArguments(args.value)
     if (!approvalArgs.ok) return approvalArgs
     args = { ok: true, value: approvalArgs.value }
+  }
+  if (
+    (value.name === 'channel.member.revoke' || value.name === 'channel.close') &&
+    !isNonEmptyString(target.value.channelId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return { ok: false, error: 'target.channelId is required' }
+  }
+  if (
+    value.name === 'channel.member.revoke' &&
+    !isNonEmptyString(args.value.memberId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return { ok: false, error: 'channel.member.revoke memberId is required' }
   }
   if (value.name === 'receipt.lookup') {
     const hasCommand = isNonEmptyString(target.value.commandId, HOST_PROTOCOL_MAX_ID)
@@ -2416,6 +2473,113 @@ function decodeHostScheduleProjection(
   return { ok: true, value: schedule }
 }
 
+function decodeHostChannelMemberProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostChannelMemberProjection> {
+  const label = `channel member[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.memberId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.memberId is required` }
+  }
+  if (value.kind !== 'human' && value.kind !== 'agent') {
+    return { ok: false, error: `${label}.kind is invalid` }
+  }
+  if (!isNonEmptyString(value.displayName, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.displayName is required` }
+  }
+  if (value.status !== 'pending' && value.status !== 'active') {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  return {
+    ok: true,
+    value: {
+      memberId: value.memberId,
+      kind: value.kind,
+      displayName: value.displayName,
+      status: value.status
+    }
+  }
+}
+
+function decodeHostChannelProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostChannelProjection> {
+  const label = `channels[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.channelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.channelId is required` }
+  }
+  if (!isNonEmptyString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is required` }
+  }
+  if (!isNonEmptyString(value.ownerMemberId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.ownerMemberId is required` }
+  }
+  if (!isNonEmptyString(value.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (value.status !== 'active' && value.status !== 'closed') {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (value.availability !== 'ready' && value.availability !== 'recovery_blocked') {
+    return { ok: false, error: `${label}.availability is invalid` }
+  }
+  for (const field of ['membershipRevision', 'memberCount', 'messageCount', 'updatedAt'] as const) {
+    if (!isNonNegativeInt(value[field])) {
+      return { ok: false, error: `${label}.${field} is invalid` }
+    }
+  }
+  const pendingAdmissionCount = decodeOptionalNonNegativeInt(
+    value.pendingAdmissionCount,
+    `${label}.pendingAdmissionCount`
+  )
+  if (!pendingAdmissionCount.ok) return pendingAdmissionCount
+  const pendingHumanReviewCount = decodeOptionalNonNegativeInt(
+    value.pendingHumanReviewCount,
+    `${label}.pendingHumanReviewCount`
+  )
+  if (!pendingHumanReviewCount.ok) return pendingHumanReviewCount
+
+  let members: HostChannelMemberProjection[] | undefined
+  if (value.members !== undefined) {
+    if (!Array.isArray(value.members)) {
+      return { ok: false, error: `${label}.members must be an array` }
+    }
+    if (value.members.length > HOST_PROTOCOL_MAX_CHANNEL_MEMBERS) {
+      return { ok: false, error: `${label}.members exceeds compact bound` }
+    }
+    members = []
+    for (let memberIndex = 0; memberIndex < value.members.length; memberIndex += 1) {
+      const member = decodeHostChannelMemberProjection(value.members[memberIndex], memberIndex)
+      if (!member.ok) return member
+      members.push(member.value)
+    }
+  }
+
+  const channel: HostChannelProjection = {
+    channelId: value.channelId,
+    threadId: value.threadId,
+    ownerMemberId: value.ownerMemberId,
+    title: value.title,
+    status: value.status,
+    availability: value.availability,
+    membershipRevision: value.membershipRevision as number,
+    memberCount: value.memberCount as number,
+    messageCount: value.messageCount as number,
+    updatedAt: value.updatedAt as number
+  }
+  if (members !== undefined) channel.members = members
+  if (pendingAdmissionCount.value !== undefined) {
+    channel.pendingAdmissionCount = pendingAdmissionCount.value
+  }
+  if (pendingHumanReviewCount.value !== undefined) {
+    channel.pendingHumanReviewCount = pendingHumanReviewCount.value
+  }
+  return { ok: true, value: channel }
+}
+
 function decodeHostArtifactProjection(
   value: unknown,
   index: number
@@ -2557,6 +2721,16 @@ export function decodeHostSnapshot(value: unknown): HostDecodeResult<HostSnapsho
   if (!approvals.ok) return approvals
   const schedules = decodeBoundedArray(value.schedules, 'schedules', decodeHostScheduleProjection)
   if (!schedules.ok) return schedules
+  let channels: HostChannelProjection[] | undefined
+  if (value.channels !== undefined) {
+    const decodedChannels = decodeBoundedArray(
+      value.channels,
+      'channels',
+      decodeHostChannelProjection
+    )
+    if (!decodedChannels.ok) return decodedChannels
+    channels = decodedChannels.value
+  }
   const usage = decodeHostUsageObservation(value.usage)
   if (!usage.ok) return usage
   const artifacts = decodeBoundedArray(value.artifacts, 'artifacts', decodeHostArtifactProjection)
@@ -2590,6 +2764,7 @@ export function decodeHostSnapshot(value: unknown): HostDecodeResult<HostSnapsho
     recovery: recovery.value
   }
   if (routing !== undefined) snapshot.routing = routing
+  if (channels !== undefined) snapshot.channels = channels
 
   const families = assertHostSnapshotFamilies(snapshot)
   if (!families.ok) return families

@@ -929,6 +929,9 @@ import { createHostProductionRoundShadow } from './host/HostProductionRoundShado
 import { createHostProductionScheduleShadow } from './host/HostProductionScheduleShadow'
 import { createHostProductionParticipantShadow } from './host/HostProductionParticipantShadow'
 import { createHostProductionArtifactShadow } from './host/HostProductionArtifactShadow'
+import { createHostProductionChannelAdapter } from './host/HostProductionChannelAdapter'
+import { createHostProjectionBroker } from './host/HostProjectionBroker'
+import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandClient'
 import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
@@ -48864,6 +48867,11 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    const desktopHostBroker = createHostProjectionBroker({
+      userDataPath: app.getPath('userData'),
+      appVersion: app.getVersion()
+    })
+    const hostChannelAdmin = new HostChannelAdminCommandClient({ broker: desktopHostBroker })
     let channelProductionBootstrap: ReturnType<typeof createChannelProductionBootstrap> | null =
       null
     let channelMigrationLegacyWriteGate: PeopleToChannelMigrationLegacyWriteGate | null = null
@@ -48930,6 +48938,7 @@ if (isGeminiMcpBridgeProcess) {
               snapshot
             )
         },
+        hostAdmin: hostChannelAdmin,
         publishToMain: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return
           mainWindow.webContents.send(CHANNEL_IPC_CHANGED_EVENT, event)
@@ -50092,6 +50101,11 @@ if (isGeminiMcpBridgeProcess) {
     // and the bootstrap supervisor registry is process-global, not a
     // cross-process fence.
     const hostChatList = createHostProductionChatListCoalescer(AppStore)
+    const hostChannels = channelProductionBootstrap
+      ? createHostProductionChannelAdapter({
+          getService: () => channelProductionBootstrap?.service ?? null
+        })
+      : undefined
     let hostSupervisor: ReturnType<typeof createHostProductionBootstrap> | undefined
     try {
       hostSupervisor = createHostProductionBootstrap({
@@ -50316,7 +50330,8 @@ if (isGeminiMcpBridgeProcess) {
                 }
               ]
             })
-        })
+        }),
+        ...(hostChannels ? { channels: hostChannels } : {})
       })
     } catch (error) {
       // Construction runs BEFORE `.start()` exists, so the start catch below can
@@ -50336,6 +50351,7 @@ if (isGeminiMcpBridgeProcess) {
       // Guarded: if bootstrap construction ever throws, an unguarded call here
       // would raise a TypeError that masks the original startup failure.
       hostSupervisor?.stopSync()
+      desktopHostBroker.close()
       void simulatorHostService.dispose()
       teardownCanvasSurfacesForWindowClose()
       if (nativeWindowExpirySweepTimer) {
@@ -50933,7 +50949,8 @@ if (isGeminiMcpBridgeProcess) {
     // cannot open the Host socket, so main brokers one snapshot channel.
     registerHostProjectionHandlers({
       userDataPath: app.getPath('userData'),
-      appVersion: app.getVersion()
+      appVersion: app.getVersion(),
+      broker: desktopHostBroker
     })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),

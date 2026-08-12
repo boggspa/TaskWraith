@@ -250,6 +250,20 @@ describe('diffHostSnapshotDomainEffects', () => {
           byteLength: 12
         }
       ],
+      channels: [
+        {
+          channelId: 'channel-1',
+          threadId: 'th-1',
+          ownerMemberId: 'owner-1',
+          title: 'Shared work',
+          status: 'active',
+          availability: 'ready',
+          membershipRevision: 1,
+          memberCount: 1,
+          messageCount: 0,
+          updatedAt: 1
+        }
+      ],
       warnings: [
         {
           warningId: 'w-1',
@@ -288,6 +302,7 @@ describe('diffHostSnapshotDomainEffects', () => {
     after.approvals[0]!.status = 'approved'
     after.schedules[0]!.enabled = false
     after.artifacts[0]!.title = 'patch-v2'
+    after.channels![0]!.messageCount = 1
     after.warnings = []
 
     const result = diffHostSnapshotDomainEffects(before, after)
@@ -307,6 +322,7 @@ describe('diffHostSnapshotDomainEffects', () => {
       'approval:upsert:a-1',
       'schedule:upsert:s-1',
       'artifact:upsert:art-1',
+      'channel:upsert:channel-1',
       'warning:tombstone:w-1'
     ])
 

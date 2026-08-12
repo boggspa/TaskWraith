@@ -21,6 +21,8 @@ const names: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select',
   'ping'
 ]
@@ -73,6 +75,10 @@ function validShape(name: HostCommandName): {
         target: { threadId: 'thread-id' },
         args: { participantId: 'participant-id', enabled: true }
       }
+    case 'channel.member.revoke':
+      return { target: { channelId: 'channel-id' }, args: { memberId: 'member-id' } }
+    case 'channel.close':
+      return { target: { channelId: 'channel-id' }, args: {} }
     case 'question.answer':
       return {
         target: { questionId: 'question-id' },

@@ -63,6 +63,7 @@ const COLLECTION_FAMILIES = new Set<HostDeltaFamily>([
   'approval',
   'schedule',
   'artifact',
+  'channel',
   'warning'
 ])
 
@@ -135,6 +136,8 @@ function entityIdOf(family: HostDeltaFamily, entity: unknown): string | null {
       return typeof record.scheduleId === 'string' ? record.scheduleId : null
     case 'artifact':
       return typeof record.artifactId === 'string' ? record.artifactId : null
+    case 'channel':
+      return typeof record.channelId === 'string' ? record.channelId : null
     case 'warning':
       return typeof record.warningId === 'string' ? record.warningId : null
     default:
@@ -166,6 +169,8 @@ function collectionKey(family: HostDeltaFamily): keyof HostSnapshot | null {
       return 'schedules'
     case 'artifact':
       return 'artifacts'
+    case 'channel':
+      return 'channels'
     case 'warning':
       return 'warnings'
     default:
@@ -317,6 +322,9 @@ function applyCollection(
   const key = collectionKey(delta.family)
   if (!key) return { ok: false, reason: `unknown collection family: ${delta.family}` }
 
+  if (delta.family === 'channel' && working.channels === undefined) {
+    working.channels = []
+  }
   const list = working[key]
   if (!Array.isArray(list)) {
     return { ok: false, reason: `snapshot family ${key} is not an array` }

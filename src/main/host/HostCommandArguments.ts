@@ -324,6 +324,30 @@ function validateApprovalDecide(command: HostCommand): HostDecodeResult<Canonica
   return { ok: true, value: { target: target.value, arguments: args.value } }
 }
 
+function validateChannelMemberRevoke(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'channelId', 'channel.member.revoke')
+  if (!target.ok) return target
+  const keys = Object.keys(command.arguments)
+  if (keys.length !== 1 || keys[0] !== 'memberId') {
+    return fail('channel.member.revoke arguments must be exactly { memberId }')
+  }
+  if (!isNonEmptyString(command.arguments.memberId, HOST_PROTOCOL_MAX_ID)) {
+    return fail('channel.member.revoke memberId is required and bounded')
+  }
+  return {
+    ok: true,
+    value: { target: target.value, arguments: { memberId: command.arguments.memberId } }
+  }
+}
+
+function validateChannelClose(command: HostCommand): HostDecodeResult<CanonicalParts> {
+  const target = exactStringTarget(command.target, 'channelId', 'channel.close')
+  if (!target.ok) return target
+  const args = emptyArguments(command.arguments, 'channel.close')
+  if (!args.ok) return args
+  return { ok: true, value: { target: target.value, arguments: args.value } }
+}
+
 function validatePing(command: HostCommand): HostDecodeResult<CanonicalParts> {
   const target = emptyTarget(command.target, 'ping')
   if (!target.ok) return target
@@ -345,6 +369,8 @@ const HOST_COMMAND_ARGUMENT_VALIDATORS = {
   'question.answer': validateQuestionAnswer,
   'approval.decide': validateApprovalDecide,
   'ensemble.seat.toggle': validateEnsembleSeatToggle,
+  'channel.member.revoke': validateChannelMemberRevoke,
+  'channel.close': validateChannelClose,
   'thread.select': (command) => validateThreadOnlyEmptyArgs(command, 'thread.select'),
   ping: validatePing
 } as const satisfies Record<HostCommandName, CommandShapeValidator>

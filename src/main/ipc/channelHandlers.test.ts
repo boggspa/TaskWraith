@@ -112,6 +112,29 @@ function fixture(
   }
   const service = {
     listChannels: vi.fn(() => channels),
+    inspectChannel: vi.fn((channelId: string) => ({
+      channel: channels.find((candidate) => candidate.channelId === channelId)!,
+      members: [
+        {
+          memberId: `owner-${channelId}`,
+          channelId,
+          kind: 'human' as const,
+          displayName: 'Host',
+          status: 'active' as const,
+          joinedAt: 1
+        },
+        {
+          memberId: 'member-a',
+          channelId,
+          kind: 'human' as const,
+          displayName: 'Member',
+          status: 'active' as const,
+          joinedAt: 2
+        }
+      ],
+      pendingAdmissionCount: 0,
+      pendingHumanReviewCount: 0
+    })),
     readChannel: vi.fn((input: { channelId: string }) => ({
       channel: channels.find((candidate) => candidate.channelId === input.channelId)!,
       members: [
@@ -282,6 +305,17 @@ function fixture(
   })
   const deps: ChannelHandlersDeps = {
     service: service as unknown as ChannelHandlersDeps['service'],
+    hostAdmin: {
+      revokeMember: vi.fn(async () => ({ ok: true as const, receipt: {} as never })),
+      closeChannel: vi.fn(async (channelId: string) => {
+        const target = channels.find((candidate) => candidate.channelId === channelId)
+        if (target) {
+          target.status = 'closed'
+          target.display.status = 'closed'
+        }
+        return { ok: true as const, receipt: {} as never }
+      })
+    },
     getChat,
     resolveSenderScope,
     ...depsOverrides
@@ -461,11 +495,18 @@ describe('registerChannelHandlers', () => {
     })
     expect(revoked).toMatchObject({ ok: true, value: { status: 'revoked' } })
     expect(JSON.stringify(revoked)).not.toContain('identityPublicKey')
+    expect(target.deps.hostAdmin.revokeMember).toHaveBeenCalledWith({
+      channelId: 'channel-a',
+      memberId: 'member-a'
+    })
+    expect(target.service.revokeMember).not.toHaveBeenCalled()
 
     const closed = await target.invoke(CHANNEL_IPC_CHANNELS.close, {
       channelId: 'channel-a'
     })
     expect(closed).toMatchObject({ ok: true, value: { status: 'closed' } })
+    expect(target.deps.hostAdmin.closeChannel).toHaveBeenCalledWith('channel-a')
+    expect(target.service.closeChannel).not.toHaveBeenCalled()
   })
 
   it('projects a recipient-labelled migration handoff only to its owning chat', async () => {

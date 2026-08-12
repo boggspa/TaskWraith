@@ -171,6 +171,28 @@ function baseInput(
         threadId: 'thread-1'
       }
     ],
+    channels: [
+      {
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+        ownerMemberId: 'owner-1',
+        title: 'Shared work',
+        status: 'active',
+        availability: 'ready',
+        membershipRevision: 1,
+        memberCount: 1,
+        messageCount: 0,
+        updatedAt: 65,
+        members: [
+          {
+            memberId: 'owner-1',
+            kind: 'human',
+            displayName: 'Owner',
+            status: 'active'
+          }
+        ]
+      }
+    ],
     usage: {
       availability: 'unavailable',
       confidence: 'unknown',
@@ -228,6 +250,7 @@ describe('HostSnapshotProjector', () => {
     expect(snapshot.questions).toHaveLength(1)
     expect(snapshot.approvals).toHaveLength(1)
     expect(snapshot.schedules).toHaveLength(1)
+    expect(snapshot.channels).toHaveLength(1)
     expect(snapshot.artifacts).toHaveLength(1)
     expect(snapshot.warnings).toHaveLength(1)
     expect(snapshot.routing?.mode).toBe('continuous')

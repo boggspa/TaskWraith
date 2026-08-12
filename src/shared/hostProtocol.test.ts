@@ -995,6 +995,47 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     })
   })
 
+  it('decodes compact optional Channels state and bounds membership detail', () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    snapshot.channels = [
+      {
+        channelId: 'channel-a',
+        threadId: 'thread-a',
+        ownerMemberId: 'owner-a',
+        title: 'Shared work',
+        status: 'active',
+        availability: 'ready',
+        membershipRevision: 2,
+        memberCount: 1,
+        messageCount: 3,
+        updatedAt: 4,
+        members: [
+          {
+            memberId: 'owner-a',
+            kind: 'human',
+            displayName: 'Owner',
+            status: 'active'
+          }
+        ],
+        pendingAdmissionCount: 1,
+        pendingHumanReviewCount: 2
+      }
+    ]
+
+    expect(decodeHostSnapshot(snapshot)).toEqual({ ok: true, value: snapshot })
+
+    snapshot.channels[0]!.members = Array.from({ length: 9 }, (_, index) => ({
+      memberId: `member-${index}`,
+      kind: 'human' as const,
+      displayName: `Member ${index}`,
+      status: 'active' as const
+    }))
+    expect(decodeHostSnapshot(snapshot)).toMatchObject({
+      ok: false,
+      error: 'channels[0].members exceeds compact bound'
+    })
+  })
+
   it('decodes host.snapshot / host.deltas / host.health frames', () => {
     const snapshot = createEmptyHostSnapshot({ generation: 3, cursor: 9 })
     const snapshotFrame = decodeHostSnapshotFrame({

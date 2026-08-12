@@ -25,6 +25,8 @@ const PROTOCOL_COMMAND_NAMES: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select',
   'ping'
 ]
@@ -42,6 +44,8 @@ const EXPECTED_GOVERNED: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select'
 ]
 
@@ -91,6 +95,8 @@ describe('HostCommandRouting', () => {
     ['question.answer', 'governed-mutation'],
     ['approval.decide', 'governed-mutation'],
     ['ensemble.seat.toggle', 'governed-mutation'],
+    ['channel.member.revoke', 'governed-mutation'],
+    ['channel.close', 'governed-mutation'],
     ['thread.select', 'governed-mutation']
   ] as const)('classifies %s as %s', (name, routingClass) => {
     expect(classifyHostCommandName(name)).toBe(routingClass)

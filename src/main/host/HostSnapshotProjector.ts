@@ -10,6 +10,7 @@
 import {
   assertHostSnapshotFamilies,
   encodeHostParticipantEntityId,
+  HOST_PROTOCOL_MAX_CHANNEL_MEMBERS,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_PROTOCOL_MAX_ID,
   HOST_PROTOCOL_MAX_SHORT,
@@ -20,6 +21,8 @@ import {
   HOST_PROJECTION_VERSION,
   type HostApprovalProjection,
   type HostArtifactProjection,
+  type HostChannelMemberProjection,
+  type HostChannelProjection,
   type HostDecodeResult,
   type HostHealthProjection,
   type HostMissionProjection,
@@ -70,6 +73,7 @@ export interface HostSnapshotProjectorInput {
   questions: HostQuestionProjection[]
   approvals: HostApprovalProjection[]
   schedules: HostScheduleProjection[]
+  channels?: HostChannelProjection[]
   usage: HostUsageObservation
   artifacts: HostArtifactProjection[]
   warnings: HostWarningProjection[]
@@ -998,6 +1002,103 @@ function projectSchedule(
   return { ok: true, value: out }
 }
 
+function projectChannelMember(
+  raw: HostChannelMemberProjection,
+  channelIndex: number,
+  memberIndex: number
+): HostDecodeResult<HostChannelMemberProjection> {
+  const label = `channels[${channelIndex}].members[${memberIndex}]`
+  if (!isValidId(raw.memberId)) return { ok: false, error: `${label}.memberId is invalid` }
+  if (raw.kind !== 'human' && raw.kind !== 'agent') {
+    return { ok: false, error: `${label}.kind is invalid` }
+  }
+  if (typeof raw.displayName !== 'string' || raw.displayName.length === 0) {
+    return { ok: false, error: `${label}.displayName is required` }
+  }
+  if (raw.status !== 'pending' && raw.status !== 'active') {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  return {
+    ok: true,
+    value: {
+      memberId: raw.memberId,
+      kind: raw.kind,
+      displayName: truncatePresentation(raw.displayName, HOST_PROTOCOL_MAX_SHORT).text,
+      status: raw.status
+    }
+  }
+}
+
+function projectChannel(
+  raw: HostChannelProjection,
+  index: number
+): HostDecodeResult<HostChannelProjection> {
+  const label = `channels[${index}]`
+  if (!isValidId(raw.channelId)) return { ok: false, error: `${label}.channelId is invalid` }
+  if (!isValidId(raw.threadId)) return { ok: false, error: `${label}.threadId is invalid` }
+  if (!isValidId(raw.ownerMemberId)) {
+    return { ok: false, error: `${label}.ownerMemberId is invalid` }
+  }
+  if (typeof raw.title !== 'string' || raw.title.length === 0) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (raw.status !== 'active' && raw.status !== 'closed') {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (raw.availability !== 'ready' && raw.availability !== 'recovery_blocked') {
+    return { ok: false, error: `${label}.availability is invalid` }
+  }
+  for (const field of ['membershipRevision', 'memberCount', 'messageCount', 'updatedAt'] as const) {
+    if (!isNonNegativeInt(raw[field])) {
+      return { ok: false, error: `${label}.${field} is invalid` }
+    }
+  }
+  if (raw.pendingAdmissionCount !== undefined && !isNonNegativeInt(raw.pendingAdmissionCount)) {
+    return { ok: false, error: `${label}.pendingAdmissionCount is invalid` }
+  }
+  if (raw.pendingHumanReviewCount !== undefined && !isNonNegativeInt(raw.pendingHumanReviewCount)) {
+    return { ok: false, error: `${label}.pendingHumanReviewCount is invalid` }
+  }
+
+  let members: HostChannelMemberProjection[] | undefined
+  if (raw.members !== undefined) {
+    if (!Array.isArray(raw.members)) {
+      return { ok: false, error: `${label}.members must be an array` }
+    }
+    if (raw.members.length > HOST_PROTOCOL_MAX_CHANNEL_MEMBERS) {
+      return { ok: false, error: `${label}.members exceeds compact bound` }
+    }
+    members = []
+    for (let memberIndex = 0; memberIndex < raw.members.length; memberIndex += 1) {
+      const member = projectChannelMember(raw.members[memberIndex]!, index, memberIndex)
+      if (!member.ok) return member
+      members.push(member.value)
+    }
+    members = stableSortById(members, (member) => member.memberId)
+  }
+
+  const out: HostChannelProjection = {
+    channelId: raw.channelId,
+    threadId: raw.threadId,
+    ownerMemberId: raw.ownerMemberId,
+    title: truncatePresentation(raw.title, HOST_PROTOCOL_MAX_SHORT).text,
+    status: raw.status,
+    availability: raw.availability,
+    membershipRevision: raw.membershipRevision,
+    memberCount: raw.memberCount,
+    messageCount: raw.messageCount,
+    updatedAt: raw.updatedAt
+  }
+  if (members !== undefined) out.members = members
+  if (raw.pendingAdmissionCount !== undefined) {
+    out.pendingAdmissionCount = raw.pendingAdmissionCount
+  }
+  if (raw.pendingHumanReviewCount !== undefined) {
+    out.pendingHumanReviewCount = raw.pendingHumanReviewCount
+  }
+  return { ok: true, value: out }
+}
+
 function projectArtifact(
   raw: HostArtifactProjection,
   index: number
@@ -1257,6 +1358,20 @@ export function projectHostSnapshot(
   )
   if (!schedules.ok) return schedules
 
+  let channels: HostChannelProjection[] | undefined
+  if (input.channels !== undefined) {
+    const projectedChannels = projectArrayFamily(
+      input.channels,
+      'channels',
+      projectChannel,
+      (channel) => channel.channelId,
+      truncationWarnings,
+      at
+    )
+    if (!projectedChannels.ok) return projectedChannels
+    channels = projectedChannels.value
+  }
+
   const artifacts = projectArrayFamily(
     input.artifacts,
     'artifacts',
@@ -1316,6 +1431,9 @@ export function projectHostSnapshot(
   if (routing.value !== undefined) {
     snapshot.routing = routing.value
   }
+  if (channels !== undefined) {
+    snapshot.channels = channels
+  }
 
   // Final structural contract + soft zero usage rule.
   const families = assertHostSnapshotFamilies(snapshot)
@@ -1345,6 +1463,7 @@ export function projectHostSnapshot(
     'questions',
     'approvals',
     'schedules',
+    'channels',
     'usage',
     'artifacts',
     'warnings',

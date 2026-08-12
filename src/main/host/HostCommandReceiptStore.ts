@@ -1060,6 +1060,8 @@ const HOST_COMMAND_NAME_SET = new Set<string>([
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select',
   'ping'
 ])

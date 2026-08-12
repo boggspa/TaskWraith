@@ -426,6 +426,14 @@ describe('ChannelProductionService', () => {
       }
     ])
     expect(JSON.stringify(read.members)).not.toMatch(/identityPublicKey|roomId|memberPresentation/)
+    const inspection = fixture.service.inspectChannel(created.channel.channelId)
+    expect(inspection).toMatchObject({
+      channel: { channelId: created.channel.channelId, availability: 'ready' },
+      pendingAdmissionCount: 0,
+      pendingHumanReviewCount: 0
+    })
+    expect(inspection.members).toHaveLength(1)
+    expect(JSON.stringify(inspection)).not.toMatch(/records|identityPublicKey|roomId/)
   })
 
   it('owns safe main queries and host commands without leaking authority fields', async () => {
@@ -822,6 +830,12 @@ describe('ChannelProductionService', () => {
     expect(fixture.service.listChannels()).toMatchObject([
       { channelId: created.channel.channelId, availability: 'recovery_blocked' }
     ])
+    expect(fixture.service.inspectChannel(created.channel.channelId)).toEqual({
+      channel: expect.objectContaining({
+        channelId: created.channel.channelId,
+        availability: 'recovery_blocked'
+      })
+    })
   })
 
   it('enforces and erases durable migrated-human policy on the real member transport', async () => {

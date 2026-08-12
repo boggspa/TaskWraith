@@ -32,6 +32,7 @@
 import type {
   HostApprovalProjection,
   HostArtifactProjection,
+  HostChannelProjection,
   HostHealthProjection,
   HostMissionProjection,
   HostParticipantProjection,
@@ -167,6 +168,11 @@ export interface HostProductionQuestionListPort {
   listQuestions(): HostQuestionProjection[]
 }
 
+/** Optional compact Channels source. Undefined means the source is unavailable. */
+export interface HostProductionChannelListPort {
+  listChannels(): HostChannelProjection[] | undefined
+}
+
 /* ------------------------------------------------------------------ */
 /*  Options                                                           */
 /* ------------------------------------------------------------------ */
@@ -205,6 +211,8 @@ export interface HostProductionSuppliersOptions {
   readonly participants?: HostProductionParticipantListPort
   /** Track4 Mixed — optional canvas/artifact-index shadow. Omitted → honest []. */
   readonly artifacts?: HostProductionArtifactListPort
+  /** Local multi-human Channel metadata; bodies and invite secrets stay resource-only. */
+  readonly channels?: HostProductionChannelListPort
 }
 
 /* ------------------------------------------------------------------ */
@@ -382,6 +390,9 @@ export function createHostProductionSuppliers(
     const artifacts: HostArtifactProjection[] = options.artifacts
       ? options.artifacts.listArtifacts()
       : []
+    const channels: HostChannelProjection[] | undefined = options.channels
+      ? options.channels.listChannels()
+      : undefined
 
     return {
       health: HONEST_HEALTH,
@@ -397,6 +408,7 @@ export function createHostProductionSuppliers(
       schedules,
       usage: HONEST_USAGE,
       artifacts,
+      ...(channels === undefined ? {} : { channels }),
       warnings
     }
   }

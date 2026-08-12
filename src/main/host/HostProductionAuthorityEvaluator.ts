@@ -107,6 +107,8 @@ const MUTATION_COMMANDS_NO_AUTHORITY: ReadonlySet<HostCommandName> = new Set([
   'composer.send',
   'run.cancel',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select'
 ])
 

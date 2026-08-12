@@ -12,6 +12,8 @@ const names: readonly HostCommandName[] = [
   'question.answer',
   'approval.decide',
   'ensemble.seat.toggle',
+  'channel.member.revoke',
+  'channel.close',
   'thread.select',
   'ping'
 ]
@@ -25,6 +27,8 @@ const goldenFingerprints: Record<HostCommandName, string> = {
   'question.answer': '8cb855e78a7f2b24a2de4a3850cc4d79b3df724c9e925839557fa970a93d0324',
   'approval.decide': '078d040867c9612380942bd5511513b9b3cd82252769c37a38302dd19a97806f',
   'ensemble.seat.toggle': '64dc23341670979c912ecef29386489f358cd9477229621ae31b0307c0d70693',
+  'channel.member.revoke': '51a4604f14d895086e0b85c263e6774325d6504ee8e75459f9d8689308894866',
+  'channel.close': '4625fb853cf4ab722a841fedd77642f383578ece976ba99661d6d20ed8a21468',
   'thread.select': 'dd6f5b3acf5c03eaae9f553b8dae1673c105f5ea94ef3ba41dc28e76c26a5960',
   ping: 'd9a4e49d77578533bcb8e34c3449e00d73c7439fdd41be0db373e4c8aac83131'
 }
@@ -54,6 +58,9 @@ function targetFor(name: HostCommandName): Record<string, string> {
     case 'ensemble.seat.toggle':
     case 'thread.select':
       return { threadId: 'thread-id' }
+    case 'channel.member.revoke':
+    case 'channel.close':
+      return { channelId: 'channel-id' }
     case 'question.answer':
       return { questionId: 'question-id' }
     case 'approval.decide':

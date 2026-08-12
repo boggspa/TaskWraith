@@ -134,6 +134,35 @@ struct HostSnapshotCacheTests {
     #expect(applied.participants[0].id == "shared")
   }
 
+  @Test("Channel deltas materialize the optional compact family")
+  func channelDeltaMaterializesOptionalFamily() throws {
+    let snapshot = baseSnapshot()
+    #expect(snapshot.channels == nil)
+    let channel = HostChannelProjection(
+      channelId: "channel-1", threadId: "thread-1",
+      ownerMemberId: "owner-1", title: "Review room",
+      status: .active, availability: .ready,
+      membershipRevision: 1, memberCount: 1, messageCount: 0,
+      updatedAt: 10,
+      members: [
+        HostChannelMemberProjection(
+          memberId: "owner-1", kind: .human,
+          displayName: "Owner", status: .active)
+      ])
+    let delta = HostDeltaEnvelope(
+      generation: 7, cursor: 1, previousCursor: 0,
+      kind: .upsert, family: .channel, entityId: channel.channelId,
+      payload: try payload(channel), at: timestamp(1))
+
+    let result = applyHostSnapshotDeltas(cache: snapshot, deltas: [delta])
+    guard case .applied(let applied, _, _, _) = result else {
+      Issue.record("expected applied, got \(result)")
+      return
+    }
+    #expect(applied.channels == [channel])
+    #expect(snapshot.channels == nil)
+  }
+
   @Test("singletons replace, metadata cannot claim live, and removal resnapshots")
   func singletonRules() throws {
     let snapshot = baseSnapshot()

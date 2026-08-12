@@ -51,6 +51,7 @@ import type {
 } from './AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from './HostAuthority'
 import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
+import { HostChannelCommandExecutor } from './HostChannelCommandExecutor'
 import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
@@ -74,6 +75,7 @@ import {
   type HostProductionApprovalListPort,
   type HostProductionArtifactListPort,
   type HostProductionChatListPort,
+  type HostProductionChannelListPort,
   type HostProductionMissionListPort,
   type HostProductionParticipantListPort,
   type HostProductionProviderListPort,
@@ -82,6 +84,7 @@ import {
   type HostProductionRunListPort,
   type HostProductionScheduleListPort
 } from './HostProductionSuppliers'
+import type { HostChannelAdminPort } from './HostChannelCommandExecutor'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostSessionHostIdentity } from './HostSession'
 import {
@@ -187,6 +190,8 @@ export interface HostProductionBootstrapOptions {
   /** Track4 Mixed — optional family shadows. Omitted → honest empty arrays. */
   readonly participants?: HostProductionParticipantListPort
   readonly artifacts?: HostProductionArtifactListPort
+  /** Compact Channel projection plus owner-only governed administration. */
+  readonly channels?: HostProductionChannelListPort & HostChannelAdminPort
   /**
    * Live Bridge action surface. The root passes its BridgeActionExecutor
    * singleton directly; this module builds the HostBridgeCommandExecutor
@@ -239,6 +244,7 @@ function hostProductionCapabilityOffer(
   if (options.questions) capabilities.push('questions')
   if (options.schedules) capabilities.push('schedules')
   if (options.artifacts) capabilities.push('artifacts')
+  if (options.channels) capabilities.push('channels')
   capabilities.push('compact-export', 'recovery')
   return capabilities
 }
@@ -355,6 +361,14 @@ export function createHostProductionBootstrap(
     throw new Error('HostProductionBootstrap requires artifacts.listArtifacts to be a function')
   }
   if (
+    options.channels !== undefined &&
+    (typeof options.channels.listChannels !== 'function' ||
+      typeof options.channels.revokeMember !== 'function' ||
+      typeof options.channels.closeChannel !== 'function')
+  ) {
+    throw new Error('HostProductionBootstrap requires a complete channels port')
+  }
+  if (
     !options.host ||
     typeof options.host.hostId !== 'string' ||
     options.host.hostId.length === 0 ||
@@ -387,7 +401,8 @@ export function createHostProductionBootstrap(
     ...(options.rounds ? { rounds: options.rounds } : {}),
     ...(options.schedules ? { schedules: options.schedules } : {}),
     ...(options.participants ? { participants: options.participants } : {}),
-    ...(options.artifacts ? { artifacts: options.artifacts } : {})
+    ...(options.artifacts ? { artifacts: options.artifacts } : {}),
+    ...(options.channels ? { channels: options.channels } : {})
   })
   const authorityEvaluator = createHostProductionAuthorityEvaluator()
   const contextResolvers = createHostProductionContextResolvers(options.contextSources)
@@ -402,8 +417,19 @@ export function createHostProductionBootstrap(
     resolvers: contextResolvers,
     ...(options.nowMs ? { nowMs: options.nowMs } : {})
   })
-  const commandExecutor: AppStoreHostAuthorityExecutor = (command, context) =>
-    bridgeExecutor.execute(command, context)
+  const channelExecutor = options.channels ? new HostChannelCommandExecutor(options.channels) : null
+  const commandExecutor: AppStoreHostAuthorityExecutor = (command, context) => {
+    if (command.name === 'channel.member.revoke' || command.name === 'channel.close') {
+      return channelExecutor
+        ? channelExecutor.execute(command, context)
+        : {
+            status: 'failed',
+            errorCode: 'host_unavailable',
+            errorMessage: 'Channels service is unavailable'
+          }
+    }
+    return bridgeExecutor.execute(command, context)
+  }
 
   /* ---- 2. healthProvider circularity ---- */
   // The supervisor owns the honest health projection (it alone knows whether

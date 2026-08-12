@@ -160,6 +160,30 @@ const COLLECTION_CASES: Array<{
     }
   },
   {
+    family: 'channel',
+    entityId: 'channel-1',
+    payload: {
+      channelId: 'channel-1',
+      threadId: 'th-1',
+      ownerMemberId: 'owner-1',
+      title: 'Shared work',
+      status: 'active',
+      availability: 'ready',
+      membershipRevision: 1,
+      memberCount: 1,
+      messageCount: 0,
+      updatedAt: 7,
+      members: [
+        {
+          memberId: 'owner-1',
+          kind: 'human',
+          displayName: 'Owner',
+          status: 'active'
+        }
+      ]
+    }
+  },
+  {
     family: 'warning',
     entityId: 'w-1',
     payload: {

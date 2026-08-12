@@ -240,6 +240,48 @@ describe('projectHostSnapshot · bounded content', () => {
     expect(result.generation).toBe(3)
     expect(result.cursor).toBe(42)
   })
+
+  it('projects compact Channels without resource credentials or authority fields', () => {
+    const result = projectHostSnapshot(
+      snapshot({
+        channels: [
+          {
+            channelId: 'channel-a',
+            threadId: 'thread-a',
+            ownerMemberId: 'owner-a',
+            title: 'Shared work',
+            status: 'active',
+            availability: 'ready',
+            membershipRevision: 2,
+            memberCount: 2,
+            messageCount: 3,
+            updatedAt: 4,
+            members: [
+              {
+                memberId: 'member-a',
+                kind: 'human',
+                displayName: 'Alex',
+                status: 'active',
+                identityPublicKey: 'must-not-project'
+              } as never
+            ],
+            inviteToken: 'must-not-project',
+            roomId: 'must-not-project'
+          } as never
+        ]
+      }),
+      'live'
+    )
+
+    expect(result.channels).toMatchObject([
+      {
+        channelId: 'channel-a',
+        members: [{ memberId: 'member-a', displayName: 'Alex' }]
+      }
+    ])
+    expect(result.counts.channels).toBe(1)
+    expect(JSON.stringify(result.channels)).not.toMatch(/inviteToken|roomId|identityPublicKey/)
+  })
 })
 
 /* ------------------------------------------------------------------ */

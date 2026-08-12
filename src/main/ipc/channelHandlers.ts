@@ -50,6 +50,10 @@ import {
 } from '../collaboration/PeopleToChannelMigrationHandoffService'
 import { ChannelError } from '../collaboration/ChannelStore'
 import type { ChatRecord } from '../store/types'
+import type {
+  HostChannelAdminCommandClient,
+  HostChannelAdminCommandResult
+} from '../host/HostChannelAdminCommandClient'
 
 const MAX_IDENTIFIER_LENGTH = 512
 const MAX_DISPLAY_NAME_LENGTH = 120
@@ -81,17 +85,17 @@ export interface ChannelHandlersDeps {
   service: Pick<
     ChannelProductionService,
     | 'listChannels'
+    | 'inspectChannel'
     | 'readChannel'
     | 'listAudit'
     | 'createChannel'
     | 'issueInvite'
     | 'appendHost'
-    | 'revokeMember'
     | 'listHumanReviews'
     | 'approveHumanReview'
     | 'denyHumanReview'
-    | 'closeChannel'
   >
+  hostAdmin: Pick<HostChannelAdminCommandClient, 'revokeMember' | 'closeChannel'>
   getChat: (chatId: string) => Pick<ChatRecord, 'appChatId' | 'title' | 'archived'> | null
   resolveSenderScope: (event: IpcMainInvokeEvent) => ChannelIpcSenderScope
   /** Optional until the migration bootstrap has constructed its handoff authority. */
@@ -109,6 +113,36 @@ class ChannelIpcBoundaryError extends Error {
   ) {
     super(message)
     this.name = 'ChannelIpcBoundaryError'
+  }
+}
+
+function throwHostAdminFailure(
+  result: Extract<HostChannelAdminCommandResult, { ok: false }>
+): never {
+  switch (result.code) {
+    case 'protocol_unsupported':
+    case 'human_only':
+    case 'not_member':
+    case 'identity_mismatch':
+    case 'revoked':
+    case 'quota_exceeded':
+    case 'policy_denied':
+    case 'idempotency_conflict':
+    case 'invalid_cursor':
+    case 'resync_required':
+    case 'recovery_blocked':
+    case 'host_unavailable':
+    case 'channel_closed':
+      throw new ChannelError(result.code, result.message)
+    case 'host_denied':
+    case 'host_cancelled':
+    case 'host_conflict':
+    case 'host_command_pending':
+      throw new ChannelError('policy_denied', result.message)
+    case 'host_indeterminate':
+      throw new ChannelError('recovery_blocked', result.message)
+    default:
+      throw new ChannelError('host_unavailable', 'Host Channel authority is unavailable')
   }
 }
 
@@ -576,6 +610,9 @@ export function registerChannelHandlers(
   if (
     !deps ||
     !deps.service ||
+    !deps.hostAdmin ||
+    typeof deps.hostAdmin.revokeMember !== 'function' ||
+    typeof deps.hostAdmin.closeChannel !== 'function' ||
     typeof deps.getChat !== 'function' ||
     typeof deps.resolveSenderScope !== 'function' ||
     (deps.migrationHandoff !== undefined &&
@@ -753,7 +790,13 @@ export function registerChannelHandlers(
       if (input.memberId === channel.ownerMemberId) {
         throw new ChannelError('protocol_unsupported', 'The Channel owner cannot be revoked')
       }
-      return projectMember(await deps.service.revokeMember(input))
+      const member = deps.service
+        .inspectChannel(input.channelId)
+        .members?.find((candidate) => candidate.memberId === input.memberId)
+      if (!member) throw new ChannelError('not_member', 'Channel member was not found')
+      const result = await deps.hostAdmin.revokeMember(input)
+      if (!result.ok) throwHostAdminFailure(result)
+      return projectMember({ ...member, status: 'revoked' })
     })
   )
 
@@ -791,7 +834,15 @@ export function registerChannelHandlers(
       const scope = senderScope(event)
       const input = parseCloseInput(value)
       requireOwnedChannel(scope, input.channelId)
-      return projectChannel(await deps.service.closeChannel(input.channelId))
+      const result = await deps.hostAdmin.closeChannel(input.channelId)
+      if (!result.ok) throwHostAdminFailure(result)
+      const channel = deps.service
+        .listChannels()
+        .find((candidate) => candidate.channelId === input.channelId)
+      if (!channel || channel.status !== 'closed') {
+        throw new ChannelError('recovery_blocked', 'Closed Channel state was not observable')
+      }
+      return projectChannel(channel)
     })
   )
 

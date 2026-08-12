@@ -398,6 +398,43 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
     ])
   })
 
+  it('advertises Channels only with a real port and routes its commands outside Bridge', async () => {
+    const closeChannel = vi.fn(async (channelId: string) => ({
+      ok: true as const,
+      channel: { channelId, status: 'closed' as const }
+    }))
+    const { compositionInput } = captureSupervisorInput({
+      channels: {
+        listChannels: () => [],
+        revokeMember: vi.fn(),
+        closeChannel
+      }
+    })
+    expect(compositionInput.hostCapabilityOffer).toContain('channels')
+
+    const actor = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+    await expect(
+      compositionInput.commandExecutor(
+        {
+          type: 'host.command',
+          protocolVersion: 2,
+          commandId: '11111111-1111-4111-8111-111111111111',
+          idempotencyKey: 'channel-close-1',
+          actor,
+          name: 'channel.close',
+          target: { channelId: 'channel-a' },
+          arguments: {},
+          issuedAt: '2026-08-12T20:00:00.000Z'
+        },
+        {
+          actor,
+          client: { clientId: 'client-1', clientClass: 'desktop', clientVersion: 'test' }
+        }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(closeChannel).toHaveBeenCalledWith('channel-a')
+  })
+
   it('wires canonical thread offers from the same live context source as composer validation', async () => {
     const getChat = vi.fn((threadId: string) =>
       threadId === 'thread-1'

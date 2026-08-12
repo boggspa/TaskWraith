@@ -234,6 +234,12 @@ private func mutateHostSnapshot(
     outcome = mutateCollection(&snapshot.schedules, delta: delta) { $0.scheduleId }
   case .artifact:
     outcome = mutateCollection(&snapshot.artifacts, delta: delta) { $0.artifactId }
+  case .channel:
+    var channels = snapshot.channels ?? []
+    outcome = mutateCollection(&channels, delta: delta) { $0.channelId }
+    if case .applied = outcome {
+      snapshot.channels = channels
+    }
   case .warning:
     outcome = mutateCollection(&snapshot.warnings, delta: delta) { $0.warningId }
   case .health:

@@ -35,6 +35,7 @@ import {
   encodeHostProviderEntityId,
   type HostApprovalProjection,
   type HostArtifactProjection,
+  type HostChannelProjection,
   type HostDeltaFamily,
   type HostMissionProjection,
   type HostParticipantProjection,
@@ -117,6 +118,7 @@ const FAMILY_ORDER: readonly DiffFamily[] = [
   'schedule',
   'usage',
   'artifact',
+  'channel',
   'warning',
   'recovery',
   'health'
@@ -377,6 +379,8 @@ function collectionItems(family: CollectionFamily, snapshot: HostSnapshot): read
       return snapshot.schedules
     case 'artifact':
       return snapshot.artifacts
+    case 'channel':
+      return snapshot.channels ?? []
     case 'warning':
       return snapshot.warnings
     default: {
@@ -456,6 +460,9 @@ function entityIdOf(
       break
     case 'artifact':
       raw = (entity as HostArtifactProjection).artifactId
+      break
+    case 'channel':
+      raw = (entity as HostChannelProjection).channelId
       break
     case 'warning':
       raw = (entity as HostWarningProjection).warningId

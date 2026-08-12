@@ -174,6 +174,7 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
       hostIdentityPublicKey: vi.fn(() => 'public-key'),
       refreshRelayRooms: vi.fn(() => 0),
       listChannels: vi.fn(() => channels as never),
+      inspectChannel: vi.fn(),
       readChannel: vi.fn(),
       inspectAgentSeat: vi.fn(),
       inspectChannelAgentSeats: vi.fn(() => []),
@@ -232,6 +233,10 @@ function harness(overrides: Partial<ChannelProductionBootstrapOptions> = {}): {
     publishToChat,
     agentManagement: defaultAgentManagement,
     agentExecution: agentExecution(),
+    hostAdmin: {
+      revokeMember: vi.fn(async () => ({ ok: true as const, receipt: {} as never })),
+      closeChannel: vi.fn(async () => ({ ok: true as const, receipt: {} as never }))
+    },
     logger,
     ...optionOverrides,
     createService: (options) => {

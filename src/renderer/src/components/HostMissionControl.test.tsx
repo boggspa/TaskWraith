@@ -314,6 +314,42 @@ describe('HostMissionControl', () => {
     expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Cancel run<\/button>/)
   })
 
+  it('renders compact Channel lifecycle and governed owner controls', () => {
+    const source = missionFixture()
+    source.channels = [
+      {
+        channelId: 'channel-a',
+        threadId: 'thread-a',
+        ownerMemberId: 'owner-a',
+        title: 'Shared work',
+        status: 'active',
+        availability: 'ready',
+        membershipRevision: 2,
+        memberCount: 2,
+        messageCount: 3,
+        updatedAt: 4,
+        members: [
+          { memberId: 'owner-a', kind: 'human', displayName: 'Owner', status: 'active' },
+          { memberId: 'member-a', kind: 'human', displayName: 'Alex', status: 'active' },
+          { memberId: 'agent-a', kind: 'agent', displayName: 'Worker', status: 'active' }
+        ]
+      }
+    ]
+    const commands = new HostCommandController({
+      client: { submitAndResolve: vi.fn(), decideApproval: vi.fn() }
+    })
+
+    const state = stateFromSnapshot(source)
+    expect(projectHostMissionControl(state).channels).toHaveLength(1)
+    const markup = renderToStaticMarkup(<HostMissionControl state={state} commands={commands} />)
+    expect(markup).toContain('Channels')
+    expect(markup).toContain('Shared work')
+    expect(markup).toContain('2 members · 3 messages')
+    expect(markup).toContain('Revoke Alex')
+    expect(markup).toContain('Close Channel')
+    expect(markup).not.toContain('Revoke Worker')
+  })
+
   it('disables governed mutations when the projection is cached', () => {
     const source = missionFixture()
     source.runs = [

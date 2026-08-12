@@ -7,6 +7,8 @@ import type {
 } from '../lib/host/HostCommandController'
 import type {
   HostProjectedMission,
+  HostProjectedChannel,
+  HostProjectedChannelMember,
   HostProjectedParticipant,
   HostProjectedQuestion,
   HostProjectedRound,
@@ -28,6 +30,7 @@ export interface HostMissionControlModel {
   readonly runs: readonly HostProjectedRun[]
   readonly questionReceipts: readonly HostProjectedQuestion[]
   readonly participantGroups: readonly HostMissionControlParticipantGroup[]
+  readonly channels?: readonly HostProjectedChannel[]
   readonly activeMissionCount: number
   readonly participantCount: number
 }
@@ -121,6 +124,7 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
     runs: projection.runs,
     questionReceipts,
     participantGroups,
+    ...(projection.channels ? { channels: projection.channels } : {}),
     activeMissionCount: missions.filter((mission) => mission.status === 'active').length,
     participantCount: projection.participants.length
   }
@@ -168,7 +172,7 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
   const model = projectHostMissionControl(state)
   const summary = `${model.activeMissionCount} active · ${model.participantCount} participant${
     model.participantCount === 1 ? '' : 's'
-  }`
+  }${model.channels ? ` · ${model.channels.length} channel${model.channels.length === 1 ? '' : 's'}` : ''}`
   const runById = new Map(model.runs.map((run) => [run.runId, run]))
   const activeRunThreadIds = [
     ...new Set(
@@ -190,6 +194,23 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
       name: 'ensemble.seat.toggle',
       target: { threadId: participant.threadId },
       arguments: { participantId: participant.id, enabled: !participant.enabled }
+    })
+  }
+
+  const submitChannelClose = (channel: HostProjectedChannel): void => {
+    if (!commands || !canMutate) return
+    void commands.submit({ name: 'channel.close', target: { channelId: channel.channelId } })
+  }
+
+  const submitChannelMemberRevoke = (
+    channel: HostProjectedChannel,
+    member: HostProjectedChannelMember
+  ): void => {
+    if (!commands || !canMutate) return
+    void commands.submit({
+      name: 'channel.member.revoke',
+      target: { channelId: channel.channelId },
+      arguments: { memberId: member.memberId }
     })
   }
 
@@ -297,6 +318,73 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
                     </div>
                   ))}
                 </div>
+              </section>
+            ) : null}
+
+            {model.channels !== undefined ? (
+              <section
+                className="host-mission-control-section"
+                aria-labelledby="host-channels-title"
+              >
+                <h3 id="host-channels-title">Channels</h3>
+                {model.channels.length === 0 ? (
+                  <div className="host-mission-control-empty">No shared Channels yet.</div>
+                ) : (
+                  <div className="host-mission-control-timeline">
+                    {model.channels.map((channel) => (
+                      <article
+                        className="host-mission-control-command-card"
+                        key={channel.channelId}
+                      >
+                        <span className="host-mission-control-row-copy">
+                          <strong>{channel.title}</strong>
+                          <span>
+                            {channel.status} · {channel.memberCount} members ·{' '}
+                            {channel.messageCount} messages
+                            {channel.availability === 'recovery_blocked'
+                              ? ' · recovery blocked'
+                              : ''}
+                          </span>
+                        </span>
+                        {channel.members
+                          ?.filter(
+                            (member) =>
+                              member.kind === 'human' &&
+                              member.status === 'active' &&
+                              member.memberId !== channel.ownerMemberId
+                          )
+                          .map((member) => (
+                            <button
+                              type="button"
+                              className="is-danger"
+                              disabled={
+                                !canMutate ||
+                                commandState.busy ||
+                                channel.availability !== 'ready' ||
+                                channel.status !== 'active'
+                              }
+                              key={member.memberId}
+                              onClick={() => submitChannelMemberRevoke(channel, member)}
+                            >
+                              Revoke {member.displayName}
+                            </button>
+                          ))}
+                        {channel.status === 'active' ? (
+                          <button
+                            type="button"
+                            className="is-danger"
+                            disabled={
+                              !canMutate || commandState.busy || channel.availability !== 'ready'
+                            }
+                            onClick={() => submitChannelClose(channel)}
+                          >
+                            Close Channel
+                          </button>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                )}
               </section>
             ) : null}
 

@@ -12,12 +12,12 @@ import Testing
 
 @testable import TaskWraithKit
 
-@Suite("HostProtocol decode — all 13 families")
+@Suite("HostProtocol decode — all compact families")
 struct HostProtocolDecodeTests {
 
     // ── Full snapshot round-trip ────────────────────────────────────────
 
-    @Test("complete snapshot with all 13 families decodes and round-trips")
+    @Test("complete snapshot with all compact families decodes and round-trips")
     func completeSnapshotRoundTrip() throws {
         let snapshot = makeFullSnapshot()
         let data = try JSONEncoder().encode(snapshot)
@@ -87,6 +87,11 @@ struct HostProtocolDecodeTests {
         // Privacy: artifact body bytes are never included
         #expect(decoded.artifacts[0].sha256 == "abc123def456")
 
+        // Channels
+        #expect(decoded.channels?.count == 1)
+        #expect(decoded.channels?[0].members?.count == 2)
+        #expect(decoded.channels?[0].pendingAdmissionCount == 1)
+
         // Warnings
         #expect(decoded.warnings.count == 1)
         #expect(decoded.warnings[0].code == "provider_source_not_ready")
@@ -107,6 +112,37 @@ struct HostProtocolDecodeTests {
             return
         }
         #expect(decoded.generation == 42)
+    }
+
+    @Test("Channel projection is optional, bounded, and fail-closed")
+    func channelProjectionBounds() throws {
+        let withoutChannels = createEmptyHostSnapshot(generation: 0, cursor: 0)
+        let absentResult = decodeHostSnapshot(from: try JSONEncoder().encode(withoutChannels))
+        guard case .ok(let absent) = absentResult else {
+            Issue.record("expected absent Channels to decode, got \(absentResult)")
+            return
+        }
+        #expect(absent.channels == nil)
+
+        let encoded = try JSONEncoder().encode(makeFullSnapshot())
+        var raw = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var channels = try #require(raw["channels"] as? [[String: Any]])
+        let member = try #require(channels[0]["members"] as? [[String: Any]])[0]
+        channels[0]["members"] = Array(
+            repeating: member,
+            count: HostProtocolConstants.maxChannelMembers + 1
+        )
+        raw["channels"] = channels
+        let oversized = decodeHostSnapshot(
+            from: try JSONSerialization.data(withJSONObject: raw)
+        )
+        guard case .error(let message) = oversized else {
+            Issue.record("expected oversized Channel membership to fail")
+            return
+        }
+        #expect(message.contains("members exceeds compact bound"))
     }
 
     @Test("decodeHostSnapshot requires participant thread ownership")
@@ -694,7 +730,7 @@ struct HostProtocolDecodeTests {
 
     // ── Full-family enumeration coverage ────────────────────────────────
 
-    @Test("all 13 families present in snapshot type")
+    @Test("all compact families present in snapshot type")
     func allFamiliesPresent() throws {
         let snapshot = createEmptyHostSnapshot(generation: 0, cursor: 0)
         // Every family array / value is present (not nil/optional except routing)
@@ -711,10 +747,12 @@ struct HostProtocolDecodeTests {
         _ = snapshot.schedules
         _ = snapshot.usage
         _ = snapshot.artifacts
+        _ = snapshot.channels
         _ = snapshot.warnings
         _ = snapshot.recovery
-        // routing is the only optional family (correctly matches protocol)
+        // Routing and Channels are capability-dependent optional families.
         #expect(snapshot.routing == nil)
+        #expect(snapshot.channels == nil)
     }
 
     @Test("JSONAny round-trips all variants")
@@ -826,6 +864,23 @@ struct HostProtocolDecodeTests {
                     threadId: "thread-1", title: "chart.png",
                     createdAt: 1_700_000_400,
                     byteLength: 2048, sha256: "abc123def456")
+            ],
+            channels: [
+                HostChannelProjection(
+                    channelId: "channel-1", threadId: "thread-1",
+                    ownerMemberId: "human-owner", title: "Release room",
+                    status: .active, availability: .ready,
+                    membershipRevision: 3, memberCount: 2, messageCount: 14,
+                    updatedAt: 1_700_000_450,
+                    members: [
+                        HostChannelMemberProjection(
+                            memberId: "human-owner", kind: .human,
+                            displayName: "Owner", status: .active),
+                        HostChannelMemberProjection(
+                            memberId: "human-pending", kind: .human,
+                            displayName: "Reviewer", status: .pending),
+                    ],
+                    pendingAdmissionCount: 1, pendingHumanReviewCount: 0)
             ],
             warnings: [
                 HostWarningProjection(

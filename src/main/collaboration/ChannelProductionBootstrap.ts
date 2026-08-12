@@ -30,6 +30,7 @@ import {
 import type { ChannelAgentIdentitySafeStorage } from './ChannelAgentIdentityStore'
 import type { PeopleToChannelMigrationAdmissionAuthority } from './PeopleToChannelMigrationAdmissionAuthority'
 import type { PeopleToChannelMigrationHandoffService } from './PeopleToChannelMigrationHandoffService'
+import type { HostChannelAdminCommandClient } from '../host/HostChannelAdminCommandClient'
 
 export interface ChannelProductionRelaySources {
   getEmbeddedRelayPort: () => number | null | undefined
@@ -63,6 +64,7 @@ export interface ChannelProductionBootstrapOptions {
   publishToChat: (chatId: string, event: ChannelIpcChangeEvent) => void
   agentManagement: ChannelProductionAgentManagementOptions
   agentExecution: ChannelProductionAgentRuntimeOptions
+  hostAdmin: Pick<HostChannelAdminCommandClient, 'revokeMember' | 'closeChannel'>
   socketFactory?: TransportSocketFactory
   logger?: (line: string) => void
   /** Constructed by the migration startup owner before this bootstrap starts serving IPC. */
@@ -188,6 +190,13 @@ export function createChannelProductionBootstrap(
     throw new Error('ChannelProductionBootstrap requires renderer publication ports')
   }
   if (
+    !options.hostAdmin ||
+    typeof options.hostAdmin.revokeMember !== 'function' ||
+    typeof options.hostAdmin.closeChannel !== 'function'
+  ) {
+    throw new Error('ChannelProductionBootstrap requires Host Channel administration')
+  }
+  if (
     !options.agentManagement ||
     typeof options.agentManagement.getSettings !== 'function' ||
     typeof options.agentManagement.providerAllowed !== 'function' ||
@@ -302,6 +311,7 @@ export function createChannelProductionBootstrap(
       try {
         registration = registerChannelHandlers(options.ipc, {
           service,
+          hostAdmin: options.hostAdmin,
           getChat: options.getChat,
           resolveSenderScope,
           ...(options.migrationHandoff ? { migrationHandoff: options.migrationHandoff } : {})

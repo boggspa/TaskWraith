@@ -152,8 +152,8 @@ describe('HostProductionAuthorityEvaluator import isolation', () => {
 /* ------------------------------------------------------------------ */
 
 describe('HostProductionAuthorityEvaluator exhaustive command table', () => {
-  it('catalogue contains exactly 10 HostCommandNames', () => {
-    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(10)
+  it('catalogue contains exactly 12 HostCommandNames', () => {
+    expect(HOST_PRODUCTION_AUTHORITY_EVALUATOR_CATALOGUE).toHaveLength(12)
   })
 
   it('every classified command is covered by exactly one set', () => {

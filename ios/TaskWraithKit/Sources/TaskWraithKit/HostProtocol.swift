@@ -34,6 +34,7 @@ public enum HostProtocolConstants {
     public static let maxDeltas = 500
     public static let maxTranscriptPreview = 2_000
     public static let maxWarning = 1_000
+    public static let maxChannelMembers = 8
     public static let commandFingerprintHexLength = 64
     public static let questionAnswerMaxChars = 8_000
     public static let questionDismissMessageMaxChars = 1_000
@@ -53,6 +54,7 @@ public enum HostCapability: String, Codable, Sendable, CaseIterable {
     case bootstrap
     case snapshot
     case deltas
+    case modelOffers = "model-offers"
     case commands
     case receipts
     case health
@@ -63,14 +65,15 @@ public enum HostCapability: String, Codable, Sendable, CaseIterable {
     case schedules
     case usage
     case artifacts
+    case channels
     case recovery
     case compactExport = "compact-export"
 
     /// Stable capability order matching TS `HOST_CAPABILITY_ORDER`.
     public static let ordered: [HostCapability] = [
-        .bootstrap, .snapshot, .deltas, .commands, .receipts,
+        .bootstrap, .snapshot, .deltas, .modelOffers, .commands, .receipts,
         .health, .missions, .ensemble, .approvals, .questions,
-        .schedules, .usage, .artifacts, .recovery, .compactExport
+        .schedules, .usage, .artifacts, .channels, .recovery, .compactExport
     ]
 }
 
@@ -171,6 +174,26 @@ public enum HostApprovalStatus: String, Codable, Sendable, CaseIterable {
     case cancelled
 }
 
+public enum HostChannelStatus: String, Codable, Sendable, CaseIterable {
+    case active
+    case closed
+}
+
+public enum HostChannelAvailability: String, Codable, Sendable, CaseIterable {
+    case ready
+    case recoveryBlocked = "recovery_blocked"
+}
+
+public enum HostChannelMemberKind: String, Codable, Sendable, CaseIterable {
+    case human
+    case agent
+}
+
+public enum HostChannelMemberStatus: String, Codable, Sendable, CaseIterable {
+    case pending
+    case active
+}
+
 public enum HostWarningSeverity: String, Codable, Sendable, CaseIterable {
     case info
     case warning
@@ -199,6 +222,8 @@ public enum HostCommandName: String, Codable, Sendable, CaseIterable {
     case questionAnswer = "question.answer"
     case approvalDecide = "approval.decide"
     case ensembleSeatToggle = "ensemble.seat.toggle"
+    case channelMemberRevoke = "channel.member.revoke"
+    case channelClose = "channel.close"
     case threadSelect = "thread.select"
     case ping
 }
@@ -234,6 +259,7 @@ public enum HostDeltaFamily: String, Codable, Sendable, CaseIterable {
     case schedule
     case usage
     case artifact
+    case channel
     case warning
     case recovery
     case health
@@ -246,7 +272,7 @@ public enum HostAuthorityDecisionKind: String, Codable, Sendable {
     case ask
 }
 
-// ── Projection types (the 13 families + metadata) ─────────────────────────
+// ── Projection types (the compact families + metadata) ────────────────────
 
 public typealias HostGeneration = Int
 public typealias HostCursor = Int
@@ -693,6 +719,65 @@ public struct HostArtifactProjection: Codable, Sendable, Equatable {
     }
 }
 
+// Compact Channel lifecycle and membership metadata. Message bodies, invite
+// credentials, relay room ids and identity keys remain on the resource bridge.
+public struct HostChannelMemberProjection: Codable, Sendable, Equatable {
+    public var memberId: String
+    public var kind: HostChannelMemberKind
+    public var displayName: String
+    public var status: HostChannelMemberStatus
+
+    public init(
+        memberId: String, kind: HostChannelMemberKind,
+        displayName: String, status: HostChannelMemberStatus
+    ) {
+        self.memberId = memberId
+        self.kind = kind
+        self.displayName = displayName
+        self.status = status
+    }
+}
+
+public struct HostChannelProjection: Codable, Sendable, Equatable {
+    public var channelId: String
+    public var threadId: String
+    public var ownerMemberId: String
+    public var title: String
+    public var status: HostChannelStatus
+    public var availability: HostChannelAvailability
+    public var membershipRevision: Int
+    public var memberCount: Int
+    public var messageCount: Int
+    public var updatedAt: Int
+    public var members: [HostChannelMemberProjection]?
+    public var pendingAdmissionCount: Int?
+    public var pendingHumanReviewCount: Int?
+
+    public init(
+        channelId: String, threadId: String, ownerMemberId: String,
+        title: String, status: HostChannelStatus,
+        availability: HostChannelAvailability,
+        membershipRevision: Int, memberCount: Int, messageCount: Int,
+        updatedAt: Int, members: [HostChannelMemberProjection]? = nil,
+        pendingAdmissionCount: Int? = nil,
+        pendingHumanReviewCount: Int? = nil
+    ) {
+        self.channelId = channelId
+        self.threadId = threadId
+        self.ownerMemberId = ownerMemberId
+        self.title = title
+        self.status = status
+        self.availability = availability
+        self.membershipRevision = membershipRevision
+        self.memberCount = memberCount
+        self.messageCount = messageCount
+        self.updatedAt = updatedAt
+        self.members = members
+        self.pendingAdmissionCount = pendingAdmissionCount
+        self.pendingHumanReviewCount = pendingHumanReviewCount
+    }
+}
+
 // Metadata families
 public struct HostWarningProjection: Codable, Sendable, Equatable {
     public var warningId: String
@@ -763,6 +848,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var schedules: [HostScheduleProjection]
     public var usage: HostUsageObservation
     public var artifacts: [HostArtifactProjection]
+    public var channels: [HostChannelProjection]?
     public var warnings: [HostWarningProjection]
     public var recovery: HostRecoveryProjection
 
@@ -787,6 +873,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
         schedules: [HostScheduleProjection],
         usage: HostUsageObservation,
         artifacts: [HostArtifactProjection],
+        channels: [HostChannelProjection]? = nil,
         warnings: [HostWarningProjection],
         recovery: HostRecoveryProjection
     ) {
@@ -810,6 +897,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
         self.schedules = schedules
         self.usage = usage
         self.artifacts = artifacts
+        self.channels = channels
         self.warnings = warnings
         self.recovery = recovery
     }
@@ -1431,6 +1519,24 @@ public func decodeHostSnapshot(from data: Data) -> HostDecodeResult<HostSnapshot
     guard raw["artifacts"] is [[String: Any]] else {
         return .error("artifacts must be an array")
     }
+    if raw.keys.contains("channels") {
+        guard let channels = raw["channels"] as? [[String: Any]] else {
+            return .error("channels must be an array")
+        }
+        if channels.count > HostProtocolConstants.maxCollection {
+            return .error("channels exceeds max collection")
+        }
+        for (channelIndex, channel) in channels.enumerated() {
+            if channel.keys.contains("members") {
+                guard let members = channel["members"] as? [[String: Any]] else {
+                    return .error("channels[\(channelIndex)].members must be an array")
+                }
+                if members.count > HostProtocolConstants.maxChannelMembers {
+                    return .error("channels[\(channelIndex)].members exceeds compact bound")
+                }
+            }
+        }
+    }
     guard raw["warnings"] is [[String: Any]] else {
         return .error("warnings must be an array")
     }
@@ -1591,7 +1697,7 @@ public func createEmptyHostSnapshot(
         participants: [], providers: [],
         routing: nil, questions: [], approvals: [], schedules: [],
         usage: HostUsageObservation(availability: .unavailable),
-        artifacts: [], warnings: [],
+        artifacts: [], channels: nil, warnings: [],
         recovery: HostRecoveryProjection(reopenStatus: .clean)
     )
 }

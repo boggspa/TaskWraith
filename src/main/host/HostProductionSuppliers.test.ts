@@ -144,6 +144,32 @@ describe('HostProductionSuppliers empty state', () => {
     expect(families.workspaces).toEqual([])
   })
 
+  it('omits Channels when no source is installed and preserves measured rows when present', async () => {
+    const absent = await createHostProductionSuppliers({ chatList: makePort([]) })()
+    expect(absent.channels).toBeUndefined()
+
+    const donor = createHostProductionSuppliers({
+      chatList: makePort([]),
+      channels: {
+        listChannels: () => [
+          {
+            channelId: 'channel-1',
+            threadId: 'thread-1',
+            ownerMemberId: 'owner-1',
+            title: 'Shared work',
+            status: 'active',
+            availability: 'ready',
+            membershipRevision: 1,
+            memberCount: 1,
+            messageCount: 0,
+            updatedAt: 1
+          }
+        ]
+      }
+    })
+    expect((await donor()).channels).toHaveLength(1)
+  })
+
   it('returns honest usage (unavailable, never zero tokens)', async () => {
     const donor = createHostProductionSuppliers({ chatList: makePort([]) })
     const families = await donor()

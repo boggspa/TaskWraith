@@ -35,18 +35,24 @@
 
 import { ipcMain } from 'electron'
 
-import type {
-  HostCommand,
-  HostCommandReceipt,
-  HostCursorPosition,
-  HostDeltasSinceResult,
-  HostSnapshot
-} from '../../shared/hostProtocol'
+import type { HostCommand, HostCursorPosition } from '../../shared/hostProtocol'
 import {
-  TASKWRAITH_DESKTOP_HOST_ACTOR,
-  TASKWRAITH_DESKTOP_HOST_CLIENT_ID
-} from '../../shared/hostProtocol'
-import { HostProjectionClient } from '../host/HostProjectionClient'
+  createHostProjectionBroker,
+  type HostProjectionBroker,
+  type HostProjectionClientPort,
+  type HostProjectionCommandResult,
+  type HostProjectionDeltasResult,
+  type HostProjectionReceiptLookupResult,
+  type HostProjectionSnapshotResult
+} from '../host/HostProjectionBroker'
+
+export type {
+  HostProjectionClientPort,
+  HostProjectionCommandResult,
+  HostProjectionDeltasResult,
+  HostProjectionReceiptLookupResult,
+  HostProjectionSnapshotResult
+} from '../host/HostProjectionBroker'
 
 /** Read channel — HostSnapshot. */
 export const HOST_PROJECTION_SNAPSHOT_CHANNEL = 'host-projection:snapshot'
@@ -60,49 +66,6 @@ export const HOST_PROJECTION_COMMAND_SUBMIT_CHANNEL = 'host-projection:command-s
 /** Wave 4.3b — lookup a durable receipt by commandId. */
 export const HOST_PROJECTION_RECEIPT_LOOKUP_CHANNEL = 'host-projection:receipt-lookup'
 
-/**
- * Capability request for Desktop after Wave 4.3b.
- *
- * Host intersects this with its own offer, so asking for less than Host offers
- * is a real narrowing. `commands` and `receipts` are required for mutation
- * cutover; without them Host withholds the request kinds.
- */
-const DESKTOP_HOST_CAPABILITIES = [
-  'bootstrap',
-  'snapshot',
-  'deltas',
-  'health',
-  'commands',
-  'receipts'
-] as const
-
-/** Typed IPC result. Never a thrown Error, never a fabricated snapshot. */
-export type HostProjectionSnapshotResult =
-  | { readonly ok: true; readonly snapshot: HostSnapshot }
-  | { readonly ok: false; readonly error: string }
-
-export type HostProjectionDeltasResult =
-  | { readonly ok: true; readonly result: HostDeltasSinceResult }
-  | { readonly ok: false; readonly error: string }
-
-export type HostProjectionCommandResult =
-  | { readonly ok: true; readonly receipt: HostCommandReceipt }
-  | { readonly ok: false; readonly error: string }
-
-export type HostProjectionReceiptLookupResult =
-  | { readonly ok: true; readonly receipt: HostCommandReceipt }
-  | { readonly ok: false; readonly error: string }
-
-/** The narrow slice of HostProjectionClient this bridge uses. */
-export interface HostProjectionClientPort {
-  connect(): Promise<unknown>
-  getSnapshot(): Promise<{ snapshot: HostSnapshot }>
-  getDeltasSince(position: HostCursorPosition): Promise<{ result: HostDeltasSinceResult }>
-  submitCommand(command: HostCommand): Promise<HostCommandReceipt>
-  lookupReceipt(params: { commandId: string }): Promise<HostCommandReceipt>
-  close(): void
-}
-
 export interface HostProjectionHandlersDeps {
   /** Absolute userData path — the client reads Host discovery from it. */
   readonly userDataPath: string
@@ -110,14 +73,10 @@ export interface HostProjectionHandlersDeps {
   readonly appVersion: string
   /** Client factory seam; defaults to a real HostProjectionClient. */
   readonly createClient?: () => HostProjectionClientPort
+  /** Shared Desktop broker. Production passes one instance to every consumer. */
+  readonly broker?: HostProjectionBroker
   /** ipcMain seam for tests. */
   readonly ipc?: Pick<typeof ipcMain, 'handle' | 'removeHandler'>
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  const text = String(error)
-  return text.length > 0 ? text : 'unknown host projection failure'
 }
 
 function isHostCommandShape(value: unknown): value is HostCommand {
@@ -152,62 +111,17 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
 
   const ipc = deps.ipc ?? ipcMain
 
-  const createClient =
-    deps.createClient ??
-    ((): HostProjectionClientPort =>
-      new HostProjectionClient({
-        client: {
-          clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
-          clientClass: 'desktop',
-          clientVersion: deps.appVersion
-        },
-        capabilities: [...DESKTOP_HOST_CAPABILITIES],
-        userDataPath: deps.userDataPath
-      }) as unknown as HostProjectionClientPort)
-
-  // One client, reused across requests. Rebuilt only after a failure, so a
-  // transient Host restart heals on the next fetch instead of pinning a dead
-  // socket forever.
-  let client: HostProjectionClientPort | null = null
-
-  const discardClient = (): void => {
-    const previous = client
-    client = null
-    if (!previous) return
-    try {
-      previous.close()
-    } catch {
-      // close() is best-effort teardown; a throw here must not mask the
-      // original fetch failure the caller is about to be told about.
-    }
-  }
-
-  const ensureClient = async (): Promise<HostProjectionClientPort> => {
-    if (client) return client
-    const next = createClient()
-    await next.connect()
-    client = next
-    return next
-  }
-
-  const withClient = async <T>(
-    run: (active: HostProjectionClientPort) => Promise<T>
-  ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
-    try {
-      const active = await ensureClient()
-      const value = await run(active)
-      return { ok: true, value }
-    } catch (error) {
-      discardClient()
-      return { ok: false, error: errorText(error) }
-    }
-  }
+  const broker =
+    deps.broker ??
+    createHostProjectionBroker({
+      userDataPath: deps.userDataPath,
+      appVersion: deps.appVersion,
+      ...(deps.createClient ? { createClient: deps.createClient } : {})
+    })
 
   ipc.removeHandler?.(HOST_PROJECTION_SNAPSHOT_CHANNEL)
   ipc.handle(HOST_PROJECTION_SNAPSHOT_CHANNEL, async (): Promise<HostProjectionSnapshotResult> => {
-    const outcome = await withClient((active) => active.getSnapshot())
-    if (!outcome.ok) return { ok: false, error: outcome.error }
-    return { ok: true, snapshot: outcome.value.snapshot }
+    return broker.snapshot()
   })
 
   ipc.removeHandler?.(HOST_PROJECTION_DELTAS_SINCE_CHANNEL)
@@ -224,14 +138,10 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
       ) {
         return { ok: false, error: 'host projection delta lookup requires generation and cursor' }
       }
-      const outcome = await withClient((active) =>
-        active.getDeltasSince({
-          generation: Number(candidate.generation),
-          cursor: Number(candidate.cursor)
-        })
-      )
-      if (!outcome.ok) return { ok: false, error: outcome.error }
-      return { ok: true, result: outcome.value.result }
+      return broker.deltasSince({
+        generation: Number(candidate.generation),
+        cursor: Number(candidate.cursor)
+      })
     }
   )
 
@@ -242,16 +152,7 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
       if (!isHostCommandShape(command)) {
         return { ok: false, error: 'host projection command payload is invalid' }
       }
-      // The sandboxed renderer proposes the action, never its identity. Stamp
-      // the actor from this broker's authenticated transport identity; Host's
-      // socket binding independently derives the matching call context.
-      const authenticatedCommand: HostCommand = {
-        ...command,
-        actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
-      }
-      const outcome = await withClient((active) => active.submitCommand(authenticatedCommand))
-      if (!outcome.ok) return { ok: false, error: outcome.error }
-      return { ok: true, receipt: outcome.value }
+      return broker.submitCommand(command)
     }
   )
 
@@ -266,9 +167,7 @@ export function registerHostProjectionHandlers(deps: HostProjectionHandlersDeps)
       if (typeof commandId !== 'string' || commandId.length === 0) {
         return { ok: false, error: 'host projection receipt lookup requires commandId' }
       }
-      const outcome = await withClient((active) => active.lookupReceipt({ commandId }))
-      if (!outcome.ok) return { ok: false, error: outcome.error }
-      return { ok: true, receipt: outcome.value }
+      return broker.lookupReceipt(commandId)
     }
   )
 }

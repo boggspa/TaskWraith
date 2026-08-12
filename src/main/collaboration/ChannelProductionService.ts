@@ -167,6 +167,15 @@ export interface ChannelProductionReadResult {
   highWaterSequence: number
 }
 
+/** Compact host-owned inspection that deliberately excludes messages and credentials. */
+export interface ChannelProductionChannelInspection {
+  channel: ChannelProductionChannelView
+  /** Omitted when recovery has blocked trustworthy membership reads. */
+  members?: ChannelProductionMemberView[]
+  pendingAdmissionCount?: number
+  pendingHumanReviewCount?: number
+}
+
 export interface ChannelProductionInviteResult {
   channelId: string
   inviteId: string
@@ -210,6 +219,7 @@ export interface ChannelProductionService {
   hostIdentityPublicKey(): string
   refreshRelayRooms(): number
   listChannels(): ChannelProductionChannelView[]
+  inspectChannel(channelId: string): ChannelProductionChannelInspection
   readChannel(args: {
     channelId: string
     resumeAfter: number
@@ -815,6 +825,25 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
   listChannels(): ChannelProductionChannelView[] {
     const state = this.requireRunning()
     return state.store.listChannels().map((channel) => this.channelView(channel, state))
+  }
+
+  inspectChannel(channelId: string): ChannelProductionChannelInspection {
+    const state = this.requireRunning()
+    const channel = state.store.getChannel(channelId)
+    if (!channel) throw new ChannelError('not_member', 'Channel was not found')
+    const view = this.channelView(channel, state)
+    if (view.availability === 'recovery_blocked') {
+      return { channel: view }
+    }
+    return {
+      channel: view,
+      members: state.store
+        .listMembers(channelId)
+        .filter((member) => member.status !== 'revoked')
+        .map(memberView),
+      pendingAdmissionCount: this.listPendingAdmissions(channelId).length,
+      pendingHumanReviewCount: this.listHumanReviews({ channelId }).length
+    }
   }
 
   readChannel(args: {
