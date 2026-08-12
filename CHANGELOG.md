@@ -25,6 +25,7 @@ current boundary; release notes will be compiled when 1.9.5 is tagged.
 
 ### Ensemble and Orchestration
 
+- **Provider-aware starter rosters.** Fresh roster stores now include editable 3-, 4-, 5-, 6-, 8-, and 10-seat panels spanning Orchestrator, Advisor, Boardmaster, Scout, Worker, and Challenger roles. They use only the user's configured providers and those providers' default models, repeat providers as needed, and seed every seat at Accept Edits without Full WS Access, Full Access, or custom overrides.
 - **Boss post-Round 1 handoff rule.** Boss and Captain seats must make explicit routing decisions with `ensemble_yield` or `ensemble_fanout` after the first continuous pass instead of silently dropping the turn.
 - **Fence stale continuous drains.** Fences stale continuous drains and suppresses impossible lane retries during continuous orchestration.
 - **Read-only search inspection.** Read-only search inspection is now allowed under standard permission models.
