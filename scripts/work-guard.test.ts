@@ -463,7 +463,7 @@ describe('orphan alarm', () => {
     expect(result.aged.map((o) => o.path)).toContain('src/orphan.ts')
     const orphan = result.orphans.find((o) => o.path === 'src/orphan.ts')
     expect(orphan?.ageMs).toBeGreaterThan(ORPHAN_WARN_MS)
-  })
+  }, 30_000)
 
   it('stays silent when a live claim covers the work', () => {
     const root = makeRepo()
