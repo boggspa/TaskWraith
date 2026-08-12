@@ -73,6 +73,7 @@ export type StudioSupervisorEvent =
   | { type: 'restart_scheduled'; delayMs: number; restartsInWindow: number }
   | { type: 'restart_cap_exceeded'; restartsInWindow: number }
   | { type: 'clean_exit' }
+  | { type: 'hydration_served'; revision: number }
   | { type: 'decode_error'; code: 'parse_error' | 'line_too_long'; message: string }
   | { type: 'dispatch_failed'; message: string }
   | { type: 'write_failed'; message: string }
@@ -134,6 +135,24 @@ function extractCommittedEdit(
   const result = (response as StudioSuccessResponseMessage).result as StudioApplyEditResult
   const params = candidate.params as StudioApplyEditParams
   return { revision: result.revision, op: params.op }
+}
+
+/**
+ * A served getDocument result is the host-observable hydration boundary. This
+ * diagnostic deliberately says "served", not "recovered": protocol v1 has no
+ * durable proposal model and therefore cannot claim open-proposal replay.
+ */
+function extractHydrationRevision(
+  request: unknown,
+  response: StudioResponseMessage
+): number | null {
+  if (typeof request !== 'object' || request === null) return null
+  if ((request as { method?: unknown }).method !== STUDIO_METHODS.getDocument) return null
+  if (!('result' in response)) return null
+  const result = (response as StudioSuccessResponseMessage).result
+  if (typeof result !== 'object' || result === null) return null
+  const revision = (result as { revision?: unknown }).revision
+  return typeof revision === 'number' && Number.isSafeInteger(revision) ? revision : null
 }
 
 export class StudioCompanionSupervisor {
@@ -358,6 +377,10 @@ export class StudioCompanionSupervisor {
     }
     if (response === null) return
     this.writeToChild(child, response)
+    const hydratedRevision = extractHydrationRevision(value, response)
+    if (hydratedRevision !== null) {
+      this.emit({ type: 'hydration_served', revision: hydratedRevision })
+    }
     const committed = extractCommittedEdit(value, response)
     if (committed !== null) {
       this.writeToChild(child, buildEditCommittedNotification(committed.revision, committed.op))

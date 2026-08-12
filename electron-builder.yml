@@ -174,10 +174,15 @@ mac:
   # compiled by `scripts/build-bridge-daemon.cjs` (run via the
   # `prebuild:bridge-daemon` npm script in all mac build targets).
   # macOS-only: the daemon uses Apple Network framework + Bonjour +
-  # CryptoKit and is not built on other platforms.
+  # CryptoKit and is not built on other platforms. The separate Studio app is
+  # pre-lipo'd by scripts/build-studio-companion.cjs so both temporary apps in
+  # the universal merge contain the same nested bundle. It stays unsigned here;
+  # the parent macOS signing pass seals nested code in final-inside-out order.
   extraResources:
     - from: swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon
       to: bridge/TaskWraithBridgeDaemon
+    - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
+      to: studio/TaskWraith Studio.app
 dmg:
   artifactName: TaskWraith-${version}-universal-mac.${ext}
   # Branded installer window. The visible composition is 660x420 inside a

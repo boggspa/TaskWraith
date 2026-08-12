@@ -587,6 +587,25 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
   const bridgeDaemon = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
+
+  const studioApp = path.join(resourcesDir, 'studio', 'TaskWraith Studio.app')
+  const studioInfoPath = path.join(studioApp, 'Contents', 'Info.plist')
+  const studioExecutable = path.join(studioApp, 'Contents', 'MacOS', 'TaskWraithStudioCompanion')
+  assertDir(studioApp, 'TaskWraith Studio.app')
+  assertFile(studioInfoPath, 'TaskWraith Studio Info.plist')
+  assertFile(studioExecutable, 'TaskWraithStudioCompanion')
+  const studioInfo = readPlistAsJson(studioInfoPath, 'TaskWraith Studio Info.plist')
+  if (studioInfo.CFBundleIdentifier !== 'com.chrisizatt.taskwraith.studio') {
+    fail(
+      `TaskWraith Studio CFBundleIdentifier must be com.chrisizatt.taskwraith.studio, got ${String(studioInfo.CFBundleIdentifier)}.`
+    )
+  }
+  if (studioInfo.CFBundleExecutable !== 'TaskWraithStudioCompanion') {
+    fail(
+      `TaskWraith Studio CFBundleExecutable must be TaskWraithStudioCompanion, got ${String(studioInfo.CFBundleExecutable)}.`
+    )
+  }
+  verifyMachOArchitectures(studioExecutable, expectedArchs, 'TaskWraithStudioCompanion')
 }
 
 function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
@@ -670,6 +689,31 @@ function validateMacAppSignature(packageRoot) {
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
   const bridgeEntitlements = readSignedEntitlements(bridgeDaemon, true)
   assertAppleEventsEntitlement(bridgeEntitlements, 'TaskWraithBridgeDaemon signature')
+
+  const studioApp = path.join(
+    packageRoot,
+    'Contents',
+    'Resources',
+    'studio',
+    'TaskWraith Studio.app'
+  )
+  assertDir(studioApp, 'TaskWraith Studio.app')
+  const studioVerification = spawnSync(
+    '/usr/bin/codesign',
+    ['--verify', '--strict', '--verbose=2', studioApp],
+    { encoding: 'utf8' }
+  )
+  if (studioVerification.status !== 0) {
+    const detail = [studioVerification.stdout, studioVerification.stderr]
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    fail(
+      `TaskWraith Studio code signature is invalid in ${path.relative(repoRoot, packageRoot)}.${
+        detail ? `\n${detail}` : ''
+      }`
+    )
+  }
 
   const requiredEntitlementsByPath = new Map([
     [packageRoot, entitlements],

@@ -9,6 +9,7 @@ import {
   spawnStudioCompanionProcess,
   type StudioSupervisorEvent
 } from './StudioCompanionSupervisor'
+import { STUDIO_METHODS, StudioNdjsonDecoder } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 /**
@@ -46,25 +47,54 @@ async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
   }
 }
 
+interface InteropHarnessOptions {
+  maxRestarts?: number
+  restartDelayMs?: number
+}
+
 interface InteropHarness {
   supervisor: StudioCompanionSupervisor
   events: StudioSupervisorEvent[]
-  child: () => ChildProcess | null
+  children: () => ChildProcess[]
+  methodsBySpawn: () => string[][]
 }
 
-async function createInteropHarness(args: readonly string[]): Promise<InteropHarness> {
+async function createInteropHarness(
+  args: readonly string[],
+  options: InteropHarnessOptions = {}
+): Promise<InteropHarness> {
   const directory = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'studio-swift-interop-'))
   const store = await StudioRevisionStore.open(directory)
   const events: StudioSupervisorEvent[] = []
-  let child: ChildProcess | null = null
+  const children: ChildProcess[] = []
+  const methodsBySpawn: string[][] = []
   const supervisor = new StudioCompanionSupervisor({
     store,
     spawn: () => {
-      const spawned = spawnStudioCompanionProcess(companionBinaryPath, args)
-      child = spawned as unknown as ChildProcess
+      const spawned = spawnStudioCompanionProcess(
+        companionBinaryPath,
+        args
+      ) as unknown as ChildProcess
+      const decoder = new StudioNdjsonDecoder()
+      const methods: string[] = []
+      children.push(spawned)
+      methodsBySpawn.push(methods)
+      spawned.stdout?.on('data', (chunk: Buffer | string) => {
+        for (const event of decoder.push(chunk)) {
+          if (
+            event.kind === 'message' &&
+            typeof event.value === 'object' &&
+            event.value !== null &&
+            typeof (event.value as { method?: unknown }).method === 'string'
+          ) {
+            methods.push((event.value as { method: string }).method)
+          }
+        }
+      })
       return spawned
     },
-    maxRestarts: 0,
+    maxRestarts: options.maxRestarts ?? 0,
+    restartDelayMs: options.restartDelayMs ?? 10,
     onEvent: (event) => events.push(event)
   })
   cleanups.push(async () => {
@@ -72,7 +102,12 @@ async function createInteropHarness(args: readonly string[]): Promise<InteropHar
     await store.close()
     await fsPromises.rm(directory, { recursive: true, force: true })
   })
-  return { supervisor, events, child: () => child }
+  return {
+    supervisor,
+    events,
+    children: () => children,
+    methodsBySpawn: () => methodsBySpawn
+  }
 }
 
 describe('Swift companion under StudioCompanionSupervisor (interop)', () => {
@@ -88,6 +123,7 @@ describe('Swift companion under StudioCompanionSupervisor (interop)', () => {
       expect(harness.supervisor.state).toBe('stopped')
       expect(harness.supervisor.status().lastExit).toEqual({ code: 0, signal: null })
       expect(harness.events.some((event) => event.type === 'clean_exit')).toBe(true)
+      expect(harness.events).toContainEqual({ type: 'hydration_served', revision: 0 })
       // Any TS<->Swift framing drift would surface here as host-side decode
       // errors on the companion's emitted NDJSON.
       expect(harness.events.filter((event) => event.type === 'decode_error')).toEqual([])
@@ -100,18 +136,59 @@ describe('Swift companion under StudioCompanionSupervisor (interop)', () => {
     async () => {
       const harness = await createInteropHarness([])
       harness.supervisor.start()
-      await until(() => harness.supervisor.state === 'running')
-      // v1 exposes no host-observable hydration signal, so give the local
-      // handshake a moment before EOF; a premature EOF would exit 5 and fail
-      // the code-0 assertion below.
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      await until(() => harness.events.some((event) => event.type === 'hydration_served'), 15000)
       await harness.supervisor.stop()
       expect(harness.supervisor.state).toBe('stopped')
       expect(harness.supervisor.status().lastExit).toEqual({ code: 0, signal: null })
       // Stdin EOF sufficed: no SIGTERM/SIGKILL escalation should have fired.
-      expect(harness.child()?.killed ?? true).toBe(false)
+      expect(harness.children().at(-1)?.killed ?? true).toBe(false)
       expect(harness.events.filter((event) => event.type === 'decode_error')).toEqual([])
     },
     20000
+  )
+
+  it.runIf(hasCompanionBinary)(
+    'restarts the real binary after SIGKILL, re-hydrates, and enforces the cap',
+    async () => {
+      const harness = await createInteropHarness([], { maxRestarts: 1, restartDelayMs: 10 })
+      harness.supervisor.start()
+
+      await until(
+        () => harness.events.filter((event) => event.type === 'hydration_served').length === 1,
+        15000
+      )
+      expect(harness.methodsBySpawn()[0]).toEqual([
+        STUDIO_METHODS.hello,
+        STUDIO_METHODS.getDocument
+      ])
+      expect(harness.children()[0].kill('SIGKILL')).toBe(true)
+
+      await until(
+        () =>
+          harness.children().length === 2 &&
+          harness.events.filter((event) => event.type === 'hydration_served').length === 2,
+        15000
+      )
+      expect(harness.supervisor.state).toBe('running')
+      expect(harness.methodsBySpawn()[1]).toEqual([
+        STUDIO_METHODS.hello,
+        STUDIO_METHODS.getDocument
+      ])
+      expect(harness.events).toContainEqual({
+        type: 'restart_scheduled',
+        delayMs: 10,
+        restartsInWindow: 1
+      })
+      expect(harness.events.filter((event) => event.type === 'decode_error')).toEqual([])
+
+      expect(harness.children()[1].kill('SIGKILL')).toBe(true)
+      await until(() => harness.supervisor.state === 'failed', 15000)
+      expect(harness.children()).toHaveLength(2)
+      expect(harness.events).toContainEqual({
+        type: 'restart_cap_exceeded',
+        restartsInWindow: 1
+      })
+    },
+    30000
   )
 })
