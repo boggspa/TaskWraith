@@ -188,6 +188,7 @@ import {
 import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/transcriptSeat'
 import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
+import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -222,6 +223,7 @@ import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { SeatChangeRow } from './SeatChangeRow'
+import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
@@ -954,6 +956,10 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // never as a foldable one-liner (owner spec: the row collapses with its
     // ROUND, but must not truncate into system-notice stacks).
     !msg.metadata?.seatChange &&
+    // Hop-limit changes have the same transcript standing as seat changes.
+    // Only valid structured payloads are promoted; malformed records keep the
+    // carrier sentence as their plain fallback.
+    !isContinuationHopsChangePayload(msg.metadata?.continuationHopsChange) &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -4209,6 +4215,9 @@ export const TranscriptPanel = memo(
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
+            const isContinuationHopsChange = isContinuationHopsChangePayload(
+              msg.metadata?.continuationHopsChange
+            )
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
@@ -5091,6 +5100,8 @@ export const TranscriptPanel = memo(
                   />
                 ) : msg.metadata?.seatChange ? (
                   <SeatChangeRow key={msg.id} message={msg} />
+                ) : isContinuationHopsChange ? (
+                  <ContinuationHopsChangeRow key={msg.id} message={msg} />
                 ) : systemAutoCollapsible ? (
                   <CollapsedTranscriptRow
                     key={msg.id}

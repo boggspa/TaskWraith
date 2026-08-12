@@ -12129,6 +12129,71 @@
   font-style: italic;
 }
 
+/* Max-handoff-turn changes share the seat row's hop-in, click target, time and
+ * indented "was" line. These rules only supply the numeric event's own
+ * vocabulary; DigitOdometer remains the one animation implementation. */
+.continuation-hops-change-row {
+  gap: 12px;
+}
+
+.continuation-hops-change-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.continuation-hops-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+.continuation-hops-change-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2em;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.continuation-hops-change-actor {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 52%, transparent);
+}
+
+.continuation-hops-change-actor:is(.is-boss, .is-captain) {
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
+}
+
+.continuation-hops-change-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 42%, transparent);
+}
+
+.continuation-hops-change-was .continuation-hops-change-value {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
 :root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row {
   animation: none !important;
 }
