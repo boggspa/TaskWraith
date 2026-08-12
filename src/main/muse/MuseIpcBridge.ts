@@ -11,11 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { MuseExecNormalizedEvent } from './MuseExecJson'
 import { resolveMuseExecSessionId } from './MuseCliArgs'
-import {
-  isMuseCredentialPresent,
-  parseMuseAuthJsonCredential,
-  type MuseProbeBinary
-} from './MuseProbe'
+import { parseMuseAuthJsonCredential, type MuseProbeBinary } from './MuseProbe'
 import {
   runMuseProvider,
   type MuseRunOutcome,
@@ -271,20 +267,47 @@ function failSetup(
   throw new Error(message)
 }
 
-async function resolveApiKeyForStdin(
+interface ResolvedMuseRunCredential {
+  readonly present: boolean
+  readonly apiKey: string | null
+  readonly authJsonText: string | null
+}
+
+async function resolveMuseRunCredential(
   deps: MuseIpcBridgeDeps,
   payload: MuseIpcRunPayload
-): Promise<string | null> {
+): Promise<ResolvedMuseRunCredential> {
   if (typeof payload.museApiKey === 'string' && payload.museApiKey.trim()) {
-    return payload.museApiKey.trim()
+    return { present: true, apiKey: payload.museApiKey.trim(), authJsonText: null }
   }
-  if (deps.readAuthJsonText) {
-    const fromFile = extractMuseMetaApiKey(await deps.readAuthJsonText())
-    if (fromFile) return fromFile
-  }
+
+  // Muse documents META_API_KEY as taking precedence over account login. The
+  // managed seat scrubs the inherited variable, so preserve that precedence by
+  // piping its value through the bounded API-key stdin channel.
   const fromEnv = deps.readMetaApiKeyEnv?.()
-  if (typeof fromEnv === 'string' && fromEnv.trim()) return fromEnv.trim()
-  return null
+  if (typeof fromEnv === 'string' && fromEnv.trim()) {
+    return { present: true, apiKey: fromEnv.trim(), authJsonText: null }
+  }
+
+  let authJsonText: string | null = null
+  if (deps.readAuthJsonText) {
+    authJsonText = await deps.readAuthJsonText()
+    const evidence = parseMuseAuthJsonCredential(authJsonText)
+    if (evidence.credentialKind === 'api-key') {
+      const fromFile = extractMuseMetaApiKey(authJsonText)
+      if (fromFile) return { present: true, apiKey: fromFile, authJsonText: null }
+    }
+    if (evidence.credentialKind === 'oauth' && authJsonText) {
+      return { present: true, apiKey: null, authJsonText }
+    }
+  }
+
+  if (deps.hasInjectedCredential && (await deps.hasInjectedCredential())) {
+    // The injection owner must still place the secret in the run payload. Keep
+    // presence compatibility for callers that inject below this bridge.
+    return { present: true, apiKey: null, authJsonText: null }
+  }
+  return { present: false, apiKey: null, authJsonText: null }
 }
 
 /**
@@ -315,20 +338,11 @@ export async function runMuseProviderFromIpc(
     return
   }
 
-  const credentialPresent = await isMuseCredentialPresent({
-    resolveBinary: deps.resolveBinary,
-    readAuthJsonText: deps.readAuthJsonText,
-    readMetaApiKeyEnv: deps.readMetaApiKeyEnv,
-    hasInjectedCredential: deps.hasInjectedCredential
-  })
-  if (!credentialPresent) {
+  const credential = await resolveMuseRunCredential(deps, payload)
+  if (!credential.present) {
     failSetup(deps, event, payload, MUSE_LOGIN_HINT)
     return
   }
-
-  // Presence was checked without retaining secrets; re-read only to pipe
-  // `--api-key-stdin` into the isolated seat (auth.json is not inherited).
-  const apiKey = await resolveApiKeyForStdin(deps, payload)
 
   let cancelled = false
   const cancel = () => {
@@ -364,7 +378,8 @@ export async function runMuseProviderFromIpc(
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
-      apiKey,
+      apiKey: credential.apiKey,
+      authJsonText: credential.authJsonText,
       spawn: deps.spawn,
       shouldCancel: () => cancelled,
       onEvent: (museEvent) => {

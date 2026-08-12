@@ -462,7 +462,7 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
   })
 
-  it('opens muse login for Meta account sign-in (currently missing → no-op)', async () => {
+  it('opens muse login for Meta account sign-in', async () => {
     const { deps, loginDir } = createDeps()
     const commandFile = join(loginDir, 'muse-login.command')
     registerProviderTerminalHandlers(deps)
@@ -478,6 +478,11 @@ describe('registerProviderTerminalHandlers', () => {
     const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
     expect(script).toContain("'login'")
     expect(script).toMatch(/muse['"]?\s+'login'|bin\/muse' 'login'/)
+    // Regression: the notice used to be embedded in `echo "..."`, so its
+    // Markdown backticks executed `muse login`, `muse logout`, and `muse exec`
+    // as shell command substitutions before the requested action ran.
+    expect(script).toMatch(/printf '%s\\n' 'This opens.*`muse login`/)
+    expect(script).not.toMatch(/echo "[^\n]*`muse login`/)
     expect(deps.openPath).toHaveBeenCalledWith(commandFile)
   })
 
@@ -500,18 +505,40 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.openPath).toHaveBeenCalledWith(join(loginDir, 'muse-logout.command'))
   })
 
-  it('opens the official Muse installer for an explicit upgrade', async () => {
+  it('synchronously upgrades the same Muse launcher TaskWraith resolves', async () => {
     const { deps } = createDeps()
+    deps.resolveCliProviderBinary.mockResolvedValueOnce(
+      createResolved('/Users/test/.local/bin/muse')
+    )
     registerProviderTerminalHandlers(deps)
 
     await expect(handlerFor('provider:open-upgrade-terminal')({}, 'muse')).resolves.toEqual({
       ok: true,
       scope: 'user-owned-provider-setup',
       managedRunReady: false,
-      notice: expect.stringMatching(/muse login|Meta Model API/i)
+      notice: expect.stringMatching(/resolved Muse launcher|updated in place/i)
     })
     const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
-    expect(script).toContain('curl -fsSL https://api.meta.ai/muse-launcher.sh | bash')
+    expect(script).toContain("export MUSE_SYNC_UPDATE='1'")
+    expect(script).toContain("'/Users/test/.local/bin/muse' '--version'")
+    expect(script).not.toContain('muse-launcher.sh | bash')
+  })
+
+  it('installs a missing Muse launcher into ~/.local/bin without piping it to bash', async () => {
+    const { deps } = createDeps()
+    deps.resolveCliProviderBinary.mockResolvedValueOnce(createResolved(null))
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'muse')).resolves.toMatchObject({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      notice: expect.stringMatching(/not found on PATH.*official launcher/i)
+    })
+
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('curl -fsSL https://api.meta.ai/muse-launcher.sh -o "$muse_tmp"')
+    expect(script).toContain('MUSE_LAUNCHER_INSTALL=1 "$muse_dir/muse"')
+    expect(script).not.toContain('muse-launcher.sh | bash')
   })
 })
 

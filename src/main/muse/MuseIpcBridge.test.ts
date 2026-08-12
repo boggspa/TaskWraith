@@ -377,20 +377,72 @@ describe('runMuseProviderFromIpc', () => {
     )
   })
 
-  it('accepts META_API_KEY when auth.json is absent', async () => {
+  it('passes muse login OAuth through as run-local auth.json instead of an API key', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const authJsonText = JSON.stringify({
+      schema_version: 1,
+      providers: {
+        meta: {
+          mechanism: 'oauth',
+          access_token: 'oauth-access-secret',
+          refresh_token: 'oauth-refresh-secret',
+          expires_at: 1_900_000_000
+        }
+      }
+    })
+    const readAuthJsonText = vi.fn(async () => authJsonText)
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ readAuthJsonText, runMuseProvider })
+    })
+
+    expect(readAuthJsonText).toHaveBeenCalledOnce()
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: null,
+        authJsonText
+      })
+    )
+  })
+
+  it('accepts a payload API key without requiring a second credential source', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({ museApiKey: 'payload-meta-key' }),
+      baseDeps({
+        readAuthJsonText: async () => null,
+        readMetaApiKeyEnv: () => null,
+        runMuseProvider
+      })
+    )
+
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'payload-meta-key', authJsonText: null })
+    )
+  })
+
+  it('keeps META_API_KEY precedence over a saved account login', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome({ assistantText: 'ok' }))
+    const readAuthJsonText = vi.fn(async () =>
+      JSON.stringify({
+        providers: { meta: { mechanism: 'oauth', access_token: 'saved-oauth-secret' } }
+      })
+    )
 
     await runMuseProviderFromIpc(event, basePayload(), {
       ...baseDeps({
-        readAuthJsonText: async () => null,
+        readAuthJsonText,
         readMetaApiKeyEnv: () => 'env-meta-key',
         runMuseProvider
       })
     })
 
     expect(runMuseProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: 'env-meta-key' })
+      expect.objectContaining({ apiKey: 'env-meta-key', authJsonText: null })
     )
+    expect(readAuthJsonText).not.toHaveBeenCalled()
   })
 })
 

@@ -10,6 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { parseMuseAuthJsonCredential } from './MuseProbe'
 import {
   serializeMuseSkillPinSettings,
   type MuseSkillPinSettings,
@@ -106,6 +107,8 @@ export const MUSE_EMPTY_TRUST_DOCUMENT = Object.freeze({
   schema_version: 1 as const,
   projects: Object.freeze({})
 })
+
+const MUSE_AUTH_JSON_MAX_BYTES = 1024 * 1024
 
 /**
  * Create and verify an isolated Muse home before it is exposed to the provider
@@ -268,6 +271,23 @@ export function verifyMuseIsolatedHome(lease: MuseIsolatedHomeLease): MuseIsolat
   return authority
 }
 
+/**
+ * Project a validated Muse-owned credential into an already-issued private
+ * lease. This deliberately happens inside the run lifecycle's `try/finally`,
+ * so every post-write failure still removes the credential at teardown.
+ */
+export function projectMuseAuthJson(lease: MuseIsolatedHomeLease, raw: string): string {
+  verifyMuseIsolatedHome(lease)
+  const authJsonText = validateMuseAuthJsonProjection(raw)
+  const authPath = join(lease.museConfigDir, 'auth.json')
+  writeFileSync(authPath, authJsonText, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx'
+  })
+  return authPath
+}
+
 export interface BuildMuseIsolatedHomeEnvironmentInput {
   readonly root: string
   readonly homePath: string
@@ -379,6 +399,26 @@ function requireRunId(value: string): string {
     throw new TypeError('Muse isolated-home run id is invalid.')
   }
   return value
+}
+
+function validateMuseAuthJsonProjection(raw: string): string {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new TypeError('Muse auth.json projection requires a non-empty JSON document.')
+  }
+  if (Buffer.byteLength(raw, 'utf8') > MUSE_AUTH_JSON_MAX_BYTES) {
+    throw new Error('Muse auth.json projection exceeds the 1 MiB safety limit.')
+  }
+
+  try {
+    JSON.parse(raw)
+  } catch {
+    throw new Error('Muse auth.json projection is not valid JSON.')
+  }
+
+  if (!parseMuseAuthJsonCredential(raw).present) {
+    throw new Error('Muse auth.json projection contains no supported Meta credential.')
+  }
+  return raw
 }
 
 function requireAbsoluteCanonicalPath(path: string, label: string): string {

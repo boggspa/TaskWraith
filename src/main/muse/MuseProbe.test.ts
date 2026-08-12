@@ -37,8 +37,34 @@ describe('MuseProbe', () => {
       expect(evidence).toEqual({
         present: true,
         source: 'auth-json-meta',
+        credentialKind: 'api-key',
         apiKeyLength: 48
       })
+    })
+
+    it('accepts the OAuth credential written by muse login without retaining its tokens', () => {
+      const evidence = parseMuseAuthJsonCredential(
+        JSON.stringify({
+          schema_version: 1,
+          providers: {
+            meta: {
+              mechanism: 'oauth',
+              access_token: 'oauth-access-secret',
+              refresh_token: 'oauth-refresh-secret',
+              expires_at: 1_900_000_000
+            }
+          }
+        })
+      )
+
+      expect(evidence).toEqual({
+        present: true,
+        source: 'auth-json-meta',
+        credentialKind: 'oauth',
+        apiKeyLength: null
+      })
+      expect(JSON.stringify(evidence)).not.toContain('oauth-access-secret')
+      expect(JSON.stringify(evidence)).not.toContain('oauth-refresh-secret')
     })
 
     it('rejects empty or malformed auth.json', () => {
@@ -47,6 +73,11 @@ describe('MuseProbe', () => {
       expect(
         parseMuseAuthJsonCredential(JSON.stringify({ providers: { meta: { api_key: '' } } }))
           .present
+      ).toBe(false)
+      expect(
+        parseMuseAuthJsonCredential(
+          JSON.stringify({ providers: { meta: { mechanism: 'oauth', access_token: '' } } })
+        ).present
       ).toBe(false)
     })
   })

@@ -18,6 +18,7 @@ import {
   MUSE_PROBE_ENV_ALLOWLIST,
   createMuseIsolatedHome,
   museLaunchEnvPathsStayInsideLease,
+  projectMuseAuthJson,
   verifyMuseIsolatedHome,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
@@ -108,6 +109,40 @@ describe('Muse isolated home', () => {
     ) as typeof MUSE_EMPTY_TRUST_DOCUMENT
     expect(trust).toEqual(MUSE_EMPTY_TRUST_DOCUMENT)
     expect(trust.projects).toEqual({})
+  })
+
+  it('projects Muse OAuth into a private run-local auth.json and removes it at teardown', () => {
+    const authJsonText = JSON.stringify({
+      schema_version: 1,
+      providers: {
+        meta: {
+          mechanism: 'oauth',
+          access_token: 'oauth-access-secret',
+          refresh_token: 'oauth-refresh-secret',
+          expires_at: 1_900_000_000
+        }
+      }
+    })
+    const lease = create('oauth-projection')
+    const authPath = projectMuseAuthJson(lease, authJsonText)
+
+    expect(readFileSync(authPath, 'utf8')).toBe(authJsonText)
+    expect(Object.values(lease.env).join('\n')).not.toContain('oauth-access-secret')
+    expect(Object.values(lease.env).join('\n')).not.toContain('oauth-refresh-secret')
+    if (process.platform !== 'win32') {
+      expect(lstatSync(authPath).mode & 0o777).toBe(0o600)
+    }
+
+    expect(lease.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    expect(existsSync(authPath)).toBe(false)
+  })
+
+  it('refuses malformed or credential-free auth.json projections', () => {
+    const lease = create('bad-auth-json')
+    expect(() => projectMuseAuthJson(lease, '{')).toThrow(/valid JSON/i)
+    expect(() =>
+      projectMuseAuthJson(lease, JSON.stringify({ schema_version: 1, providers: {} }))
+    ).toThrow(/no supported Meta credential/i)
   })
 
   it('scrubs credential and Muse auth env keys from the parent process', () => {

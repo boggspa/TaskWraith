@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MUSE_INSTALL_COMMAND,
   OLLAMA_MODEL_COMMANDS,
   PROVIDER_INSTALL_COMMANDS,
   findCatalogInstallCommand
@@ -21,6 +22,13 @@ describe('findCatalogInstallCommand', () => {
   it('carries the platform restriction for platform-bound installers', () => {
     expect(findCatalogInstallCommand('mistral')?.platforms).toEqual(['darwin', 'linux'])
     expect(findCatalogInstallCommand('ollama')?.platforms).toEqual(['darwin', 'linux'])
+  })
+
+  it('installs the Muse launcher as a file instead of executing it from stdin', () => {
+    expect(findCatalogInstallCommand('muse')?.command).toBe(MUSE_INSTALL_COMMAND)
+    expect(MUSE_INSTALL_COMMAND).toContain('MUSE_LAUNCHER_INSTALL=1')
+    expect(MUSE_INSTALL_COMMAND).toContain('muse-launcher.sh -o "$muse_tmp"')
+    expect(MUSE_INSTALL_COMMAND).not.toContain('| bash')
   })
 
   it('refuses unknown ids and providers outside the live-selectable set', () => {

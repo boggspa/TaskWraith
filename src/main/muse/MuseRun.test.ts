@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
@@ -167,6 +167,94 @@ describe('runMuseProvider', () => {
     expect(cron).toHaveBeenCalledOnce()
     expect(cron).toHaveBeenCalledWith(expect.objectContaining({ sessionId }))
     expect(outcome.warnings.filter((w) => w.includes('cron')).length).toBe(0)
+  })
+
+  it('projects OAuth only into the private run home and does not use API-key stdin', async () => {
+    const temporaryRoot = tempDir('muse-run-oauth-')
+    const workspacePath = tempDir('muse-ws-oauth-')
+    const sessionId = '12121212-1212-1212-1212-121212121212'
+    const authJsonText = JSON.stringify({
+      schema_version: 1,
+      providers: {
+        meta: {
+          mechanism: 'oauth',
+          access_token: 'oauth-access-secret',
+          refresh_token: 'oauth-refresh-secret'
+        }
+      }
+    })
+    let projectedAuth = ''
+    let observedStdin: string | null | undefined
+    let observedArgv: readonly string[] = []
+
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'say hi',
+      runId: 'run-oauth',
+      sessionId,
+      temporaryRoot,
+      authJsonText,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId,
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        projectedAuth = readFileSync(join(input.env.XDG_CONFIG_HOME, 'muse', 'auth.json'), 'utf8')
+        observedStdin = input.stdin
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            stream: { kind: 'session', id: sessionId },
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'done' }
+          })
+        ])
+      }
+    })
+
+    expect(outcome.status).toBe('success')
+    expect(projectedAuth).toBe(authJsonText)
+    expect(observedStdin).toBeNull()
+    expect(observedArgv).not.toContain('--api-key-stdin')
+    expect(existsSync(outcome.leasePath)).toBe(false)
+  })
+
+  it('cleans the private home when OAuth projection is rejected before spawn', async () => {
+    const temporaryRoot = tempDir('muse-run-bad-oauth-')
+    const workspacePath = tempDir('muse-ws-bad-oauth-')
+    let leasePath = ''
+    const spawn = vi.fn()
+
+    await expect(
+      runMuseProvider({
+        binaryPath: '/bin/muse',
+        workspacePath,
+        prompt: 'say hi',
+        runId: 'run-bad-oauth',
+        temporaryRoot,
+        authJsonText: '{',
+        createHome: (input) => {
+          const lease = createMuseIsolatedHome(input)
+          leasePath = lease.path
+          return lease
+        },
+        spawn
+      })
+    ).rejects.toThrow(/valid JSON/i)
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(leasePath).not.toBe('')
+    expect(existsSync(leasePath)).toBe(false)
   })
 
   it('surfaces cron non-empty as a teardown warning without throwing', async () => {

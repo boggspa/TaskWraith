@@ -167,6 +167,8 @@ export interface MuseRunResult {
 export interface MuseCredentialEvidence {
   readonly present: boolean
   readonly source: 'auth-json-meta' | 'meta-api-key-env' | 'injected' | 'none'
+  /** Muse-owned credential mechanism; never includes credential bytes. */
+  readonly credentialKind: 'api-key' | 'oauth' | null
   /** Length only — never the secret. */
   readonly apiKeyLength: number | null
 }

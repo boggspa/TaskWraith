@@ -69,31 +69,52 @@ export function parseMuseVersion(raw: string): string | null {
 
 /**
  * Pure auth.json credential presence check.
- * Shape (verified wave-1 A): `{ schema_version, providers: { meta: { api_key } } }`.
- * Returns length only — never the secret.
+ *
+ * Muse owns two supported shapes under `providers.meta`:
+ * - API key: `{ api_key }` (written by `muse auth set --api-key-stdin`)
+ * - Meta account: `{ mechanism: "oauth", access_token, ... }` (written by
+ *   `muse login`)
+ *
+ * Returns only mechanism/length evidence — never the secret.
  */
 export function parseMuseAuthJsonCredential(
   raw: string | null | undefined
 ): MuseCredentialEvidence {
   if (typeof raw !== 'string' || !raw.trim()) {
-    return { present: false, source: 'none', apiKeyLength: null }
+    return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
   }
   try {
     const parsed = JSON.parse(raw) as {
-      providers?: { meta?: { api_key?: unknown } }
+      providers?: {
+        meta?: { api_key?: unknown; mechanism?: unknown; access_token?: unknown }
+      }
     }
-    const key = parsed?.providers?.meta?.api_key
+    const meta = parsed?.providers?.meta
+    const key = meta?.api_key
     if (typeof key === 'string' && key.trim().length > 0) {
       return {
         present: true,
         source: 'auth-json-meta',
+        credentialKind: 'api-key',
         apiKeyLength: key.trim().length
       }
     }
+    if (
+      meta?.mechanism === 'oauth' &&
+      typeof meta.access_token === 'string' &&
+      meta.access_token.trim().length > 0
+    ) {
+      return {
+        present: true,
+        source: 'auth-json-meta',
+        credentialKind: 'oauth',
+        apiKeyLength: null
+      }
+    }
   } catch {
-    return { present: false, source: 'none', apiKeyLength: null }
+    return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
   }
-  return { present: false, source: 'none', apiKeyLength: null }
+  return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
 }
 
 export function museCredentialFromEnv(value: string | null | undefined): MuseCredentialEvidence {
@@ -101,10 +122,11 @@ export function museCredentialFromEnv(value: string | null | undefined): MuseCre
     return {
       present: true,
       source: 'meta-api-key-env',
+      credentialKind: 'api-key',
       apiKeyLength: value.trim().length
     }
   }
-  return { present: false, source: 'none', apiKeyLength: null }
+  return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
 }
 
 function extractFlags(text: string): string[] {
@@ -156,7 +178,7 @@ export async function resolveMuseCredentialEvidence(
   if (deps.hasInjectedCredential) {
     const injected = await deps.hasInjectedCredential()
     if (injected) {
-      return { present: true, source: 'injected', apiKeyLength: null }
+      return { present: true, source: 'injected', credentialKind: 'api-key', apiKeyLength: null }
     }
   }
 
@@ -171,7 +193,7 @@ export async function resolveMuseCredentialEvidence(
     if (fromEnv.present) return fromEnv
   }
 
-  return { present: false, source: 'none', apiKeyLength: null }
+  return { present: false, source: 'none', credentialKind: null, apiKeyLength: null }
 }
 
 /**

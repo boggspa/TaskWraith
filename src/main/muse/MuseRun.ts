@@ -26,7 +26,11 @@ import {
   type MuseEnvelope,
   type MuseExecNormalizedEvent
 } from './MuseExecJson'
-import { createMuseIsolatedHome, type MuseIsolatedHomeLease } from './MuseIsolatedHome'
+import {
+  createMuseIsolatedHome,
+  projectMuseAuthJson,
+  type MuseIsolatedHomeLease
+} from './MuseIsolatedHome'
 import {
   createMuseSessionLogTailer,
   resolveMuseSessionLogPath,
@@ -74,6 +78,11 @@ export interface MuseRunInput {
   readonly approvalMode?: string | null
   /** BYOK for `--api-key-stdin` only — never placed on argv. */
   readonly apiKey?: string | null
+  /**
+   * Validated Muse-owned auth.json for account OAuth. It is projected only
+   * into the private run home and deleted with that lease at teardown.
+   */
+  readonly authJsonText?: string | null
   readonly sourceEnvironment?: NodeJS.ProcessEnv
   readonly spawn: MuseRunSpawn
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
@@ -305,6 +314,10 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const museDataHome = lease.museDataDir
 
   try {
+    if (input.authJsonText != null) {
+      projectMuseAuthJson(lease, input.authJsonText)
+    }
+
     if (input.shouldCancel?.()) {
       return {
         status: 'cancelled',

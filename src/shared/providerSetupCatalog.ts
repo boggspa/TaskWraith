@@ -22,6 +22,14 @@ export interface OllamaModelEntry {
   command: string
 }
 
+/**
+ * Meta's endpoint serves the Muse launcher itself. Save it beside the binary
+ * payload and opt into its explicit install mode; piping it to `bash` leaves
+ * `BASH_SOURCE` empty and makes the current working directory the install dir.
+ */
+export const MUSE_INSTALL_COMMAND =
+  'muse_dir="$HOME/.local/bin"; mkdir -p "$muse_dir" && muse_tmp="$(mktemp "$muse_dir/.muse-launcher.XXXXXX")" && curl -fsSL https://api.meta.ai/muse-launcher.sh -o "$muse_tmp" && bash -n "$muse_tmp" && chmod 0755 "$muse_tmp" && mv -f "$muse_tmp" "$muse_dir/muse" && MUSE_LAUNCHER_INSTALL=1 "$muse_dir/muse"'
+
 export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
   { id: 'codex', label: 'Codex', command: 'npm i -g @openai/codex', source: 'OpenAI' },
   {
@@ -59,7 +67,7 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
   {
     id: 'muse',
     label: 'Muse',
-    command: 'curl -fsSL https://api.meta.ai/muse-launcher.sh | bash',
+    command: MUSE_INSTALL_COMMAND,
     source: 'Meta',
     platform: 'macOS / Linux',
     platforms: ['darwin', 'linux']
