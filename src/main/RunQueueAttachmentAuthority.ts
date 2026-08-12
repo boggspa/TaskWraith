@@ -1,12 +1,14 @@
 import { createHash } from 'crypto'
 import type {
+  DirectoryAttachmentRef,
   ExternalPathGrant,
   PersistedAttachmentRef,
-  PersistedOrLegacyAttachmentRef
+  RunQueueImageAttachmentSnapshot
 } from './store/types'
 import type { TranscriptMediaAssetStore } from './services/TranscriptMediaAssetStore'
 import { snapshotRasterOrPdfAttachment } from './services/TranscriptMediaService'
 import { MAX_DURABLE_ATTACHMENT_REFS } from './ScheduledAttachmentDurability'
+import { isDirectoryComposerAttachment } from '../shared/composerAttachment'
 
 type RunQueueAttachmentStore = Pick<
   TranscriptMediaAssetStore,
@@ -49,11 +51,11 @@ export interface MainOwnedRunQueueAttachmentStageInput {
   workspacePath?: string
   externalPathGrants: ExternalPathGrant[]
   authorizedFilePaths?: string[]
-  attachments: PersistedOrLegacyAttachmentRef[]
+  attachments: RunQueueImageAttachmentSnapshot[]
 }
 
 export type MainOwnedRunQueueAttachmentStageResult =
-  | { ok: true; attachments: PersistedAttachmentRef[] }
+  | { ok: true; attachments: RunQueueImageAttachmentSnapshot[] }
   | { ok: false; reason: string }
 
 export interface MainOwnedRunQueueAttachmentStageDeps {
@@ -75,6 +77,7 @@ export function createMainOwnedRunQueueAttachmentStager(
     }
     const slots: Array<
       | { kind: 'persisted'; attachment: PersistedAttachmentRef }
+      | { kind: 'directory'; attachment: DirectoryAttachmentRef }
       | { kind: 'pending'; index: number; id?: string; name?: string }
     > = []
     const pendingWrites: Array<{
@@ -85,7 +88,25 @@ export function createMainOwnedRunQueueAttachmentStager(
     }> = []
     try {
       const store = deps.getAssetStore()
+      const authorizedPaths = new Set(
+        input.authorizedFilePaths ?? [...(deps.getAuthorizedFilePaths?.() || [])]
+      )
       for (const attachment of input.attachments) {
+        if (isDirectoryComposerAttachment(attachment)) {
+          if (!authorizedPaths.has(attachment.path)) {
+            return { ok: false, reason: 'Attachment snapshot failed.' }
+          }
+          slots.push({
+            kind: 'directory',
+            attachment: {
+              kind: 'directory',
+              ...(attachment.id ? { id: attachment.id } : {}),
+              path: attachment.path,
+              ...(attachment.name ? { name: attachment.name } : {})
+            }
+          })
+          continue
+        }
         if ('persistenceVersion' in attachment && attachment.persistenceVersion === 1) {
           const existing = resolveOwnedPersistedRunQueueAttachment({
             store,
@@ -107,8 +128,7 @@ export function createMainOwnedRunQueueAttachmentStager(
           candidatePath: attachment.path,
           workspacePath: input.workspacePath,
           externalPathGrants: input.externalPathGrants,
-          authorizedFilePaths:
-            input.authorizedFilePaths ?? [...(deps.getAuthorizedFilePaths?.() || [])]
+          authorizedFilePaths: [...authorizedPaths]
         })
         if (!snapshot.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
         if (!input.chatId) {
@@ -153,7 +173,7 @@ export function createMainOwnedRunQueueAttachmentStager(
       return {
         ok: true,
         attachments: slots.map((slot) => {
-          if (slot.kind === 'persisted') return slot.attachment
+          if (slot.kind === 'persisted' || slot.kind === 'directory') return slot.attachment
           const asset = written.assets[slot.index]
           return {
             persistenceVersion: 1,

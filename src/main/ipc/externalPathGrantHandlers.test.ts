@@ -117,6 +117,11 @@ function createDeps() {
     findRegisteredWorkspace: vi.fn(() => undefined),
     verifyExternalPathGrantSignatureForGrant: vi.fn(() => true),
     canonicalPath: vi.fn((value: string) => `/canonical${value}`),
+    isPathInsideWorkspace: vi.fn(
+      (workspacePath: string, targetPath: string) =>
+        targetPath === workspacePath || targetPath.startsWith(`${workspacePath}/`)
+    ),
+    authorizeAttachmentPath: vi.fn(),
     optionalString: vi.fn((value: unknown) =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined
     ),
@@ -368,6 +373,77 @@ describe('registerExternalPathGrantHandlers', () => {
       }),
       { canonicalPath: '/resolved/dialog/path' }
     )
+  })
+
+  it('attaches an in-workspace folder reference without minting a redundant grant', async () => {
+    const { deps, setChat } = createDeps()
+    setChat(
+      createChat({
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        workspacePath: '/resolved/tmp'
+      })
+    )
+    registerExternalPathGrantHandlers(deps)
+    const event = { sender: { id: 51 } }
+
+    await expect(
+      handlerFor('external-path:pick-and-persist')(event, {
+        chatId: 'chat-1',
+        access: 'read',
+        purpose: 'attachment'
+      })
+    ).resolves.toEqual({
+      ok: true,
+      grants: [],
+      path: '/resolved/tmp/workspace'
+    })
+
+    expect(deps.showOpenDialog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Select folder to attach',
+        properties: ['openDirectory', 'createDirectory']
+      })
+    )
+    expect(deps.authorizeAttachmentPath).toHaveBeenCalledWith(
+      event,
+      '/resolved/tmp/workspace',
+      'chat-1'
+    )
+    expect(deps.issueExternalPathGrant).not.toHaveBeenCalled()
+    expect(deps.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('auto-grants read access when an attached folder is outside the workspace', async () => {
+    const { deps, setChat } = createDeps()
+    setChat(
+      createChat({
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        workspacePath: '/resolved/primary'
+      })
+    )
+    registerExternalPathGrantHandlers(deps)
+    const event = { sender: { id: 52 } }
+
+    const result = await handlerFor('external-path:pick-and-persist')(event, {
+      chatId: 'chat-1',
+      purpose: 'attachment'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      path: '/resolved/tmp/workspace',
+      grants: [expect.objectContaining({ access: 'read', kind: 'directory' })]
+    })
+    expect(deps.authorizeAttachmentPath).toHaveBeenCalledWith(
+      event,
+      '/resolved/tmp/workspace',
+      'chat-1'
+    )
+    expect(deps.saveChat).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledTimes(1)
   })
 
   it('pick-and-persist preserves provider dedupe/order, proactive ids, metadata canonicalization, save, and broadcast', async () => {

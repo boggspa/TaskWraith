@@ -249,6 +249,7 @@ import { AttachmentCapabilityRegistry } from './AttachmentCapabilityRegistry'
 import { ClipboardPasteIntentRegistry } from './ClipboardPasteIntentRegistry'
 import { saveClipboardImageFromTrustedPaste } from './ClipboardImagePasteHandler'
 import {
+  authorizeAttachmentRecords,
   authorizeThenExpandAttachmentRecords,
   dispatchWithAuthorizedAttachmentPaths,
   resolveAuthorizedRendererAttachmentPaths
@@ -1487,6 +1488,7 @@ import {
 } from './DiffService'
 import { isCodexSandboxToolingFailure, isSwiftPmNestedSandboxFailure } from './SandboxFallback'
 import { isPathInsideWorkspace } from './AgenticPolicy'
+import { isDirectoryComposerAttachment } from '../shared/composerAttachment'
 import {
   RunManager,
   canStartRunTransport,
@@ -53842,6 +53844,13 @@ if (isGeminiMcpBridgeProcess) {
       resolveRegisteredExplicitExternalPath,
       findRegisteredWorkspace,
       canonicalPath,
+      isPathInsideWorkspace,
+      authorizeAttachmentPath: (event, pathValue, appChatId) =>
+        authorizeImagePreviewPath(pathValue, {
+          sender: event.sender,
+          mainAuthority: isMainRendererSender(event),
+          appChatId
+        }),
       optionalString,
       randomBytes,
       securityScopedBookmarks: process.platform === 'darwin',
@@ -56311,7 +56320,12 @@ if (isGeminiMcpBridgeProcess) {
           mode?: 'normal' | 'queue' | 'steer'
           concurrentMode?: boolean
           fanoutPolicy?: EnsembleFanoutPolicy
-          imageAttachments?: Array<{ id?: string; path?: string; name?: string }>
+          imageAttachments?: Array<{
+            id?: string
+            path?: string
+            name?: string
+            kind?: 'file' | 'directory'
+          }>
           imageThumbnails?: Array<{
             dataBase64: string
             mimeType: string
@@ -56356,11 +56370,19 @@ if (isGeminiMcpBridgeProcess) {
         ) {
           throw new Error('Ensemble prompt, attachment, or Project reference selection is required.')
         }
-        const dispatchImageAttachments = await authorizeThenExpandAttachmentRecords(
-          imageAttachments,
+        const folderAttachments = imageAttachments.filter(isDirectoryComposerAttachment)
+        const fileAttachments = imageAttachments.filter(
+          (attachment) => !isDirectoryComposerAttachment(attachment)
+        )
+        const dispatchFolderAttachments = authorizeAttachmentRecords(folderAttachments, (paths) =>
+          resolveRendererAttachmentPaths(event, paths)
+        )
+        const dispatchFileAttachments = await authorizeThenExpandAttachmentRecords(
+          fileAttachments,
           (paths) => resolveRendererAttachmentPaths(event, paths),
           (authorizedAttachments) => expandPdfAttachmentsForDispatch(authorizedAttachments, chatId)
         )
+        const dispatchImageAttachments = [...dispatchFolderAttachments, ...dispatchFileAttachments]
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
         // and produces an [] when nothing is granted.

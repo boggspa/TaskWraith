@@ -37,6 +37,7 @@ interface ExternalPathGrantPersistPayload {
   path?: string
   deferPersist?: boolean
   selectionReceipt?: string
+  purpose?: 'attachment'
 }
 
 interface ExternalPathGrantRevokePayload {
@@ -80,6 +81,8 @@ export interface ExternalPathGrantHandlersDeps {
   }) => RegisteredExplicitExternalPath | null
   findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
   canonicalPath: (value: string) => string
+  isPathInsideWorkspace: (workspacePath: string, targetPath: string) => boolean
+  authorizeAttachmentPath: (event: IpcMainInvokeEvent, path: string, chatId: string) => void
   /**
    * Signature-only verification of a persisted grant row (no run binding) —
    * the provenance check behind the preflight card's receipt-less re-grant.
@@ -185,12 +188,13 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
       if (!chat) return { ok: false, reason: 'no-chat' }
 
       const access: 'read' | 'write' = payload?.access === 'write' ? 'write' : 'read'
+      const attachmentPurpose = payload?.purpose === 'attachment'
 
       const dispatchProviders = grantProvidersForChat(
         chat,
         deps.isExternalPathGrantDispatchProvider
       )
-      if (dispatchProviders.length === 0) {
+      if (dispatchProviders.length === 0 && !attachmentPurpose) {
         return { ok: false, reason: 'no-provider' }
       }
 
@@ -318,11 +322,17 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
                 .join(', ')}).`
             : ''
         const dialogResult = await deps.showOpenDialog(mainWindow, {
-          title: `Select folder agents in this chat ${accessVerb}`,
-          message: `Issues a ${
-            access === 'write' ? 'read+write' : 'read-only'
-          } grant scoped to this chat.${providerSummary}`,
-          properties: ['openFile', 'openDirectory', 'createDirectory'],
+          title: attachmentPurpose
+            ? 'Select folder to attach'
+            : `Select folder agents in this chat ${accessVerb}`,
+          message: attachmentPurpose
+            ? 'Folders are attached as references. Read access is added automatically when the folder is outside this chat workspace.'
+            : `Issues a ${
+                access === 'write' ? 'read+write' : 'read-only'
+              } grant scoped to this chat.${providerSummary}`,
+          properties: attachmentPurpose
+            ? ['openDirectory', 'createDirectory']
+            : ['openFile', 'openDirectory', 'createDirectory'],
           securityScopedBookmarks: deps.securityScopedBookmarks
         } as OpenDialogOptions)
         if (dialogResult.canceled || dialogResult.filePaths.length === 0) {
@@ -349,6 +359,9 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
         } catch {
           kind = 'file'
         }
+      }
+      if (attachmentPurpose && kind !== 'directory') {
+        return { ok: false, reason: 'cancelled' }
       }
 
       if (payload?.deferPersist) {
@@ -406,6 +419,15 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
       ) {
         return { ok: false, reason: 'cancelled' }
       }
+      if (
+        attachmentPurpose &&
+        currentChat.scope !== 'global' &&
+        currentChat.workspacePath &&
+        deps.isPathInsideWorkspace(currentChat.workspacePath, selectedPath)
+      ) {
+        deps.authorizeAttachmentPath(event, selectedPath, chatId)
+        return { ok: true, grants: [], path: selectedPath }
+      }
       if (currentDispatchProviders.length === 0) {
         return { ok: false, reason: 'no-provider' }
       }
@@ -440,6 +462,9 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
       }
       deps.saveChat(updatedChat)
       deps.broadcastChatUpdated(updatedChat)
+      if (attachmentPurpose) {
+        deps.authorizeAttachmentPath(event, selectedPath, chatId)
+      }
 
       return { ok: true, grants: newGrants, path: selectedPath }
     }

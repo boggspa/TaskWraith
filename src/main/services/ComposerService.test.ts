@@ -980,6 +980,31 @@ describe('ComposerService', () => {
     expect(payload.imagePaths).toEqual(['/tmp/screen.png'])
   })
 
+  it('keeps folder attachments as prompt references without treating them as image bytes', async () => {
+    const payload = await compose(
+      { provider: 'codex' },
+      {
+        selectedModelType: 'gpt-5.5',
+        userInput: 'Review this package.',
+        attachments: [
+          {
+            id: 'folder-1',
+            path: '/tmp/reference-package',
+            name: 'reference-package',
+            kind: 'directory'
+          }
+        ],
+        externalPathGrants: [
+          makeGrant({ access: 'read', kind: 'directory', path: '/tmp/reference-package' })
+        ]
+      }
+    )
+
+    expect(payload.prompt).toContain('Folder: "/tmp/reference-package"')
+    expect(payload.prompt).toContain('view directory: "/tmp/reference-package"')
+    expect(payload.imagePaths).toEqual([])
+  })
+
   it('injects Discord context snapshots into provider prompts and read metadata', async () => {
     const payload = await compose(
       { provider: 'claude', linkedProviderSessionId: 'claude-session-1' },

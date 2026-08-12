@@ -129,6 +129,44 @@ describe('registerComposeRunHandlers', () => {
     })
   })
 
+  it('capability-checks folder references without changing their attachment kind', async () => {
+    const deps = createDeps()
+    deps.resolveSenderAttachmentPaths = vi.fn((_event, paths) =>
+      paths.map((path) => `/real${path}`)
+    )
+    registerComposeRunHandlers(deps)
+    const input = {
+      ...inputFor('chat-test-1'),
+      imageAttachments: [
+        {
+          path: '/Test 1/reference-folder',
+          name: 'reference-folder',
+          kind: 'directory' as const
+        },
+        { path: '/Test 1/allowed.png', name: 'allowed.png' }
+      ]
+    }
+    const event = { sender: { id: 11 } }
+
+    await handlerFor('compose-run')(event, input)
+
+    expect(deps.resolveSenderAttachmentPaths).toHaveBeenCalledWith(event, [
+      '/Test 1/reference-folder',
+      '/Test 1/allowed.png'
+    ])
+    expect(deps.composeRun).toHaveBeenCalledWith({
+      ...input,
+      imageAttachments: [
+        {
+          path: '/real/Test 1/reference-folder',
+          name: 'reference-folder',
+          kind: 'directory'
+        },
+        { path: '/real/Test 1/allowed.png', name: 'allowed.png' }
+      ]
+    })
+  })
+
   it('composes only the durable chat/workspace returned by main authority', async () => {
     const deps = createDeps()
     const input = {

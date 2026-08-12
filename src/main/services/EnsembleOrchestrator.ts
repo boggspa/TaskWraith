@@ -353,7 +353,12 @@ export type EnsembleQueuedPromptMutationResult = {
   prompt?: string
   queuedPrompts?: string[]
   /** Attachment snapshots from the removed entry so Edit can restore them. */
-  imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+  imageAttachments?: Array<{
+    id?: string
+    path: string
+    name?: string
+    kind?: 'file' | 'directory'
+  }>
   dmTargetParticipantId?: string
   error?: string
 }
@@ -462,6 +467,7 @@ export interface EnsembleImageAttachment {
   id?: string
   path: string
   name?: string
+  kind?: 'file' | 'directory'
 }
 
 export interface EnsembleImageThumbnail {
@@ -21214,14 +21220,15 @@ function normalizeEnsembleImageAttachments(
       path,
       ...(typeof attachment.name === 'string' && attachment.name.trim()
         ? { name: attachment.name.trim() }
-        : {})
+        : {}),
+      ...(attachment.kind === 'directory' ? { kind: 'directory' as const } : {})
     })
   }
   return normalized
 }
 
 function isEnsembleImageAttachment(attachment: EnsembleImageAttachment): boolean {
-  return ENSEMBLE_IMAGE_ATTACHMENT_EXT.test(attachment.path)
+  return attachment.kind !== 'directory' && ENSEMBLE_IMAGE_ATTACHMENT_EXT.test(attachment.path)
 }
 
 function imagePathsForEnsembleAttachments(attachments: EnsembleImageAttachment[]): string[] {
@@ -21264,7 +21271,7 @@ function promptWithAttachmentReferences(
   if (normalized.length === 0) return prompt
   const lines = normalized.map(
     (attachment, index) =>
-      `${index + 1}. ${attachment.name ? `${attachment.name}: ` : ''}"${attachment.path}"`
+      `${index + 1}. ${attachment.kind === 'directory' ? 'Folder' : 'File'}${attachment.name ? ` ${attachment.name}` : ''}: "${attachment.path}"`
   )
   return `${prompt}\n\nAttachment references for this request:\n${lines.join('\n')}`
 }

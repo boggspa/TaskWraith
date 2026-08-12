@@ -36,6 +36,7 @@ export type {
 } from '../../shared/ensembleFanoutIsolation'
 export { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
+import type { ComposerAttachmentKind } from '../../shared/composerAttachment'
 export type {
   HarnessPassthroughMode,
   ProviderHarnessPosture,
@@ -1199,7 +1200,12 @@ export interface EnsembleQueuedPromptState {
    * the context the user selected.
    */
   hadDiscordContext?: boolean
-  imageAttachments: Array<{ id?: string; path: string; name?: string }>
+  imageAttachments: Array<{
+    id?: string
+    path: string
+    name?: string
+    kind?: ComposerAttachmentKind
+  }>
   imageThumbnails?: Array<{
     dataBase64: string
     mimeType: string
@@ -5832,6 +5838,18 @@ export interface LegacyPersistedAttachmentPathRef {
   name?: string
 }
 
+/**
+ * A folder attachment is intentionally a live reference rather than a byte
+ * snapshot. Read authority is re-derived from the owning workspace or the
+ * main-signed external path grants stored beside the queue request.
+ */
+export interface DirectoryAttachmentRef {
+  id?: string
+  path: string
+  name?: string
+  kind: 'directory'
+}
+
 export type PersistedOrLegacyAttachmentRef =
   | PersistedAttachmentRef
   | LegacyPersistedAttachmentPathRef
@@ -5841,7 +5859,9 @@ export type ScheduledTaskAttachmentRef = PersistedOrLegacyAttachmentRef & {
   name: string
 }
 
-export type RunQueueImageAttachmentSnapshot = PersistedOrLegacyAttachmentRef
+export type RunQueueImageAttachmentSnapshot =
+  | PersistedOrLegacyAttachmentRef
+  | DirectoryAttachmentRef
 
 export interface RunQueueDiscordContextSelectionSnapshot {
   guildId?: string

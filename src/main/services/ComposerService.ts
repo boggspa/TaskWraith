@@ -84,6 +84,10 @@ import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
 import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
+import {
+  isDirectoryComposerAttachment,
+  type ComposerAttachmentKind
+} from '../../shared/composerAttachment'
 
 // Known ids for historical decode. Compose/dispatch uses the shared live
 // admission predicate through `assertLiveProviderId`.
@@ -105,6 +109,7 @@ export interface ComposerImageAttachment {
   id?: string
   path?: string
   name?: string
+  kind?: ComposerAttachmentKind
 }
 
 export interface ComposerInput {
@@ -429,12 +434,13 @@ export class ComposerService {
           ? effectiveInput.prompt
           : ''
     const planParsed = parsePlanModeInput(rawUserInput)
-    const imagePaths = normalizeImagePaths(
+    const composerAttachments = normalizeComposerAttachments(
       effectiveInput.imageAttachments || effectiveInput.attachments || []
     )
+    const imagePaths = normalizeImagePaths(composerAttachments)
     const basePrompt = planParsed.prompt.trim()
       ? planParsed.prompt
-      : imagePaths.length > 0
+      : composerAttachments.length > 0
         ? 'Please inspect the attached file(s).'
         : planParsed.prompt
     if (!basePrompt.trim()) {
@@ -565,7 +571,7 @@ export class ComposerService {
         })
       : undefined
     const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)
-    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}${formatProjectReferenceContextPromptAppendix(projectReferenceContext)}${formatProjectReferenceExtractsPromptAppendix(
+    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(composerAttachments)}${externalPathGrantPromptAppendix(externalPathGrants)}${formatProjectReferenceContextPromptAppendix(projectReferenceContext)}${formatProjectReferenceExtractsPromptAppendix(
       projectReferenceContext,
       this.deps.projectReferenceExtractLoader
     )}`
@@ -1314,11 +1320,29 @@ function normalizeProviderSessionId(value?: string | null): string | undefined {
   return /^[a-zA-Z0-9][a-zA-Z0-9._:@/-]{0,511}$/.test(target) ? target : undefined
 }
 
-function normalizeImagePaths(attachments: ComposerImageAttachment[]): string[] {
+function normalizeComposerAttachments(
+  attachments: ComposerImageAttachment[]
+): ComposerImageAttachment[] {
   if (!Array.isArray(attachments)) return []
   return attachments
-    .map((item) => (typeof item?.path === 'string' ? item.path.trim() : ''))
-    .filter((path): path is string => Boolean(path))
+    .map<ComposerImageAttachment | null>((item) => {
+      const path = typeof item?.path === 'string' ? item.path.trim() : ''
+      if (!path) return null
+      return {
+        ...(typeof item.id === 'string' && item.id.trim() ? { id: item.id.trim() } : {}),
+        path,
+        ...(typeof item.name === 'string' && item.name.trim() ? { name: item.name.trim() } : {}),
+        ...(isDirectoryComposerAttachment(item) ? { kind: 'directory' as const } : {})
+      }
+    })
+    .filter((item): item is ComposerImageAttachment => item !== null)
+}
+
+function normalizeImagePaths(attachments: ComposerImageAttachment[]): string[] {
+  return attachments
+    .filter((attachment) => !isDirectoryComposerAttachment(attachment))
+    .map((attachment) => attachment.path || '')
+    .filter(Boolean)
 }
 
 function normalizeComposerExternalPathGrants(
@@ -1350,12 +1374,13 @@ function normalizeComposerExternalPathGrants(
   return stripExternalPathGrantOrder(coalesceExternalPathGrants(grants))
 }
 
-function attachmentPromptAppendix(imagePaths: string[]): string {
-  if (imagePaths.length === 0) {
+function attachmentPromptAppendix(attachments: ComposerImageAttachment[]): string {
+  if (attachments.length === 0) {
     return ''
   }
-  const lines = imagePaths.map(
-    (imagePath, index) => `${index + 1}. "${imagePath.replace(/"/g, '\\"')}"`
+  const lines = attachments.map(
+    (attachment, index) =>
+      `${index + 1}. ${isDirectoryComposerAttachment(attachment) ? 'Folder' : 'File'}: "${(attachment.path || '').replace(/"/g, '\\"')}"`
   )
   return `\n\nAttachment references for this request:\n${lines.join('\n')}`
 }

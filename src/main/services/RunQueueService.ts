@@ -14,14 +14,15 @@ import type {
   ExecutionGraphQueueBinding,
   ExternalPathGrant,
   PermissionPresetId,
+  DirectoryAttachmentRef,
   PersistedAttachmentRef,
-  PersistedOrLegacyAttachmentRef,
   ProviderId,
   RunPermissionPostureSnapshot,
   RunQueueJob,
   RunQueueJobFilter,
   RunQueueJobSource,
   RunQueueJobStatus,
+  RunQueueImageAttachmentSnapshot,
   RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
@@ -202,7 +203,7 @@ export interface RunQueueAttachmentStageInput {
   externalPathGrants: ExternalPathGrant[]
   /** Canonical attachment paths authorized for the requesting renderer. */
   authorizedFilePaths?: string[]
-  attachments: PersistedOrLegacyAttachmentRef[]
+  attachments: RunQueueImageAttachmentSnapshot[]
 }
 
 export interface RunQueuePrepareOptions {
@@ -217,7 +218,7 @@ export interface RunQueuePrepareOptions {
 }
 
 export type RunQueueAttachmentStageResult =
-  | { ok: true; attachments: PersistedAttachmentRef[] }
+  | { ok: true; attachments: RunQueueImageAttachmentSnapshot[] }
   | { ok: false; reason: string }
 
 const DURABLE_ATTACHMENT_QUARANTINE_REASON =
@@ -649,14 +650,16 @@ export class RunQueueService {
           id: optionalString(attachment.id),
           path: requireNonEmptyString(attachment.path, 'Image attachment path'),
           name: optionalString(attachment.name),
-          ...(attachment.persistenceVersion === 1
-            ? {
-                persistenceVersion: 1 as const,
-                sha256: optionalString(attachment.sha256) || '',
-                mimeType: optionalString(attachment.mimeType) || '',
-                byteLength: optionalNumber(attachment.byteLength) || 0
-              }
-            : {})
+          ...(attachment.kind === 'directory'
+            ? { kind: 'directory' as const }
+            : attachment.persistenceVersion === 1
+              ? {
+                  persistenceVersion: 1 as const,
+                  sha256: optionalString(attachment.sha256) || '',
+                  mimeType: optionalString(attachment.mimeType) || '',
+                  byteLength: optionalNumber(attachment.byteLength) || 0
+                }
+              : {})
         }))
       : []
     const rawExternalPathGrants = Array.isArray(value.externalPathGrants)
@@ -680,7 +683,7 @@ export class RunQueueService {
         'Queued external path grants must be issued by TaskWraith in this app session.'
       )
     }
-    let imageAttachments: PersistedAttachmentRef[] = []
+    let imageAttachments: RunQueueImageAttachmentSnapshot[] = []
     let attachmentError: string | undefined = tooManyImageAttachments
       ? DURABLE_ATTACHMENT_QUARANTINE_REASON
       : undefined
@@ -694,11 +697,11 @@ export class RunQueueService {
         if (
           !staged.ok ||
           staged.attachments.length !== rawImageAttachments.length ||
-          !staged.attachments.every(isPersistedAttachmentRef)
+          !staged.attachments.every(isDurableRunQueueAttachmentRef)
         ) {
           attachmentError = DURABLE_ATTACHMENT_QUARANTINE_REASON
         } else {
-          imageAttachments = staged.attachments.map(copyPersistedAttachmentRef)
+          imageAttachments = staged.attachments.map(copyRunQueueAttachmentRef)
         }
       } catch {
         attachmentError = DURABLE_ATTACHMENT_QUARANTINE_REASON
@@ -762,7 +765,7 @@ export class RunQueueService {
       !sourceRequest ||
       !attachments?.length ||
       (attachments.length <= MAX_DURABLE_ATTACHMENT_REFS &&
-        attachments.every(isPersistedAttachmentRef))
+        attachments.every(isDurableRunQueueAttachmentRef))
     ) {
       return job
     }
@@ -815,6 +818,30 @@ function copyPersistedAttachmentRef(value: PersistedAttachmentRef): PersistedAtt
     mimeType: value.mimeType.toLowerCase(),
     byteLength: value.byteLength
   }
+}
+
+function isDirectoryAttachmentRef(value: unknown): value is DirectoryAttachmentRef {
+  if (!isRecord(value) || value.kind !== 'directory') return false
+  return typeof value.path === 'string' && Boolean(value.path.trim())
+}
+
+function isDurableRunQueueAttachmentRef(value: unknown): value is RunQueueImageAttachmentSnapshot {
+  return isPersistedAttachmentRef(value) || isDirectoryAttachmentRef(value)
+}
+
+function copyRunQueueAttachmentRef(
+  value: RunQueueImageAttachmentSnapshot
+): RunQueueImageAttachmentSnapshot {
+  if (isDirectoryAttachmentRef(value)) {
+    return {
+      kind: 'directory',
+      id: optionalString(value.id),
+      path: value.path,
+      name: optionalString(value.name)
+    }
+  }
+  if (isPersistedAttachmentRef(value)) return copyPersistedAttachmentRef(value)
+  throw new Error('Queued attachment is not durable.')
 }
 
 function isTerminalRunQueueStatus(status: RunQueueJobStatus): boolean {

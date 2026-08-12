@@ -107,6 +107,9 @@ describe('createMainOwnedRunQueueAttachmentStager', () => {
     ])
     if (!result.ok) return
     for (const attachment of result.attachments) {
+      if (!('sha256' in attachment) || !('mimeType' in attachment)) {
+        throw new Error('Expected staged file attachment metadata.')
+      }
       expect(
         store.owns({
           sha256: attachment.sha256,
@@ -130,6 +133,59 @@ describe('createMainOwnedRunQueueAttachmentStager', () => {
       })
     ).toMatchObject({ ok: true, attachments: [expect.objectContaining({ id: 'first' })] })
     expect(grantMany).not.toHaveBeenCalled()
+  })
+
+  it('preserves an authorized folder as a live reference without snapshotting bytes', () => {
+    const { store, workspacePath } = freshFixture()
+    const folderPath = path.join(workspacePath, 'reference-folder')
+    fs.mkdirSync(folderPath)
+    const writeOwnedMany = vi.spyOn(store, 'writeOwnedMany')
+    const stage = createMainOwnedRunQueueAttachmentStager({ getAssetStore: () => store })
+
+    expect(
+      stage({
+        chatId: 'chat-owner',
+        workspacePath,
+        externalPathGrants: [],
+        authorizedFilePaths: [folderPath],
+        attachments: [
+          {
+            id: 'folder-1',
+            name: 'reference-folder',
+            path: folderPath,
+            kind: 'directory'
+          }
+        ]
+      })
+    ).toEqual({
+      ok: true,
+      attachments: [
+        {
+          id: 'folder-1',
+          name: 'reference-folder',
+          path: folderPath,
+          kind: 'directory'
+        }
+      ]
+    })
+    expect(writeOwnedMany).not.toHaveBeenCalled()
+  })
+
+  it('refuses a folder reference that was not selected by the requesting renderer', () => {
+    const { store, workspacePath } = freshFixture()
+    const folderPath = path.join(workspacePath, 'unselected-folder')
+    fs.mkdirSync(folderPath)
+    const stage = createMainOwnedRunQueueAttachmentStager({ getAssetStore: () => store })
+
+    expect(
+      stage({
+        chatId: 'chat-owner',
+        workspacePath,
+        externalPathGrants: [],
+        authorizedFilePaths: [],
+        attachments: [{ path: folderPath, kind: 'directory' }]
+      })
+    ).toEqual({ ok: false, reason: 'Attachment snapshot failed.' })
   })
 
   it('returns no durable refs when the ownership batch fails', () => {

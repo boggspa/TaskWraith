@@ -550,7 +550,7 @@ function sanitizePluginReviewState(value: unknown): TaskWraithPluginReviewState 
 
 export function imageAttachmentSnapshots(
   value: unknown
-): Array<{ id?: string; path: string; name?: string }> {
+): Array<{ id?: string; path: string; name?: string; kind?: 'directory' }> {
   if (!Array.isArray(value)) return []
   return value
     .map((item) => {
@@ -563,10 +563,13 @@ export function imageAttachmentSnapshots(
         path,
         ...(typeof record.name === 'string' && record.name.trim()
           ? { name: record.name.trim() }
-          : {})
+          : {}),
+        ...(record.kind === 'directory' ? { kind: 'directory' as const } : {})
       }
     })
-    .filter((item): item is { id?: string; path: string; name?: string } => Boolean(item))
+    .filter((item): item is { id?: string; path: string; name?: string; kind?: 'directory' } =>
+      Boolean(item)
+    )
 }
 
 export function optionalNumber(value: unknown): number | undefined {

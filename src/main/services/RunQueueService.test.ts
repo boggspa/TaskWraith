@@ -776,6 +776,51 @@ describe('RunQueueService', () => {
     )
   })
 
+  it('persists folder attachments as typed references instead of image snapshots', () => {
+    const stageAttachments = vi.fn((input) => ({
+      ok: true as const,
+      attachments: input.attachments
+    }))
+    const { deps, repository } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+
+    service.requestJob(
+      {
+        runId: 'run-folder-reference',
+        provider: 'codex',
+        workspacePath: '/repo',
+        chatId: 'chat-1',
+        request: {
+          prompt: 'Inspect this folder',
+          imageAttachments: [
+            {
+              id: 'folder-1',
+              path: '/repo/reference-folder',
+              name: 'reference-folder',
+              kind: 'directory'
+            }
+          ]
+        }
+      },
+      { authorizedFilePaths: ['/repo/reference-folder'] }
+    )
+
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          imageAttachments: [
+            {
+              id: 'folder-1',
+              path: '/repo/reference-folder',
+              name: 'reference-folder',
+              kind: 'directory'
+            }
+          ]
+        })
+      })
+    )
+  })
+
   it('passes durable identity fields to staging so re-queued assets can be revalidated, not reopened as raw paths', () => {
     const stageAttachments = vi.fn((input) => ({
       ok: true as const,

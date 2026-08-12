@@ -431,6 +431,7 @@ interface ComposerImageAttachment {
   id?: string
   path?: string
   name?: string
+  kind?: 'file' | 'directory'
 }
 
 interface ComposerRunInput {
@@ -691,6 +692,9 @@ declare global {
         // Opaque, short-lived proof returned by a native deferred picker.
         // Required to confirm an unregistered external path.
         selectionReceipt?: string
+        // Folder attachment flow: folder-only picker plus automatic read grant
+        // when the selected reference is outside the chat workspace.
+        purpose?: 'attachment'
       }) => Promise<
         | {
             ok: true

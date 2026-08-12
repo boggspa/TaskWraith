@@ -141,6 +141,7 @@ type ComposerImageAttachment = {
   id?: string
   path?: string
   name?: string
+  kind?: 'file' | 'directory'
 }
 
 const CLIPBOARD_PASTE_INTENT_TTL_MS = 1_500
@@ -609,6 +610,7 @@ const api = {
     path?: string
     deferPersist?: boolean
     selectionReceipt?: string
+    purpose?: 'attachment'
   }): Promise<
     | { ok: true; grants: unknown[]; path: string; selectionReceipt?: string }
     | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
