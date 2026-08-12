@@ -1,24 +1,24 @@
-# How to: Shares tab
+# How to: Channels tab
 
 **Platform:** Electron
 
 ## What it is
-The Shares tab lists chats you've shared with human collaborators. Each entry shows the share's contribution rules, its participants and their live connection state, any open invites, and lets you change the rules, stop the share, or remove a single collaborator. Collaborator contributions are host-reviewed — nothing reaches the AI unless you insert it as a draft and send it yourself.
+The Channels tab is the global overview of every channel this Mac hosts or has joined — and the revoke/close authority of last resort. Each channel shows its members and their live connection state, plus host controls to revoke a member, close the channel, or review its audit trail. Per-chat sharing controls (fresh invites, admissions, message review) live in each chat's own Channel panel; member messages are host-reviewed, and nothing posts into the transcript until you approve it.
 
 ## Where to find it
-**Settings → Integrations → Shares**
+**Settings → Integrations → Channels**
 
-![Shares tab showing collaborator list and access controls](../images/settings-and-configuration__shares-tab.png)
+<!-- screenshot-pending: Channels tab showing hosted channel list with member and revoke controls -->
 
 ## How to use it
-1. Open **Settings → Integrations → Shares** to see every chat you currently have shared.
-2. Each card shows the chat title, its contribution rules, and its connection state (**Live**, **Offline**, **Invite issued**, or **Not connected**). Each active collaborator also carries their own **Live**/**Offline** chip.
-3. Use the rules picker on a card to change what collaborators may do: **View only**, **Comments — host-reviewed before AI**, **Request host action — host-reviewed**, or **Auto-draft — you still send** (action requests pre-fill your composer as a draft; nothing ever sends itself).
-4. Click **Copy invite** to generate a fresh out-of-band invite for that share — paste it to the collaborator yourself.
-5. Under a card's participant list, each collaborator shows their own status (**Active**, **Pending**, or **Removed**); click **Remove** next to a collaborator to revoke just their access.
-6. Click **Stop sharing** to revoke the whole share immediately; all collaborators lose access at once.
+1. Open **Settings → Integrations → Channels** to see every channel you host or belong to.
+2. Each channel shows its chat, its members with live connection state, and any open admissions. The member ceiling (eight) counts humans and agent seats together.
+3. To share a chat or issue a fresh invite, open that chat's own **Channel panel** — invites and admissions are per-chat, not created from this tab.
+4. Review member messages from the host review queue in the chat's Channel panel: **Approve** posts the member's message into the transcript as an external, untrusted row; **Decline** drops it.
+5. Use **Remove** next to a member to revoke just their access, or close the whole channel to revoke everyone at once.
+6. A channel is reachable only while the host Mac is online.
 
 ## Tips & related
-- Collaborators connect over your remote-access relay, so make sure remote access is enabled on the [Devices tab](devices-tab.md) before sending an invite.
-- [Shares popover](../footer-control-row/shares-popover.md) — quick glance at active shares from the sidebar footer.
-- Start a new share from a chat's share action or the sidebar's "+ New" menu ("New Shared Chat" / "Join Shared Chat").
+- Members connect over your remote-access relay, so make sure remote access is enabled on the [Devices tab](devices-tab.md) before sending an invite.
+- Join a channel by pasting an invite into **Join a Channel** in a chat's Channel panel.
+- [Chat types](../chats-and-threads/chat-types.md) — where channels fit among the chat types.

@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-The sidebar starts with three primary surfaces: **Chat**, **Code**, and **Work**. Chat shows General chats; Code shows workspace-scoped threads and workspace tools; Work opens the **Projects** organizer. Chat and Code show the sections relevant to that surface, such as Active Runs, Pinned, Recents, Ensembles, Shared, Workflows, Workspace Boards, Workspaces, and Local Servers. Some remain visible in an empty state so their create action or status is still reachable. Section headers can be collapsed and reordered.
+The sidebar starts with three primary surfaces: **Chat**, **Code**, and **Work**. Chat shows General chats; Code shows workspace-scoped threads and workspace tools; Work opens the **Projects** organizer. Chat and Code show the sections relevant to that surface, such as Active Runs, Pinned, Recents, Ensembles, Channels, Workflows, Workspace Boards, Workspaces, and Local Servers. Some remain visible in an empty state so their create action or status is still reachable. Section headers can be collapsed and reordered.
 
 ## Where to find it
 In the **left sidebar panel** of the TaskWraith main window.
