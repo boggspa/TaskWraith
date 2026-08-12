@@ -407,11 +407,19 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'grok',
+      'cursor',
       'muse',
       'ollama',
       'mistral',
       'pi'
     ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name
+    ).toBe('Grok 4.6 Fast')
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'cursor')?.models[0]?.name
+    ).toBe('Grok 4.6')
     const museGroup = newAdditions?.groups?.find((group) => group.provider === 'muse')
     expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')

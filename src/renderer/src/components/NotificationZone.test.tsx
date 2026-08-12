@@ -206,9 +206,11 @@ describe('NotificationZone', () => {
     )
   })
 
-  it('renders official Ollama / Mistral / Pi logos in the pinned New Additions notice', () => {
+  it('renders the current provider lineup and official logos in New Additions', () => {
     const html = renderToStaticMarkup(<NotificationZone notifications={PINNED_APP_NOTIFICATIONS} />)
 
+    expect(html).toContain('notification-newadditions-provider provider-grok')
+    expect(html).toContain('notification-newadditions-provider provider-cursor')
     expect(html).toContain('notification-newadditions-provider provider-muse')
     expect(html).toContain('notification-newadditions-provider provider-ollama')
     expect(html).toContain('notification-newadditions-provider provider-mistral')
@@ -218,6 +220,8 @@ describe('NotificationZone', () => {
     expect(html).toContain('data-provider-logo="pi"')
     expect(html).toContain('provider-logo-mistral.png')
     expect(html).not.toContain('provider-glyph-mistral')
+    expect(html).toContain('Grok 4.6 Fast')
+    expect(html).toContain('Grok 4.6')
     expect(html).toContain('Muse Glimmer (30B-MLX)')
     expect(html).toContain('Nemotron 3.5 Lightning (30B-MLX)')
     expect(html).toContain('notification-newadditions-model provider-meta')

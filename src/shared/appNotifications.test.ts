@@ -148,12 +148,34 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['muse', 'ollama', 'mistral', 'pi'])
-    expect(groups.map((g) => g.label)).toEqual(['Muse', 'Ollama', 'Mistral', 'Pi'])
+    expect(groups.map((g) => g.provider)).toEqual([
+      'grok',
+      'cursor',
+      'muse',
+      'ollama',
+      'mistral',
+      'pi'
+    ])
+    expect(groups.map((g) => g.label)).toEqual([
+      'Grok',
+      'Cursor',
+      'Muse',
+      'Ollama',
+      'Mistral',
+      'Pi'
+    ])
     // Dropped from the card once they stopped being the newest story.
     expect(groups.map((g) => g.provider)).not.toContain('claude')
     expect(groups.map((g) => g.provider)).not.toContain('antigravity')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
+
+    const grok = groups.find((g) => g.provider === 'grok')
+    expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.6 Fast'])
+    expect(grok?.models[0]?.blurb).toMatch(/500K.*Extra High.*Grok Build/i)
+
+    const cursor = groups.find((g) => g.provider === 'cursor')
+    expect(cursor?.models.map((m) => m.name)).toEqual(['Grok 4.6'])
+    expect(cursor?.models[0]?.blurb).toMatch(/256K.*Extra High.*Standard\/Fast/i)
 
     const muse = groups.find((g) => g.provider === 'muse')
     expect(muse?.models.map((m) => m.name)).toEqual(['Muse Spark 1.2'])
