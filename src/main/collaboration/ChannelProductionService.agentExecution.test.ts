@@ -30,7 +30,7 @@ const safeStorage: ChannelAgentIdentitySafeStorage = {
   isEncryptionAvailable: () => true,
   encryptString: (plaintext) => Buffer.from(plaintext, 'utf8'),
   decryptString: (ciphertext) => ciphertext.toString('utf8'),
-  getSelectedStorageBackend: () => 'keychain'
+  getSelectedStorageBackend: () => (process.platform === 'linux' ? 'gnome_libsecret' : 'keychain')
 }
 
 const socketFactory: TransportSocketFactory = () => ({
