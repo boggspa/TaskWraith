@@ -518,6 +518,7 @@ import {
   materializeParticipantsFromPresetWithBossman,
   MAX_ROSTER_PRESET_PARTICIPANTS,
   saveEnsembleRosterPresetFromParticipants,
+  seedDefaultEnsembleRosterPresets,
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
@@ -1756,6 +1757,10 @@ function App(): React.JSX.Element {
   )
   const configuredAntigravityModels =
     configuredProviderSnapshot.modelsByProvider?.antigravity || []
+  useEffect(() => {
+    if (isChatPopoutWindow || !configuredProviderSnapshot.ready) return
+    seedDefaultEnsembleRosterPresets(configuredProviderSnapshot.providerIds)
+  }, [configuredProviderSnapshot, isChatPopoutWindow])
   const [selectedModelType, setSelectedModelType] = useState<string>('flash-lite')
   const [lastNonCustomModelType, setLastNonCustomModelType] = useState<string>('flash-lite')
   const [customModel, setCustomModel] = useState('')

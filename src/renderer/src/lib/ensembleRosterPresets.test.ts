@@ -45,6 +45,7 @@ import {
   materializeParticipantsFromPresetWithBossman,
   previewEnsembleRosterPresetsFromJson,
   saveEnsembleRosterPresetFromParticipants,
+  seedDefaultEnsembleRosterPresets,
   serializeEnsembleRosterPresetsForExport,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
@@ -330,6 +331,35 @@ describe('ensembleRosterPresets — round-trip fidelity + isolation', () => {
 })
 
 describe('ensembleRosterPresets — editor primitives', () => {
+  it('seeds provider-aware defaults when the roster store has never been initialized', () => {
+    const seeded = seedDefaultEnsembleRosterPresets(['codex', 'mistral'], 123)
+
+    expect(seeded.map((preset) => preset.participants.length)).toEqual([3, 4, 5, 6, 8, 10])
+    expect(listEnsembleRosterPresets()).toHaveLength(6)
+    expect(
+      seeded
+        .flatMap((preset) => preset.participants)
+        .every((participant) =>
+          participant.provider === 'codex' || participant.provider === 'mistral'
+        )
+    ).toBe(true)
+  })
+
+  it('does not replace an initialized roster store, including an intentional empty array', () => {
+    fake.store.set(STORAGE_KEY, '[]')
+
+    expect(seedDefaultEnsembleRosterPresets(['codex'], 123)).toEqual([])
+    expect(fake.store.get(STORAGE_KEY)).toBe('[]')
+  })
+
+  it('waits to initialize storage until configured-provider discovery finds a provider', () => {
+    expect(seedDefaultEnsembleRosterPresets([], 123)).toEqual([])
+    expect(fake.store.has(STORAGE_KEY)).toBe(false)
+
+    expect(seedDefaultEnsembleRosterPresets(['codex'], 123)).toHaveLength(6)
+    expect(fake.store.has(STORAGE_KEY)).toBe(true)
+  })
+
   it('createEmpty persists a valid Boss/Captain/Specialist starter panel', () => {
     const created = createEmptyEnsembleRosterPreset('My panel')
     expect(created.participants.length).toBeGreaterThanOrEqual(MIN_ROSTER_PRESET_PARTICIPANTS)

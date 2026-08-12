@@ -24,6 +24,7 @@ import {
   getDefaultEnsembleRoleName
 } from './ensembleProviderDefaults'
 import { normalizeEnsembleAuthority } from '../../../shared/ensembleAuthority'
+import { buildDefaultEnsembleRosterPresets } from './ensembleDefaultRosterPresets'
 
 export {
   MAX_ROSTER_PRESET_PARTICIPANTS,
@@ -198,6 +199,30 @@ export function subscribeEnsembleRosterPresets(listener: () => void): () => void
 
 export function listEnsembleRosterPresets(): EnsembleRosterPreset[] {
   return readRawPresets().sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/**
+ * Seed the provider-aware built-in roster choices exactly once. Storage-key
+ * presence is the initialization boundary: an existing array (including an
+ * intentionally empty one after the user deletes every preset) is never
+ * replaced. An empty provider list leaves storage untouched so startup can
+ * retry after configured-provider discovery settles.
+ */
+export function seedDefaultEnsembleRosterPresets(
+  providerIds: readonly ProviderId[],
+  now = Date.now()
+): EnsembleRosterPreset[] {
+  if (typeof window === 'undefined') return []
+  try {
+    if (window.localStorage.getItem(STORAGE_KEY) !== null) return []
+    const presets = buildDefaultEnsembleRosterPresets(providerIds, now)
+    if (presets.length === 0) return []
+    writeRawPresets(presets)
+    notifyPresetListeners()
+    return presets.map(cloneRosterPreset)
+  } catch {
+    return []
+  }
 }
 
 export function saveEnsembleRosterPreset(
