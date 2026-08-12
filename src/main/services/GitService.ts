@@ -38,6 +38,16 @@ import {
   readGitUnpushedCommitStack,
   type GitUnpushedCommitStack
 } from './GitCommitStack'
+import {
+  createGitCommitGroupPullRequest,
+  manageGitPullRequest,
+  readGitPullRequestWorkspace,
+  type GitCommitGroupPullRequestInput,
+  type GitCommitGroupPullRequestResult,
+  type GitPullRequestLifecycleResult,
+  type GitPullRequestManagementInput,
+  type GitPullRequestWorkspaceSnapshot
+} from './GitPullRequestWorkflow'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const WORKSPACE_STATS_CACHE_TTL_MS = 30_000
@@ -100,6 +110,8 @@ export interface GitRepositorySnapshot {
 
 export interface GitPrSummary {
   number?: number
+  title?: string
+  body?: string
   url?: string
   state?: string
   isDraft?: boolean
@@ -113,6 +125,7 @@ export interface GitPrSummary {
    * on required checks or its turn in the merge queue. Distinct from merged.
    */
   autoMergeEnabled?: boolean
+  updatedAt?: string
   checks?: Array<{
     name?: string
     status?: string
@@ -392,6 +405,78 @@ export class GitService {
           run: this.run,
           timeoutMs: this.timeoutMs
         })
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async pullRequestWorkspace(
+    inputPath: string
+  ): Promise<GitResult<GitPullRequestWorkspaceSnapshot>> {
+    try {
+      const snapshot = await this.buildSnapshot(inputPath)
+      return {
+        ok: true,
+        data: await readGitPullRequestWorkspace({
+          repoRoot: snapshot.repoRoot,
+          snapshot,
+          run: this.run,
+          timeoutMs: this.timeoutMs
+        })
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async createCommitGroupPullRequest(
+    input: GitCommitGroupPullRequestInput
+  ): Promise<GitResult<GitCommitGroupPullRequestResult>> {
+    try {
+      const snapshot = await this.buildSnapshot(input.repoPath)
+      const stack = await readGitUnpushedCommitStack({
+        repoRoot: snapshot.repoRoot,
+        snapshot,
+        run: this.run,
+        timeoutMs: this.timeoutMs
+      })
+      const { repoPath: _repoPath, ...request } = input
+      return {
+        ok: true,
+        data: await createGitCommitGroupPullRequest(
+          {
+            repoRoot: snapshot.repoRoot,
+            snapshot,
+            run: this.run,
+            timeoutMs: this.timeoutMs
+          },
+          stack.commits,
+          request
+        )
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async managePullRequest(
+    input: GitPullRequestManagementInput
+  ): Promise<GitResult<GitPullRequestLifecycleResult>> {
+    try {
+      const snapshot = await this.buildSnapshot(input.repoPath)
+      const { repoPath: _repoPath, ...request } = input
+      return {
+        ok: true,
+        data: await manageGitPullRequest(
+          {
+            repoRoot: snapshot.repoRoot,
+            snapshot,
+            run: this.run,
+            timeoutMs: this.timeoutMs
+          },
+          request
+        )
       }
     } catch (error) {
       return failure(error)
