@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   canonicalTaskWraithToolName,
+  codexShellCommandFromApprovalParams,
+  codexToolArgumentsFromApprovalParams,
   effectiveAgenticSettings,
   resolveCodexMcpApprovalIdentity,
   resolveCodexStructuralApproval,
@@ -25,6 +27,48 @@ const resolution = (
   workspaceGrantAllowed: Boolean(grants.workspaceGrantAllowed),
   sessionGrantAllowed: Boolean(grants.sessionGrantAllowed),
   decision
+})
+
+describe('Codex approval payload evidence', () => {
+  it('extracts exact tool arguments and shell command from MCP elicitation metadata', () => {
+    const params = {
+      serverName: 'TaskWraith',
+      mode: 'form',
+      _meta: {
+        codex_approval_kind: 'mcp_tool_call',
+        tool_params: {
+          cwd: '/workspace',
+          command: 'find . -maxdepth 2 -type f 2>/dev/null'
+        }
+      },
+      message: 'Allow the TaskWraith MCP server to run a tool?'
+    }
+
+    expect(codexToolArgumentsFromApprovalParams(params)).toEqual(params._meta.tool_params)
+    expect(codexShellCommandFromApprovalParams(params)).toBe(
+      'find . -maxdepth 2 -type f 2>/dev/null'
+    )
+  })
+
+  it('prefers native structural fields and never parses display text', () => {
+    expect(
+      codexShellCommandFromApprovalParams({
+        command: ['git', 'status', '--short'],
+        _meta: { tool_params: { command: 'rm -rf .' } }
+      })
+    ).toEqual(['git', 'status', '--short'])
+    expect(
+      codexToolArgumentsFromApprovalParams({
+        arguments: { command: 'git log --oneline' },
+        _meta: { tool_params: { command: 'rm -rf .' } }
+      })
+    ).toEqual({ command: 'git log --oneline' })
+    expect(
+      codexShellCommandFromApprovalParams({
+        message: 'Allow tool run_shell_command with command git status?'
+      })
+    ).toBeUndefined()
+  })
 })
 
 const effectivePermissions = (

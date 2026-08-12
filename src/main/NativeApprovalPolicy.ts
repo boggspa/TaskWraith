@@ -148,13 +148,10 @@ export function resolveNativeApprovalPreflightDecision(args: {
    */
   trustedSessionExternalWrite?: boolean
   /**
-   * The request is a strictly-classified read-only git shell command —
-   * `git status` / `git diff` / `git log` (isReadOnlyGitShellCommand). Allowed
-   * under EVERY posture — including a read_only/plan shell deny — mirroring
-   * the auto-allowed MCP git read tools. The caller computes this from the
-   * RAW command; external-path detection still wins (these commands never
-   * carry external paths, so a detection means the classification cannot be
-   * trusted).
+   * The request passed the canonical prompt-free read-shell proof (strict Git
+   * reads or a fail-closed inspection-only shell command). Allowed under EVERY
+   * posture — including a read_only/plan shell deny. The caller computes this
+   * from the RAW command; external-path detection still wins.
    */
   readOnlyShellFastPath?: boolean
   /**
@@ -282,6 +279,38 @@ export function resolveCodexMcpApprovalIdentity(input: {
         service: contract.service
       }
     : { recognized: false }
+}
+
+/**
+ * Extract the exact tool arguments carried by a Codex approval request.
+ *
+ * Codex app-server MCP elicitations place arguments under
+ * `_meta.tool_params`, while provider-native approvals use the top-level
+ * `arguments` / `input` fields. Direct structural fields win; display text is
+ * never parsed as authority.
+ */
+export function codexToolArgumentsFromApprovalParams(paramsValue: unknown): unknown {
+  const params = objectRecord(paramsValue)
+  if (!params) return undefined
+  const item = objectRecord(params.item)
+  for (const candidate of [params.arguments, params.input, item?.arguments]) {
+    if (candidate !== undefined) return candidate
+  }
+  const metadata = objectRecord(params._meta)
+  return metadata?.tool_params
+}
+
+/** Exact shell command evidence from native or MCP-elicitation approval params. */
+export function codexShellCommandFromApprovalParams(paramsValue: unknown): unknown {
+  const params = objectRecord(paramsValue)
+  if (!params) return undefined
+  const exec = objectRecord(params.exec)
+  const item = objectRecord(params.item)
+  for (const candidate of [params.command, params.commandLine, exec?.command, item?.command]) {
+    if (candidate !== undefined) return candidate
+  }
+  const toolArguments = objectRecord(codexToolArgumentsFromApprovalParams(params))
+  return toolArguments?.command
 }
 
 export type CodexStructuralApprovalAction = 'commandExecution' | 'fileChange'

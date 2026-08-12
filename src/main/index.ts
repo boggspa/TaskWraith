@@ -184,6 +184,8 @@ import {
 } from './AgenticServiceMessages'
 import {
   canonicalTaskWraithToolName,
+  codexShellCommandFromApprovalParams,
+  codexToolArgumentsFromApprovalParams,
   effectiveAgenticSettings,
   resolveCodexMcpApprovalIdentity,
   resolveCodexStructuralApproval,
@@ -1529,9 +1531,9 @@ import {
   structuredProviderNetworkReadRequested
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
-import { isReadOnlyGitShellCommand, shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from './IsolateSharedBranchHold'
-import { isInspectionShellCommand, shellCommandTierHold } from './ShellCommandTierPolicy'
+import { shellCommandTierHold } from './ShellCommandTierPolicy'
+import { isPromptFreeReadOnlyShellCommand } from './PromptFreeReadOnlyShell'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -13876,15 +13878,10 @@ function resolveNativeApprovalPreflight(args: {
       // (ask-hold, not deny — unattended lanes fail safe via approval timeout).
       isolateSharedBranchHold ||
       tierShellHold,
-    // Pure `git status` / `git diff` / `git log` runs prompt-free under every
-    // posture (parity with the auto-allowed MCP git read tools); the
-    // classifier fails closed.
+    // Canonically proven Git / inspection-only shell commands run prompt-free
+    // under every posture; mutation and unknown syntax fail closed.
     readOnlyShellFastPath:
-      args.service === 'shellCommands' &&
-      (isReadOnlyGitShellCommand(shellCommandFromRawCommand(args.shellCommand)) ||
-        // Slice D: pure inspection commands join the read fast path (fails
-        // closed; structurally disjoint from every hold above).
-        isInspectionShellCommand(shellCommandFromRawCommand(args.shellCommand))),
+      args.service === 'shellCommands' && isPromptFreeReadOnlyShellCommand(args.shellCommand),
     // Slice E: outside-workspace READS auto-approve at the write tiers;
     // writes keep the external-path ask.
     externalPathReadAutoAllowed:
@@ -29971,7 +29968,7 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
     const codexMcpIdentity = resolveCodexMcpApprovalIdentity({
       toolName: String(toolName || ''),
       serverName: typeof mcpServerName === 'string' ? mcpServerName : undefined,
-      toolArgs: params?.arguments ?? params?.input ?? params?.item?.arguments
+      toolArgs: codexToolArgumentsFromApprovalParams(params)
     })
     const resolvedService: AgenticServiceId = codexMcpIdentity.recognized
       ? codexMcpIdentity.service
@@ -30188,8 +30185,7 @@ async function settleCodexNativeApprovalRequest(
   // C2b-ii — best-effort tool-args for the exact reviewer-verdict exception;
   // fail-closed when the ACP approval params carry no plain-object args
   // (classifier sees undefined → no auto-allow / no read-only exemption).
-  const codexToolArgs =
-    (params as Record<string, unknown>)?.arguments ?? (params as Record<string, unknown>)?.input
+  const codexToolArgs = codexToolArgumentsFromApprovalParams(params)
   const codexMcpIdentity = resolveCodexMcpApprovalIdentity({
     toolName: probedToolName,
     serverName: probedServerName,
@@ -30284,10 +30280,9 @@ async function settleCodexNativeApprovalRequest(
       externalPathDetection,
       toolName: codexCanonicalToolName || probedToolName,
       toolArgs: codexToolArgs,
-      // The RAW exec command (argv or string) — same lookup chain the approval
-      // formatter uses — so a pure `git status` is allowed under every posture.
-      shellCommand:
-        params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command,
+      // The RAW exec command (argv or string), including Codex MCP elicitation
+      // metadata, so proven read-only calls can take the prompt-free path.
+      shellCommand: codexShellCommandFromApprovalParams(params),
       // Canvas tools carry their target surface in the args; a surface-scoped
       // grant is only allowed to match the window the user actually approved.
       surfaceId:
