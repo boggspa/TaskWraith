@@ -74,6 +74,7 @@ describe('roster-surface wiring', () => {
       'buildContinuationHopsChangeRequest(chatId, source.ensemble, nextMax)'
     )
     expect(appSource).toContain('previousMaxContinuationHops?: number')
+    expect(appSource).toContain('patch.maxContinuationHops === undefined &&')
     expect(appSource).toContain('requestLiveEnsembleRoundConfigUpdate(chatId, {')
     expect(appSource).toContain('previousMaxContinuationHops: change.previousMaxContinuationHops')
   })

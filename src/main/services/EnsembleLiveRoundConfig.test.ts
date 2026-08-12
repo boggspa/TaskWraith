@@ -262,6 +262,34 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     })
   })
 
+  it('persists an idle user change without assigning it to a completed round', () => {
+    const harness = makeHarness()
+    delete harness.chat.ensemble!.activeRound
+    harness.internals.roundsByChatId.clear()
+
+    expect(
+      harness.orchestrator.updateLiveRoundConfig({
+        chatId: 'ensemble-chat',
+        maxContinuationHops: 76,
+        previousMaxContinuationHops: 12
+      })
+    ).toMatchObject({
+      ok: true,
+      maxContinuationHops: 76,
+      activeRoundUpdated: false
+    })
+    expect(harness.chat.messages.at(-1)?.metadata).toMatchObject({
+      kind: 'ensembleContinuationHopsChange',
+      continuationHopsChange: {
+        before: 12,
+        after: 76,
+        actor: 'user'
+      }
+    })
+    expect(harness.chat.messages.at(-1)?.metadata).not.toHaveProperty('ensembleRoundId')
+    expect(harness.saveChat).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects malformed values without changing the chat or runtime', () => {
     const harness = makeHarness()
 
