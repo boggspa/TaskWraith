@@ -336,6 +336,10 @@ import {
 } from './codex/CodexOutboundReasoning'
 import { resolveCodexMcpRouteHint, type CodexMcpRouteHint } from './codex/CodexMcpRouting'
 import { BridgeDaemonClient } from './BridgeDaemonClient'
+import {
+  startStudioProductionLifecycle,
+  type StudioProductionLifecycle
+} from './studio/StudioProductionLifecycle'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
@@ -4048,6 +4052,7 @@ function getFaviconService(): FaviconService {
 // methods. Stays null when the daemon is disabled or hasn't spawned yet;
 // the `attached_window_*` MCP tools null-check and return a clear error.
 let bridgeDaemonRef: BridgeDaemonClient | null = null
+let studioProductionLifecycleRef: StudioProductionLifecycle | null = null
 
 /** Late-bound RemoteGitSnapshotFeed — keeps the phone git pill riding the
  * desktop watcher lane while ≥1 phone is connected. Constructed next to the
@@ -50106,6 +50111,18 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     reconcileBridgeDaemonFromSettings()
+    void startStudioProductionLifecycle({
+      userDataPath: app.getPath('userData'),
+      resourcesPath: process.resourcesPath,
+      settingEnabled: AppStore.getSettings().studioCompanionEnabled,
+      envValue: process.env.TASKWRAITH_STUDIO_COMPANION
+    })
+      .then(({ lifecycle }) => {
+        studioProductionLifecycleRef = lifecycle
+      })
+      .catch((error) => {
+        console.error('[studio] production companion failed to start', error)
+      })
 
     // Host Arc R4' — production Host ON. WIRING ONLY: every port is assembled
     // inside createHostProductionBootstrap (Wave 3.6c), so this composition
@@ -50366,6 +50383,8 @@ if (isGeminiMcpBridgeProcess) {
     )
 
     app.on('will-quit', () => {
+      void studioProductionLifecycleRef?.dispose()
+      studioProductionLifecycleRef = null
       hostLifecycle.stopSync()
       desktopHostBroker.close()
       void simulatorHostService.dispose()
