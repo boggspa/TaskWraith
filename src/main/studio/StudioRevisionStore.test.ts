@@ -249,6 +249,60 @@ describe('StudioRevisionStore', () => {
     await recovered.close()
   })
 
+  it('opens a real media asset through a jailed root and replays its identity', async () => {
+    const directory = await makeStoreDirectory()
+    const mediaRoot = nodePath.join(directory, 'media')
+    await fsPromises.mkdir(mediaRoot)
+    const mediaPath = nodePath.join(mediaRoot, 'clip.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [mediaRoot] })
+    const opened = await store.openMedia(0, {
+      assetId: 'asset-clip',
+      path: mediaPath,
+      mediaKind: 'video'
+    })
+    const canonicalPath = await fsPromises.realpath(mediaPath)
+    expect(opened).toEqual({
+      ok: true,
+      revision: 1,
+      asset: { assetId: 'asset-clip', path: canonicalPath, mediaKind: 'video' }
+    })
+    expect(store.getDocument().assets).toEqual([opened.ok ? opened.asset : null])
+    await store.close()
+
+    const reopened = await StudioRevisionStore.open(directory, {
+      allowedMediaRoots: [mediaRoot]
+    })
+    expect(reopened.revision).toBe(1)
+    expect(reopened.recovery.replayedJournalOps).toBe(1)
+    expect(reopened.getDocument().assets).toEqual([
+      { assetId: 'asset-clip', path: canonicalPath, mediaKind: 'video' }
+    ])
+    await reopened.close()
+  })
+
+  it('rejects media paths that resolve outside the configured root', async () => {
+    const directory = await makeStoreDirectory()
+    const mediaRoot = nodePath.join(directory, 'media')
+    const outsideRoot = await makeStoreDirectory()
+    await fsPromises.mkdir(mediaRoot)
+    const outsidePath = nodePath.join(outsideRoot, 'outside.mov')
+    await fsPromises.writeFile(outsidePath, 'fixture', 'utf8')
+    const symlinkPath = nodePath.join(mediaRoot, 'linked.mov')
+    await fsPromises.symlink(outsidePath, symlinkPath)
+
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [mediaRoot] })
+    const rejected = await store.openMedia(0, {
+      assetId: 'asset-outside',
+      path: symlinkPath,
+      mediaKind: 'video'
+    })
+    expect(rejected).toMatchObject({ ok: false, code: 'invalid_params', currentRevision: 0 })
+    expect(store.revision).toBe(0)
+    await store.close()
+  })
+
   it('exposes a pure apply function that never mutates its input document', () => {
     const document = createEmptyStudioDocument()
     const next = applyStudioEditOp(document, insertRange())

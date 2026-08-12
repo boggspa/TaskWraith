@@ -36,8 +36,9 @@ import {
   studioError,
   type StudioApplyEditParams,
   type StudioApplyEditResult,
-  type StudioEditOp,
+  type StudioDocumentOperation,
   type StudioMessage,
+  type StudioOpenMediaResult,
   type StudioResponseMessage,
   type StudioSuccessResponseMessage
 } from './StudioProtocol'
@@ -127,14 +128,27 @@ function describeError(error: unknown): string {
 function extractCommittedEdit(
   request: unknown,
   response: StudioResponseMessage
-): { revision: number; op: StudioEditOp } | null {
+): { revision: number; op: StudioDocumentOperation } | null {
   if (typeof request !== 'object' || request === null) return null
   const candidate = request as { method?: unknown; params?: unknown }
-  if (candidate.method !== STUDIO_METHODS.applyEdit) return null
   if (!('result' in response)) return null
-  const result = (response as StudioSuccessResponseMessage).result as StudioApplyEditResult
-  const params = candidate.params as StudioApplyEditParams
-  return { revision: result.revision, op: params.op }
+  if (candidate.method === STUDIO_METHODS.applyEdit) {
+    const result = (response as StudioSuccessResponseMessage).result as StudioApplyEditResult
+    const params = candidate.params as StudioApplyEditParams
+    return { revision: result.revision, op: params.op }
+  }
+  if (candidate.method === STUDIO_METHODS.openMedia) {
+    const result = (response as StudioSuccessResponseMessage).result as StudioOpenMediaResult
+    if (
+      typeof result.revision !== 'number' ||
+      typeof result.asset !== 'object' ||
+      result.asset === null
+    ) {
+      return null
+    }
+    return { revision: result.revision, op: { type: 'open_media', asset: result.asset } }
+  }
+  return null
 }
 
 /**

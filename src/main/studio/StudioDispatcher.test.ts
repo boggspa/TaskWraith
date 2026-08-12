@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { buildEditCommittedNotification, handleStudioMessage } from './StudioDispatcher'
 import {
   STUDIO_ERROR_NUMBERS,
+  STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
   STUDIO_METHODS,
   STUDIO_PROTOCOL_VERSION,
   StudioNdjsonDecoder,
@@ -13,14 +14,14 @@ import {
   type StudioInsertRangeOp,
   type StudioSuccessResponseMessage
 } from './StudioProtocol'
-import { StudioRevisionStore } from './StudioRevisionStore'
+import { StudioRevisionStore, type StudioRevisionStoreOptions } from './StudioRevisionStore'
 
 const temporaryDirectories: string[] = []
 
-async function openStore(): Promise<StudioRevisionStore> {
+async function openStore(options: StudioRevisionStoreOptions = {}): Promise<StudioRevisionStore> {
   const directory = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'studio-dispatcher-'))
   temporaryDirectories.push(directory)
-  return StudioRevisionStore.open(directory)
+  return StudioRevisionStore.open(directory, options)
 }
 
 afterEach(async () => {
@@ -92,6 +93,59 @@ describe('StudioDispatcher', () => {
       method: STUDIO_METHODS.getDocument
     })) as StudioSuccessResponseMessage
     expect(fetched.result).toMatchObject({ revision: 1 })
+    await store.close()
+  })
+
+  it('opens media with a versioned payload, returns identity and persists the document asset', async () => {
+    const directory = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'studio-open-media-'))
+    temporaryDirectories.push(directory)
+    const mediaPath = nodePath.join(directory, 'clip.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+
+    const opened = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 10,
+      method: STUDIO_METHODS.openMedia,
+      params: {
+        schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+        baseRevision: 0,
+        assetId: 'asset-clip',
+        path: mediaPath,
+        mediaKind: 'video'
+      }
+    })) as StudioSuccessResponseMessage
+    expect(opened.result).toMatchObject({
+      schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+      revision: 1,
+      asset: { assetId: 'asset-clip', mediaKind: 'video' }
+    })
+    const canonicalPath = await fsPromises.realpath(mediaPath)
+    expect((opened.result as { asset: { path: string } }).asset.path).toBe(canonicalPath)
+
+    const fetched = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 11,
+      method: STUDIO_METHODS.getDocument
+    })) as StudioSuccessResponseMessage
+    expect(fetched.result).toMatchObject({
+      revision: 1,
+      document: { assets: [{ assetId: 'asset-clip', path: canonicalPath, mediaKind: 'video' }] }
+    })
+
+    const stale = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 12,
+      method: STUDIO_METHODS.openMedia,
+      params: {
+        schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+        baseRevision: 0,
+        assetId: 'asset-other',
+        path: mediaPath,
+        mediaKind: 'video'
+      }
+    })) as StudioErrorResponseMessage
+    expect(stale.error.data).toMatchObject({ studioCode: 'stale_base', currentRevision: 1 })
     await store.close()
   })
 

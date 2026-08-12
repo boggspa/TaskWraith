@@ -6,11 +6,13 @@
  */
 import {
   STUDIO_METHODS,
+  STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
   STUDIO_PROTOCOL_VERSION,
   STUDIO_SERVER_NAME,
   classifyStudioMessage,
   studioError,
   studioResult,
+  type StudioDocumentOperation,
   type StudioEditOp,
   type StudioNotificationMessage,
   type StudioRequestMessage,
@@ -48,6 +50,38 @@ async function handleRequest(
     }
     case STUDIO_METHODS.getDocument:
       return studioResult(request.id, { revision: store.revision, document: store.getDocument() })
+    case STUDIO_METHODS.openMedia: {
+      const params = request.params
+      if (
+        !isRecord(params) ||
+        params.schemaVersion !== STUDIO_OPEN_MEDIA_SCHEMA_VERSION ||
+        typeof params.baseRevision !== 'number' ||
+        typeof params.assetId !== 'string' ||
+        typeof params.path !== 'string' ||
+        params.mediaKind !== 'video'
+      ) {
+        return studioError(
+          request.id,
+          'invalid_params',
+          `openMedia requires schemaVersion ${STUDIO_OPEN_MEDIA_SCHEMA_VERSION}, baseRevision, assetId, path and mediaKind=video`
+        )
+      }
+      const outcome = await store.openMedia(params.baseRevision, {
+        assetId: params.assetId,
+        path: params.path,
+        mediaKind: params.mediaKind
+      })
+      if (outcome.ok) {
+        return studioResult(request.id, {
+          schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+          revision: outcome.revision,
+          asset: outcome.asset
+        })
+      }
+      return studioError(request.id, outcome.code, outcome.message, {
+        currentRevision: outcome.currentRevision
+      })
+    }
     case STUDIO_METHODS.applyEdit: {
       const params = request.params
       if (!isRecord(params) || typeof params.baseRevision !== 'number' || !isRecord(params.op)) {
@@ -95,7 +129,7 @@ export async function handleStudioMessage(
 /** Event pushed to companions after each committed edit (transport arrives later). */
 export function buildEditCommittedNotification(
   revision: number,
-  op: StudioEditOp
+  op: StudioDocumentOperation
 ): StudioNotificationMessage {
   return { jsonrpc: '2.0', method: STUDIO_METHODS.editCommitted, params: { revision, op } }
 }

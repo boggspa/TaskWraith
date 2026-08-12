@@ -86,12 +86,14 @@ interface HarnessOptions {
   restartDelayMs?: number
   stopGraceMs?: number
   childConfig?: FakeCompanionConfig
+  allowMediaRoot?: boolean
   spawn?: StudioCompanionSupervisorOptions['spawn']
 }
 
 interface Harness {
   supervisor: StudioCompanionSupervisor
   store: StudioRevisionStore
+  directory: string
   children: FakeCompanion[]
   events: StudioSupervisorEvent[]
 }
@@ -107,7 +109,10 @@ afterEach(async () => {
 
 async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const directory = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'studio-supervisor-'))
-  const store = await StudioRevisionStore.open(directory)
+  const store = await StudioRevisionStore.open(
+    directory,
+    options.allowMediaRoot ? { allowedMediaRoots: [directory] } : undefined
+  )
   const children: FakeCompanion[] = []
   const events: StudioSupervisorEvent[] = []
   const supervisor = new StudioCompanionSupervisor({
@@ -130,7 +135,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     await store.close()
     await fsPromises.rm(directory, { recursive: true, force: true })
   })
-  return { supervisor, store, children, events }
+  return { supervisor, store, directory, children, events }
 }
 
 async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -212,6 +217,43 @@ describe('StudioCompanionSupervisor', () => {
     )
     expect(committed).toHaveLength(1)
     expect(harness.store.revision).toBe(1)
+    await harness.supervisor.stop()
+  })
+
+  it('pushes studio/editCommitted after a committed media open', async () => {
+    const harness = await createHarness({ allowMediaRoot: true })
+    const mediaPath = nodePath.join(harness.directory, 'clip.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+    harness.supervisor.start()
+    const child = harness.children[0]
+
+    child.send({
+      jsonrpc: '2.0',
+      id: 13,
+      method: STUDIO_METHODS.openMedia,
+      params: {
+        schemaVersion: 1,
+        baseRevision: 0,
+        assetId: 'asset-open',
+        path: mediaPath,
+        mediaKind: 'video'
+      }
+    })
+    await until(() => child.messages.length >= 2)
+    expect(child.messages[0]).toMatchObject({
+      id: 13,
+      result: { schemaVersion: 1, revision: 1 }
+    })
+    expect(child.messages[1]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 1,
+        op: {
+          type: 'open_media',
+          asset: { assetId: 'asset-open', mediaKind: 'video' }
+        }
+      }
+    })
     await harness.supervisor.stop()
   })
 

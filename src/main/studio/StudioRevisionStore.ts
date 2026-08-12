@@ -26,7 +26,13 @@ import {
   studioTimeSub,
   type StudioRationalTime
 } from './StudioRationalTime'
-import type { StudioEditOp, StudioInsertRangeOp } from './StudioProtocol'
+import type {
+  StudioDocumentOperation,
+  StudioEditOp,
+  StudioInsertRangeOp,
+  StudioMediaAsset,
+  StudioOpenMediaOp
+} from './StudioProtocol'
 
 export const STUDIO_DOCUMENT_FORMAT_VERSION = 1
 export const STUDIO_DEFAULT_TRACK_ID = 'V1'
@@ -56,11 +62,13 @@ export interface StudioTrack {
 
 export interface StudioDocument {
   formatVersion: typeof STUDIO_DOCUMENT_FORMAT_VERSION
+  /** File-backed sources known to this host-owned document. */
+  assets: StudioMediaAsset[]
   tracks: StudioTrack[]
 }
 
 export function createEmptyStudioDocument(): StudioDocument {
-  return { formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION, tracks: [] }
+  return { formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION, assets: [], tracks: [] }
 }
 
 export type StudioEditErrorCode =
@@ -248,6 +256,35 @@ export function applyStudioEditOp(document: StudioDocument, op: StudioEditOp): S
   }
 }
 
+function applyOpenMedia(document: StudioDocument, op: StudioOpenMediaOp): StudioDocument {
+  const assetId = requireNonEmptyString(op.asset.assetId, 'open_media.asset.assetId')
+  const path = requireNonEmptyString(op.asset.path, 'open_media.asset.path')
+  if (!nodePath.isAbsolute(path) || path.includes('\0')) {
+    throw new StudioEditError('invalid_params', 'open_media.asset.path must be an absolute path')
+  }
+  if (op.asset.mediaKind !== 'video') {
+    throw new StudioEditError('invalid_params', 'open_media.asset.mediaKind must be video')
+  }
+  const asset = { assetId, path, mediaKind: op.asset.mediaKind } satisfies StudioMediaAsset
+  const existingIndex = document.assets.findIndex((candidate) => candidate.assetId === assetId)
+  const assets = [...document.assets]
+  if (existingIndex === -1) assets.push(asset)
+  else assets[existingIndex] = asset
+  return { ...document, assets }
+}
+
+/** Apply either a timeline edit or a durable media-open mutation. */
+export function applyStudioDocumentOperation(
+  document: StudioDocument,
+  operation: StudioDocumentOperation
+): StudioDocument {
+  if (typeof operation !== 'object' || operation === null) {
+    throw new StudioEditError('invalid_op', 'document operation must be an object')
+  }
+  if (operation.type === 'open_media') return applyOpenMedia(document, operation)
+  return applyStudioEditOp(document, operation)
+}
+
 export interface StudioStoreRecovery {
   revision: number
   replayedJournalOps: number
@@ -265,11 +302,22 @@ export type StudioApplyEditOutcome =
       currentRevision: number
     }
 
+export type StudioOpenMediaOutcome =
+  | { ok: true; revision: number; asset: StudioMediaAsset }
+  | {
+      ok: false
+      code: 'invalid_params' | 'stale_base'
+      message: string
+      currentRevision: number
+    }
+
 export interface StudioRevisionStoreOptions {
   /** Compact once this many ops accumulate in the journal. */
   compactEveryOps?: number
   /** Compact once the journal grows past this many bytes. */
   compactWhenJournalBytes?: number
+  /** Realpath-jail roots for studio/openMedia. Empty means media opening is unavailable. */
+  allowedMediaRoots?: readonly string[]
 }
 
 interface StudioJournalLine {
@@ -277,7 +325,7 @@ interface StudioJournalLine {
   v: 1
   revision: number
   committedAtIso: string
-  op: StudioEditOp
+  op: StudioDocumentOperation
 }
 
 interface StudioSnapshotFile {
@@ -322,7 +370,17 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
   ) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: snapshot shape is invalid`)
   }
-  return candidate as StudioSnapshotFile
+  const document = candidate.document as StudioDocument & { assets?: unknown }
+  if (document.assets !== undefined && !Array.isArray(document.assets)) {
+    throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: assets must be an array`)
+  }
+  return {
+    ...(candidate as StudioSnapshotFile),
+    document: {
+      ...document,
+      assets: (document.assets ?? []) as StudioMediaAsset[]
+    }
+  }
 }
 
 function isJournalLineShape(value: unknown): value is StudioJournalLine {
@@ -351,6 +409,7 @@ export class StudioRevisionStore {
   private readonly journalPath: string
   private readonly compactEveryOps: number
   private readonly compactWhenJournalBytes: number
+  private readonly allowedMediaRoots: string[]
   readonly recovery: StudioStoreRecovery
 
   private constructor(init: {
@@ -374,6 +433,7 @@ export class StudioRevisionStore {
       1,
       init.options.compactWhenJournalBytes ?? DEFAULT_COMPACT_JOURNAL_BYTES
     )
+    this.allowedMediaRoots = [...(init.options.allowedMediaRoots ?? [])]
   }
 
   static async open(
@@ -383,6 +443,12 @@ export class StudioRevisionStore {
     await fsPromises.mkdir(directory, { recursive: true })
     const snapshotPath = nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME)
     const journalPath = nodePath.join(directory, STUDIO_JOURNAL_FILENAME)
+    const resolvedOptions: StudioRevisionStoreOptions = {
+      ...options,
+      allowedMediaRoots: await Promise.all(
+        (options.allowedMediaRoots ?? []).map((root) => fsPromises.realpath(root))
+      )
+    }
 
     let document = createEmptyStudioDocument()
     let revision = 0
@@ -458,7 +524,7 @@ export class StudioRevisionStore {
           break
         }
         try {
-          document = applyStudioEditOp(document, parsed.op)
+          document = applyStudioDocumentOperation(document, parsed.op)
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error)
           warnings.push(
@@ -486,7 +552,7 @@ export class StudioRevisionStore {
         discardedJournalLines,
         warnings
       },
-      options
+      options: resolvedOptions
     })
 
     if (discardedJournalLines > 0 || skippedStaleJournalLines > 0) {
@@ -568,6 +634,87 @@ export class StudioRevisionStore {
     })
   }
 
+  openMedia(
+    baseRevision: number,
+    requestedAsset: StudioMediaAsset
+  ): Promise<StudioOpenMediaOutcome> {
+    return this.enqueue(async () => {
+      if (this.closed) {
+        throw new Error('StudioRevisionStore is closed')
+      }
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+        return {
+          ok: false as const,
+          code: 'invalid_params' as const,
+          message: 'baseRevision must be a non-negative safe integer',
+          currentRevision: this.currentRevision
+        }
+      }
+      if (baseRevision !== this.currentRevision) {
+        return {
+          ok: false as const,
+          code: 'stale_base' as const,
+          message: `base revision ${baseRevision} is stale; current revision is ${this.currentRevision}`,
+          currentRevision: this.currentRevision
+        }
+      }
+
+      let asset: StudioMediaAsset
+      try {
+        asset = await this.resolveMediaAsset(requestedAsset)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: 'invalid_params' as const,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
+      }
+
+      const operation: StudioOpenMediaOp = { type: 'open_media', asset }
+      let nextDocument: StudioDocument
+      try {
+        nextDocument = applyStudioDocumentOperation(this.document, operation)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: 'invalid_params' as const,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
+      }
+
+      const line: StudioJournalLine = {
+        format: STUDIO_JOURNAL_FORMAT,
+        v: 1,
+        revision: this.currentRevision + 1,
+        committedAtIso: new Date().toISOString(),
+        op: structuredClone(operation)
+      }
+      const serialised = `${JSON.stringify(line)}\n`
+      const handle = await this.journalFileHandle()
+      await handle.appendFile(serialised, 'utf8')
+      await handle.datasync()
+      this.document = nextDocument
+      this.currentRevision += 1
+      this.journalOpsSinceSnapshot += 1
+      this.journalBytesSinceSnapshot += Buffer.byteLength(serialised)
+      if (
+        this.journalOpsSinceSnapshot >= this.compactEveryOps ||
+        this.journalBytesSinceSnapshot >= this.compactWhenJournalBytes
+      ) {
+        await this.compactLocked()
+      }
+      return { ok: true as const, revision: this.currentRevision, asset }
+    })
+  }
+
   close(): Promise<void> {
     return this.enqueue(async () => {
       this.closed = true
@@ -585,6 +732,47 @@ export class StudioRevisionStore {
       () => undefined
     )
     return result
+  }
+
+  private async resolveMediaAsset(requested: StudioMediaAsset): Promise<StudioMediaAsset> {
+    const assetId = requireNonEmptyString(requested.assetId, 'openMedia.assetId')
+    const requestedPath = requireNonEmptyString(requested.path, 'openMedia.path')
+    if (!nodePath.isAbsolute(requestedPath) || requestedPath.includes('\0')) {
+      throw new StudioEditError('invalid_params', 'openMedia.path must be an absolute path')
+    }
+    if (requested.mediaKind !== 'video') {
+      throw new StudioEditError('invalid_params', 'openMedia.mediaKind must be video')
+    }
+    if (this.allowedMediaRoots.length === 0) {
+      throw new StudioEditError('invalid_params', 'host media roots are not configured')
+    }
+
+    let canonicalPath: string
+    try {
+      canonicalPath = await fsPromises.realpath(requestedPath)
+    } catch {
+      throw new StudioEditError('invalid_params', 'openMedia.path does not resolve to a file')
+    }
+    let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+    try {
+      stat = await fsPromises.stat(canonicalPath)
+    } catch {
+      throw new StudioEditError('invalid_params', 'openMedia.path does not resolve to a file')
+    }
+    if (!stat.isFile()) {
+      throw new StudioEditError('invalid_params', 'openMedia.path must resolve to a regular file')
+    }
+
+    const allowed = this.allowedMediaRoots.some(
+      (root) => canonicalPath === root || canonicalPath.startsWith(`${root}${nodePath.sep}`)
+    )
+    if (!allowed) {
+      throw new StudioEditError(
+        'invalid_params',
+        'openMedia.path is outside the allowed media roots'
+      )
+    }
+    return { assetId, path: canonicalPath, mediaKind: requested.mediaKind }
   }
 
   private async journalFileHandle(): Promise<fsPromises.FileHandle> {

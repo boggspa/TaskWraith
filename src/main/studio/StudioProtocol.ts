@@ -15,6 +15,8 @@
 import type { StudioRationalTime } from './StudioRationalTime'
 
 export const STUDIO_PROTOCOL_VERSION = 1
+/** Versioned schema for the additive studio/openMedia request. */
+export const STUDIO_OPEN_MEDIA_SCHEMA_VERSION = 1
 
 export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 
@@ -22,6 +24,7 @@ export const STUDIO_METHODS = Object.freeze({
   hello: 'studio/hello',
   getDocument: 'studio/getDocument',
   applyEdit: 'studio/applyEdit',
+  openMedia: 'studio/openMedia',
   editCommitted: 'studio/editCommitted'
 })
 
@@ -90,6 +93,16 @@ export type StudioResponseMessage = StudioSuccessResponseMessage | StudioErrorRe
 
 export type StudioMessage = StudioRequestMessage | StudioNotificationMessage | StudioResponseMessage
 
+export type StudioMediaKind = 'video'
+
+/** Stable host-owned identity for a file-backed media source. */
+export interface StudioMediaAsset {
+  assetId: string
+  /** Canonical real path returned by the host after its media-root check. */
+  path: string
+  mediaKind: StudioMediaKind
+}
+
 /** Insert a source range into the sequence. Closed, frame-precise, lossless. */
 export interface StudioInsertRangeOp {
   type: 'insert_range'
@@ -108,6 +121,14 @@ export interface StudioInsertRangeOp {
 }
 
 export type StudioEditOp = StudioInsertRangeOp
+
+/** Durable document mutation emitted by studio/openMedia. */
+export interface StudioOpenMediaOp {
+  type: 'open_media'
+  asset: StudioMediaAsset
+}
+
+export type StudioDocumentOperation = StudioEditOp | StudioOpenMediaOp
 
 export interface StudioHelloParams {
   protocolVersion: number
@@ -129,9 +150,24 @@ export interface StudioApplyEditResult {
   revision: number
 }
 
+export interface StudioOpenMediaParams {
+  /** This field versions the method payload independently of protocol v1. */
+  schemaVersion: typeof STUDIO_OPEN_MEDIA_SCHEMA_VERSION
+  baseRevision: number
+  assetId: string
+  path: string
+  mediaKind: StudioMediaKind
+}
+
+export interface StudioOpenMediaResult {
+  schemaVersion: typeof STUDIO_OPEN_MEDIA_SCHEMA_VERSION
+  revision: number
+  asset: StudioMediaAsset
+}
+
 export interface StudioEditCommittedParams {
   revision: number
-  op: StudioEditOp
+  op: StudioDocumentOperation
 }
 
 export function studioResult(id: number, result: unknown): StudioSuccessResponseMessage {
