@@ -4,11 +4,14 @@ import {
   pathComparisonKey,
   sanitizeLocalPath
 } from './pathDisplay'
+import type { ComposerAttachmentKind } from '../../../shared/composerAttachment'
+import { isDirectoryComposerAttachment } from '../../../shared/composerAttachment'
 
 export type ImageAttachment = {
   id: string
   path: string
   name: string
+  kind?: ComposerAttachmentKind
   persistenceVersion?: 1
   sha256?: string
   mimeType?: string
@@ -45,10 +48,16 @@ export const persistedAttachmentMetadata = (
   }
 }
 
+export const attachmentKindMetadata = (
+  value: unknown
+): Partial<Pick<ImageAttachment, 'kind'>> =>
+  isDirectoryComposerAttachment(value) ? { kind: 'directory' } : {}
+
 type AttachmentPromptLike = {
   id?: string | null
   path?: string | null
   name?: string | null
+  kind?: ComposerAttachmentKind | null
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
@@ -74,6 +83,8 @@ export const isImageAttachmentPath = (path: string): boolean => IMAGE_EXT.test(p
 
 export const isPdfAttachmentPath = (path: string): boolean => PDF_EXT.test(path)
 
+export const isDirectoryAttachment = isDirectoryComposerAttachment
+
 const isReadableLocalAttachmentPath = (value: string): boolean => {
   const normalized = sanitizeImagePath(value)
   return Boolean(
@@ -94,24 +105,31 @@ export const hasAttachmentPromptContent = (
 export const attachmentSummary = (
   attachments: readonly AttachmentPromptLike[] | null | undefined
 ): string => {
-  const names = (attachments || [])
-    .map((attachment) => attachment.name || getImageName(attachment.path || ''))
-    .map((name) => name.trim())
-    .filter(Boolean)
+  const entries = (attachments || [])
+    .map((attachment) => ({
+      name: (attachment.name || getImageName(attachment.path || '')).trim(),
+      directory: isDirectoryAttachment(attachment)
+    }))
+    .filter((entry) => Boolean(entry.name))
+  const names = entries.map((entry) => entry.name)
   if (names.length === 0) return ''
   if (names.length === 1) return `Attached: ${names[0]}`
   const preview = names.slice(0, 3).join(', ')
   const remainder = names.length - 3
-  return `Attached ${names.length} files: ${preview}${remainder > 0 ? `, +${remainder} more` : ''}`
+  const noun = entries.some((entry) => entry.directory) ? 'items' : 'files'
+  return `Attached ${names.length} ${noun}: ${preview}${remainder > 0 ? `, +${remainder} more` : ''}`
 }
 
 export const attachmentQueueKey = (
   attachments: readonly AttachmentPromptLike[] | null | undefined
 ): string =>
   (attachments || [])
-    .map((attachment) => sanitizeImagePath(attachment.path || ''))
-    .filter(Boolean)
-    .map((path) => pathComparisonKey(path))
+    .map((attachment) => ({
+      path: sanitizeImagePath(attachment.path || ''),
+      kind: isDirectoryAttachment(attachment) ? 'directory' : 'file'
+    }))
+    .filter((attachment) => Boolean(attachment.path))
+    .map((attachment) => `${attachment.kind}:${pathComparisonKey(attachment.path)}`)
     .sort()
     .join('\n')
 

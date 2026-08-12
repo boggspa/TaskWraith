@@ -68,7 +68,7 @@ export type MediaAttachmentLike = {
   id?: string
   path?: string
   name?: string
-  kind?: ChatMediaKind
+  kind?: ChatMediaKind | 'directory'
   source?: ChatMediaSource
   access?: ExternalPathGrant['access']
   mimeType?: string
@@ -507,9 +507,15 @@ export function collectChatMediaRefs(
   ) => {
     const path = typeof attachment?.path === 'string' ? attachment.path.trim() : ''
     if (!path) return
+    const declaredKind = attachment?.kind
     addRef({
       id: attachment?.id || `${source}:${path}`,
-      kind: isChatMediaImagePath(path) ? 'image' : 'file',
+      kind:
+        declaredKind === 'directory' || declaredKind === 'folder'
+          ? 'folder'
+          : isChatMediaImagePath(path)
+            ? 'image'
+            : 'file',
       source,
       name: attachment?.name || chatMediaNameFromPath(path),
       path
@@ -727,8 +733,10 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
     seen.add(key)
     const declaredKind = attachment?.kind
     const kind =
-      declaredKind === 'folder' || declaredKind === 'file' || declaredKind === 'image'
-        ? declaredKind
+      declaredKind === 'directory'
+        ? 'folder'
+        : declaredKind === 'folder' || declaredKind === 'file' || declaredKind === 'image'
+          ? declaredKind
         : isChatMediaImagePath(path)
           ? 'image'
           : 'file'

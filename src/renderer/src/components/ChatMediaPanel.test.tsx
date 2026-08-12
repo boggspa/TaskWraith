@@ -215,6 +215,30 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(refs[0].thumbnail?.dataBase64).toBe('POSTER')
   })
 
+  it('keeps pending folder attachments typed as folders', () => {
+    const refs = collectChatMediaRefs(
+      null,
+      [
+        {
+          id: 'folder-1',
+          kind: 'directory',
+          name: 'reference-package',
+          path: '/tmp/reference-package'
+        }
+      ],
+      []
+    )
+
+    expect(refs).toEqual([
+      expect.objectContaining({
+        id: 'folder-1',
+        kind: 'folder',
+        source: 'upload',
+        path: '/tmp/reference-package'
+      })
+    ])
+  })
+
   it('uses legacy image thumbnails for chat-level uploaded attachment refs', () => {
     const refs = collectChatMediaRefs(
       {

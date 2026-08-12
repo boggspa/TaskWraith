@@ -77,7 +77,7 @@ describe('Composer permission-picker admission while running', () => {
   it('keeps next-turn draft controls available during a solo run', () => {
     const attachmentRegion = sourceRegion(
       composerSource,
-      'aria-label="Composer attachments and context"',
+      '<ComposerAttachmentTray',
       '<div className="composer-inner-module">'
     )
     expect(attachmentRegion).not.toContain('disabled={isCurrentComposerLocked}')

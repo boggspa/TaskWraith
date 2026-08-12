@@ -19,7 +19,7 @@ import { resolveEnsembleFanoutIsolationPolicy } from '../../../shared/ensembleFa
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -60,7 +60,6 @@ import { EnsembleParticipantsAboveRow } from '../components/EnsembleParticipants
 import { EnsembleRosterPresetPicker } from '../components/EnsembleRosterPresetPicker'
 import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
-import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
@@ -130,10 +129,9 @@ import {
   collectClipboardAttachmentPaths,
   collectDroppedAttachmentPaths,
   dataTransferHasFiles,
-  hasAttachmentPromptContent,
-  isPdfAttachmentPath
+  hasAttachmentPromptContent
 } from '../lib/imageAttachments'
-import { ComposerImageThumb } from './ComposerImageThumb'
+import { ComposerAttachmentTray } from './ComposerAttachmentTray'
 import { ComposerBlackboardButton } from './ComposerBlackboardButton'
 import { ComposerEnsembleToggleButton } from './ComposerEnsembleToggleButton'
 import { ComposerPlanImportCard } from './ComposerPlanImportCard'
@@ -250,8 +248,6 @@ export interface ComposerProps {
   /** Optional host bridge for focusing a secondary Composer after it mounts. */
   externalComposerTextareaRef?: { current: HTMLTextAreaElement | null }
   composerAriaLabel: any
-  composerFileAttachments: any
-  composerImageAttachments: any
   composerPlaceholder: any
   composerRunTimecodeStartedAt: any
   composerSlashCommands: ComposerSlashCommand[]
@@ -350,6 +346,7 @@ export interface ComposerProps {
   handleNewGlobalChat: any
   handlePaletteCommand: any
   handlePermissionRetry: any
+  handlePickFolder: any
   handlePickImages: any
   handleProviderChange: any
   handleRemoveWorkspace: any
@@ -593,8 +590,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerAreaRef,
     externalComposerTextareaRef,
     composerAriaLabel,
-    composerFileAttachments,
-    composerImageAttachments,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
     composerSlashCommands,
@@ -682,6 +677,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleNewGlobalChat,
     handlePaletteCommand,
     handlePermissionRetry,
+    handlePickFolder,
     handlePickImages,
     handleProviderChange,
     handleRemoveWorkspace,
@@ -2824,98 +2820,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 so it does not read like a day-to-day action chip.
               */}
 
-              {(imageAttachments.length > 0 || currentDiscordContextSelection) && (
-                <div
-                  className="composer-image-strip composer-attachment-tray"
-                  aria-label="Composer attachments and context"
-                >
-                  {composerImageAttachments.map((image) => (
-                    <div
-                      key={image.id}
-                      className="composer-image-item composer-image-tile is-image"
-                      title={image.path}
-                      aria-label={`Image attachment ${image.name}`}
-                    >
-                      <ComposerImageThumb path={image.path} name={image.name} />
-                      <button
-                        className="composer-image-remove"
-                        type="button"
-                        onClick={() => handleRemoveImageAttachment(image.id)}
-                        title="Remove attachment"
-                        aria-label={`Remove ${image.name}`}
-                      >
-                        <XSymbolIcon />
-                      </button>
-                    </div>
-                  ))}
-                  {composerFileAttachments.map((file) => {
-                    const isPdf = isPdfAttachmentPath(file.path)
-                    return (
-                      <div
-                        key={file.id}
-                        className={`composer-image-item composer-file-card${isPdf ? ' is-pdf' : ''}`}
-                        title={file.path}
-                      >
-                        <span className="composer-attachment-icon" title={file.name}>
-                          {isPdf ? (
-                            <ComposerImageThumb path={file.path} name={file.name} />
-                          ) : (
-                            <FileTypeIcon
-                              path={file.path}
-                              size={18}
-                              className="composer-attachment-icon-inner"
-                              workspacePath={composerGitActionBasePath || currentWorkspace?.path}
-                            />
-                          )}
-                        </span>
-                        <span className="composer-image-name" title={file.path}>
-                          {file.name}
-                        </span>
-                        <button
-                          className="composer-image-remove"
-                          type="button"
-                          onClick={() => handleRemoveImageAttachment(file.id)}
-                          title="Remove attachment"
-                          aria-label={`Remove ${file.name}`}
-                        >
-                          <XSymbolIcon />
-                        </button>
-                      </div>
-                    )
-                  })}
-                  {currentDiscordContextSelection && (
-                    <div
-                      className="composer-image-item composer-file-card composer-discord-context-card"
-                      title={`Discord #${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId}`}
-                    >
-                      <span className="composer-discord-context-icon" aria-hidden>
-                        #
-                      </span>
-                      <span
-                        className="composer-image-name composer-discord-context-name"
-                        title={`Discord #${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId}`}
-                      >
-                        {`Discord #${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId}`}
-                      </span>
-                      <span className="composer-discord-context-count">
-                        {currentDiscordContextSelection.limit}
-                      </span>
-                      <button
-                        className="composer-image-remove"
-                        type="button"
-                        onClick={handleClearDiscordContext}
-                        title="Remove Discord context"
-                        aria-label="Remove Discord context"
-                      >
-                        <XSymbolIcon />
-                      </button>
-                    </div>
-                  )}
-                  {imageAttachments.length > 0 && (
-                    <span className="composer-image-count">{`${imageAttachments.length}/${MAX_IMAGE_ATTACHMENTS}`}</span>
-                  )}
-                </div>
-              )}
+              <ComposerAttachmentTray
+                attachments={imageAttachments}
+                discordContextSelection={currentDiscordContextSelection}
+                workspacePath={composerGitActionBasePath || currentWorkspace?.path}
+                onRemoveAttachment={handleRemoveImageAttachment}
+                onClearDiscordContext={handleClearDiscordContext}
+              />
 
               {/*
                 Console redesign — INNER MODULE. The textarea + the
@@ -3521,10 +3432,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               items: [
                                 {
                                   id: 'attachment',
-                                  label: 'Attachment',
+                                  label: 'Attachments',
                                   description: 'Add files or images',
                                   icon: <PlusSymbolIcon />,
                                   onSelect: handlePickImages
+                                },
+                                {
+                                  id: 'folder-attachment',
+                                  label: 'Folder',
+                                  description: isCurrentGlobalChat
+                                    ? 'Choose a workspace first'
+                                    : 'Attach a folder reference',
+                                  icon: <FolderSymbolIcon />,
+                                  disabled: !currentChat || isCurrentGlobalChat,
+                                  onSelect: handlePickFolder
                                 },
                                 {
                                   id: 'attached-window',

@@ -2,6 +2,7 @@ import React from 'react'
 import {
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
+  FolderSymbolIcon,
   GitCommitSymbolIcon,
   GoalSymbolIcon,
   PlusSymbolIcon,
@@ -219,9 +220,16 @@ const PREVIEW_PLUS_SECTIONS: ComposerPlusPickerSection[] = [
     items: [
       {
         id: 'preview-attachment',
-        label: 'Attachment',
+        label: 'Attachments',
         description: 'Add files or images',
         icon: <PlusSymbolIcon />,
+        onSelect: NOOP
+      },
+      {
+        id: 'preview-folder-attachment',
+        label: 'Folder',
+        description: 'Attach a folder reference',
+        icon: <FolderSymbolIcon />,
         onSelect: NOOP
       }
     ]

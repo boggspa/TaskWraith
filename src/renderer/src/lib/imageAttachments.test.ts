@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_IMAGE_ATTACHMENTS,
+  attachmentKindMetadata,
   attachmentQueueKey,
   attachmentSummary,
   collectClipboardAttachmentPaths,
@@ -72,7 +73,23 @@ describe('image attachment path helpers', () => {
     ]
 
     expect(attachmentSummary(attachments)).toBe('Attached 2 files: B.png, a.png')
-    expect(attachmentQueueKey(attachments)).toBe('/tmp/B.png\n/tmp/a.png')
+    expect(attachmentQueueKey(attachments)).toBe('file:/tmp/B.png\nfile:/tmp/a.png')
+  })
+
+  it('labels folder references in summaries, metadata, and queue identity', () => {
+    const folder = {
+      id: 'folder-1',
+      path: '/tmp/reference-package',
+      name: 'reference-package',
+      kind: 'directory' as const
+    }
+
+    expect(attachmentSummary([folder, { path: '/tmp/readme.md', name: 'readme.md' }])).toBe(
+      'Attached 2 items: reference-package, readme.md'
+    )
+    expect(attachmentKindMetadata(folder)).toEqual({ kind: 'directory' })
+    expect(attachmentKindMetadata({ path: '/tmp/readme.md' })).toEqual({})
+    expect(attachmentQueueKey([folder])).toBe('directory:/tmp/reference-package')
   })
 
   it('preserves only complete durable attachment identity', () => {

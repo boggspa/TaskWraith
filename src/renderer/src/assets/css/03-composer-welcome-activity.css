@@ -7000,6 +7000,25 @@ button.composer-run-timecode.is-open {
   border-radius: 8px;
 }
 
+.composer-file-card.is-folder {
+  border-color: color-mix(
+    in srgb,
+    var(--provider-accent, var(--accent)) 34%,
+    var(--sidebar-border)
+  );
+}
+
+.composer-file-card.is-folder .composer-attachment-icon {
+  color: color-mix(in srgb, var(--provider-accent, var(--accent)) 76%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 36%, transparent);
+  background: color-mix(in srgb, var(--provider-accent, var(--accent)) 14%, transparent);
+}
+
+.composer-file-card.is-folder .composer-control-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .composer-attachment-icon-inner {
   width: 16px;
   height: 16px;

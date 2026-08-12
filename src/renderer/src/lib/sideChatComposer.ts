@@ -49,8 +49,6 @@ export function buildSideChatComposerProps<T extends Record<string, unknown>>(
   return {
     ...sharedSurfaceProps,
     attachedWindow: null,
-    composerFileAttachments: [],
-    composerImageAttachments: [],
     composerSlashCommands: [],
     composerAboveBarStackAuraClass: '',
     composerAgentAuraClass: '',

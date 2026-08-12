@@ -810,12 +810,14 @@ import type {
   DiscordContextTargets
 } from '../../main/channels/DiscordContextService'
 import {
+  attachmentKindMetadata,
   attachmentQueueKey,
   attachmentSummary,
   dedupePaths,
   getImageName,
   hasAttachmentPromptContent,
   imagePreviewDataUrlToThumbnail,
+  isDirectoryAttachment,
   isImageAttachmentPath,
   MAX_IMAGE_ATTACHMENTS,
   mergeImageAttachments,
@@ -4028,14 +4030,6 @@ function App(): React.JSX.Element {
         : null,
     [currentComposerChatId, discordContextSelectionByChatId]
   )
-  const composerImageAttachments = useMemo(
-    () => imageAttachments.filter((attachment) => isImageAttachmentPath(attachment.path)),
-    [imageAttachments]
-  )
-  const composerFileAttachments = useMemo(
-    () => imageAttachments.filter((attachment) => !isImageAttachmentPath(attachment.path)),
-    [imageAttachments]
-  )
   const currentChatMediaRefs = useMemo(
     () => collectChatMediaRefs(currentChat, imageAttachments, externalPathGrants),
     [currentChat, imageAttachments, externalPathGrants]
@@ -4120,7 +4114,10 @@ function App(): React.JSX.Element {
   const buildSubmittedImageThumbnailMetadata = async (
     attachments: readonly ImageAttachment[]
   ): Promise<{ imagePaths: string[]; imageThumbnails: ImageAttachmentThumbnail[] }> => {
-    const images = attachments.filter((attachment) => isImageAttachmentPath(attachment.path))
+    const images = attachments.filter(
+      (attachment) =>
+        !isDirectoryAttachment(attachment) && isImageAttachmentPath(attachment.path)
+    )
     if (images.length === 0 || typeof window.api?.readImagePreview !== 'function') {
       return { imagePaths: [], imageThumbnails: [] }
     }
@@ -10180,6 +10177,24 @@ function App(): React.JSX.Element {
     []
   )
 
+  const addFolderAttachmentToChat = useCallback(
+    (chatId: string | null | undefined, path: string) => {
+      const normalizedPath = sanitizeImagePath(path)
+      if (!chatId || !normalizedPath) return
+      const folder: ImageAttachment = {
+        id: `folder-${Date.now()}-${Math.random()}`,
+        path: normalizedPath,
+        name: getImageName(normalizedPath),
+        kind: 'directory'
+      }
+      setImageAttachmentsByChatId((prev) => ({
+        ...prev,
+        [chatId]: mergeImageAttachments(prev[chatId] || [], [folder])
+      }))
+    },
+    []
+  )
+
   const addImageAttachments = (paths: string[]) => {
     addImageAttachmentsToChat(getCurrentComposerStateChatId(), paths)
   }
@@ -10316,6 +10331,57 @@ function App(): React.JSX.Element {
     },
     [updateChatById]
   )
+
+  const handlePickFolderForChat = useCallback(
+    async (chatId: string) => {
+      const chat = chatByIdRef.current.get(chatId)
+      if (!chat || isGlobalChat(chat)) return
+      try {
+        const result = await window.api.pickAndPersistExternalPathGrant({
+          chatId,
+          access: 'read',
+          purpose: 'attachment'
+        })
+        if (!result.ok || !result.path) return
+        if (result.grants.length > 0) {
+          const liveChat = chatByIdRef.current.get(chatId) || chat
+          updateExternalPathGrantsForChat(
+            chatId,
+            normalizeExternalPathGrants([
+              ...externalPathGrantsForChat(liveChat),
+              ...result.grants
+            ])
+          )
+        }
+        const existing = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+        addFolderAttachmentToChat(chatId, result.path)
+        if (existing.length >= MAX_IMAGE_ATTACHMENTS) {
+          setRawLogs((prev) => [
+            ...prev,
+            {
+              type: 'info',
+              content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); the oldest item was removed.`
+            }
+          ])
+        }
+      } catch (error) {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'stderr',
+            content: `Failed to attach folder: ${redactLog(String(error))}`
+          }
+        ])
+      }
+    },
+    [addFolderAttachmentToChat, updateExternalPathGrantsForChat]
+  )
+
+  const handlePickFolder = async () => {
+    const chatId = getCurrentComposerStateChatId()
+    if (!chatId) return
+    await handlePickFolderForChat(chatId)
+  }
 
   const updateExternalPathGrants = (nextGrants: ExternalPathGrant[]) => {
     const chatId = currentChat?.appChatId
@@ -12663,6 +12729,7 @@ function App(): React.JSX.Element {
           id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
           path: attachment.path,
           name: attachment.name || getImageName(attachment.path),
+          ...attachmentKindMetadata(attachment),
           ...persistedAttachmentMetadata(attachment)
           }))
         : fallbackRequest.imageAttachments,
@@ -12765,6 +12832,7 @@ function App(): React.JSX.Element {
       id: attachment.id,
       path: attachment.path,
       name: attachment.name,
+      ...attachmentKindMetadata(attachment),
       ...persistedAttachmentMetadata(attachment)
     })),
     ...(request.discordContextSelection
@@ -12930,6 +12998,7 @@ function App(): React.JSX.Element {
         id: attachment.id || `${job.runId}-attachment-${index}`,
         path: attachment.path,
         name: attachment.name || getImageName(attachment.path),
+        ...attachmentKindMetadata(attachment),
         ...persistedAttachmentMetadata(attachment)
       })),
       discordContextSelection: request.discordContextSelection,
@@ -13492,7 +13561,8 @@ function App(): React.JSX.Element {
         .map((attachment) => ({
           id: attachment.id,
           path: attachment.path,
-          name: attachment.name || getImageName(attachment.path)
+          name: attachment.name || getImageName(attachment.path),
+          ...attachmentKindMetadata(attachment)
         }))
         .filter((attachment) => Boolean(attachment.path))
       const metadata: ChatMessage['metadata'] = {}
@@ -13860,6 +13930,7 @@ function App(): React.JSX.Element {
               id: attachment.id,
               path: attachment.path,
               name: attachment.name,
+              ...attachmentKindMetadata(attachment),
               ...persistedAttachmentMetadata(attachment)
             })),
             ...(request.discordContextSnapshots?.length
@@ -14143,7 +14214,8 @@ function App(): React.JSX.Element {
           .map((attachment) => ({
             id: attachment.id,
             path: attachment.path,
-            name: attachment.name || getImageName(attachment.path)
+            name: attachment.name || getImageName(attachment.path),
+            ...attachmentKindMetadata(attachment)
           }))
           .filter((attachment) => Boolean(attachment.path))
         const linkPreviewMetadata = extractHttpUrls(displayFinalPrompt, 8)
@@ -16763,6 +16835,7 @@ function App(): React.JSX.Element {
             id: attachment.id,
             path: attachment.path,
             name: attachment.name,
+            ...attachmentKindMetadata(attachment),
             ...persistedAttachmentMetadata(attachment)
           }))
         })
@@ -26190,6 +26263,7 @@ function App(): React.JSX.Element {
           id: attachment.id,
           path: attachment.path,
           name: attachment.name,
+          ...attachmentKindMetadata(attachment),
           ...persistedAttachmentMetadata(attachment)
         }))
       })
@@ -28612,6 +28686,7 @@ function App(): React.JSX.Element {
     handleNewGlobalChat,
     handlePaletteCommand,
     handlePermissionRetry,
+    handlePickFolder,
     handlePickImages,
     handleProviderChange,
     handleRemoveWorkspace,
@@ -29181,12 +29256,6 @@ function App(): React.JSX.Element {
         : 'Set active goal'
       const paneViewerSelection = viewerSelection
       const viewerProviderLabel = getProviderLabel(viewerProvider)
-      const paneComposerImageAttachments = (
-        imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
-      ).filter((attachment) => isImageAttachmentPath(attachment.path))
-      const paneComposerFileAttachments = (
-        imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
-      ).filter((attachment) => !isImageAttachmentPath(attachment.path))
       const paneIsEnsembleChat = viewerChat.chatKind === 'ensemble'
       const paneComposerPlaceholder = paneIsEnsembleChat
         ? 'Ask the ensemble. @ to direct a participant.'
@@ -29548,8 +29617,6 @@ function App(): React.JSX.Element {
         markPersistentSessionRestartNeeded: focusPaneForGoalControl,
         // attachments (display)
         imageAttachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
-        composerImageAttachments: paneComposerImageAttachments,
-        composerFileAttachments: paneComposerFileAttachments,
         // goal (display)
         currentActiveGoal: viewerChat.activeGoal || null,
         currentGoalStatus: viewerGoalStatus,
@@ -29613,6 +29680,7 @@ function App(): React.JSX.Element {
         updateCurrentGoalStatus: focusPaneForGoalControl,
         markCurrentGoalBlocked: focusPaneForGoalControl,
         clearCurrentGoal: focusPaneForGoalControl,
+        handlePickFolder: () => handlePickFolderForChat(viewerChatId),
         handlePickImages: () => handleMultiviewPanePickAttachments(viewerPaneIndex, viewerChatId),
         handleRemoveImageAttachment: (id: string) =>
           handleMultiviewPaneRemoveAttachment(viewerPaneIndex, viewerChatId, id),
@@ -29768,6 +29836,7 @@ function App(): React.JSX.Element {
       handleMultiviewPaneAddWorkspace,
       handleMultiviewPaneComposerWorktreeChange,
       handleMultiviewPaneCopyTranscript,
+      handlePickFolderForChat,
       handleMultiviewPanePickAttachments,
       handleMultiviewPanePickWorkspace,
       handleMultiviewPanePrimaryGitSnapshot,
@@ -29855,8 +29924,6 @@ function App(): React.JSX.Element {
     cursorFastMode,
     composerAreaRef,
     composerAriaLabel,
-    composerFileAttachments,
-    composerImageAttachments,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
     composerTokenTally,
@@ -30251,6 +30318,7 @@ function App(): React.JSX.Element {
       if (!sideChat) return
       handleMultiviewPaneRemoveAttachment(-1, sideChat.appChatId, attachmentId)
     },
+    handlePickFolderForChat,
     handleSideChatChange,
     handleSideModelChange,
     handleSideProviderChange,

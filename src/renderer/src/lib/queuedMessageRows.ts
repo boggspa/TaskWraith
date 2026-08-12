@@ -6,6 +6,7 @@ import type {
 import type { QueuedMessageRowEntry } from '../components/QueuedMessagesAboveRow'
 import type { ImageAttachment } from './imageAttachments'
 import {
+  attachmentKindMetadata,
   getImageName,
   persistedAttachmentMetadata,
   sanitizeImagePath
@@ -50,6 +51,7 @@ export const mapQueuedAttachmentsForComposer = (
         id?: string | null
         path?: string | null
         name?: string | null
+        kind?: 'file' | 'directory' | null
         persistenceVersion?: unknown
         sha256?: unknown
         mimeType?: unknown
@@ -74,6 +76,7 @@ export const mapQueuedAttachmentsForComposer = (
       name:
         (typeof attachment?.name === 'string' && attachment.name.trim()) ||
         getImageName(path),
+      ...attachmentKindMetadata(attachment),
       ...persistedAttachmentMetadata(attachment)
     })
   }

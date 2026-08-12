@@ -27,7 +27,6 @@ import {
 import { buildContinuationHopsChangeRequest } from '../../lib/continuationHopsChangeRequest'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../../../shared/ensembleFanoutIsolation'
 import { activeGoalModeLabel } from '../../../../shared/activeGoalPresentation'
-import { isImageAttachmentPath } from '../../lib/imageAttachments'
 import {
   MIN_RIGHT_PANEL_WIDTH,
   MAX_RIGHT_PANEL_WIDTH,
@@ -331,6 +330,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSideCancel,
   handleSideAgentApprovalAction,
   handleRemoveSideImageAttachment,
+  handlePickFolderForChat,
   handleSideChatChange,
   handleSideProviderChange,
   handleSideRun,
@@ -752,12 +752,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   const sideComposerAttachments = Array.isArray(sideImageAttachments)
     ? sideImageAttachments
     : []
-  const sideComposerImageAttachments = sideComposerAttachments.filter((attachment: any) =>
-    isImageAttachmentPath(attachment.path)
-  )
-  const sideComposerFileAttachments = sideComposerAttachments.filter(
-    (attachment: any) => !isImageAttachmentPath(attachment.path)
-  )
   const sideRawModelOptions = Array.isArray(sideComposerModelOptions)
     ? sideComposerModelOptions.filter((option: any) => option.id !== 'custom')
     : []
@@ -1032,8 +1026,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           getProjectReferenceContextSelection(sideChat.appChatId)?.referenceIds.length
         ),
         imageAttachments: sideComposerAttachments,
-        composerImageAttachments: sideComposerImageAttachments,
-        composerFileAttachments: sideComposerFileAttachments,
         currentActiveGoal: sideChat.activeGoal || null,
         currentGoalStatus: sideChat.activeGoal?.status || 'empty',
         currentGoalModeLabel: sideChat.activeGoal
@@ -1112,6 +1104,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         handleAgentApprovalAction: handleSideAgentApprovalAction,
         handleProviderChange: handleSideProviderChange,
         rememberCurrentChatComposerSelection: rememberSideChatComposerSelection,
+        handlePickFolder: () => handlePickFolderForChat(sideChat.appChatId),
         handlePickImages: async () => {
           const selected = await window.api.selectImageFiles()
           if (selected?.length) {

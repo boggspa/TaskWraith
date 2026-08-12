@@ -388,6 +388,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideCancel: any
   handleSideAgentApprovalAction: any
   handleRemoveSideImageAttachment: any
+  handlePickFolderForChat: (chatId: string) => Promise<void>
   handleSideChatChange: any
   handleSideModelChange: any
   handleSideProviderChange: any

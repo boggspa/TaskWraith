@@ -215,7 +215,13 @@ describe('queued message row helpers', () => {
           byteLength: 12
         },
         { path: '' },
-        { path: '/tmp/note.pdf' }
+        { path: '/tmp/note.pdf' },
+        {
+          id: 'folder-1',
+          path: '/tmp/reference-package',
+          name: 'reference-package',
+          kind: 'directory'
+        }
       ])
     ).toEqual([
       {
@@ -231,6 +237,12 @@ describe('queued message row helpers', () => {
         id: 'queued-edit-attachment-2',
         path: '/tmp/note.pdf',
         name: 'note.pdf'
+      },
+      {
+        id: 'folder-1',
+        path: '/tmp/reference-package',
+        name: 'reference-package',
+        kind: 'directory'
       }
     ])
   })
