@@ -8,6 +8,12 @@ describe('promptFreeReadOnlyShellReason', () => {
   it('keeps basic Git reads prompt-free, including inside safe command sequences', () => {
     expect(promptFreeReadOnlyShellReason('git status --porcelain')).toBe('readonly_shell')
     expect(promptFreeReadOnlyShellReason('git log --oneline -10')).toBe('readonly_shell')
+    expect(promptFreeReadOnlyShellReason('git diff --check')).toBe('readonly_shell')
+    expect(
+      promptFreeReadOnlyShellReason(
+        'git log -n 5 --oneline && git rev-list --count origin/master..master'
+      )
+    ).toBe('inspection_shell')
     expect(promptFreeReadOnlyShellReason('ls -la && git status --short')).toBe('inspection_shell')
   })
 

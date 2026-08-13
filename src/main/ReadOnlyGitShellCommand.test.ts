@@ -67,6 +67,7 @@ describe('isReadOnlyGitShellCommand — git diff', () => {
       'git diff -U0 --no-color',
       'git diff --word-diff=color',
       'git diff --compact-summary',
+      'git diff --check',
       'git --no-pager diff --shortstat',
       'git diff --merge-base main',
       'git diff -w -b',
@@ -96,6 +97,29 @@ describe('isReadOnlyGitShellCommand — git diff', () => {
       'git diff | tee /tmp/x',
       'git diff && rm -rf /',
       "git diff 'HEAD'"
+    ]) {
+      expect(isReadOnlyGitShellCommand(command), command).toBe(false)
+    }
+  })
+})
+
+describe('isReadOnlyGitShellCommand — git rev-list', () => {
+  it('accepts the narrow commit-count forms used for local/upstream inspection', () => {
+    for (const command of [
+      'git rev-list --count HEAD',
+      'git rev-list --count origin/master..master',
+      'git --no-pager rev-list --count HEAD~5..HEAD'
+    ]) {
+      expect(isReadOnlyGitShellCommand(command), command).toBe(true)
+    }
+  })
+
+  it('rejects the unscreened rev-list option surface', () => {
+    for (const command of [
+      'git rev-list --alternate-refs',
+      'git rev-list --all',
+      'git rev-list --objects HEAD',
+      'git rev-list --filter=blob:none HEAD'
     ]) {
       expect(isReadOnlyGitShellCommand(command), command).toBe(false)
     }

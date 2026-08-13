@@ -1,7 +1,7 @@
 /**
  * Fail-closed classifier for the read-only git shell commands every permission
- * posture may run without a prompt: pure `git status`, `git diff`, and
- * `git log` invocations.
+ * posture may run without a prompt: pure `git status`, `git diff`, `git log`,
+ * and narrowly screened `git rev-list` invocations.
  *
  * WHY: the MCP `git_status` / `git_diff` / `git_log` tools are auto-allowed in
  * every posture (MCP_AUTO_ALLOWED_TOOLS — fixed-argv, non-mutating). Agents
@@ -23,8 +23,8 @@
  *    `-C <dir>` (repo of the agent's choosing), `--exec-path`, `--git-dir`,
  *    `--work-tree`, `-p`/`--paginate` (pager exec — POSITION-SENSITIVE:
  *    `git -p log` is the pager, `git log -p` is the patch read), `--output`;
- *  - the subcommand must be one of `status` / `diff` / `log`, followed only by
- *    that subcommand's allow-listed read flags and metacharacter-free
+ *  - the subcommand must be one of `status` / `diff` / `log` / `rev-list`,
+ *    followed only by that subcommand's allow-listed read flags and metacharacter-free
  *    pathspecs/refs. NOT allow-listed (and therefore rejected) on diff/log:
  *    `--no-index` (diffs ARBITRARY files outside the repo — a read of any path
  *    on disk), `--output[=]` (writes a file), `--ext-diff` / `--textconv`
@@ -134,7 +134,15 @@ const GIT_READ_SUBCOMMANDS: Record<string, GitReadSubcommandSpec> = {
     combinedShort: /^-[sbvz]{1,4}$/
   },
   diff: {
-    exact: new Set([...DIFF_FAMILY_EXACT, '--cached', '--staged', '--merge-base']),
+    exact: new Set([
+      ...DIFF_FAMILY_EXACT,
+      '--cached',
+      '--staged',
+      '--merge-base',
+      // Reports whitespace errors through stdout + exit status; it does not
+      // modify the index or working tree.
+      '--check'
+    ]),
     prefixes: [...DIFF_FAMILY_PREFIXES]
   },
   log: {
@@ -197,6 +205,13 @@ const GIT_READ_SUBCOMMANDS: Record<string, GitReadSubcommandSpec> = {
     ],
     // -10 / -n10 count shorthands; the separate-value form uses exact '-n'.
     combinedShort: /^-n?\d{1,6}$/
+  },
+  // `rev-list` has a very large option surface, including `--alternate-refs`,
+  // which can execute a command configured by the repository. Keep this to
+  // the exact count form agents use to compare local and upstream history.
+  'rev-list': {
+    exact: new Set(['--count']),
+    prefixes: []
   }
 }
 
