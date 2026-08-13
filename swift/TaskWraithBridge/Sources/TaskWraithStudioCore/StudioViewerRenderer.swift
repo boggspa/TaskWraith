@@ -136,6 +136,21 @@ public final class StudioViewerRenderer {
     /// Keyed by assetId because a proposal routinely inserts material from a
     /// DIFFERENT asset than the one open; the router matches on identity so a
     /// mismatch draws nothing rather than the wrong file.
+    /// Grading state for subsequent frames.
+    ///
+    /// WHY THIS EXISTS. StudioVideoFrameRenderer has taken a per-render
+    /// StudioGradeSettings since the grading slice landed, and nothing above it
+    /// ever supplied one — so the running product was permanently pinned to the
+    /// default Original path while the bypass, display transform, LUT and split
+    /// were all real and pixel-tested underneath. Core-complete and
+    /// product-unreachable is not shipped.
+    public var grade = StudioGradeSettings()
+
+    /// Loads (or clears) the externally supplied LUT.
+    public func setLut(_ lut: StudioColorLut?) throws {
+        try videoRenderer.setLut(lut)
+    }
+
     public func attachProposed(
         source newSource: StudioVideoFrameSource,
         assetId: String,
@@ -284,7 +299,8 @@ public final class StudioViewerRenderer {
                     frame: textures,
                     to: target,
                     presenting: drawable,
-                    chaining: chaining
+                    chaining: chaining,
+                    grade: grade
                 )
                 decodedFrameCount += 1
                 return .decodedFrame(frameIndex: frameIndex)

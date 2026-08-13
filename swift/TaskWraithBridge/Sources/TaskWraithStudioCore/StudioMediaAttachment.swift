@@ -87,6 +87,41 @@ public final class StudioMediaAttachment {
         }
     }
 
+    /// Detaches the proposed source when a ghost is resolved either way.
+    public func detachProposed() {
+        renderer.detachProposedSource()
+    }
+
+    /// Loads `asset` as the PROPOSED source for review, leaving the current
+    /// source attached. Both must be resident at once — that is what makes an
+    /// A/B possible rather than a reload each time the operator toggles.
+    public func attachProposed(
+        asset: StudioMediaAsset,
+        maxSampleCount: Int = StudioMediaSourceLoader.defaultMaxSampleCount
+    ) async -> StudioMediaAttachmentOutcome {
+        do {
+            let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+                asset: asset,
+                device: renderer.device,
+                maxSampleCount: maxSampleCount
+            )
+            renderer.attachProposed(
+                source: loaded.source,
+                assetId: asset.assetId,
+                timebase: loaded.media.timebase
+            )
+            return .attached(
+                assetId: asset.assetId,
+                frameCount: loaded.media.samples.count,
+                timebase: loaded.media.timebase,
+                durationTicks: loaded.media.durationTicks
+            )
+        } catch {
+            failedCount += 1
+            return .failed(assetId: asset.assetId, message: String(describing: error))
+        }
+    }
+
     /// Applies every asset a session step reported, in order. The last one wins,
     /// which matches the host's document semantics: opening a second asset
     /// replaces what the viewer is showing.

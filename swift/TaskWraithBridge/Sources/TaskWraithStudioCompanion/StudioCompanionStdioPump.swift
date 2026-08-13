@@ -24,7 +24,9 @@ enum StudioCompanionStdioPump {
         hydrateOnce: Bool,
         onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil,
         onTranscripts: (@Sendable ([StudioTranscript]) -> Void)? = nil,
-        onRevision: (@Sendable (Int) -> Void)? = nil
+        onRevision: (@Sendable (Int) -> Void)? = nil,
+        onProposals: (@Sendable ([StudioEditProposal]) -> Void)? = nil,
+        onResolvedProposals: (@Sendable ([String]) -> Void)? = nil
     ) -> Int32 {
         let session = StudioCompanionSession(hydrateOnce: hydrateOnce)
         let standardInput = FileHandle.standardInput
@@ -62,6 +64,17 @@ enum StudioCompanionStdioPump {
             }
             if let revision = session.latestRevision {
                 onRevision?(revision)
+            }
+            // Ghosts. The session has parsed these since the proposal slice
+            // landed and the pump discarded them, so every open proposal was
+            // invisible in the running product no matter how well Core handled
+            // it. Resolutions ride the same hop: a ghost that cannot be
+            // dismissed when the host accepts it is worse than one never drawn.
+            if !step.proposals.isEmpty {
+                onProposals?(step.proposals)
+            }
+            if !step.resolvedProposalIds.isEmpty {
+                onResolvedProposals?(step.resolvedProposalIds)
             }
             if let code = step.exitCode {
                 return code

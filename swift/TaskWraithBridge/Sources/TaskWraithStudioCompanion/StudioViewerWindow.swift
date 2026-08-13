@@ -53,6 +53,14 @@ final class StudioViewerView: NSView {
     private var trim: StudioTrimDrag?
     /// The revision the operator is looking at. Proposals cite it as their base.
     private var hostRevision = 0
+    /// The open ghost being reviewed, or nil. Built by the Companion from a
+    /// proposal the pump now forwards; before this the renderer's review
+    /// machinery existed and NOTHING CALLED IT.
+    private var reviewTimeline: StudioProposedTimeline?
+    private var reviewVersion: StudioReviewVersion = .current
+    /// Grading is Core-complete and was unreachable: no Companion code built a
+    /// non-default settings value, so the product was pinned to Original.
+    private var gradeSettings = StudioGradeSettings()
     /// Monotonic within this process, and started above hello/getDocument so a
     /// proposal id can never collide with them.
     private var nextProposalRequestId = StudioProposalRequest.firstProposalRequestId
@@ -221,7 +229,14 @@ final class StudioViewerView: NSView {
             snapshot: snapshot,
             to: drawable.texture,
             presenting: drawable,
-            overlay: overlay
+            overlay: overlay,
+            review: reviewTimeline.map {
+                StudioReviewContext(
+                    version: reviewVersion,
+                    timeline: $0,
+                    timebase: transport.clock.timebase
+                )
+            }
         )
         // MEASURED A/V SYNC. Recorded only for a frame that was actually DRAWN,
         // against the audio hardware's own playhead — a dropped frame is not
@@ -250,6 +265,26 @@ final class StudioViewerView: NSView {
     /// because a segment id from another transcript addresses nothing.
     func adopt(revision: Int) {
         hostRevision = revision
+    }
+
+    /// Adopts an open ghost. `nil` clears review entirely — a resolved proposal
+    /// must stop being reviewable, in both directions.
+    func adopt(reviewTimeline: StudioProposedTimeline?) {
+        self.reviewTimeline = reviewTimeline
+        if reviewTimeline == nil { reviewVersion = .current }
+        needsDisplay = true
+    }
+
+    /// Which version the viewer is addressing. Toggling is only meaningful
+    /// while a ghost is open.
+    func toggleReviewVersion() {
+        guard reviewTimeline != nil else {
+            report(message: "No proposal to compare")
+            return
+        }
+        reviewVersion = reviewVersion == .current ? .proposed : .current
+        report(message: reviewVersion == .current ? "Showing Current" : "Showing Proposed")
+        needsDisplay = true
     }
 
     func adopt(transcript: StudioTranscript?) {
@@ -290,6 +325,17 @@ final class StudioViewerView: NSView {
                 memoryLabel: memoryLabel
             )
         )
+        state.reviewVersion = reviewTimeline == nil ? nil : reviewVersion
+        if let reviewTimeline {
+            state.ghosts = [
+                StudioGhostGeometry(
+                    proposalId: reviewTimeline.proposalId,
+                    startTicks: reviewTimeline.insertionTicks,
+                    endTicks: reviewTimeline.insertionTicks + reviewTimeline.spanTicks,
+                    isInsertionPoint: reviewVersion == .current
+                )
+            ]
+        }
         // The band reads the SAME position and duration the HUD does — it is a
         // view of the one clock, never a second opinion about time.
         if let transcript {
@@ -459,6 +505,29 @@ final class StudioViewerView: NSView {
         }
         // Restores whatever the transport was doing before the gesture.
         transport.endScrub(atHost: CACurrentMediaTime())
+    }
+
+    /// Emits studio/resolveProposal through the SAME serialized writer the trim
+    /// proposal uses. A ghost a user can see but cannot accept or reject is a
+    /// decoration, not proposal-first editing.
+    private func resolveOpenProposal(accept: Bool) {
+        guard let reviewTimeline else {
+            report(message: "No proposal to resolve")
+            return
+        }
+        let requestId = nextProposalRequestId
+        nextProposalRequestId += 1
+        StudioOutboundWriter.shared.write(
+            StudioProposalRequest.resolveProposal(
+                proposalId: reviewTimeline.proposalId,
+                accept: accept,
+                baseRevision: hostRevision,
+                requestId: requestId
+            )
+        )
+        // The host owns the document: the ghost clears when the resulting
+        // editCommitted arrives, not optimistically here.
+        report(message: accept ? "Accept sent — awaiting host" : "Reject sent — awaiting host")
     }
 
     // MARK: - Timeline band keyboard
@@ -661,6 +730,22 @@ final class StudioViewerView: NSView {
             transport.playRange(atHost: host)
         case "x":
             transport.clearMarks(atHost: host)
+        case "g":
+            // Original <-> Effect. The mission's guard still binds: a toggle and
+            // one supplied LUT, not a grading suite.
+            gradeSettings.mode = gradeSettings.mode == .original ? .effect : .original
+            renderer.grade = gradeSettings
+            report(message: gradeSettings.mode == .original ? "Original" : "Effect")
+        case "s":
+            gradeSettings.mode = gradeSettings.mode == .split ? .effect : .split
+            renderer.grade = gradeSettings
+            report(message: gradeSettings.mode == .split ? "Split compare" : "Effect")
+        case "v":
+            toggleReviewVersion()
+        case "a":
+            resolveOpenProposal(accept: true)
+        case "r":
+            resolveOpenProposal(accept: false)
         case "[":
             nudgeTrim(handle: .start, frames: event.modifierFlags.contains(.shift) ? -1 : 1)
         case "]":
@@ -849,6 +934,10 @@ final class StudioViewerWindowController {
         view.adopt(transcript: transcript)
     }
 
+    func adopt(reviewTimeline: StudioProposedTimeline?) {
+        view.adopt(reviewTimeline: reviewTimeline)
+    }
+
     func adopt(revision: Int) {
         view.adopt(revision: revision)
     }
@@ -881,12 +970,61 @@ final class StudioViewerAppState {
     /// switches so that returning to an asset does not need a re-send.
     private var known: [String: StudioTranscript] = [:]
     private var openAssetId: String?
+    private var openProposalId: String?
+    private var viewerTimebase: StudioTimebase?
+    /// Assets the host has opened, keyed by id, so a proposal inserting from a
+    /// previously-opened asset can find its media.
+    private var proposalAssets: [String: StudioMediaAsset] = [:]
 
     /// Adopts the host's transcripts. Only the one matching the open asset is
     /// shown: a transcript for a different asset is kept, not drawn, because a
     /// band of somebody else's words over this picture is worse than no band.
     func adopt(revision: Int) {
         controller.adopt(revision: revision)
+    }
+
+    /// Adopts open ghosts. The proposal's asset is loaded as a SECOND resident
+    /// source so an A/B toggle is instant rather than a reload, and the review
+    /// timeline is built in the VIEWER's timebase — the router converts when
+    /// indexing the proposed source, which may run at a different rate.
+    func adopt(proposals: [StudioEditProposal]) async {
+        guard let proposal = proposals.last else { return }
+        guard let timebase = viewerTimebase else {
+            Self.report("proposal \(proposal.proposalId) held — no media open")
+            return
+        }
+        guard let timeline = StudioProposedTimeline(proposal: proposal, timebase: timebase) else {
+            Self.report("proposal \(proposal.proposalId) rejected — unrepresentable range")
+            return
+        }
+        // An insert from the OPEN asset needs no second source; one from another
+        // asset does, and if that load fails the ghost is not shown rather than
+        // reviewed against the wrong picture.
+        if timeline.assetId != openAssetId {
+            guard let asset = proposalAssets[timeline.assetId] else {
+                Self.report(
+                    "proposal \(proposal.proposalId) held — asset \(timeline.assetId) not open")
+                return
+            }
+            let outcome = await attachment.attachProposed(asset: asset)
+            guard outcome.didAttach else {
+                Self.report("proposal \(proposal.proposalId) held — proposed source failed")
+                return
+            }
+        }
+        openProposalId = proposal.proposalId
+        controller.adopt(reviewTimeline: timeline)
+        Self.report(
+            "proposal \(proposal.proposalId) shown — v to compare, a accept, r reject")
+    }
+
+    /// A resolved ghost stops being reviewable, whichever way it went.
+    func adopt(resolvedProposals ids: [String]) {
+        guard let openProposalId, ids.contains(openProposalId) else { return }
+        self.openProposalId = nil
+        attachment.detachProposed()
+        controller.adopt(reviewTimeline: nil)
+        Self.report("proposal \(openProposalId) resolved — review cleared")
     }
 
     func adopt(transcripts: [StudioTranscript]) {
@@ -911,6 +1049,7 @@ final class StudioViewerAppState {
     /// that actually loaded. Failures are reported to stderr rather than being
     /// swallowed or crashing the viewer.
     func open(assets: [StudioMediaAsset]) async {
+        for asset in assets { proposalAssets[asset.assetId] = asset }
         for outcome in await attachment.attach(openedAssets: assets) {
             switch outcome {
             case .attached(let assetId, let frameCount, let timebase, let durationTicks):
@@ -925,6 +1064,7 @@ final class StudioViewerAppState {
                 // A source switch must not leave the previous asset's words on
                 // screen: adopt this asset's transcript, or clear the band.
                 openAssetId = assetId
+                viewerTimebase = timebase
                 controller.adopt(transcript: known[assetId])
                 Self.report("opened \(assetId) (\(frameCount) frames)")
             case .failed(let assetId, let message):
@@ -986,6 +1126,16 @@ enum StudioViewerApp {
                     onRevision: { revision in
                         Task { @MainActor in
                             StudioViewerAppState.shared?.adopt(revision: revision)
+                        }
+                    },
+                    onProposals: { proposals in
+                        Task { @MainActor in
+                            await StudioViewerAppState.shared?.adopt(proposals: proposals)
+                        }
+                    },
+                    onResolvedProposals: { ids in
+                        Task { @MainActor in
+                            StudioViewerAppState.shared?.adopt(resolvedProposals: ids)
                         }
                     }
                 )

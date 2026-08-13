@@ -53,4 +53,36 @@ public enum StudioProposalRequest {
         data.append(0x0A)
         return data
     }
+
+    /// Encodes studio/resolveProposal.
+    ///
+    /// Shape is taken from the NORMATIVE src/main/studio/StudioProtocol.ts
+    /// (StudioResolveProposalParams): schemaVersion, baseRevision, proposalId,
+    /// decision. Swift conforms to the host contract, never the reverse.
+    ///
+    /// The companion does NOT clear its own ghost on send. The host owns the
+    /// document; the ghost clears when the resulting editCommitted arrives, so
+    /// a rejected-by-stale-base resolve cannot leave the viewer showing an
+    /// outcome that never happened.
+    public static func resolveProposal(
+        proposalId: String,
+        accept: Bool,
+        baseRevision: Int,
+        requestId: Int
+    ) -> Data {
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": requestId,
+            "method": "studio/resolveProposal",
+            "params": [
+                "schemaVersion": StudioEditProposal.schemaVersion,
+                "baseRevision": baseRevision,
+                "proposalId": proposalId,
+                "decision": accept ? "accept" : "reject",
+            ],
+        ]
+        var data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+        data.append(0x0A)
+        return data
+    }
 }

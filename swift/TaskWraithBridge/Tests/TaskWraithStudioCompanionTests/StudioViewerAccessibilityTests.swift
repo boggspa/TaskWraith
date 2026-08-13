@@ -156,6 +156,42 @@ final class StudioViewerAccessibilityTests: XCTestCase {
             "selection must be readable by a client, not only drawn")
     }
 
+    /// @Challenge2's F-A: everything above reads the VIEW's own override. This
+    /// walks DOWN from the window, the way a client enters the process, and
+    /// proves the view is actually reachable — the "published but not consumed
+    /// at the next layer up" shape, one layer up.
+    func testAClientReachesTheViewFromTheWindow() throws {
+        let (view, window) = try makeViewer()
+        let windowChildren = NSAccessibility.unignoredChildren(
+            from: window.accessibilityChildren() ?? [])
+        XCTAssertFalse(
+            windowChildren.isEmpty,
+            "a client entering at the window must find something")
+
+        // Walk down to the viewer group rather than assuming its depth.
+        var frontier: [Any] = windowChildren
+        var reached = false
+        var depth = 0
+        while !frontier.isEmpty, depth < 6, !reached {
+            var next: [Any] = []
+            for node in frontier {
+                if let element = node as? StudioViewerView, element === view {
+                    reached = true
+                    break
+                }
+                if let kids = (node as AnyObject).accessibilityChildren?() {
+                    next.append(contentsOf: kids)
+                }
+            }
+            frontier = next
+            depth += 1
+        }
+        XCTAssertTrue(
+            reached,
+            "the viewer is not reachable from the window: its accessibility tree "
+                + "is correct and nothing can get to it")
+    }
+
     private static let transcript = StudioTranscript(
         transcriptId: "t1", assetId: "a1",
         segments: [
