@@ -44,17 +44,32 @@ public final class StudioCompanionSession {
         /// belongs to StudioMediaAttachment, which is where it can be tested
         /// against a real file without dragging I/O into this state machine.
         public let openedAssets: [StudioMediaAsset]
+        /// Ghost proposals the host committed in this chunk.
+        ///
+        /// Surfaced by the same principle as openedAssets: the session
+        /// RECOGNISES propose_edit and hands the decoded proposal out, and does
+        /// nothing else with it. Building a proposed timeline and drawing a
+        /// ghost belong upstairs where they can be tested against real geometry.
+        public let proposals: [StudioEditProposal]
+        /// Proposals the host RESOLVED, by id. A resolved ghost must stop being
+        /// drawn whichever way it went — an accepted proposal is now part of the
+        /// sequence, and a rejected one never will be.
+        public let resolvedProposalIds: [String]
 
         public init(
             outboundLines: [Data],
             exitCode: Int32?,
             protocolErrors: [String],
-            openedAssets: [StudioMediaAsset] = []
+            openedAssets: [StudioMediaAsset] = [],
+            proposals: [StudioEditProposal] = [],
+            resolvedProposalIds: [String] = []
         ) {
             self.outboundLines = outboundLines
             self.exitCode = exitCode
             self.protocolErrors = protocolErrors
             self.openedAssets = openedAssets
+            self.proposals = proposals
+            self.resolvedProposalIds = resolvedProposalIds
         }
     }
 
@@ -67,6 +82,11 @@ public final class StudioCompanionSession {
     public private(set) var editCommittedCount = 0
     /// open_media operations recognised on studio/editCommitted.
     public private(set) var openedAssetCount = 0
+    /// Bounded counters for diagnostics; the session holds no proposal state
+    /// itself, because durable proposal state is the HOST's and re-deriving it
+    /// here would create a second source of truth that can disagree.
+    public private(set) var proposalCount = 0
+    public private(set) var resolvedProposalCount = 0
     /// Most recent asset the host reported opening, for reconnect diagnostics.
     public private(set) var lastOpenedAsset: StudioMediaAsset?
     public private(set) var protocolErrorCount = 0
@@ -99,6 +119,8 @@ public final class StudioCompanionSession {
         var outbound: [Data] = []
         var errors: [String] = []
         var opened: [StudioMediaAsset] = []
+        var proposed: [StudioEditProposal] = []
+        var resolved: [String] = []
         var exitCode: Int32?
         for event in decoder.push(chunk: chunk) {
             if exitCode != nil { break }
@@ -116,6 +138,19 @@ public final class StudioCompanionSession {
                 if let asset = outcome.openedAsset {
                     opened.append(asset)
                 }
+                // Proposal traffic rides the SAME editCommitted notification as
+                // open_media and insert_range, so the guard is the notification
+                // plus the op discriminator — not the presence of a field.
+                if message.method == "studio/editCommitted" {
+                    if let proposal = Self.proposal(in: message) {
+                        proposed.append(proposal)
+                        proposalCount += 1
+                    }
+                    if let resolvedId = Self.resolvedProposalId(in: message) {
+                        resolved.append(resolvedId)
+                        resolvedProposalCount += 1
+                    }
+                }
                 exitCode = outcome.exit
             }
         }
@@ -123,7 +158,9 @@ public final class StudioCompanionSession {
             outboundLines: outbound,
             exitCode: exitCode,
             protocolErrors: errors,
-            openedAssets: opened
+            openedAssets: opened,
+            proposals: proposed,
+            resolvedProposalIds: resolved
         )
     }
 
@@ -203,6 +240,25 @@ public final class StudioCompanionSession {
     /// insert_range commits arrive on the SAME notification, so the type
     /// discriminator inside StudioMediaAsset.fromDocumentOperation is what keeps
     /// them apart.
+    /// Extracts a ghost proposal from a studio/editCommitted whose op is
+    /// propose_edit. Returns nil for every other operation, so open_media and
+    /// insert_range commits sharing this notification pass through untouched.
+    static func proposal(in message: StudioMessage) -> StudioEditProposal? {
+        guard let operation = message.params?["op"]?.value as? [String: Any] else { return nil }
+        return try? StudioProposalDecoder.proposal(fromProposeEdit: operation)
+    }
+
+    /// Extracts the id of a resolved proposal, accepted or rejected.
+    static func resolvedProposalId(in message: StudioMessage) -> String? {
+        guard let operation = message.params?["op"]?.value as? [String: Any],
+            operation["type"] as? String == "resolve_proposal",
+            let proposalId = operation["proposalId"] as? String
+        else {
+            return nil
+        }
+        return proposalId
+    }
+
     static func openedAsset(in message: StudioMessage) -> StudioMediaAsset? {
         guard let operation = message.params?["op"]?.value as? [String: Any] else { return nil }
         return StudioMediaAsset.fromDocumentOperation(operation)

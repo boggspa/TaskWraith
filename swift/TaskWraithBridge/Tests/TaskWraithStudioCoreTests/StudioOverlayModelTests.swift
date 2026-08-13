@@ -241,6 +241,95 @@ final class StudioOverlayModelTests: XCTestCase {
         }
     }
 
+    // MARK: - Ghost proposals
+
+    private func ghostState(
+        band: Bool = true,
+        version: StudioReviewVersion = .proposed
+    ) -> StudioOverlayState {
+        var value = state()
+        value.reviewVersion = version
+        value.ghosts = [
+            StudioGhostGeometry(
+                proposalId: "p-1",
+                startTicks: 60,
+                endTicks: band ? 240 : 60,
+                isInsertionPoint: !band
+            )
+        ]
+        return value
+    }
+
+    func testAGhostBandIsDrawnAcrossTheProposedRange() throws {
+        let model = StudioOverlayLayout.build(ghostState())
+        let ghost = try XCTUnwrap(model.rects.first { $0.color == StudioOverlayColor.ghost })
+        XCTAssertEqual(ghost.frame.x, model.trackFrame.x + model.trackFrame.width * 0.2, accuracy: 1)
+        XCTAssertEqual(
+            ghost.frame.maxX,
+            model.trackFrame.x + model.trackFrame.width * 0.8,
+            accuracy: 1
+        )
+    }
+
+    /// In the CURRENT version the insert has no duration, so it must draw as a
+    /// caret. A band would claim the sequence already contains material the host
+    /// has not accepted.
+    func testAnInsertionPointDrawsAsACaretNotABand() {
+        let model = StudioOverlayLayout.build(ghostState(band: false, version: .current))
+        XCTAssertNil(model.rects.first { $0.color == StudioOverlayColor.ghost })
+        XCTAssertNotNil(model.rects.first { $0.color == StudioOverlayColor.ghostEdge })
+    }
+
+    /// A ghost is a SUGGESTION. It must sit underneath the playhead and the
+    /// operator's own marks, never over them — draw order is the whole of that
+    /// claim, so it is asserted rather than assumed.
+    func testGhostsDrawUnderneathThePlayheadAndMarks() throws {
+        var value = ghostState()
+        value.inPointTicks = 30
+        value.outPointTicks = 270
+        let model = StudioOverlayLayout.build(value)
+
+        let ghostIndex = try XCTUnwrap(
+            model.rects.firstIndex { $0.color == StudioOverlayColor.ghost }
+        )
+        let playheadIndex = try XCTUnwrap(
+            model.rects.lastIndex { $0.color == StudioOverlayColor.playhead }
+        )
+        let markIndex = try XCTUnwrap(
+            model.rects.firstIndex { $0.color == StudioOverlayColor.mark }
+        )
+        XCTAssertLessThan(ghostIndex, playheadIndex, "ghost drew over the playhead")
+        XCTAssertLessThan(ghostIndex, markIndex, "ghost drew over an In/Out mark")
+    }
+
+    func testTheReviewVersionLeadsTheStatusLine() {
+        let proposed = StudioOverlayLayout.build(ghostState(version: .proposed))
+        XCTAssertTrue(proposed.texts.contains { $0.string.hasPrefix("PROPOSED") })
+
+        let current = StudioOverlayLayout.build(ghostState(version: .current))
+        XCTAssertTrue(current.texts.contains { $0.string.hasPrefix("CURRENT") })
+
+        // No proposal open: no version label at all. Nil and .current are
+        // different claims and the HUD must not conflate them.
+        let plain = StudioOverlayLayout.build(state())
+        XCTAssertFalse(plain.texts.contains { $0.string.contains("CURRENT") })
+    }
+
+    func testAGhostIsDescribedForAssistiveTechnology() throws {
+        let model = StudioOverlayLayout.build(ghostState())
+        let descriptor = try XCTUnwrap(
+            model.accessibilityElements.first { $0.label == "Proposed edit" }
+        )
+        XCTAssertEqual(descriptor.value, "p-1")
+        XCTAssertGreaterThan(descriptor.frame.width, 0)
+    }
+
+    func testNoGhostsMeansNoGhostGeometry() {
+        let model = StudioOverlayLayout.build(state())
+        XCTAssertNil(model.rects.first { $0.color == StudioOverlayColor.ghost })
+        XCTAssertNil(model.accessibilityElements.first { $0.label == "Proposed edit" })
+    }
+
     // MARK: - Degenerate viewports
 
     func testAViewportTooSmallForTheHudDrawsNothing() {

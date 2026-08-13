@@ -59,6 +59,11 @@ public struct StudioOverlayColor: Equatable, Sendable {
     public static let track = StudioOverlayColor(red: 1, green: 1, blue: 1, alpha: 0.22)
     public static let markedSpan = StudioOverlayColor(red: 0.35, green: 0.72, blue: 1.0, alpha: 0.45)
     public static let mark = StudioOverlayColor(red: 0.45, green: 0.82, blue: 1.0, alpha: 0.95)
+    /// Ghost proposals read as PENDING rather than committed, so they are amber
+    /// and translucent: a ghost drawn like a mark would claim the sequence
+    /// already contains material the host has not accepted.
+    public static let ghost = StudioOverlayColor(red: 1.0, green: 0.72, blue: 0.25, alpha: 0.38)
+    public static let ghostEdge = StudioOverlayColor(red: 1.0, green: 0.78, blue: 0.35, alpha: 0.95)
     public static let playhead = StudioOverlayColor(red: 1, green: 1, blue: 1, alpha: 0.98)
     public static let text = StudioOverlayColor(red: 0.94, green: 0.95, blue: 0.97, alpha: 1)
     public static let dimText = StudioOverlayColor(red: 0.62, green: 0.65, blue: 0.70, alpha: 1)
@@ -206,6 +211,14 @@ public struct StudioOverlayState: Equatable, Sendable {
     public var entry: StudioTimecodeFieldSnapshot?
     public var message: String?
     public var diagnostics: StudioOverlayDiagnostics?
+    /// Open ghost proposals, already resolved into the coordinates of whichever
+    /// version is displayed. The layout does not know about rational time or the
+    /// wire contract — StudioProposedTimeline has already done that.
+    public var ghosts: [StudioGhostGeometry] = []
+    /// Which version the viewer is addressing, or nil when there is nothing to
+    /// review. Nil and `.current` are different: one means no proposal exists,
+    /// the other means one exists and you are looking at the sequence without it.
+    public var reviewVersion: StudioReviewVersion?
 
     public init(
         viewport: StudioOverlayViewport,
@@ -350,7 +363,55 @@ public enum StudioOverlayLayout {
                 * playheadFraction(positionTicks: ticks, durationTicks: state.durationTicks)
         }
 
-        // Marked span first, so the marks and playhead draw on top of it.
+        // GHOSTS UNDERNEATH EVERYTHING. A pending proposal must never obscure
+        // the playhead or the operator's own In/Out marks: it is a suggestion,
+        // and it draws like one.
+        for ghost in state.ghosts {
+            let startX = xForTicks(ghost.startTicks)
+            if ghost.isInsertionPoint {
+                // No duration in this version — a caret marking where material
+                // would arrive, not a band claiming it already has.
+                rects.append(
+                    StudioOverlayRect(
+                        frame: StudioOverlayFrame(
+                            x: startX,
+                            y: trackFrame.y - trackFrame.height,
+                            width: metric(StudioOverlayMetrics.markWidth),
+                            height: trackFrame.height * 3
+                        ),
+                        color: .ghostEdge
+                    )
+                )
+            } else {
+                let endX = xForTicks(ghost.endTicks)
+                rects.append(
+                    StudioOverlayRect(
+                        frame: StudioOverlayFrame(
+                            x: startX,
+                            y: trackFrame.y,
+                            width: max(endX - startX, metric(1)),
+                            height: trackFrame.height
+                        ),
+                        color: .ghost
+                    )
+                )
+            }
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "Proposed edit",
+                    value: ghost.proposalId,
+                    frame: StudioOverlayFrame(
+                        x: startX,
+                        y: trackFrame.y - trackFrame.height,
+                        width: max(xForTicks(ghost.endTicks) - startX, metric(2)),
+                        height: trackFrame.height * 3
+                    )
+                )
+            )
+        }
+
+        // Marked span next, so the marks and playhead draw on top of it.
         if let inTicks = state.inPointTicks,
             let outTicks = state.outPointTicks,
             outTicks > inTicks
@@ -480,6 +541,9 @@ public enum StudioOverlayLayout {
 
         // Status line: transport state, then whatever qualifies it.
         var status: [String] = [state.isPlaying ? "PLAY" : "PAUSE"]
+        // The version label leads the qualifiers: when a proposal is open, WHICH
+        // sequence you are watching is the most consequential thing on screen.
+        if let reviewVersion = state.reviewVersion { status.insert(reviewVersion.label, at: 0) }
         if state.isScrubbing { status.append("SCRUB") }
         if state.isLoopingRange { status.append("LOOP") }
         if state.inPointTicks != nil || state.outPointTicks != nil {
