@@ -250,6 +250,58 @@ describe('reconcileStaleChatRuns', () => {
     expect(result.chats[0].messages).toEqual([existingMessage])
   })
 
+  it('recovers a legacy missing-status run from an exact cancelled session', () => {
+    const result = reconcileStaleChatRuns(
+      [chat('c1', [run({ runId: 'r1', provider: 'codex', status: undefined })])],
+      () => false,
+      NOW,
+      {
+        getRunSession: () => ({
+          runId: 'r1',
+          appChatId: 'c1',
+          provider: 'codex',
+          status: 'cancelled',
+          updatedAt: NOW_MS
+        })
+      }
+    )
+
+    expect(result.settlements).toEqual([])
+    expect(result.terminalRecoveries).toEqual([
+      {
+        chatId: 'c1',
+        runId: 'r1',
+        previousStatus: 'undefined',
+        recoveredStatus: 'cancelled'
+      }
+    ])
+    expect(result.chats[0].runs[0]).toMatchObject({
+      status: 'cancelled',
+      cancelled: true,
+      endedAt: NOW
+    })
+    expect(result.chats[0].messages).toEqual([])
+  })
+
+  it('leaves an ended legacy missing-status run untouched', () => {
+    const result = reconcileStaleChatRuns(
+      [chat('c1', [run({ runId: 'r1', provider: 'codex', status: undefined, endedAt: OLD })])],
+      () => false,
+      NOW,
+      {
+        getRunSession: () => ({
+          runId: 'r1',
+          appChatId: 'c1',
+          provider: 'codex',
+          status: 'cancelled',
+          updatedAt: NOW_MS
+        })
+      }
+    )
+
+    expect(result).toEqual({ chats: [], settlements: [], terminalRecoveries: [] })
+  })
+
   describe('settlement transcript notice', () => {
     it('appends an explanatory error row for every settled run', () => {
       const result = reconcileStaleChatRuns(

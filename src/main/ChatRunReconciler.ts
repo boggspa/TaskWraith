@@ -282,7 +282,12 @@ export function reconcileStaleChatRuns(
     const notices: ChatMessage[] = []
     const nextRuns = runs.map((run) => {
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
-      if (!isActiveChatRunStatus(run.status)) return run
+      // Older desktop runs could be persisted before their renderer-side
+      // status was seeded. Treat only an unended missing-status row as a
+      // reconciliation candidate; an ended legacy row is historical data,
+      // not evidence of live work.
+      const isLegacyUnsealedRun = run.status === undefined && !run.endedAt
+      if (!isActiveChatRunStatus(run.status) && !isLegacyUnsealedRun) return run
       if (isRunLive(run.runId)) return run
 
       const terminalSeal = terminalChatRunSealFromExactSession(
