@@ -17,7 +17,7 @@ public enum StudioErrorCode: String, Codable, Sendable {
 
 public actor StudioErrorCodeProvider {
     public static let shared = StudioErrorCodeProvider()
-
+    
     private let errorNumbers: [StudioErrorCode: Int] = [
         .parseError: -32700,
         .invalidRequest: -32600,
@@ -32,7 +32,7 @@ public actor StudioErrorCodeProvider {
         .unsupportedProtocolVersion: 4007,
         .storeFailure: 4008
     ]
-
+    
     public func errorNumber(for code: StudioErrorCode) -> Int {
         return errorNumbers[code] ?? -32000
     }
