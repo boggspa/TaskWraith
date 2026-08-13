@@ -18,7 +18,7 @@ describe('Codex app-server thread admission integration', () => {
       'async function runCodexExecFallback('
     )
     const reserved = provider.indexOf('codexThreadAdmissionRegistry.reserve({')
-    const acquired = provider.indexOf('await admissionReservation.waitUntilAcquired()', reserved)
+    const acquired = provider.indexOf('await waitForCodexThreadAdmission(', reserved)
     const started = provider.indexOf('await client.ensureStarted', acquired)
     const launchPlan = provider.indexOf('buildCodexAppServerThreadLaunchPlan({', started)
     const requestedThread = provider.indexOf(
@@ -40,6 +40,11 @@ describe('Codex app-server thread admission integration', () => {
     expect(registered).toBeLessThan(requested)
     expect(requested).toBeLessThan(exactBound)
     expect(provider).not.toContain('pendingCompactionAtDispatch')
+    expect(provider).toContain('signal: payload.providerSetupAbortSignal')
+    expect(provider).toContain(
+      'isTerminalClaimed: () => Boolean(runManager.getClaimedTerminalStatus(payload.appRunId))'
+    )
+    expect(provider).not.toContain('await admissionReservation.waitUntilAcquired()')
   })
 
   it('publishes manual compaction state only after the shared admission is acquired', () => {

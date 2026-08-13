@@ -278,6 +278,7 @@ import {
   CodexClientRunCohortRegistry,
   type CodexClientRunCohortLease
 } from './codex/CodexClientRunCohort'
+import { CodexClientLifecycleQueue } from './codex/CodexClientLifecycleQueue'
 import {
   codexCompactionFailureProvesNoLiveTurn,
   updateCodexCompactionLaunchEvidence
@@ -2340,7 +2341,7 @@ interface CodexClientLifecycleLease {
   readonly label: string
   release(): void
 }
-let codexClientLifecycleTail: Promise<void> = Promise.resolve()
+const codexClientLifecycleQueue = new CodexClientLifecycleQueue()
 let activeCodexClientLifecycleLease: CodexClientLifecycleLease | null = null
 interface CodexProviderClientCohortResource {
   readonly client: CodexAppServerClient
@@ -25052,20 +25053,30 @@ async function acquireCodexCredentialLeaseIfConsented(
   return null
 }
 
-async function acquireCodexClientLifecycleLease(label: string): Promise<CodexClientLifecycleLease> {
+class CodexClientLifecycleAcquireAbortedError extends Error {
+  constructor(label: string) {
+    super(`Codex client lifecycle ${label} was cancelled before acquisition.`)
+    this.name = 'CodexClientLifecycleAcquireAbortedError'
+  }
+}
+
+async function acquireCodexClientLifecycleLease(
+  label: string,
+  signal?: AbortSignal
+): Promise<CodexClientLifecycleLease> {
   const normalizedLabel = label.trim()
   if (!normalizedLabel) throw new Error('Codex client lifecycle requires an exact owner label.')
   // An exclusive transition queued behind a provider cohort must eventually
   // run. Close admission before joining the lifecycle tail so later compatible
   // turns cannot starve a profile, credential, maintenance, or teardown change.
   codexProviderClientCohorts.stopAccepting()
-  const predecessor = codexClientLifecycleTail
-  let unlock!: () => void
-  codexClientLifecycleTail = new Promise<void>((resolve) => {
-    unlock = resolve
-  })
-  await predecessor
+  const queueSlot = codexClientLifecycleQueue.enqueue()
+  if (!(await queueSlot.waitUntilAcquired(signal)) || signal?.aborted) {
+    queueSlot.release()
+    throw new CodexClientLifecycleAcquireAbortedError(normalizedLabel)
+  }
   if (activeCodexClientLifecycleLease) {
+    queueSlot.release()
     throw new Error('Codex client lifecycle serialization was violated.')
   }
   let released = false
@@ -25082,7 +25093,7 @@ async function acquireCodexClientLifecycleLease(label: string): Promise<CodexCli
         return
       }
       activeCodexClientLifecycleLease = null
-      unlock()
+      queueSlot.release()
     }
   }
   activeCodexClientLifecycleLease = lease
@@ -25458,7 +25469,10 @@ async function acquireCodexProviderClientRunLease(
     return { client, lifecycleLease, cohortLease: joined }
   }
 
-  const lifecycleLease = await acquireCodexClientLifecycleLease(`provider-run:${runId}`)
+  const lifecycleLease = await acquireCodexClientLifecycleLease(
+    `provider-run:${runId}`,
+    payload.providerSetupAbortSignal
+  )
   let client: CodexAppServerClient | null = null
   try {
     await disposeCodexClientForOwnerTransition(lifecycleLease)
@@ -31490,9 +31504,15 @@ async function runCodexAppServerWithClient(
         }
       })
     : undefined
-  if (admissionReservation && !(await admissionReservation.waitUntilAcquired())) {
-    admissionReservation.releaseBeforeAdmission()
-    runManager.finish(payload.appRunId, 'cancelled')
+  const threadAdmissionAuthority = {
+    signal: payload.providerSetupAbortSignal,
+    isTerminalClaimed: () => Boolean(runManager.getClaimedTerminalStatus(payload.appRunId))
+  }
+  if (
+    admissionReservation &&
+    !(await waitForCodexThreadAdmission(admissionReservation, threadAdmissionAuthority))
+  ) {
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   if (
@@ -31586,9 +31606,8 @@ async function runCodexAppServerWithClient(
           payload.appRunId ? providerAdapterRunsInFlight.get(payload.appRunId) : undefined
       }
     })
-    if (!(await admissionReservation.waitUntilAcquired())) {
-      admissionReservation.releaseBeforeAdmission()
-      runManager.finish(payload.appRunId, 'cancelled')
+    if (!(await waitForCodexThreadAdmission(admissionReservation, threadAdmissionAuthority))) {
+      settleDeniedProviderTransportLaunch(route)
       return
     }
   } else if (admissionReservation.threadId !== threadId) {
@@ -31603,9 +31622,8 @@ async function runCodexAppServerWithClient(
           payload.appRunId ? providerAdapterRunsInFlight.get(payload.appRunId) : undefined
       }
     })
-    if (!(await admissionReservation.waitUntilAcquired())) {
-      admissionReservation.releaseBeforeAdmission()
-      runManager.finish(payload.appRunId, 'cancelled')
+    if (!(await waitForCodexThreadAdmission(admissionReservation, threadAdmissionAuthority))) {
+      settleDeniedProviderTransportLaunch(route)
       return
     }
   }
@@ -32267,6 +32285,10 @@ async function runCodexProvider(
     await runCodexAppServer(event, payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof CodexClientLifecycleAcquireAbortedError) {
+      settleDeniedProviderTransportLaunch(routeWithRunId('codex', payload))
+      return
+    }
     if (error instanceof CodexEnsembleGoalIsolationError) {
       const route = routeWithRunId('codex', payload)
       sendAgentCompatError(event.sender, 'codex', message, route)
