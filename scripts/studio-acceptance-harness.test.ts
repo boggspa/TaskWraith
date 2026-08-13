@@ -31,7 +31,16 @@ const {
   assertNoPriorStudioOrphans: (
     plan: { artifactRoot: string },
     adapters?: Record<string, unknown>
-  ) => Promise<{ scanned: number; trusted: number; orphans: unknown[] }>
+  ) => Promise<{
+    scanned: number
+    trusted: number
+    protectedInstalledGroups: Array<{
+      receiptPath: string
+      pgid: number
+      memberPids: number[]
+    }>
+    orphans: unknown[]
+  }>
   buildStudioAcceptancePlan: (options?: Record<string, unknown>) => Record<string, any>
   buildStubSpec: (options: {
     directory: string
@@ -545,6 +554,80 @@ describe('Studio acceptance harness', () => {
       }
     }
   )
+
+  it('excludes the owner installed TaskWraith Studio group from a legacy pgid collision without signaling it', async () => {
+    const installedPgid = 93870
+    const execFile = vi.fn(async () => ({
+      stdout: [
+        `${installedPgid} 1 ${installedPgid} /Applications/TaskWraith.app/Contents/MacOS/TaskWraith`,
+        `95216 ${installedPgid} ${installedPgid} /Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion`
+      ].join('\n'),
+      stderr: ''
+    }))
+
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/acceptance/studioNowInstalled' },
+        {
+          readPriorReceipts: async () => [
+            {
+              receiptPath: '/virtual/acceptance/prior/watchdog-receipt.json',
+              receipt: {
+                kind: 'taskwraith-studio-acceptance-watchdog',
+                schemaVersion: 1,
+                status: 'reaped',
+                childPid: installedPgid,
+                childPgid: installedPgid
+              }
+            }
+          ],
+          execFile
+        }
+      )
+    ).resolves.toMatchObject({
+      orphans: [],
+      protectedInstalledGroups: [
+        {
+          receiptPath: '/virtual/acceptance/prior/watchdog-receipt.json',
+          pgid: installedPgid,
+          memberPids: [installedPgid, 95216]
+        }
+      ]
+    })
+    expect(execFile).toHaveBeenCalledOnce()
+    expect(execFile).toHaveBeenCalledWith('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,comm='])
+  })
+
+  it('does not exempt a Studio-looking descendant unless the exact installed app owns the group', async () => {
+    const acceptancePgid = 93871
+
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/acceptance/studioNowUntrusted' },
+        {
+          readPriorReceipts: async () => [
+            {
+              receiptPath: '/virtual/acceptance/prior/watchdog-receipt.json',
+              receipt: {
+                kind: 'taskwraith-studio-acceptance-watchdog',
+                schemaVersion: 1,
+                status: 'reaped',
+                childPid: acceptancePgid,
+                childPgid: acceptancePgid
+              }
+            }
+          ],
+          execFile: async () => ({
+            stdout: [
+              `${acceptancePgid} 1 ${acceptancePgid} /virtual/acceptance/Electron`,
+              `95217 ${acceptancePgid} ${acceptancePgid} /Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion`
+            ].join('\n'),
+            stderr: ''
+          })
+        }
+      )
+    ).rejects.toThrow(/still alive/)
+  })
 
   it('fails closed when a prior watchdog receipt cannot be read', async () => {
     const root = await temporaryRoot('studio-acceptance-orphan-malformed-')

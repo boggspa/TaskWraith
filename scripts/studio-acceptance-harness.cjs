@@ -59,6 +59,9 @@ const VERIFIED_TERMINAL_RECEIPT_STATUSES = new Set(['reaped', 'exited'])
 // observed to disappear. Every older receipt was written by the code path that
 // could report `reaped` over a survivor, so it must be re-scanned on sight.
 const TRUSTED_RECEIPT_SCHEMA_VERSION = 2
+const INSTALLED_TASKWRAITH_EXECUTABLE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
+const INSTALLED_STUDIO_EXECUTABLE =
+  '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -589,6 +592,17 @@ function validatePriorWatchdogReceipt(entry) {
   return { ...entry, trusted, pgid: receipt.childPgid }
 }
 
+function isProtectedInstalledTaskWraithStudioGroup(pgid, members) {
+  const installedOwner = members.some(
+    (row) => row.pid === pgid && row.command === INSTALLED_TASKWRAITH_EXECUTABLE
+  )
+  if (!installedOwner) return false
+
+  return members.some(
+    (row) => row.ppid === pgid && row.pgid === pgid && row.command === INSTALLED_STUDIO_EXECUTABLE
+  )
+}
+
 /**
  * Refuse to stack a launch on a process group a previous acceptance run may
  * have leaked. This NEVER kills anything: a suspected orphan is reported with
@@ -601,9 +615,20 @@ function validatePriorWatchdogReceipt(entry) {
  * exact group disappear. Every legacy or unverified receipt is scanned even
  * when it claims `reaped`, because the known false-green path produced exactly
  * that claim.
+ *
+ * A reused PGID now led by the exact installed TaskWraith executable and its
+ * exact packaged Studio child is protected separately: it cannot be the
+ * disposable Electron group launched by this harness and must never be targeted.
  */
 async function assertNoPriorStudioOrphans(plan, adapters = {}) {
-  if (process.platform === 'win32') return { scanned: 0, trusted: 0, orphans: [] }
+  if (process.platform === 'win32') {
+    return {
+      scanned: 0,
+      trusted: 0,
+      protectedInstalledGroups: [],
+      orphans: []
+    }
+  }
 
   const acceptanceRoot = path.dirname(path.resolve(plan.artifactRoot))
   const priors = await (adapters.readPriorReceipts || readPriorWatchdogReceipts)(acceptanceRoot)
@@ -633,15 +658,32 @@ async function assertNoPriorStudioOrphans(plan, adapters = {}) {
       recordedStatus: typeof entry.receipt.status === 'string' ? entry.receipt.status : null
     })
   }
-  if (suspects.length === 0) return { scanned: priors.length, trusted, orphans: [] }
+  if (suspects.length === 0) {
+    return {
+      scanned: priors.length,
+      trusted,
+      protectedInstalledGroups: [],
+      orphans: []
+    }
+  }
 
   const runExec = adapters.execFile || defaultExecFile
   const sample = await runExec('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,comm='])
   const rows = parseProcessTable(sample.stdout)
   const orphans = []
+  const protectedInstalledGroups = []
   for (const suspect of suspects) {
     const members = rows.filter((row) => row.pgid === suspect.pgid)
-    if (members.length > 0) orphans.push({ ...suspect, members })
+    if (members.length === 0) continue
+    if (isProtectedInstalledTaskWraithStudioGroup(suspect.pgid, members)) {
+      protectedInstalledGroups.push({
+        receiptPath: suspect.receiptPath,
+        pgid: suspect.pgid,
+        memberPids: members.map((row) => row.pid).sort((left, right) => left - right)
+      })
+      continue
+    }
+    orphans.push({ ...suspect, members })
   }
   if (orphans.length > 0) {
     throw new Error(
@@ -655,7 +697,12 @@ async function assertNoPriorStudioOrphans(plan, adapters = {}) {
         .join('\n')}`
     )
   }
-  return { scanned: priors.length, trusted, orphans: [] }
+  return {
+    scanned: priors.length,
+    trusted,
+    protectedInstalledGroups,
+    orphans: []
+  }
 }
 
 function assertCleanWatchdogTerminal(terminal) {
