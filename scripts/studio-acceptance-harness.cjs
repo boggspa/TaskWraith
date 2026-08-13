@@ -42,6 +42,24 @@ const STUDIO_JOURNAL_FILE = 'studio-project.journal.jsonl'
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_WAIT_MS = 45_000
 const ACCEPTANCE_SCHEMA_VERSION = 1
+const ACCEPTANCE_RECEIPT_MAX_BYTES = 256 * 1024
+const WATCHDOG_RECEIPT_KIND = 'taskwraith-studio-acceptance-watchdog'
+const KNOWN_RECEIPT_SCHEMA_VERSIONS = new Set([1, 2])
+const KNOWN_RECEIPT_STATUSES = new Set([
+  'running',
+  'reaping',
+  'force_kill_sent',
+  'group_survived_leader',
+  'reaped',
+  'exited',
+  'spawn_failed',
+  'reap_incomplete'
+])
+const VERIFIED_TERMINAL_RECEIPT_STATUSES = new Set(['reaped', 'exited'])
+// Only a v2 watchdog receipt records whether the exact process group was
+// observed to disappear. Every older receipt was written by the code path that
+// could report `reaped` over a survivor, so it must be re-scanned on sight.
+const TRUSTED_RECEIPT_SCHEMA_VERSION = 2
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -155,7 +173,8 @@ function buildStudioAcceptancePlan(options = {}) {
       parentDisconnectReapsExactGroup: true,
       neverAutoDeletesArtifacts: true,
       neverTargetsLiveOrSharedProfile: true,
-      launchRequiresOwnerOrphanClearance: true
+      launchRequiresOwnerOrphanClearance: true,
+      refusesLaunchOnPriorLiveGroup: true
     }
   }
 }
@@ -265,10 +284,25 @@ function launchUnderWatchdog(spec, adapters = {}) {
     let settled = false
     let terminalMessage = null
     const terminalWaiters = []
-    const timer = setTimeout(() => {
+    const disconnectController = () => {
+      if (!controller.connected) return
+      try {
+        controller.disconnect()
+      } catch {
+        // The controller may have exited between the connected check and disconnect.
+      }
+    }
+    const rejectBeforeLaunch = (error) => {
       if (settled) return
       settled = true
-      reject(new Error(`Studio acceptance watchdog launch timed out after ${launchTimeoutMs}ms`))
+      clearTimeout(timer)
+      disconnectController()
+      reject(error)
+    }
+    const timer = setTimeout(() => {
+      rejectBeforeLaunch(
+        new Error(`Studio acceptance watchdog launch timed out after ${launchTimeoutMs}ms`)
+      )
     }, launchTimeoutMs)
 
     const settleTerminal = (message) => {
@@ -280,9 +314,7 @@ function launchUnderWatchdog(spec, adapters = {}) {
       if (!isRecord(message)) return
       if (message.type === 'terminal') settleTerminal(message)
       if (message.type === 'error' && !settled) {
-        settled = true
-        clearTimeout(timer)
-        reject(new Error(String(message.error || 'watchdog launch failed')))
+        rejectBeforeLaunch(new Error(String(message.error || 'watchdog launch failed')))
         return
       }
       if (message.type !== 'launched' || settled) return
@@ -322,10 +354,7 @@ function launchUnderWatchdog(spec, adapters = {}) {
     })
 
     controller.once('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(error)
+      rejectBeforeLaunch(error)
     })
     controller.once('exit', (code, signal) => {
       if (!settled) {
@@ -337,7 +366,13 @@ function launchUnderWatchdog(spec, adapters = {}) {
       }
     })
 
-    controller.send({ type: 'launch', spec })
+    try {
+      controller.send({ type: 'launch', spec }, (error) => {
+        if (error) rejectBeforeLaunch(error)
+      })
+    } catch (error) {
+      rejectBeforeLaunch(error)
+    }
   })
 }
 
@@ -458,6 +493,188 @@ function defaultExecFile(file, args, options = {}) {
   })
 }
 
+/**
+ * Read every prior watchdog receipt under the acceptance root.
+ *
+ * A receipt we cannot read is reported as `malformed` rather than skipped: an
+ * unreadable receipt is precisely the case where we do not know whether a
+ * process group leaked, so it must fail closed.
+ */
+async function readPriorWatchdogReceipts(acceptanceRoot) {
+  let entries
+  try {
+    entries = await fsPromises.readdir(acceptanceRoot, { withFileTypes: true })
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return []
+    throw error
+  }
+
+  const receipts = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const receiptPath = path.join(acceptanceRoot, entry.name, 'watchdog-receipt.json')
+    let raw
+    try {
+      const stat = await fsPromises.lstat(receiptPath)
+      if (!stat.isFile()) {
+        receipts.push({ receiptPath, malformed: 'receipt is not a regular file' })
+        continue
+      }
+      if (stat.size > ACCEPTANCE_RECEIPT_MAX_BYTES) {
+        receipts.push({
+          receiptPath,
+          malformed: `receipt exceeds ${ACCEPTANCE_RECEIPT_MAX_BYTES} bytes`
+        })
+        continue
+      }
+      raw = await fsPromises.readFile(receiptPath, 'utf8')
+    } catch (error) {
+      if (error && error.code === 'ENOENT') continue
+      receipts.push({
+        receiptPath,
+        malformed: error instanceof Error ? error.message : String(error)
+      })
+      continue
+    }
+
+    let parsed
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      receipts.push({ receiptPath, malformed: 'receipt is not valid JSON' })
+      continue
+    }
+    if (!isRecord(parsed)) {
+      receipts.push({ receiptPath, malformed: 'receipt is not a JSON object' })
+      continue
+    }
+    receipts.push({ receiptPath, receipt: parsed })
+  }
+  return receipts
+}
+
+function validatePriorWatchdogReceipt(entry) {
+  const receipt = entry.receipt
+  if (receipt.kind !== WATCHDOG_RECEIPT_KIND) {
+    return { ...entry, malformed: 'receipt kind is not recognized' }
+  }
+  if (!KNOWN_RECEIPT_SCHEMA_VERSIONS.has(receipt.schemaVersion)) {
+    return { ...entry, malformed: 'receipt schema version is not recognized' }
+  }
+  if (!KNOWN_RECEIPT_STATUSES.has(receipt.status)) {
+    return { ...entry, malformed: 'receipt status is not recognized' }
+  }
+
+  if (
+    receipt.status === 'spawn_failed' &&
+    receipt.childPid === null &&
+    receipt.childPgid === null
+  ) {
+    return { ...entry, trusted: true, pgid: null }
+  }
+
+  if (!Number.isSafeInteger(receipt.childPid) || receipt.childPid <= 0) {
+    return { ...entry, malformed: 'receipt has no valid child process id' }
+  }
+  if (!Number.isSafeInteger(receipt.childPgid) || receipt.childPgid <= 0) {
+    return { ...entry, malformed: 'receipt has no valid child process group id' }
+  }
+  if (receipt.childPid !== receipt.childPgid) {
+    return { ...entry, malformed: 'receipt does not identify the exact owned process group' }
+  }
+
+  const trusted =
+    receipt.schemaVersion === TRUSTED_RECEIPT_SCHEMA_VERSION &&
+    VERIFIED_TERMINAL_RECEIPT_STATUSES.has(receipt.status) &&
+    receipt.groupExitVerified === true
+  return { ...entry, trusted, pgid: receipt.childPgid }
+}
+
+/**
+ * Refuse to stack a launch on a process group a previous acceptance run may
+ * have leaked. This NEVER kills anything: a suspected orphan is reported with
+ * its receipt, PGID and current member rows so a human adjudicates it.
+ *
+ * A historical PGID is not a durable identity — the OS reuses group ids — so a
+ * receipt is trusted and skipped only when it is a recognized schema-v2
+ * watchdog receipt with a clean terminal status and groupExitVerified:true,
+ * because only that shape was written after the watchdog actually observed the
+ * exact group disappear. Every legacy or unverified receipt is scanned even
+ * when it claims `reaped`, because the known false-green path produced exactly
+ * that claim.
+ */
+async function assertNoPriorStudioOrphans(plan, adapters = {}) {
+  if (process.platform === 'win32') return { scanned: 0, trusted: 0, orphans: [] }
+
+  const acceptanceRoot = path.dirname(path.resolve(plan.artifactRoot))
+  const priors = await (adapters.readPriorReceipts || readPriorWatchdogReceipts)(acceptanceRoot)
+
+  const validated = priors.map((entry) =>
+    entry.malformed ? entry : validatePriorWatchdogReceipt(entry)
+  )
+  const malformed = validated.filter((entry) => entry.malformed)
+  if (malformed.length > 0) {
+    throw new Error(
+      `Refusing launch: ${malformed.length} prior Studio acceptance receipt(s) could not be read, so a leaked process group cannot be ruled out. Inspect manually:\n${malformed
+        .map((entry) => `  ${entry.receiptPath} — ${entry.malformed}`)
+        .join('\n')}`
+    )
+  }
+
+  const suspects = []
+  let trusted = 0
+  for (const entry of validated) {
+    if (entry.trusted) {
+      trusted += 1
+      continue
+    }
+    suspects.push({
+      receiptPath: entry.receiptPath,
+      pgid: entry.pgid,
+      recordedStatus: typeof entry.receipt.status === 'string' ? entry.receipt.status : null
+    })
+  }
+  if (suspects.length === 0) return { scanned: priors.length, trusted, orphans: [] }
+
+  const runExec = adapters.execFile || defaultExecFile
+  const sample = await runExec('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,comm='])
+  const rows = parseProcessTable(sample.stdout)
+  const orphans = []
+  for (const suspect of suspects) {
+    const members = rows.filter((row) => row.pgid === suspect.pgid)
+    if (members.length > 0) orphans.push({ ...suspect, members })
+  }
+  if (orphans.length > 0) {
+    throw new Error(
+      `Refusing launch: ${orphans.length} prior Studio acceptance process group(s) are still alive. Nothing was killed — adjudicate manually:\n${orphans
+        .map(
+          (orphan) =>
+            `  pgid ${orphan.pgid} (receipt ${orphan.receiptPath}, recorded status ${String(
+              orphan.recordedStatus
+            )}) members: ${orphan.members.map((row) => `${row.pid} ${row.command}`).join(', ')}`
+        )
+        .join('\n')}`
+    )
+  }
+  return { scanned: priors.length, trusted, orphans: [] }
+}
+
+function assertCleanWatchdogTerminal(terminal) {
+  if (
+    !isRecord(terminal) ||
+    terminal.status !== 'reaped' ||
+    terminal.groupExitVerified !== true ||
+    terminal.reason !== 'owner_requested'
+  ) {
+    throw new Error(
+      `Studio acceptance watchdog did not confirm clean owner-requested teardown: ${JSON.stringify(
+        terminal
+      ).slice(0, 1000)}`
+    )
+  }
+  return terminal
+}
+
 async function runStudioAcceptanceBuild(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '..'))
   const runExec = options.execFile || defaultExecFile
@@ -572,6 +789,14 @@ async function runStudioAcceptance(args, adapters = {}) {
   const authorization = assertLaunchAuthorized(args, plan)
   if (!authorization.launch) return { launched: false, plan, authorization }
 
+  // Before creating or building anything: refuse to launch on top of a group a
+  // prior acceptance run may have leaked. The owner attestation flag stays
+  // independent of this measurement — a human promise is not evidence.
+  const priorOrphanScan = await (adapters.assertNoPriorOrphans || assertNoPriorStudioOrphans)(
+    plan,
+    adapters.orphanAdapters || {}
+  )
+
   await fsPromises.mkdir(plan.home, { recursive: true, mode: 0o700 })
   await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
   const asset = await materializeOwnedMedia({
@@ -608,6 +833,8 @@ async function runStudioAcceptance(args, adapters = {}) {
   const watchdogLaunch = adapters.launchUnderWatchdog || launchUnderWatchdog
   const session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
   let renderer = null
+  let evidence = null
+  let acceptanceError = null
   try {
     await (adapters.assertExactChildOwnsDebugPorts || assertExactChildOwnsDebugPorts)(
       session,
@@ -630,7 +857,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       companion.pid,
       adapters.windowAdapters || {}
     )
-    const evidence = {
+    evidence = {
       ok: true,
       instanceId: plan.instanceId,
       electron: {
@@ -645,21 +872,66 @@ async function runStudioAcceptance(args, adapters = {}) {
       openResult,
       durable,
       watchdogReceiptPath: plan.receiptPath,
+      priorOrphanScan,
       safety: plan.safety
     }
-    await (adapters.writeEvidence || writeEvidence)(plan, evidence)
-    return { launched: true, plan, evidence }
-  } finally {
-    try {
-      renderer?.close()
-    } finally {
-      await session.stop()
-    }
+  } catch (error) {
+    acceptanceError = error
   }
+
+  let rendererCloseError = null
+  try {
+    renderer?.close()
+  } catch (error) {
+    rendererCloseError = error
+  }
+
+  let watchdogTerminal = null
+  let watchdogError = null
+  try {
+    watchdogTerminal = assertCleanWatchdogTerminal(await session.stop())
+  } catch (error) {
+    watchdogError = error
+  }
+
+  const failures = [acceptanceError, rendererCloseError, watchdogError].filter(Boolean)
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) {
+    throw new AggregateError(failures, 'Studio acceptance and cleanup both failed')
+  }
+
+  const completedEvidence = { ...evidence, watchdogTerminal }
+  await (adapters.writeEvidence || writeEvidence)(plan, completedEvidence)
+  return { launched: true, plan, evidence: completedEvidence }
 }
 
 function buildStubSpec(options) {
   const directory = path.resolve(options.directory)
+  const gracefulExitMs = options.grandchildGracefulExitMs
+  if (
+    gracefulExitMs !== undefined &&
+    (!Number.isSafeInteger(gracefulExitMs) || gracefulExitMs < 1)
+  ) {
+    throw new Error('grandchildGracefulExitMs must be a positive integer')
+  }
+  if (options.stubbornGrandchild && gracefulExitMs !== undefined) {
+    throw new Error('stub grandchild cannot be both stubborn and graceful')
+  }
+  // A stubborn grandchild ignores SIGTERM, so only escalation to SIGKILL of the
+  // exact group can end it. That is the control which fails whenever the
+  // watchdog finalizes on group-leader exit alone.
+  //
+  // It announces itself only AFTER installing the handler. The leader cannot do
+  // that for it: spawn() returns long before the child's runtime boots, so a
+  // reap racing that window would kill an ordinary process and silently prove
+  // nothing.
+  let grandchildBody = 'setInterval(()=>{},1000)'
+  if (options.stubbornGrandchild) {
+    grandchildBody =
+      "process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('grandchild-ready.json',JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);"
+  } else if (gracefulExitMs !== undefined) {
+    grandchildBody = `process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),${gracefulExitMs}));require('node:fs').writeFileSync('grandchild-ready.json',JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);`
+  }
   return {
     kind: 'stub',
     command: process.execPath,
@@ -669,7 +941,9 @@ function buildStubSpec(options) {
         "const fs=require('node:fs');",
         "const path=require('node:path');",
         "const {spawn}=require('node:child_process');",
-        "const grandchild=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});",
+        `const grandchild=spawn(process.execPath,['-e',${JSON.stringify(
+          grandchildBody
+        )}],{stdio:'ignore'});`,
         "fs.writeFileSync(path.join(process.cwd(),'grandchild.json'),JSON.stringify({pid:grandchild.pid})+'\\n');",
         "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),10));",
         "process.on('SIGINT',()=>process.exit(0));",
@@ -764,6 +1038,9 @@ module.exports = {
   evaluateByValue,
   parseProcessTable,
   descendantsOf,
+  readPriorWatchdogReceipts,
+  assertNoPriorStudioOrphans,
+  assertCleanWatchdogTerminal,
   runStudioAcceptanceBuild,
   findStudioCompanion,
   verifyDurableOpen,

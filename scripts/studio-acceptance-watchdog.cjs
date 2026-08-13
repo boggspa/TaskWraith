@@ -15,9 +15,14 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { spawn } = require('node:child_process')
 
-const RECEIPT_SCHEMA_VERSION = 1
+// v2 receipts carry `groupExitVerified`. A v1 receipt cannot distinguish "the
+// whole group is gone" from "the group leader exited and we assumed the rest
+// followed", so readers must treat every v1 receipt as unverified.
+const RECEIPT_SCHEMA_VERSION = 2
 const MAX_TAIL_BYTES = 8 * 1024
 const DEFAULT_FORCE_AFTER_MS = 4_000
+const GROUP_EXIT_POLL_MS = 50
+const GROUP_EXIT_GRACE_MS = 5_000
 const MIN_RUN_TIMEOUT_MS = 30_000
 const MAX_RUN_TIMEOUT_MS = 30 * 60 * 1_000
 
@@ -28,7 +33,9 @@ let stderrTail = ''
 let stdoutTail = ''
 let reapingReason = null
 let forceTimer = null
+let forceKillSentAt = null
 let deadlineTimer = null
+let groupExitTimer = null
 let terminal = false
 
 function boundedTail(previous, chunk) {
@@ -176,21 +183,109 @@ function signalOwnedGroup(signal) {
   }
 }
 
+/**
+ * Exact process-GROUP liveness. `kill(-pgid, 0)` is the POSIX existence probe
+ * for a whole group: ESRCH means every member is gone, EPERM means at least one
+ * member survives but is not ours to signal, and success means members remain.
+ *
+ * This deliberately does not scrape `ps`. A reaper must not depend on spawning
+ * and parsing another process while it is trying to prove a group died.
+ */
+function ownedGroupHasMembers() {
+  if (process.platform === 'win32' || !childPgid) return false
+  try {
+    process.kill(-childPgid, 0)
+    return true
+  } catch (error) {
+    return Boolean(error) && error.code !== 'ESRCH'
+  }
+}
+
+function forceKillOwnedGroup() {
+  if (process.platform === 'win32' || !childPgid) return
+  try {
+    process.kill(-childPgid, 'SIGKILL')
+  } catch {
+    // ESRCH only means the group is already gone; the poll below confirms it.
+  }
+}
+
+function scheduleForceKill(reason) {
+  if (terminal || forceTimer || forceKillSentAt !== null) return
+  forceTimer = setTimeout(() => {
+    forceTimer = null
+    forceKillSentAt = Date.now()
+    forceKillOwnedGroup()
+    receipt('force_kill_sent', { reason })
+  }, spec.forceAfterMs)
+}
+
 function complete(status, extra = {}) {
   if (terminal) return
   terminal = true
   if (forceTimer) clearTimeout(forceTimer)
   if (deadlineTimer) clearTimeout(deadlineTimer)
+  if (groupExitTimer) clearTimeout(groupExitTimer)
   receipt(status, extra)
   send({
     type: 'terminal',
     status,
     childPid: child && Number.isInteger(child.pid) ? child.pid : null,
     childPgid,
+    groupExitVerified: extra.groupExitVerified === true,
     reason: extra.reason || null,
     receiptPath: spec && spec.receiptPath
   })
-  setImmediate(() => process.exit(status === 'spawn_failed' ? 1 : 0))
+  setImmediate(() =>
+    process.exit(status === 'spawn_failed' || status === 'reap_incomplete' ? 1 : 0)
+  )
+}
+
+/**
+ * The group leader exiting does NOT mean the group is gone — a descendant that
+ * ignores SIGTERM outlives it, which is exactly how a "reaped" receipt used to
+ * be written over a surviving process. Terminal status therefore waits for the
+ * exact PGID to disappear, escalating to SIGKILL, and records whether that was
+ * actually observed. A group that outlives the grace window finalizes as
+ * `reap_incomplete` instead of claiming a clean reap.
+ */
+function finalizeAfterChildExit(status, extra) {
+  if (terminal) return
+  if (!ownedGroupHasMembers()) {
+    complete(status, {
+      ...extra,
+      groupExitVerified: true,
+      ...(forceKillSentAt !== null ? { groupRequiredForceKill: true } : {})
+    })
+    return
+  }
+
+  receipt('group_survived_leader', extra)
+  if (!reapingReason) {
+    signalOwnedGroup('SIGTERM')
+    scheduleForceKill(extra.reason || 'child_exit')
+  }
+  const poll = () => {
+    if (terminal) return
+    if (!ownedGroupHasMembers()) {
+      complete(status, {
+        ...extra,
+        groupExitVerified: true,
+        ...(forceKillSentAt !== null ? { groupRequiredForceKill: true } : {})
+      })
+      return
+    }
+    if (forceKillSentAt !== null && Date.now() >= forceKillSentAt + GROUP_EXIT_GRACE_MS) {
+      complete('reap_incomplete', {
+        ...extra,
+        groupExitVerified: false,
+        error: `process group ${childPgid} still had members ${GROUP_EXIT_GRACE_MS}ms after SIGKILL`
+      })
+      return
+    }
+    groupExitTimer = setTimeout(poll, GROUP_EXIT_POLL_MS)
+  }
+  groupExitTimer = setTimeout(poll, GROUP_EXIT_POLL_MS)
 }
 
 function beginReap(reason) {
@@ -198,10 +293,7 @@ function beginReap(reason) {
   reapingReason = reason
   receipt('reaping', { reason })
   signalOwnedGroup('SIGTERM')
-  forceTimer = setTimeout(() => {
-    signalOwnedGroup('SIGKILL')
-    receipt('force_kill_sent', { reason })
-  }, spec.forceAfterMs)
+  scheduleForceKill(reason)
 }
 
 function launch(candidate) {
@@ -235,7 +327,7 @@ function launch(candidate) {
     })
   })
   child.once('exit', (code, signal) => {
-    complete(reapingReason ? 'reaped' : 'exited', {
+    finalizeAfterChildExit(reapingReason ? 'reaped' : 'exited', {
       reason: reapingReason || 'child_exit',
       exitCode: code,
       signal
