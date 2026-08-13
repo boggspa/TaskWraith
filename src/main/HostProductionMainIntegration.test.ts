@@ -20,7 +20,7 @@ describe('production Host main integration', () => {
 
     const hostWiring = between(
       "// Host Arc R4' — production Host ON.",
-      '// Construction runs BEFORE `.start()` exists'
+      'const hostLifecycle = new HostLifecycleController({'
     )
     expect(hostWiring).toContain(
       'const hostChatList = createHostProductionChatListCoalescer(AppStore)'
