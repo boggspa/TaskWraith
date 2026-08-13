@@ -2395,6 +2395,122 @@ describe('since-last-turn transcript widening', () => {
 })
 
 describe('advisory seat soft boundary', () => {
+  it('does not infer an advisory clamp for an explicit worker from shared roster prose', () => {
+    const worker: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      role: 'Work1',
+      stageRole: 'worker',
+      permissionPresetId: 'workspace_write',
+      instructions: [
+        'Management: @Orchestrator',
+        'Recon Scouts: @Scout1',
+        'Worker Captains: @Work1',
+        'Review Challengers: @Challenge1'
+      ].join('\n')
+    }
+    const config = withActiveRoundStatuses(
+      {
+        ...ensemble,
+        orchestrationMode: 'continuous',
+        participants: [ensemble.participants[0], worker]
+      },
+      { [ensemble.participants[0].id]: 'answered', [worker.id]: 'running' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Implement the assigned repair.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).not.toContain('Advisory turn boundary')
+    expect(prompt).toContain('Worker rule: execute the assigned implementation slice')
+    expect(prompt).toContain('Stage role: worker — you take a serial implementation turn')
+  })
+
+  it('lets a Boss-approved writer lane override an advisory stage boundary', () => {
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      stageRole: 'reviewer',
+      permissionPresetId: 'workspace_write'
+    }
+    const baseConfig = withActiveRoundStatuses(
+      {
+        ...ensemble,
+        orchestrationMode: 'continuous',
+        bossmanParticipantId: ensemble.participants[1].id,
+        participants: [reviewer, ensemble.participants[1]]
+      },
+      { [reviewer.id]: 'running', [ensemble.participants[1].id]: 'answered' }
+    )
+    const config: EnsembleConfig = {
+      ...baseConfig,
+      activeRound: {
+        ...baseConfig.activeRound!,
+        concurrentMode: true,
+        lanes: {
+          'lane-reviewer-write': {
+            laneId: 'lane-reviewer-write',
+            participantId: reviewer.id,
+            provider: reviewer.provider,
+            status: 'running',
+            intent: 'write',
+            approvedWriteScopes: [
+              {
+                kind: 'path',
+                path: 'src/main/AssignedRepair.ts',
+                reason: 'Boss-assigned implementation slice',
+                approvedBy: 'boss',
+                approvedAt: '2026-08-13T11:30:00.000Z'
+              }
+            ],
+            startedAt: '2026-08-13T11:30:00.000Z'
+          }
+        }
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: reviewer,
+      currentPrompt: 'Land the scoped repair assigned by the Boss.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).not.toContain('Advisory turn boundary')
+    expect(prompt).not.toContain('Stage role: reviewer —')
+    expect(prompt).toContain('Boss/Captain write allocation')
+    expect(prompt).toContain('execute the approved implementation slice')
+  })
+
+  it('keeps an unallocated reviewer advisory even when its configured preset can write', () => {
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[0],
+      stageRole: 'reviewer',
+      permissionPresetId: 'workspace_write'
+    }
+    const config = withActiveRoundStatuses(
+      {
+        ...ensemble,
+        orchestrationMode: 'continuous',
+        participants: [reviewer, ensemble.participants[1]]
+      },
+      { [reviewer.id]: 'running', [ensemble.participants[1].id]: 'idle' }
+    )
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: reviewer,
+      currentPrompt: 'Review the implementation evidence.',
+      roundId: 'round-advisory'
+    })
+
+    expect(prompt).toContain('Advisory turn boundary (Review')
+    expect(prompt).toContain('Stage role: reviewer —')
+    expect(prompt).not.toContain('Boss/Captain write allocation')
+  })
+
   it.each(['Scout', 'Explorer'] as const)(
     'recognizes an unstaged %s role and places the boundary after the current request',
     (role) => {

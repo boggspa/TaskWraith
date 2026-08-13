@@ -431,7 +431,8 @@ function formatRoleBoundaryContract(
   participant: EnsembleParticipant,
   orderedParticipants: EnsembleParticipant[],
   positionOneIndexed: number,
-  totalParticipants: number
+  totalParticipants: number,
+  bossDrivenWriteAllocation: boolean
 ): string[] {
   if (orderedParticipants.length < 2) return []
   const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
@@ -453,7 +454,11 @@ function formatRoleBoundaryContract(
     )
   }
 
-  if (isReviewOrReconLike(participant)) {
+  if (bossDrivenWriteAllocation) {
+    lines.push(
+      "- Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes. This explicit allocation supersedes an advisory/review stage for this lane only; it does not change the seat's standing roster role."
+    )
+  } else if (isReviewOrReconLike(participant)) {
     lines.push(
       isCaptain
         ? '- Review/Recon/Scout stage rule: fulfill the scheduled investigation or review, then report findings, evidence, risks, and acceptance criteria. Captain authority is additive: retain your listed Captain powers and this stage instead of becoming an advisory-only coordinator or abandoning the stage work.'
@@ -623,9 +628,29 @@ function isConfiguredCaptain(config: EnsembleConfig, participantId: string): boo
   }).captainParticipantIds.includes(participantId)
 }
 
+function hasBossDrivenWriteAllocation(config: EnsembleConfig, participantId: string): boolean {
+  return Object.values(config.activeRound?.lanes || {}).some(
+    (lane) =>
+      lane.participantId === participantId &&
+      lane.intent === 'write' &&
+      (lane.status === 'pending' ||
+        lane.status === 'running' ||
+        lane.status === 'awaiting-approval') &&
+      Boolean(
+        lane.approvedWriteScopes?.some(
+          (scope) => scope.approvedBy === 'boss' || scope.approvedBy === 'captain'
+        )
+      )
+  )
+}
+
 function advisorySeatKind(participant: EnsembleParticipant): AdvisorySeatKind | null {
   if (participant.stageRole === 'reviewer') return 'review'
   if (participant.stageRole === 'scout') return 'recon'
+  // Explicit dispatch stages are stronger than free-form roster prose. Shared
+  // briefs often enumerate every group (for example "Review Challengers"),
+  // which must never turn a declared worker into an advisory-only seat.
+  if (participant.stageRole === 'worker') return null
 
   const role = String(participant.role || '').toLowerCase()
   if (/\b(review|reviewer|adv|adversarial|snitch|typecheck|auditor|qa)\b/.test(role)) {
@@ -661,12 +686,17 @@ function isWorkerLike(participant: EnsembleParticipant): boolean {
 function formatAdvisoryTurnBoundary(
   config: EnsembleConfig,
   participant: EnsembleParticipant,
-  orderedParticipants: EnsembleParticipant[]
+  orderedParticipants: EnsembleParticipant[],
+  bossDrivenWriteAllocation: boolean
 ): string | null {
   // Captain is authority added to a seat, not an advisory replacement for its
   // role. Scout/reviewer wording still comes from the role/stage contract,
   // but it must not erase Captain fan-out or acting-authority powers.
   if (isConfiguredCaptain(config, participant.id)) return null
+  // A scoped writer lane is already a machine-verifiable Boss/Captain
+  // assignment. Re-injecting an advisory boundary here contradicts that
+  // allocation and causes capable seats to self-refuse despite write posture.
+  if (bossDrivenWriteAllocation) return null
   const kind = advisorySeatKind(participant)
   if (!kind) return null
 
@@ -1204,17 +1234,20 @@ export function buildEnsembleParticipantPromptProjection(
   // makes clears explicit via the snapshot's tombstones.
   const includeDynamicState =
     !input.slimTurn || input.participant.promptDynamicStateVersion !== dynamicStateSnapshot.version
+  const bossDrivenWriteAllocation = hasBossDrivenWriteAllocation(input.config, input.participant.id)
   const roleBoundaryLines = formatRoleBoundaryContract(
     input.config,
     input.participant,
     orderedParticipants,
     positionOneIndexed,
-    totalParticipants
+    totalParticipants,
+    bossDrivenWriteAllocation
   )
   const advisoryTurnBoundary = formatAdvisoryTurnBoundary(
     input.config,
     input.participant,
-    orderedParticipants
+    orderedParticipants,
+    bossDrivenWriteAllocation
   )
   const planOwnerLines = formatEnsemblePlanOwnerLines(input.chat, input.config, input.participant)
   // Recon-aware ollama workflow hint: the local-scout hint used to say
@@ -1420,9 +1453,13 @@ export function buildEnsembleParticipantPromptProjection(
       `Round id: ${input.roundId}`,
       ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
       ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
-      ...(input.participant.stageRole
-        ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
-        : []),
+      ...(bossDrivenWriteAllocation
+        ? [
+            'Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes.'
+          ]
+        : input.participant.stageRole
+          ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
+          : []),
       ...(includeDynamicState ? ['', dynamicStateSnapshot.block] : []),
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
@@ -1535,27 +1572,29 @@ export function buildEnsembleParticipantPromptProjection(
     ),
     // Spike 4 — declared dispatch stage. Emitted only when the seat carries
     // an explicit stageRole so unstaged rosters keep their prompt shape.
-    ...(input.participant.stageRole === 'reviewer'
-      ? [
-          '',
-          'Stage role: reviewer — your turn was deliberately scheduled after the other participants finished their work this round. Review what changed (the transcript carries per-turn tool and file-change summaries), verify claims against the workspace, and report findings; do not redo or extend the work itself.'
-        ]
-      : input.participant.stageRole === 'scout'
+    ...(bossDrivenWriteAllocation
+      ? []
+      : input.participant.stageRole === 'reviewer'
         ? [
             '',
-            'Stage role: scout — you run at the start of the round to investigate. Gather the facts your peers will need and report them crisply; leave implementation to the worker seats.'
+            'Stage role: reviewer — your turn was deliberately scheduled after the other participants finished their work this round. Review what changed (the transcript carries per-turn tool and file-change summaries), verify claims against the workspace, and report findings; do not redo or extend the work itself.'
           ]
-        : input.participant.stageRole === 'worker'
+        : input.participant.stageRole === 'scout'
           ? [
               '',
-              'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
+              'Stage role: scout — you run at the start of the round to investigate. Gather the facts your peers will need and report them crisply; leave implementation to the worker seats.'
             ]
-          : input.participant.stageRole === 'background'
+          : input.participant.stageRole === 'worker'
             ? [
                 '',
-                'Stage role: background — you were explicitly delegated an asynchronous lane and do not consume an ordinary round turn. Execute only the scoped request, respect the lane permission posture, and report concise evidence when ready; do not take ownership of foreground rotation or claim Boss/Captain/synthesizer authority.'
+                'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
               ]
-            : []),
+            : input.participant.stageRole === 'background'
+              ? [
+                  '',
+                  'Stage role: background — you were explicitly delegated an asynchronous lane and do not consume an ordinary round turn. Execute only the scoped request, respect the lane permission posture, and report concise evidence when ready; do not take ownership of foreground rotation or claim Boss/Captain/synthesizer authority.'
+                ]
+              : []),
     ...(isOllamaParticipant
       ? [
           '',
