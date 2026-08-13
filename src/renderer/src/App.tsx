@@ -601,6 +601,10 @@ import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
 import {
+  createRunQueueLeaseClaims,
+  removeExactQueuedRunRequest
+} from './lib/runQueueLeaseClaims'
+import {
   acceptedEnsembleRunQueueWrapperReason,
   isQueuedDesktopRunQueueJob,
   queuedRunFallbackId,
@@ -1675,6 +1679,7 @@ function App(): React.JSX.Element {
   // Retained for cancellation events created by older persisted handoffs.
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
+  const queuedDispatchLeaseClaimsRef = useRef(createRunQueueLeaseClaims())
   const soloSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
   // Single-flight guard for the ENSEMBLE composer Steer IPC. Keyed by chatId;
   // added before dispatch and cleared in a `finally`.
@@ -19897,6 +19902,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)
+    queuedDispatchLeaseClaimsRef.current.retainQueuedRunIds(queuedJobs.map((job) => job.runId))
     if (queuedJobs.length === 0) return
 
     // Pure scheduling decision lives in main (Phase B3.3 extraction). The
@@ -19912,6 +19918,10 @@ function App(): React.JSX.Element {
     const queuedRequests = queuedJobs
       .map((job) => resolveQueuedDesktopRunRequest(job))
       .filter((request): request is QueuedRunRequest => Boolean(request))
+      .filter(
+        (request) =>
+          !request.appRunId || !queuedDispatchLeaseClaimsRef.current.has(request.appRunId)
+      )
     if (queuedRequests.length === 0) return
     const nowMs = Date.now()
     const nextIndex = findNextRunnableQueueIndex(
@@ -19926,18 +19936,21 @@ function App(): React.JSX.Element {
     if (nextIndex < 0) return
 
     const nextRun = queuedRequests[nextIndex]
+    const nextRunId = nextRun.appRunId
+    if (!nextRunId || !queuedDispatchLeaseClaimsRef.current.tryClaim(nextRunId)) return
     const remainingRuns = queuedRequests.filter((_, index) => index !== nextIndex)
-    setQueuedRuns((prev) => prev.filter((request) => request.appRunId !== nextRun.appRunId))
     void window.api
       .leaseRunQueueJob({
-        runId: nextRun.appRunId,
+        runId: nextRunId,
         provider: nextRun.provider,
         statusReason: 'Dequeued by TaskWraith scheduler.'
       })
       .then((leased) => {
         if (!leased) {
+          queuedDispatchLeaseClaimsRef.current.release(nextRunId)
           return
         }
+        setQueuedRuns((prev) => removeExactQueuedRunRequest(prev, nextRunId))
         let dispatchChat = nextRun.chatRecord
         if (
           dispatchChat &&
@@ -19970,6 +19983,8 @@ function App(): React.JSX.Element {
           provider: dispatchProvider,
           chatRecord: dispatchChat || nextRun.chatRecord
         })
+      }, () => {
+        queuedDispatchLeaseClaimsRef.current.release(nextRunId)
       })
   }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
 
