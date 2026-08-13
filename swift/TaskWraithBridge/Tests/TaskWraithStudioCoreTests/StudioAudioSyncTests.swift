@@ -281,6 +281,50 @@ final class StudioAudioSyncTests: XCTestCase {
         XCTAssertEqual(StudioAudioSyncPolicy.toleranceTicks(for: .fps60), 2)
     }
 
+    // MARK: - Timeline cut selection
+
+    /// This is the shipped wrong-clip failure in its smallest form: timeline
+    /// tick 100 belongs to B at source tick 700, not the last-opened A track.
+    func testTimelineAudioSelectsTheCutAssetAtItsOwnContentTick() {
+        let sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "a", assetId: "asset-a", startTicks: 0, endTicks: 100,
+                sourceInTicks: 20),
+            StudioSequenceItem(
+                itemId: "b", assetId: "asset-b", startTicks: 100, endTicks: 240,
+                sourceInTicks: 700),
+        ])
+
+        XCTAssertEqual(
+            StudioSequenceAudioPolicy.selection(in: sequence, atTicks: 99),
+            .play(assetId: "asset-a", sourceTicks: 119)
+        )
+        XCTAssertEqual(
+            StudioSequenceAudioPolicy.selection(in: sequence, atTicks: 100),
+            .play(assetId: "asset-b", sourceTicks: 700),
+            "the first tick of B must schedule B at B's source in, not continue A"
+        )
+    }
+
+    /// A hole or an unavailable sequence is affirmative silence. Falling back
+    /// to the previous source track would put unrelated dialogue under black.
+    func testTimelineAudioSilencesGapsAndAnEmptyTimeline() {
+        let sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "a", assetId: "asset-a", startTicks: 0, endTicks: 100,
+                sourceInTicks: 0),
+            StudioSequenceItem(
+                itemId: "b", assetId: "asset-b", startTicks: 200, endTicks: 300,
+                sourceInTicks: 0),
+        ])
+
+        XCTAssertEqual(StudioSequenceAudioPolicy.selection(in: sequence, atTicks: 150), .silence)
+        XCTAssertEqual(
+            StudioSequenceAudioPolicy.selection(in: StudioTimelineSequence(items: []), atTicks: 0),
+            .silence
+        )
+    }
+
     // MARK: - Helpers
 
     /// A buffer whose every sample equals its own frame index, so any offset is

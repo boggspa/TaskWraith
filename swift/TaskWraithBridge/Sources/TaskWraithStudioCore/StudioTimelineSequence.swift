@@ -31,6 +31,30 @@ public enum StudioSequenceSample: Equatable, Sendable {
     case gap
 }
 
+/// The audio counterpart of StudioSequenceSample. This is deliberately only
+/// an identity plus source time: selecting PCM and touching the one device
+/// player remain presentation-layer responsibilities.
+public enum StudioSequenceAudioSelection: Equatable, Sendable {
+    case play(assetId: String, sourceTicks: Int64)
+    case silence
+}
+
+/// Timeline audio is content-addressed. A gap is not permission to reuse the
+/// prior clip: it is a positive instruction to remain silent.
+public enum StudioSequenceAudioPolicy {
+    public static func selection(
+        in sequence: StudioTimelineSequence,
+        atTicks ticks: Int64
+    ) -> StudioSequenceAudioSelection {
+        switch sequence.sample(atTicks: ticks) {
+        case .gap:
+            return .silence
+        case .item(_, let assetId, let sourceTicks):
+            return .play(assetId: assetId, sourceTicks: sourceTicks)
+        }
+    }
+}
+
 /// THE COMMITTED TIMELINE AS A PLAYBACK SUBJECT.
 ///
 /// WHY THIS TYPE EXISTS, and it is the distinction the owner-approved briefing

@@ -134,6 +134,22 @@ public final class StudioMediaSourcePool {
     }
 }
 
+/// Resident audio is borrowed from an existing decoder lease. Looking it up
+/// never opens another asset or allocates another player: a missing lease is
+/// deliberate silence at that timeline position.
+@MainActor
+public final class StudioResidentAudio {
+    public let assetId: String
+    public let track: StudioAudioTrack
+    public let timebase: StudioTimebase
+
+    fileprivate init(assetId: String, track: StudioAudioTrack, timebase: StudioTimebase) {
+        self.assetId = assetId
+        self.track = track
+        self.timebase = timebase
+    }
+}
+
 /// Closes the last gap between the host protocol and rendered pixels: given an
 /// asset the host reported opening, load it and hand the viewer a live source.
 ///
@@ -176,6 +192,18 @@ public final class StudioMediaAttachment {
             "a shared StudioMediaSourcePool must use the renderer's Metal device"
         )
         self.sourcePool = sourcePool
+    }
+
+    /// Returns audio already resident for this attachment's primary, proposal,
+    /// or committed-sequence slot. It never falls back to another asset.
+    public func residentAudio(for assetId: String) -> StudioResidentAudio? {
+        let leases = [primaryLease, proposedLease, sequenceLeases[assetId]]
+        guard let lease = leases.compactMap({ $0 }).first(where: { $0.assetId == assetId }),
+            let audio = lease.audio
+        else {
+            return nil
+        }
+        return StudioResidentAudio(assetId: assetId, track: audio, timebase: lease.media.timebase)
     }
 
     /// Acquires media and attaches it to this renderer. The source can already
