@@ -22,16 +22,19 @@ import type { AgyModel } from './AntigravityCli'
  * install with the official binary present" — deliberately, because a silent
  * disappearance is worse than an offer row that fails loudly at dispatch.
  *
- * Ids are the verbatim `agy models` catalogue observed 2026-07-25. Labels equal
- * ids because `agy models` prints bare ids with no display names, so live rows
- * already render that way (`modelFromValues` takes the id as the label when no
- * label column is present) — a floor row is indistinguishable from a live one.
+ * Ids are the offerable Gemini rows from the verbatim `agy models` catalogue,
+ * refreshed 2026-08-13 after Gemini 3.7 Flash became live. Floor labels equal
+ * ids deliberately: the shared picker grouping derives the same family label
+ * and effort ladder that the richer live labels produce.
  *
  * Live discovery always wins: these are returned only when it yields nothing. A
  * stale id fails at dispatch with agy's own model error rather than silently
  * hiding the provider.
  */
 const STATIC_AGY_MODEL_IDS: readonly string[] = [
+  'gemini-3.7-flash-high',
+  'gemini-3.7-flash-medium',
+  'gemini-3.7-flash-low',
   'gemini-3.6-flash-high',
   'gemini-3.6-flash-medium',
   'gemini-3.6-flash-low',

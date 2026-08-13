@@ -10,6 +10,7 @@ import { isAntigravityGeminiApiModelCandidate } from './AntigravityCombinedModeD
 
 describe('antigravityAgyStaticModels', () => {
   it('offers the Gemini families and refuses resold first-party models', () => {
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.7-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.6-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.1-pro-low')
     // claude-*/gpt-oss-* exist in agy's catalogue but are never offered:
@@ -25,21 +26,18 @@ describe('antigravityAgyStaticModels', () => {
     expect(isResoldFirstPartyAgyModelId('claude-sonnet-4-6')).toBe(true)
     expect(isResoldFirstPartyAgyModelId('claude-opus-4-6-thinking')).toBe(true)
     expect(isResoldFirstPartyAgyModelId('gpt-oss-120b-medium')).toBe(true)
-    expect(isResoldFirstPartyAgyModelId('gemini-3.6-flash-high')).toBe(false)
+    expect(isResoldFirstPartyAgyModelId('gemini-3.7-flash-high')).toBe(false)
     const filtered = offerableAgyModels([
-      { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' },
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
       { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
       { id: 'gpt-oss-120b-medium', label: 'gpt-oss-120b-medium' }
     ])
-    expect(filtered.map((model) => model.id)).toEqual(['gemini-3.6-flash-high'])
+    expect(filtered.map((model) => model.id)).toEqual(['gemini-3.7-flash-high'])
   })
 
-  // `agy models` prints bare ids with no display column, so live rows take the
-  // id as their label. Floor rows must match or they would look different in the
-  // picker from the same model discovered live.
-  it('labels rows exactly as live discovery does', () => {
-    const live = parseAgyModels(ANTIGRAVITY_AGY_STATIC_MODEL_IDS.join('\n'))
-    expect(antigravityAgyStaticModels()).toEqual(live)
+  it('uses each exact wire id as the deterministic fallback label', () => {
+    const parsedBareIds = parseAgyModels(ANTIGRAVITY_AGY_STATIC_MODEL_IDS.join('\n'))
+    expect(antigravityAgyStaticModels()).toEqual(parsedBareIds)
   })
 
   it('has no duplicate ids', () => {

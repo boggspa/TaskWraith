@@ -118,6 +118,11 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('antigravity', 'gemini-api:gemini-3.1-pro-preview')).toBe(
         '3.1 Pro Preview'
       )
+      expect(canonicalModelIdForProvider('antigravity', 'gemini-3.7-flash-high')).toBe(
+        'gemini-3.7-flash'
+      )
+      expect(humaniseModelId('antigravity', 'gemini-3.7-flash-medium')).toBe('Gemini 3.7 Flash')
+      expect(humaniseModelIdCompact('antigravity', 'gemini-3.7-flash-low')).toBe('3.7 Flash')
       expect(canonicalModelIdForProvider('antigravity', 'gemini-3.6-flash-high')).toBe(
         'gemini-3.6-flash'
       )

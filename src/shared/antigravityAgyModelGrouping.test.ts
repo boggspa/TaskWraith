@@ -6,8 +6,11 @@ import {
   groupAntigravityModelRows
 } from './antigravityAgyModelGrouping'
 
-/** The verbatim agy catalogue observed 2026-07-25 (AntigravityAgyStaticModels). */
+/** The offerable agy catalogue observed 2026-08-13 (AntigravityAgyStaticModels). */
 const CATALOGUE = [
+  'gemini-3.7-flash-high',
+  'gemini-3.7-flash-medium',
+  'gemini-3.7-flash-low',
   'gemini-3.6-flash-high',
   'gemini-3.6-flash-medium',
   'gemini-3.6-flash-low',
@@ -25,6 +28,7 @@ describe('antigravityModelGrouping', () => {
   it('groups the live catalogue to one readable row per host model', () => {
     const rows = groupAntigravityModelRows(CATALOGUE)
     expect(rows.map((row) => row.label)).toEqual([
+      'Gemini 3.7 Flash',
       'Gemini 3.6 Flash',
       'Gemini 3.5 Flash',
       'Gemini 3.1 Pro',
@@ -33,25 +37,25 @@ describe('antigravityModelGrouping', () => {
       'GPT-OSS 120B'
     ])
     // Unselected grouped rows resolve to their catalogue-first variant.
-    expect(rows[0].id).toBe('gemini-3.6-flash-high')
+    expect(rows[0].id).toBe('gemini-3.7-flash-high')
     expect(rows[0].antigravityVariants).toEqual([
-      { effort: 'low', id: 'gemini-3.6-flash-low' },
-      { effort: 'medium', id: 'gemini-3.6-flash-medium' },
-      { effort: 'high', id: 'gemini-3.6-flash-high' }
+      { effort: 'low', id: 'gemini-3.7-flash-low' },
+      { effort: 'medium', id: 'gemini-3.7-flash-medium' },
+      { effort: 'high', id: 'gemini-3.7-flash-high' }
     ])
-    expect(rows[2].id).toBe('gemini-3.1-pro-high')
-    expect(rows[5].id).toBe('gpt-oss-120b-medium')
+    expect(rows[3].id).toBe('gemini-3.1-pro-high')
+    expect(rows[6].id).toBe('gpt-oss-120b-medium')
   })
 
   it('a grouped row follows the selected variant of its family', () => {
-    const rows = groupAntigravityModelRows(CATALOGUE, 'gemini-3.6-flash-low')
-    expect(rows[0].id).toBe('gemini-3.6-flash-low')
+    const rows = groupAntigravityModelRows(CATALOGUE, 'gemini-3.7-flash-low')
+    expect(rows[0].id).toBe('gemini-3.7-flash-low')
     // Other families stay on their defaults.
-    expect(rows[1].id).toBe('gemini-3.5-flash-high')
+    expect(rows[1].id).toBe('gemini-3.6-flash-high')
   })
 
   it('parses effort suffixes and refuses -thinking', () => {
-    expect(antigravityEffortForModelId('gemini-3.6-flash-high')).toBe('high')
+    expect(antigravityEffortForModelId('gemini-3.7-flash-high')).toBe('high')
     expect(antigravityEffortForModelId('gemini-3.1-pro-low')).toBe('low')
     expect(antigravityEffortForModelId('gpt-oss-120b-medium')).toBe('medium')
     expect(antigravityEffortForModelId('claude-opus-4-6-thinking')).toBeNull()
@@ -59,10 +63,10 @@ describe('antigravityModelGrouping', () => {
   })
 
   it('exposes slider variants low → high with the family default preserved', () => {
-    const group = antigravityVariantGroupForModel(CATALOGUE, 'gemini-3.6-flash-medium')
-    expect(group?.displayName).toBe('Gemini 3.6 Flash')
+    const group = antigravityVariantGroupForModel(CATALOGUE, 'gemini-3.7-flash-medium')
+    expect(group?.displayName).toBe('Gemini 3.7 Flash')
     expect(group?.variants.map((variant) => variant.effort)).toEqual(['low', 'medium', 'high'])
-    expect(group?.defaultId).toBe('gemini-3.6-flash-high')
+    expect(group?.defaultId).toBe('gemini-3.7-flash-high')
 
     const pro = antigravityVariantGroupForModel(CATALOGUE, 'gemini-3.1-pro-high')
     expect(pro?.variants.map((variant) => variant.effort)).toEqual(['low', 'high'])
@@ -92,7 +96,7 @@ describe('antigravityModelGrouping', () => {
     expect(rows[0]).toEqual({ id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' })
     expect(rows[1]).toEqual({ id: 'gemini-api:gemini-2.5-flash-lite', label: '2.5 Flash-Lite' })
     // The agy families still group after the api rows.
-    expect(rows.map((row) => row.label)).toContain('Gemini 3.6 Flash')
+    expect(rows.map((row) => row.label)).toContain('Gemini 3.7 Flash')
     // An api id never joins a variant group even hypothetically.
     expect(antigravityVariantGroupForModel(mixed, 'gemini-api:gemini-3.5-flash')).toBeNull()
   })
