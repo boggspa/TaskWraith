@@ -208,6 +208,27 @@ final class StudioStressTests: XCTestCase {
 
     // MARK: - S4: 10 viewer close/reopen cycles
 
+    /// THE BOUND MOST OF THIS FILE MEASURES AGAINST IS A PRODUCTION CONSTANT.
+    ///
+    /// Four stress tests pass `retainedBound: inFlightRetentionDepth`, so
+    /// raising that constant to absorb a leak would keep every "BOUNDED
+    /// RESOURCES" claim green — the instrument would move with the defect.
+    /// @Challenge2 named this and filed it as an accepted trade-off; it costs
+    /// one line to close instead.
+    ///
+    /// This does not stop anyone changing the depth. It stops them changing it
+    /// SILENTLY, which is the entire difference between a tuned constant and a
+    /// leak given a bigger budget.
+    func testTheRetentionDepthTheStressBoundsRelyOnIsItselfPinned() {
+        XCTAssertEqual(
+            StudioVideoFrameRenderer.inFlightRetentionDepth,
+            3,
+            "the in-flight retention depth changed — if that is deliberate, update this "
+                + "literal in the same commit; if it is not, a leak just widened every "
+                + "bounded-resource assertion in this file"
+        )
+    }
+
     /// A full renderer teardown and rebuild: command queue, three pipelines, the
     /// glyph atlas and the texture caches. If any of those survived teardown,
     /// ten cycles would show it.
@@ -230,8 +251,43 @@ final class StudioStressTests: XCTestCase {
             for frame in 0..<12 {
                 renderer.render(snapshot: snapshot(frame: Int64(frame)), to: output)
             }
+            // ASSERTED EVERY CYCLE, NOT JUST THE LAST ONE. This read used to be
+            // overwritten nine times with only the tenth value checked, so a
+            // resource stranded in cycles 0-8 and released by cycle 9 passed
+            // clean — and this file's own header records that RSS is BLIND to
+            // IOSurface memory, so the trend half could not see it either.
+            //
+            // THE LIVE SIGNAL ON THIS PATH IS THE SOURCE COUNT, and measuring
+            // told me so. `retainedFrameCount` is 0 here BEFORE teardown as well
+            // as after, every cycle: `retain(_:)` is called only from the
+            // PRESENT path and this test renders offscreen with no drawable. So
+            // the original `XCTAssertEqual(lastRetained, 0)` could not detect a
+            // stranded surface — the surfaces are never created to strand.
+            // @Challenge2 was right that the read was thrown away; the deeper
+            // problem is that the quantity is structurally zero here.
+            XCTAssertEqual(
+                renderer.activeSourceCount,
+                1,
+                "cycle \(cycle): the source must be attached before teardown, or the "
+                    + "teardown assertion below proves nothing"
+            )
             renderer.detachSource()
             lastRetained = renderer.retainedFrameCount
+            XCTAssertEqual(
+                renderer.activeSourceCount,
+                0,
+                "cycle \(cycle) left \(renderer.activeSourceCount) sources attached"
+            )
+            // Kept, but honestly: this is a REGRESSION TRIPWIRE for a future
+            // presenting variant, not evidence of release today. The in-flight
+            // ring's retain/release contract is proven with genuinely non-zero
+            // counts in StudioResourceLifetimeTests, which drives `retain(_:)`
+            // directly rather than hoping a render path populated it.
+            XCTAssertEqual(
+                lastRetained,
+                0,
+                "cycle \(cycle) left \(lastRetained) surfaces retained after teardown"
+            )
             sampler.record(cycle: cycle)
         }
 

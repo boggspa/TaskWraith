@@ -127,8 +127,25 @@ final class StudioAudioPlaybackTests: XCTestCase {
         // now returns a consistent pair, which is the real fix.
         let reading = try XCTUnwrap(player.reading())
         let latency = player.outputLatencySamples
-        XCTAssertGreaterThanOrEqual(latency, 0)
+
+        // CONTRACT LOCK, AND ONLY THAT — @Challenge2's finding 2, kept with an
+        // honest label rather than deleted. `reading()` computes
+        // `audible = sample - outputLatencySamples` and this re-asserts that
+        // formula from the same two inputs, so it catches DELETING the
+        // subtraction and can prove nothing about the latency value itself: a
+        // zeroed or wrong-signed figure satisfies it.
         XCTAssertEqual(reading.audibleSamplePosition, reading.samplePosition - latency)
+
+        // THE INDEPENDENT HALF. Output latency is a physical property of the
+        // device, so it has a plausible range that no rearrangement of the
+        // formula above can satisfy: never negative, and never a whole second.
+        // A wrong-signed or absurd figure fails here and nowhere else.
+        XCTAssertGreaterThanOrEqual(latency, 0, "negative output latency is not physical")
+        XCTAssertLessThan(
+            latency,
+            Int64(track.sampleRate),
+            "output latency of \(latency) samples is over a second — that is not a device figure"
+        )
         if latency > 0 {
             XCTAssertLessThan(
                 reading.audiblePositionTicks,

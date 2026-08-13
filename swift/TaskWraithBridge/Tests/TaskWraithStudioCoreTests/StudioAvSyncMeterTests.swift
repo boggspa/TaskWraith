@@ -190,12 +190,38 @@ final class StudioAvSyncMeterTests: XCTestCase {
         for frame in 0..<10_000 {
             subject.record(presentedFrameTicks: Int64(frame) * 1001, audiblePositionTicks: 0)
         }
+        // The counter counts and does not wrap. This half was always real.
         XCTAssertEqual(subject.sampleCount, 10_000)
-        XCTAssertEqual(
+
+        // WHAT STOOD HERE COMPARED MemoryLayout<T>.size TO ITSELF — a
+        // compile-time constant equal to itself, which cannot fail for any type
+        // that has ever existed. @Challenge2 found it one commit after this same
+        // file was repaired for the circular meter, which is the more useful
+        // lesson: FIXING A FILE IS NOT SWEEPING IT.
+        //
+        // Pinning the footprint to a literal catches an INLINE buffer — someone
+        // keeping the last N errors in a tuple or fixed-size array to compute a
+        // median.
+        XCTAssertLessThanOrEqual(
             MemoryLayout<StudioAvSyncMeter>.size,
-            MemoryLayout<StudioAvSyncMeter>.size,
-            "meter must be a fixed-size value type"
+            128,
+            "meter footprint grew to \(MemoryLayout<StudioAvSyncMeter>.size) bytes — "
+                + "diagnostics must accumulate, not retain"
         )
+
+        // AND THAT BOUND HONESTLY DOES NOT CATCH THE LIKELIEST REGRESSION.
+        // `[Int64]` is a single pointer, so adding a per-sample history array
+        // would grow this meter without moving the number above by one byte. A
+        // bound that looks like it proves "no unbounded storage" and does not is
+        // worse than no bound at all, so the member audit is the half that
+        // actually covers it.
+        for member in Mirror(reflecting: subject).children {
+            XCTAssertNil(
+                member.value as? any Collection,
+                "stored property '\(member.label ?? "?")' is a collection — a meter that "
+                    + "retains one element per frame is a leak with a badge on"
+            )
+        }
     }
 
     func testSummaryFlagsAnOutOfToleranceReading() {

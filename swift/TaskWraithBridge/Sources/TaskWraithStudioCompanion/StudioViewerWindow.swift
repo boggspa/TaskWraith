@@ -323,10 +323,13 @@ final class StudioViewerView: NSView {
                 )
             }
         )
-        // MEASURED A/V SYNC. Recorded only for a frame that was actually DRAWN,
-        // against the audio hardware's own playhead — a dropped frame is not
-        // evidence about sync, and counting it as zero error would flatter the
-        // pipeline precisely when it is misbehaving.
+        // MEASURED A/V SYNC, against the audio hardware's own playhead.
+        //
+        // EVERY tick is recorded, drawn or not. The comment that stood here said
+        // a dropped frame is not evidence about sync — which is true of the
+        // frame that failed to arrive and FALSE of the frame still on screen,
+        // and the distinction is the whole instrument. Left uncorrected it
+        // would read as a justification for restoring the exclusion.
         if let audible = audioPlayer.audiblePositionTicks() {
             if outcome.didDraw {
                 syncMeter?.record(
@@ -341,6 +344,8 @@ final class StudioViewerView: NSView {
                 // frame quantisation whatever the pipeline was doing.
                 syncMeter?.recordDroppedFrame(audiblePositionTicks: audible)
             }
+            // Both branches are deliberate. If you are here to make the meter
+            // quieter, the number is telling you something.
         }
 
         if outcome.didDraw {
