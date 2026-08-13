@@ -1,13 +1,12 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // The production harness is CommonJS because it is run directly by Node.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+/* eslint-disable @typescript-eslint/no-require-imports */
 const {
   assertCleanWatchdogTerminal,
   assertLaunchAuthorized,
@@ -75,6 +74,7 @@ const {
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
 }
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 const roots: string[] = []
 
@@ -116,25 +116,6 @@ function processIsAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH'
   }
-}
-
-function runNode(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, {
-      cwd: path.resolve(__dirname, '..'),
-      env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    let stderr = ''
-    child.stderr.on('data', (chunk) => {
-      stderr += String(chunk)
-    })
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) resolve()
-      else reject(new Error(`helper exited code=${code} signal=${signal}: ${stderr}`))
-    })
-  })
 }
 
 describe('Studio acceptance harness', () => {

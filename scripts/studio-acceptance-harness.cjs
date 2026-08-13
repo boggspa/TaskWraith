@@ -20,7 +20,6 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const fsPromises = require('node:fs/promises')
-const os = require('node:os')
 const path = require('node:path')
 const { execFile, fork } = require('node:child_process')
 const {
