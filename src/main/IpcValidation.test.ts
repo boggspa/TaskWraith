@@ -114,6 +114,16 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('host-lifecycle:set', ['stop'])).toThrow(/object/)
   })
 
+  it('shape-gates opening an owned video asset in Studio', () => {
+    expect(() =>
+      validateIpcArgs('media-asset:open-in-studio', [
+        { sha256: 'a'.repeat(64), mimeType: 'video/mp4' }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('media-asset:open-in-studio', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('media-asset:open-in-studio', ['video.mp4'])).toThrow(/object/)
+  })
+
   it('shape-gates the closed Channels host contract and rejects trailing data', () => {
     expect(() => validateIpcArgs('channels:list', [])).not.toThrow()
     expect(() => validateIpcArgs('channels:list', [{}])).toThrow(/too many arguments/)

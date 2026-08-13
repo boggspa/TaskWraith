@@ -730,6 +730,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // Each takes a single `{ sha256, mimeType, ... }` object; the handler re-validates
   // the sha256 + jails the resolved path via transcriptMediaAssetPath (the renderer
   // never resolves filesystem paths itself).
+  'media-asset:open-in-studio': ['object'],
   'media-asset:reveal': ['object'],
   'media-asset:get-path': ['object'],
   'media-asset:save-as': ['object'],

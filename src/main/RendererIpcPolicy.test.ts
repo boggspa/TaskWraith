@@ -129,6 +129,13 @@ describe('RendererIpcPolicy', () => {
     }
   })
 
+  it('lets chat popouts open only their domain-authorized video assets in Studio', () => {
+    const channel = 'media-asset:open-in-studio'
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
+  })
+
   it.each([
     'channels:append',
     'channels:approve-human-review',

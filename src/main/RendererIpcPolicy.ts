@@ -209,6 +209,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'list-gemini-sessions',
   'list-workspace-files',
   'list-workspace-files-for-editor',
+  'media-asset:open-in-studio',
   'media-asset:get-path',
   'media-asset:reveal',
   'media-asset:save-as',
