@@ -69,6 +69,8 @@ public final class StudioViewerRenderer {
     let videoRenderer: StudioVideoFrameRenderer
     let overlayRenderer: StudioOverlayRenderer
     private var source: StudioVideoFrameSource?
+    private var sourceAssetId: String?
+    private var sourceTimebase: StudioTimebase?
 
     /// Second source for a proposal's inserted material (mission outcome 3).
     ///
@@ -120,6 +122,20 @@ public final class StudioViewerRenderer {
     /// Attaches decoded media. Any previously attached source is invalidated
     /// first, so switching sources cannot leak a decompression session.
     public func attach(source newSource: StudioVideoFrameSource) {
+        attach(source: newSource, assetId: nil, timebase: nil)
+    }
+
+    /// Attaches the primary source with the identity and timebase required to
+    /// reuse it safely when a proposal inserts from the already-open asset.
+    ///
+    /// A caller that does not know its media identity can retain the legacy
+    /// overload above, but it cannot be selected for a same-asset review: a
+    /// false identity match would show the wrong picture.
+    public func attach(
+        source newSource: StudioVideoFrameSource,
+        assetId: String?,
+        timebase: StudioTimebase?
+    ) {
         source?.invalidate()
         // The in-flight ring may still hold frames belonging to the session we
         // just invalidated. Without this flush they survive until the NEW
@@ -129,6 +145,8 @@ public final class StudioViewerRenderer {
         // two paths silently disagree about resource lifetime.
         videoRenderer.releaseRetainedFrames()
         source = newSource
+        sourceAssetId = assetId
+        sourceTimebase = timebase
     }
 
     /// Attaches the second source a proposal's inserted material decodes from.
@@ -254,6 +272,8 @@ public final class StudioViewerRenderer {
     public func detachSource() {
         source?.invalidate()
         source = nil
+        sourceAssetId = nil
+        sourceTimebase = nil
         detachProposedSource()
         videoRenderer.releaseRetainedFrames()
     }
@@ -351,16 +371,25 @@ public final class StudioViewerRenderer {
                 atTicks: snapshot.positionTicks,
                 version: review.version,
                 timeline: review.timeline,
+                availablePrimaryAssetId: sourceAssetId,
                 availableProposedAssetId: proposedAssetId
             ) {
             case .current(let ticks):
                 selectedFrame = ticks / review.timebase.frameDurationTicks
-            case .proposed(_, let ticks):
-                guard let proposedSource, let proposedTimebase else {
+            case .proposed(let assetId, let ticks):
+                let material: (source: StudioVideoFrameSource, timebase: StudioTimebase)?
+                if assetId == sourceAssetId, let source, let sourceTimebase {
+                    material = (source, sourceTimebase)
+                } else if assetId == proposedAssetId, let proposedSource, let proposedTimebase {
+                    material = (proposedSource, proposedTimebase)
+                } else {
+                    material = nil
+                }
+                guard let material else {
                     failedFrameCount += 1
                     return .proposedMaterialUnavailable(
                         frameIndex: frameIndex,
-                        assetId: proposedAssetId ?? "unknown"
+                        assetId: assetId
                     )
                 }
                 // The inserted asset may run at a different rate; convert
@@ -368,10 +397,10 @@ public final class StudioViewerRenderer {
                 let converted = StudioReviewRouter.convert(
                     ticks: ticks,
                     from: review.timebase,
-                    to: proposedTimebase
+                    to: material.timebase
                 )
-                selectedSource = proposedSource
-                selectedFrame = converted / proposedTimebase.frameDurationTicks
+                selectedSource = material.source
+                selectedFrame = converted / material.timebase.frameDurationTicks
             case .unavailable(let assetId):
                 // Draw NOTHING. A neighbouring frame here would show a
                 // comparison that does not exist.

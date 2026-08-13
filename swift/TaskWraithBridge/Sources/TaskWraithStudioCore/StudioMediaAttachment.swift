@@ -66,7 +66,11 @@ public final class StudioMediaAttachment {
                 device: renderer.device,
                 maxSampleCount: maxSampleCount
             )
-            renderer.attach(source: loaded.source)
+            renderer.attach(
+                source: loaded.source,
+                assetId: asset.assetId,
+                timebase: loaded.media.timebase
+            )
             attachedAssetId = asset.assetId
             attachedCount += 1
             // Audio is OPTIONAL and its absence is not a failure: plenty of real

@@ -92,6 +92,7 @@ final class StudioReviewAbTests: XCTestCase {
             assetId: "insert-asset",
             timebase: inserted.media.timebase
         )
+        XCTAssertEqual(renderer.activeSourceCount, 2, "cross-asset review retains two sources")
 
         let reviewTimeline = try timeline()
         // Sequence tick 2 is the first frame of the insert in PROPOSED, and
@@ -128,6 +129,93 @@ final class StudioReviewAbTests: XCTestCase {
             "A/B rendered the same picture for both versions (\(currentGreen) vs \(proposedGreen))"
         )
         XCTAssertGreaterThan(proposedGreen, currentGreen, "the inserted clip is the brighter one")
+    }
+
+    /// An insertion from the asset already open in Source must reuse the
+    /// resident primary decoder. Creating a second decoder for the same file
+    /// wastes resources; refusing it leaves the canonical trim/reinsert review
+    /// blank. The affected range must draw a different source-time picture,
+    /// while unaffected material stays identical.
+    func testSameAssetInsertRendersFromTheResidentPrimarySource() async throws {
+        let device = try makeDevice()
+        let currentUrl = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: currentUrl) }
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [16, 80, 160, 235],
+            to: currentUrl
+        )
+
+        let renderer = try StudioViewerRenderer(device: device)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: size,
+            height: size
+        )
+        let primary = try await StudioMediaSourceLoader.makeFrameSource(
+            asset: StudioMediaAsset(assetId: "current-asset", path: currentUrl.path),
+            device: device
+        )
+        renderer.attach(
+            source: primary.source,
+            assetId: "current-asset",
+            timebase: primary.media.timebase
+        )
+        let reviewTimeline = try timeline(assetId: "current-asset")
+
+        let currentOutcome = renderer.render(
+            snapshot: snapshot(ticks: 2),
+            to: target,
+            review: StudioReviewContext(
+                version: .current,
+                timeline: reviewTimeline,
+                timebase: timebase
+            )
+        )
+        XCTAssertTrue(currentOutcome.didDraw, "current version drew nothing: \\(currentOutcome)")
+        let currentGreen = try green(target)
+
+        let proposedOutcome = renderer.render(
+            snapshot: snapshot(ticks: 2),
+            to: target,
+            review: StudioReviewContext(
+                version: .proposed,
+                timeline: reviewTimeline,
+                timebase: timebase
+            )
+        )
+        XCTAssertTrue(
+            proposedOutcome.didDraw,
+            "same-asset insertion must not be unavailable: \\(proposedOutcome)"
+        )
+        let proposedGreen = try green(target)
+        XCTAssertGreaterThan(
+            abs(proposedGreen - currentGreen),
+            60,
+            "the affected range must show the inserted source-time picture"
+        )
+        XCTAssertEqual(renderer.activeSourceCount, 1, "same-asset review must reuse the primary source")
+
+        let outsideOutcome = renderer.render(
+            snapshot: snapshot(ticks: 1),
+            to: target,
+            review: StudioReviewContext(
+                version: .proposed,
+                timeline: reviewTimeline,
+                timebase: timebase
+            )
+        )
+        XCTAssertTrue(outsideOutcome.didDraw)
+        let proposedOutsideGreen = try green(target)
+        renderer.render(
+            snapshot: snapshot(ticks: 1),
+            to: target,
+            review: StudioReviewContext(
+                version: .current,
+                timeline: reviewTimeline,
+                timebase: timebase
+            )
+        )
+        XCTAssertEqual(try green(target), proposedOutsideGreen, "unaffected material must stay identical")
     }
 
     /// The other half, and it is not optional. Outside the affected range the

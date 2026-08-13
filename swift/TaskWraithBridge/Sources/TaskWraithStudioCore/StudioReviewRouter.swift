@@ -74,15 +74,18 @@ public enum StudioReviewRouter {
 
     /// Resolves a review position to a source and an offset.
     ///
+    /// - Parameter availablePrimaryAssetId: the identity of the resident Source
+    ///   decoder, if the caller retained it with media metadata.
     /// - Parameter availableProposedAssetId: the asset the viewer currently has
     ///   a second source attached for, if any. Matching is by IDENTITY, not by
-    ///   assuming the insert refers to the open clip: a proposal routinely
+    ///   assuming an insert may use either resident source: a proposal routinely
     ///   inserts material from a DIFFERENT asset, and quietly decoding the wrong
     ///   file would look like working playback.
     public static func request(
         atTicks ticks: Int64,
         version: StudioReviewVersion,
         timeline: StudioProposedTimeline?,
+        availablePrimaryAssetId: String? = nil,
         availableProposedAssetId: String?
     ) -> StudioReviewFrameRequest {
         // No open proposal, or the operator is looking at the sequence as it
@@ -93,7 +96,7 @@ public enum StudioReviewRouter {
         case .existing(let currentTicks):
             return .current(ticks: currentTicks)
         case .inserted(let assetId, let sourceTicks):
-            guard assetId == availableProposedAssetId else {
+            guard assetId == availablePrimaryAssetId || assetId == availableProposedAssetId else {
                 return .unavailable(assetId: assetId)
             }
             return .proposed(assetId: assetId, ticks: sourceTicks)
