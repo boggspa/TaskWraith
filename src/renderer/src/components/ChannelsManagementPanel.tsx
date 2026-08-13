@@ -166,20 +166,22 @@ export function ChannelsManagementPanel(): React.JSX.Element {
         return (
           <div key={channel.channelId} className="shares-panel-card">
             <div className="shares-panel-card-head">
-              <button
-                type="button"
-                className="shares-panel-card-title"
-                onClick={() => toggleExpanded(channel.channelId)}
-                aria-expanded={expanded}
-              >
-                {channel.display.title}
-              </button>
-              <span className="settings-hint">
-                {channel.display.memberCount} member
-                {channel.display.memberCount === 1 ? '' : 's'} · {channel.display.messageCount}{' '}
-                message
-                {channel.display.messageCount === 1 ? '' : 's'}
-              </span>
+              <div className="shares-panel-card-title-wrap">
+                <button
+                  type="button"
+                  className="shares-panel-card-title"
+                  onClick={() => toggleExpanded(channel.channelId)}
+                  aria-expanded={expanded}
+                >
+                  {channel.display.title}
+                </button>
+                <span className="settings-hint shares-panel-card-counts">
+                  {channel.display.memberCount} member
+                  {channel.display.memberCount === 1 ? '' : 's'} · {channel.display.messageCount}{' '}
+                  message
+                  {channel.display.messageCount === 1 ? '' : 's'}
+                </span>
+              </div>
               <div className="shares-panel-card-actions">
                 <button
                   type="button"
