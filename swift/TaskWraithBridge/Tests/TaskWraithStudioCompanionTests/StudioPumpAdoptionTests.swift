@@ -105,7 +105,7 @@ final class StudioPumpAdoptionTests: XCTestCase {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device")
         }
-        let movie = try await makeMovie()
+        let movie = try await makeMovie(lumaLevels: [16, 235])
         defer { try? FileManager.default.removeItem(at: movie) }
 
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
@@ -201,6 +201,35 @@ final class StudioPumpAdoptionTests: XCTestCase {
             reviewController.hasOpenReview,
             "the recovered ghost never reached the Review controller"
         )
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            1,
+            "Source, Review, and the matching hydrated sequence must lease one decoder"
+        )
+        XCTAssertEqual(state.sharedResidentDecoderCount, 1)
+
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 1, atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128)
+        func green(_ texture: MTLTexture) throws -> Int {
+            Int(try StudioTestPatternRenderer.readPixel(from: texture, x: 64, y: 64).green)
+        }
+        let current = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(
+            snapshot: clock.snapshot(atHost: 0), to: target, review: current
+        ).didDraw)
+        let currentGreen = try green(target)
+        reviewController.toggleReviewVersion()
+        let proposed = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(
+            snapshot: clock.snapshot(atHost: 0), to: target, review: proposed
+        ).didDraw)
+        XCTAssertGreaterThan(
+            abs(try green(target) - currentGreen),
+            60,
+            "an open hydrated ghost must win over the committed sequence at its affected range"
+        )
     }
 
     /// Exercises the product handoff between two distinct controllers. The
@@ -243,8 +272,14 @@ final class StudioPumpAdoptionTests: XCTestCase {
         XCTAssertTrue(sourceRenderer.diagnostics.hasSource)
         XCTAssertTrue(
             reviewRenderer.diagnostics.hasSource,
-            "Review needs its own route-resident primary material"
+            "Review needs a presentation slot for the shared primary material"
         )
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            1,
+            "opening one asset across Source and Review must construct one decoder"
+        )
+        XCTAssertEqual(state.sharedResidentDecoderCount, 1)
 
         func proposal(id: String, assetId: String) throws -> StudioEditProposal {
             StudioEditProposal(
@@ -291,6 +326,38 @@ final class StudioPumpAdoptionTests: XCTestCase {
             1,
             "same-asset Proposed must reuse Review's resident primary decoder"
         )
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            1,
+            "same-asset Proposed must not create a route-local or proposal-local decoder"
+        )
+
+        XCTAssertEqual(state.toggleRoute(.review), .shown(.review))
+        XCTAssertEqual(state.toggleRoute(.review), .hidden(.review))
+        XCTAssertTrue(
+            sourceRenderer.diagnostics.hasSource,
+            "hiding Review must not invalidate Source's lease"
+        )
+        XCTAssertFalse(reviewRenderer.diagnostics.hasSource)
+        await state.restoreReviewRoute()
+        XCTAssertTrue(
+            reviewRenderer.diagnostics.hasSource,
+            "showing Review must re-establish its primary slot rather than trusting stale identity"
+        )
+        let restoredProposed = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(
+            snapshot: snapshot, to: target, review: restoredProposed
+        ).didDraw)
+        XCTAssertEqual(
+            try green(target),
+            sameProposedGreen,
+            "show-hide-show must restore the same-asset Proposed picture"
+        )
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            1,
+            "show-hide-show must reacquire a lease, not decode the same asset again"
+        )
 
         state.adopt(resolvedProposals: [sameAsset.proposalId])
         XCTAssertFalse(reviewController.hasOpenReview)
@@ -307,6 +374,11 @@ final class StudioPumpAdoptionTests: XCTestCase {
             reviewRenderer.activeSourceCount,
             2,
             "cross-asset Proposed needs the independent secondary resident source"
+        )
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            2,
+            "cross-asset Proposed must add exactly one distinct decoder"
         )
         let crossCurrent = try XCTUnwrap(reviewController.activeReviewContext)
         XCTAssertTrue(reviewRenderer.render(snapshot: snapshot, to: target, review: crossCurrent).didDraw)
@@ -336,6 +408,87 @@ final class StudioPumpAdoptionTests: XCTestCase {
             "hiding Review must not tear down the material Source is still presenting"
         )
         XCTAssertFalse(reviewRenderer.diagnostics.hasSource)
+        XCTAssertEqual(
+            state.sharedResidentDecoderCount,
+            1,
+            "releasing Review must leave only Source's visible primary decoder"
+        )
+    }
+
+    /// The actual Review controller must not fall back to the opened source when
+    /// a committed multi-asset sequence names an unknown later clip.
+    func testMultiAssetSequenceUsesOnlyItsExactResidentAsset() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let primaryURL = try await makeMovie(lumaLevels: [16, 16])
+        let secondaryURL = try await makeMovie(lumaLevels: [235, 235])
+        defer {
+            try? FileManager.default.removeItem(at: primaryURL)
+            try? FileManager.default.removeItem(at: secondaryURL)
+        }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: {}
+        )
+        let primary = StudioMediaAsset(assetId: "primary", path: primaryURL.path)
+        let secondary = StudioMediaAsset(assetId: "secondary", path: secondaryURL.path)
+        await state.open(assets: [primary])
+        await state.adopt(
+            sequence: StudioTimelineSequence(items: [
+                StudioSequenceItem(
+                    itemId: "secondary-item", assetId: secondary.assetId,
+                    startTicks: 0, endTicks: 2, sourceInTicks: 0
+                ),
+                StudioSequenceItem(
+                    itemId: "missing-item", assetId: "missing",
+                    startTicks: 2, endTicks: 4, sourceInTicks: 0
+                ),
+            ]),
+            knownAssets: [secondary]
+        )
+
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount,
+            2,
+            "the sequence may add its distinct asset but must reuse Source/Review primary"
+        )
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128
+        )
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 0, atHost: 0)
+        XCTAssertTrue(reviewRenderer.render(snapshot: clock.snapshot(atHost: 0), to: target).didDraw)
+        let secondaryGreen = Int(
+            try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64).green
+        )
+        XCTAssertGreaterThan(
+            secondaryGreen,
+            180,
+            "the Review sequence must render its named secondary clip, not Source"
+        )
+
+        clock.seek(toTicks: 2, atHost: 0)
+        XCTAssertEqual(
+            reviewRenderer.render(snapshot: clock.snapshot(atHost: 0), to: target),
+            .proposedMaterialUnavailable(frameIndex: 2, assetId: "missing"),
+            "a missing sequence identity must not substitute either resident asset"
+        )
     }
 
     private func makeMovie(lumaLevels: [UInt8] = [128, 128]) async throws -> URL {

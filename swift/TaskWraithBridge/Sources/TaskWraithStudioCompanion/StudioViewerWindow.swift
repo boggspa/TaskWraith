@@ -1223,9 +1223,10 @@ final class StudioViewerAppState {
 
     let controller: StudioViewerWindowController
     let attachment: StudioMediaAttachment
-    /// Review has an independent renderer and independently releasable route
-    /// lifetime. Its primary is made resident when Source opens; a same-asset
-    /// ghost then reuses that primary rather than loading a second decoder.
+    /// One pool spans both routes. Slots may be released independently, but the
+    /// one decoder behind an exact asset stays valid while any visible route
+    /// still holds a lease.
+    private let sourcePool: StudioMediaSourcePool
     private let reviewAttachment: StudioMediaAttachment?
     /// Presentation is separate from process startup. The supervised companion
     /// hydrates in the background, but only a host open_media request may bring
@@ -1295,10 +1296,12 @@ final class StudioViewerAppState {
         presentSource: (() -> Void)? = nil
     ) {
         self.controller = controller
-        self.attachment = StudioMediaAttachment(renderer: renderer)
+        let sourcePool = StudioMediaSourcePool(device: renderer.device)
+        self.sourcePool = sourcePool
+        self.attachment = StudioMediaAttachment(renderer: renderer, sourcePool: sourcePool)
         self.reviewController = reviewController
         self.reviewAttachment = reviewController.map {
-            StudioMediaAttachment(renderer: $0.renderer)
+            StudioMediaAttachment(renderer: $0.renderer, sourcePool: sourcePool)
         }
         self.presentSource = presentSource ?? {
             NSApplication.shared.setActivationPolicy(.regular)
@@ -1307,29 +1310,33 @@ final class StudioViewerAppState {
         }
     }
 
-    /// Shows or hides a route. HIDING RELEASES THAT ROUTE'S DECODER/PLAYER
-    /// RESOURCES, which the briefing requires by name — the transition value
-    /// carries the obligation so a caller cannot quietly skip it.
+    /// Shows or hides a route. Hiding releases that route's slots through the
+    /// attachment, not by invalidating a decoder another visible route leases.
     @discardableResult
     func toggleRoute(_ route: StudioViewerRoute) -> StudioRouteTransition {
         let transition = routes.toggle(route)
         switch transition {
         case .shown(let shown):
             windowController(for: shown)?.show()
+            Task { @MainActor [weak self] in
+                if shown == .review {
+                    await self?.restoreReviewRoute()
+                } else {
+                    await self?.restoreSourceRoute()
+                }
+            }
             Self.report("route \(shown.rawValue) shown")
         case .hidden(let hidden):
             guard let controller = windowController(for: hidden) else { break }
             controller.window.orderOut(nil)
-            // The obligation, discharged where the resources actually live.
-            controller.renderer.detachSource()
-            controller.renderer.detachProposedSource()
-            // Sequence assets are decoder resources too. Adding the keyed
-            // collection without extending this release would have made the
-            // briefing's obligation quietly incomplete — a hidden route holding
-            // N decoders while the code claimed it released everything.
-            controller.renderer.detachSequenceSources()
+            if hidden == .source {
+                attachment.detach()
+            } else {
+                reviewAttachment?.detach()
+                reviewAttachment?.detachSequence()
+            }
             Self.report(
-                "route \(hidden.rawValue) hidden — decoder resources released")
+                "route \(hidden.rawValue) hidden — route leases released")
         case .refused(let reason):
             Self.report("route toggle refused: \(reason.rawValue)")
         }
@@ -1353,12 +1360,95 @@ final class StudioViewerAppState {
     /// Assets the host has opened, keyed by id, so a proposal inserting from a
     /// previously-opened asset can find its media.
     private var proposalAssets: [String: StudioMediaAsset] = [:]
+    private var activeSequence: StudioTimelineSequence?
+    private var activeReviewTimeline: StudioProposedTimeline?
+
+    /// Testable system-wide count: Source, Review, proposal, and sequence slots
+    /// all draw from the same pool, so this cannot hide a second route-local
+    /// decoder behind an individual renderer's count.
+    var sharedDecoderCreationCount: Int { sourcePool.decoderCreationCount }
+    var sharedResidentDecoderCount: Int { sourcePool.residentDecoderCount }
 
     /// Adopts the host's transcripts. Only the one matching the open asset is
     /// shown: a transcript for a different asset is kept, not drawn, because a
     /// band of somebody else's words over this picture is worse than no band.
     func adopt(revision: Int) {
         controller.adopt(revision: revision)
+    }
+
+    /// Restores Source after it was hidden while Review remained visible. This
+    /// reclaims the existing Review-held lease instead of reopening the file.
+    private func restoreSourceRoute() async {
+        guard let openAssetId, let asset = proposalAssets[openAssetId] else { return }
+        guard attachment.attachedAssetId != openAssetId else { return }
+        switch await attachment.attach(asset: asset) {
+        case .attached(_, let frameCount, let timebase, let durationTicks):
+            controller.adopt(
+                timebase: timebase,
+                durationTicks: durationTicks,
+                label: "\(openAssetId) · \(frameCount) frames"
+            )
+            controller.attachAudio(
+                track: attachment.attachedAudio,
+                timebase: timebase,
+                assetId: openAssetId
+            )
+        case .failed:
+            Self.report("source \(openAssetId) unavailable while restoring route")
+        }
+    }
+
+    /// Restores the Review renderer after a hide without reopening media. A
+    /// fresh attachment lease resolves through the Source-held pool entry, so a
+    /// route transition cannot manufacture another decoder or retain a stale id.
+    func restoreReviewRoute() async {
+        guard let reviewAttachment else { return }
+        guard await ensureReviewPrimary(reviewAttachment) else { return }
+        if let sequence = activeSequence {
+            await restore(sequence: sequence, into: reviewAttachment)
+        }
+        guard let timeline = activeReviewTimeline else { return }
+        if timeline.assetId != reviewAttachment.attachedAssetId {
+            guard let asset = proposalAssets[timeline.assetId] else {
+                Self.report("review proposal held — asset \(timeline.assetId) not open")
+                return
+            }
+            guard (await reviewAttachment.attachProposed(asset: asset)).didAttach else {
+                Self.report("review proposal held — proposed source failed")
+                return
+            }
+        }
+        reviewTarget.adopt(reviewTimeline: timeline)
+    }
+
+    private func ensureReviewPrimary(_ reviewAttachment: StudioMediaAttachment) async -> Bool {
+        guard let openAssetId, let asset = proposalAssets[openAssetId] else { return false }
+        guard reviewAttachment.attachedAssetId != openAssetId else { return true }
+        guard (await reviewAttachment.attach(asset: asset)).didAttach else {
+            Self.report("review primary \(openAssetId) unavailable — proposal comparison held")
+            return false
+        }
+        return true
+    }
+
+    private func restore(
+        sequence: StudioTimelineSequence,
+        into reviewAttachment: StudioMediaAttachment
+    ) async {
+        var attached = 0
+        var held: [String] = []
+        for assetId in sequence.referencedAssetIds.sorted() {
+            guard let asset = proposalAssets[assetId] else {
+                held.append(assetId)
+                continue
+            }
+            let outcome = await reviewAttachment.attachSequence(asset: asset)
+            if outcome.didAttach { attached += 1 } else { held.append(assetId) }
+        }
+        reviewController?.renderer.sequence = sequence
+        Self.report(
+            "sequence restored — \(sequence.items.count) items, \(attached) assets resident"
+                + (held.isEmpty ? "" : ", held: \(held.joined(separator: ","))"))
     }
 
     /// Adopts open ghosts. The proposal's asset is loaded as a SECOND resident
@@ -1375,17 +1465,17 @@ final class StudioViewerAppState {
             Self.report("proposal \(proposal.proposalId) rejected — unrepresentable range")
             return
         }
-        // The Review renderer has its own route lifetime, so it has its own
-        // resident primary. An insert from that primary must not allocate a
-        // second same-asset decoder; a foreign asset gets the one secondary
-        // source required for A/B. Never substitute the Source route's asset.
+        // The two renderers have independent presentation slots, but every
+        // slot leases from one pool. A same-asset proposal therefore uses the
+        // Source decoder; only a distinct asset creates a second decoder.
         let reviewAttachment = reviewAttachment ?? attachment
+        if let dedicatedReviewAttachment = self.reviewAttachment,
+            !(await ensureReviewPrimary(dedicatedReviewAttachment))
+        {
+            Self.report("proposal \(proposal.proposalId) held — review primary source unavailable")
+            return
+        }
         if timeline.assetId != reviewAttachment.attachedAssetId {
-            if timeline.assetId == openAssetId {
-                Self.report(
-                    "proposal \(proposal.proposalId) held — review primary source unavailable")
-                return
-            }
             guard let asset = proposalAssets[timeline.assetId] else {
                 Self.report(
                     "proposal \(proposal.proposalId) held — asset \(timeline.assetId) not open")
@@ -1398,6 +1488,7 @@ final class StudioViewerAppState {
             }
         }
         openProposalId = proposal.proposalId
+        activeReviewTimeline = timeline
         reviewTarget.adopt(reviewTimeline: timeline)
         Self.report(
             "proposal \(proposal.proposalId) shown — v to compare, a accept, r reject")
@@ -1407,6 +1498,7 @@ final class StudioViewerAppState {
     func adopt(resolvedProposals ids: [String]) {
         guard let openProposalId, ids.contains(openProposalId) else { return }
         self.openProposalId = nil
+        activeReviewTimeline = nil
         (reviewAttachment ?? attachment).detachProposed()
         reviewTarget.adopt(reviewTimeline: nil)
         Self.report("proposal \(openProposalId) resolved — review cleared")
@@ -1427,27 +1519,16 @@ final class StudioViewerAppState {
         // the first run reported "0 assets resident" for an asset the document
         // plainly carried.
         for asset in knownAssets { proposalAssets[asset.assetId] = asset }
+        activeSequence = sequence
         guard let reviewController else { return }
         guard !sequence.isEmpty else {
-            reviewController.renderer.detachSequenceSources()
+            reviewAttachment?.detachSequence()
+            reviewController.renderer.sequence = nil
             return
         }
         let reviewAttachment = reviewAttachment ?? StudioMediaAttachment(
-            renderer: reviewController.renderer)
-        var attached = 0
-        var held: [String] = []
-        for assetId in sequence.referencedAssetIds.sorted() {
-            guard let asset = proposalAssets[assetId] else {
-                held.append(assetId)
-                continue
-            }
-            let outcome = await reviewAttachment.attachSequence(asset: asset)
-            if outcome.didAttach { attached += 1 } else { held.append(assetId) }
-        }
-        reviewController.renderer.sequence = sequence
-        Self.report(
-            "sequence adopted — \(sequence.items.count) items, \(attached) assets resident"
-                + (held.isEmpty ? "" : ", held: \(held.joined(separator: ","))"))
+            renderer: reviewController.renderer, sourcePool: sourcePool)
+        await restore(sequence: sequence, into: reviewAttachment)
     }
 
     func adopt(transcripts: [StudioTranscript]) {
@@ -1498,21 +1579,15 @@ final class StudioViewerAppState {
                     timebase: timebase,
                     assetId: assetId
                 )
-                // The source and review routes retain independently so hiding
-                // Review cannot invalidate Source. Preparing Review's primary
-                // here is what lets a same-asset proposal reuse its resident
-                // decoder instead of either drawing blank or loading a second.
-                if let reviewAttachment, let asset = proposalAssets[assetId] {
-                    let reviewOutcome = await reviewAttachment.attach(asset: asset)
-                    if !reviewOutcome.didAttach {
-                        Self.report(
-                            "review primary \(assetId) unavailable — proposal comparison held")
-                    }
-                }
                 // A source switch must not leave the previous asset's words on
                 // screen: adopt this asset's transcript, or clear the band.
                 openAssetId = assetId
                 viewerTimebase = timebase
+                // Review receives another lease of this exact source. It gets
+                // independent presentation ownership without another decoder.
+                if let reviewAttachment {
+                    _ = await ensureReviewPrimary(reviewAttachment)
+                }
                 controller.adopt(transcript: known[assetId])
                 Self.report("opened \(assetId) (\(frameCount) frames)")
             case .failed(let assetId, let message):

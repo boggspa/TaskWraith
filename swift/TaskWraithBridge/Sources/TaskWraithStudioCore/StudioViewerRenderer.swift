@@ -134,9 +134,10 @@ public final class StudioViewerRenderer {
     public func attach(
         source newSource: StudioVideoFrameSource,
         assetId: String?,
-        timebase: StudioTimebase?
+        timebase: StudioTimebase?,
+        invalidatingPrevious: Bool = true
     ) {
-        source?.invalidate()
+        if invalidatingPrevious { source?.invalidate() }
         // The in-flight ring may still hold frames belonging to the session we
         // just invalidated. Without this flush they survive until the NEW
         // source presents enough frames to evict them — and if it never does
@@ -190,7 +191,8 @@ public final class StudioViewerRenderer {
         if let source { sources.append(source) }
         if let proposedSource { sources.append(proposedSource) }
         sources.append(contentsOf: sequenceSources.values)
-        return sources
+        var seen: Set<ObjectIdentifier> = []
+        return sources.filter { seen.insert(ObjectIdentifier($0)).inserted }
     }
 
     /// AGGREGATED ACROSS EVERY RESIDENT SOURCE, and that is not cosmetic. These
@@ -221,9 +223,10 @@ public final class StudioViewerRenderer {
     public func attachProposed(
         source newSource: StudioVideoFrameSource,
         assetId: String,
-        timebase: StudioTimebase
+        timebase: StudioTimebase,
+        invalidatingPrevious: Bool = true
     ) {
-        proposedSource?.invalidate()
+        if invalidatingPrevious { proposedSource?.invalidate() }
         videoRenderer.releaseRetainedFrames()
         proposedSource = newSource
         proposedAssetId = assetId
@@ -234,9 +237,10 @@ public final class StudioViewerRenderer {
     public func attachSequence(
         source newSource: StudioVideoFrameSource,
         assetId: String,
-        timebase: StudioTimebase
+        timebase: StudioTimebase,
+        invalidatingPrevious: Bool = true
     ) {
-        sequenceSources[assetId]?.invalidate()
+        if invalidatingPrevious { sequenceSources[assetId]?.invalidate() }
         videoRenderer.releaseRetainedFrames()
         sequenceSources[assetId] = newSource
         sequenceTimebases[assetId] = timebase
@@ -245,8 +249,10 @@ public final class StudioViewerRenderer {
     /// Releases every sequence source. Called when the Review route hides, so
     /// the briefing's resource obligation covers sequence assets too rather
     /// than only the A/B pair.
-    public func detachSequenceSources() {
-        for source in sequenceSources.values { source.invalidate() }
+    public func detachSequenceSources(invalidatingSources: Bool = true) {
+        if invalidatingSources {
+            for source in sequenceSources.values { source.invalidate() }
+        }
         sequenceSources.removeAll()
         sequenceTimebases.removeAll()
         sequence = nil
@@ -258,8 +264,8 @@ public final class StudioViewerRenderer {
     /// Detaches the proposal's source. Called when a ghost is resolved either
     /// way: an accepted proposal becomes part of the sequence and a rejected one
     /// never will be, so neither leaves anything to review.
-    public func detachProposedSource() {
-        proposedSource?.invalidate()
+    public func detachProposedSource(invalidatingSource: Bool = true) {
+        if invalidatingSource { proposedSource?.invalidate() }
         proposedSource = nil
         proposedAssetId = nil
         proposedTimebase = nil
@@ -269,12 +275,12 @@ public final class StudioViewerRenderer {
     /// Detaches and invalidates the current source, reverting to the test
     /// pattern. Idempotent. Also drops the proposal's source: a review of
     /// material that is no longer open is not a review.
-    public func detachSource() {
-        source?.invalidate()
+    public func detachSource(invalidatingSource: Bool = true) {
+        if invalidatingSource { source?.invalidate() }
         source = nil
         sourceAssetId = nil
         sourceTimebase = nil
-        detachProposedSource()
+        detachProposedSource(invalidatingSource: invalidatingSource)
         videoRenderer.releaseRetainedFrames()
     }
 
@@ -345,28 +351,10 @@ public final class StudioViewerRenderer {
         var selectedSource = source
         var selectedFrame = frameIndex
 
-        // THE SEQUENCE PATH. Review plays the committed timeline: the tick
-        // decides WHICH ASSET is on screen, not just which frame. A gap draws
-        // nothing rather than the neighbouring clip.
-        if let sequence, !sequence.isEmpty {
-            switch sequence.sample(atTicks: snapshot.positionTicks) {
-            case .gap:
-                failedFrameCount += 1
-                return .proposedMaterialUnavailable(
-                    frameIndex: frameIndex, assetId: "sequence-gap")
-            case .item(_, let assetId, let sourceTicks):
-                guard
-                    let clipSource = sequenceSources[assetId],
-                    let clipTimebase = sequenceTimebases[assetId]
-                else {
-                    failedFrameCount += 1
-                    return .proposedMaterialUnavailable(
-                        frameIndex: frameIndex, assetId: assetId)
-                }
-                selectedSource = clipSource
-                selectedFrame = sourceTicks / max(1, clipTimebase.frameDurationTicks)
-            }
-        } else if let review {
+        // An open review has priority over the committed sequence. Otherwise a
+        // hydrated sequence would cover the ghost exactly where the operator
+        // expects Current/Proposed pixels.
+        if let review {
             switch StudioReviewRouter.request(
                 atTicks: snapshot.positionTicks,
                 version: review.version,
@@ -392,8 +380,6 @@ public final class StudioViewerRenderer {
                         assetId: assetId
                     )
                 }
-                // The inserted asset may run at a different rate; convert
-                // before indexing or the review shows the wrong picture.
                 let converted = StudioReviewRouter.convert(
                     ticks: ticks,
                     from: review.timebase,
@@ -402,10 +388,28 @@ public final class StudioViewerRenderer {
                 selectedSource = material.source
                 selectedFrame = converted / material.timebase.frameDurationTicks
             case .unavailable(let assetId):
-                // Draw NOTHING. A neighbouring frame here would show a
-                // comparison that does not exist.
                 failedFrameCount += 1
                 return .proposedMaterialUnavailable(frameIndex: frameIndex, assetId: assetId)
+            }
+        } else if let sequence, !sequence.isEmpty {
+            // The committed path chooses an asset from the timeline. A gap
+            // draws nothing rather than substituting a neighbouring clip.
+            switch sequence.sample(atTicks: snapshot.positionTicks) {
+            case .gap:
+                failedFrameCount += 1
+                return .proposedMaterialUnavailable(
+                    frameIndex: frameIndex, assetId: "sequence-gap")
+            case .item(_, let assetId, let sourceTicks):
+                guard
+                    let clipSource = sequenceSources[assetId],
+                    let clipTimebase = sequenceTimebases[assetId]
+                else {
+                    failedFrameCount += 1
+                    return .proposedMaterialUnavailable(
+                        frameIndex: frameIndex, assetId: assetId)
+                }
+                selectedSource = clipSource
+                selectedFrame = sourceTicks / max(1, clipTimebase.frameDurationTicks)
             }
         }
 
