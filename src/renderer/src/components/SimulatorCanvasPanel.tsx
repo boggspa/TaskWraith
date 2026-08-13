@@ -30,7 +30,7 @@ import {
   buildScrollGesture,
   buildTapGesture,
   buildTypeGesture,
-  canSendSimulatorGestures,
+  canBeginSimulatorGesture,
   mapPointerToBezelNorm,
   previewOnlyBannerText
 } from '../lib/simulatorCanvasGestures'
@@ -302,53 +302,27 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
 
   useEffect(() => {
     const api = getSimulatorCanvasBridge()
-    const hasControlBridge = Boolean(getSimulatorControlBridge())
-    const canClaim =
-      !hasControlBridge || Boolean(controlStatus?.enabled && controlStatus.ready)
-    // Do not claim a human controller until the user has enabled and prepared
-    // Simulator control. Screen preview remains available without it.
-    if (!canClaim) {
-      return
-    }
-
-    // Human dock is authoritative for this surface — claim controller on open
-    // so direct interaction is ready without a preliminary action. Release the
-    // human token on unmount / chat switch / hide (CanvasDock unmounts this
-    // panel when showSimulator becomes false).
+    // Opening the dock is observation, not control. Hydrate the shared session
+    // without taking the lease from an active agent; the first deliberate
+    // human gesture or host-control action performs the authoritative claim.
     let cancelled = false
-    const claimThenRefresh = async (): Promise<void> => {
-      if (api?.claimControl) {
-        try {
-          const result = await api.claimControl(chatId)
-          if (cancelled || chatIdRef.current !== chatId) return
-          const failure = claimControlFailureMessage(result)
-          if (failure) setIssue(failure)
-        } catch (error) {
-          if (!cancelled && chatIdRef.current === chatId) {
-            setIssue(error instanceof Error ? error.message : String(error))
-          }
-        }
-      }
+    const hydrateSession = async (): Promise<void> => {
       if (!cancelled && chatIdRef.current === chatId) {
         // Session first so Rotate label matches any prior agent/host rotate.
         await refreshSessionOrientation()
         await refreshInteraction()
       }
     }
-    void claimThenRefresh()
+    void hydrateSession()
     return () => {
       cancelled = true
+      // Idempotent main handler releases only a human holder. An agent lease is
+      // never force-released just because the observer closes the dock.
       if (api?.releaseControl) {
         void api.releaseControl(chatId)
       }
     }
-  }, [
-    chatId,
-    controlStatus?.enabled,
-    controlStatus?.ready,
-    refreshInteraction,
-    refreshSessionOrientation
-  ])
+  }, [chatId, refreshInteraction, refreshSessionOrientation])
 
   useEffect(() => {
     const hasControlBridge = Boolean(getSimulatorControlBridge())
@@ -377,9 +351,8 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
   const controlReady =
     !hasControlBridge || Boolean(controlStatus?.enabled && controlStatus.ready)
   const showControlSetup = hasControlBridge && controlStatus !== null && !controlReady
-  const gesturesEnabled = controlReady && canSendSimulatorGestures(interaction)
-  const hardwareControlsEnabled =
-    selectedBooted && Boolean(interaction?.actuationReady) && gesturesEnabled
+  const gesturesEnabled = selectedBooted && controlReady && canBeginSimulatorGesture(interaction)
+  const hardwareControlsEnabled = selectedBooted && gesturesEnabled
   const banner = controlReady ? previewOnlyBannerText(interaction) : ''
   const agentControllerNotice =
     !showControlSetup && interaction?.controllerKind === 'run'
@@ -704,9 +677,9 @@ export function SimulatorCanvasPanel({ chatId }: SimulatorCanvasPanelProps) {
     return mapPointerToBezelNorm(event.clientX, event.clientY, el.getBoundingClientRect())
   }
 
-  /** Soft-claim human control when the mount claim/lease is missing (e.g. after release race). */
+  /** Soft-claim human control on the first deliberate interaction. */
   const ensureHumanLease = async (): Promise<boolean> => {
-    if (interaction?.controllerLeaseHeld) return true
+    if (interaction?.controllerKind === 'human') return true
     const api = getSimulatorCanvasBridge()
     if (!api?.claimControl) return false
     try {

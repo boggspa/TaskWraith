@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   SIMULATOR_GESTURE_ACTUATION_DEFERRED,
@@ -8,10 +10,12 @@ import {
   buildScrollGesture,
   buildTapGesture,
   buildTypeGesture,
+  canBeginSimulatorGesture,
   canSendSimulatorGestures,
   mapPointerToBezelNorm,
   previewOnlyBannerText,
-  simulatorControllerBadgeText
+  simulatorControllerBadgeText,
+  SIMULATOR_TAKE_CONTROL_BANNER
 } from './simulatorCanvasGestures'
 
 describe('mapPointerToBezelNorm', () => {
@@ -90,6 +94,21 @@ describe('gesture gate helpers', () => {
     ).toBe('')
   })
 
+  it('keeps a passive preview interactive without pre-claiming a controller lease', () => {
+    const passive = {
+      canControl: false,
+      actuationReady: false,
+      reason: SIMULATOR_PREVIEW_ONLY_BANNER,
+      hasObservation: false,
+      idbAvailable: true,
+      controllerLeaseHeld: false
+    }
+    expect(canSendSimulatorGestures(passive)).toBe(false)
+    expect(canBeginSimulatorGesture(passive)).toBe(true)
+    expect(previewOnlyBannerText(passive)).toBe(SIMULATOR_TAKE_CONTROL_BANNER)
+    expect(canBeginSimulatorGesture({ ...passive, idbAvailable: false })).toBe(false)
+  })
+
   it('builds tap/type/scroll payloads for IPC', () => {
     expect(buildTapGesture('chat-1', { x: 0.25, y: 0.75 })).toEqual({
       chatId: 'chat-1',
@@ -140,5 +159,24 @@ describe('simulatorControllerBadgeText', () => {
         controllerLeaseHeld: false
       })
     ).toBeNull()
+  })
+})
+
+describe('SimulatorCanvasPanel controller lifecycle', () => {
+  it('hydrates a passive preview without claiming control on mount', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/SimulatorCanvasPanel.tsx'),
+      'utf8'
+    )
+    const start = source.indexOf('// Opening the dock is observation, not control.')
+    const end = source.indexOf('  useEffect(() => {\n    const hasControlBridge', start)
+    const mountLifecycle = source.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(mountLifecycle).toContain('refreshSessionOrientation()')
+    expect(mountLifecycle).toContain('refreshInteraction()')
+    expect(mountLifecycle).toContain('releaseControl(chatId)')
+    expect(mountLifecycle).not.toContain('claimControl(chatId)')
   })
 })

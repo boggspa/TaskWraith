@@ -13,6 +13,8 @@ import {
 
 export { SIMULATOR_PREVIEW_ONLY_BANNER }
 
+export const SIMULATOR_TAKE_CONTROL_BANNER = 'Previewing — interact to take control.' as const
+
 export interface BezelPointNorm {
   x: number
   y: number
@@ -51,11 +53,25 @@ export function canSendSimulatorGestures(
   return Boolean(status?.canControl && status.actuationReady)
 }
 
+/**
+ * A passive Canvas view owns no controller lease. The first deliberate human
+ * gesture may claim one, so keep the bezel available when idb itself is ready.
+ * Main still performs the authoritative claim before actuation.
+ */
+export function canBeginSimulatorGesture(
+  status: SimulatorInteractionStatus | null | undefined
+): boolean {
+  return Boolean(status?.idbAvailable)
+}
+
 export function previewOnlyBannerText(
   status: SimulatorInteractionStatus | null | undefined
 ): string {
   if (!status) return SIMULATOR_PREVIEW_ONLY_BANNER
   if (!status.canControl) {
+    if (status.idbAvailable && !status.controllerLeaseHeld) {
+      return SIMULATOR_TAKE_CONTROL_BANNER
+    }
     return status.reason || SIMULATOR_PREVIEW_ONLY_BANNER
   }
   if (!status.actuationReady) {
