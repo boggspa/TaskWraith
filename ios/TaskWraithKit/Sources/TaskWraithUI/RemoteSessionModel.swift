@@ -2222,7 +2222,10 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-12","kind":"addition","title":"New Additions","body":"Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-13","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"antigravity","label":"AntiGravity","models":[
+              {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
+            ]},
             {"provider":"grok","label":"Grok","models":[
               {"name":"Grok 4.6 Fast","blurb":"The new 500K default with Low through Extra High reasoning in Grok Build."}
             ]},

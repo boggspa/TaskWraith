@@ -407,6 +407,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'antigravity',
       'grok',
       'cursor',
       'muse',
@@ -414,6 +415,9 @@ describe('buildRemoteFirstLaunchState', () => {
       'mistral',
       'pi'
     ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
+    ).toBe('Gemini 3.7 Flash')
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name
     ).toBe('Grok 4.6 Fast')

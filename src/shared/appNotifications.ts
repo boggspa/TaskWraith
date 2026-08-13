@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-12'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-13'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,9 +138,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
+    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
     dismissible: true,
     groups: [
+      {
+        provider: 'antigravity',
+        label: 'AntiGravity',
+        models: [
+          {
+            name: 'Gemini 3.7 Flash',
+            blurb:
+              'The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI.'
+          }
+        ]
+      },
       {
         provider: 'grok',
         label: 'Grok',

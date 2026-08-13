@@ -6,7 +6,7 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 12 August 2026.** Your actual picker is still governed by the
+> **Snapshot: 13 August 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
@@ -127,13 +127,20 @@ and workspace Tool Grants apply to TaskWraith-mediated calls; see
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-antigravity.png" alt="AntiGravity logo" width="34" />
     </td>
-    <td valign="middle"><strong>AntiGravity / Google</strong><br /><sub>Green provider hue · opt-in, separately billed Gemini API-key lane</sub></td>
+    <td valign="middle"><strong>AntiGravity / Google</strong><br /><sub>Green provider hue · consented official CLI + separately billed Gemini API-key lanes</sub></td>
   </tr>
 </table>
 
-AntiGravity's ordinary bring-your-own-key lane curates the authenticated Gemini
-API `models.list` response, so the live picker—not a frozen documentation
-table—is authoritative. The current GA highlights are:
+The separately consented official `agy` CLI lane follows the signed-in
+AntiGravity subscription catalogue. Its newest family is:
+
+| Model                                                           | Reasoning           | Fast | Notes                                                                      |
+| --------------------------------------------------------------- | ------------------- | ---- | -------------------------------------------------------------------------- |
+| **Gemini 3.7 Flash** `gemini-3.7-flash-{low,medium,high}`        | Low · Medium · High | —    | Authenticated `agy models` catalogue; availability remains account-controlled. |
+
+The independent bring-your-own-key lane curates the authenticated Gemini API
+`models.list` response, so the live picker—not a frozen documentation table—is
+authoritative. Its current GA highlights are:
 
 | Model                                                               | Reasoning | Fast | Notes                                                       |
 | ------------------------------------------------------------------- | --------- | ---- | ----------------------------------------------------------- |
@@ -141,13 +148,12 @@ table—is authoritative. The current GA highlights are:
 | **Gemini 3.5 Flash** `gemini-api:gemini-3.5-flash`                  | —         | —    | Sustained frontier performance for agentic and coding work. |
 | **Gemini 3.5 Flash-Lite** `gemini-api:gemini-3.5-flash-lite`        | —         | —    | Lowest-cost 3.5 model for high-throughput execution.        |
 
-When live discovery cannot be verified, TaskWraith can retain bounded fallback
-rows from the 3.1 and 2.5 families so the configured provider does not vanish;
-dispatch still reports an ordinary API error if a stale row is no longer
-accepted. The separately consented `agy` CLI lane is intentionally absent from
-this fixed table and appears only after its own authenticated discovery. See
-Google's [Gemini API model catalogue](https://ai.google.dev/gemini-api/docs/models)
-for the upstream lifecycle.
+Live discovery wins for both lanes. The consent-gated CLI catalogue has a
+current Gemini-family floor so a transient `agy models` failure does not hide
+the provider; the API-key lane likewise retains bounded fallback rows from the
+3.1 and 2.5 families. A stale row still fails visibly at dispatch. See Google's
+[Gemini API model catalogue](https://ai.google.dev/gemini-api/docs/models) for
+the upstream API lifecycle.
 
 <table>
   <tr>

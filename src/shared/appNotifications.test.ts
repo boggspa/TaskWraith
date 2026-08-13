@@ -149,6 +149,7 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
+      'antigravity',
       'grok',
       'cursor',
       'muse',
@@ -157,6 +158,7 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'AntiGravity',
       'Grok',
       'Cursor',
       'Muse',
@@ -166,8 +168,12 @@ describe('notification registry', () => {
     ])
     // Dropped from the card once they stopped being the newest story.
     expect(groups.map((g) => g.provider)).not.toContain('claude')
-    expect(groups.map((g) => g.provider)).not.toContain('antigravity')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
+
+    const antigravity = groups.find((g) => g.provider === 'antigravity')
+    expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])
+    expect(antigravity?.models[0]?.blurb).toMatch(/Low.*Medium.*High.*official agy CLI/i)
+    expect(antigravity?.models[0]?.blurb).not.toMatch(/API key|separately billed/i)
 
     const grok = groups.find((g) => g.provider === 'grok')
     expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.6 Fast'])
