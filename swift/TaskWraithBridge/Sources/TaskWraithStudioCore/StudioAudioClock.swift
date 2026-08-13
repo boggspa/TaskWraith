@@ -68,8 +68,8 @@ public struct StudioAudioClock: Equatable, Sendable {
     /// Media position, in ticks, at an audio device sample position.
     public func ticks(atSamplePosition samplePosition: Int64) -> Int64 {
         let elapsedSamples = samplePosition &- anchorSample
-        return anchorTicks &+ Self.ticks(
-            forSamples: elapsedSamples,
+        return anchorTicks &+ Self.scaled(
+            elapsedSamples,
             numerator: tickNumerator,
             denominator: sampleDenominator
         )
@@ -89,7 +89,19 @@ public struct StudioAudioClock: Equatable, Sendable {
     /// Ticks spanned by a sample count, rounded to nearest. Exposed so the sync
     /// meter can convert a latency in samples without duplicating the ratio.
     public func ticks(forSamples samples: Int64) -> Int64 {
-        Self.ticks(forSamples: samples, numerator: tickNumerator, denominator: sampleDenominator)
+        Self.scaled(samples, numerator: tickNumerator, denominator: sampleDenominator)
+    }
+
+    /// Samples spanned by a tick count — the inverse of `ticks(forSamples:)`.
+    ///
+    /// THIS IS WHAT MAKES SOUND ADDRESSABLE BY TIME, and its absence was a real
+    /// defect rather than a missing convenience. Without it `play(fromTicks:)`
+    /// could only ever begin the buffer at sample zero, so the position was
+    /// carried into the anchor while the CONTENT always started at the head:
+    /// the reported position was then right by construction and the sound in the
+    /// room was wherever the device happened to have reached.
+    public func samples(forTicks ticks: Int64) -> Int64 {
+        Self.scaled(ticks, numerator: sampleDenominator, denominator: tickNumerator)
     }
 
     /// Samples spanned by a duration in seconds, rounded to nearest.
@@ -101,19 +113,22 @@ public struct StudioAudioClock: Equatable, Sendable {
 
     // MARK: - Internals
 
-    private static func ticks(
-        forSamples samples: Int64,
+    /// `value * numerator / denominator`, rounded to nearest away from zero.
+    /// Named for what it does rather than for one of its two directions: both
+    /// conversions are this function with the ratio the other way up.
+    private static func scaled(
+        _ value: Int64,
         numerator: Int64,
         denominator: Int64
     ) -> Int64 {
         guard denominator != 0 else { return 0 }
-        let scaled = samples.multipliedReportingOverflow(by: numerator)
+        let scaled = value.multipliedReportingOverflow(by: numerator)
         guard !scaled.overflow else {
             // Falls back to a lossy path rather than trapping. Reaching this
             // needs order-of-centuries playback, but a media clock must not be
             // the thing that kills the viewer.
             return Int64(
-                (Double(samples) * Double(numerator) / Double(denominator))
+                (Double(value) * Double(numerator) / Double(denominator))
                     .rounded(.toNearestOrAwayFromZero)
             )
         }

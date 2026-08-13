@@ -233,8 +233,68 @@ final class StudioViewerView: NSView {
         syncMeter?.reset()
     }
 
+    /// Keeps the sound addressed to the position the picture is at.
+    ///
+    /// Runs every displayed frame and decides from DIVERGENCE, never from a
+    /// gesture, so no transport call site has to remember to drive audio — see
+    /// StudioAudioSyncPolicy for why that shape was chosen over eleven forwards.
+    private func reconcileAudio() {
+        guard audioPlayer.hasAudio else { return }
+        let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
+        let decision = StudioAudioSyncPolicy.decide(
+            transportIsPlaying: snapshot.isPlaying,
+            intendedTicks: snapshot.positionTicks,
+            audioEndTicks: audioPlayer.endTicks,
+            audioIsPlaying: audioPlayer.isPlaying,
+            audioPositionTicks: audioPlayer.reading()?.positionTicks,
+            toleranceTicks: StudioAudioSyncPolicy.toleranceTicks(
+                for: transport.clock.timebase
+            )
+        )
+        switch decision {
+        case .leave:
+            return
+        case .pause:
+            // The oscillator stops reporting, and reconcileTimeSource() picks
+            // host monotonic time back up on this same frame.
+            audioPlayer.pause()
+        case .reschedule(let ticks):
+            reschedule(audioAt: ticks)
+        }
+    }
+
+    /// Restarts the sound at `ticks` and IMMEDIATELY re-establishes the clock
+    /// against the audio timeline it just created.
+    ///
+    /// THIS IS THE HAZARD THE WHOLE SLICE TURNS ON. A re-schedule stops the
+    /// player node, which resets its sample counter, so `audioHostSeconds()` —
+    /// the value StudioPlaybackClock is being driven by — restarts near zero. A
+    /// clock still anchored to the previous audio timeline reads that as an
+    /// enormous negative elapsed time and teleports the playhead.
+    /// reconcileTimeSource() cannot catch it: audio never stopped being present,
+    /// and its guard only fires on a presence CHANGE. So the re-anchor has to
+    /// happen here, synchronously, at the point the discontinuity is created.
+    private func reschedule(audioAt ticks: Int64) {
+        do {
+            guard try audioPlayer.play(fromTicks: ticks) else { return }
+        } catch {
+            message = "audio unavailable: \(error)"
+            audioPlayer.detach()
+            return
+        }
+        guard let nextHost = audioPlayer.audioHostSeconds() else { return }
+        transport.seek(toTicks: ticks, atHost: nextHost)
+        transport.play(atHost: nextHost)
+        usingAudioTime = true
+        lastAudioHostSeconds = nextHost
+        // Sync statistics from before the restart were measured against a
+        // different anchor, so they describe a pipeline that no longer exists.
+        syncMeter?.reset()
+    }
+
     func renderCurrentFrame() {
         guard let metalLayer else { return }
+        reconcileAudio()
         reconcileTimeSource()
         let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
         guard let drawable = metalLayer.nextDrawable() else {
@@ -431,7 +491,11 @@ final class StudioViewerView: NSView {
         guard let track else { return }
         do {
             try audioPlayer.attach(track: track, timebase: timebase)
-            try audioPlayer.play(fromTicks: 0)
+            // Deliberately NOT started here. Opening a file used to begin the
+            // sound immediately and from sample zero, so a viewer sitting paused
+            // at the head was already audibly playing. reconcileAudio() starts
+            // it at whatever position the transport is actually at, when the
+            // transport is actually running.
             syncMeter = StudioAvSyncMeter(timebase: timebase)
         } catch {
             message = "audio unavailable: \(error)"

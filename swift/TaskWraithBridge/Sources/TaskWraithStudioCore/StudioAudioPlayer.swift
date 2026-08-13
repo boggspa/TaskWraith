@@ -221,11 +221,111 @@ public final class StudioAudioPlayer {
         }
     }
 
-    /// Starts playback from `ticks`, anchoring the audio clock at the device's
+    /// Media position one tick past the last sample of the attached sound.
+    /// Zero when nothing is attached, which the sync policy reads as "there is
+    /// nothing to play" rather than "play from the start".
+    public var endTicks: Int64 {
+        guard let track, let clock else { return 0 }
+        return clock.ticks(forSamples: track.sampleCount)
+    }
+
+    /// The buffer frame holding media position `ticks`, or nil when the position
+    /// lies past the end of the sound.
+    ///
+    /// Static and pure so the mapping is verifiable WITHOUT an audio device. The
+    /// device-dependent half of playback must not be the reason a conversion
+    /// goes untested — that is how the old behaviour survived: every audio test
+    /// called `play(fromTicks: 0)`, the one argument for which starting the
+    /// buffer at sample zero happens to be correct.
+    public nonisolated static func startFrame(
+        forTicks ticks: Int64,
+        clock: StudioAudioClock,
+        frameLength: AVAudioFrameCount
+    ) -> AVAudioFrameCount? {
+        let sample = clock.samples(forTicks: ticks)
+        guard sample < Int64(frameLength) else { return nil }
+        return AVAudioFrameCount(max(sample, 0))
+    }
+
+    /// A view over `buffer` beginning at `startFrame`, SHARING its samples.
+    ///
+    /// Copying would move up to a few hundred megabytes per seek, which is not a
+    /// scrub. The view aliases the source's per-channel pointers, so the source
+    /// must outlive it — the player retains `track` for as long as anything it
+    /// scheduled can still be rendering, and the allocated buffer list is freed
+    /// by the deallocator rather than leaked.
+    ///
+    /// Non-interleaved float32 only, which is exactly what `StudioAudioTrack`
+    /// produces. Anything else returns nil rather than reinterpreting memory
+    /// under a format it was not written in.
+    nonisolated static func segment(
+        of buffer: AVAudioPCMBuffer,
+        from startFrame: AVAudioFrameCount
+    ) -> AVAudioPCMBuffer? {
+        let format = buffer.format
+        guard !format.isInterleaved,
+            format.commonFormat == .pcmFormatFloat32,
+            format.channelCount > 0,
+            startFrame < buffer.frameLength,
+            let channelData = buffer.floatChannelData
+        else {
+            return nil
+        }
+        if startFrame == 0 { return buffer }
+
+        let channels = Int(format.channelCount)
+        let frames = buffer.frameLength - startFrame
+        let byteCount = UInt32(frames) * UInt32(MemoryLayout<Float>.size)
+        let listSize =
+            MemoryLayout<AudioBufferList>.size
+            + (channels - 1) * MemoryLayout<AudioBuffer>.stride
+        let storage = UnsafeMutableRawPointer.allocate(
+            byteCount: listSize,
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        let list = storage.bindMemory(to: AudioBufferList.self, capacity: 1)
+        list.pointee.mNumberBuffers = UInt32(channels)
+        let audioBuffers = UnsafeMutableAudioBufferListPointer(list)
+        for channel in 0..<channels {
+            audioBuffers[channel] = AudioBuffer(
+                mNumberChannels: 1,
+                mDataByteSize: byteCount,
+                mData: UnsafeMutableRawPointer(
+                    channelData[channel].advanced(by: Int(startFrame))
+                )
+            )
+        }
+        return AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: list) { _ in
+            storage.deallocate()
+        }
+    }
+
+    /// Starts the sound AT `ticks`, anchoring the audio clock at the device's
     /// current sample position.
+    ///
+    /// `ticks` now addresses CONTENT as well as the anchor. It did not always:
+    /// this method used to schedule the whole buffer from sample zero and carry
+    /// `ticks` into the anchor alone, so after any pause, seek, scrub, step or
+    /// loop wrap the picture moved and the sound did not — and the position it
+    /// REPORTED stayed right by construction the whole time.
+    ///
+    /// Returns false when the position lies past the end of the sound. Silence
+    /// is the honest answer there; the head of the track is not.
     @discardableResult
     public func play(fromTicks ticks: Int64) throws -> Bool {
         guard let track, var audioClock = clock else { return false }
+        guard
+            let startFrame = Self.startFrame(
+                forTicks: ticks,
+                clock: audioClock,
+                frameLength: track.buffer.frameLength
+            ),
+            let scheduled = Self.segment(of: track.buffer, from: startFrame)
+        else {
+            player.stop()
+            isPlaying = false
+            return false
+        }
         if !isEngineRunning {
             do {
                 try engine.start()
@@ -235,7 +335,7 @@ public final class StudioAudioPlayer {
             isEngineRunning = true
         }
         player.stop()
-        player.scheduleBuffer(track.buffer, at: nil, options: [])
+        player.scheduleBuffer(scheduled, at: nil, options: [])
         player.play()
         isPlaying = true
         // Anchor AFTER play() so the sample position is the one the device is
@@ -243,6 +343,18 @@ public final class StudioAudioPlayer {
         audioClock.anchor(atTicks: ticks, samplePosition: rawSamplePosition())
         clock = audioClock
         return true
+    }
+
+    /// Holds the sound where it is without tearing the engine down.
+    ///
+    /// `isPlaying` goes false so `reading()` stops answering: a paused node's
+    /// sample counter is not a position, and the viewer's oscillator machinery
+    /// already knows how to fall back to host monotonic time the moment audio
+    /// stops reporting.
+    public func pause() {
+        guard isPlaying else { return }
+        player.pause()
+        isPlaying = false
     }
 
     public func stop() {
