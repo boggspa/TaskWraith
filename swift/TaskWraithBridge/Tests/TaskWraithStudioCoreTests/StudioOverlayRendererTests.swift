@@ -161,8 +161,18 @@ final class StudioOverlayRendererTests: XCTestCase {
     /// decoded frame and leave a HUD floating on black.
     func testTheOverlayCompositesOverThePictureRatherThanReplacingIt() throws {
         let device = try makeDevice()
-        let patternRenderer = try StudioTestPatternRenderer(device: device)
-        let overlayRenderer = try StudioOverlayRenderer(device: device)
+        // ONE QUEUE. `chaining: true` commits WITHOUT waiting, and its own
+        // documentation says a later pass "in this queue" owns readback. Two
+        // device-built renderers get two queues, and Metal orders within a
+        // queue only — so the overlay could load a target the pattern pass had
+        // not finished writing. MEASURED at 1 in 40 trials before this fix and
+        // 0 in 40 x 3 after. This is Challenge2's Finding 2 surviving in the
+        // tests after production was fixed: 64ed303e6 injected a shared queue
+        // into StudioViewerRenderer, and these tests bypass it.
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let patternRenderer = try StudioTestPatternRenderer(
+            device: device, commandQueue: queue)
+        let overlayRenderer = try StudioOverlayRenderer(device: device, commandQueue: queue)
 
         // Frame 60 puts the pattern's sweep bar at x=256, so the probe below
         // sits on a WHITE part of the picture. Sampling somewhere the pattern is
@@ -203,9 +213,18 @@ final class StudioOverlayRendererTests: XCTestCase {
     /// cannot see where they are.
     func testThePlayheadIsBrighterThanTheTrackItSitsOn() throws {
         let device = try makeDevice()
-        let overlayRenderer = try StudioOverlayRenderer(device: device)
+        // ONE QUEUE. `chaining: true` commits WITHOUT waiting, and its own
+        // documentation says a later pass "in this queue" owns readback. Two
+        // device-built renderers get two queues, and Metal orders within a
+        // queue only — so the overlay could load a target the pattern pass had
+        // not finished writing. MEASURED at 1 in 40 trials before this fix and
+        // 0 in 40 x 3 after. This is Challenge2's Finding 2 surviving in the
+        // tests after production was fixed: 64ed303e6 injected a shared queue
+        // into StudioViewerRenderer, and these tests bypass it.
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let overlayRenderer = try StudioOverlayRenderer(device: device, commandQueue: queue)
         let target = try makeTarget(device)
-        try StudioTestPatternRenderer(device: device).render(
+        try StudioTestPatternRenderer(device: device, commandQueue: queue).render(
             to: target,
             frameIndex: 0,
             chaining: true
@@ -215,14 +234,51 @@ final class StudioOverlayRendererTests: XCTestCase {
         try overlayRenderer.render(model: model, to: target)
 
         let trackMidY = Int(model.trackFrame.y + model.trackFrame.height / 2)
-        let playheadX = Int(model.trackFrame.x + model.trackFrame.width / 2)
+        // Sample the playhead where the MODEL puts it, not where the test
+        // assumes it is. The old version computed the track midpoint from
+        // position 150 of 300 and sampled that, so a layout shift would move
+        // the sample onto track and fail for a reason unrelated to brightness -
+        // a reading derived from an assumption about the thing being measured.
+        // The drawn playhead is 2pt wide, so the guess also sat one pixel from
+        // the rect's edge.
+        let playheadRect = try XCTUnwrap(
+            model.rects.first {
+                $0.color == .playhead
+                    && $0.frame.y < model.trackFrame.maxY
+                    && $0.frame.maxY > model.trackFrame.y
+            },
+            "the layout drew no playhead over the track")
+        let playheadX = Int(playheadRect.frame.x + playheadRect.frame.width / 2)
+        let trackX = Int(model.trackFrame.x) + 40
         let playheadPixel = try pixel(target, playheadX, trackMidY)
-        let trackPixel = try pixel(target, Int(model.trackFrame.x) + 40, trackMidY)
+        let trackPixel = try pixel(target, trackX, trackMidY)
+
+        // SELF-DESCRIBING FAILURE. "not distinguishable" on its own cannot tell
+        // you whether the playhead dimmed or whether the sample landed on the
+        // wrong pixel, and an order-sensitive failure you cannot diagnose from
+        // one reproduction becomes a hunt. Everything needed is in the message.
+        let diagnosis = """
+            playhead is not distinguishable from the track
+              sampled playhead (\(playheadX), \(trackMidY)) rgba=\
+            (\(playheadPixel.red),\(playheadPixel.green),\(playheadPixel.blue),\
+            \(playheadPixel.alpha)) luma=\(luminance(playheadPixel))
+              sampled track    (\(trackX), \(trackMidY)) rgba=\
+            (\(trackPixel.red),\(trackPixel.green),\(trackPixel.blue),\
+            \(trackPixel.alpha)) luma=\(luminance(trackPixel))
+              required margin  40, actual \
+            \(luminance(playheadPixel) - luminance(trackPixel))
+              model.trackFrame  \(model.trackFrame)
+              model.playheadRect \(playheadRect.frame)
+              model.grabFrame  \(model.grabFrame)
+              timeline visible \(model.timeline.isVisible), \
+            rects=\(model.rects.count) texts=\(model.texts.count)
+              viewport \(width)x\(height)
+            """
 
         XCTAssertGreaterThan(
             luminance(playheadPixel),
             luminance(trackPixel) + 40,
-            "playhead is not distinguishable from the track"
+            diagnosis
         )
     }
 
