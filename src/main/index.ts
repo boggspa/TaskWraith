@@ -1710,6 +1710,7 @@ import {
   type AgyHookBridgeDecision,
   type AgyHookBridgeServer
 } from './antigravity/AntigravityHookBridge'
+import { antigravityShellApprovalService } from './antigravity/AntigravityShellApprovalPolicy'
 import {
   formatAgyProjectBoundSessionId,
   readAgyConversationReceipt
@@ -33956,6 +33957,7 @@ async function runAntigravityAgyProvider(
         const kind = classifyAgyHookTool(toolCall.name)
         if (kind === 'shell') {
           if (!toolCall.command) return { decision: 'none' }
+          const approvalService = antigravityShellApprovalService(toolCall.command)
           const toolId = `agy-shell-${Date.now()}-${++toolSeq}`
           emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, {
             command: toolCall.command
@@ -33963,11 +33965,14 @@ async function runAntigravityAgyProvider(
           const allowed = await requestAgenticServiceApproval(
             event.sender,
             'antigravity',
-            'shellCommands',
+            approvalService,
             workspacePath,
             {
               method: 'agy_native_command',
-              title: 'AntiGravity shell command',
+              title:
+                approvalService === 'externalPublish'
+                  ? 'AntiGravity external publish'
+                  : 'AntiGravity shell command',
               body: toolCall.command,
               preview: {
                 toolName: 'run_command',

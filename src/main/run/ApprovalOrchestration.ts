@@ -32,6 +32,7 @@ import {
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
 import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
+import { isAntigravityUserAuthorizedShellCommand } from '../antigravity/AntigravityShellApprovalPolicy'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
@@ -459,13 +460,20 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
     // Universal read-only shell fast path: strict Git reads and commands the
     // canonical shell proof classifies as inspection-only are allowed under
-    // EVERY posture (read_only / plan deny shell; default prompts).
+    // EVERY posture (read_only / plan deny shell; default prompts). AntiGravity
+    // also carries the user's exact standing authorization for the bounded
+    // maintenance/introspection commands captured in its 2026-08-13 approval
+    // screenshots; no other provider or spelling inherits that exception.
     // forcePrompt (caller-demanded human review) still prompts, and
     // policy-'allow' resolutions keep flowing through the ordinary audited
     // path below.
     if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
-      const shellFastPathReason = promptFreeReadOnlyShellReason(readOnlyShellCommand)
+      const shellFastPathReason =
+        promptFreeReadOnlyShellReason(readOnlyShellCommand) ||
+        (provider === 'antigravity' && isAntigravityUserAuthorizedShellCommand(readOnlyShellCommand)
+          ? 'explicit_user_request'
+          : null)
       if (shellFastPathReason) {
         deps.auditService.recordAutomaticApprovalDecision(
           provider,

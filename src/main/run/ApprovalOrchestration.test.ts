@@ -1604,3 +1604,138 @@ describe('createApprovalOrchestration — read-only git status shell fast path',
     expect(allowOrder).not.toContain('audit:autoAllow:readonly_shell')
   })
 })
+
+describe('createApprovalOrchestration — AntiGravity shell approval parity', () => {
+  const screenshotCommands: Array<{ command: string; reason: string }> = [
+    { command: 'git diff --check', reason: 'readonly_shell' },
+    {
+      command: 'git log -n 5 --oneline && git rev-list --count origin/master..master',
+      reason: 'inspection_shell'
+    },
+    { command: 'npm run work-guard', reason: 'explicit_user_request' },
+    {
+      command: 'export PATH=$PATH:/opt/homebrew/bin; npm run work-guard',
+      reason: 'explicit_user_request'
+    },
+    {
+      command:
+        'export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:~/.nvm/versions/node/$(ls ~/.nvm/versions/node 2>/dev/null | tail -n 1)/bin; which npm node swift',
+      reason: 'explicit_user_request'
+    },
+    {
+      command: `export PATH=$PATH:/opt/homebrew/bin; node -e "const p = require('./package.json'); console.log(JSON.stringify(p.scripts, null, 2));"`,
+      reason: 'explicit_user_request'
+    }
+  ]
+
+  it('auto-allows every screenshot command even when the run posture resolves shell to deny', async () => {
+    for (const { command, reason } of screenshotCommands) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'antigravity',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(true)
+      expect(order).toContain(`audit:autoAllow:${reason}`)
+      expect(order).not.toContain('registerGeminiTool')
+    }
+  })
+
+  it('does not grant AntiGravity exact-command exceptions to another provider', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        'shellCommands',
+        '/repo',
+        request({
+          preview: {
+            command: 'npm run work-guard',
+            params: { command: 'npm run work-guard' }
+          }
+        })
+      )
+    ).resolves.toBe(false)
+    expect(order).toContain('audit:autoDeny:policy')
+    expect(order).not.toContain('audit:autoAllow:explicit_user_request')
+  })
+
+  it('auto-allows an ordinary AntiGravity command when Accept Edits resolves shell to allow', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              effectivePermissions: { presetId: 'default', readOnly: false }
+            }
+          }
+        : undefined) as never)
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'antigravity',
+        'shellCommands',
+        '/repo',
+        request({
+          preview: {
+            command: 'npx vitest run src/main/studio',
+            params: { command: 'npx vitest run src/main/studio' }
+          }
+        })
+      )
+    ).resolves.toBe(true)
+    expect(order).toContain('audit:autoAllow:policy')
+    expect(order).not.toContain('registerGeminiTool')
+  })
+
+  it('keeps external publication attended at Accept Edits', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              effectivePermissions: { presetId: 'default', readOnly: false }
+            }
+          }
+        : undefined) as never)
+
+    void createApprovalOrchestration(deps)(
+      sender,
+      'antigravity',
+      'externalPublish',
+      '/repo',
+      request({
+        preview: {
+          command: 'git push origin master',
+          params: { command: 'git push origin master' }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:policy')
+    expect(order).toContain('registerGeminiTool')
+  })
+})
