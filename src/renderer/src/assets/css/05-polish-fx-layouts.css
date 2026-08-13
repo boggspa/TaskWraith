@@ -3455,10 +3455,10 @@
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success, #34d399) 60%, transparent));
 }
 
-/* Footer popover — shared shell for all three control buttons. In the expanded
-   sidebar each popover is nested inside the summoning icon's anchor, so its
-   bottom-left corner tracks that button instead of the wider footer cluster.
-   Reuses the settings-menu item styles for rows + nav. */
+/* Footer popover — shared shell for all three control buttons. Live instances
+   portal to <body> so their backdrop can sample the app instead of stopping at
+   the sidebar / corner-pill backdrop root. The inline geometry remains as the
+   fallback used by isolated renderers and tests. */
 .sidebar-footer-popover {
   position: absolute;
   left: 0;
@@ -3486,6 +3486,10 @@
   transform-origin: bottom left;
 }
 
+.sidebar-footer-popover--portaled {
+  z-index: 10060;
+}
+
 .sidebar-footer-popover.is-approvals {
   width: min(420px, calc(100vw - 24px));
   min-width: min(360px, calc(100vw - 24px));
@@ -3509,6 +3513,28 @@
   background: var(--tw-popover-glass-bg);
   color: var(--surface-text);
   box-shadow: var(--tw-popover-material-shadow);
+}
+
+/* Body-portaled footer popovers retain the inverse material that their
+ * original `.app-sidebar` ancestry supplied in these two themes. */
+[data-theme="alabaster"]
+  .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-dark);
+  --tw-glass-solid: var(--tw-neutral-material-solid-dark);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-dark);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+[data-theme="obsidian"]
+  .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {
+  --tw-popover-glass-bg: var(--tw-neutral-material-bg-light);
+  --tw-glass-solid: var(--tw-neutral-material-solid-light);
+  --tw-popover-material-shadow: var(--tw-neutral-material-shadow-light);
+  --text-primary: rgba(18, 21, 27, 0.92);
+  --panel-border: rgba(18, 21, 27, 0.1);
+  color-scheme: light;
 }
 
 [data-reduce-transparency="true"]

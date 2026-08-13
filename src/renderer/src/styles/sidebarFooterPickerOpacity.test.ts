@@ -132,9 +132,11 @@ describe('sidebar footer picker opacity CSS', () => {
     }
   })
 
-  it('keeps the body-portaled Settings menu on its sidebar-specific material', () => {
+  it('keeps body-portaled sidebar pickers on their sidebar-specific material', () => {
     const css = readCss('05-polish-fx-layouts.css')
+    const sidebar = readRendererCss('components/Sidebar.tsx')
     const portaledSettings = cssBlockStartingAt(css, '.sidebar-settings-menu--portaled {')
+    const portaledFooter = cssBlockStartingAt(css, '.sidebar-footer-popover--portaled {')
     const alabasterSettings = cssBlockStartingAt(
       css,
       '[data-theme="alabaster"] .sidebar-settings-menu--portaled {'
@@ -143,12 +145,26 @@ describe('sidebar footer picker opacity CSS', () => {
       css,
       '[data-theme="obsidian"] .sidebar-settings-menu--portaled {'
     )
+    const alabasterFooter = cssBlockStartingAt(
+      css,
+      '[data-theme="alabaster"]\n  .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {'
+    )
+    const obsidianFooter = cssBlockStartingAt(
+      css,
+      '[data-theme="obsidian"]\n  .sidebar-footer-popover--portaled:not(.sidebar-footer-popover--corner-portaled) {'
+    )
 
     expect(portaledSettings).toContain('z-index: 10060')
-    expect(alabasterSettings).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-dark)')
-    expect(alabasterSettings).toContain('color-scheme: dark')
-    expect(obsidianSettings).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-light)')
-    expect(obsidianSettings).toContain('color-scheme: light')
+    expect(portaledFooter).toContain('z-index: 10060')
+    expect(sidebar).toContain('return createPortal(popover, document.body)')
+    for (const block of [alabasterSettings, alabasterFooter]) {
+      expect(block).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-dark)')
+      expect(block).toContain('color-scheme: dark')
+    }
+    for (const block of [obsidianSettings, obsidianFooter]) {
+      expect(block).toContain('--tw-popover-glass-bg: var(--tw-neutral-material-bg-light)')
+      expect(block).toContain('color-scheme: light')
+    }
   })
 
   it('routes masthead new and shared-chat create pickers through the shared glass bed', () => {

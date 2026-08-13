@@ -68,6 +68,7 @@ export function CollapsedSidebarCornerPill({
   onDismissAgentQuestion,
 }: CollapsedSidebarCornerPillProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const popoverPortalRef = useRef<HTMLDivElement | null>(null)
   // Exclusive panel state — mirrors the sidebar footer, where opening any
   // control closes the others so at most one popover is up.
   const [openPanel, setOpenPanel] = useState<CornerPillPanel | null>(null)
@@ -128,8 +129,13 @@ export function CollapsedSidebarCornerPill({
     if (!openPanel) return
     const handleMouseDown = (event: globalThis.MouseEvent) => {
       const wrap = wrapRef.current
-      if (!wrap) return
-      if (event.target instanceof Node && wrap.contains(event.target)) return
+      const portal = popoverPortalRef.current
+      if (
+        event.target instanceof Node &&
+        (wrap?.contains(event.target) || portal?.contains(event.target))
+      ) {
+        return
+      }
       setOpenPanel(null)
     }
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -292,6 +298,12 @@ export function CollapsedSidebarCornerPill({
             setOpenPanel(null)
             onOpenSettingsTab('approval-ledger')
           }}
+          portal={{
+            anchorRef: wrapRef,
+            rootRef: popoverPortalRef,
+            placement: 'side',
+            sidebarWidth: 296
+          }}
         />
       )}
       {openPanel === 'devices' && (
@@ -300,6 +312,12 @@ export function CollapsedSidebarCornerPill({
           onOpenSettings={() => {
             setOpenPanel(null)
             onOpenSettingsTab('pairing')
+          }}
+          portal={{
+            anchorRef: wrapRef,
+            rootRef: popoverPortalRef,
+            placement: 'side',
+            sidebarWidth: 296
           }}
         />
       )}

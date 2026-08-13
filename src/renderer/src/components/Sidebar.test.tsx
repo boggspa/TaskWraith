@@ -12,6 +12,7 @@ import type {
 import {
   Sidebar,
   SidebarSettingsMenu,
+  resolveSidebarFooterPopoverPortalPosition,
   resolveSidebarSettingsMenuPortalPosition,
   DevicesFooterPopover,
   ApprovalsFooterPopover,
@@ -329,6 +330,24 @@ describe('Sidebar settings quick menu', () => {
         { width: 1280, height: 800 }
       )
     ).toEqual({ position: 'fixed', left: 1012, bottom: 208 })
+  })
+
+  it('keeps portaled footer popovers beside either trigger surface and inside the viewport', () => {
+    const anchor = { left: 14, right: 61, top: 780, bottom: 940 }
+
+    expect(
+      resolveSidebarFooterPopoverPortalPosition(anchor, { width: 1280, height: 980 }, {
+        placement: 'above',
+        popoverWidth: 280
+      })
+    ).toEqual({ position: 'fixed', left: 14, bottom: 208 })
+
+    expect(
+      resolveSidebarFooterPopoverPortalPosition(anchor, { width: 430, height: 980 }, {
+        placement: 'side',
+        popoverWidth: 420
+      })
+    ).toEqual({ position: 'fixed', left: 8, bottom: 40 })
   })
 })
 

@@ -368,12 +368,9 @@
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success, #34d399) 60%, transparent));
 }
 
-/* The sidebar-footer popovers open ABOVE-RIGHT-ALIGNED inside the sidebar; from
- * the bottom-left pill they open BESIDE it (bottom-aligned, to the right) so
- * they never run off the window's left/bottom edges. `--sidebar-width` doesn't
- * exist outside the sidebar, so pin an explicit width for the shell to size
- * from. Dividers are per-BUTTON furniture — never on the popovers. */
-.chat-corner-controls-bottom-left .sidebar-footer-popover,
+/* The Settings menu remains nested and opens beside the bottom-left pill.
+ * Footer popovers use a body portal so their blur samples past this pill's own
+ * backdrop root; their equivalent placement is resolved in Sidebar.tsx. */
 .chat-corner-controls-bottom-left .sidebar-settings-menu {
   --sidebar-width: 296px;
   right: auto;
@@ -383,7 +380,7 @@
 }
 
 .chat-corner-controls.chat-corner-controls-bottom-left
-  > :is(.sidebar-footer-popover, .sidebar-settings-menu)::before {
+  > .sidebar-settings-menu::before {
   content: none;
 }
 

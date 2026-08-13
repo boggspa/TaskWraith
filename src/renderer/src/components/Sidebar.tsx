@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -531,6 +532,8 @@ export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'system'
 
 const SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER = 8
 const SIDEBAR_SETTINGS_MENU_MAX_WIDTH = 260
+const SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER = 8
+const SIDEBAR_FOOTER_POPOVER_SIDE_GAP = 10
 
 export function resolveSidebarSettingsMenuPortalPosition(
   anchorRect: Pick<DOMRect, 'left' | 'top'>,
@@ -550,6 +553,41 @@ export function resolveSidebarSettingsMenuPortalPosition(
     bottom: Math.max(
       SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER,
       viewport.height - anchorRect.top + SIDEBAR_SETTINGS_MENU_PORTAL_GUTTER
+    )
+  }
+}
+
+export type SidebarFooterPopoverPortalPlacement = 'above' | 'side'
+
+export function resolveSidebarFooterPopoverPortalPosition(
+  anchorRect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+  viewport: { width: number; height: number },
+  options: { placement: SidebarFooterPopoverPortalPlacement; popoverWidth: number }
+): Pick<CSSProperties, 'position' | 'left' | 'bottom'> {
+  const availableWidth = Math.max(
+    0,
+    viewport.width - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER * 2
+  )
+  const clampedWidth = Math.min(options.popoverWidth, availableWidth)
+  const desiredLeft =
+    options.placement === 'side'
+      ? anchorRect.right + SIDEBAR_FOOTER_POPOVER_SIDE_GAP
+      : anchorRect.left
+
+  return {
+    position: 'fixed',
+    left: Math.max(
+      SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER,
+      Math.min(
+        desiredLeft,
+        viewport.width - clampedWidth - SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER
+      )
+    ),
+    bottom: Math.max(
+      SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER,
+      viewport.height -
+        (options.placement === 'side' ? anchorRect.bottom : anchorRect.top) +
+        (options.placement === 'above' ? SIDEBAR_FOOTER_POPOVER_PORTAL_GUTTER : 0)
     )
   }
 }
@@ -2471,12 +2509,20 @@ function buildSidebarChatRowA11y(args: {
 // Settings tab. The expanded sidebar wraps each trigger + popover in its own
 // anchor so widened panels can grow from the summoning icon instead of the
 // whole footer cluster. The collapsed corner pill keeps its own CSS override.
+export interface SidebarFooterPopoverPortalOptions {
+  anchorRef: RefObject<HTMLElement | null>
+  rootRef: RefObject<HTMLDivElement | null>
+  placement: SidebarFooterPopoverPortalPlacement
+  sidebarWidth?: number
+}
+
 function SidebarFooterPopover({
   title,
   navLabel,
   onNav,
   ariaLabel,
   className,
+  portal,
   children
 }: {
   title: string
@@ -2484,11 +2530,68 @@ function SidebarFooterPopover({
   onNav: () => void
   ariaLabel?: string
   className?: string
+  portal?: SidebarFooterPopoverPortalOptions
   children?: ReactNode
 }) {
-  return (
+  const [portalStyle, setPortalStyle] = useState<CSSProperties | null>(null)
+  const portalAnchorRef = portal?.anchorRef
+  const portalRootRef = portal?.rootRef
+  const portalPlacement = portal?.placement ?? 'above'
+  const portalSidebarWidth = portal?.sidebarWidth
+  const positionPortal = useCallback(() => {
+    if (typeof window === 'undefined') return
+    const anchor = portalAnchorRef?.current
+    if (!anchor) return
+
+    const inheritedSidebarWidth = window
+      .getComputedStyle(anchor)
+      .getPropertyValue('--sidebar-width')
+      .trim()
+    const parsedSidebarWidth = Number.parseFloat(inheritedSidebarWidth)
+    const sidebarWidth =
+      portalSidebarWidth ?? (Number.isFinite(parsedSidebarWidth) ? parsedSidebarWidth : 260)
+    const popoverWidth = className?.split(/\s+/).includes('is-approvals')
+      ? 420
+      : Math.max(0, sidebarWidth - 16)
+
+    setPortalStyle({
+      ...resolveSidebarFooterPopoverPortalPosition(
+        anchor.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+        { placement: portalPlacement, popoverWidth }
+      ),
+      '--sidebar-width': `${sidebarWidth}px`
+    } as CSSProperties)
+  }, [className, portalAnchorRef, portalPlacement, portalSidebarWidth])
+
+  useLayoutEffect(() => {
+    if (!portalAnchorRef) return
+
+    positionPortal()
+    window.addEventListener('scroll', positionPortal, true)
+    window.addEventListener('resize', positionPortal)
+    const anchor = portalAnchorRef.current
+    const observer =
+      anchor && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(positionPortal) : null
+    if (anchor) observer?.observe(anchor)
+    return () => {
+      window.removeEventListener('scroll', positionPortal, true)
+      window.removeEventListener('resize', positionPortal)
+      observer?.disconnect()
+    }
+  }, [portalAnchorRef, positionPortal])
+
+  const popover = (
     <div
-      className={`sidebar-footer-popover${className ? ` ${className}` : ''}`}
+      ref={portalRootRef}
+      className={`sidebar-footer-popover${className ? ` ${className}` : ''}${
+        portalAnchorRef ? ' sidebar-footer-popover--portaled' : ''
+      }${
+        portalAnchorRef && portalPlacement === 'side'
+          ? ' sidebar-footer-popover--corner-portaled'
+          : ''
+      }`}
+      style={portalStyle ?? undefined}
       role="dialog"
       aria-modal="false"
       aria-label={ariaLabel ?? title}
@@ -2506,6 +2609,10 @@ function SidebarFooterPopover({
       </button>
     </div>
   )
+
+  if (!portalAnchorRef) return popover
+  if (!portalStyle || typeof document === 'undefined') return null
+  return createPortal(popover, document.body)
 }
 
 // Approvals popover — pending agent questions + approvals (each a deep-link into
@@ -2522,7 +2629,8 @@ export function ApprovalsFooterPopover({
   onAnswerQuestion,
   onDismissQuestion,
   onOpenSettings,
-  loadRecent
+  loadRecent,
+  portal
 }: {
   /** Each pending approval paired with the chatId it is filed under (the jump
    * target — see pendingApprovalsFlat). */
@@ -2543,6 +2651,7 @@ export function ApprovalsFooterPopover({
   onDismissQuestion?: (questionId: string) => void | Promise<void>
   onOpenSettings: () => void
   loadRecent?: () => Promise<ApprovalLedgerRecord[]>
+  portal?: SidebarFooterPopoverPortalOptions
 }) {
   const [recent, setRecent] = useState<ApprovalLedgerRecord[]>([])
   useEffect(() => {
@@ -2593,6 +2702,7 @@ export function ApprovalsFooterPopover({
       className="is-approvals"
       navLabel="Approvals & Grants"
       onNav={onOpenSettings}
+      portal={portal}
     >
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {pendingLiveSummary}
@@ -2842,10 +2952,12 @@ export function ApprovalsFooterPopover({
 const DEVICES_POPOVER_LIMIT = 5
 export function DevicesFooterPopover({
   devices = [],
-  onOpenSettings
+  onOpenSettings,
+  portal
 }: {
   devices?: PairedRemoteDeviceSummary[]
   onOpenSettings: () => void
+  portal?: SidebarFooterPopoverPortalOptions
 }) {
   const shown = devices.slice(0, DEVICES_POPOVER_LIMIT)
   const overflow = devices.length - shown.length
@@ -2855,6 +2967,7 @@ export function DevicesFooterPopover({
       ariaLabel="Paired devices"
       navLabel="Manage devices"
       onNav={onOpenSettings}
+      portal={portal}
     >
       {devices.length === 0 ? (
         <div className="sidebar-footer-popover-empty">No paired devices</div>
@@ -3121,9 +3234,12 @@ export function Sidebar({
   }, [positionSettingsMenu, settingsMenuOpen])
 
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
-  // anchors + their popovers) so a single outside-click/Escape listener
-  // dismisses whichever popover is open.
+  // anchors) plus one ref shared by the mutually-exclusive body portal, so a
+  // single outside-click/Escape listener dismisses whichever popover is open.
   const footerControlsWrapRef = useRef<HTMLDivElement | null>(null)
+  const footerPopoverPortalRef = useRef<HTMLDivElement | null>(null)
+  const approvalsFooterAnchorRef = useRef<HTMLDivElement | null>(null)
+  const devicesFooterAnchorRef = useRef<HTMLDivElement | null>(null)
   // Ref to the sidebar search <input>. App.tsx owns the editable key command
   // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -4035,8 +4151,13 @@ export function Sidebar({
     if (!approvalsPopoverOpen && !sharesPopoverOpen && !devicesPopoverOpen) return
     const handleMouseDown = (event: globalThis.MouseEvent) => {
       const wrap = footerControlsWrapRef.current
-      if (!wrap) return
-      if (event.target instanceof Node && wrap.contains(event.target)) return
+      const portal = footerPopoverPortalRef.current
+      if (
+        event.target instanceof Node &&
+        (wrap?.contains(event.target) || portal?.contains(event.target))
+      ) {
+        return
+      }
       setApprovalsPopoverOpen(false)
       setSharesPopoverOpen(false)
       setDevicesPopoverOpen(false)
@@ -6535,7 +6656,7 @@ export function Sidebar({
               the bottom item deep-links to the matching Settings tab. Settings
               stays flex:1 so it dominates the row. */}
           <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
-            <div className="sidebar-footer-control-anchor">
+            <div className="sidebar-footer-control-anchor" ref={approvalsFooterAnchorRef}>
               <button
                 type="button"
                 className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
@@ -6589,11 +6710,16 @@ export function Sidebar({
                     setApprovalsPopoverOpen(false)
                     openSettingsTab('approval-ledger')
                   }}
+                  portal={{
+                    anchorRef: approvalsFooterAnchorRef,
+                    rootRef: footerPopoverPortalRef,
+                    placement: 'above'
+                  }}
                 />
               )}
             </div>
             {IOS_REMOTE_ENABLED && (
-              <div className="sidebar-footer-control-anchor">
+              <div className="sidebar-footer-control-anchor" ref={devicesFooterAnchorRef}>
                 <button
                   type="button"
                   className={`sidebar-footer-icon-btn${
@@ -6619,6 +6745,11 @@ export function Sidebar({
                     onOpenSettings={() => {
                       setDevicesPopoverOpen(false)
                       openSettingsTab('pairing')
+                    }}
+                    portal={{
+                      anchorRef: devicesFooterAnchorRef,
+                      rootRef: footerPopoverPortalRef,
+                      placement: 'above'
                     }}
                   />
                 )}
