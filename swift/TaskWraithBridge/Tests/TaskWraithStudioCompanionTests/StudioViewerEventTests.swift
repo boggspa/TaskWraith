@@ -346,3 +346,80 @@ final class StudioReviewLoopTests: XCTestCase {
         XCTAssertNil(view.parkedMarks)
     }
 }
+
+/// The routes must SHOW different things, or they are one window twice.
+@MainActor
+final class StudioRouteContentTests: XCTestCase {
+    private func makeView(_ route: StudioViewerRoute, _ authority: StudioPlaybackAuthority)
+        throws -> StudioViewerView
+    {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        let renderer = try StudioViewerRenderer(device: device)
+        let view = StudioViewerView(renderer: renderer, authority: authority, route: route)
+        view.frame = NSRect(x: 0, y: 0, width: 960, height: 540)
+        return view
+    }
+
+    private var ghost: StudioProposedTimeline {
+        get throws {
+            let op = StudioInsertRangeOp(
+                itemId: "i1", assetId: "a1", trackId: nil,
+                sourceIn: StudioRationalTime(n: 0, d: 600)!,
+                sourceOut: StudioRationalTime(n: 600, d: 600)!,
+                at: StudioRationalTime(n: 3000, d: 600)!)
+            return try XCTUnwrap(
+                StudioProposedTimeline(
+                    proposal: StudioEditProposal(
+                        proposalId: "p1", createdRevision: 1, op: op),
+                    timebase: StudioTimebase(timescale: 600, frameDurationTicks: 20)!))
+        }
+    }
+
+    /// The briefing says Source previews the asset "independently of the
+    /// timeline". A ghost drawn over the audition viewer would make the two
+    /// routes the same window twice.
+    func testAGhostReachesReviewAndNotSource() throws {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let source = try makeView(.source, authority)
+        let review = try makeView(.review, authority)
+        let open = try ghost
+
+        source.adopt(reviewTimeline: open)
+        review.adopt(reviewTimeline: open)
+        source.renderCurrentFrame()
+        review.renderCurrentFrame()
+
+        // Asserted on the DRAWN rects rather than on state, because "the route
+        // shows it" is the claim and a state field nothing renders would be the
+        // very shape this round keeps catching.
+        func ghostRects(_ view: StudioViewerView) -> Int {
+            (view.overlayModel?.rects ?? []).filter {
+                $0.color == .ghost || $0.color == .ghostEdge
+            }.count
+        }
+        XCTAssertEqual(
+            ghostRects(source), 0,
+            "the Source route drew a proposal's ghost — the routes are the same window twice")
+        XCTAssertGreaterThan(
+            ghostRects(review), 0,
+            "the Review route drew no ghost, so Review shows nothing Source does not")
+    }
+
+    /// And the two routes still agree about time, because that is the one thing
+    /// the briefing says they must never disagree about.
+    func testRoutesDifferInContentButNotInTime() throws {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let source = try makeView(.source, authority)
+        let review = try makeView(.review, authority)
+
+        source.transport.seek(toTicks: 2400, atHost: CACurrentMediaTime())
+        XCTAssertEqual(
+            review.transport.clock.snapshot(atHost: CACurrentMediaTime()).positionTicks,
+            2400,
+            "content may differ between routes; TIME may not")
+    }
+}

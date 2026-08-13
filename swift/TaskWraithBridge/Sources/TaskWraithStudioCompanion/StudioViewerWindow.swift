@@ -255,7 +255,7 @@ final class StudioViewerView: NSView {
             to: drawable.texture,
             presenting: drawable,
             overlay: overlay,
-            review: reviewTimeline.map {
+            review: (route == .review ? reviewTimeline : nil).map {
                 StudioReviewContext(
                     version: reviewVersion,
                     timeline: $0,
@@ -359,8 +359,14 @@ final class StudioViewerView: NSView {
                 playerCount: renderer.activeSourceCount + (audioPlayer.isAttached ? 1 : 0)
             )
         )
-        state.reviewVersion = reviewTimeline == nil ? nil : reviewVersion
-        if let reviewTimeline {
+        // ROUTE-SPECIFIC CONTENT. Source/Audition previews the selected asset
+        // "independently of the timeline" (briefing) — so ghosts and the
+        // Current/Proposed context belong to Review and are withheld here.
+        // Showing a proposal's ghost over the audition viewer would make the
+        // two routes the same window twice.
+        state.reviewVersion =
+            (route == .review && reviewTimeline != nil) ? reviewVersion : nil
+        if route == .review, let reviewTimeline {
             state.ghosts = [
                 StudioGhostGeometry(
                     proposalId: reviewTimeline.proposalId,
@@ -821,6 +827,12 @@ final class StudioViewerView: NSView {
             transport.playRange(atHost: host)
         case "x":
             transport.clearMarks(atHost: host)
+        case "w":
+            // The route toggle had no input path at all: toggleRoute existed and
+            // nothing called it, which is this round's reachable-but-inert shape
+            // in the slice that introduced it.
+            StudioViewerAppState.shared?.toggleRoute(
+                route == .source ? .review : .source)
         case "c":
             toggleReviewLoop(atHost: host)
         case "d":
@@ -843,6 +855,10 @@ final class StudioViewerView: NSView {
             renderer.grade = gradeSettings
             report(message: gradeLabel)
         case "v":
+            guard route == .review else {
+                report(message: "Current/Proposed lives in the Review route (w)")
+                break
+            }
             toggleReviewVersion()
         case "a":
             resolveOpenProposal(accept: true)

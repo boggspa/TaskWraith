@@ -245,6 +245,67 @@ final class StudioStressTests: XCTestCase {
         )
     }
 
+    /// S10 UNDER THE TWO-ROUTE ARCHITECTURE.
+    ///
+    /// WHY THIS EXISTS ALONGSIDE the cycle test above rather than replacing it.
+    /// That test builds a NEW renderer each cycle and drops it — which is what
+    /// "viewer close/reopen" meant when the companion had ONE viewer. With two
+    /// routes, hiding a route RETAINS its renderer and releases only its
+    /// decoder/player resources, and that path did not exist when the older test
+    /// was written. The old test still passes and still measures something real;
+    /// it simply measures the previous architecture. A green suite gives no
+    /// signal that the ground moved, so the new path needs its own instrument.
+    func testTenRouteHideShowCyclesReleaseResourcesOnARetainedRenderer() async throws {
+        let device = try makeDevice()
+        let url = try await makeClip(frames: 12)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // ONE renderer for the whole run — that is the distinction from S10.
+        let renderer = try StudioViewerRenderer(device: device)
+        let output = try target(device)
+        var sampler = StudioMemorySampler(warmupCycles: 2)
+        var routes = StudioRouteVisibility(visible: [.source, .review])
+
+        for cycle in 0..<10 {
+            // SHOW: the route acquires its decoder resources.
+            let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+                asset: StudioMediaAsset(assetId: "route-\(cycle)", path: url.path),
+                device: device
+            )
+            renderer.attach(source: loaded.source)
+            XCTAssertEqual(renderer.activeSourceCount, 1)
+            for frame in 0..<12 {
+                renderer.render(snapshot: snapshot(frame: Int64(frame)), to: output)
+            }
+
+            // HIDE: the transition reports the obligation, and discharging it
+            // must actually free the sources on a renderer that SURVIVES.
+            let transition = routes.toggle(.review)
+            XCTAssertTrue(
+                transition.requiresResourceRelease,
+                "hiding must oblige release, or this cycle proves nothing")
+            renderer.detachSource()
+            renderer.detachProposedSource()
+            XCTAssertEqual(
+                renderer.activeSourceCount, 0,
+                "a hidden route still held decode sources at cycle \(cycle)")
+            XCTAssertEqual(
+                renderer.retainedFrameCount, 0,
+                "a hidden route still held surfaces at cycle \(cycle)")
+
+            routes.toggle(.review)
+            sampler.record(cycle: cycle)
+        }
+
+        assertStable(
+            sampler.trend,
+            retained: renderer.retainedFrameCount,
+            retainedBound: 0,
+            growthBudgetMB: 40,
+            label: "10 route hide/show cycles on a retained renderer"
+        )
+    }
+
     // MARK: - S5: review A/B, which doubles the allocations
 
     /// The second source is a second decoder, texture cache and reorder buffer.
