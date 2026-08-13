@@ -36,10 +36,47 @@ public final class StudioVideoFrameRenderer {
         var padding: Float
     }
 
+    /// Must mirror `StudioGradeUniforms` in the shader.
+    private struct GradeUniforms {
+        var splitPosition: Float
+        var lutAmount: Float
+        var lutSize: Float
+        var applyDisplayTransform: Float
+    }
+
     public let device: MTLDevice
     /// Internal so tests can assert the viewer shares ONE queue across passes.
     let commandQueue: MTLCommandQueue
+    /// THREE PIPELINES, AND THE REASON IS THE WHOLE BYPASS CLAIM.
+    ///
+    /// `pipelineState` is compiled from studio_video_fragment, which contains no
+    /// grading code at all. Original therefore does not run the transform with
+    /// neutral values — it does not run the transform. A bypass implemented as
+    /// "same shader, identity coefficients" proves nothing about whether the
+    /// transform does anything, which is the instrument-independent-of-the-
+    /// defect shape this round keeps catching.
     private let pipelineState: MTLRenderPipelineState
+    private let gradedPipelineState: MTLRenderPipelineState
+    private let splitPipelineState: MTLRenderPipelineState
+    private let lutSampler: MTLSamplerState
+    /// Which program the last render actually used.
+    ///
+    /// EXISTS BECAUSE PIXEL EQUALITY CANNOT PROVE A BYPASS. A grading shader run
+    /// with neutral uniforms produces bit-identical output to the ungraded one,
+    /// so every pixel assertion in the world passes on a fake bypass — I proved
+    /// that against my own suite before adding this. The only thing that
+    /// distinguishes them is WHICH PROGRAM RAN, so the renderer records it and
+    /// the test asserts it.
+    public enum PipelineKind: String, Equatable, Sendable {
+        case ungraded
+        case graded
+        case split
+    }
+
+    public private(set) var lastPipelineKind: PipelineKind?
+
+    private var lutTexture: MTLTexture?
+    private var lutSize = 0
     private let sampler: MTLSamplerState
 
     /// Frames whose plane textures may still be sampled by an in-flight command
@@ -82,6 +119,45 @@ public final class StudioVideoFrameRenderer {
             throw StudioRendererError.pipelineCreationFailed(String(describing: error))
         }
 
+        for (name, target) in [
+            ("studio_video_graded_fragment", 0), ("studio_video_split_fragment", 1),
+        ] {
+            guard library.makeFunction(name: name) != nil else {
+                throw StudioRendererError.shaderCompilationFailed("missing \(name)")
+            }
+            _ = target
+        }
+        func makePipeline(_ fragmentName: String) throws -> MTLRenderPipelineState {
+            guard let function = library.makeFunction(name: fragmentName) else {
+                throw StudioRendererError.shaderCompilationFailed("missing \(fragmentName)")
+            }
+            let gradeDescriptor = MTLRenderPipelineDescriptor()
+            gradeDescriptor.vertexFunction = vertexFunction
+            gradeDescriptor.fragmentFunction = function
+            gradeDescriptor.colorAttachments[0].pixelFormat = Self.pixelFormat
+            do {
+                return try device.makeRenderPipelineState(descriptor: gradeDescriptor)
+            } catch {
+                throw StudioRendererError.pipelineCreationFailed(String(describing: error))
+            }
+        }
+        self.gradedPipelineState = try makePipeline("studio_video_graded_fragment")
+        self.splitPipelineState = try makePipeline("studio_video_split_fragment")
+
+        // Nearest, not linear: a LUT is already interpolated between its own
+        // cells by the hardware's trilinear filter on the COORDINATE. Filtering
+        // the sampler as well would blur cell boundaries twice.
+        let lutSamplerDescriptor = MTLSamplerDescriptor()
+        lutSamplerDescriptor.minFilter = .linear
+        lutSamplerDescriptor.magFilter = .linear
+        lutSamplerDescriptor.sAddressMode = .clampToEdge
+        lutSamplerDescriptor.tAddressMode = .clampToEdge
+        lutSamplerDescriptor.rAddressMode = .clampToEdge
+        guard let lutSamplerState = device.makeSamplerState(descriptor: lutSamplerDescriptor) else {
+            throw StudioRendererError.pipelineCreationFailed("lut sampler unavailable")
+        }
+        self.lutSampler = lutSamplerState
+
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
         samplerDescriptor.magFilter = .linear
@@ -107,6 +183,47 @@ public final class StudioVideoFrameRenderer {
     ///   in-flight ring. When nil the buffer is committed and waited on so the
     ///   target is immediately readable, and no retention is needed because the
     ///   caller's own reference outlives the wait.
+    /// Loads an externally supplied LUT as a 3D texture, or clears it.
+    ///
+    /// Uploaded ONCE per LUT rather than per frame: a .cube is static data and
+    /// re-uploading it every refresh would be a per-frame CPU cost on the
+    /// presentation path, which is exactly what the AVCDAW note forbids.
+    public func setLut(_ lut: StudioColorLut?) throws {
+        guard let lut else {
+            lutTexture = nil
+            lutSize = 0
+            return
+        }
+        let descriptor = MTLTextureDescriptor()
+        descriptor.textureType = .type3D
+        descriptor.pixelFormat = .rgba32Float
+        descriptor.width = lut.size
+        descriptor.height = lut.size
+        descriptor.depth = lut.size
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = device.hasUnifiedMemory ? .shared : .managed
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw StudioRendererError.textureAllocationFailed
+        }
+        let data = lut.textureData
+        let bytesPerRow = lut.size * MemoryLayout<Float>.size * 4
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.replace(
+                region: MTLRegionMake3D(0, 0, 0, lut.size, lut.size, lut.size),
+                mipmapLevel: 0,
+                slice: 0,
+                withBytes: base,
+                bytesPerRow: bytesPerRow,
+                bytesPerImage: bytesPerRow * lut.size
+            )
+        }
+        lutTexture = texture
+        lutSize = lut.size
+    }
+
+    public var hasLut: Bool { lutTexture != nil }
+
     /// - Parameter chaining: when true a LATER pass in this queue owns
     ///   presentation and readback, so this commits without presenting and
     ///   without blocking. Metal executes command buffers committed to the SAME
@@ -118,7 +235,8 @@ public final class StudioVideoFrameRenderer {
         frame: StudioVideoFrameTextures,
         to target: MTLTexture,
         presenting drawable: MTLDrawable? = nil,
-        chaining: Bool = false
+        chaining: Bool = false,
+        grade: StudioGradeSettings = StudioGradeSettings()
     ) throws {
         guard target.pixelFormat == Self.pixelFormat else {
             throw StudioRendererError.unsupportedPixelFormat(String(describing: target.pixelFormat))
@@ -144,11 +262,39 @@ public final class StudioVideoFrameRenderer {
             padding: 0
         )
 
-        encoder.setRenderPipelineState(pipelineState)
+        // ORIGINAL SELECTS THE UNGRADED PIPELINE. Not a neutral uniform — a
+        // different compiled program that has no grading code in it.
+        switch grade.mode {
+        case .original:
+            encoder.setRenderPipelineState(pipelineState)
+            lastPipelineKind = .ungraded
+        case .effect:
+            encoder.setRenderPipelineState(gradedPipelineState)
+            lastPipelineKind = .graded
+        case .split:
+            encoder.setRenderPipelineState(splitPipelineState)
+            lastPipelineKind = .split
+        }
         encoder.setFragmentTexture(frame.luma, index: 0)
         encoder.setFragmentTexture(frame.chroma, index: 1)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+
+        if grade.mode != .original {
+            var gradeUniforms = GradeUniforms(
+                splitPosition: grade.splitPosition,
+                lutAmount: lutTexture == nil ? 0 : grade.lutAmount,
+                lutSize: Float(lutSize),
+                applyDisplayTransform: grade.displayTransform == .none ? 0 : 1
+            )
+            encoder.setFragmentTexture(lutTexture, index: 2)
+            encoder.setFragmentSamplerState(lutSampler, index: 1)
+            encoder.setFragmentBytes(
+                &gradeUniforms,
+                length: MemoryLayout<GradeUniforms>.stride,
+                index: 1
+            )
+        }
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
 
@@ -254,6 +400,107 @@ public final class StudioVideoFrameRenderer {
         float b = y + 1.8556 * cb;
 
         return float4(saturate(float3(r, g, b)), 1.0);
+    }
+
+    // ---- Grading (mission outcome 8) ----------------------------------------
+    //
+    // Deliberately BELOW the ungraded entry point and reachable only from the
+    // graded/split functions. studio_video_fragment above does not call any of
+    // it, which is what makes Original a true bypass rather than the transform
+    // running with neutral values.
+
+    struct StudioGradeUniforms {
+        float splitPosition;
+        float lutAmount;
+        float lutSize;
+        float applyDisplayTransform;
+    };
+
+    static inline float3 studio_decode_rec709(float3 v) {
+        float3 low = v / 4.5;
+        float3 high = pow(max((v + 0.099) / 1.099, 0.0), 1.0 / 0.45);
+        return select(high, low, v < 0.081);
+    }
+
+    static inline float3 studio_encode_srgb(float3 linear) {
+        float3 low = linear * 12.92;
+        float3 high = 1.055 * pow(max(linear, 0.0), 1.0 / 2.4) - 0.055;
+        return select(high, low, linear <= 0.0031308);
+    }
+
+    static inline float3 studio_apply_grade(
+        float3 rgb,
+        constant StudioGradeUniforms &grade,
+        texture3d<float> lut,
+        sampler lutSampler)
+    {
+        float3 graded = rgb;
+        if (grade.lutSize > 1.5 && grade.lutAmount > 0.0) {
+            // Half-texel inset: sampling a 3D LUT at the exact 0/1 edges reads
+            // outside the outer cell centres and clips the extremes.
+            float scale = (grade.lutSize - 1.0) / grade.lutSize;
+            float offset = 0.5 / grade.lutSize;
+            float3 coord = saturate(rgb) * scale + offset;
+            float3 sampled = lut.sample(lutSampler, coord).rgb;
+            graded = mix(graded, sampled, grade.lutAmount);
+        }
+        if (grade.applyDisplayTransform > 0.5) {
+            graded = studio_encode_srgb(studio_decode_rec709(saturate(graded)));
+        }
+        return saturate(graded);
+    }
+
+    static inline float3 studio_video_rgb(
+        float2 uv,
+        texture2d<float> lumaTexture,
+        texture2d<float> chromaTexture,
+        sampler videoSampler,
+        constant StudioVideoUniforms &uniforms)
+    {
+        float luma = lumaTexture.sample(videoSampler, uv).r;
+        float2 chroma = chromaTexture.sample(videoSampler, uv).rg;
+        float y = (luma - uniforms.lumaOffset) * uniforms.lumaScale;
+        float cb = (chroma.x - 0.5) * uniforms.chromaScale;
+        float cr = (chroma.y - 0.5) * uniforms.chromaScale;
+        return saturate(float3(
+            y + 1.5748 * cr,
+            y - 0.187324 * cb - 0.468124 * cr,
+            y + 1.8556 * cb));
+    }
+
+    fragment float4 studio_video_graded_fragment(
+        StudioVideoVertex in [[stage_in]],
+        texture2d<float> lumaTexture [[texture(0)]],
+        texture2d<float> chromaTexture [[texture(1)]],
+        texture3d<float> lutTexture [[texture(2)]],
+        sampler videoSampler [[sampler(0)]],
+        sampler lutSampler [[sampler(1)]],
+        constant StudioVideoUniforms &uniforms [[buffer(0)]],
+        constant StudioGradeUniforms &grade [[buffer(1)]]
+    ) {
+        float3 rgb = studio_video_rgb(in.uv, lumaTexture, chromaTexture, videoSampler, uniforms);
+        return float4(studio_apply_grade(rgb, grade, lutTexture, lutSampler), 1.0);
+    }
+
+    fragment float4 studio_video_split_fragment(
+        StudioVideoVertex in [[stage_in]],
+        texture2d<float> lumaTexture [[texture(0)]],
+        texture2d<float> chromaTexture [[texture(1)]],
+        texture3d<float> lutTexture [[texture(2)]],
+        sampler videoSampler [[sampler(0)]],
+        sampler lutSampler [[sampler(1)]],
+        constant StudioVideoUniforms &uniforms [[buffer(0)]],
+        constant StudioGradeUniforms &grade [[buffer(1)]]
+    ) {
+        // ONE sample of the source, ONE draw. Both halves are therefore the
+        // SAME FRAME at the same instant by construction — a split that read
+        // the source twice could show a seam that is a timing artefact rather
+        // than a grading difference.
+        float3 rgb = studio_video_rgb(in.uv, lumaTexture, chromaTexture, videoSampler, uniforms);
+        if (in.uv.x < grade.splitPosition) {
+            return float4(rgb, 1.0);
+        }
+        return float4(studio_apply_grade(rgb, grade, lutTexture, lutSampler), 1.0);
     }
     """
 }
