@@ -1133,7 +1133,7 @@ describe('executeCanvasTool', () => {
     expect(seenParticipantId).toBe('seat-boss')
   })
 
-  it('canvas_sketch_open opens a sketch-driver canvas and returns the document', async () => {
+  it('canvas_sketch_open presents the sketch-driver canvas in the chat dock', async () => {
     let seen: unknown = null
     const controller = fakeController({
       open: async (input) => {
@@ -1161,8 +1161,14 @@ describe('executeCanvasTool', () => {
       'claude'
     )
     expect(result.isError).toBeFalsy()
-    expect(seen).toMatchObject({ driver: 'sketch', viewport: { width: 900, height: 700 } })
+    expect(seen).toMatchObject({
+      driver: 'sketch',
+      embed: true,
+      presentation: 'dock',
+      viewport: { width: 900, height: 700 }
+    })
     expect(result.structuredContent?.canvasId).toBe('sk1')
+    expect(result.structuredContent?.presentation).toBe('dock')
     expect(result.structuredContent?.document).toMatchObject({ title: 'Sketch Canvas' })
   })
 

@@ -738,7 +738,10 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         }
         case 'canvas_sketch_open': {
           const viewport = resolveViewport({ width: args.width, height: args.height })
-          const opened = await controller.open({ driver: 'sketch', viewport }, ctx)
+          const opened = await controller.open(
+            { driver: 'sketch', embed: true, presentation: 'dock', viewport },
+            ctx
+          )
           const document = await controller.sketchDocument(opened.canvasId, ctx)
           return jsonResult({
             ok: true,
@@ -747,6 +750,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             url: redactUrlQuery(opened.url),
             title: opened.title,
             viewport: opened.viewport,
+            presentation: 'dock' as const,
             document
           })
         }
