@@ -46,10 +46,16 @@ import {
   type StudioResolveProposalParams,
   type StudioResolveProposalResult,
   type StudioResponseMessage,
-  type StudioSuccessResponseMessage
+  type StudioSetTranscriptResult,
+  type StudioSuccessResponseMessage,
+  type StudioTranscript
 } from './StudioProtocol'
 import { buildEditCommittedNotification, handleStudioMessage } from './StudioDispatcher'
-import type { StudioOpenMediaOutcome, StudioRevisionStore } from './StudioRevisionStore'
+import type {
+  StudioOpenMediaOutcome,
+  StudioRevisionStore,
+  StudioSetTranscriptOutcome
+} from './StudioRevisionStore'
 
 /**
  * Narrow structural view of a spawned companion process. node:child_process
@@ -95,6 +101,15 @@ export interface StudioSupervisorStatus {
 
 export type StudioHostOpenMediaOutcome =
   | StudioOpenMediaOutcome
+  | {
+      ok: false
+      code: 'companion_not_ready' | 'delivery_failed'
+      message: string
+      currentRevision: number
+    }
+
+export type StudioHostSetTranscriptOutcome =
+  | StudioSetTranscriptOutcome
   | {
       ok: false
       code: 'companion_not_ready' | 'delivery_failed'
@@ -162,6 +177,20 @@ function extractCommittedEdit(
       return null
     }
     return { revision: result.revision, op: { type: 'open_media', asset: result.asset } }
+  }
+  if (candidate.method === STUDIO_METHODS.setTranscript) {
+    const result = (response as StudioSuccessResponseMessage).result as StudioSetTranscriptResult
+    if (
+      typeof result.revision !== 'number' ||
+      typeof result.transcript !== 'object' ||
+      result.transcript === null
+    ) {
+      return null
+    }
+    return {
+      revision: result.revision,
+      op: { type: 'set_transcript', transcript: result.transcript }
+    }
   }
   if (candidate.method === STUDIO_METHODS.proposeEdit) {
     const result = (response as StudioSuccessResponseMessage).result as StudioProposeEditResult
@@ -349,6 +378,47 @@ export class StudioCompanionSupervisor {
           ok: false,
           code: 'delivery_failed',
           message: 'Studio media open committed but the companion disconnected before delivery',
+          currentRevision: outcome.revision
+        }
+      }
+      return outcome
+    })
+  }
+
+  /**
+   * Commit host-owned transcript selection units at the current revision and
+   * notify the hydrated companion. This is the production data seam: callers
+   * do not need to impersonate a companion-originated RPC to publish speech
+   * timing that TaskWraith already owns.
+   */
+  setTranscript(transcript: StudioTranscript): Promise<StudioHostSetTranscriptOutcome> {
+    return this.enqueueSerialized(async () => {
+      const child = this.child
+      if (child === null || this.hydratedChild !== child) {
+        return {
+          ok: false,
+          code: 'companion_not_ready',
+          message: 'Studio companion has not completed document hydration',
+          currentRevision: this.store.revision
+        }
+      }
+      const outcome = await this.store.setTranscript(this.store.revision, transcript)
+      if (!outcome.ok) return outcome
+      if (
+        this.child !== child ||
+        this.hydratedChild !== child ||
+        !this.writeToChild(
+          child,
+          buildEditCommittedNotification(outcome.revision, {
+            type: 'set_transcript',
+            transcript: outcome.transcript
+          })
+        )
+      ) {
+        return {
+          ok: false,
+          code: 'delivery_failed',
+          message: 'Studio transcript committed but the companion disconnected before delivery',
           currentRevision: outcome.revision
         }
       }

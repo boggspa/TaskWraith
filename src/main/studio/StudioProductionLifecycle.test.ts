@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TRANSCRIPT_MEDIA_ASSET_DIR } from '../services/TranscriptMediaAssetStore'
 import type { StudioCompanionChild } from './StudioCompanionSupervisor'
+import { STUDIO_TRANSCRIPT_SCHEMA_VERSION } from './StudioProtocol'
 import {
   STUDIO_COMPANION_EXECUTABLE,
   resolveStudioCompanionBinaryPath,
@@ -133,6 +134,18 @@ describe('StudioProductionLifecycle', () => {
 
     expect(launches).toEqual([{ command: '/fake/TaskWraithStudioCompanion', args: ['--viewer'] }])
     expect(lifecycle.paths.allowedMediaRoot).toBe(nodePath.join(root, TRANSCRIPT_MEDIA_ASSET_DIR))
+    await expect(
+      lifecycle.setTranscript({
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        transcriptId: 'not-hydrated',
+        assetId: 'owned',
+        segments: []
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'companion_not_ready',
+      currentRevision: 0
+    })
 
     const outsidePath = nodePath.join(root, 'outside.mov')
     await fsPromises.writeFile(outsidePath, 'outside')

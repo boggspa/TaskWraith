@@ -9,6 +9,7 @@ import {
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_METHODS,
   STUDIO_PROTOCOL_VERSION,
+  STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   StudioNdjsonDecoder,
   encodeStudioMessage,
   type StudioErrorResponseMessage,
@@ -147,6 +148,93 @@ describe('StudioDispatcher', () => {
       }
     })) as StudioErrorResponseMessage
     expect(stale.error.data).toMatchObject({ studioCode: 'stale_base', currentRevision: 1 })
+    await store.close()
+  })
+
+  it('stores versioned exact transcript segments for a known media asset', async () => {
+    const directory = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'studio-transcript-'))
+    temporaryDirectories.push(directory)
+    const mediaPath = nodePath.join(directory, 'spoken.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+    await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 30,
+      method: STUDIO_METHODS.openMedia,
+      params: {
+        schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+        baseRevision: 0,
+        assetId: 'spoken',
+        path: mediaPath,
+        mediaKind: 'video'
+      }
+    })
+
+    const stored = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 31,
+      method: STUDIO_METHODS.setTranscript,
+      params: {
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        baseRevision: 1,
+        transcriptId: 'spoken-en',
+        assetId: 'spoken',
+        localeIdentifier: 'en-US',
+        segments: [
+          {
+            segmentId: 'phrase-1',
+            text: 'Cut on this phrase',
+            sourceIn: { n: 30_030, d: 30_000 },
+            sourceOut: { n: 60_060, d: 30_000 },
+            confidence: 0.95
+          }
+        ]
+      }
+    })) as StudioSuccessResponseMessage
+    expect(stored.result).toMatchObject({
+      schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+      revision: 2,
+      transcript: {
+        transcriptId: 'spoken-en',
+        assetId: 'spoken',
+        segments: [
+          {
+            segmentId: 'phrase-1',
+            sourceIn: { n: 1001, d: 1000 },
+            sourceOut: { n: 1001, d: 500 }
+          }
+        ]
+      }
+    })
+
+    const fetched = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 32,
+      method: STUDIO_METHODS.getDocument
+    })) as StudioSuccessResponseMessage
+    expect(fetched.result).toMatchObject({
+      revision: 2,
+      document: { transcripts: [{ transcriptId: 'spoken-en' }] }
+    })
+    await store.close()
+  })
+
+  it('rejects unsupported transcript schemas before mutating durable state', async () => {
+    const store = await openStore()
+    const response = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 33,
+      method: STUDIO_METHODS.setTranscript,
+      params: {
+        schemaVersion: 99,
+        baseRevision: 0,
+        transcriptId: 'unsupported',
+        assetId: 'missing',
+        segments: []
+      }
+    })) as StudioErrorResponseMessage
+    expect(response.error.data.studioCode).toBe('invalid_params')
+    expect(store.revision).toBe(0)
     await store.close()
   })
 

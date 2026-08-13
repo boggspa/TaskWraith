@@ -19,6 +19,8 @@ export const STUDIO_PROTOCOL_VERSION = 1
 export const STUDIO_OPEN_MEDIA_SCHEMA_VERSION = 1
 /** Versioned schema for durable ghost proposals and their resolution. */
 export const STUDIO_PROPOSAL_SCHEMA_VERSION = 1
+/** Versioned schema for exact, asset-bound transcript segments. */
+export const STUDIO_TRANSCRIPT_SCHEMA_VERSION = 1
 
 export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 
@@ -29,6 +31,7 @@ export const STUDIO_METHODS = Object.freeze({
   openMedia: 'studio/openMedia',
   proposeEdit: 'studio/proposeEdit',
   resolveProposal: 'studio/resolveProposal',
+  setTranscript: 'studio/setTranscript',
   editCommitted: 'studio/editCommitted'
 })
 
@@ -158,11 +161,35 @@ export interface StudioResolveProposalOp {
   decision: StudioProposalDecision
 }
 
+/** Half-open source range for one stable transcript selection unit. */
+export interface StudioTranscriptSegment {
+  segmentId: string
+  text: string
+  sourceIn: StudioRationalTime
+  sourceOut: StudioRationalTime
+  /** Optional recognizer metadata; never used for edit timing. */
+  confidence?: number
+}
+
+export interface StudioTranscript {
+  schemaVersion: typeof STUDIO_TRANSCRIPT_SCHEMA_VERSION
+  transcriptId: string
+  assetId: string
+  localeIdentifier?: string
+  segments: StudioTranscriptSegment[]
+}
+
+export interface StudioSetTranscriptOp {
+  type: 'set_transcript'
+  transcript: StudioTranscript
+}
+
 export type StudioDocumentOperation =
   | StudioEditOp
   | StudioOpenMediaOp
   | StudioProposeEditOp
   | StudioResolveProposalOp
+  | StudioSetTranscriptOp
 
 export interface StudioHelloParams {
   protocolVersion: number
@@ -226,6 +253,21 @@ export interface StudioResolveProposalResult {
   decision: StudioProposalDecision
   /** Present only when acceptance applied the proposal to the timeline. */
   appliedOp?: StudioEditOp
+}
+
+export interface StudioSetTranscriptParams {
+  schemaVersion: typeof STUDIO_TRANSCRIPT_SCHEMA_VERSION
+  baseRevision: number
+  transcriptId: string
+  assetId: string
+  localeIdentifier?: string
+  segments: StudioTranscriptSegment[]
+}
+
+export interface StudioSetTranscriptResult {
+  schemaVersion: typeof STUDIO_TRANSCRIPT_SCHEMA_VERSION
+  revision: number
+  transcript: StudioTranscript
 }
 
 export interface StudioEditCommittedParams {

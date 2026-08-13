@@ -11,7 +11,11 @@ import {
   type StudioCompanionSupervisorOptions,
   type StudioSupervisorEvent
 } from './StudioCompanionSupervisor'
-import { STUDIO_METHODS, STUDIO_PROPOSAL_SCHEMA_VERSION } from './StudioProtocol'
+import {
+  STUDIO_METHODS,
+  STUDIO_PROPOSAL_SCHEMA_VERSION,
+  STUDIO_TRANSCRIPT_SCHEMA_VERSION
+} from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 /** Loose view of one NDJSON line the supervisor wrote to the companion. */
@@ -325,6 +329,14 @@ describe('StudioCompanionSupervisor', () => {
         mediaKind: 'video'
       })
     ).resolves.toMatchObject({ ok: false, code: 'companion_not_ready', currentRevision: 0 })
+    await expect(
+      harness.supervisor.setTranscript({
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        transcriptId: 'too-early',
+        assetId: 'host-owned',
+        segments: []
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'companion_not_ready', currentRevision: 0 })
     expect(harness.store.revision).toBe(0)
 
     child.send({
@@ -360,6 +372,45 @@ describe('StudioCompanionSupervisor', () => {
       }
     })
     expect(harness.store.revision).toBe(1)
+
+    await expect(
+      harness.supervisor.setTranscript({
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        transcriptId: 'host-owned-en',
+        assetId: 'host-owned',
+        segments: [
+          {
+            segmentId: 'host-phrase',
+            text: 'TaskWraith-owned words',
+            sourceIn: { n: 0, d: 1 },
+            sourceOut: { n: 1001, d: 1000 }
+          }
+        ]
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      revision: 2,
+      transcript: {
+        transcriptId: 'host-owned-en',
+        segments: [{ sourceOut: { n: 1001, d: 1000 } }]
+      }
+    })
+    await until(() => child.messages.length >= 4)
+    expect(child.messages[3]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 2,
+        op: {
+          type: 'set_transcript',
+          transcript: {
+            transcriptId: 'host-owned-en',
+            assetId: 'host-owned',
+            segments: [{ segmentId: 'host-phrase' }]
+          }
+        }
+      }
+    })
+    expect(harness.store.getDocument().transcripts).toHaveLength(1)
     await harness.supervisor.stop()
   })
 
@@ -394,6 +445,102 @@ describe('StudioCompanionSupervisor', () => {
         op: {
           type: 'open_media',
           asset: { assetId: 'asset-open', mediaKind: 'video' }
+        }
+      }
+    })
+    await harness.supervisor.stop()
+  })
+
+  it('pushes transcript commits and serves exact segments after companion restart', async () => {
+    const harness = await createHarness({ allowMediaRoot: true, maxRestarts: 3 })
+    const mediaPath = nodePath.join(harness.directory, 'spoken.mov')
+    await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+    harness.supervisor.start()
+    const first = harness.children[0]
+
+    first.send({
+      jsonrpc: '2.0',
+      id: 20,
+      method: STUDIO_METHODS.openMedia,
+      params: {
+        schemaVersion: 1,
+        baseRevision: 0,
+        assetId: 'spoken',
+        path: mediaPath,
+        mediaKind: 'video'
+      }
+    })
+    await until(() => first.messages.length >= 2)
+    first.send({
+      jsonrpc: '2.0',
+      id: 21,
+      method: STUDIO_METHODS.setTranscript,
+      params: {
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        baseRevision: 1,
+        transcriptId: 'spoken-en',
+        assetId: 'spoken',
+        segments: [
+          {
+            segmentId: 'phrase-1',
+            text: 'Exact words',
+            sourceIn: { n: 30_030, d: 30_000 },
+            sourceOut: { n: 60_060, d: 30_000 }
+          }
+        ]
+      }
+    })
+    await until(() => first.messages.length >= 4)
+    expect(first.messages[2]).toMatchObject({
+      id: 21,
+      result: {
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        revision: 2,
+        transcript: { transcriptId: 'spoken-en' }
+      }
+    })
+    expect(first.messages[3]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 2,
+        op: {
+          type: 'set_transcript',
+          transcript: {
+            transcriptId: 'spoken-en',
+            segments: [
+              {
+                segmentId: 'phrase-1',
+                sourceIn: { n: 1001, d: 1000 },
+                sourceOut: { n: 1001, d: 500 }
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    first.exit(1)
+    await until(() => harness.children.length === 2)
+    const second = harness.children[1]
+    second.send({
+      jsonrpc: '2.0',
+      id: 22,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    second.send({ jsonrpc: '2.0', id: 23, method: STUDIO_METHODS.getDocument })
+    await until(() => second.messages.length >= 2)
+    expect(second.messages[1]).toMatchObject({
+      id: 23,
+      result: {
+        revision: 2,
+        document: {
+          transcripts: [
+            {
+              transcriptId: 'spoken-en',
+              segments: [{ segmentId: 'phrase-1', text: 'Exact words' }]
+            }
+          ]
         }
       }
     })

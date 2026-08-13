@@ -28,6 +28,7 @@ import {
 } from './StudioRationalTime'
 import {
   STUDIO_PROPOSAL_SCHEMA_VERSION,
+  STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   type StudioDocumentOperation,
   type StudioEditOp,
   type StudioEditProposal,
@@ -36,10 +37,13 @@ import {
   type StudioOpenMediaOp,
   type StudioProposalDecision,
   type StudioProposeEditOp,
-  type StudioResolveProposalOp
+  type StudioResolveProposalOp,
+  type StudioSetTranscriptOp,
+  type StudioTranscript,
+  type StudioTranscriptSegment
 } from './StudioProtocol'
 
-export const STUDIO_DOCUMENT_FORMAT_VERSION = 2
+export const STUDIO_DOCUMENT_FORMAT_VERSION = 3
 export const STUDIO_DEFAULT_TRACK_ID = 'V1'
 export const STUDIO_SNAPSHOT_FILENAME = 'studio-project.snapshot.json'
 export const STUDIO_JOURNAL_FILENAME = 'studio-project.journal.jsonl'
@@ -71,6 +75,8 @@ export interface StudioDocument {
   assets: StudioMediaAsset[]
   /** Durable ghost edits waiting for explicit accept/reject resolution. */
   proposals: StudioEditProposal[]
+  /** Exact, asset-bound transcript selection units. */
+  transcripts: StudioTranscript[]
   tracks: StudioTrack[]
 }
 
@@ -79,6 +85,7 @@ export function createEmptyStudioDocument(): StudioDocument {
     formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
     assets: [],
     proposals: [],
+    transcripts: [],
     tracks: []
   }
 }
@@ -356,7 +363,139 @@ function applyResolveProposal(
     : withoutProposal
 }
 
-/** Apply a timeline edit, media-open mutation, or durable proposal transition. */
+const STUDIO_MAX_TRANSCRIPT_SEGMENTS = 100_000
+const STUDIO_MAX_TRANSCRIPT_TEXT_LENGTH = 16_384
+
+function applySetTranscript(
+  document: StudioDocument,
+  operation: StudioSetTranscriptOp
+): StudioDocument {
+  const candidate = operation.transcript as Partial<StudioTranscript> | null
+  if (typeof candidate !== 'object' || candidate === null) {
+    throw new StudioEditError('invalid_params', 'set_transcript.transcript must be an object')
+  }
+  if (candidate.schemaVersion !== STUDIO_TRANSCRIPT_SCHEMA_VERSION) {
+    throw new StudioEditError(
+      'invalid_params',
+      `set_transcript.transcript.schemaVersion must be ${STUDIO_TRANSCRIPT_SCHEMA_VERSION}`
+    )
+  }
+  const transcriptId = requireNonEmptyString(
+    candidate.transcriptId,
+    'set_transcript.transcript.transcriptId'
+  )
+  const assetId = requireNonEmptyString(candidate.assetId, 'set_transcript.transcript.assetId')
+  if (!document.assets.some((asset) => asset.assetId === assetId)) {
+    throw new StudioEditError(
+      'invalid_op',
+      `set_transcript asset "${assetId}" is not in the document`
+    )
+  }
+  if (!Array.isArray(candidate.segments)) {
+    throw new StudioEditError(
+      'invalid_params',
+      'set_transcript.transcript.segments must be an array'
+    )
+  }
+  if (candidate.segments.length > STUDIO_MAX_TRANSCRIPT_SEGMENTS) {
+    throw new StudioEditError(
+      'invalid_params',
+      `set_transcript has more than ${STUDIO_MAX_TRANSCRIPT_SEGMENTS} segments`
+    )
+  }
+
+  let localeIdentifier: string | undefined
+  if (candidate.localeIdentifier !== undefined) {
+    localeIdentifier = requireNonEmptyString(
+      candidate.localeIdentifier,
+      'set_transcript.transcript.localeIdentifier'
+    )
+  }
+
+  const seenIds = new Set<string>()
+  let previousEnd = STUDIO_TIME_ZERO
+  const segments: StudioTranscriptSegment[] = candidate.segments.map((raw, index) => {
+    if (typeof raw !== 'object' || raw === null) {
+      throw new StudioEditError('invalid_params', `transcript segment ${index} must be an object`)
+    }
+    const segment = raw as Partial<StudioTranscriptSegment>
+    const segmentId = requireNonEmptyString(
+      segment.segmentId,
+      `transcript segment ${index}.segmentId`
+    )
+    if (seenIds.has(segmentId)) {
+      throw new StudioEditError(
+        'invalid_params',
+        `transcript segment id "${segmentId}" is duplicated`
+      )
+    }
+    seenIds.add(segmentId)
+
+    const text = requireNonEmptyString(segment.text, `transcript segment ${index}.text`)
+    if (text.length > STUDIO_MAX_TRANSCRIPT_TEXT_LENGTH) {
+      throw new StudioEditError(
+        'invalid_params',
+        `transcript segment "${segmentId}" text is too long`
+      )
+    }
+    const sourceIn = readOpTime(segment.sourceIn, `transcript segment ${index}.sourceIn`)
+    const sourceOut = readOpTime(segment.sourceOut, `transcript segment ${index}.sourceOut`)
+    if (studioTimeCompare(sourceIn, STUDIO_TIME_ZERO) < 0) {
+      throw new StudioEditError('invalid_op', 'transcript segment sourceIn must not be negative')
+    }
+    if (studioTimeCompare(sourceOut, sourceIn) <= 0) {
+      throw new StudioEditError('invalid_op', 'transcript segment source range must be non-empty')
+    }
+    if (index > 0 && studioTimeCompare(sourceIn, previousEnd) < 0) {
+      throw new StudioEditError(
+        'invalid_op',
+        'transcript segments must be ordered and non-overlapping'
+      )
+    }
+    previousEnd = sourceOut
+
+    let confidence: number | undefined
+    if (segment.confidence !== undefined) {
+      if (
+        typeof segment.confidence !== 'number' ||
+        !Number.isFinite(segment.confidence) ||
+        segment.confidence < 0 ||
+        segment.confidence > 1
+      ) {
+        throw new StudioEditError(
+          'invalid_params',
+          `transcript segment "${segmentId}" confidence must be between 0 and 1`
+        )
+      }
+      confidence = segment.confidence
+    }
+
+    return {
+      segmentId,
+      text,
+      sourceIn,
+      sourceOut,
+      ...(confidence === undefined ? {} : { confidence })
+    }
+  })
+
+  const transcript: StudioTranscript = {
+    schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+    transcriptId,
+    assetId,
+    ...(localeIdentifier === undefined ? {} : { localeIdentifier }),
+    segments
+  }
+  const existingIndex = document.transcripts.findIndex(
+    (existing) => existing.transcriptId === transcriptId
+  )
+  const transcripts = [...document.transcripts]
+  if (existingIndex === -1) transcripts.push(transcript)
+  else transcripts[existingIndex] = transcript
+  return { ...document, transcripts }
+}
+
+/** Apply a timeline edit, media-open mutation, proposal, or transcript transition. */
 export function applyStudioDocumentOperation(
   document: StudioDocument,
   operation: StudioDocumentOperation
@@ -367,6 +506,7 @@ export function applyStudioDocumentOperation(
   if (operation.type === 'open_media') return applyOpenMedia(document, operation)
   if (operation.type === 'propose_edit') return applyProposeEdit(document, operation)
   if (operation.type === 'resolve_proposal') return applyResolveProposal(document, operation)
+  if (operation.type === 'set_transcript') return applySetTranscript(document, operation)
   return applyStudioEditOp(document, operation)
 }
 
@@ -413,6 +553,15 @@ export type StudioResolveProposalOutcome =
       decision: StudioProposalDecision
       appliedOp?: StudioEditOp
     }
+  | {
+      ok: false
+      code: StudioEditErrorCode | 'stale_base'
+      message: string
+      currentRevision: number
+    }
+
+export type StudioSetTranscriptOutcome =
+  | { ok: true; revision: number; transcript: StudioTranscript }
   | {
       ok: false
       code: StudioEditErrorCode | 'stale_base'
@@ -487,10 +636,14 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
     formatVersion?: unknown
     assets?: unknown
     proposals?: unknown
+    transcripts?: unknown
     tracks?: unknown
   }
+  const documentFormatVersion = document.formatVersion
   if (
-    (document.formatVersion !== 1 && document.formatVersion !== STUDIO_DOCUMENT_FORMAT_VERSION) ||
+    (documentFormatVersion !== 1 &&
+      documentFormatVersion !== 2 &&
+      documentFormatVersion !== STUDIO_DOCUMENT_FORMAT_VERSION) ||
     !Array.isArray(document.tracks)
   ) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: snapshot shape is invalid`)
@@ -498,11 +651,17 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
   if (document.assets !== undefined && !Array.isArray(document.assets)) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: assets must be an array`)
   }
-  if (
-    document.formatVersion === STUDIO_DOCUMENT_FORMAT_VERSION &&
-    !Array.isArray(document.proposals)
-  ) {
+  if (documentFormatVersion !== 1 && !Array.isArray(document.proposals)) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: proposals must be an array`)
+  }
+  if (
+    documentFormatVersion === STUDIO_DOCUMENT_FORMAT_VERSION &&
+    !Array.isArray(document.transcripts)
+  ) {
+    throw new StudioStoreCorruptError(
+      'snapshot_unreadable',
+      `${path}: transcripts must be an array`
+    )
   }
 
   return {
@@ -512,9 +671,10 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
     document: {
       formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
       assets: (document.assets ?? []) as StudioMediaAsset[],
-      proposals:
-        document.formatVersion === STUDIO_DOCUMENT_FORMAT_VERSION
-          ? (document.proposals as StudioEditProposal[])
+      proposals: documentFormatVersion === 1 ? [] : (document.proposals as StudioEditProposal[]),
+      transcripts:
+        documentFormatVersion === STUDIO_DOCUMENT_FORMAT_VERSION
+          ? (document.transcripts as StudioTranscript[])
           : [],
       tracks: document.tracks as StudioTrack[]
     }
@@ -860,6 +1020,63 @@ export class StudioRevisionStore {
           ? { appliedOp: structuredClone(proposal.op) }
           : {})
       }
+    })
+  }
+
+  setTranscript(
+    baseRevision: number,
+    requestedTranscript: StudioTranscript
+  ): Promise<StudioSetTranscriptOutcome> {
+    return this.enqueue(async () => {
+      if (this.closed) throw new Error('StudioRevisionStore is closed')
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+        return {
+          ok: false as const,
+          code: 'invalid_params' as const,
+          message: 'baseRevision must be a non-negative safe integer',
+          currentRevision: this.currentRevision
+        }
+      }
+      if (baseRevision !== this.currentRevision) {
+        return {
+          ok: false as const,
+          code: 'stale_base' as const,
+          message: `base revision ${baseRevision} is stale; current revision is ${this.currentRevision}`,
+          currentRevision: this.currentRevision
+        }
+      }
+
+      const requestedOperation: StudioSetTranscriptOp = {
+        type: 'set_transcript',
+        transcript: structuredClone(requestedTranscript)
+      }
+      let nextDocument: StudioDocument
+      try {
+        nextDocument = applyStudioDocumentOperation(this.document, requestedOperation)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: error.code,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
+      }
+
+      const transcript = nextDocument.transcripts.find(
+        (candidate) => candidate.transcriptId === requestedTranscript.transcriptId
+      )
+      if (transcript === undefined) {
+        throw new Error('validated transcript was not present in the next Studio document')
+      }
+      const operation: StudioSetTranscriptOp = {
+        type: 'set_transcript',
+        transcript: structuredClone(transcript)
+      }
+      const revision = await this.commitOperationLocked(operation, nextDocument)
+      return { ok: true as const, revision, transcript: structuredClone(transcript) }
     })
   }
 

@@ -9,6 +9,7 @@ import {
   STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_PROTOCOL_VERSION,
+  STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   STUDIO_SERVER_NAME,
   classifyStudioMessage,
   studioError,
@@ -17,7 +18,8 @@ import {
   type StudioEditOp,
   type StudioNotificationMessage,
   type StudioRequestMessage,
-  type StudioResponseMessage
+  type StudioResponseMessage,
+  type StudioTranscriptSegment
 } from './StudioProtocol'
 import type { StudioRevisionStore } from './StudioRevisionStore'
 
@@ -77,6 +79,43 @@ async function handleRequest(
           schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
           revision: outcome.revision,
           asset: outcome.asset
+        })
+      }
+      return studioError(request.id, outcome.code, outcome.message, {
+        currentRevision: outcome.currentRevision
+      })
+    }
+    case STUDIO_METHODS.setTranscript: {
+      const params = request.params
+      if (
+        !isRecord(params) ||
+        params.schemaVersion !== STUDIO_TRANSCRIPT_SCHEMA_VERSION ||
+        typeof params.baseRevision !== 'number' ||
+        typeof params.transcriptId !== 'string' ||
+        typeof params.assetId !== 'string' ||
+        (params.localeIdentifier !== undefined && typeof params.localeIdentifier !== 'string') ||
+        !Array.isArray(params.segments)
+      ) {
+        return studioError(
+          request.id,
+          'invalid_params',
+          `setTranscript requires schemaVersion ${STUDIO_TRANSCRIPT_SCHEMA_VERSION}, baseRevision, transcriptId, assetId and segments`
+        )
+      }
+      const outcome = await store.setTranscript(params.baseRevision, {
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        transcriptId: params.transcriptId,
+        assetId: params.assetId,
+        ...(params.localeIdentifier === undefined
+          ? {}
+          : { localeIdentifier: params.localeIdentifier }),
+        segments: params.segments as StudioTranscriptSegment[]
+      })
+      if (outcome.ok) {
+        return studioResult(request.id, {
+          schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+          revision: outcome.revision,
+          transcript: outcome.transcript
         })
       }
       return studioError(request.id, outcome.code, outcome.message, {

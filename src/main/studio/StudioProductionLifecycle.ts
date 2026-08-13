@@ -7,6 +7,7 @@ import {
   spawnStudioCompanionProcess,
   type StudioCompanionChild,
   type StudioHostOpenMediaOutcome,
+  type StudioHostSetTranscriptOutcome,
   type StudioSupervisorEvent,
   type StudioSupervisorStatus
 } from './StudioCompanionSupervisor'
@@ -14,7 +15,7 @@ import {
   resolveStudioCompanionShouldRun,
   type StudioCompanionResolution
 } from './StudioCompanionSettings'
-import type { StudioMediaAsset } from './StudioProtocol'
+import type { StudioMediaAsset, StudioTranscript } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 export const STUDIO_PRODUCTION_STATE_DIR = 'studio-companion'
@@ -158,6 +159,11 @@ export class StudioProductionLifecycle {
   openMedia(asset: StudioMediaAsset): Promise<StudioHostOpenMediaOutcome> {
     if (this.disposed) throw new Error('StudioProductionLifecycle is disposed')
     return this.supervisor.openMedia(asset)
+  }
+
+  setTranscript(transcript: StudioTranscript): Promise<StudioHostSetTranscriptOutcome> {
+    if (this.disposed) throw new Error('StudioProductionLifecycle is disposed')
+    return this.supervisor.setTranscript(transcript)
   }
 
   async dispose(): Promise<void> {

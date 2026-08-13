@@ -2,7 +2,12 @@ import * as fsPromises from 'node:fs/promises'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { STUDIO_PROPOSAL_SCHEMA_VERSION, type StudioInsertRangeOp } from './StudioProtocol'
+import {
+  STUDIO_PROPOSAL_SCHEMA_VERSION,
+  STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+  type StudioInsertRangeOp,
+  type StudioTranscript
+} from './StudioProtocol'
 import {
   STUDIO_DOCUMENT_FORMAT_VERSION,
   STUDIO_JOURNAL_FILENAME,
@@ -38,6 +43,43 @@ function insertRange(overrides: Partial<StudioInsertRangeOp> = {}): StudioInsert
     at: { n: 0, d: 1 },
     ...overrides
   }
+}
+
+function transcript(overrides: Partial<StudioTranscript> = {}): StudioTranscript {
+  return {
+    schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+    transcriptId: 'transcript-1',
+    assetId: 'asset-1',
+    localeIdentifier: 'en-US',
+    segments: [
+      {
+        segmentId: 'segment-1',
+        text: 'First exact phrase',
+        sourceIn: { n: 0, d: 30_000 },
+        sourceOut: { n: 30_030, d: 30_000 },
+        confidence: 0.97
+      },
+      {
+        segmentId: 'segment-2',
+        text: 'Second exact phrase',
+        sourceIn: { n: 60_060, d: 30_000 },
+        sourceOut: { n: 90_090, d: 30_000 },
+        confidence: 0.91
+      }
+    ],
+    ...overrides
+  }
+}
+
+async function openTranscriptAsset(store: StudioRevisionStore, directory: string): Promise<void> {
+  const mediaPath = nodePath.join(directory, 'transcript-source.mov')
+  await fsPromises.writeFile(mediaPath, 'fixture', 'utf8')
+  const outcome = await store.openMedia(0, {
+    assetId: 'asset-1',
+    path: mediaPath,
+    mediaKind: 'video'
+  })
+  if (!outcome.ok) throw new Error(outcome.message)
 }
 
 describe('StudioRevisionStore', () => {
@@ -304,6 +346,181 @@ describe('StudioRevisionStore', () => {
     await store.close()
   })
 
+  it('persists exact transcript ranges and replays them with their asset identity', async () => {
+    const directory = await makeStoreDirectory()
+    const first = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+    await openTranscriptAsset(first, directory)
+
+    const stored = await first.setTranscript(1, transcript())
+    expect(stored).toMatchObject({
+      ok: true,
+      revision: 2,
+      transcript: {
+        schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
+        transcriptId: 'transcript-1',
+        assetId: 'asset-1'
+      }
+    })
+    if (!stored.ok) throw new Error(stored.message)
+    expect(stored.transcript.segments[0]).toMatchObject({
+      segmentId: 'segment-1',
+      sourceIn: { n: 0, d: 1 },
+      sourceOut: { n: 1001, d: 1000 }
+    })
+    const expected = first.getDocument()
+    await first.close()
+
+    const reopened = await StudioRevisionStore.open(directory, {
+      allowedMediaRoots: [directory]
+    })
+    expect(reopened.revision).toBe(2)
+    expect(reopened.recovery.replayedJournalOps).toBe(2)
+    expect(reopened.getDocument()).toEqual(expected)
+    await reopened.close()
+  })
+
+  it('keeps exact transcript segments in a compacted v3 snapshot', async () => {
+    const directory = await makeStoreDirectory()
+    const first = await StudioRevisionStore.open(directory, {
+      allowedMediaRoots: [directory],
+      compactEveryOps: 2
+    })
+    await openTranscriptAsset(first, directory)
+    await first.setTranscript(1, transcript())
+    await first.close()
+
+    const snapshot = JSON.parse(
+      await fsPromises.readFile(nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME), 'utf8')
+    ) as { document: { formatVersion: number; transcripts: unknown[] } }
+    expect(snapshot.document.formatVersion).toBe(STUDIO_DOCUMENT_FORMAT_VERSION)
+    expect(snapshot.document.transcripts).toHaveLength(1)
+    expect(snapshot.document.transcripts[0]).toMatchObject({ transcriptId: 'transcript-1' })
+
+    const reopened = await StudioRevisionStore.open(directory, {
+      allowedMediaRoots: [directory]
+    })
+    expect(reopened.recovery.replayedJournalOps).toBe(0)
+    const transcripts = reopened.getDocument().transcripts
+    expect(transcripts).toHaveLength(1)
+    expect(transcripts[0].transcriptId).toBe('transcript-1')
+    expect(transcripts[0].segments[0].segmentId).toBe('segment-1')
+    await reopened.close()
+  })
+
+  it('replaces a transcript by stable id without duplicating selection units', async () => {
+    const directory = await makeStoreDirectory()
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+    await openTranscriptAsset(store, directory)
+    await store.setTranscript(1, transcript())
+
+    const replacement = transcript({
+      localeIdentifier: 'en-GB',
+      segments: [
+        {
+          segmentId: 'replacement',
+          text: 'Replacement phrase',
+          sourceIn: { n: 0, d: 1 },
+          sourceOut: { n: 2, d: 1 }
+        }
+      ]
+    })
+    await expect(store.setTranscript(2, replacement)).resolves.toMatchObject({
+      ok: true,
+      revision: 3,
+      transcript: { localeIdentifier: 'en-GB', segments: [{ segmentId: 'replacement' }] }
+    })
+    expect(store.getDocument().transcripts).toHaveLength(1)
+    await store.close()
+  })
+
+  it('rejects unknown assets, duplicate ids, overlaps and invalid confidence atomically', async () => {
+    const directory = await makeStoreDirectory()
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+    await expect(store.setTranscript(0, transcript())).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_op',
+      currentRevision: 0
+    })
+    await openTranscriptAsset(store, directory)
+
+    const duplicate = transcript({
+      segments: [
+        {
+          segmentId: 'same',
+          text: 'One',
+          sourceIn: { n: 0, d: 1 },
+          sourceOut: { n: 1, d: 1 }
+        },
+        {
+          segmentId: 'same',
+          text: 'Two',
+          sourceIn: { n: 2, d: 1 },
+          sourceOut: { n: 3, d: 1 }
+        }
+      ]
+    })
+    await expect(store.setTranscript(1, duplicate)).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_params',
+      currentRevision: 1
+    })
+
+    const overlapping = transcript({
+      segments: [
+        {
+          segmentId: 'one',
+          text: 'One',
+          sourceIn: { n: 0, d: 1 },
+          sourceOut: { n: 2, d: 1 }
+        },
+        {
+          segmentId: 'two',
+          text: 'Two',
+          sourceIn: { n: 1, d: 1 },
+          sourceOut: { n: 3, d: 1 }
+        }
+      ]
+    })
+    await expect(store.setTranscript(1, overlapping)).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_op',
+      currentRevision: 1
+    })
+
+    const invalidConfidence = transcript({
+      segments: [
+        {
+          segmentId: 'confidence',
+          text: 'Confidence',
+          sourceIn: { n: 0, d: 1 },
+          sourceOut: { n: 1, d: 1 },
+          confidence: 1.1
+        }
+      ]
+    })
+    await expect(store.setTranscript(1, invalidConfidence)).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid_params',
+      currentRevision: 1
+    })
+    expect(store.revision).toBe(1)
+    expect(store.getDocument().transcripts).toEqual([])
+    await store.close()
+  })
+
+  it('rejects stale transcript replacement without changing durable data', async () => {
+    const directory = await makeStoreDirectory()
+    const store = await StudioRevisionStore.open(directory, { allowedMediaRoots: [directory] })
+    await openTranscriptAsset(store, directory)
+    await store.setTranscript(1, transcript())
+
+    await expect(
+      store.setTranscript(1, transcript({ localeIdentifier: 'fr-FR' }))
+    ).resolves.toMatchObject({ ok: false, code: 'stale_base', currentRevision: 2 })
+    expect(store.getDocument().transcripts[0].localeIdentifier).toBe('en-US')
+    await store.close()
+  })
+
   it('persists a ghost proposal without touching the timeline, then accepts it atomically', async () => {
     const store = await StudioRevisionStore.open(await makeStoreDirectory())
     const proposed = await store.proposeEdit(0, 'proposal-1', insertRange())
@@ -393,7 +610,7 @@ describe('StudioRevisionStore', () => {
     await store.close()
   })
 
-  it('keeps open proposals in a compacted v2 snapshot', async () => {
+  it('keeps open proposals in a compacted v3 snapshot', async () => {
     const directory = await makeStoreDirectory()
     const first = await StudioRevisionStore.open(directory, { compactEveryOps: 1 })
     await first.proposeEdit(0, 'proposal-snapshot', insertRange())
@@ -413,7 +630,40 @@ describe('StudioRevisionStore', () => {
     await reopened.close()
   })
 
-  it('migrates document-format v1 snapshots with no proposals into v2', async () => {
+  it('migrates document-format v2 snapshots while preserving open proposals', async () => {
+    const directory = await makeStoreDirectory()
+    const openProposal = {
+      schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+      proposalId: 'v2-proposal',
+      createdRevision: 3,
+      op: insertRange()
+    }
+    await fsPromises.writeFile(
+      nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME),
+      JSON.stringify({
+        format: STUDIO_SNAPSHOT_FORMAT,
+        v: 1,
+        revision: 3,
+        document: {
+          formatVersion: 2,
+          assets: [],
+          proposals: [openProposal],
+          tracks: []
+        }
+      }),
+      'utf8'
+    )
+
+    const store = await StudioRevisionStore.open(directory)
+    expect(store.getDocument()).toMatchObject({
+      formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+      proposals: [{ proposalId: 'v2-proposal' }],
+      transcripts: []
+    })
+    await store.close()
+  })
+
+  it('migrates document-format v1 snapshots with no proposals or transcripts into v3', async () => {
     const directory = await makeStoreDirectory()
     await fsPromises.writeFile(
       nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME),
@@ -432,6 +682,7 @@ describe('StudioRevisionStore', () => {
       formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
       assets: [],
       proposals: [],
+      transcripts: [],
       tracks: []
     })
     await store.close()
