@@ -443,14 +443,20 @@ export function applyRuntimeProfileToPayload(
       status: selectedPath ? 'selected' : 'selection-required'
     }
   }
-  if (profile.approvalMode) {
+  const standardBuiltInDefaultInherits =
+    profile.builtin === true &&
+    profile.approvalMode === 'default' &&
+    (profile.id === `builtin:${payload.provider}:local` ||
+      profile.id === `builtin:${payload.provider}:global`)
+  if (profile.approvalMode && !standardBuiltInDefaultInherits) {
     // SAFETY: a runtime profile must NOT silently LOOSEN an explicit read-only
     // ('plan') seat to write-capable. The builtin profiles carry
-    // approvalMode:'default', which otherwise clobbered a user's explicit
-    // "Plan / Read-only" composer choice and dropped the read-only posture
-    // (observed live: a read-only Grok run went write-capable via
-    // builtin:grok:global, so the deny rules + host read-only gate never engaged).
-    // A profile MAY still tighten a non-read-only seat (including to 'plan').
+    // approvalMode:'default' as a schema-era default, not as a user-selected
+    // ceiling. Those exact standard profiles inherit the signed run posture so
+    // Full WS Access cannot silently become Accept Edits at dispatch. Explicit
+    // custom profiles MAY still tighten a non-read-only seat (including to
+    // 'plan'), while the rank check below prevents every profile from loosening
+    // an explicit Plan / Read-only seat.
     const profileMode = coerceApprovalMode(profile.approvalMode) ?? 'default'
     if (approvalModeRank(profileMode) <= approvalModeRank(incomingMode)) {
       payload.approvalMode = profileMode

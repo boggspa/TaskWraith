@@ -102,12 +102,41 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
     expect(out.approvalMode).toBe('plan')
   })
 
-  it('still applies the profile mode for a non-read-only seat', () => {
+  it('treats the standard built-in default as inheritance for an elevated seat', () => {
     const out = applyRuntimeProfileToPayload(
-      payload({ approvalMode: 'acceptEdits' }),
+      payload({
+        approvalMode: 'auto_edit',
+        effectivePermissions: {
+          ...fullAccessPermissions(),
+          presetId: 'workspace_write'
+        }
+      }),
       depsWith(makeProfile({ approvalMode: 'default' }))
     )
+    expect(out.approvalMode).toBe('auto_edit')
+    expect(out.effectivePermissions).toMatchObject({
+      presetId: 'workspace_write',
+      approvalMode: 'auto_edit',
+      readOnly: false
+    })
+  })
+
+  it('still applies an explicit custom profile mode as a ceiling', () => {
+    const profile = makeProfile({
+      id: 'custom:grok:prompt-on-action',
+      builtin: false,
+      approvalMode: 'default'
+    })
+    const out = applyRuntimeProfileToPayload(
+      payload({
+        runtimeProfileId: profile.id,
+        approvalMode: 'auto_edit',
+        effectivePermissions: fullAccessPermissions()
+      }),
+      depsWith(profile)
+    )
     expect(out.approvalMode).toBe('default')
+    expect(out.effectivePermissions?.presetId).toBe('default')
   })
 
   it('lets a profile TIGHTEN a non-read-only seat to read-only', () => {
@@ -119,19 +148,21 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
   })
 
   it('re-derives the signed service map when a profile tightens auto_edit to default', () => {
+    const profile = makeProfile({
+      id: 'custom:grok:deny-files',
+      builtin: false,
+      approvalMode: 'default',
+      agenticServices: { fileChanges: 'deny' }
+    })
     const out = applyRuntimeProfileToPayload(
       payload({
+        runtimeProfileId: profile.id,
         workspace: '/repo',
         approvalMode: 'auto_edit',
         effectivePermissions: fullAccessPermissions()
       }),
       {
-        ...depsWith(
-          makeProfile({
-            approvalMode: 'default',
-            agenticServices: { fileChanges: 'deny' }
-          })
-        ),
+        ...depsWith(profile),
         getSettings: () =>
           settingsWithServices({
             shellCommands: 'ask',
