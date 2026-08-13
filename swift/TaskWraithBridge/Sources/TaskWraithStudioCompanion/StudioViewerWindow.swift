@@ -34,7 +34,7 @@ final class StudioViewerView: NSView {
         static let tab: UInt16 = 48
     }
 
-    private let renderer: StudioViewerRenderer
+    let renderer: StudioViewerRenderer
     /// The tested transport lives in Core; this view only forwards gestures to
     /// it and draws whatever the resulting playhead selects.
     var transport: StudioTransportController
@@ -60,7 +60,7 @@ final class StudioViewerView: NSView {
     private var reviewVersion: StudioReviewVersion = .current
     /// Grading is Core-complete and was unreachable: no Companion code built a
     /// non-default settings value, so the product was pinned to Original.
-    private var gradeSettings = StudioGradeSettings()
+    var gradeSettings = StudioGradeSettings()
     /// Monotonic within this process, and started above hello/getDocument so a
     /// proposal id can never collide with them.
     private var nextProposalRequestId = StudioProposalRequest.firstProposalRequestId
@@ -507,6 +507,21 @@ final class StudioViewerView: NSView {
         transport.endScrub(atHost: CACurrentMediaTime())
     }
 
+    /// The HUD line for the current grade. Calls isNeutral so a mode claiming
+    /// FX while doing nothing SAYS SO — the guard I wrote for exactly this and
+    /// then never invoked.
+    var gradeLabel: String {
+        switch gradeSettings.mode {
+        case .original:
+            return "Original"
+        case .effect:
+            return renderer.isGradeNeutral ? "Effect (no-op — d for 709>sRGB)" : "Effect"
+        case .split:
+            return renderer.isGradeNeutral
+                ? "Split (no-op — d for 709>sRGB)" : "Split compare"
+        }
+    }
+
     /// Emits studio/resolveProposal through the SAME serialized writer the trim
     /// proposal uses. A ghost a user can see but cannot accept or reject is a
     /// decoration, not proposal-first editing.
@@ -730,16 +745,25 @@ final class StudioViewerView: NSView {
             transport.playRange(atHost: host)
         case "x":
             transport.clearMarks(atHost: host)
+        case "d":
+            // The display transform was implemented, pixel-tested against a CPU
+            // oracle, and reachable by nobody: gradeSettings stayed at its
+            // default .none forever, so Effect switched program without moving
+            // the picture.
+            gradeSettings.displayTransform =
+                gradeSettings.displayTransform == .none ? .rec709ToSRGB : .none
+            renderer.grade = gradeSettings
+            report(message: gradeLabel)
         case "g":
             // Original <-> Effect. The mission's guard still binds: a toggle and
             // one supplied LUT, not a grading suite.
             gradeSettings.mode = gradeSettings.mode == .original ? .effect : .original
             renderer.grade = gradeSettings
-            report(message: gradeSettings.mode == .original ? "Original" : "Effect")
+            report(message: gradeLabel)
         case "s":
             gradeSettings.mode = gradeSettings.mode == .split ? .effect : .split
             renderer.grade = gradeSettings
-            report(message: gradeSettings.mode == .split ? "Split compare" : "Effect")
+            report(message: gradeLabel)
         case "v":
             toggleReviewVersion()
         case "a":

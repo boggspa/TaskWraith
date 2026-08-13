@@ -89,4 +89,88 @@ final class StudioProductWiringTests: XCTestCase {
         let params = try XCTUnwrap(json["params"] as? [String: Any])
         XCTAssertNil(params["op"], "a resolve carries a decision, never an op")
     }
+
+    /// THE DISPLAY-TRANSFORM REACHABILITY TEST — and lastPipelineKind is the
+    /// WRONG instrument here.
+    ///
+    /// For the bypass, lastPipelineKind was right: neutral grading is
+    /// bit-identical to no grading, so pixels could not distinguish them. For
+    /// THIS claim it is exactly backwards — the program can switch while the
+    /// picture stays put, and that inertness IS the defect. So this asserts
+    /// pixels.
+    func testEnablingTheDisplayTransformActuallyChangesThePicture() throws {
+        let renderer = try makeRenderer()
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: renderer.device, width: 64, height: 64)
+        // A mid-grey: Rec.709 and sRGB differ most in shadows and measurably
+        // here. Sampling where the two curves coincide would prove nothing.
+        let source = try StudioTestMedia.makeFrameSource(
+            lumaLevels: [96], device: renderer.device)
+        renderer.attach(source: source)
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let clock = StudioPlaybackClock(timebase: timebase, durationTicks: 600)
+        let snapshot = clock.snapshot(atHost: 0)
+
+        var effect = StudioGradeSettings()
+        effect.mode = .effect
+        renderer.grade = effect
+        _ = renderer.render(snapshot: snapshot, to: target)
+        let inert = try StudioTestPatternRenderer.readPixel(from: target, x: 32, y: 32)
+
+        effect.displayTransform = .rec709ToSRGB
+        renderer.grade = effect
+        _ = renderer.render(snapshot: snapshot, to: target)
+        let transformed = try StudioTestPatternRenderer.readPixel(from: target, x: 32, y: 32)
+
+        XCTAssertNotEqual(
+            [inert.red, inert.green, inert.blue],
+            [transformed.red, transformed.green, transformed.blue],
+            "enabling the display transform did not move a single channel — the "
+                + "HUD would claim Effect while the picture is untouched")
+        // Direction matters: Rec.709 -> sRGB LIFTS shadows, so mid-grey must
+        // come out brighter. An equality-only assertion would pass on a change
+        // in the wrong direction.
+        XCTAssertGreaterThan(transformed.red, inert.red)
+    }
+
+    /// The honesty guard, finally invoked — and it was wrong in the direction
+    /// nobody checked.
+    func testTheNeutralityGuardAccountsForWhetherALutIsActuallyLoaded() throws {
+        let renderer = try makeRenderer()
+
+        // DEFAULT settings, which is what the product uses: lutAmount is 1.0 but
+        // no LUT is resident, so the picture is untouched and the guard must
+        // say so. The old parameterless form returned false here.
+        renderer.grade = StudioGradeSettings()
+        XCTAssertTrue(
+            renderer.isGradeNeutral,
+            "default settings with no LUT leave the picture untouched")
+
+        var transformed = StudioGradeSettings()
+        transformed.displayTransform = .rec709ToSRGB
+        renderer.grade = transformed
+        XCTAssertFalse(renderer.isGradeNeutral, "a display transform is not a no-op")
+
+        // And with a LUT resident, lutAmount decides.
+        let identity = try StudioColorLut.parseCube(Self.identityCube)
+        try renderer.setLut(identity)
+        var withLut = StudioGradeSettings()
+        renderer.grade = withLut
+        XCTAssertFalse(renderer.isGradeNeutral, "a loaded LUT at full amount is not a no-op")
+        withLut.lutAmount = 0
+        renderer.grade = withLut
+        XCTAssertTrue(renderer.isGradeNeutral, "a LUT at zero amount changes nothing")
+    }
+
+    private static let identityCube = """
+        LUT_3D_SIZE 2
+        0.0 0.0 0.0
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        1.0 1.0 0.0
+        0.0 0.0 1.0
+        1.0 0.0 1.0
+        0.0 1.0 1.0
+        1.0 1.0 1.0
+        """
 }

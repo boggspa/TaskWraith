@@ -366,9 +366,21 @@ final class StudioColorGradeTests: XCTestCase {
         XCTAssertEqual(StudioGradeSettings(splitPosition: -5).splitPosition, 0)
         XCTAssertEqual(StudioGradeSettings(lutAmount: 9).lutAmount, 1)
         // "FX" that changes nothing is the same lie as a bypass that is not one.
-        XCTAssertTrue(StudioGradeSettings(mode: .effect, lutAmount: 0).isNeutral)
+        XCTAssertTrue(
+            StudioGradeSettings(mode: .effect, lutAmount: 0).isNeutral(hasLut: true))
         XCTAssertFalse(
-            StudioGradeSettings(mode: .effect, displayTransform: .rec709ToSRGB).isNeutral
+            StudioGradeSettings(mode: .effect, displayTransform: .rec709ToSRGB)
+                .isNeutral(hasLut: true)
         )
+        // THE CASE THIS TEST USED TO MISS. It only ever passed lutAmount: 0 by
+        // hand — the input that makes the predicate correct. The DEFAULT the
+        // product uses is lutAmount 1.0 with no LUT resident, and that leaves
+        // the picture untouched.
+        XCTAssertTrue(
+            StudioGradeSettings(mode: .effect).isNeutral(hasLut: false),
+            "no LUT loaded means lutAmount cannot change anything")
+        XCTAssertFalse(
+            StudioGradeSettings(mode: .effect).isNeutral(hasLut: true),
+            "a resident LUT at full amount does change the picture")
     }
 }

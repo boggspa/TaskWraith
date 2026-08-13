@@ -234,3 +234,39 @@ final class StudioViewerCoordinateTests: XCTestCase {
         XCTAssertEqual(mid.y, 1000, accuracy: 0.001, "(540 - 40) x 2")
     }
 }
+
+/// The HUD must not claim FX while the picture is untouched.
+@MainActor
+final class StudioViewerGradeHudTests: XCTestCase {
+    private func makeView() throws -> StudioViewerView {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        return StudioViewerView(
+            renderer: renderer,
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 600))
+    }
+
+    /// isNeutral was written to prevent exactly this and was never called, so
+    /// the product reported "Effect" over an unchanged picture.
+    func testTheHudSaysNoOpWhenTheGradeChangesNothing() throws {
+        let view = try makeView()
+        view.gradeSettings = StudioGradeSettings(mode: .effect)
+        view.renderer.grade = view.gradeSettings
+        XCTAssertTrue(
+            view.gradeLabel.contains("no-op"),
+            "claiming Effect over an untouched picture is the same lie as a "
+                + "bypass that is not a bypass; got \(view.gradeLabel)")
+
+        view.gradeSettings.displayTransform = .rec709ToSRGB
+        view.renderer.grade = view.gradeSettings
+        XCTAssertEqual(view.gradeLabel, "Effect")
+
+        view.gradeSettings.mode = .split
+        view.renderer.grade = view.gradeSettings
+        XCTAssertEqual(view.gradeLabel, "Split compare")
+
+        view.gradeSettings.mode = .original
+        XCTAssertEqual(view.gradeLabel, "Original", "Original never claims FX")
+    }
+}

@@ -146,6 +146,13 @@ public final class StudioViewerRenderer {
     /// product-unreachable is not shipped.
     public var grade = StudioGradeSettings()
 
+    /// Whether the current grade would leave the picture untouched, accounting
+    /// for whether a LUT is actually resident. The renderer is the only place
+    /// that knows both halves.
+    public var isGradeNeutral: Bool {
+        grade.isNeutral(hasLut: videoRenderer.hasLut)
+    }
+
     /// Loads (or clears) the externally supplied LUT.
     public func setLut(_ lut: StudioColorLut?) throws {
         try videoRenderer.setLut(lut)

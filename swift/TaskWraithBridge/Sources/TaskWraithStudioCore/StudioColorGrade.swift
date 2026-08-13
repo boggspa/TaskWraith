@@ -91,8 +91,21 @@ public struct StudioGradeSettings: Equatable, Sendable {
     /// True when nothing would change the picture. Used to keep the HUD honest
     /// rather than to skip work: a mode that claims "FX" while doing nothing is
     /// the same lie as a bypass that is not a bypass.
-    public var isNeutral: Bool {
-        displayTransform == .none && lutAmount == 0
+    ///
+    /// `hasLut` IS REQUIRED, and that is the whole point of the signature. This
+    /// began as a parameterless `var` reading `lutAmount == 0`, which is wrong
+    /// for the DEFAULT settings the product actually uses: lutAmount defaults to
+    /// 1.0, so with no LUT loaded the old predicate said "not neutral" while the
+    /// picture was unchanged — a guard against a lying HUD that lied itself, in
+    /// the opposite direction. The settings alone cannot know whether a LUT is
+    /// resident; only the renderer can. Taking it as a parameter makes the
+    /// missing fact impossible to forget rather than merely documented.
+    ///
+    /// The old form passed its tests because they supplied `lutAmount: 0` by
+    /// hand — the input that makes the predicate correct, rather than the one
+    /// the product uses.
+    public func isNeutral(hasLut: Bool) -> Bool {
+        displayTransform == .none && (!hasLut || lutAmount == 0)
     }
 }
 
