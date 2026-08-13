@@ -80,6 +80,37 @@ describe('deriveChatIsRunning', () => {
     expect(deriveChatIsRunning({ chat: baseChat(), runningChatIds: new Set(['chat-1']) })).toBe(true)
   })
 
+  it('lets a terminal solo run override an orphan runningChatIds entry', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat(withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 1 })),
+        runningChatIds: new Set(['chat-1'])
+      })
+    ).toBe(false)
+  })
+
+  it('lets active queue evidence override an older terminal solo run', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat(withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 1 })),
+        runningChatIds: new Set(['chat-1']),
+        runQueueJobs: [{ chatId: 'chat-1', status: 'starting' }]
+      })
+    ).toBe(true)
+  })
+
+  it('lets a live ensemble round override an older terminal run', () => {
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat({
+          ...ensemblePatch('running'),
+          ...withRuns({ endedAt: '2026-06-09T00:01:00.000Z', exitCode: 0 })
+        }),
+        runningChatIds: new Set(['chat-1'])
+      })
+    ).toBe(true)
+  })
+
   it('is true for active and steer-promoting run-queue jobs, false for queued/paused/other-chat jobs', () => {
     const run = (status: string, chatId = 'chat-1') => ({ chatId, status })
     expect(

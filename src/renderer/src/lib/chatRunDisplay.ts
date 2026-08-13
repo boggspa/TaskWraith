@@ -1,7 +1,7 @@
 import type { ChatRecord } from '../../../main/store/types'
 import type { RunCompleteNotice } from './runCompleteNotice'
 import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
-import { hasKnownInactiveEnsembleRound, hasTerminalLastRun } from './runningChatVisibility'
+import { hasTerminalLastRun } from './runningChatVisibility'
 
 /**
  * Run-queue statuses that count a chat as actively RUNNING — drives the
@@ -45,12 +45,15 @@ export function deriveChatIsRunning(input: DeriveChatIsRunningInput): boolean {
       return true
     }
   }
-  if (input.runningChatIds.has(chatId)) {
-    const staleTerminalEnsembleRun =
-      input.chat && hasKnownInactiveEnsembleRound(input.chat) && hasTerminalLastRun(input.chat)
-    return !staleTerminalEnsembleRun
-  }
   if (isEnsembleActiveRoundDispatchLive(input.chat?.ensemble?.activeRound)) return true
+  if (input.runningChatIds.has(chatId)) {
+    // `runningChatIds` is additive when a provider exit is missed. Treat a
+    // terminal last run as the persisted source of truth for solo chats too,
+    // matching `visibleRunningChatIds`; otherwise a recovered run can vanish
+    // from Active Runs while its transcript still paints a live Working row.
+    const staleTerminalRun = input.chat && hasTerminalLastRun(input.chat)
+    return !staleTerminalRun
+  }
   return false
 }
 
