@@ -77,6 +77,14 @@ export interface SeatChangePayload {
    * which is paragraphs against the row's one line.
    */
   briefUpdated?: boolean
+  /**
+   * The final enabled state when this change toggled round participation.
+   *
+   * Absent for every other seat edit. A boolean rather than a generic
+   * "updated" flag lets the transcript say exactly what happened while the
+   * before/after chip snapshots remain scoped to fields the chips render.
+   */
+  enabledChangedTo?: boolean
 }
 
 /**
@@ -182,7 +190,15 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
         // the whole flurry rather than its last step — and a brief edited in an
         // earlier tweak is still news when the latest one only moved the model.
         // Without this OR the note would blink out on the next unrelated tweak.
-        ...(candidate.briefUpdated || next.briefUpdated ? { briefUpdated: true } : {})
+        ...(candidate.briefUpdated || next.briefUpdated ? { briefUpdated: true } : {}),
+        // Keep an earlier toggle visible when a later model/role tweak folds
+        // into the same row. If the later tweak is itself a toggle, its final
+        // state wins — including `false`, which must never be truthiness-tested.
+        ...(typeof next.enabledChangedTo === 'boolean'
+          ? { enabledChangedTo: next.enabledChangedTo }
+          : typeof candidate.enabledChangedTo === 'boolean'
+            ? { enabledChangedTo: candidate.enabledChangedTo }
+            : {})
       }
     }
   }

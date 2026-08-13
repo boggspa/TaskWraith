@@ -131,6 +131,27 @@ describe('coalesceSeatChangeMessages (120 s sliding window, tombstoning)', () =>
     const { payload } = coalesceSeatChangeMessages([prior], nextPayload, T0)
     expect(payload.briefUpdated).toBeUndefined()
   })
+
+  it('keeps the latest enabled state across a coalesced flurry', () => {
+    const disabled = seatChangeMessage('m1', 'p1', T0 - 30_000)
+    disabled.metadata!.seatChange!.enabledChangedTo = false
+
+    // A later non-toggle edit keeps the earlier status annotation alive.
+    const afterUnrelatedEdit = coalesceSeatChangeMessages([disabled], nextPayload, T0).payload
+    expect(afterUnrelatedEdit.enabledChangedTo).toBe(false)
+
+    // A later toggle supersedes it. The false -> true transition must use the
+    // next event's state rather than OR-ing booleans like `briefUpdated` does.
+    const enabledAgain = { ...nextPayload, enabledChangedTo: true }
+    const afterSecondToggle = coalesceSeatChangeMessages([disabled], enabledAgain, T0).payload
+    expect(afterSecondToggle.enabledChangedTo).toBe(true)
+  })
+
+  it('does not annotate ordinary seat changes with an enabled state', () => {
+    const prior = seatChangeMessage('m1', 'p1', T0 - 30_000)
+    const { payload } = coalesceSeatChangeMessages([prior], nextPayload, T0)
+    expect(payload.enabledChangedTo).toBeUndefined()
+  })
 })
 
 describe('close-out seat links', () => {

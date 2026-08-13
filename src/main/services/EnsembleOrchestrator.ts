@@ -20107,7 +20107,10 @@ export class EnsembleOrchestrator {
         // row's one line. So a brief-only edit produced a payload whose two
         // sides were identical: a change row with nothing changed in it. The
         // flag is what the row's "(Brief updated)" note reads.
-        ...(before.instructions !== after.instructions ? { briefUpdated: true } : {})
+        ...(before.instructions !== after.instructions ? { briefUpdated: true } : {}),
+        // Enabled has no composer chip of its own. Carry only actual toggles
+        // so ordinary seat edits never grow an Enabled/Disabled annotation.
+        ...(before.enabled !== after.enabled ? { enabledChangedTo: after.enabled } : {})
       },
       this.deps.now()
     )

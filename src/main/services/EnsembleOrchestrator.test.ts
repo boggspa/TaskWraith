@@ -9931,6 +9931,69 @@ Next action:
     expect(seatChangeMessages()[0].id).not.toBe(firstRow.id)
   })
 
+  it('annotates toggle-only seat changes with the final enabled state', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-05-24T00:00:00.000Z'
+    }
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const seatChangeRow = () => {
+      const payload = harness.chat.messages
+        .filter((message) => message.metadata?.seatChange?.participantId === 'codex')
+        .at(-1)?.metadata?.seatChange
+      return isSeatRosterPayload(payload) ? undefined : payload
+    }
+
+    const disabled = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { enabled: false },
+      changedBy: 'user',
+      reason: 'User disabled an idle seat.'
+    })
+    expect(disabled).toMatchObject({ ok: true, status: 'applied' })
+    expect(seatChangeRow()).toMatchObject({ enabledChangedTo: false })
+    // Enabled is deliberately event chrome rather than a composer chip field,
+    // so a toggle-only row has identical visual seat snapshots plus the note.
+    expect(seatChangeRow()!.before).toEqual(seatChangeRow()!.after)
+
+    // An unrelated tweak folded into the same living row must not erase the
+    // earlier status annotation.
+    await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { model: 'gpt-5.5' },
+      changedBy: 'user',
+      reason: 'User changed an idle seat model.'
+    })
+    expect(seatChangeRow()).toMatchObject({ enabledChangedTo: false })
+
+    // If the seat is toggled again inside the window, the latest final state
+    // wins rather than truthiness-dropping `false` or OR-ing both toggles.
+    const enabled = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { enabled: true },
+      changedBy: 'user',
+      reason: 'User enabled an idle seat.'
+    })
+    expect(enabled).toMatchObject({ ok: true, status: 'applied' })
+    expect(seatChangeRow()).toMatchObject({ enabledChangedTo: true })
+  })
+
   it('flags a brief-only edit, which changes nothing the seat chips can show', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'

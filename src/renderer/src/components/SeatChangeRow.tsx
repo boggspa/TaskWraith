@@ -251,6 +251,12 @@ function SeatStrip({
   // was, with no brief field that could have moved. The `in` check is what
   // keeps a link from ever reaching the note.
   const briefUpdated = 'briefUpdated' in seatChange && seatChange.briefUpdated === true
+  const enabledChangedTo =
+    'enabledChangedTo' in seatChange && typeof seatChange.enabledChangedTo === 'boolean'
+      ? seatChange.enabledChangedTo
+      : undefined
+  const enabledChangeNote =
+    enabledChangedTo === undefined ? '' : enabledChangedTo ? '(Enabled)' : '(Disabled)'
 
   const role = seatRoleLabel(current, true)
 
@@ -286,6 +292,9 @@ function SeatStrip({
           element, as on every other transcript row. */}
       {briefUpdated && phase === 'after' && (
         <span className="seat-change-brief-note">(Brief updated)</span>
+      )}
+      {enabledChangeNote && phase === 'after' && (
+        <span className="seat-change-brief-note">{enabledChangeNote}</span>
       )}
       {time && <span className="seat-change-time">{time}</span>}
     </>

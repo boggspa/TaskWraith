@@ -122,6 +122,32 @@ describe('brief-only seat changes say so', () => {
   })
 })
 
+describe('enabled-state seat changes say what happened', () => {
+  it('maps only the explicit toggle field to Enabled or Disabled', () => {
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    expect(region).toContain("'enabledChangedTo' in seatChange")
+    expect(region).toContain("typeof seatChange.enabledChangedTo === 'boolean'")
+    expect(region).toContain("enabledChangedTo ? '(Enabled)' : '(Disabled)'")
+  })
+
+  it('shows the status with the after state and ahead of the timestamp', () => {
+    const start = rowSource.indexOf('function SeatStrip(')
+    const region = rowSource.slice(start, rowSource.indexOf('export function seatAccentVar'))
+    expect(region).toContain("enabledChangeNote && phase === 'after'")
+    const note = region.indexOf('{enabledChangeNote &&')
+    expect(note).toBeGreaterThan(region.indexOf('{inline ? null : role}'))
+    expect(note).toBeLessThan(region.indexOf('className="seat-change-time"'))
+  })
+
+  it('shares the brief note chrome instead of presenting the status as a seat value chip', () => {
+    const start = rowSource.indexOf('{enabledChangeNote &&')
+    const region = rowSource.slice(start, rowSource.indexOf('{time &&', start))
+    expect(region).toContain('className="seat-change-brief-note"')
+    expect(region).not.toContain('seat-change-chip')
+  })
+})
+
 describe('CharOdometer family contract', () => {
   it('omits the permission chip when the tier is unknown, rather than claiming default', () => {
     // An absent preset is not the default preset. Rows predating the seat
