@@ -15,7 +15,12 @@ import Foundation
 ///   set, in which case it requests exit 0 immediately after hydration. That
 ///   mode exists for conformance/E2E harnesses (the host-side
 ///   StudioCompanionSupervisor interop test); production launch omits it.
-/// - Open-proposal replay is EXPLICITLY UNIMPLEMENTED in v1: durable proposal
+/// - Reconnect hydration is studio/hello -> studio/getDocument, and the
+///   document response now RESTORES durable state: opened assets, open ghost
+///   proposals and transcripts. The "open-proposal replay is explicitly
+///   unimplemented" caveat that rode this file since v1 is retired — the host
+///   made that state durable, and this parses it.
+/// - Legacy note, kept because it explains the shape: durable proposal
 ///   state is not modelled yet, so there is nothing to replay.
 ///
 /// Exit codes:
@@ -55,6 +60,8 @@ public final class StudioCompanionSession {
         /// drawn whichever way it went — an accepted proposal is now part of the
         /// sequence, and a rejected one never will be.
         public let resolvedProposalIds: [String]
+        /// Transcripts the host published in this chunk.
+        public let transcripts: [StudioTranscript]
 
         public init(
             outboundLines: [Data],
@@ -62,7 +69,8 @@ public final class StudioCompanionSession {
             protocolErrors: [String],
             openedAssets: [StudioMediaAsset] = [],
             proposals: [StudioEditProposal] = [],
-            resolvedProposalIds: [String] = []
+            resolvedProposalIds: [String] = [],
+            transcripts: [StudioTranscript] = []
         ) {
             self.outboundLines = outboundLines
             self.exitCode = exitCode
@@ -70,6 +78,7 @@ public final class StudioCompanionSession {
             self.openedAssets = openedAssets
             self.proposals = proposals
             self.resolvedProposalIds = resolvedProposalIds
+            self.transcripts = transcripts
         }
     }
 
@@ -81,12 +90,35 @@ public final class StudioCompanionSession {
     public private(set) var documentRevision: Int?
     public private(set) var editCommittedCount = 0
     /// open_media operations recognised on studio/editCommitted.
+    /// Durable state recovered from the getDocument response.
+    ///
+    /// Separate from the per-chunk Step because hydration is a DIFFERENT event
+    /// from a live commit: a caller reconnecting must reapply everything at
+    /// once, while a caller handling a notification is reacting to one change.
+    /// Collapsing them would make "reopen this asset" indistinguishable from
+    /// "the user just opened this asset".
+    public struct Hydration: Equatable, Sendable {
+        public let assets: [StudioMediaAsset]
+        public let proposals: [StudioEditProposal]
+        public let transcripts: [StudioTranscript]
+
+        public var isEmpty: Bool {
+            assets.isEmpty && proposals.isEmpty && transcripts.isEmpty
+        }
+
+        public static let empty = Hydration(assets: [], proposals: [], transcripts: [])
+    }
+
+    /// Nil until the document response arrives.
+    public private(set) var hydrated: Hydration?
+
     public private(set) var openedAssetCount = 0
     /// Bounded counters for diagnostics; the session holds no proposal state
     /// itself, because durable proposal state is the HOST's and re-deriving it
     /// here would create a second source of truth that can disagree.
     public private(set) var proposalCount = 0
     public private(set) var resolvedProposalCount = 0
+    public private(set) var transcriptCount = 0
     /// Most recent asset the host reported opening, for reconnect diagnostics.
     public private(set) var lastOpenedAsset: StudioMediaAsset?
     public private(set) var protocolErrorCount = 0
@@ -121,6 +153,7 @@ public final class StudioCompanionSession {
         var opened: [StudioMediaAsset] = []
         var proposed: [StudioEditProposal] = []
         var resolved: [String] = []
+        var transcripts: [StudioTranscript] = []
         var exitCode: Int32?
         for event in decoder.push(chunk: chunk) {
             if exitCode != nil { break }
@@ -150,6 +183,10 @@ public final class StudioCompanionSession {
                         resolved.append(resolvedId)
                         resolvedProposalCount += 1
                     }
+                    if let transcript = Self.transcript(in: message) {
+                        transcripts.append(transcript)
+                        transcriptCount += 1
+                    }
                 }
                 exitCode = outcome.exit
             }
@@ -160,7 +197,8 @@ public final class StudioCompanionSession {
             protocolErrors: errors,
             openedAssets: opened,
             proposals: proposed,
-            resolvedProposalIds: resolved
+            resolvedProposalIds: resolved,
+            transcripts: transcripts
         )
     }
 
@@ -221,6 +259,16 @@ public final class StudioCompanionSession {
                 return ([], 4, nil, nil)
             }
             documentRevision = revision
+            // RECOVER THE DOCUMENT, not just the revision.
+            //
+            // This is the reconnect path, and dropping the document here is
+            // what made "reconnect recovery" a claim rather than a behaviour: a
+            // restarted companion re-hydrated to the right revision number and
+            // then showed nothing — no media reopened, no ghosts reappeared, no
+            // transcript. The host has held all of it durably since the
+            // proposal and transcript slices landed; the companion simply threw
+            // it away.
+            hydrated = Self.hydration(from: result["document"])
             phase = .hydrated
             return ([], hydrateOnce ? 0 : nil, nil, nil)
         case .hydrated:
@@ -240,6 +288,30 @@ public final class StudioCompanionSession {
     /// insert_range commits arrive on the SAME notification, so the type
     /// discriminator inside StudioMediaAsset.fromDocumentOperation is what keeps
     /// them apart.
+    /// Decodes durable state from the getDocument document payload.
+    ///
+    /// Individual malformed entries are SKIPPED rather than failing the whole
+    /// hydration. One unreadable ghost must not cost the operator their media
+    /// and their transcript too — partial recovery beats none, and the
+    /// per-entry decoders already fail closed on anything they cannot read.
+    static func hydration(from document: Any?) -> Hydration {
+        guard let document = document as? [String: Any] else { return .empty }
+        let assets = (document["assets"] as? [[String: Any]] ?? [])
+            .compactMap(StudioMediaAsset.decode(from:))
+        let proposals = (document["proposals"] as? [[String: Any]] ?? [])
+            .compactMap { try? StudioProposalDecoder.proposal(from: $0) }
+        let transcripts = (document["transcripts"] as? [[String: Any]] ?? [])
+            .compactMap { try? StudioTranscriptDecoder.transcript(from: $0) }
+        return Hydration(assets: assets, proposals: proposals, transcripts: transcripts)
+    }
+
+    /// Extracts a transcript from a studio/editCommitted whose op is
+    /// set_transcript.
+    static func transcript(in message: StudioMessage) -> StudioTranscript? {
+        guard let operation = message.params?["op"]?.value as? [String: Any] else { return nil }
+        return try? StudioTranscriptDecoder.transcript(fromSetTranscript: operation)
+    }
+
     /// Extracts a ghost proposal from a studio/editCommitted whose op is
     /// propose_edit. Returns nil for every other operation, so open_media and
     /// insert_range commits sharing this notification pass through untouched.
