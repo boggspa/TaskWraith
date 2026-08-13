@@ -182,13 +182,43 @@ public final class StudioAudioPlayer {
     private var track: StudioAudioTrack?
     private var clock: StudioAudioClock?
     private var isEngineRunning = false
+    private var isPlayerAttachedToEngine = false
 
     public private(set) var isPlaying = false
+    /// Exact identity of the resident asset attached to the one device player.
+    /// A caller must name this again when scheduling; a stale route may not
+    /// repurpose the last track after a timeline cut.
+    public private(set) var attachedAssetId: String?
+    public private(set) var scheduledAssetId: String?
+    public private(set) var hasQueuedOutput = false
+    public private(set) var switchCount = 0
+    public private(set) var dropCount = 0
+    public private(set) var correctionCount = 0
+    private var lastScheduledAssetId: String?
+
+    public struct Diagnostics: Equatable, Sendable {
+        public let attachedAssetId: String?
+        public let scheduledAssetId: String?
+        public let hasQueuedOutput: Bool
+        public let switchCount: Int
+        public let dropCount: Int
+        public let correctionCount: Int
+    }
 
     public init() {}
 
     public var sampleRate: Int { track?.sampleRate ?? 0 }
     public var hasAudio: Bool { track != nil }
+    public var diagnostics: Diagnostics {
+        Diagnostics(
+            attachedAssetId: attachedAssetId,
+            scheduledAssetId: scheduledAssetId,
+            hasQueuedOutput: hasQueuedOutput,
+            switchCount: switchCount,
+            dropCount: dropCount,
+            correctionCount: correctionCount
+        )
+    }
 
     /// Output latency in samples: how far ahead of the listener the device is.
     ///
@@ -204,7 +234,11 @@ public final class StudioAudioPlayer {
         return clock.samples(forSeconds: seconds)
     }
 
-    public func attach(track newTrack: StudioAudioTrack, timebase: StudioTimebase) throws {
+    public func attach(
+        track newTrack: StudioAudioTrack,
+        timebase: StudioTimebase,
+        assetId: String? = nil
+    ) throws {
         stop()
         guard let audioClock = StudioAudioClock(
             timebase: timebase,
@@ -214,11 +248,17 @@ public final class StudioAudioPlayer {
         }
         track = newTrack
         clock = audioClock
+        attachedAssetId = assetId
+        scheduledAssetId = nil
+        hasQueuedOutput = false
 
-        if !isEngineRunning {
+        if !isPlayerAttachedToEngine {
             engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: newTrack.format)
+            isPlayerAttachedToEngine = true
+        } else {
+            engine.disconnectNodeOutput(player)
         }
+        engine.connect(player, to: engine.mainMixerNode, format: newTrack.format)
     }
 
     /// Media position one tick past the last sample of the attached sound.
@@ -312,7 +352,15 @@ public final class StudioAudioPlayer {
     /// Returns false when the position lies past the end of the sound. Silence
     /// is the honest answer there; the head of the track is not.
     @discardableResult
-    public func play(fromTicks ticks: Int64) throws -> Bool {
+    public func play(
+        fromTicks ticks: Int64,
+        expectedAssetId: String? = nil
+    ) throws -> Bool {
+        if let expectedAssetId, expectedAssetId != attachedAssetId {
+            dropCount += 1
+            silence()
+            return false
+        }
         guard let track, var audioClock = clock else { return false }
         guard
             let startFrame = Self.startFrame(
@@ -322,8 +370,7 @@ public final class StudioAudioPlayer {
             ),
             let scheduled = Self.segment(of: track.buffer, from: startFrame)
         else {
-            player.stop()
-            isPlaying = false
+            silence()
             return false
         }
         if !isEngineRunning {
@@ -334,10 +381,23 @@ public final class StudioAudioPlayer {
             }
             isEngineRunning = true
         }
+        let changedAsset = lastScheduledAssetId != attachedAssetId
+        let wasQueued = hasQueuedOutput
+        // AVAudioPlayerNode.stop() explicitly flushes every scheduled buffer.
+        // pause() does not, so it is never the gap/missing-asset silence path.
         player.stop()
+        hasQueuedOutput = false
         player.scheduleBuffer(scheduled, at: nil, options: [])
         player.play()
         isPlaying = true
+        hasQueuedOutput = true
+        scheduledAssetId = attachedAssetId
+        lastScheduledAssetId = attachedAssetId
+        if changedAsset {
+            switchCount += 1
+        } else if wasQueued {
+            correctionCount += 1
+        }
         // Anchor AFTER play() so the sample position is the one the device is
         // actually about to render from.
         audioClock.anchor(atTicks: ticks, samplePosition: rawSamplePosition())
@@ -357,12 +417,21 @@ public final class StudioAudioPlayer {
         isPlaying = false
     }
 
-    public func stop() {
-        guard isEngineRunning else { return }
+    /// Positive output silence. AVAudioPlayerNode.pause() leaves scheduled
+    /// buffers queued; stop() flushes them so a gap, missing asset, or identity
+    /// refusal cannot resume the last audible clip later.
+    public func silence() {
         player.stop()
+        scheduledAssetId = nil
+        hasQueuedOutput = false
+        isPlaying = false
+    }
+
+    public func stop() {
+        silence()
+        guard isEngineRunning else { return }
         engine.stop()
         isEngineRunning = false
-        isPlaying = false
     }
 
     /// The device's rendered sample position. Zero before the node has started,
@@ -422,5 +491,7 @@ public final class StudioAudioPlayer {
         stop()
         track = nil
         clock = nil
+        attachedAssetId = nil
+        lastScheduledAssetId = nil
     }
 }

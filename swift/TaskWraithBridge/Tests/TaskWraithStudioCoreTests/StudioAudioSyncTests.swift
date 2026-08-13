@@ -325,6 +325,25 @@ final class StudioAudioSyncTests: XCTestCase {
         )
     }
 
+    /// The committed document is commonly millisecond-timed while a resident
+    /// asset is frame-timed. Keeping the correct clip identity but handing its
+    /// millisecond tick directly to the asset player starts the right clip at
+    /// the wrong audible instant.
+    func testTimelineAudioReexpressesContentTicksForTheResidentAssetClock() {
+        let document = StudioTimebase(timescale: 1_000, frameDurationTicks: 1)!
+        let resident = StudioTimebase.ntsc2997
+
+        XCTAssertEqual(
+            StudioSequenceAudioPolicy.reexpress(
+                sourceTicks: 700,
+                from: document,
+                into: resident
+            ),
+            21_000,
+            "700ms must address 0.7s on the resident asset clock, not tick 700"
+        )
+    }
+
     // MARK: - Helpers
 
     /// A buffer whose every sample equals its own frame index, so any offset is

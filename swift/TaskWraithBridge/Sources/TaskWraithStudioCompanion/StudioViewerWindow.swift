@@ -3,6 +3,26 @@ import Metal
 import QuartzCore
 import TaskWraithStudioCore
 
+/// Only one visible route may schedule the shared device player. This is
+/// separate from StudioPlaybackAuthority: the latter answers content time; this
+/// gate prevents two display links from trying to re-anchor that same authority.
+@MainActor
+final class StudioAudioSchedulingAuthority {
+    private(set) var owner: StudioViewerRoute
+
+    init(owner: StudioViewerRoute = .source) {
+        self.owner = owner
+    }
+
+    func activate(_ route: StudioViewerRoute) {
+        owner = route
+    }
+
+    func permits(_ route: StudioViewerRoute) -> Bool {
+        owner == route
+    }
+}
+
 /// AppKit window + CAMetalLayer shell for the Studio viewer.
 ///
 /// SCOPE HONESTY: this is the presentation shell only. It puts a real
@@ -104,9 +124,13 @@ final class StudioViewerView: NSView {
     /// Source and Review therefore share an oscillator as well as the playback
     /// authority; a cut changes its resident track, not the number of players.
     private let audioPlayer: StudioAudioPlayer
+    /// The one route allowed to schedule that shared device player.
+    let audioSchedulingAuthority: StudioAudioSchedulingAuthority
+    /// The app state owns leases; this callback releases this route's pool lease
+    /// when AppKit closes its window without invalidating a shared decoder.
+    var onPresentationDetached: (() -> Void)?
     /// Which asset the attached sound came from. Nil when nothing is attached.
     private var audioAssetId: String?
-    private var sequenceAudioMuted = false
     /// Sequence PCM must already be resident in the Review attachment. A nil
     /// result is silence; it is never a request to reopen the last clip.
     private var sequenceAudioProvider: ((String) -> StudioResidentAudio?)?
@@ -144,12 +168,15 @@ final class StudioViewerView: NSView {
         renderer: StudioViewerRenderer,
         authority: StudioPlaybackAuthority,
         route: StudioViewerRoute = .source,
-        audioPlayer: StudioAudioPlayer? = nil
+        audioPlayer: StudioAudioPlayer? = nil,
+        audioSchedulingAuthority: StudioAudioSchedulingAuthority? = nil
     ) {
         self.renderer = renderer
         self.authority = authority
         self.route = route
         self.audioPlayer = audioPlayer ?? StudioAudioPlayer()
+        self.audioSchedulingAuthority = audioSchedulingAuthority
+            ?? StudioAudioSchedulingAuthority(owner: route)
         super.init(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -173,7 +200,9 @@ final class StudioViewerView: NSView {
 
     func setLocalAudioSuspendedForSequence(_ suspended: Bool) {
         suspendsLocalAudioForSequence = suspended
-        if suspended { audioPlayer.pause() }
+        if suspended, audioSchedulingAuthority.permits(route) {
+            audioPlayer.silence()
+        }
     }
 
     // MARK: - Layer
@@ -221,10 +250,13 @@ final class StudioViewerView: NSView {
         frameLink?.invalidate()
         frameLink = nil
         guard window != nil else {
-            // Viewer closed: release the decoder and its texture cache now
-            // rather than waiting for ARC, so close/reopen cycles cannot
-            // accumulate decompression sessions.
-            renderer.detachSource()
+            // App state releases this route's lease. Calling renderer.detachSource
+            // directly would default-invalidate a decoder the other route may
+            // still lease from the shared pool.
+            if audioSchedulingAuthority.permits(route) {
+                audioPlayer.silence()
+            }
+            onPresentationDetached?()
             return
         }
 
@@ -263,6 +295,7 @@ final class StudioViewerView: NSView {
     /// up. So the position is read under the OLD source and re-established under
     /// the NEW one.
     private func reconcileTimeSource() {
+        guard audioSchedulingAuthority.permits(route) else { return }
         let audioSeconds = audioPlayer.audioHostSeconds()
         let audioActive = audioSeconds != nil
         if audioActive { lastAudioHostSeconds = audioSeconds ?? 0 }
@@ -286,6 +319,7 @@ final class StudioViewerView: NSView {
     /// item; a gap or unresolved asset is affirmative silence, never last-track
     /// fallback. Source deliberately abstains while Review owns a timeline.
     private func reconcileAudio() {
+        guard audioSchedulingAuthority.permits(route) else { return }
         if route == .source, suspendsLocalAudioForSequence { return }
 
         let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
@@ -296,21 +330,21 @@ final class StudioViewerView: NSView {
         if route == .review, let sequence = renderer.sequence, !sequence.isEmpty {
             switch StudioSequenceAudioPolicy.selection(in: sequence, atTicks: snapshot.positionTicks) {
             case .silence:
-                sequenceAudioMuted = true
                 audioContentAnchorTicks = nil
                 audioTimelineAnchorTicks = nil
-                audioPlayer.pause()
+                audioPlayer.silence()
                 return
             case .play(let assetId, let sourceTicks):
-                guard let resident = sequenceAudioProvider?(assetId) else {
-                    sequenceAudioMuted = true
-                    message = "sequence audio silent — \(assetId) is unavailable"
+                guard let resident = sequenceAudioProvider?(assetId),
+                    resident.assetId == assetId
+                else {
+                        message = "sequence audio silent — \(assetId) is unavailable"
                     audioContentAnchorTicks = nil
                     audioTimelineAnchorTicks = nil
-                    audioPlayer.pause()
+                    audioPlayer.silence()
                     return
                 }
-                if audioAssetId != assetId {
+                if audioAssetId != assetId || !audioPlayer.hasAudio {
                     attachAudio(
                         track: resident.track,
                         timebase: resident.timebase,
@@ -318,8 +352,11 @@ final class StudioViewerView: NSView {
                         assetId: assetId
                     )
                 }
-                sequenceAudioMuted = false
-                contentTicks = sourceTicks
+                contentTicks = StudioSequenceAudioPolicy.reexpress(
+                    sourceTicks: sourceTicks,
+                    from: sequence.timebase ?? transport.clock.timebase,
+                    into: resident.timebase
+                )
                 timelineTicks = snapshot.positionTicks
                 isSequenceAudio = true
             }
@@ -344,7 +381,8 @@ final class StudioViewerView: NSView {
         case .reschedule(let ticks):
             reschedule(
                 audioAt: ticks,
-                transportAt: isSequenceAudio ? timelineTicks : ticks
+                transportAt: isSequenceAudio ? timelineTicks : ticks,
+                expectedAssetId: audioAssetId
             )
         }
     }
@@ -360,9 +398,16 @@ final class StudioViewerView: NSView {
     /// reconcileTimeSource() cannot catch it: audio never stopped being present,
     /// and its guard only fires on a presence CHANGE. So the re-anchor has to
     /// happen here, synchronously, at the point the discontinuity is created.
-    private func reschedule(audioAt contentTicks: Int64, transportAt timelineTicks: Int64) {
+    private func reschedule(
+        audioAt contentTicks: Int64,
+        transportAt timelineTicks: Int64,
+        expectedAssetId: String?
+    ) {
         do {
-            guard try audioPlayer.play(fromTicks: contentTicks) else { return }
+            guard try audioPlayer.play(
+                fromTicks: contentTicks,
+                expectedAssetId: expectedAssetId
+            ) else { return }
         } catch {
             message = "audio unavailable: \(error)"
             audioPlayer.detach()
@@ -606,7 +651,6 @@ final class StudioViewerView: NSView {
         assetId: String?
     ) {
         audioAssetId = track == nil ? nil : assetId
-        sequenceAudioMuted = false
         audioContentAnchorTicks = nil
         audioTimelineAnchorTicks = nil
         audioPlayer.detach()
@@ -614,7 +658,7 @@ final class StudioViewerView: NSView {
         syncMeter = nil
         guard let track else { return }
         do {
-            try audioPlayer.attach(track: track, timebase: timebase)
+            try audioPlayer.attach(track: track, timebase: timebase, assetId: assetId)
             // Deliberately NOT started here. Opening a file used to begin the
             // sound immediately and from sample zero, so a viewer sitting paused
             // at the head was already audibly playing. reconcileAudio() starts
@@ -1220,7 +1264,8 @@ final class StudioViewerWindowController {
         renderer: StudioViewerRenderer,
         authority: StudioPlaybackAuthority,
         route: StudioViewerRoute = .source,
-        audioPlayer: StudioAudioPlayer? = nil
+        audioPlayer: StudioAudioPlayer? = nil,
+        audioSchedulingAuthority: StudioAudioSchedulingAuthority? = nil
     ) {
         self.route = route
         self.renderer = renderer
@@ -1228,7 +1273,8 @@ final class StudioViewerWindowController {
             renderer: renderer,
             authority: authority,
             route: route,
-            audioPlayer: audioPlayer
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority
         )
 
         window = NSWindow(
@@ -1239,10 +1285,26 @@ final class StudioViewerWindowController {
         )
         window.title = route.windowTitle
         window.center()
+        view.onPresentationDetached = { [weak self] in
+            self?.presentationDidDetach()
+        }
     }
 
     var isPresentationAttached: Bool {
         view.window === window
+    }
+
+    var onPresentationDetached: (() -> Void)?
+
+    /// Called by the AppKit view when its content view is detached. Keeping the
+    /// ownership callback here makes close/reopen testable without asking an
+    /// unrelated route to invalidate its shared decoder.
+    func presentationDidDetach() {
+        onPresentationDetached?()
+    }
+
+    func activateAudioScheduling(for route: StudioViewerRoute) {
+        view.audioSchedulingAuthority.activate(route)
     }
 
     /// Observable view state for controller-level lifecycle diagnostics. These
@@ -1404,6 +1466,13 @@ final class StudioViewerAppState {
             return self.reviewAttachment?.residentAudio(for: assetId)
                 ?? self.attachment.residentAudio(for: assetId)
         }
+        controller.onPresentationDetached = { [weak self] in
+            self?.attachment.detach()
+        }
+        reviewController?.onPresentationDetached = { [weak self] in
+            self?.reviewAttachment?.detach()
+            self?.reviewAttachment?.detachSequence()
+        }
     }
 
     /// Shows or hides a route. Hiding releases that route's slots through the
@@ -1413,6 +1482,7 @@ final class StudioViewerAppState {
         let transition = routes.toggle(route)
         switch transition {
         case .shown(let shown):
+            controller.activateAudioScheduling(for: shown)
             windowController(for: shown)?.show()
             if shown == .review, let activeSequence {
                 controller.setLocalAudioSuspendedForSequence(!activeSequence.isEmpty)
@@ -1430,9 +1500,11 @@ final class StudioViewerAppState {
             controller.window.orderOut(nil)
             if hidden == .source {
                 attachment.detach()
+                controller.activateAudioScheduling(for: .review)
             } else {
                 reviewAttachment?.detach()
                 reviewAttachment?.detachSequence()
+                controller.activateAudioScheduling(for: .source)
                 controller.setLocalAudioSuspendedForSequence(false)
                 if let audio = attachment.attachedAudio,
                     let assetId = attachment.attachedAssetId,
@@ -1626,7 +1698,9 @@ final class StudioViewerAppState {
         // plainly carried.
         for asset in knownAssets { proposalAssets[asset.assetId] = asset }
         activeSequence = sequence
-        controller.setLocalAudioSuspendedForSequence(!sequence.isEmpty)
+        controller.setLocalAudioSuspendedForSequence(
+            routes.isVisible(.review) && !sequence.isEmpty
+        )
         guard let reviewController else { return }
         guard !sequence.isEmpty else {
             reviewAttachment?.detachSequence()
@@ -1768,11 +1842,13 @@ enum StudioViewerApp {
         let authority = StudioPlaybackAuthority(
             clock: StudioPlaybackClock(timebase: .ntsc2997, durationTicks: 0))
         let audioPlayer = StudioAudioPlayer()
+        let audioSchedulingAuthority = StudioAudioSchedulingAuthority(owner: .source)
         let controller = StudioViewerWindowController(
             renderer: renderer,
             authority: authority,
             route: .source,
-            audioPlayer: audioPlayer
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority
         )
         retainedController = controller
 
@@ -1783,7 +1859,8 @@ enum StudioViewerApp {
                 renderer: $0,
                 authority: authority,
                 route: .review,
-                audioPlayer: audioPlayer
+                audioPlayer: audioPlayer,
+                audioSchedulingAuthority: audioSchedulingAuthority
             )
         }
         retainedReviewController = reviewController

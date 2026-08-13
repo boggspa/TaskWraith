@@ -53,6 +53,19 @@ public enum StudioSequenceAudioPolicy {
             return .play(assetId: assetId, sourceTicks: sourceTicks)
         }
     }
+
+    /// Re-expresses a document content tick in the selected resident asset's
+    /// clock. The source time is a rational instant; integer ticks are merely
+    /// its representation in each clock, so reusing the document value for an
+    /// asset clock is wrong whenever their timescales differ.
+    public static func reexpress(
+        sourceTicks: Int64,
+        from documentTimebase: StudioTimebase,
+        into assetTimebase: StudioTimebase
+    ) -> Int64 {
+        StudioRationalTime(n: sourceTicks, d: documentTimebase.timescale)!
+            .ticks(in: assetTimebase)
+    }
 }
 
 /// THE COMMITTED TIMELINE AS A PLAYBACK SUBJECT.
@@ -70,9 +83,14 @@ public enum StudioSequenceAudioPolicy {
 public struct StudioTimelineSequence: Equatable, Sendable {
     /// Sorted by start, non-overlapping — the host's own guarantee for a track.
     public let items: [StudioSequenceItem]
+    /// Clock in which item start/end/source ticks were decoded. It must travel
+    /// with the sequence so a resident asset can re-express content time before
+    /// its audio buffer is scheduled.
+    public let timebase: StudioTimebase?
 
-    public init(items: [StudioSequenceItem]) {
+    public init(items: [StudioSequenceItem], timebase: StudioTimebase? = nil) {
         self.items = items.sorted { $0.startTicks < $1.startTicks }
+        self.timebase = timebase
     }
 
     public var isEmpty: Bool { items.isEmpty }
@@ -137,7 +155,7 @@ public enum StudioTimelineSequenceDecoder {
                 )
             }
         }
-        return StudioTimelineSequence(items: items)
+        return StudioTimelineSequence(items: items, timebase: timebase)
     }
 
     private static func rational(_ value: Any?) -> StudioRationalTime? {

@@ -69,6 +69,57 @@ final class StudioAudioPlaybackTests: XCTestCase {
         }
     }
 
+    func testWrongAssetIdentityIsRefusedBeforeSchedulingTheDevice() async throws {
+        let url = try await makeToneAsset()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let player = StudioAudioPlayer()
+        defer { player.detach() }
+        do {
+            try player.attach(
+                track: try await StudioAudioTrack.load(url: url),
+                timebase: ntsc,
+                assetId: "resident-a"
+            )
+        } catch let error as StudioAudioError {
+            throw XCTSkip("no usable audio output: \(error)")
+        }
+
+        XCTAssertFalse(try player.play(fromTicks: 0, expectedAssetId: "resident-b"))
+        XCTAssertEqual(player.diagnostics.dropCount, 1)
+        XCTAssertFalse(player.diagnostics.hasQueuedOutput)
+        XCTAssertNil(player.diagnostics.scheduledAssetId)
+    }
+
+    /// A gap/missing path needs an actual node stop: pause() leaves the prior
+    /// scheduled buffer queued and can make dialogue return after the gap.
+    func testPositiveSilenceFlushesTheStartedDeviceBuffer() async throws {
+        let url = try await makeToneAsset()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let player = StudioAudioPlayer()
+        defer { player.detach() }
+        do {
+            try player.attach(
+                track: try await StudioAudioTrack.load(url: url),
+                timebase: ntsc,
+                assetId: "resident-a"
+            )
+            guard try player.play(fromTicks: 0, expectedAssetId: "resident-a") else {
+                throw XCTSkip("audio player declined to start")
+            }
+        } catch let error as StudioAudioError {
+            throw XCTSkip("no usable audio output: \(error)")
+        }
+
+        XCTAssertTrue(player.diagnostics.hasQueuedOutput)
+        player.silence()
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertFalse(player.diagnostics.hasQueuedOutput)
+        XCTAssertNil(player.diagnostics.scheduledAssetId)
+        XCTAssertNil(player.reading(), "a flushed player has no device-driving reading")
+    }
+
     // MARK: - Real playback on real hardware
 
     /// THE EVIDENCE THAT MATTERS. Starts AVAudioEngine, plays the asset's own

@@ -35,6 +35,11 @@ final class StudioTimelineSequenceTests: XCTestCase {
             ]),
             timebase: ms)
 
+        XCTAssertEqual(
+            sequence.timebase,
+            ms,
+            "a decoded sequence must retain its document clock for resident-audio conversion"
+        )
         guard case .item(let id1, let asset1, let source1) = sequence.sample(atTicks: 500) else {
             return XCTFail("expected an item at 500")
         }

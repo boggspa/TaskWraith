@@ -32,6 +32,20 @@ import XCTest
 @MainActor
 final class StudioPumpAdoptionTests: XCTestCase {
 
+    func testOnlyTheActiveRouteMayScheduleTheSharedAudioPlayer() {
+        let scheduling = StudioAudioSchedulingAuthority(owner: .source)
+        XCTAssertTrue(scheduling.permits(.source))
+        XCTAssertFalse(scheduling.permits(.review))
+
+        scheduling.activate(.review)
+        XCTAssertFalse(scheduling.permits(.source))
+        XCTAssertTrue(scheduling.permits(.review))
+
+        scheduling.activate(.source)
+        XCTAssertTrue(scheduling.permits(.source))
+        XCTAssertFalse(scheduling.permits(.review))
+    }
+
     /// Every payload `Step` carries must have a branch in
     /// `StudioViewerAppState.adopt(update:)`.
     ///
@@ -413,6 +427,19 @@ final class StudioPumpAdoptionTests: XCTestCase {
             1,
             "releasing Review must leave only Source's visible primary decoder"
         )
+
+        // The AppKit close path must release Source's pool lease, not call the
+        // renderer's default invalidating detach while Review still holds it.
+        XCTAssertEqual(state.toggleRoute(.review), .shown(.review))
+        await state.restoreReviewRoute()
+        XCTAssertTrue(reviewRenderer.diagnostics.hasSource)
+        sourceController.presentationDidDetach()
+        XCTAssertFalse(sourceRenderer.diagnostics.hasSource)
+        XCTAssertTrue(
+            reviewRenderer.diagnostics.hasSource,
+            "closing Source must not invalidate Review's shared decoder lease"
+        )
+        XCTAssertEqual(state.sharedResidentDecoderCount, 1)
     }
 
     /// The actual Review controller must not fall back to the opened source when
