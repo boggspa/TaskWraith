@@ -329,7 +329,10 @@ import {
   getDiffWorkspacePath,
   normalizeGeminiWorktreeLaunchOption
 } from './lib/geminiWorktree'
-import { chatHasInFlightThinkingWork } from './lib/chatThinkingState'
+import {
+  chatHasInFlightThinkingWork,
+  deriveFocusedTranscriptIsThinking
+} from './lib/chatThinkingState'
 import { humaniseModelId } from './lib/modelDisplayName'
 import { mergeOllamaModelCatalog } from './lib/ollamaModelCatalog'
 import { normalizeGeminiResumeTarget, resolveGeminiResumeForRun } from './lib/geminiResume'
@@ -21727,12 +21730,11 @@ function App(): React.JSX.Element {
   // last participant yields and the user sees stale "Codex Thinking…" even
   // though the round is over and the surface is back to "awaiting input".
   // For non-ensemble chats this passes through `isThinking` unchanged.
-  const ensembleRoundStatus = currentChat?.ensemble?.activeRound?.status
-  const effectiveIsThinking =
-    isThinking &&
-    (currentChat?.chatKind !== 'ensemble' || isCurrentEnsembleRoundDispatchLive) &&
-    ensembleRoundStatus !== 'completed' &&
-    ensembleRoundStatus !== 'cancelled'
+  const effectiveIsThinking = deriveFocusedTranscriptIsThinking({
+    rendererIsThinking: isThinking,
+    chat: currentChat,
+    runQueueJobs
+  })
   const currentRun = currentChat?.runs?.[currentChat.runs.length - 1]
   const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
   const hasSideChatActiveRunQueueJob = Boolean(
