@@ -37,17 +37,19 @@ final class StudioViewerView: NSView {
     private let renderer: StudioViewerRenderer
     /// The tested transport lives in Core; this view only forwards gestures to
     /// it and draws whatever the resulting playhead selects.
-    private var transport: StudioTransportController
+    var transport: StudioTransportController
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
     /// draws the field's own display text.
-    private var timecodeField = StudioTimecodeField()
+    /// Internal rather than private so the Companion event tests can assert
+    /// that Return belongs to timecode entry. No test-only accessor is added.
+    var timecodeField = StudioTimecodeField()
     private var sourceLabel = "No media"
     private var message: String?
     /// The host's transcript for the open asset, or nil. Drives the band.
     private var transcript: StudioTranscript?
-    private var selectedSegmentId: String?
+    var selectedSegmentId: String?
     private var trim: StudioTrimDrag?
     /// The revision the operator is looking at. Proposals cite it as their base.
     private var hostRevision = 0
@@ -69,7 +71,7 @@ final class StudioViewerView: NSView {
     private var lastMemorySampleHost: Double = 0
     private var cachedMemoryLabel = "rss --"
 
-    private var overlayModel: StudioOverlayModel?
+    var overlayModel: StudioOverlayModel?
     private var publishedAccessibility: [StudioAccessibilityDescriptor] = []
     private var accessibilityChildElements: [NSAccessibilityElement] = []
 
@@ -198,7 +200,7 @@ final class StudioViewerView: NSView {
         syncMeter?.reset()
     }
 
-    private func renderCurrentFrame() {
+    func renderCurrentFrame() {
         guard let metalLayer else { return }
         reconcileTimeSource()
         let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
@@ -378,7 +380,15 @@ final class StudioViewerView: NSView {
     /// View point (points, bottom-left origin) to the overlay's pixel space
     /// (top-left origin). The overlay is laid out in DRAWABLE pixels, so this
     /// has to scale as well as flip.
-    private func overlayPoint(from event: NSEvent) -> CGPoint {
+    /// Window point -> overlay coordinates: BACKING PIXELS, TOP-LEFT ORIGIN.
+    ///
+    /// Both halves matter and neither is visible to a Core test, which is handed
+    /// an already-converted x. NSView is not flipped, so y must be inverted; the
+    /// overlay model is built from the drawable, so points must be scaled. A
+    /// headless test window reports backingScaleFactor 1.0, which makes the
+    /// scale a no-op there — so the scale is exercised separately against a
+    /// windowless view, where the 2.0 fallback below applies.
+    func overlayPoint(from event: NSEvent) -> CGPoint {
         let local = convert(event.locationInWindow, from: nil)
         let scale = window?.backingScaleFactor ?? 2.0
         return CGPoint(x: local.x * scale, y: (bounds.height - local.y) * scale)

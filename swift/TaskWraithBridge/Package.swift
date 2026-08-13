@@ -55,6 +55,15 @@ let package = Package(
         .testTarget(
             name: "TaskWraithStudioCoreTests",
             dependencies: ["TaskWraithStudioCore"]
+        ),
+        // Companion tests. Mirrors TaskWraithBridgeDaemonTests above, which
+        // already proves this toolchain tests an .executableTarget carrying a
+        // top-level main.swift — so the AppKit view needed no library refactor
+        // and the executable product/target NAMES are unchanged, which is what
+        // scripts/build-studio-companion.cjs builds by.
+        .testTarget(
+            name: "TaskWraithStudioCompanionTests",
+            dependencies: ["TaskWraithStudioCompanion", "TaskWraithStudioCore"]
         )
     ]
 )
