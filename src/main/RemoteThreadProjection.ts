@@ -678,6 +678,9 @@ export interface RemoteSeatChange {
    * row's one line). Without it a brief-only change projects two identical
    * sides — a strip saying a change happened without saying what. */
   briefUpdated?: true
+  /** Final round-participation state when this row includes an enabled-state
+   * toggle. Absent for every other seat change. */
+  enabledChangedTo?: boolean
 }
 
 /** One seat of a roster-created stack — the change-seat shape plus its
@@ -2349,7 +2352,12 @@ function buildSeatChange(message: ChatMessage): RemoteSeatChange | undefined {
     appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp,
     // The shared coalescer already ORed the flag across the flurry; project
     // strictly `true` so the wire never carries a junk value.
-    ...(payload.briefUpdated === true ? { briefUpdated: true as const } : {})
+    ...(payload.briefUpdated === true ? { briefUpdated: true as const } : {}),
+    // Both boolean values are meaningful; project only real booleans and do
+    // not truthiness-drop the Disabled (`false`) state.
+    ...(typeof payload.enabledChangedTo === 'boolean'
+      ? { enabledChangedTo: payload.enabledChangedTo }
+      : {})
   }
 }
 

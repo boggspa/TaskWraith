@@ -4758,7 +4758,8 @@ struct ThreadRowView: View, Equatable {
                         link: seatChangeLink,
                         showsChair: true,
                         timestamp: row.seatChange?.appliedAt ?? row.timestamp,
-                        briefUpdated: row.seatChange?.briefUpdated == true)
+                        briefUpdated: row.seatChange?.briefUpdated == true,
+                        enabledChangedTo: row.seatChange?.enabledChangedTo)
                 } else if hasSeatRosterCard, let roster = row.seatRoster {
                     TWSeatRosterStack(
                         roster: roster,

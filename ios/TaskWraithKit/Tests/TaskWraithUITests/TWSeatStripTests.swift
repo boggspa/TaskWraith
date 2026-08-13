@@ -174,6 +174,12 @@ struct TWSeatStripTests {
         #expect(changed.contains("Previously #1 Lead, Kimi, K2.7 Coding, Thinking reasoning, Ask"))
     }
 
+    @Test func enabledChangeNotesDistinguishBothStatesFromAnOrdinaryEdit() {
+        #expect(twSeatEnabledChangeNote(true) == "(Enabled)")
+        #expect(twSeatEnabledChangeNote(false) == "(Disabled)")
+        #expect(twSeatEnabledChangeNote(nil) == nil)
+    }
+
     // MARK: - Transcript row time
 
     @Test func theRowStampsARealTimeOrNoneAtAll() {
@@ -200,6 +206,7 @@ struct TWSeatStripTests {
                 "participantId": "p-8",
                 "label": "GemProWork",
                 "appliedAt": "2026-08-05T12:00:00.000Z",
+                "enabledChangedTo": false,
                 "before": [
                     "provider": "grok", "model": "grok-4.5", "role": "GemProWork",
                     "seatNumber": 8, "reasoningEffort": "high", "permissionPresetId": "default",
@@ -222,6 +229,7 @@ struct TWSeatStripTests {
         #expect(link?.after.provider == "claude")
         #expect(twSeatStripSide(link!.after).permissionLabel == "Full WS Access")
         #expect(twSeatStripSide(link!.after).grantsLabel == "2 grants")
+        #expect(row.seatChange?.enabledChangedTo == false)
     }
 
     /// The seat change is a plain SYSTEM row. Left foldable it collapses into

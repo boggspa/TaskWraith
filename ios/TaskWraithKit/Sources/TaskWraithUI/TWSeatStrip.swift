@@ -138,6 +138,13 @@ func twSeatStripAccessibilityLabel(before: TWSeatStripSide, after: TWSeatStripSi
     return "\(now). Previously \(twSeatStripSpokenLabel(before))"
 }
 
+/// Transcript-only status chrome for a round-participation toggle. `nil` is
+/// intentionally different from `false`: nil means this row was not a toggle.
+func twSeatEnabledChangeNote(_ enabledChangedTo: Bool?) -> String? {
+    guard let enabledChangedTo else { return nil }
+    return enabledChangedTo ? "(Enabled)" : "(Disabled)"
+}
+
 // MARK: - View
 
 struct TWSeatStrip: View {
@@ -151,6 +158,9 @@ struct TWSeatStrip: View {
     /// change has two identical sides, and without rolling, the after-gated
     /// note would never appear.
     var briefUpdated: Bool = false
+    /// Final round-participation state for a toggle-only change. Kept outside
+    /// the seat link because close-out cells are records, not toggle events.
+    var enabledChangedTo: Bool? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsAfter = false
@@ -163,6 +173,13 @@ struct TWSeatStrip: View {
     private var after: TWSeatStripSide { twSeatStripSide(link.after) }
     private var current: TWSeatStripSide { showsAfter ? after : before }
     private var changed: Bool { before != after }
+
+    private var spokenLabel: String {
+        var parts = [twSeatStripAccessibilityLabel(before: before, after: after)]
+        if briefUpdated { parts.append("Brief updated") }
+        if let enabledChangedTo { parts.append(enabledChangedTo ? "Enabled" : "Disabled") }
+        return parts.joined(separator: ". ")
+    }
 
     private var accent: Color {
         TWTheme.providerAccent(
@@ -205,6 +222,13 @@ struct TWSeatStrip: View {
                         .lineLimit(1)
                         .transition(.opacity)
                 }
+                if let enabledChangeNote = twSeatEnabledChangeNote(enabledChangedTo), showsAfter {
+                    Text(enabledChangeNote)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .lineLimit(1)
+                        .transition(.opacity)
+                }
                 if let time = twSeatStripTime(timestamp) {
                     Spacer(minLength: 4)
                     Text(time)
@@ -219,16 +243,13 @@ struct TWSeatStrip: View {
             value: showsAfter
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            briefUpdated
-                ? "\(twSeatStripAccessibilityLabel(before: before, after: after)). Brief updated"
-                : twSeatStripAccessibilityLabel(before: before, after: after))
+        .accessibilityLabel(spokenLabel)
         .task(id: link) {
             // Replay on every appearance, by design: reset, hold, then move.
             // A brief-only change must roll too — its sides are identical,
             // and the note it exists for is gated on the after phase.
             showsAfter = false
-            guard changed || briefUpdated else { return }
+            guard changed || briefUpdated || enabledChangedTo != nil else { return }
             try? await Task.sleep(for: .seconds(Self.holdSeconds))
             guard !Task.isCancelled else { return }
             showsAfter = true

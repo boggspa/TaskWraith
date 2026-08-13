@@ -125,6 +125,9 @@ public struct TWSeatChangePayload: Codable, Sendable, Equatable {
     /// the flag across a flurry, so it survives a later unrelated tweak; a
     /// brief-only change ships two identical sides plus this.
     public let briefUpdated: Bool?
+    /// Final round-participation state when the seat was toggled. Absent for
+    /// every other seat change; both true and false are meaningful.
+    public let enabledChangedTo: Bool?
 
     public init(
         participantId: String?,
@@ -132,7 +135,8 @@ public struct TWSeatChangePayload: Codable, Sendable, Equatable {
         before: TWSeatChangeState?,
         after: TWSeatChangeState?,
         appliedAt: String?,
-        briefUpdated: Bool? = nil
+        briefUpdated: Bool? = nil,
+        enabledChangedTo: Bool? = nil
     ) {
         self.participantId = participantId
         self.label = label
@@ -140,6 +144,7 @@ public struct TWSeatChangePayload: Codable, Sendable, Equatable {
         self.after = after
         self.appliedAt = appliedAt
         self.briefUpdated = briefUpdated
+        self.enabledChangedTo = enabledChangedTo
     }
 
     /// The two sides as a renderable link, or nil when the payload carries no

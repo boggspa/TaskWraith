@@ -1520,7 +1520,7 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows.every((row) => row.seatChange === undefined)).toBe(true)
     })
 
-    it('projects stageRole, authority, and briefUpdated on the change row', () => {
+    it('projects stageRole, authority, briefUpdated, and enabledChangedTo on the change row', () => {
       // The glyph pair and the brief note are exactly what the desktop commit
       // pair (roster glyphs / "(Brief updated)") added; dropping them on the
       // wire re-creates the failure those commits fixed — a brief-only change
@@ -1528,6 +1528,7 @@ describe('RemoteThreadProjection', () => {
       const withStage = {
         ...CHANGE,
         briefUpdated: true,
+        enabledChangedTo: false,
         before: { ...CHANGE.before, stageRole: 'scout' },
         after: { ...CHANGE.after, stageRole: 'worker', authority: 'captain' }
       }
@@ -1539,6 +1540,12 @@ describe('RemoteThreadProjection', () => {
         seatChangeRow({ ...CHANGE, after: { ...CHANGE.after, stageRole: 'auditor' } })
       ])
       expect(future.rows[0].seatChange?.after.stageRole).toBe('auditor')
+
+      // Junk never becomes a status annotation on the client.
+      const malformed = project({ kind: 'latestN', n: 10 }, [
+        seatChangeRow({ ...CHANGE, enabledChangedTo: 'false' })
+      ])
+      expect(malformed.rows[0].seatChange?.enabledChangedTo).toBeUndefined()
     })
   })
 
