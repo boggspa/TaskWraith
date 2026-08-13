@@ -15,6 +15,7 @@ import {
   composeRunPrompt,
   promptNeedsBrowserCanvasHint,
   promptNeedsImageToolsHint,
+  promptNeedsSimulatorCanvasHint,
   sanitizeTaskWraithMcpPromptClaims
 } from './PromptComposition'
 import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
@@ -1411,6 +1412,116 @@ describe('Browser Canvas handoff', () => {
     })
 
     expect(result.contextualPrompt).toBe('Can you see the webpage in the browser canvas?')
+  })
+})
+
+describe('Simulator Canvas handoff', () => {
+  it('detects explicit Simulator Canvas and iOS QA requests without matching generic simulation', () => {
+    for (const prompt of [
+      'Open the Simulator Canvas and load TaskWraith on iOS.',
+      'Validate this SwiftUI app on an iPhone.',
+      'Run xcrun simctl and inspect the booted device.',
+      'Can you screenshot the iPad simulator?'
+    ]) {
+      expect(promptNeedsSimulatorCanvasHint(prompt)).toBe(true)
+    }
+    for (const prompt of [
+      'Run a Monte Carlo simulation.',
+      'Fix the canvas chart serializer.',
+      'Validate the browser form.'
+    ]) {
+      expect(promptNeedsSimulatorCanvasHint(prompt)).toBe(false)
+    }
+  })
+
+  it('re-injects the in-app gateway route on a resumed session', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Open the Simulator Canvas and load TaskWraith on iOS.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-simulator',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    })
+
+    expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
+    expect(result.contextualPrompt).toContain('built-in, in-app Simulator Canvas')
+    expect(result.contextualPrompt).toContain('capability_search')
+    expect(result.contextualPrompt).toContain('capability_invoke')
+    expect(result.contextualPrompt).toContain('simulator_status')
+    expect(result.contextualPrompt).toContain('simulator_install')
+    expect(result.contextualPrompt).toContain('simulator_launch')
+    expect(result.contextualPrompt).toContain('simulator_screenshot')
+    expect(result.contextualPrompt).toContain('simulator_inspect')
+    expect(result.contextualPrompt).toContain('simulator_open')
+    expect(result.contextualPrompt).toContain('standalone Xcode Simulator.app')
+    expect(result.applicationLog).toContain('Simulator Canvas context injected')
+  })
+
+  it('names direct tools for a full MCP profile', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Test the iPhone app in Simulator Canvas.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex'
+    })
+
+    expect(result.contextualPrompt).toContain('use simulator_boot')
+    expect(result.contextualPrompt).toContain('simulator_install')
+    expect(result.contextualPrompt).toContain('simulator_launch')
+    expect(result.contextualPrompt).not.toContain(
+      'capability_search({ query: "Simulator Canvas boot install launch screenshot inspect"'
+    )
+  })
+
+  it('states the core-profile limit without suggesting the standalone substitute', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Load this app in the iOS Simulator Canvas.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpProfileId: TASKWRAITH_CORE_MCP_PROFILE_ID
+    })
+
+    expect(result.contextualPrompt).toContain('constrained core MCP profile')
+    expect(result.contextualPrompt).toContain('cannot operate Simulator Canvas')
+    expect(result.contextualPrompt).toContain('Do not describe the surface as nonexistent')
+    expect(result.contextualPrompt).not.toContain('capability_search')
+  })
+
+  it('does not promise Simulator Canvas when the run has no TaskWraith MCP transport', () => {
+    const prompt = 'Open the Simulator Canvas and run the iPhone app.'
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: prompt,
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: false
+    })
+
+    expect(result.contextualPrompt).toBe(prompt)
   })
 })
 

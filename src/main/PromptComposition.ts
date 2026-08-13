@@ -353,6 +353,45 @@ export function promptNeedsBrowserCanvasHint(prompt: string): boolean {
   return BROWSER_CANVAS_INTENT_PATTERN.test(prompt)
 }
 
+const SIMULATOR_CANVAS_ACTION_PATTERN =
+  '(?:open|boot|launch|install|load|run|test|validate|inspect|drive|tap|type|scroll|screenshot|interact)'
+const SIMULATOR_CANVAS_TARGET_PATTERN = '(?:iOS|iPhone|iPad|SwiftUI|Xcode|simulator)'
+const SIMULATOR_CANVAS_INTENT_PATTERN = new RegExp(
+  [
+    '\\b(?:simulator\\s+canvas|canvas\\s+simulator|(?:iOS|iPhone|iPad)\\s+simulator|xcrun\\s+simctl|simctl)\\b',
+    `\\b${SIMULATOR_CANVAS_ACTION_PATTERN}\\b[^\\n]{0,64}\\b${SIMULATOR_CANVAS_TARGET_PATTERN}\\b`,
+    `\\b${SIMULATOR_CANVAS_TARGET_PATTERN}\\b[^\\n]{0,64}\\b${SIMULATOR_CANVAS_ACTION_PATTERN}\\b`
+  ].join('|'),
+  'i'
+)
+
+export function promptNeedsSimulatorCanvasHint(prompt: string): boolean {
+  return SIMULATOR_CANVAS_INTENT_PATTERN.test(prompt)
+}
+
+function buildSimulatorCanvasToolsHint(args: {
+  prompt: string
+  advertised: boolean
+  coreProfile: boolean
+  gatewayProfile: boolean
+}): string {
+  if (!args.advertised || !promptNeedsSimulatorCanvasHint(args.prompt)) return ''
+
+  const liveContext = 'TaskWraith has a built-in, in-app Simulator Canvas for iOS QA.'
+  if (args.coreProfile) {
+    return `${liveContext} This provider session is using the constrained core MCP profile, which cannot operate Simulator Canvas. Do not describe the surface as nonexistent or substitute the standalone Simulator.app; report this exact profile limitation if the user asks you to use it.`
+  }
+
+  const route =
+    'Use Simulator Canvas as the default iOS QA route instead of raw `xcrun simctl` commands or the standalone Simulator.app. Device QA calls such as boot, install, launch, screenshot, inspect, tap, type, and scroll bring the in-app Canvas forward for the active chat.'
+  const standaloneWarning =
+    '`simulator_open` specifically opens the standalone Xcode Simulator.app; use it only when the user explicitly asks for that separate window.'
+  if (args.gatewayProfile) {
+    return `${liveContext} ${route} Call capability_search({ query: "Simulator Canvas boot install launch screenshot inspect", limit: 6 }), then capability_invoke({ name, arguments }). Discover and use simulator_status, simulator_boot, simulator_install, simulator_launch, simulator_screenshot, simulator_inspect, simulator_tap, simulator_type, and simulator_scroll. ${standaloneWarning}`
+  }
+  return `${liveContext} ${route} Start with simulator_status when device selection is needed, then use simulator_boot, simulator_install, simulator_launch, simulator_screenshot, simulator_inspect, simulator_tap, simulator_type, or simulator_scroll directly. ${standaloneWarning}`
+}
+
 function safeOpenWebCanvasIds(sessions: readonly OpenCanvasPromptContext[]): string[] {
   const ids = new Set<string>()
   for (const session of sessions) {
@@ -1029,6 +1068,7 @@ export function planInstructionInjection(args: {
  * instruction block); the Layers view documents provenance, not byte
  * geometry, so the canonical order is used for all providers. */
 const ENVELOPE_LAYER_ORDER: readonly PromptEnvelopeLayerId[] = [
+  'simulator_canvas_hint',
   'browser_canvas_hint',
   'image_tools_note',
   'recon_steer',
@@ -1756,6 +1796,27 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       label: 'Browser Canvas context',
       state: 'applied',
       content: browserCanvasToolsHint
+    })
+  }
+
+  // Simulator Canvas is an in-app QA surface, but its gateway tools are hidden
+  // until searched. Repeat the exact route on every relevant turn, including
+  // resumed provider sessions, and distinguish it from simulator_open (which
+  // intentionally launches Xcode's separate Simulator.app window).
+  const simulatorCanvasToolsHint = buildSimulatorCanvasToolsHint({
+    prompt: finalPrompt,
+    advertised: taskWraithMcpAdvertised,
+    coreProfile: coreMcpProfile,
+    gatewayProfile: gatewayMcpProfile
+  })
+  if (simulatorCanvasToolsHint) {
+    contextualPrompt = `${simulatorCanvasToolsHint}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; Simulator Canvas context injected`
+    envelopeLayers.push({
+      id: 'simulator_canvas_hint',
+      label: 'Simulator Canvas context',
+      state: 'applied',
+      content: simulatorCanvasToolsHint
     })
   }
 
