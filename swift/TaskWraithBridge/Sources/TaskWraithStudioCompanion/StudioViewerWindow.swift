@@ -327,11 +327,20 @@ final class StudioViewerView: NSView {
         // against the audio hardware's own playhead — a dropped frame is not
         // evidence about sync, and counting it as zero error would flatter the
         // pipeline precisely when it is misbehaving.
-        if outcome.didDraw, let audible = audioPlayer.audiblePositionTicks() {
-            syncMeter?.record(
-                presentedFrameTicks: transport.clock.ticks(ofFrame: snapshot.frameIndex),
-                audiblePositionTicks: audible
-            )
+        if let audible = audioPlayer.audiblePositionTicks() {
+            if outcome.didDraw {
+                syncMeter?.record(
+                    presentedFrameTicks: transport.clock.ticks(ofFrame: snapshot.frameIndex),
+                    audiblePositionTicks: audible
+                )
+            } else {
+                // A dropped frame leaves the PREVIOUS picture on screen while
+                // sound carries on. That is the desync, and the old
+                // `if outcome.didDraw` gate excluded exactly it — so the meter
+                // sampled only healthy ticks and its reading was bounded by
+                // frame quantisation whatever the pipeline was doing.
+                syncMeter?.recordDroppedFrame(audiblePositionTicks: audible)
+            }
         }
 
         if outcome.didDraw {

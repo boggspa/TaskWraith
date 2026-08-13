@@ -57,13 +57,44 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
         self.timebase = timebase
     }
 
+    /// The picture currently ON SCREEN, in ticks. Nil until something has been
+    /// drawn, because an empty viewer has no picture to be out of sync with.
+    public private(set) var onScreenFrameTicks: Int64?
+
     /// Records one presented frame against the audio playhead at that instant.
     ///
     /// - Parameter presentedFrameTicks: PTS of the frame actually drawn.
     /// - Parameter audiblePositionTicks: audio position genuinely in the room,
     ///   i.e. the device's sample counter already corrected for output latency.
     public mutating func record(presentedFrameTicks: Int64, audiblePositionTicks: Int64) {
-        let error = presentedFrameTicks &- audiblePositionTicks
+        onScreenFrameTicks = presentedFrameTicks
+        accumulate(errorTicks: presentedFrameTicks &- audiblePositionTicks)
+    }
+
+    /// Records a display tick on which NOTHING NEW WAS DRAWN.
+    ///
+    /// THIS IS THE MEASUREMENT THIS METER WAS MISSING, and its absence was not a
+    /// gap in coverage — it was an exemption for the only desync this pipeline
+    /// actually produces. A dropped frame does not blank the screen. The viewer
+    /// keeps showing the last frame that WAS drawn, and that picture ages by
+    /// another display period against sound which did not stop. Skipping these
+    /// ticks meant the error was sampled only while the pipeline was healthy, so
+    /// the number was bounded by frame quantisation BY CONSTRUCTION and could
+    /// not report the failure it existed to report.
+    ///
+    /// I wrote the original exclusion, and the reasoning was wrong in a specific
+    /// way worth keeping: "a dropped frame is not evidence about sync" is true
+    /// of the frame that failed to arrive and false of the frame still on
+    /// screen. The stale picture is the evidence.
+    ///
+    /// Records nothing when the viewer has never drawn, since "no picture" and
+    /// "picture at position zero" are different claims.
+    public mutating func recordDroppedFrame(audiblePositionTicks: Int64) {
+        guard let onScreenFrameTicks else { return }
+        accumulate(errorTicks: onScreenFrameTicks &- audiblePositionTicks)
+    }
+
+    private mutating func accumulate(errorTicks error: Int64) {
         currentErrorTicks = error
         peakAbsoluteErrorTicks = max(peakAbsoluteErrorTicks, abs(error))
         errorSumTicks = errorSumTicks &+ error
@@ -81,6 +112,10 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
         errorSumTicks = 0
         sampleCount = 0
         outOfToleranceCount = 0
+        // The picture on screen after a seek is not the picture from before it,
+        // so carrying it forward would measure against a frame nobody is
+        // looking at any more.
+        onScreenFrameTicks = nil
     }
 
     public var currentErrorMilliseconds: Double {

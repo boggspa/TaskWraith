@@ -138,10 +138,26 @@ final class StudioAudioPlaybackTests: XCTestCase {
         }
     }
 
-    /// END TO END: real audio playing, real device counter, and the sync meter
-    /// fed from it. The picture side is the frame the clock selects; the audio
-    /// side comes from the hardware. Sync must land inside BT.1359 tolerance.
-    func testMeasuredSyncAgainstRealAudioStaysWithinTolerance() async throws {
+    /// REAL HARDWARE PLUMBING — and deliberately NOT a sync claim any more.
+    ///
+    /// WHAT THIS PROVES: a real device counter, corrected for output latency,
+    /// reaches StudioAvSyncMeter and accumulates. The audio device is the one
+    /// part of this pipeline that cannot be exercised offscreen, so that the
+    /// plumbing works against real hardware is worth asserting.
+    ///
+    /// WHAT IT USED TO CLAIM, AND WHY THAT WAS WORTHLESS. It computed the
+    /// picture side FROM the audio side — `frameIndex(ofTicks: audible)` then
+    /// `ticks(ofFrame:)` — so the "error" was the quantisation remainder of
+    /// `audible` onto the frame grid, bounded by one frame period as a matter of
+    /// arithmetic. At 29.97 that is 33.4 ms, and it asserted `< 45`. A theorem
+    /// dressed as a measurement, over a test containing NO VIDEO AT ALL.
+    ///
+    /// The sync claim now lives in StudioAvSyncFailureTests, where the picture
+    /// is scripted independently of the sound and a stalled picture is PROVEN
+    /// to leave tolerance. No tolerance is asserted here, because the picture
+    /// side below advances on `Task.sleep` and asserting a bound on an
+    /// imprecise timer would be trading a tautology for a flake.
+    func testTheSyncMeterAcceptsReadingsFromRealAudioHardware() async throws {
         let url = try await makeToneAsset()
         defer { try? FileManager.default.removeItem(at: url) }
         let track = try await StudioAudioTrack.load(url: url)
@@ -155,32 +171,38 @@ final class StudioAudioPlaybackTests: XCTestCase {
             throw XCTSkip("no usable audio output: \(error)")
         }
 
-        // Video slaved to the audio clock: the frame shown is the one containing
-        // the audible position, quantised down to its frame boundary.
         let clock = StudioPlaybackClock(timebase: ntsc, durationTicks: 30_000 * 2)
         var meter = StudioAvSyncMeter(timebase: ntsc)
 
+        // The picture side advances on its OWN counter — one frame per pass —
+        // rather than being derived from `audible`. It is not a real decoder, so
+        // the resulting error is not a sync figure; what matters is that the two
+        // sides are independent, because a meter fed two views of one number
+        // cannot report anything at all.
+        var presentedFrame: Int64 = 0
         for _ in 0..<12 {
             try await Task.sleep(nanoseconds: 40_000_000)
             guard let audible = player.audiblePositionTicks() else { continue }
-            let frame = clock.frameIndex(ofTicks: max(audible, 0))
             meter.record(
-                presentedFrameTicks: clock.ticks(ofFrame: frame),
+                presentedFrameTicks: clock.ticks(ofFrame: presentedFrame),
                 audiblePositionTicks: audible
             )
+            presentedFrame += 1
         }
 
         guard meter.sampleCount > 0 else {
             throw XCTSkip("audio never produced a position on this machine")
         }
         XCTAssertGreaterThan(meter.sampleCount, 4)
-        XCTAssertEqual(
-            meter.outOfToleranceCount,
-            0,
-            "measured sync left BT.1359 tolerance: \(meter.summaryText)"
+        XCTAssertNotNil(
+            meter.meanErrorMilliseconds,
+            "the meter must produce a mean once real readings have arrived"
         )
-        // A frame is 33.4ms at 29.97; quantisation alone cannot exceed that.
-        XCTAssertLessThan(meter.peakAbsoluteErrorMilliseconds, 45)
+        XCTAssertNotNil(meter.onScreenFrameTicks, "a recorded frame is a picture on screen")
+        XCTAssertTrue(
+            meter.currentErrorMilliseconds.isFinite,
+            "real device readings must convert to a finite error"
+        )
     }
 
     // MARK: - Lifecycle
