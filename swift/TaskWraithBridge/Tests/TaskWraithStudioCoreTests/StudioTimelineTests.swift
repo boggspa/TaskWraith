@@ -556,3 +556,111 @@ final class StudioTranscriptRejectionTests: XCTestCase {
         XCTAssertTrue(bad.protocolErrors[0].hasPrefix("set_transcript rejected:"))
     }
 }
+
+/// The decisions the mouse handler delegates to Core.
+final class StudioTimelineGestureTests: XCTestCase {
+    private static let timebase = StudioTimebase(timescale: 600, frameDurationTicks: 20)!
+    private static func time(_ n: Int64) -> StudioRationalTime {
+        StudioRationalTime(n: n, d: 600)!
+    }
+
+    private let transcript = StudioTranscript(
+        transcriptId: "t1",
+        assetId: "a1",
+        segments: [
+            StudioTranscriptSegment(
+                segmentId: "s1", text: "one",
+                sourceIn: time(0), sourceOut: time(600)),
+            StudioTranscriptSegment(
+                segmentId: "s2", text: "two",
+                sourceIn: time(900), sourceOut: time(1500)),
+            StudioTranscriptSegment(
+                segmentId: "s3", text: "three",
+                sourceIn: time(1800), sourceOut: time(2400)),
+        ]
+    )
+
+    /// A handle already sits on its own boundary. Including it would pin the
+    /// handle and read as a dead control.
+    func testAHandleDoesNotSnapToItsOwnSegmentsEdges() {
+        let boundaries = StudioTimelineLayout.snapBoundaries(
+            transcript: transcript, excluding: "s2", timebase: Self.timebase)
+        XCTAssertEqual(boundaries.sorted(), [0, 600, 1800, 2400])
+        XCTAssertFalse(boundaries.contains(900), "own start must not be a target")
+        XCTAssertFalse(boundaries.contains(1500), "own end must not be a target")
+    }
+
+    func testNoTranscriptOffersNoSnapTargets() {
+        XCTAssertTrue(
+            StudioTimelineLayout.snapBoundaries(
+                transcript: nil, excluding: "s1", timebase: Self.timebase
+            ).isEmpty)
+    }
+
+    /// Half a frame, and never zero — a zero tolerance would make every
+    /// comparison an exact-equality test and snapping would never fire.
+    func testToleranceIsHalfAFrameAndNeverZero() {
+        XCTAssertEqual(StudioTimelineLayout.snapToleranceTicks(timebase: Self.timebase), 10)
+        let fine = StudioTimebase(timescale: 600, frameDurationTicks: 1)!
+        XCTAssertEqual(StudioTimelineLayout.snapToleranceTicks(timebase: fine), 1)
+    }
+
+    /// The full gesture, in the order the mouse handler performs it.
+    func testADragEndingNearANeighbourSnapsAndProposesThatExactTick() throws {
+        var drag = StudioTrimDrag(
+            segmentId: "s2", assetId: "a1", handle: .end,
+            originalStartTicks: 900, originalEndTicks: 1500)
+        let boundaries = StudioTimelineLayout.snapBoundaries(
+            transcript: transcript, excluding: "s2", timebase: Self.timebase)
+
+        // Released 4 ticks short of s3's start, inside the 10-tick tolerance.
+        drag.update(toTicks: 1796, boundaries: boundaries,
+                    toleranceTicks: StudioTimelineLayout.snapToleranceTicks(
+                        timebase: Self.timebase))
+        XCTAssertTrue(drag.didSnap)
+        XCTAssertEqual(drag.currentTicks, 1800)
+
+        let intent = try XCTUnwrap(drag.intent)
+        XCTAssertTrue(intent.snapped)
+        XCTAssertEqual(intent.sourceOutTicks, 1800)
+
+        let line = StudioProposalRequest.proposeEdit(
+            intent: intent, baseRevision: 7, proposalId: "p1", itemId: "s2",
+            requestId: 100, timebase: Self.timebase)
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: line) as? [String: Any])
+        XCTAssertEqual(json["method"] as? String, "studio/proposeEdit")
+        let params = try XCTUnwrap(json["params"] as? [String: Any])
+        XCTAssertEqual(params["baseRevision"] as? Int, 7)
+        let op = try XCTUnwrap(params["op"] as? [String: Any])
+        let sourceOut = try XCTUnwrap(op["sourceOut"] as? [String: Any])
+        XCTAssertEqual(sourceOut["n"] as? Int64 ?? Int64(sourceOut["n"] as? Int ?? -1), 1800)
+    }
+
+    /// Released just outside tolerance: the handle stays where the operator put
+    /// it. Snapping that ignored tolerance would take the frame away from them.
+    func testADragEndingOutsideToleranceKeepsTheOperatorsExactTick() {
+        var drag = StudioTrimDrag(
+            segmentId: "s2", assetId: "a1", handle: .end,
+            originalStartTicks: 900, originalEndTicks: 1500)
+        drag.update(
+            toTicks: 1789,
+            boundaries: StudioTimelineLayout.snapBoundaries(
+                transcript: transcript, excluding: "s2", timebase: Self.timebase),
+            toleranceTicks: StudioTimelineLayout.snapToleranceTicks(timebase: Self.timebase))
+        XCTAssertFalse(drag.didSnap)
+        XCTAssertEqual(drag.currentTicks, 1789)
+    }
+
+    /// A collapsed or inverted drag proposes NOTHING. The handler reports it
+    /// rather than emitting an unrepresentable range.
+    func testAnInvertedDragYieldsNoIntent() {
+        var drag = StudioTrimDrag(
+            segmentId: "s2", assetId: "a1", handle: .end,
+            originalStartTicks: 900, originalEndTicks: 1500)
+        drag.update(toTicks: 400, boundaries: [], toleranceTicks: 10)
+        XCTAssertNil(drag.intent, "an end before the start must not become a proposal")
+        drag.update(toTicks: 900, boundaries: [], toleranceTicks: 10)
+        XCTAssertNil(drag.intent, "a zero-length segment must not become a proposal")
+    }
+}

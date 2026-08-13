@@ -23,17 +23,17 @@ enum StudioCompanionStdioPump {
     static func run(
         hydrateOnce: Bool,
         onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil,
-        onTranscripts: (@Sendable ([StudioTranscript]) -> Void)? = nil
+        onTranscripts: (@Sendable ([StudioTranscript]) -> Void)? = nil,
+        onRevision: (@Sendable (Int) -> Void)? = nil
     ) -> Int32 {
         let session = StudioCompanionSession(hydrateOnce: hydrateOnce)
         let standardInput = FileHandle.standardInput
-        let standardOutput = FileHandle.standardOutput
         let standardError = FileHandle.standardError
 
+        // Through the shared writer, so a viewer-originated proposal cannot
+        // interleave with a pump response mid-line.
         func writeLines(_ lines: [Data]) {
-            for line in lines {
-                standardOutput.write(line)
-            }
+            StudioOutboundWriter.shared.write(lines)
         }
 
         func reportProtocolErrors(_ notes: [String]) {
@@ -59,6 +59,9 @@ enum StudioCompanionStdioPump {
             }
             if !step.transcripts.isEmpty {
                 onTranscripts?(step.transcripts)
+            }
+            if let revision = session.latestRevision {
+                onRevision?(revision)
             }
             if let code = step.exitCode {
                 return code

@@ -408,6 +408,30 @@ public enum StudioTimelineLayout {
         return model.segmentHits.first { $0.frame.contains(x: x, y: y) }
     }
 
+    /// Snap targets for a trim on `segmentId`: every OTHER segment's edges.
+    ///
+    /// A handle must not snap to its own segment's boundaries — it already sits
+    /// on one of them, so including them would pin the handle in place and read
+    /// as a dead control. Excluding them is the difference between "snapping"
+    /// and "refusing to move".
+    public static func snapBoundaries(
+        transcript: StudioTranscript?,
+        excluding segmentId: String,
+        timebase: StudioTimebase
+    ) -> [Int64] {
+        guard let transcript else { return [] }
+        return transcript.segments
+            .filter { $0.segmentId != segmentId }
+            .compactMap { $0.range(in: timebase) }
+            .flatMap { [$0.startTicks, $0.endTicks] }
+    }
+
+    /// Half a frame. Tight enough that an operator aiming between two words is
+    /// not dragged onto one of them.
+    public static func snapToleranceTicks(timebase: StudioTimebase) -> Int64 {
+        max(1, timebase.frameDurationTicks / 2)
+    }
+
     /// Tick position for a pointer x within the band.
     public static func ticks(
         atX x: Double,

@@ -48,6 +48,11 @@ final class StudioViewerView: NSView {
     private var transcript: StudioTranscript?
     private var selectedSegmentId: String?
     private var trim: StudioTrimDrag?
+    /// The revision the operator is looking at. Proposals cite it as their base.
+    private var hostRevision = 0
+    /// Monotonic within this process, and started above hello/getDocument so a
+    /// proposal id can never collide with them.
+    private var nextProposalRequestId = StudioProposalRequest.firstProposalRequestId
     /// The overlay layout most recently drawn. Hit testing and accessibility
     /// both read it, so neither re-derives geometry the renderer might disagree
     /// with.
@@ -240,6 +245,10 @@ final class StudioViewerView: NSView {
     /// StudioOverlayModelTests; this is the only place the two worlds meet.
     /// Adopts (or clears) the transcript band. Selection is dropped on change
     /// because a segment id from another transcript addresses nothing.
+    func adopt(revision: Int) {
+        hostRevision = revision
+    }
+
     func adopt(transcript: StudioTranscript?) {
         guard transcript != self.transcript else { return }
         self.transcript = transcript
@@ -380,6 +389,15 @@ final class StudioViewerView: NSView {
             return
         }
         let point = overlayPoint(from: event)
+
+        // The band is tested BEFORE the scrub bar. They do not overlap, but
+        // ordering it this way means a future layout change cannot silently
+        // turn a trim into a playhead yank.
+        if let box = StudioTimelineLayout.hit(atX: point.x, y: point.y, in: model.timeline) {
+            beginTimelineGesture(box, in: model)
+            return
+        }
+
         // Only the track's grab area starts a scrub. A click anywhere else in
         // the picture must not yank the playhead.
         guard model.grabFrame.contains(x: point.x, y: point.y) else {
@@ -399,6 +417,10 @@ final class StudioViewerView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if trim != nil, let model = overlayModel {
+            updateTimelineDrag(toX: overlayPoint(from: event).x, in: model)
+            return
+        }
         guard transport.isScrubbing, let model = overlayModel else {
             super.mouseDragged(with: event)
             return
@@ -416,12 +438,107 @@ final class StudioViewerView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if trim != nil {
+            endTimelineDrag()
+            return
+        }
         guard transport.isScrubbing else {
             super.mouseUp(with: event)
             return
         }
         // Restores whatever the transport was doing before the gesture.
         transport.endScrub(atHost: CACurrentMediaTime())
+    }
+
+    // MARK: - Timeline band gestures
+
+    /// A click on a segment SELECTS it. A click on a handle of the already
+    /// selected segment starts a trim. Selection first means the handles a
+    /// drag needs are on screen before the drag can begin, rather than
+    /// requiring an operator to hit a 3pt target they cannot see yet.
+    private func beginTimelineGesture(_ box: StudioTimelineHitBox, in model: StudioOverlayModel) {
+        guard let handle = box.handle else {
+            selectedSegmentId = box.segmentId
+            trim = nil
+            needsDisplay = true
+            return
+        }
+        guard
+            let transcript,
+            let segment = transcript.segments.first(where: { $0.segmentId == box.segmentId }),
+            let range = segment.range(in: transport.clock.timebase)
+        else { return }
+        trim = StudioTrimDrag(
+            segmentId: segment.segmentId,
+            assetId: transcript.assetId,
+            handle: handle,
+            originalStartTicks: range.startTicks,
+            originalEndTicks: range.endTicks
+        )
+        needsDisplay = true
+    }
+
+    private func updateTimelineDrag(toX x: Double, in model: StudioOverlayModel) {
+        guard var drag = trim else { return }
+        drag.update(
+            toTicks: StudioTimelineLayout.ticks(
+                atX: x,
+                in: model.timeline,
+                durationTicks: transport.clock.durationTicks
+            ),
+            boundaries: timelineSnapBoundaries,
+            toleranceTicks: timelineSnapToleranceTicks
+        )
+        trim = drag
+        needsDisplay = true
+    }
+
+    /// Ends the gesture by PROPOSING. The document is not touched here: the
+    /// host owns it, and a trim the host has not accepted must not appear to
+    /// have happened.
+    private func endTimelineDrag() {
+        defer {
+            trim = nil
+            needsDisplay = true
+        }
+        guard let drag = trim, let intent = drag.intent else {
+            // A degenerate drag - one that inverted or collapsed the segment -
+            // proposes nothing rather than emitting an unrepresentable range.
+            report(message: "Trim discarded: a segment cannot end before it starts")
+            return
+        }
+        let requestId = nextProposalRequestId
+        nextProposalRequestId += 1
+        let line = StudioProposalRequest.proposeEdit(
+            intent: intent,
+            baseRevision: hostRevision,
+            proposalId: "trim-\(intent.segmentId)-\(requestId)",
+            itemId: intent.segmentId,
+            requestId: requestId,
+            timebase: transport.clock.timebase
+        )
+        StudioOutboundWriter.shared.write(line)
+        report(
+            message: intent.snapped
+                ? "Trim proposed, snapped to a transcript boundary"
+                : "Trim proposed"
+        )
+    }
+
+    /// Both of these live in Core so they can be tested: the Companion target
+    /// has no test target, and "which boundaries does a handle snap to" is a
+    /// decision, not glue.
+    private var timelineSnapBoundaries: [Int64] {
+        guard let drag = trim else { return [] }
+        return StudioTimelineLayout.snapBoundaries(
+            transcript: transcript,
+            excluding: drag.segmentId,
+            timebase: transport.clock.timebase
+        )
+    }
+
+    private var timelineSnapToleranceTicks: Int64 {
+        StudioTimelineLayout.snapToleranceTicks(timebase: transport.clock.timebase)
     }
 
     // MARK: - Transport keys
@@ -649,6 +766,10 @@ final class StudioViewerWindowController {
         view.adopt(transcript: transcript)
     }
 
+    func adopt(revision: Int) {
+        view.adopt(revision: revision)
+    }
+
     func report(message text: String?) {
         view.report(message: text)
     }
@@ -681,6 +802,10 @@ final class StudioViewerAppState {
     /// Adopts the host's transcripts. Only the one matching the open asset is
     /// shown: a transcript for a different asset is kept, not drawn, because a
     /// band of somebody else's words over this picture is worse than no band.
+    func adopt(revision: Int) {
+        controller.adopt(revision: revision)
+    }
+
     func adopt(transcripts: [StudioTranscript]) {
         for transcript in transcripts {
             known[transcript.assetId] = transcript
@@ -773,6 +898,11 @@ enum StudioViewerApp {
                     onTranscripts: { transcripts in
                         Task { @MainActor in
                             StudioViewerAppState.shared?.adopt(transcripts: transcripts)
+                        }
+                    },
+                    onRevision: { revision in
+                        Task { @MainActor in
+                            StudioViewerAppState.shared?.adopt(revision: revision)
                         }
                     }
                 )

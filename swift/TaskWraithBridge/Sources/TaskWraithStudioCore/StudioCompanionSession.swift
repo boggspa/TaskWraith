@@ -89,6 +89,12 @@ public final class StudioCompanionSession {
     public private(set) var phase: Phase = .awaitingHelloResponse
     public private(set) var documentRevision: Int?
     public private(set) var editCommittedCount = 0
+    /// The revision of the most recent studio/editCommitted. This is the base a
+    /// proposal must cite: the host rejects a stale base rather than rebasing
+    /// silently, so an operator who proposes against what they were looking at
+    /// gets a conflict instead of quietly overwriting a concurrent edit.
+    public private(set) var latestRevision: Int?
+
     /// open_media operations recognised on studio/editCommitted.
     /// Durable state recovered from the getDocument response.
     ///
@@ -225,6 +231,9 @@ public final class StudioCompanionSession {
         if message.id == nil, message.method != nil {
             if message.method == "studio/editCommitted" {
                 editCommittedCount += 1
+                if let revision = message.params?["revision"]?.value as? Int {
+                    latestRevision = revision
+                }
                 if let asset = Self.openedAsset(in: message) {
                     lastOpenedAsset = asset
                     openedAssetCount += 1
