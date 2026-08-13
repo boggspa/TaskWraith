@@ -562,10 +562,38 @@ final class StudioStressTests: XCTestCase {
             trend.isStable(withinGrowthBytes: 32 * 1_048_576),
             "the memory trend called a 128MB leak stable: \(trend.summaryText)"
         )
+        // IF YOU ARE READING THIS BECAUSE THE NUMBER CAME IN LOW, IT IS NOT A
+        // FLAKE TO RE-RUN AND IT IS NOT A THRESHOLD TO LOWER. MEASURED, this
+        // pass, on the identical deliberate 128 MB leak:
+        //
+        //   cold process, focused run      112.48, 112.48, 112.48  (dead stable)
+        //   warm process, full suite       112.50, then 87.50
+        //   after a 128 MB alloc/free churn  5.02, 37.17, 33.17
+        //
+        // So phys_footprint under-reports malloc-class growth by up to ~96%
+        // once the allocator holds a pool of already-mapped freed pages: the
+        // leak is satisfied from pages the process already owns, and the
+        // footprint never moves. The reading is a function of PROCESS HISTORY,
+        // which is why it is exact in isolation and erratic in a full run.
+        //
+        // WHY THAT MATTERS MORE THAN THIS TEST. The instrument is least
+        // sensitive in exactly the condition outcome 11 exists to probe —
+        // looped playback, 100 seeks, 20 source switches, 10 close/reopen
+        // cycles are all churn. A real malloc-class leak in that scenario could
+        // read as five megabytes. This is the malloc-side twin of the banked
+        // finding that RSS is blind to IOSurface video memory, and together
+        // they mean the memory half of S1-S10 rests on an instrument that is
+        // unreliable in BOTH of its allocation classes.
+        //
+        // Lowering 60 would make this control pass while the instrument is 96%
+        // blind — the same shape as raising inFlightRetentionDepth to absorb a
+        // leak, which is pinned three tests above precisely so nobody does it.
         XCTAssertGreaterThan(
             trend.growthMegabytes,
             60,
-            "growth magnitude is the sensitive half and it missed the leak"
+            "growth magnitude is the sensitive half and it read \(trend.growthMegabytes)MB "
+                + "for a deliberate 128MB leak. Measured cause is allocator page reuse, not "
+                + "flakiness — see the comment above before re-running or retuning"
         )
     }
 }
