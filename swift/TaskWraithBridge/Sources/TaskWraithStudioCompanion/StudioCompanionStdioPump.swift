@@ -17,9 +17,13 @@ enum StudioCompanionStdioPump {
     ///   commits an open_media. Only Sendable identities cross; loading and
     ///   attaching happen on whichever isolation the handler chooses, because
     ///   the viewer's renderer is main-thread state.
+    /// - Parameter onTranscripts: called on the PUMP THREAD when the host sends
+    ///   or replaces a transcript. Without this the session parses transcripts
+    ///   that reach no renderer, which is what the band is for.
     static func run(
         hydrateOnce: Bool,
-        onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil
+        onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil,
+        onTranscripts: (@Sendable ([StudioTranscript]) -> Void)? = nil
     ) -> Int32 {
         let session = StudioCompanionSession(hydrateOnce: hydrateOnce)
         let standardInput = FileHandle.standardInput
@@ -52,6 +56,9 @@ enum StudioCompanionStdioPump {
             writeLines(step.outboundLines)
             if !step.openedAssets.isEmpty {
                 onOpenedAssets?(step.openedAssets)
+            }
+            if !step.transcripts.isEmpty {
+                onTranscripts?(step.transcripts)
             }
             if let code = step.exitCode {
                 return code

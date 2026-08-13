@@ -183,9 +183,19 @@ public final class StudioCompanionSession {
                         resolved.append(resolvedId)
                         resolvedProposalCount += 1
                     }
-                    if let transcript = Self.transcript(in: message) {
+                    switch Self.transcriptOutcome(in: message) {
+                    case .decoded(let transcript):
                         transcripts.append(transcript)
                         transcriptCount += 1
+                    case .rejected(let reason):
+                        // A malformed transcript must SAY SO. Silent rejection
+                        // is indistinguishable from silent acceptance, which
+                        // leaves the host unable to tell whether its speech
+                        // timing ever reached the band.
+                        protocolErrorCount += 1
+                        errors.append("set_transcript rejected: \(reason)")
+                    case .notATranscript:
+                        break
                     }
                 }
                 exitCode = outcome.exit
@@ -308,8 +318,29 @@ public final class StudioCompanionSession {
     /// Extracts a transcript from a studio/editCommitted whose op is
     /// set_transcript.
     static func transcript(in message: StudioMessage) -> StudioTranscript? {
-        guard let operation = message.params?["op"]?.value as? [String: Any] else { return nil }
-        return try? StudioTranscriptDecoder.transcript(fromSetTranscript: operation)
+        guard case .decoded(let transcript) = transcriptOutcome(in: message) else { return nil }
+        return transcript
+    }
+
+    enum TranscriptOutcome {
+        case decoded(StudioTranscript)
+        /// The op WAS a set_transcript and failed to decode. Distinct from
+        /// `notATranscript`, which is every other operation passing through.
+        case rejected(String)
+        case notATranscript
+    }
+
+    static func transcriptOutcome(in message: StudioMessage) -> TranscriptOutcome {
+        guard let operation = message.params?["op"]?.value as? [String: Any] else {
+            return .notATranscript
+        }
+        guard operation["type"] as? String == "set_transcript" else { return .notATranscript }
+        do {
+            return .decoded(
+                try StudioTranscriptDecoder.transcript(fromSetTranscript: operation))
+        } catch {
+            return .rejected(String(describing: error))
+        }
     }
 
     /// Extracts a ghost proposal from a studio/editCommitted whose op is

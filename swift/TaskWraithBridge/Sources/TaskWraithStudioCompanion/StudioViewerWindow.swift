@@ -44,6 +44,10 @@ final class StudioViewerView: NSView {
     private var timecodeField = StudioTimecodeField()
     private var sourceLabel = "No media"
     private var message: String?
+    /// The host's transcript for the open asset, or nil. Drives the band.
+    private var transcript: StudioTranscript?
+    private var selectedSegmentId: String?
+    private var trim: StudioTrimDrag?
     /// The overlay layout most recently drawn. Hit testing and accessibility
     /// both read it, so neither re-derives geometry the renderer might disagree
     /// with.
@@ -234,11 +238,20 @@ final class StudioViewerView: NSView {
     /// Flattens the live transport into the value the overlay layout consumes.
     /// Everything interesting about the result is asserted in
     /// StudioOverlayModelTests; this is the only place the two worlds meet.
+    /// Adopts (or clears) the transcript band. Selection is dropped on change
+    /// because a segment id from another transcript addresses nothing.
+    func adopt(transcript: StudioTranscript?) {
+        guard transcript != self.transcript else { return }
+        self.transcript = transcript
+        selectedSegmentId = nil
+        trim = nil
+    }
+
     private func overlayState(
         snapshot: StudioTransportSnapshot,
         drawable: MTLTexture
     ) -> StudioOverlayState {
-        StudioOverlayState(
+        var state = StudioOverlayState(
             viewport: StudioOverlayViewport(
                 width: Double(drawable.width),
                 height: Double(drawable.height),
@@ -265,6 +278,20 @@ final class StudioViewerView: NSView {
                 memoryLabel: memoryLabel
             )
         )
+        // The band reads the SAME position and duration the HUD does — it is a
+        // view of the one clock, never a second opinion about time.
+        if let transcript {
+            state.timeline = StudioTimelineState(
+                viewport: state.viewport,
+                positionTicks: state.positionTicks,
+                durationTicks: state.durationTicks,
+                timebase: transport.clock.timebase,
+                transcript: transcript,
+                selectedSegmentId: selectedSegmentId,
+                trim: trim
+            )
+        }
+        return state
     }
 
     /// Process memory, sampled once a second rather than per frame: task_info is
@@ -580,6 +607,7 @@ final class StudioViewerView: NSView {
         switch role {
         case .slider: return .slider
         case .staticText: return .staticText
+        case .button: return .button
         }
     }
 }
@@ -617,6 +645,10 @@ final class StudioViewerWindowController {
         view.adopt(timebase: timebase, durationTicks: durationTicks, label: label)
     }
 
+    func adopt(transcript: StudioTranscript?) {
+        view.adopt(transcript: transcript)
+    }
+
     func report(message text: String?) {
         view.report(message: text)
     }
@@ -641,6 +673,32 @@ final class StudioViewerAppState {
         self.attachment = StudioMediaAttachment(renderer: renderer)
     }
 
+    /// Transcripts the host has sent, keyed by asset. Held across source
+    /// switches so that returning to an asset does not need a re-send.
+    private var known: [String: StudioTranscript] = [:]
+    private var openAssetId: String?
+
+    /// Adopts the host's transcripts. Only the one matching the open asset is
+    /// shown: a transcript for a different asset is kept, not drawn, because a
+    /// band of somebody else's words over this picture is worse than no band.
+    func adopt(transcripts: [StudioTranscript]) {
+        for transcript in transcripts {
+            known[transcript.assetId] = transcript
+            // Reported for the same reason media opens are: a transcript that
+            // silently fails to reach the band is indistinguishable from one
+            // that arrived, and that is precisely the bug this wiring fixes.
+            let shown = transcript.assetId == openAssetId
+            Self.report(
+                "transcript \(transcript.transcriptId) for \(transcript.assetId)"
+                    + " (\(transcript.segments.count) segments, "
+                    + (shown ? "shown" : "held — a different asset is open") + ")"
+            )
+        }
+        if let assetId = openAssetId, let match = known[assetId] {
+            controller.adopt(transcript: match)
+        }
+    }
+
     /// Opens each asset the host committed and points the clock at the last one
     /// that actually loaded. Failures are reported to stderr rather than being
     /// swallowed or crashing the viewer.
@@ -656,6 +714,10 @@ final class StudioViewerAppState {
                 // Audio after the clock, so it anchors against the timebase the
                 // viewer just adopted rather than the previous asset's.
                 controller.attachAudio(track: attachment.attachedAudio, timebase: timebase)
+                // A source switch must not leave the previous asset's words on
+                // screen: adopt this asset's transcript, or clear the band.
+                openAssetId = assetId
+                controller.adopt(transcript: known[assetId])
                 Self.report("opened \(assetId) (\(frameCount) frames)")
             case .failed(let assetId, let message):
                 // Surfaced ON SCREEN as well as on stderr: a viewer that fails
@@ -701,11 +763,19 @@ enum StudioViewerApp {
         // renderer itself never crosses a thread boundary.
         let pumpThread = Thread {
             exit(
-                StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { assets in
-                    Task { @MainActor in
-                        await StudioViewerAppState.shared?.open(assets: assets)
+                StudioCompanionStdioPump.run(
+                    hydrateOnce: hydrateOnce,
+                    onOpenedAssets: { assets in
+                        Task { @MainActor in
+                            await StudioViewerAppState.shared?.open(assets: assets)
+                        }
+                    },
+                    onTranscripts: { transcripts in
+                        Task { @MainActor in
+                            StudioViewerAppState.shared?.adopt(transcripts: transcripts)
+                        }
                     }
-                }
+                )
             )
         }
         pumpThread.name = "taskwraith-studio-stdio"

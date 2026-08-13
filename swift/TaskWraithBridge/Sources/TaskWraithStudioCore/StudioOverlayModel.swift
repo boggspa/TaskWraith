@@ -119,6 +119,8 @@ public struct StudioAccessibilityDescriptor: Equatable, Sendable {
     public enum Role: String, Equatable, Sendable {
         case slider
         case staticText
+        /// A transcript segment: activating it selects that segment.
+        case button
     }
 
     public let role: Role
@@ -203,6 +205,11 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
 /// Everything the overlay needs, flattened out of the transport so the layout is
 /// a pure function of a value.
 public struct StudioOverlayState: Equatable, Sendable {
+    /// Optional transcript band. `nil` means the host has sent no transcript for
+    /// the open asset, and the band is not drawn at all — an empty band would
+    /// claim "this media has no speech", which is a different statement.
+    public var timeline: StudioTimelineState?
+
     public var viewport: StudioOverlayViewport
     public var positionTicks: Int64
     /// 0 means UNBOUNDED — the synthetic pattern before any media is open. The
@@ -295,6 +302,10 @@ public struct StudioOverlayModel: Equatable, Sendable {
     public let trackFrame: StudioOverlayFrame
     public let grabFrame: StudioOverlayFrame
     public let isVisible: Bool
+    /// The transcript band, already laid out. Carried here rather than built by
+    /// the view so that hit testing and drawing read the SAME geometry — the
+    /// scrub bar's trackFrame/grabFrame split taught this lesson once already.
+    public var timeline: StudioTimelineModel = .empty
 
     public var isEmpty: Bool { rects.isEmpty && texts.isEmpty }
 }
@@ -632,13 +643,20 @@ public enum StudioOverlayLayout {
             )
         )
 
+        let timeline: StudioTimelineModel =
+            state.timeline.map(StudioTimelineLayout.build) ?? .empty
+        rects.append(contentsOf: timeline.rects)
+        texts.append(contentsOf: timeline.texts)
+        accessibility.append(contentsOf: timeline.accessibilityElements)
+
         return StudioOverlayModel(
             rects: rects,
             texts: texts,
             accessibilityElements: accessibility,
             trackFrame: trackFrame,
             grabFrame: grabFrame,
-            isVisible: true
+            isVisible: true,
+            timeline: timeline
         )
     }
 
