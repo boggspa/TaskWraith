@@ -80,6 +80,30 @@ describe('AppStore settings defaults', () => {
     }
   })
 
+  it.each(['mistral', 'muse'] as const)(
+    'seeds workspace and global built-in runtime profiles for %s',
+    (provider) => {
+      const profiles = AppStore.getRuntimeProfiles(provider)
+
+      expect(profiles).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: `builtin:${provider}:local`,
+            provider,
+            scope: 'workspace',
+            builtin: true
+          }),
+          expect.objectContaining({
+            id: `builtin:${provider}:global`,
+            provider,
+            scope: 'global',
+            builtin: true
+          })
+        ])
+      )
+    }
+  )
+
   it('drops retired message bridge settings on read and subsequent writes', () => {
     const settingsPath = `${userDataPath}/settings.json`
     fs.writeFileSync(
