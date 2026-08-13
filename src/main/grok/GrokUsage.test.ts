@@ -453,8 +453,7 @@ describe('probeGrokUsage', () => {
       now: () => FIXED_NOW,
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
-      readyDelayMs: 100,
-      selectDelayMs: 100
+      readyDelayMs: 100
     }).then((s) => {
       resolved = true
       return s
@@ -483,12 +482,11 @@ describe('probeGrokUsage', () => {
       now: () => FIXED_NOW,
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
-      readyDelayMs: 100,
-      selectDelayMs: 100
+      readyDelayMs: 100
     })
 
     pty.emit('[stable] Weekly limit left: 2% ·')
-    clock.advance(100 + 100 + 1500)
+    clock.advance(100 + 1500)
 
     const snap = await promise
     expect(snap.confidence).toBe('observed')
@@ -518,7 +516,7 @@ describe('probeGrokUsage', () => {
     expect(snap.confidence).toBe('observed')
   })
 
-  it('sends "/usage" then Enter to open the usage screen', async () => {
+  it('sends only "/usage" and never a follow-up Enter', async () => {
     const pty = new FakePty()
     const clock = new FakeClock()
     const promise = probeGrokUsage({
@@ -527,18 +525,16 @@ describe('probeGrokUsage', () => {
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
       readyDelayMs: 100,
-      selectDelayMs: 100,
       timeoutMs: 1000
     })
 
     clock.advance(100)
-    expect(pty.writes).toContain('/usage\r')
-    clock.advance(100)
-    expect(pty.writes).toContain('\r')
+    expect(pty.writes).toEqual(['/usage\r'])
 
-    clock.advance(800) // reach the hard timeout
+    clock.advance(900) // reach the hard timeout without another activation key
     const snap = await promise
     expect(snap.confidence).toBe('unavailable')
+    expect(pty.writes).toEqual(['/usage\r'])
   })
 
   it('resolves an "unavailable" snapshot on timeout with no data', async () => {

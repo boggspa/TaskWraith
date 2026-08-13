@@ -274,23 +274,21 @@ export interface GrokUsageProbeDeps {
   timeoutMs?: number
   /** ms to wait for the TUI before sending `/usage` (overridable for tests). */
   readyDelayMs?: number
-  /** ms after `/usage` before pressing Enter to pick "Show Usage". */
-  selectDelayMs?: number
   now?: () => string
   setTimer?: (cb: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
 }
 
 /**
- * Capture `/usage` → "Show Usage" via PTY and parse it. Resolves as soon as a
- * credit signal is seen (early-out), or with an 'unavailable' snapshot on
- * timeout / clean-exit-without-data. Always kills the child. Never sends a
- * prompt.
+ * Capture `/usage` via PTY and parse it. Resolves as soon as a credit signal
+ * is seen (early-out), or with an 'unavailable' snapshot on timeout /
+ * clean-exit-without-data. Always kills the child. The command's terminating
+ * carriage return is the only Enter sent; the probe never sends a later
+ * activation keystroke.
  */
 export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnapshot> {
   const timeoutMs = deps.timeoutMs ?? 12_000
   const readyDelayMs = deps.readyDelayMs ?? 2200
-  const selectDelayMs = deps.selectDelayMs ?? 2000
   const now = deps.now ?? (() => new Date().toISOString())
   const setTimer = deps.setTimer ?? ((cb, ms) => setTimeout(cb, ms))
   const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>))
@@ -347,22 +345,16 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
         // The welcome screen's status line ("Weekly limit left: 2%") shows up
         // BEFORE /usage is even sent. It is a usable reading but has no reset
         // window, so don't settle on it immediately — leave time for the
-        // /usage screen (sent at readyDelay, selected at +selectDelay) to
-        // render, then fall back to the status-line data.
+        // /usage screen (sent at readyDelay) to render, then fall back to the
+        // status-line data.
         partialFallbackArmed = true
-        timers.push(
-          setTimer(
-            () => finish(parseGrokUsage(buffer, now())),
-            readyDelayMs + selectDelayMs + 1500
-          )
-        )
+        timers.push(setTimer(() => finish(parseGrokUsage(buffer, now())), readyDelayMs + 1500))
       }
     })
 
     child.onExit(() => finish(parseGrokUsage(buffer, now())))
 
     timers.push(setTimer(() => child?.write('/usage\r'), readyDelayMs))
-    timers.push(setTimer(() => child?.write('\r'), readyDelayMs + selectDelayMs))
     timers.push(setTimer(() => finish(parseGrokUsage(buffer, now())), timeoutMs))
   })
 }
