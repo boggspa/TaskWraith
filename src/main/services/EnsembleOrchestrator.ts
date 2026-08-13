@@ -7,6 +7,7 @@ import {
 } from '../../shared/ensembleSeatFailureClear'
 import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import { resolveRuntimeProfileIdForScope } from '../RuntimeProfileResolution'
 import {
   unattendedElevationPresetId,
   type UnattendedElevationLevel
@@ -13778,6 +13779,11 @@ export class EnsembleOrchestrator {
       { ensembleLaneId: run.laneId }
     )
     const workflowMode = chat.workflowMode === 'plan' ? 'plan' : 'normal'
+    const runtimeProfileId = resolveRuntimeProfileIdForScope({
+      provider: run.participant.provider,
+      scope: chat.scope === 'global' ? 'global' : 'workspace',
+      runtimeProfileId: run.participant.runtimeProfileId
+    })
     const context: RunPermissionPostureContext = {
       provider: run.participant.provider,
       scope: chat.scope === 'global' ? 'global' : 'workspace',
@@ -13785,7 +13791,7 @@ export class EnsembleOrchestrator {
       appChatId: wakeup.chatId,
       prompt: runtime.prompt,
       workflowMode,
-      runtimeProfileId: run.participant.runtimeProfileId,
+      runtimeProfileId,
       ensembleParticipantId: run.participant.id,
       ensembleLaneId: run.laneId
     }
@@ -15649,6 +15655,11 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking = participant.provider === 'kimi' ? true : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
+      const runtimeProfileId = resolveRuntimeProfileIdForScope({
+        provider: participant.provider,
+        scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
+        runtimeProfileId: participant.runtimeProfileId
+      })
 
       const payload: AgentRunPayload = {
         provider: participant.provider,
@@ -15662,7 +15673,7 @@ export class EnsembleOrchestrator {
         model: participant.model || 'cli-default',
         approvalMode: permissions.approvalMode,
         workflowMode: dispatchChat.workflowMode === 'plan' ? 'plan' : 'normal',
-        runtimeProfileId: participant.runtimeProfileId,
+        runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
         providerSessionId: run.providerSessionId || participant.linkedProviderSessionId || null,
@@ -15681,7 +15692,7 @@ export class EnsembleOrchestrator {
                   prompt: promptWithDiscordContext,
                   ...(resumeFallbackPrompt ? { resumeFallbackPrompt } : {}),
                   workflowMode: dispatchChat.workflowMode === 'plan' ? 'plan' : 'normal',
-                  runtimeProfileId: participant.runtimeProfileId,
+                  runtimeProfileId,
                   ensembleParticipantId: participant.id
                 }
               )
@@ -17803,6 +17814,11 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking = participant.provider === 'kimi' ? true : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
+      const runtimeProfileId = resolveRuntimeProfileIdForScope({
+        provider: participant.provider,
+        scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
+        runtimeProfileId: participant.runtimeProfileId
+      })
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: dispatchChat.scope === 'global' ? 'global' : 'workspace',
@@ -17814,7 +17830,7 @@ export class EnsembleOrchestrator {
         model: participant.model || 'cli-default',
         approvalMode: permissions.approvalMode,
         workflowMode: dispatchChat.workflowMode === 'plan' ? 'plan' : 'normal',
-        runtimeProfileId: participant.runtimeProfileId,
+        runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
         providerSessionId: participant.linkedProviderSessionId || null,
@@ -17832,7 +17848,7 @@ export class EnsembleOrchestrator {
                   appChatId: dispatchChat.appChatId,
                   prompt: promptWithDiscordContext,
                   workflowMode: dispatchChat.workflowMode === 'plan' ? 'plan' : 'normal',
-                  runtimeProfileId: participant.runtimeProfileId,
+                  runtimeProfileId,
                   ensembleParticipantId: participant.id,
                   ensembleLaneId: run.laneId
                 }
@@ -18188,6 +18204,11 @@ export class EnsembleOrchestrator {
       participant,
       Boolean(options.laneId)
     )
+    const runtimeProfileId = resolveRuntimeProfileIdForScope({
+      provider: participant.provider,
+      scope: chat.scope === 'global' ? 'global' : 'workspace',
+      runtimeProfileId: participant.runtimeProfileId
+    })
     const run: ChatRun = {
       runId,
       provider: participant.provider,
@@ -18205,7 +18226,7 @@ export class EnsembleOrchestrator {
       ensembleOrder: participant.order,
       ensembleSeatSnapshot: ensembleSeatSnapshot(participant),
       ...pooledAgentTranscriptMetadata(participant),
-      runtimeProfileId: participant.runtimeProfileId,
+      runtimeProfileId,
       ...(participant.provider === 'gemini' && participant.geminiAuthProfileId
         ? { geminiAuthProfileId: participant.geminiAuthProfileId }
         : {}),

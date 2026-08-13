@@ -1522,6 +1522,64 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  it.each([
+    {
+      label: 'workspace default',
+      scope: 'workspace' as const,
+      requested: undefined,
+      expected: 'builtin:codex:local'
+    },
+    {
+      label: 'global default',
+      scope: 'global' as const,
+      requested: undefined,
+      expected: 'builtin:codex:global'
+    },
+    {
+      label: 'explicit custom profile',
+      scope: 'workspace' as const,
+      requested: 'custom-codex-runtime',
+      expected: 'custom-codex-runtime'
+    }
+  ])('dispatches a concrete runtime profile for $label', async ({ scope, requested, expected }) => {
+    const initialChat = makeChat()
+    initialChat.scope = scope
+    initialChat.provider = 'codex'
+    if (scope === 'global') {
+      delete initialChat.workspaceId
+      delete initialChat.workspacePath
+    }
+    initialChat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write',
+        ...(requested ? { runtimeProfileId: requested } : {})
+      }
+    ]
+    const signRunPermissionPosture = vi.fn(() => 'f'.repeat(64))
+    const harness = makeHarness({ initialChat, signRunPermissionPosture })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use the canonical runtime identity.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].runtimeProfileId).toBe(expected)
+    expect(harness.chat.runs?.[0]?.runtimeProfileId).toBe(expected)
+    expect(signRunPermissionPosture).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({ runtimeProfileId: expected })
+    )
+  })
+
   it('freezes participant model, reasoning, and permissions in the round snapshot', async () => {
     const initialChat = makeChat()
     Object.assign(initialChat.ensemble!.participants[0], {

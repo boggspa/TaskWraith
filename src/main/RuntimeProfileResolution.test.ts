@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { resolveRuntimeProfileIdForChat } from './RuntimeProfileResolution'
+import {
+  defaultRuntimeProfileId,
+  resolveRuntimeProfileIdForChat,
+  resolveRuntimeProfileIdForScope
+} from './RuntimeProfileResolution'
 import type { ChatRecord, ChatScope, ProviderId, RuntimeProfile } from './store/types'
 
 const now = '2026-01-01T00:00:00.000Z'
 
-function profile(
-  id: string,
-  provider: ProviderId,
-  scope: ChatScope,
-  name = id
-): RuntimeProfile {
+function profile(id: string, provider: ProviderId, scope: ChatScope, name = id): RuntimeProfile {
   return {
     id,
     name,
@@ -99,5 +98,25 @@ describe('resolveRuntimeProfileIdForChat', () => {
         profiles
       })
     ).toBe('codex-global')
+  })
+})
+
+describe('resolveRuntimeProfileIdForScope', () => {
+  it.each([
+    ['workspace', 'builtin:codex:local'],
+    ['global', 'builtin:codex:global']
+  ] as const)('makes the implicit %s Codex profile concrete', (scope, expected) => {
+    expect(resolveRuntimeProfileIdForScope({ provider: 'codex', scope })).toBe(expected)
+    expect(defaultRuntimeProfileId('codex', scope)).toBe(expected)
+  })
+
+  it('preserves an explicit custom profile identity', () => {
+    expect(
+      resolveRuntimeProfileIdForScope({
+        provider: 'codex',
+        scope: 'workspace',
+        runtimeProfileId: ' custom-codex '
+      })
+    ).toBe('custom-codex')
   })
 })

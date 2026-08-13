@@ -1,6 +1,25 @@
 import type { ChatRecord, ChatScope, ProviderId, RuntimeProfile } from './store/types'
 
 /**
+ * Concrete built-in runtime identity used when a dispatch has no persisted
+ * profile selection. Keeping the implicit default concrete matters for shared
+ * provider processes: `undefined` and the built-in profile launch differently
+ * and therefore must not describe the same seat in two different ways.
+ */
+export function defaultRuntimeProfileId(provider: ProviderId, scope: ChatScope): string {
+  return `builtin:${provider}:${scope === 'global' ? 'global' : 'local'}`
+}
+
+export function resolveRuntimeProfileIdForScope(input: {
+  provider: ProviderId
+  scope: ChatScope
+  runtimeProfileId?: string | null
+}): string {
+  const requested = input.runtimeProfileId?.trim()
+  return requested || defaultRuntimeProfileId(input.provider, input.scope)
+}
+
+/**
  * Runtime-profile resolution (Phase B3.4 extraction).
  *
  * Pure function that picks which `RuntimeProfile` applies to a given chat +
