@@ -132,3 +132,150 @@ final class StudioTimelineSequenceTests: XCTestCase {
         XCTAssertEqual(sequence.referencedAssetIds, ["clip-a", "clip-b"])
     }
 }
+
+/// The Review route PLAYING the sequence, and the diagnostics that had to grow
+/// with it.
+final class StudioSequencePlaybackTests: XCTestCase {
+    private let timebase = StudioTimebase(timescale: 600, frameDurationTicks: 20)!
+
+    private func renderer() throws -> StudioViewerRenderer {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        return try StudioViewerRenderer(device: device)
+    }
+
+    private func snapshot(ticks: Int64) -> StudioTransportSnapshot {
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 12000)
+        clock.seek(toTicks: ticks, atHost: 0)
+        return clock.snapshot(atHost: 0)
+    }
+
+    /// THE CLAIM: which FILE is on screen depends on the tick. Two clips of
+    /// different brightness, and the rendered pixel changes at the cut — an
+    /// implementation that played one asset throughout cannot pass this.
+    func testTheTickDecidesWhichASSETIsOnScreen() throws {
+        let renderer = try renderer()
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: renderer.device, width: 64, height: 64)
+
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [32], device: renderer.device),
+            assetId: "dark", timebase: timebase)
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [224], device: renderer.device),
+            assetId: "bright", timebase: timebase)
+        renderer.sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "i1", assetId: "dark",
+                startTicks: 0, endTicks: 3000, sourceInTicks: 0),
+            StudioSequenceItem(
+                itemId: "i2", assetId: "bright",
+                startTicks: 3000, endTicks: 6000, sourceInTicks: 0),
+        ])
+
+        _ = renderer.render(snapshot: snapshot(ticks: 1000), to: target)
+        let beforeCut = try StudioTestPatternRenderer.readPixel(from: target, x: 32, y: 32)
+
+        _ = renderer.render(snapshot: snapshot(ticks: 4000), to: target)
+        let afterCut = try StudioTestPatternRenderer.readPixel(from: target, x: 32, y: 32)
+
+        XCTAssertLessThan(
+            beforeCut.red, afterCut.red,
+            "the picture did not change across the cut — the route is playing one "
+                + "asset, not the timeline")
+    }
+
+    /// A gap draws NOTHING rather than the neighbouring clip, all the way
+    /// through the render path and not just in the resolver.
+    func testAGapInTheSequenceDrawsNothing() throws {
+        let renderer = try renderer()
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: renderer.device, width: 64, height: 64)
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [32], device: renderer.device),
+            assetId: "dark", timebase: timebase)
+        renderer.sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "i1", assetId: "dark",
+                startTicks: 0, endTicks: 1000, sourceInTicks: 0),
+        ])
+
+        let outcome = renderer.render(snapshot: snapshot(ticks: 5000), to: target)
+        XCTAssertFalse(outcome.didDraw, "a gap must not present a frame")
+        XCTAssertEqual(
+            outcome, .proposedMaterialUnavailable(frameIndex: 250, assetId: "sequence-gap"))
+    }
+
+    /// A clip whose asset is not resident is REFUSED, not substituted.
+    func testAMissingSequenceAssetIsRefusedRatherThanSubstituted() throws {
+        let renderer = try renderer()
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: renderer.device, width: 64, height: 64)
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [32], device: renderer.device),
+            assetId: "resident", timebase: timebase)
+        renderer.sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "i1", assetId: "absent",
+                startTicks: 0, endTicks: 3000, sourceInTicks: 0),
+        ])
+
+        let outcome = renderer.render(snapshot: snapshot(ticks: 1000), to: target)
+        XCTAssertFalse(outcome.didDraw)
+        XCTAssertEqual(
+            outcome, .proposedMaterialUnavailable(frameIndex: 50, assetId: "absent"),
+            "a missing clip must name the asset it wanted, not fall back to a resident one")
+    }
+
+    /// THE PROSPECTIVE AGING FIX. Orchestrator found this BEFORE the change
+    /// landed: cacheHitCount and boundTextureCount read one source, so N
+    /// resident sources would have been silently under-reported while the HUD
+    /// kept drawing and its test kept passing.
+    func testDiagnosticsCountEVERYResidentSourceNotJustTheFirst() throws {
+        let renderer = try renderer()
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: renderer.device, width: 64, height: 64)
+
+        renderer.attach(
+            source: try StudioTestMedia.makeFrameSource(
+                lumaLevels: [32, 96], device: renderer.device))
+        _ = renderer.render(snapshot: snapshot(ticks: 0), to: target)
+        let primaryOnly = renderer.boundTextureCount
+        XCTAssertGreaterThan(primaryOnly, 0, "the primary source must bind something")
+
+        // A second resident source, driven so it binds too.
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(
+                lumaLevels: [224], device: renderer.device),
+            assetId: "second", timebase: timebase)
+        renderer.sequence = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "i1", assetId: "second",
+                startTicks: 0, endTicks: 3000, sourceInTicks: 0),
+        ])
+        _ = renderer.render(snapshot: snapshot(ticks: 0), to: target)
+
+        XCTAssertGreaterThan(
+            renderer.boundTextureCount, primaryOnly,
+            "textures reported only one source's count while two were resident — "
+                + "silently under-reporting is what this fix exists to prevent")
+        XCTAssertEqual(renderer.residentSequenceAssetCount, 1)
+    }
+
+    /// Hiding the Review route must release SEQUENCE sources too, not just the
+    /// A/B pair — the briefing's resource obligation covers all of them.
+    func testDetachingReleasesEverySequenceSource() throws {
+        let renderer = try renderer()
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [32], device: renderer.device),
+            assetId: "a", timebase: timebase)
+        renderer.attachSequence(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [64], device: renderer.device),
+            assetId: "b", timebase: timebase)
+        XCTAssertEqual(renderer.residentSequenceAssetCount, 2)
+
+        renderer.detachSequenceSources()
+        XCTAssertEqual(renderer.residentSequenceAssetCount, 0)
+        XCTAssertNil(renderer.sequence, "a released route must not keep a timeline to play")
+        XCTAssertEqual(renderer.retainedFrameCount, 0)
+    }
+}

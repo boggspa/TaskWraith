@@ -154,8 +154,39 @@ public final class StudioViewerRenderer {
 
     /// Cache hits and bound textures, surfaced from the frame source so the
     /// viewer can display them without reaching through two more layers.
-    public var cacheHitCount: Int { source?.diagnostics.cacheHitCount ?? 0 }
-    public var boundTextureCount: Int { source?.diagnostics.boundFrameCount ?? 0 }
+    /// Sequence sources, keyed by assetId.
+    ///
+    /// The A/B pair cannot express a timeline: a proposal is chosen by VERSION,
+    /// a sequence resolves by TICK, and a cut can land on any asset the document
+    /// references. Two optionals picked by a boolean cannot answer "which file
+    /// is on screen at tick T".
+    private var sequenceSources: [String: StudioVideoFrameSource] = [:]
+    private var sequenceTimebases: [String: StudioTimebase] = [:]
+    /// The committed timeline the Review route plays. Nil for Source, which
+    /// previews the asset independently of the timeline.
+    public var sequence: StudioTimelineSequence?
+
+    /// Every resident decode source: primary, proposed, and each sequence asset.
+    private var allSources: [StudioVideoFrameSource] {
+        var sources: [StudioVideoFrameSource] = []
+        if let source { sources.append(source) }
+        if let proposedSource { sources.append(proposedSource) }
+        sources.append(contentsOf: sequenceSources.values)
+        return sources
+    }
+
+    /// AGGREGATED ACROSS EVERY RESIDENT SOURCE, and that is not cosmetic. These
+    /// read `source?` alone until this commit, which was correct while at most
+    /// two sources existed and one was the A/B partner. A sequence holds N, so a
+    /// single-source reading would have kept drawing, kept passing its test, and
+    /// SILENTLY UNDER-REPORTED — the aging-evidence pattern, caught here BEFORE
+    /// the change landed rather than after it.
+    public var cacheHitCount: Int {
+        allSources.reduce(0) { $0 + $1.diagnostics.cacheHitCount }
+    }
+    public var boundTextureCount: Int {
+        allSources.reduce(0) { $0 + $1.diagnostics.boundFrameCount }
+    }
 
     /// Whether the current grade would leave the picture untouched, accounting
     /// for whether a LUT is actually resident. The renderer is the only place
@@ -180,6 +211,31 @@ public final class StudioViewerRenderer {
         proposedAssetId = assetId
         proposedTimebase = timebase
     }
+
+    /// Attaches a decode source for one asset of the committed sequence.
+    public func attachSequence(
+        source newSource: StudioVideoFrameSource,
+        assetId: String,
+        timebase: StudioTimebase
+    ) {
+        sequenceSources[assetId]?.invalidate()
+        videoRenderer.releaseRetainedFrames()
+        sequenceSources[assetId] = newSource
+        sequenceTimebases[assetId] = timebase
+    }
+
+    /// Releases every sequence source. Called when the Review route hides, so
+    /// the briefing's resource obligation covers sequence assets too rather
+    /// than only the A/B pair.
+    public func detachSequenceSources() {
+        for source in sequenceSources.values { source.invalidate() }
+        sequenceSources.removeAll()
+        sequenceTimebases.removeAll()
+        sequence = nil
+        videoRenderer.releaseRetainedFrames()
+    }
+
+    public var residentSequenceAssetCount: Int { sequenceSources.count }
 
     /// Detaches the proposal's source. Called when a ghost is resolved either
     /// way: an accepted proposal becomes part of the sequence and a rejected one
@@ -268,7 +324,29 @@ public final class StudioViewerRenderer {
         // a proposal is actually being reviewed, so nothing else pays for it.
         var selectedSource = source
         var selectedFrame = frameIndex
-        if let review {
+
+        // THE SEQUENCE PATH. Review plays the committed timeline: the tick
+        // decides WHICH ASSET is on screen, not just which frame. A gap draws
+        // nothing rather than the neighbouring clip.
+        if let sequence, !sequence.isEmpty {
+            switch sequence.sample(atTicks: snapshot.positionTicks) {
+            case .gap:
+                failedFrameCount += 1
+                return .proposedMaterialUnavailable(
+                    frameIndex: frameIndex, assetId: "sequence-gap")
+            case .item(_, let assetId, let sourceTicks):
+                guard
+                    let clipSource = sequenceSources[assetId],
+                    let clipTimebase = sequenceTimebases[assetId]
+                else {
+                    failedFrameCount += 1
+                    return .proposedMaterialUnavailable(
+                        frameIndex: frameIndex, assetId: assetId)
+                }
+                selectedSource = clipSource
+                selectedFrame = sourceTicks / max(1, clipTimebase.frameDurationTicks)
+            }
+        } else if let review {
             switch StudioReviewRouter.request(
                 atTicks: snapshot.positionTicks,
                 version: review.version,

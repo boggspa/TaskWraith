@@ -1118,6 +1118,11 @@ final class StudioViewerAppState {
             // The obligation, discharged where the resources actually live.
             controller.renderer.detachSource()
             controller.renderer.detachProposedSource()
+            // Sequence assets are decoder resources too. Adding the keyed
+            // collection without extending this release would have made the
+            // briefing's obligation quietly incomplete — a hidden route holding
+            // N decoders while the code claimed it released everything.
+            controller.renderer.detachSequenceSources()
             Self.report(
                 "route \(hidden.rawValue) hidden — decoder resources released")
         case .refused(let reason):
