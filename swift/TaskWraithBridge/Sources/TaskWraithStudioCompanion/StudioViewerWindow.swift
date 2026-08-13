@@ -1201,6 +1201,42 @@ final class StudioViewerAppState {
     private var routes = StudioRouteVisibility()
     private let reviewController: StudioViewerWindowController?
 
+    /// Everything one pump update means, applied.
+    ///
+    /// A CORRECTION TO MY OWN CLAIM AT c062d109b. I wrote there that the pump
+    /// "no longer knows what a payload is, so it cannot fail to mention one".
+    /// That is true OF THE PUMP and it was not the whole story: the enumeration
+    /// did not disappear, it MOVED HERE. Adding a field to Step or Hydration
+    /// still needs a branch below, and nothing in the compiler asks for it. The
+    /// compiler forced this site to be rewritten ONCE; it does not force it to
+    /// stay complete.
+    ///
+    /// So this lives as a named method rather than a closure buried in a Thread
+    /// inside run(): the hop that has silently dropped a payload TWICE —
+    /// proposals before 5ca5a06e2, the sequence before c062d109b — is now
+    /// reachable by a test, and StudioPumpAdoptionTests pins the field counts
+    /// so a seventh payload cannot be added without this list being revisited.
+    func adopt(update: StudioCompanionStdioPump.Update) async {
+        if let revision = update.latestRevision {
+            adopt(revision: revision)
+        }
+        if !update.step.openedAssets.isEmpty {
+            await open(assets: update.step.openedAssets)
+        }
+        if !update.step.transcripts.isEmpty {
+            adopt(transcripts: update.step.transcripts)
+        }
+        if let hydration = update.hydration {
+            await adopt(sequence: hydration.sequence, knownAssets: hydration.assets)
+        }
+        if !update.step.proposals.isEmpty {
+            await adopt(proposals: update.step.proposals)
+        }
+        if !update.step.resolvedProposalIds.isEmpty {
+            adopt(resolvedProposals: update.step.resolvedProposalIds)
+        }
+    }
+
     init(
         controller: StudioViewerWindowController,
         renderer: StudioViewerRenderer,
@@ -1434,32 +1470,8 @@ enum StudioViewerApp {
         let pumpThread = Thread {
             exit(
                 StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { update in
-                    // ONE hop for everything the session learned. Destructuring
-                    // here rather than in the transport means a forgotten
-                    // payload is visible at this single site instead of being
-                    // silently absent from a callback list.
                     Task { @MainActor in
-                        guard let state = StudioViewerAppState.shared else { return }
-                        if let revision = update.latestRevision {
-                            state.adopt(revision: revision)
-                        }
-                        if !update.step.openedAssets.isEmpty {
-                            await state.open(assets: update.step.openedAssets)
-                        }
-                        if !update.step.transcripts.isEmpty {
-                            state.adopt(transcripts: update.step.transcripts)
-                        }
-                        if let hydration = update.hydration {
-                            await state.adopt(
-                                sequence: hydration.sequence,
-                                knownAssets: hydration.assets)
-                        }
-                        if !update.step.proposals.isEmpty {
-                            await state.adopt(proposals: update.step.proposals)
-                        }
-                        if !update.step.resolvedProposalIds.isEmpty {
-                            state.adopt(resolvedProposals: update.step.resolvedProposalIds)
-                        }
+                        await StudioViewerAppState.shared?.adopt(update: update)
                     }
                 }
             )
