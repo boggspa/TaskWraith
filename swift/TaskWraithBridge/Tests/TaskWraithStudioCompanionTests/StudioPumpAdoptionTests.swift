@@ -1,3 +1,7 @@
+import AVFoundation
+import CoreMedia
+import CoreVideo
+import Metal
 import XCTest
 
 @testable import TaskWraithStudioCompanion
@@ -21,12 +25,11 @@ import XCTest
 ///
 /// WHAT THIS FILE DOES AND DOES NOT PROVE — said plainly, because a guard that
 /// reads stronger than it is would be the exact failure this round keeps
-/// catching. It pins the SHAPE of the payload types, so adding a seventh field
-/// fails here and sends the next person to the adoption list. It does NOT
-/// execute adoption or assert its effects: those land on private state, and
-/// widening it for a test would buy coverage with the honesty this lane has
-/// spent the round defending. Behavioural adoption coverage remains open and is
-/// named as such in the ledger.
+/// catching. The first three controls pin the SHAPE of the payload types, so
+/// adding a seventh field sends the next person to the adoption list. The
+/// lower controls execute that list through the real app state, attachment,
+/// controller and renderer paths. Neither kind substitutes for the other.
+@MainActor
 final class StudioPumpAdoptionTests: XCTestCase {
 
     /// Every payload `Step` carries must have a branch in
@@ -95,4 +98,329 @@ final class StudioPumpAdoptionTests: XCTestCase {
         XCTAssertEqual(fields, ["hydration", "latestRevision", "step"])
         XCTAssertEqual(update.latestRevision, 7, "the envelope must carry what it was given")
     }
+    /// Executes the real update-adoption path over media that the production
+    /// attachment can decode. A hydration that merely mirrors its fields while
+    /// leaving the Source picture, transcript band, or ghost empty is broken.
+    func testHydrationRestoresMediaTranscriptAndGhostWithoutPresenting() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie()
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        var presentationCount = 0
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: { presentationCount += 1 }
+        )
+
+        let asset = StudioMediaAsset(assetId: "recovered", path: movie.path)
+        let transcript = StudioTranscript(
+            transcriptId: "recovered-transcript",
+            assetId: asset.assetId,
+            segments: [
+                StudioTranscriptSegment(
+                    segmentId: "word-1",
+                    text: "restored",
+                    sourceIn: try XCTUnwrap(StudioRationalTime(n: 0, d: 30)),
+                    sourceOut: try XCTUnwrap(StudioRationalTime(n: 1, d: 30))
+                )
+            ]
+        )
+        let proposal = StudioEditProposal(
+            proposalId: "recovered-proposal",
+            createdRevision: 7,
+            op: StudioInsertRangeOp(
+                itemId: "recovered-item",
+                assetId: asset.assetId,
+                sourceIn: try XCTUnwrap(StudioRationalTime(n: 0, d: 30)),
+                sourceOut: try XCTUnwrap(StudioRationalTime(n: 1, d: 30)),
+                at: try XCTUnwrap(StudioRationalTime(n: 1, d: 30))
+            )
+        )
+        let update = StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: []
+            ),
+            latestRevision: 7,
+            hydration: StudioCompanionSession.Hydration(
+                assets: [asset],
+                proposals: [proposal],
+                transcripts: [transcript],
+                sequence: StudioTimelineSequence(items: [
+                    StudioSequenceItem(
+                        itemId: "recovered-sequence-item", assetId: asset.assetId,
+                        startTicks: 0, endTicks: 2, sourceInTicks: 0
+                    )
+                ])
+            )
+        )
+
+        await state.adopt(update: update)
+
+        XCTAssertEqual(presentationCount, 0, "hydration must not foreground Studio")
+        XCTAssertFalse(sourceController.isPresentationAttached)
+        XCTAssertTrue(
+            sourceRenderer.diagnostics.hasSource,
+            "the recovered asset was not actually attached to the Source renderer"
+        )
+        XCTAssertTrue(
+            reviewRenderer.diagnostics.hasSource,
+            "the recovered asset was not attached to the independent Review renderer"
+        )
+        XCTAssertEqual(
+            reviewRenderer.sequence?.sample(atTicks: 0),
+            .item(itemId: "recovered-sequence-item", assetId: asset.assetId, sourceTicks: 0),
+            "hydration must retain the exact committed asset rather than substituting another"
+        )
+        XCTAssertEqual(
+            reviewRenderer.residentSequenceAssetCount,
+            1,
+            "the recovered committed sequence did not make its named asset resident"
+        )
+        XCTAssertEqual(
+            sourceController.transcriptSegmentCount,
+            1,
+            "the recovered transcript never reached the visible Source band"
+        )
+        XCTAssertTrue(
+            reviewController.hasOpenReview,
+            "the recovered ghost never reached the Review controller"
+        )
+    }
+
+    /// Exercises the product handoff between two distinct controllers. The
+    /// Review context comes from the Review controller itself; rendering it
+    /// verifies that its independent renderer has real material, rather than
+    /// merely proving the Core renderer can draw a lookalike context.
+    func testReviewControllerUsesResidentPrimaryForSameAssetAndSecondaryForCrossAsset() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let primaryURL = try await makeMovie(lumaLevels: [16, 80, 160, 235])
+        let insertedURL = try await makeMovie(lumaLevels: [235, 235])
+        defer {
+            try? FileManager.default.removeItem(at: primaryURL)
+            try? FileManager.default.removeItem(at: insertedURL)
+        }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: {}
+        )
+        let primary = StudioMediaAsset(assetId: "primary", path: primaryURL.path)
+        let inserted = StudioMediaAsset(assetId: "inserted", path: insertedURL.path)
+
+        await state.open(assets: [primary])
+        XCTAssertTrue(sourceRenderer.diagnostics.hasSource)
+        XCTAssertTrue(
+            reviewRenderer.diagnostics.hasSource,
+            "Review needs its own route-resident primary material"
+        )
+
+        func proposal(id: String, assetId: String) throws -> StudioEditProposal {
+            StudioEditProposal(
+                proposalId: id,
+                createdRevision: 7,
+                op: StudioInsertRangeOp(
+                    itemId: "\(id)-item",
+                    assetId: assetId,
+                    sourceIn: try XCTUnwrap(StudioRationalTime(n: 0, d: 30)),
+                    sourceOut: try XCTUnwrap(StudioRationalTime(n: 2, d: 30)),
+                    at: try XCTUnwrap(StudioRationalTime(n: 2, d: 30))
+                )
+            )
+        }
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 2, atHost: 0)
+        let snapshot = clock.snapshot(atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: 128,
+            height: 128
+        )
+        func green(_ texture: MTLTexture) throws -> Int {
+            Int(try StudioTestPatternRenderer.readPixel(from: texture, x: 64, y: 64).green)
+        }
+
+        let sameAsset = try proposal(id: "same-asset", assetId: primary.assetId)
+        await state.adopt(proposals: [sameAsset])
+        let sameCurrent = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(snapshot: snapshot, to: target, review: sameCurrent).didDraw)
+        let sameCurrentGreen = try green(target)
+
+        reviewController.toggleReviewVersion()
+        let sameProposed = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(snapshot: snapshot, to: target, review: sameProposed).didDraw)
+        let sameProposedGreen = try green(target)
+        XCTAssertGreaterThan(
+            abs(sameProposedGreen - sameCurrentGreen),
+            60,
+            "the same-asset affected range must display a different source-time picture"
+        )
+        XCTAssertEqual(
+            reviewRenderer.activeSourceCount,
+            1,
+            "same-asset Proposed must reuse Review's resident primary decoder"
+        )
+
+        state.adopt(resolvedProposals: [sameAsset.proposalId])
+        XCTAssertFalse(reviewController.hasOpenReview)
+
+        // Registering a known but unopened asset lets the actual proposal path
+        // attach it as the cross-asset Review secondary without changing Source.
+        await state.adopt(
+            sequence: StudioTimelineSequence(items: []),
+            knownAssets: [inserted]
+        )
+        let crossAsset = try proposal(id: "cross-asset", assetId: inserted.assetId)
+        await state.adopt(proposals: [crossAsset])
+        XCTAssertEqual(
+            reviewRenderer.activeSourceCount,
+            2,
+            "cross-asset Proposed needs the independent secondary resident source"
+        )
+        let crossCurrent = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(snapshot: snapshot, to: target, review: crossCurrent).didDraw)
+        let crossCurrentGreen = try green(target)
+        reviewController.toggleReviewVersion()
+        let crossProposed = try XCTUnwrap(reviewController.activeReviewContext)
+        XCTAssertTrue(reviewRenderer.render(snapshot: snapshot, to: target, review: crossProposed).didDraw)
+        XCTAssertGreaterThan(
+            abs(try green(target) - crossCurrentGreen),
+            60,
+            "cross-asset Proposed must display its secondary material, not Source"
+        )
+
+        state.adopt(resolvedProposals: [crossAsset.proposalId])
+        let missing = try proposal(id: "missing-asset", assetId: "not-resident")
+        await state.adopt(proposals: [missing])
+        XCTAssertFalse(
+            reviewController.hasOpenReview,
+            "a missing identity must be held rather than shown with another asset's picture"
+        )
+        XCTAssertEqual(reviewRenderer.activeSourceCount, 1)
+
+        XCTAssertEqual(state.toggleRoute(.review), .shown(.review))
+        XCTAssertEqual(state.toggleRoute(.review), .hidden(.review))
+        XCTAssertTrue(
+            sourceRenderer.diagnostics.hasSource,
+            "hiding Review must not tear down the material Source is still presenting"
+        )
+        XCTAssertFalse(reviewRenderer.diagnostics.hasSource)
+    }
+
+    private func makeMovie(lumaLevels: [UInt8] = [128, 128]) async throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("studio-pump-adoption-\(UUID().uuidString).mov")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: 64,
+                AVVideoHeightKey: 64,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoMaxKeyFrameIntervalKey: 1,
+                    AVVideoAllowFrameReorderingKey: false,
+                ],
+            ]
+        )
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                ),
+                kCVPixelBufferWidthKey as String: 64,
+                kCVPixelBufferHeightKey as String: 64,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [CFString: Any]() as CFDictionary,
+            ]
+        )
+        guard writer.canAdd(input) else { throw XCTSkip("asset writer rejected fixture") }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw XCTSkip("asset writer could not start: \(String(describing: writer.error))")
+        }
+        writer.startSession(atSourceTime: .zero)
+        guard !lumaLevels.isEmpty else { throw XCTSkip("fixture needs at least one frame") }
+
+        for index in lumaLevels.indices {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            XCTAssertTrue(
+                adaptor.append(
+                    try makePixelBuffer(luma: lumaLevels[index]),
+                    withPresentationTime: CMTime(value: Int64(index), timescale: 30)
+                ),
+                "fixture append failed: \(String(describing: writer.error))"
+            )
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw XCTSkip("asset writer finished \(writer.status): \(String(describing: writer.error))")
+        }
+        return url
+    }
+
+    private func makePixelBuffer(luma: UInt8 = 128) throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            64,
+            64,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            [
+                kCVPixelBufferMetalCompatibilityKey: true,
+                kCVPixelBufferIOSurfacePropertiesKey: [CFString: Any]() as CFDictionary,
+            ] as CFDictionary,
+            &buffer
+        )
+        let pixelBuffer = try XCTUnwrap(buffer, "CVPixelBufferCreate failed: \(status)")
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        for plane in 0..<CVPixelBufferGetPlaneCount(pixelBuffer) {
+            guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, plane) else {
+                continue
+            }
+            memset(
+                base,
+                plane == 0 ? Int32(luma) : 128,
+                CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane)
+                    * CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)
+            )
+        }
+        return pixelBuffer
+    }
+
 }

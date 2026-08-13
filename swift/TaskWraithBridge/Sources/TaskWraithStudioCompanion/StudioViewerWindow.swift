@@ -61,6 +61,7 @@ final class StudioViewerView: NSView {
     /// The host's transcript for the open asset, or nil. Drives the band.
     private var transcript: StudioTranscript?
     var selectedSegmentId: String?
+    var transcriptSegmentCount: Int { transcript?.segments.count ?? 0 }
     private var trim: StudioTrimDrag?
     /// The revision the operator is looking at. Proposals cite it as their base.
     private var hostRevision = 0
@@ -69,6 +70,19 @@ final class StudioViewerView: NSView {
     /// machinery existed and NOTHING CALLED IT.
     private var reviewTimeline: StudioProposedTimeline?
     private var reviewVersion: StudioReviewVersion = .current
+    var hasOpenReview: Bool { reviewTimeline != nil }
+    /// The exact review request the visible Review controller supplies to its
+    /// renderer. Keeping this observable lets the Companion integration test
+    /// render the controller-adopted ghost rather than recreating a lookalike
+    /// context beside the product path.
+    var activeReviewContext: StudioReviewContext? {
+        guard route == .review, let reviewTimeline else { return nil }
+        return StudioReviewContext(
+            version: reviewVersion,
+            timeline: reviewTimeline,
+            timebase: transport.clock.timebase
+        )
+    }
     /// The operator's own In/Out, parked while the review loop borrows the
     /// transport's one loop authority. Restored on exit — overwriting an
     /// operator's marks to loop a proposal would make one of the two features
@@ -344,13 +358,7 @@ final class StudioViewerView: NSView {
             to: drawable.texture,
             presenting: drawable,
             overlay: overlay,
-            review: (route == .review ? reviewTimeline : nil).map {
-                StudioReviewContext(
-                    version: reviewVersion,
-                    timeline: $0,
-                    timebase: transport.clock.timebase
-                )
-            }
+            review: activeReviewContext
         )
         // MEASURED A/V SYNC, against the audio hardware's own playhead.
         //
@@ -1153,11 +1161,26 @@ final class StudioViewerWindowController {
             defer: false
         )
         window.title = route.windowTitle
-        window.contentView = view
         window.center()
     }
 
+    var isPresentationAttached: Bool {
+        view.window === window
+    }
+
+    /// Observable view state for controller-level lifecycle diagnostics. These
+    /// are adopted before presentation on reconnect, so callers can distinguish
+    /// a successfully restored background projection from an empty viewer.
+    var transcriptSegmentCount: Int { view.transcriptSegmentCount }
+
+    var hasOpenReview: Bool { view.hasOpenReview }
+
+    var activeReviewContext: StudioReviewContext? { view.activeReviewContext }
+
     func show() {
+        // Attaching the Metal view starts its display link. Keep it detached
+        // until an explicit presentation so hidden startup does no rendering.
+        if !isPresentationAttached { window.contentView = view }
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
     }
@@ -1172,6 +1195,10 @@ final class StudioViewerWindowController {
 
     func adopt(reviewTimeline: StudioProposedTimeline?) {
         view.adopt(reviewTimeline: reviewTimeline)
+    }
+
+    func toggleReviewVersion() {
+        view.toggleReviewVersion()
     }
 
     func adopt(revision: Int) {
@@ -1196,6 +1223,14 @@ final class StudioViewerAppState {
 
     let controller: StudioViewerWindowController
     let attachment: StudioMediaAttachment
+    /// Review has an independent renderer and independently releasable route
+    /// lifetime. Its primary is made resident when Source opens; a same-asset
+    /// ghost then reuses that primary rather than loading a second decoder.
+    private let reviewAttachment: StudioMediaAttachment?
+    /// Presentation is separate from process startup. The supervised companion
+    /// hydrates in the background, but only a host open_media request may bring
+    /// Studio to the foreground.
+    private let presentSource: () -> Void
 
     /// Route visibility and the resource obligation that rides with it.
     private var routes = StudioRouteVisibility()
@@ -1227,7 +1262,7 @@ final class StudioViewerAppState {
             adopt(transcripts: update.step.transcripts)
         }
         if let hydration = update.hydration {
-            await adopt(sequence: hydration.sequence, knownAssets: hydration.assets)
+            await adopt(hydration: hydration)
         }
         if !update.step.proposals.isEmpty {
             await adopt(proposals: update.step.proposals)
@@ -1237,14 +1272,39 @@ final class StudioViewerAppState {
         }
     }
 
+    /// Restores the durable document without turning a supervisor reconnect into
+    /// an operator-visible open_media action. Attachment is deliberately shared
+    /// with live opens; presentation is not.
+    private func adopt(hydration: StudioCompanionSession.Hydration) async {
+        if !hydration.assets.isEmpty {
+            await attach(assets: hydration.assets)
+        }
+        if !hydration.transcripts.isEmpty {
+            adopt(transcripts: hydration.transcripts)
+        }
+        await adopt(sequence: hydration.sequence, knownAssets: hydration.assets)
+        if !hydration.proposals.isEmpty {
+            await adopt(proposals: hydration.proposals)
+        }
+    }
+
     init(
         controller: StudioViewerWindowController,
         renderer: StudioViewerRenderer,
-        reviewController: StudioViewerWindowController? = nil
+        reviewController: StudioViewerWindowController? = nil,
+        presentSource: (() -> Void)? = nil
     ) {
         self.controller = controller
         self.attachment = StudioMediaAttachment(renderer: renderer)
         self.reviewController = reviewController
+        self.reviewAttachment = reviewController.map {
+            StudioMediaAttachment(renderer: $0.renderer)
+        }
+        self.presentSource = presentSource ?? {
+            NSApplication.shared.setActivationPolicy(.regular)
+            controller.show()
+            NSApplication.shared.activate()
+        }
     }
 
     /// Shows or hides a route. HIDING RELEASES THAT ROUTE'S DECODER/PLAYER
@@ -1282,6 +1342,8 @@ final class StudioViewerAppState {
         route == .source ? controller : reviewController
     }
 
+    private var reviewTarget: StudioViewerWindowController { reviewController ?? controller }
+
     /// Transcripts the host has sent, keyed by asset. Held across source
     /// switches so that returning to an asset does not need a re-send.
     private var known: [String: StudioTranscript] = [:]
@@ -1313,23 +1375,30 @@ final class StudioViewerAppState {
             Self.report("proposal \(proposal.proposalId) rejected — unrepresentable range")
             return
         }
-        // An insert from the OPEN asset needs no second source; one from another
-        // asset does, and if that load fails the ghost is not shown rather than
-        // reviewed against the wrong picture.
-        if timeline.assetId != openAssetId {
+        // The Review renderer has its own route lifetime, so it has its own
+        // resident primary. An insert from that primary must not allocate a
+        // second same-asset decoder; a foreign asset gets the one secondary
+        // source required for A/B. Never substitute the Source route's asset.
+        let reviewAttachment = reviewAttachment ?? attachment
+        if timeline.assetId != reviewAttachment.attachedAssetId {
+            if timeline.assetId == openAssetId {
+                Self.report(
+                    "proposal \(proposal.proposalId) held — review primary source unavailable")
+                return
+            }
             guard let asset = proposalAssets[timeline.assetId] else {
                 Self.report(
                     "proposal \(proposal.proposalId) held — asset \(timeline.assetId) not open")
                 return
             }
-            let outcome = await attachment.attachProposed(asset: asset)
+            let outcome = await reviewAttachment.attachProposed(asset: asset)
             guard outcome.didAttach else {
                 Self.report("proposal \(proposal.proposalId) held — proposed source failed")
                 return
             }
         }
         openProposalId = proposal.proposalId
-        controller.adopt(reviewTimeline: timeline)
+        reviewTarget.adopt(reviewTimeline: timeline)
         Self.report(
             "proposal \(proposal.proposalId) shown — v to compare, a accept, r reject")
     }
@@ -1338,8 +1407,8 @@ final class StudioViewerAppState {
     func adopt(resolvedProposals ids: [String]) {
         guard let openProposalId, ids.contains(openProposalId) else { return }
         self.openProposalId = nil
-        attachment.detachProposed()
-        controller.adopt(reviewTimeline: nil)
+        (reviewAttachment ?? attachment).detachProposed()
+        reviewTarget.adopt(reviewTimeline: nil)
         Self.report("proposal \(openProposalId) resolved — review cleared")
     }
 
@@ -1363,6 +1432,8 @@ final class StudioViewerAppState {
             reviewController.renderer.detachSequenceSources()
             return
         }
+        let reviewAttachment = reviewAttachment ?? StudioMediaAttachment(
+            renderer: reviewController.renderer)
         var attached = 0
         var held: [String] = []
         for assetId in sequence.referencedAssetIds.sorted() {
@@ -1370,8 +1441,7 @@ final class StudioViewerAppState {
                 held.append(assetId)
                 continue
             }
-            let outcome = await StudioMediaAttachment(renderer: reviewController.renderer)
-                .attachSequence(asset: asset)
+            let outcome = await reviewAttachment.attachSequence(asset: asset)
             if outcome.didAttach { attached += 1 } else { held.append(assetId) }
         }
         reviewController.renderer.sequence = sequence
@@ -1402,6 +1472,16 @@ final class StudioViewerAppState {
     /// that actually loaded. Failures are reported to stderr rather than being
     /// swallowed or crashing the viewer.
     func open(assets: [StudioMediaAsset]) async {
+        // open_media is the explicit product action. Process startup and
+        // hydration must stay invisible; even a failed user-requested open is
+        // presented so its on-screen error is not lost in stderr.
+        presentSource()
+        await attach(assets: assets)
+    }
+
+    /// Makes media resident and updates the Source projection. Hydration calls
+    /// this directly so restored state is real but remains background-only.
+    private func attach(assets: [StudioMediaAsset]) async {
         for asset in assets { proposalAssets[asset.assetId] = asset }
         for outcome in await attachment.attach(openedAssets: assets) {
             switch outcome {
@@ -1418,6 +1498,17 @@ final class StudioViewerAppState {
                     timebase: timebase,
                     assetId: assetId
                 )
+                // The source and review routes retain independently so hiding
+                // Review cannot invalidate Source. Preparing Review's primary
+                // here is what lets a same-asset proposal reuse its resident
+                // decoder instead of either drawing blank or loading a second.
+                if let reviewAttachment, let asset = proposalAssets[assetId] {
+                    let reviewOutcome = await reviewAttachment.attach(asset: asset)
+                    if !reviewOutcome.didAttach {
+                        Self.report(
+                            "review primary \(assetId) unavailable — proposal comparison held")
+                    }
+                }
                 // A source switch must not leave the previous asset's words on
                 // screen: adopt this asset's transcript, or clear the band.
                 openAssetId = assetId
@@ -1441,9 +1532,8 @@ final class StudioViewerAppState {
     }
 }
 
-/// Entry point for `--viewer`. Production launch still uses the headless stdio
-/// path; this flag is the seam that gets flipped once the viewer is wired into
-/// the host's supervisor lifecycle.
+/// Entry point for `--viewer`. The AppKit process and stdio protocol hydrate in
+/// the background; the first host open_media request presents the viewer.
 enum StudioViewerApp {
     @MainActor private static var retainedController: StudioViewerWindowController?
     @MainActor private static var retainedReviewController: StudioViewerWindowController?
@@ -1480,7 +1570,9 @@ enum StudioViewerApp {
         pumpThread.start()
 
         let application = NSApplication.shared
-        application.setActivationPolicy(.regular)
+        // A supervised companion is infrastructure, not a startup window. Keep
+        // it out of the Dock and foreground until Open in Studio arrives.
+        application.setActivationPolicy(.accessory)
         // ONE AUTHORITY, TWO ROUTES. The briefing is explicit: "two viewers must
         // never become two clocks". The authority is a reference type held by
         // both routes, so that is a fact about the object graph rather than a
@@ -1504,8 +1596,6 @@ enum StudioViewerApp {
             renderer: renderer,
             reviewController: reviewController
         )
-        controller.show()
-        application.activate()
         application.run()
         exit(0)
     }

@@ -194,6 +194,46 @@ final class StudioViewerEventTests: XCTestCase {
     )
 }
 
+/// Process startup must not be mistaken for an operator asking to see Studio.
+/// The host's open_media notification is the presentation boundary.
+@MainActor
+final class StudioViewerPresentationTests: XCTestCase {
+    func testSourcePresentationWaitsForAnOpenMediaRequest() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let controller = StudioViewerWindowController(
+            renderer: renderer,
+            authority: StudioPlaybackAuthority(
+                clock: StudioPlaybackClock(timebase: timebase, durationTicks: 0)))
+        var presentationCount = 0
+        let state = StudioViewerAppState(
+            controller: controller,
+            renderer: renderer,
+            presentSource: { presentationCount += 1 })
+
+        XCTAssertEqual(
+            presentationCount, 0,
+            "constructing the supervised viewer must not present it at app startup")
+        XCTAssertFalse(
+            controller.isPresentationAttached,
+            "the hidden startup viewer must not run its Metal display link off-screen")
+
+        await state.open(assets: [
+            StudioMediaAsset(
+                assetId: "requested",
+                path: "/path/that/does/not/exist.mov")
+        ])
+
+        XCTAssertEqual(
+            presentationCount, 1,
+            "an explicit open_media request must present Studio, including its load error")
+    }
+}
+
 /// The conversion arithmetic, exercised at a scale that is NOT 1.
 ///
 /// WHY SEPARATELY. The end-to-end event tests run in a headless window whose
