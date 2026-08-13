@@ -514,7 +514,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
         id: 'grok-real',
         timestamp: NOW - 90_000,
         provider: 'grok',
-        model: 'grok-build',
+        model: 'grok-4.6',
         inputTokens: 200,
         outputTokens: 100,
         totalTokens: 300
@@ -543,7 +543,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
 
     expect(data.modelBreakdown.map((m) => [m.provider, m.model, m.label, m.totalTokens])).toEqual([
       ['cursor', 'composer-2.5-fast', 'Composer 2.5 Fast', 4_500],
-      ['grok', 'grok-4.5', 'Grok 4.5 Fast', 450]
+      ['grok', 'grok-4.6', 'Grok 4.6 Fast', 450]
     ])
   })
 
