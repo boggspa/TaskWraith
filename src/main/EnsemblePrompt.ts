@@ -216,11 +216,11 @@ export interface EnsembleParticipantPromptProjection {
   suppliedMessageIds: string[]
 }
 
-// v4 (capability-surface repair 2026-07): tool names are now conditional on
-// the exact runtime receipt and every native/degraded lane has an explicit
-// @Role/@Model fallback. Bump so resumed seats receive a full truthful briefing
-// instead of retaining the earlier hard-coded MCP claims through slim turns.
-export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v5'
+// v6 (Boss-allocation posture repair 2026-08): explicit workers and scoped
+// Boss/Captain writer lanes no longer inherit an advisory boundary. Bump so
+// resumed provider sessions receive a full corrected briefing instead of
+// retaining the contradictory Review rule from their cached v5 shell.
+export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v6'
 export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v2'
 
 export interface EnsembleDynamicStateSnapshot {

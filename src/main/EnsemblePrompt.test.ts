@@ -13,6 +13,7 @@ import {
   formatSameProviderDisambiguationNote,
   formatToolTraceSummary,
   getOrderedEnsembleParticipants,
+  ENSEMBLE_PROMPT_SHELL_VERSION,
   MAX_ENSEMBLE_PARTICIPANTS,
   OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS,
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
@@ -3328,6 +3329,11 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
  * Spike 5 — prompt-shell stamp + slim resumed-turn prompt shape.
  */
 describe('computeEnsemblePromptShellStamp', () => {
+  it('uses the worker-allocation prompt-shell generation', () => {
+    expect(ENSEMBLE_PROMPT_SHELL_VERSION).toBe('ensemble-shell-v6')
+    expect(computeEnsemblePromptShellStamp(ensemble)).toMatch(/^ensemble-shell-v6:/)
+  })
+
   it('is stable, order-independent, and sensitive to shell-relevant changes', () => {
     const base = { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
     const stamp = computeEnsemblePromptShellStamp(base)
