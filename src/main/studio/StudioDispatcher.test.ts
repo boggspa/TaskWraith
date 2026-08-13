@@ -6,6 +6,7 @@ import { buildEditCommittedNotification, handleStudioMessage } from './StudioDis
 import {
   STUDIO_ERROR_NUMBERS,
   STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+  STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_METHODS,
   STUDIO_PROTOCOL_VERSION,
   StudioNdjsonDecoder,
@@ -146,6 +147,79 @@ describe('StudioDispatcher', () => {
       }
     })) as StudioErrorResponseMessage
     expect(stale.error.data).toMatchObject({ studioCode: 'stale_base', currentRevision: 1 })
+    await store.close()
+  })
+
+  it('proposes insert_range as a durable ghost and applies it only on acceptance', async () => {
+    const store = await openStore()
+    const proposed = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 20,
+      method: STUDIO_METHODS.proposeEdit,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 0,
+        proposalId: 'proposal-1',
+        op: insertOp
+      }
+    })) as StudioSuccessResponseMessage
+    expect(proposed.result).toMatchObject({
+      schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+      revision: 1,
+      proposal: { proposalId: 'proposal-1', createdRevision: 1 }
+    })
+
+    const ghost = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 21,
+      method: STUDIO_METHODS.getDocument
+    })) as StudioSuccessResponseMessage
+    expect(ghost.result).toMatchObject({
+      revision: 1,
+      document: { proposals: [{ proposalId: 'proposal-1' }], tracks: [] }
+    })
+
+    const accepted = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 22,
+      method: STUDIO_METHODS.resolveProposal,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 1,
+        proposalId: 'proposal-1',
+        decision: 'accept'
+      }
+    })) as StudioSuccessResponseMessage
+    expect(accepted.result).toMatchObject({
+      schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+      revision: 2,
+      proposalId: 'proposal-1',
+      decision: 'accept',
+      appliedOp: { itemId: 'item-1' }
+    })
+    expect(store.getDocument()).toMatchObject({
+      proposals: [],
+      tracks: [{ items: [{ itemId: 'item-1' }] }]
+    })
+    await store.close()
+  })
+
+  it('rejects unsupported proposal schemas before mutating durable state', async () => {
+    const store = await openStore()
+    const response = (await handleStudioMessage(store, {
+      jsonrpc: '2.0',
+      id: 23,
+      method: STUDIO_METHODS.proposeEdit,
+      params: {
+        schemaVersion: 99,
+        baseRevision: 0,
+        proposalId: 'proposal-1',
+        op: insertOp
+      }
+    })) as StudioErrorResponseMessage
+    expect(response.error.data.studioCode).toBe('invalid_params')
+    expect(store.revision).toBe(0)
+    expect(store.getDocument().proposals).toEqual([])
     await store.close()
   })
 

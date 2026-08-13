@@ -17,6 +17,8 @@ import type { StudioRationalTime } from './StudioRationalTime'
 export const STUDIO_PROTOCOL_VERSION = 1
 /** Versioned schema for the additive studio/openMedia request. */
 export const STUDIO_OPEN_MEDIA_SCHEMA_VERSION = 1
+/** Versioned schema for durable ghost proposals and their resolution. */
+export const STUDIO_PROPOSAL_SCHEMA_VERSION = 1
 
 export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 
@@ -25,6 +27,8 @@ export const STUDIO_METHODS = Object.freeze({
   getDocument: 'studio/getDocument',
   applyEdit: 'studio/applyEdit',
   openMedia: 'studio/openMedia',
+  proposeEdit: 'studio/proposeEdit',
+  resolveProposal: 'studio/resolveProposal',
   editCommitted: 'studio/editCommitted'
 })
 
@@ -41,6 +45,8 @@ export type StudioErrorCode =
   | 'misaligned_time'
   | 'unsupported_protocol_version'
   | 'store_failure'
+  | 'duplicate_proposal'
+  | 'proposal_not_found'
 
 /** JSON-RPC numeric codes; 4xxx is the Studio application range. */
 export const STUDIO_ERROR_NUMBERS: Readonly<Record<StudioErrorCode, number>> = Object.freeze({
@@ -55,7 +61,9 @@ export const STUDIO_ERROR_NUMBERS: Readonly<Record<StudioErrorCode, number>> = O
   unrepresentable_time: 4005,
   misaligned_time: 4006,
   unsupported_protocol_version: 4007,
-  store_failure: 4008
+  store_failure: 4008,
+  duplicate_proposal: 4009,
+  proposal_not_found: 4010
 })
 
 export interface StudioRequestMessage {
@@ -128,7 +136,33 @@ export interface StudioOpenMediaOp {
   asset: StudioMediaAsset
 }
 
-export type StudioDocumentOperation = StudioEditOp | StudioOpenMediaOp
+/** Durable ghost edit. The timeline changes only after explicit acceptance. */
+export interface StudioEditProposal {
+  schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
+  proposalId: string
+  /** Revision created by the proposal commit itself. */
+  createdRevision: number
+  op: StudioEditOp
+}
+
+export interface StudioProposeEditOp {
+  type: 'propose_edit'
+  proposal: StudioEditProposal
+}
+
+export type StudioProposalDecision = 'accept' | 'reject'
+
+export interface StudioResolveProposalOp {
+  type: 'resolve_proposal'
+  proposalId: string
+  decision: StudioProposalDecision
+}
+
+export type StudioDocumentOperation =
+  | StudioEditOp
+  | StudioOpenMediaOp
+  | StudioProposeEditOp
+  | StudioResolveProposalOp
 
 export interface StudioHelloParams {
   protocolVersion: number
@@ -163,6 +197,35 @@ export interface StudioOpenMediaResult {
   schemaVersion: typeof STUDIO_OPEN_MEDIA_SCHEMA_VERSION
   revision: number
   asset: StudioMediaAsset
+}
+
+export interface StudioProposeEditParams {
+  schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
+  baseRevision: number
+  proposalId: string
+  op: StudioEditOp
+}
+
+export interface StudioProposeEditResult {
+  schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
+  revision: number
+  proposal: StudioEditProposal
+}
+
+export interface StudioResolveProposalParams {
+  schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
+  baseRevision: number
+  proposalId: string
+  decision: StudioProposalDecision
+}
+
+export interface StudioResolveProposalResult {
+  schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
+  revision: number
+  proposalId: string
+  decision: StudioProposalDecision
+  /** Present only when acceptance applied the proposal to the timeline. */
+  appliedOp?: StudioEditOp
 }
 
 export interface StudioEditCommittedParams {

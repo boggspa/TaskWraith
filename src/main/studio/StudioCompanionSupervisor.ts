@@ -14,9 +14,10 @@
  *   sends studio/hello then studio/getDocument. Protocol v1 has NO
  *   host-pushed snapshot message, so the supervisor never fabricates one and
  *   the host never speaks first.
- * - Open-proposal replay is EXPLICITLY UNIMPLEMENTED: durable proposal state
- *   is not modelled in protocol v1. A later slice must model and version that
- *   state before any replay semantics can exist here.
+ * - Durable proposals are part of the host-owned document returned by
+ *   studio/getDocument, so reconnect hydration makes every open ghost
+ *   available without inventing a host-pushed snapshot message. Rendering
+ *   those ghosts remains a companion-side concern.
  * - Single-instance is enforced per supervisor: start() while a companion is
  *   live, restarting, or stopping is rejected with a typed error. The
  *   production integration slice must construct exactly one supervisor.
@@ -40,6 +41,10 @@ import {
   type StudioMediaAsset,
   type StudioMessage,
   type StudioOpenMediaResult,
+  type StudioProposeEditParams,
+  type StudioProposeEditResult,
+  type StudioResolveProposalParams,
+  type StudioResolveProposalResult,
   type StudioResponseMessage,
   type StudioSuccessResponseMessage
 } from './StudioProtocol'
@@ -158,13 +163,45 @@ function extractCommittedEdit(
     }
     return { revision: result.revision, op: { type: 'open_media', asset: result.asset } }
   }
+  if (candidate.method === STUDIO_METHODS.proposeEdit) {
+    const result = (response as StudioSuccessResponseMessage).result as StudioProposeEditResult
+    const params = candidate.params as StudioProposeEditParams
+    if (
+      typeof result.revision !== 'number' ||
+      typeof result.proposal !== 'object' ||
+      result.proposal === null ||
+      result.proposal.proposalId !== params.proposalId
+    ) {
+      return null
+    }
+    return { revision: result.revision, op: { type: 'propose_edit', proposal: result.proposal } }
+  }
+  if (candidate.method === STUDIO_METHODS.resolveProposal) {
+    const result = (response as StudioSuccessResponseMessage).result as StudioResolveProposalResult
+    const params = candidate.params as StudioResolveProposalParams
+    if (
+      typeof result.revision !== 'number' ||
+      result.proposalId !== params.proposalId ||
+      result.decision !== params.decision
+    ) {
+      return null
+    }
+    return {
+      revision: result.revision,
+      op: {
+        type: 'resolve_proposal',
+        proposalId: result.proposalId,
+        decision: result.decision
+      }
+    }
+  }
   return null
 }
 
 /**
- * A served getDocument result is the host-observable hydration boundary. This
- * diagnostic deliberately says "served", not "recovered": protocol v1 has no
- * durable proposal model and therefore cannot claim open-proposal replay.
+ * A served getDocument result is the host-observable hydration boundary.
+ * The returned host-owned document includes durable open proposals, making
+ * ghost state available after restart; companion-side presentation is separate.
  */
 function extractHydrationRevision(
   request: unknown,

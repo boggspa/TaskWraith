@@ -11,7 +11,7 @@ import {
   type StudioCompanionSupervisorOptions,
   type StudioSupervisorEvent
 } from './StudioCompanionSupervisor'
-import { STUDIO_METHODS } from './StudioProtocol'
+import { STUDIO_METHODS, STUDIO_PROPOSAL_SCHEMA_VERSION } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 /** Loose view of one NDJSON line the supervisor wrote to the companion. */
@@ -217,6 +217,97 @@ describe('StudioCompanionSupervisor', () => {
     )
     expect(committed).toHaveLength(1)
     expect(harness.store.revision).toBe(1)
+    await harness.supervisor.stop()
+  })
+
+  it('replays an open proposal through getDocument after restart and pushes both transitions', async () => {
+    const harness = await createHarness({ maxRestarts: 3 })
+    harness.supervisor.start()
+    const first = harness.children[0]
+
+    first.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    first.send({ jsonrpc: '2.0', id: 2, method: STUDIO_METHODS.getDocument })
+    await until(() => first.messages.length >= 2)
+
+    first.send({
+      jsonrpc: '2.0',
+      id: 3,
+      method: STUDIO_METHODS.proposeEdit,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 0,
+        proposalId: 'proposal-restart',
+        op: insertOp
+      }
+    })
+    await until(() => first.messages.length >= 4)
+    expect(first.messages[2]).toMatchObject({
+      id: 3,
+      result: { revision: 1, proposal: { proposalId: 'proposal-restart' } }
+    })
+    expect(first.messages[3]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 1,
+        op: { type: 'propose_edit', proposal: { proposalId: 'proposal-restart' } }
+      }
+    })
+
+    first.exit(1)
+    await until(() => harness.children.length === 2)
+    const second = harness.children[1]
+    second.send({
+      jsonrpc: '2.0',
+      id: 4,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    second.send({ jsonrpc: '2.0', id: 5, method: STUDIO_METHODS.getDocument })
+    await until(() => second.messages.length >= 2)
+    expect(second.messages[1]).toMatchObject({
+      id: 5,
+      result: {
+        revision: 1,
+        document: { proposals: [{ proposalId: 'proposal-restart' }], tracks: [] }
+      }
+    })
+
+    second.send({
+      jsonrpc: '2.0',
+      id: 6,
+      method: STUDIO_METHODS.resolveProposal,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 1,
+        proposalId: 'proposal-restart',
+        decision: 'accept'
+      }
+    })
+    await until(() => second.messages.length >= 4)
+    expect(second.messages[2]).toMatchObject({
+      id: 6,
+      result: { revision: 2, proposalId: 'proposal-restart', decision: 'accept' }
+    })
+    expect(second.messages[3]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 2,
+        op: {
+          type: 'resolve_proposal',
+          proposalId: 'proposal-restart',
+          decision: 'accept'
+        }
+      }
+    })
+    expect(harness.store.getDocument()).toMatchObject({
+      proposals: [],
+      tracks: [{ items: [{ itemId: 'sup-item-1' }] }]
+    })
     await harness.supervisor.stop()
   })
 

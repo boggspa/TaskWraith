@@ -2,8 +2,9 @@ import * as fsPromises from 'node:fs/promises'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { StudioInsertRangeOp } from './StudioProtocol'
+import { STUDIO_PROPOSAL_SCHEMA_VERSION, type StudioInsertRangeOp } from './StudioProtocol'
 import {
+  STUDIO_DOCUMENT_FORMAT_VERSION,
   STUDIO_JOURNAL_FILENAME,
   STUDIO_SNAPSHOT_FILENAME,
   STUDIO_SNAPSHOT_FORMAT,
@@ -300,6 +301,139 @@ describe('StudioRevisionStore', () => {
     })
     expect(rejected).toMatchObject({ ok: false, code: 'invalid_params', currentRevision: 0 })
     expect(store.revision).toBe(0)
+    await store.close()
+  })
+
+  it('persists a ghost proposal without touching the timeline, then accepts it atomically', async () => {
+    const store = await StudioRevisionStore.open(await makeStoreDirectory())
+    const proposed = await store.proposeEdit(0, 'proposal-1', insertRange())
+    expect(proposed).toMatchObject({
+      ok: true,
+      revision: 1,
+      proposal: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        proposalId: 'proposal-1',
+        createdRevision: 1
+      }
+    })
+    expect(store.getDocument()).toMatchObject({
+      proposals: [{ proposalId: 'proposal-1' }],
+      tracks: []
+    })
+
+    const accepted = await store.resolveProposal(1, 'proposal-1', 'accept')
+    expect(accepted).toMatchObject({
+      ok: true,
+      revision: 2,
+      proposalId: 'proposal-1',
+      decision: 'accept',
+      appliedOp: { type: 'insert_range', itemId: 'item-1' }
+    })
+    const document = store.getDocument()
+    expect(document.proposals).toEqual([])
+    expect(document.tracks[0].items[0].itemId).toBe('item-1')
+    await store.close()
+  })
+
+  it('replays open proposals after restart and rejects them without changing the timeline', async () => {
+    const directory = await makeStoreDirectory()
+    const first = await StudioRevisionStore.open(directory)
+    await first.proposeEdit(0, 'proposal-replay', insertRange())
+    await first.close()
+
+    const reopened = await StudioRevisionStore.open(directory)
+    expect(reopened.recovery.replayedJournalOps).toBe(1)
+    expect(reopened.getDocument().proposals).toMatchObject([
+      { proposalId: 'proposal-replay', createdRevision: 1 }
+    ])
+    const rejected = await reopened.resolveProposal(1, 'proposal-replay', 'reject')
+    expect(rejected).toEqual({
+      ok: true,
+      revision: 2,
+      proposalId: 'proposal-replay',
+      decision: 'reject'
+    })
+    expect(reopened.getDocument()).toMatchObject({ proposals: [], tracks: [] })
+    await reopened.close()
+  })
+
+  it('rejects stale, duplicate and unknown proposal transitions without advancing revision', async () => {
+    const store = await StudioRevisionStore.open(await makeStoreDirectory())
+    await store.proposeEdit(0, 'proposal-1', insertRange())
+
+    await expect(
+      store.proposeEdit(0, 'stale-proposal', insertRange({ itemId: 'stale' }))
+    ).resolves.toMatchObject({ ok: false, code: 'stale_base', currentRevision: 1 })
+    await expect(
+      store.proposeEdit(1, 'proposal-1', insertRange({ itemId: 'duplicate' }))
+    ).resolves.toMatchObject({ ok: false, code: 'duplicate_proposal', currentRevision: 1 })
+    await expect(store.resolveProposal(1, 'missing', 'accept')).resolves.toMatchObject({
+      ok: false,
+      code: 'proposal_not_found',
+      currentRevision: 1
+    })
+    expect(store.revision).toBe(1)
+    await store.close()
+  })
+
+  it('keeps a proposal open when acceptance no longer applies atomically', async () => {
+    const store = await StudioRevisionStore.open(await makeStoreDirectory())
+    await store.proposeEdit(0, 'proposal-conflict', insertRange({ itemId: 'shared-item' }))
+    await store.applyEdit(1, insertRange({ itemId: 'shared-item' }))
+
+    const accepted = await store.resolveProposal(2, 'proposal-conflict', 'accept')
+    expect(accepted).toMatchObject({
+      ok: false,
+      code: 'duplicate_item',
+      currentRevision: 2
+    })
+    expect(store.revision).toBe(2)
+    expect(store.getDocument().proposals).toMatchObject([{ proposalId: 'proposal-conflict' }])
+    expect(store.getDocument().tracks[0].items).toHaveLength(1)
+    await store.close()
+  })
+
+  it('keeps open proposals in a compacted v2 snapshot', async () => {
+    const directory = await makeStoreDirectory()
+    const first = await StudioRevisionStore.open(directory, { compactEveryOps: 1 })
+    await first.proposeEdit(0, 'proposal-snapshot', insertRange())
+    await first.close()
+
+    const snapshot = JSON.parse(
+      await fsPromises.readFile(nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME), 'utf8')
+    ) as { document: { formatVersion: number; proposals: unknown[] } }
+    expect(snapshot.document).toMatchObject({
+      formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+      proposals: [{ proposalId: 'proposal-snapshot' }]
+    })
+
+    const reopened = await StudioRevisionStore.open(directory)
+    expect(reopened.recovery.replayedJournalOps).toBe(0)
+    expect(reopened.getDocument().proposals).toMatchObject([{ proposalId: 'proposal-snapshot' }])
+    await reopened.close()
+  })
+
+  it('migrates document-format v1 snapshots with no proposals into v2', async () => {
+    const directory = await makeStoreDirectory()
+    await fsPromises.writeFile(
+      nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME),
+      JSON.stringify({
+        format: STUDIO_SNAPSHOT_FORMAT,
+        v: 1,
+        revision: 4,
+        document: { formatVersion: 1, assets: [], tracks: [] }
+      }),
+      'utf8'
+    )
+
+    const store = await StudioRevisionStore.open(directory)
+    expect(store.revision).toBe(4)
+    expect(store.getDocument()).toEqual({
+      formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+      assets: [],
+      proposals: [],
+      tracks: []
+    })
     await store.close()
   })
 

@@ -7,6 +7,7 @@
 import {
   STUDIO_METHODS,
   STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
+  STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_PROTOCOL_VERSION,
   STUDIO_SERVER_NAME,
   classifyStudioMessage,
@@ -76,6 +77,70 @@ async function handleRequest(
           schemaVersion: STUDIO_OPEN_MEDIA_SCHEMA_VERSION,
           revision: outcome.revision,
           asset: outcome.asset
+        })
+      }
+      return studioError(request.id, outcome.code, outcome.message, {
+        currentRevision: outcome.currentRevision
+      })
+    }
+    case STUDIO_METHODS.proposeEdit: {
+      const params = request.params
+      if (
+        !isRecord(params) ||
+        params.schemaVersion !== STUDIO_PROPOSAL_SCHEMA_VERSION ||
+        typeof params.baseRevision !== 'number' ||
+        typeof params.proposalId !== 'string' ||
+        !isRecord(params.op)
+      ) {
+        return studioError(
+          request.id,
+          'invalid_params',
+          `proposeEdit requires schemaVersion ${STUDIO_PROPOSAL_SCHEMA_VERSION}, baseRevision, proposalId and op`
+        )
+      }
+      const outcome = await store.proposeEdit(
+        params.baseRevision,
+        params.proposalId,
+        params.op as unknown as StudioEditOp
+      )
+      if (outcome.ok) {
+        return studioResult(request.id, {
+          schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+          revision: outcome.revision,
+          proposal: outcome.proposal
+        })
+      }
+      return studioError(request.id, outcome.code, outcome.message, {
+        currentRevision: outcome.currentRevision
+      })
+    }
+    case STUDIO_METHODS.resolveProposal: {
+      const params = request.params
+      if (
+        !isRecord(params) ||
+        params.schemaVersion !== STUDIO_PROPOSAL_SCHEMA_VERSION ||
+        typeof params.baseRevision !== 'number' ||
+        typeof params.proposalId !== 'string' ||
+        (params.decision !== 'accept' && params.decision !== 'reject')
+      ) {
+        return studioError(
+          request.id,
+          'invalid_params',
+          `resolveProposal requires schemaVersion ${STUDIO_PROPOSAL_SCHEMA_VERSION}, baseRevision, proposalId and decision=accept|reject`
+        )
+      }
+      const outcome = await store.resolveProposal(
+        params.baseRevision,
+        params.proposalId,
+        params.decision
+      )
+      if (outcome.ok) {
+        return studioResult(request.id, {
+          schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+          revision: outcome.revision,
+          proposalId: outcome.proposalId,
+          decision: outcome.decision,
+          ...(outcome.appliedOp === undefined ? {} : { appliedOp: outcome.appliedOp })
         })
       }
       return studioError(request.id, outcome.code, outcome.message, {

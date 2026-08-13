@@ -26,15 +26,20 @@ import {
   studioTimeSub,
   type StudioRationalTime
 } from './StudioRationalTime'
-import type {
-  StudioDocumentOperation,
-  StudioEditOp,
-  StudioInsertRangeOp,
-  StudioMediaAsset,
-  StudioOpenMediaOp
+import {
+  STUDIO_PROPOSAL_SCHEMA_VERSION,
+  type StudioDocumentOperation,
+  type StudioEditOp,
+  type StudioEditProposal,
+  type StudioInsertRangeOp,
+  type StudioMediaAsset,
+  type StudioOpenMediaOp,
+  type StudioProposalDecision,
+  type StudioProposeEditOp,
+  type StudioResolveProposalOp
 } from './StudioProtocol'
 
-export const STUDIO_DOCUMENT_FORMAT_VERSION = 1
+export const STUDIO_DOCUMENT_FORMAT_VERSION = 2
 export const STUDIO_DEFAULT_TRACK_ID = 'V1'
 export const STUDIO_SNAPSHOT_FILENAME = 'studio-project.snapshot.json'
 export const STUDIO_JOURNAL_FILENAME = 'studio-project.journal.jsonl'
@@ -64,11 +69,18 @@ export interface StudioDocument {
   formatVersion: typeof STUDIO_DOCUMENT_FORMAT_VERSION
   /** File-backed sources known to this host-owned document. */
   assets: StudioMediaAsset[]
+  /** Durable ghost edits waiting for explicit accept/reject resolution. */
+  proposals: StudioEditProposal[]
   tracks: StudioTrack[]
 }
 
 export function createEmptyStudioDocument(): StudioDocument {
-  return { formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION, assets: [], tracks: [] }
+  return {
+    formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+    assets: [],
+    proposals: [],
+    tracks: []
+  }
 }
 
 export type StudioEditErrorCode =
@@ -78,6 +90,8 @@ export type StudioEditErrorCode =
   | 'duplicate_item'
   | 'unrepresentable_time'
   | 'misaligned_time'
+  | 'duplicate_proposal'
+  | 'proposal_not_found'
 
 export class StudioEditError extends Error {
   readonly code: StudioEditErrorCode
@@ -273,7 +287,76 @@ function applyOpenMedia(document: StudioDocument, op: StudioOpenMediaOp): Studio
   return { ...document, assets }
 }
 
-/** Apply either a timeline edit or a durable media-open mutation. */
+function applyProposeEdit(
+  document: StudioDocument,
+  operation: StudioProposeEditOp
+): StudioDocument {
+  const candidate = operation.proposal as Partial<StudioEditProposal> | null
+  if (typeof candidate !== 'object' || candidate === null) {
+    throw new StudioEditError('invalid_params', 'propose_edit.proposal must be an object')
+  }
+  if (candidate.schemaVersion !== STUDIO_PROPOSAL_SCHEMA_VERSION) {
+    throw new StudioEditError(
+      'invalid_params',
+      `propose_edit.proposal.schemaVersion must be ${STUDIO_PROPOSAL_SCHEMA_VERSION}`
+    )
+  }
+  const proposalId = requireNonEmptyString(candidate.proposalId, 'propose_edit.proposal.proposalId')
+  if (
+    typeof candidate.createdRevision !== 'number' ||
+    !Number.isSafeInteger(candidate.createdRevision) ||
+    candidate.createdRevision <= 0
+  ) {
+    throw new StudioEditError(
+      'invalid_params',
+      'propose_edit.proposal.createdRevision must be a positive safe integer'
+    )
+  }
+  if (document.proposals.some((proposal) => proposal.proposalId === proposalId)) {
+    throw new StudioEditError('duplicate_proposal', `proposal id "${proposalId}" is already open`)
+  }
+  if (typeof candidate.op !== 'object' || candidate.op === null) {
+    throw new StudioEditError('invalid_params', 'propose_edit.proposal.op must be an object')
+  }
+
+  // Validate the proposal against the current timeline without applying it.
+  // Resolution revalidates after any intervening durable operations.
+  applyStudioEditOp(document, candidate.op)
+  const proposal: StudioEditProposal = {
+    schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+    proposalId,
+    createdRevision: candidate.createdRevision,
+    op: structuredClone(candidate.op)
+  }
+  return { ...document, proposals: [...document.proposals, proposal] }
+}
+
+function applyResolveProposal(
+  document: StudioDocument,
+  operation: StudioResolveProposalOp
+): StudioDocument {
+  const proposalId = requireNonEmptyString(operation.proposalId, 'resolve_proposal.proposalId')
+  if (operation.decision !== 'accept' && operation.decision !== 'reject') {
+    throw new StudioEditError(
+      'invalid_params',
+      'resolve_proposal.decision must be accept or reject'
+    )
+  }
+  const proposal = document.proposals.find((candidate) => candidate.proposalId === proposalId)
+  if (proposal === undefined) {
+    throw new StudioEditError('proposal_not_found', `proposal "${proposalId}" is not open`)
+  }
+
+  const withoutProposal = {
+    ...document,
+    proposals: document.proposals.filter((candidate) => candidate.proposalId !== proposalId)
+  }
+  return operation.decision === 'accept'
+    ? applyStudioEditOp(withoutProposal, proposal.op)
+    : withoutProposal
+}
+
+/** Apply a timeline edit, media-open mutation, or durable proposal transition. */
 export function applyStudioDocumentOperation(
   document: StudioDocument,
   operation: StudioDocumentOperation
@@ -282,6 +365,8 @@ export function applyStudioDocumentOperation(
     throw new StudioEditError('invalid_op', 'document operation must be an object')
   }
   if (operation.type === 'open_media') return applyOpenMedia(document, operation)
+  if (operation.type === 'propose_edit') return applyProposeEdit(document, operation)
+  if (operation.type === 'resolve_proposal') return applyResolveProposal(document, operation)
   return applyStudioEditOp(document, operation)
 }
 
@@ -307,6 +392,30 @@ export type StudioOpenMediaOutcome =
   | {
       ok: false
       code: 'invalid_params' | 'stale_base'
+      message: string
+      currentRevision: number
+    }
+
+export type StudioProposeEditOutcome =
+  | { ok: true; revision: number; proposal: StudioEditProposal }
+  | {
+      ok: false
+      code: StudioEditErrorCode | 'stale_base'
+      message: string
+      currentRevision: number
+    }
+
+export type StudioResolveProposalOutcome =
+  | {
+      ok: true
+      revision: number
+      proposalId: string
+      decision: StudioProposalDecision
+      appliedOp?: StudioEditOp
+    }
+  | {
+      ok: false
+      code: StudioEditErrorCode | 'stale_base'
       message: string
       currentRevision: number
     }
@@ -354,7 +463,12 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
     const detail = error instanceof Error ? error.message : String(error)
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: ${detail}`)
   }
-  const candidate = parsed as Partial<StudioSnapshotFile> | null
+  const candidate = parsed as {
+    format?: unknown
+    v?: unknown
+    revision?: unknown
+    document?: unknown
+  } | null
   if (
     typeof candidate !== 'object' ||
     candidate === null ||
@@ -364,21 +478,45 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
     !Number.isSafeInteger(candidate.revision) ||
     candidate.revision < 0 ||
     typeof candidate.document !== 'object' ||
-    candidate.document === null ||
-    candidate.document.formatVersion !== STUDIO_DOCUMENT_FORMAT_VERSION ||
-    !Array.isArray(candidate.document.tracks)
+    candidate.document === null
   ) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: snapshot shape is invalid`)
   }
-  const document = candidate.document as StudioDocument & { assets?: unknown }
+
+  const document = candidate.document as {
+    formatVersion?: unknown
+    assets?: unknown
+    proposals?: unknown
+    tracks?: unknown
+  }
+  if (
+    (document.formatVersion !== 1 && document.formatVersion !== STUDIO_DOCUMENT_FORMAT_VERSION) ||
+    !Array.isArray(document.tracks)
+  ) {
+    throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: snapshot shape is invalid`)
+  }
   if (document.assets !== undefined && !Array.isArray(document.assets)) {
     throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: assets must be an array`)
   }
+  if (
+    document.formatVersion === STUDIO_DOCUMENT_FORMAT_VERSION &&
+    !Array.isArray(document.proposals)
+  ) {
+    throw new StudioStoreCorruptError('snapshot_unreadable', `${path}: proposals must be an array`)
+  }
+
   return {
-    ...(candidate as StudioSnapshotFile),
+    format: STUDIO_SNAPSHOT_FORMAT,
+    v: 1,
+    revision: candidate.revision,
     document: {
-      ...document,
-      assets: (document.assets ?? []) as StudioMediaAsset[]
+      formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+      assets: (document.assets ?? []) as StudioMediaAsset[],
+      proposals:
+        document.formatVersion === STUDIO_DOCUMENT_FORMAT_VERSION
+          ? (document.proposals as StudioEditProposal[])
+          : [],
+      tracks: document.tracks as StudioTrack[]
     }
   }
 }
@@ -609,28 +747,119 @@ export class StudioRevisionStore {
         }
         throw error
       }
-      const line: StudioJournalLine = {
-        format: STUDIO_JOURNAL_FORMAT,
-        v: 1,
-        revision: this.currentRevision + 1,
-        committedAtIso: new Date().toISOString(),
+      const revision = await this.commitOperationLocked(op, nextDocument)
+      return { ok: true as const, revision }
+    })
+  }
+
+  proposeEdit(
+    baseRevision: number,
+    proposalId: string,
+    op: StudioEditOp
+  ): Promise<StudioProposeEditOutcome> {
+    return this.enqueue(async () => {
+      if (this.closed) throw new Error('StudioRevisionStore is closed')
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+        return {
+          ok: false as const,
+          code: 'invalid_params' as const,
+          message: 'baseRevision must be a non-negative safe integer',
+          currentRevision: this.currentRevision
+        }
+      }
+      if (baseRevision !== this.currentRevision) {
+        return {
+          ok: false as const,
+          code: 'stale_base' as const,
+          message: `base revision ${baseRevision} is stale; current revision is ${this.currentRevision}`,
+          currentRevision: this.currentRevision
+        }
+      }
+
+      const proposal: StudioEditProposal = {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        proposalId,
+        createdRevision: this.currentRevision + 1,
         op: structuredClone(op)
       }
-      const serialised = `${JSON.stringify(line)}\n`
-      const handle = await this.journalFileHandle()
-      await handle.appendFile(serialised, 'utf8')
-      await handle.datasync()
-      this.document = nextDocument
-      this.currentRevision += 1
-      this.journalOpsSinceSnapshot += 1
-      this.journalBytesSinceSnapshot += Buffer.byteLength(serialised)
-      if (
-        this.journalOpsSinceSnapshot >= this.compactEveryOps ||
-        this.journalBytesSinceSnapshot >= this.compactWhenJournalBytes
-      ) {
-        await this.compactLocked()
+      const operation: StudioProposeEditOp = { type: 'propose_edit', proposal }
+      let nextDocument: StudioDocument
+      try {
+        nextDocument = applyStudioDocumentOperation(this.document, operation)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: error.code,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
       }
-      return { ok: true as const, revision: this.currentRevision }
+
+      const revision = await this.commitOperationLocked(operation, nextDocument)
+      return { ok: true as const, revision, proposal: structuredClone(proposal) }
+    })
+  }
+
+  resolveProposal(
+    baseRevision: number,
+    proposalId: string,
+    decision: StudioProposalDecision
+  ): Promise<StudioResolveProposalOutcome> {
+    return this.enqueue(async () => {
+      if (this.closed) throw new Error('StudioRevisionStore is closed')
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+        return {
+          ok: false as const,
+          code: 'invalid_params' as const,
+          message: 'baseRevision must be a non-negative safe integer',
+          currentRevision: this.currentRevision
+        }
+      }
+      if (baseRevision !== this.currentRevision) {
+        return {
+          ok: false as const,
+          code: 'stale_base' as const,
+          message: `base revision ${baseRevision} is stale; current revision is ${this.currentRevision}`,
+          currentRevision: this.currentRevision
+        }
+      }
+
+      const proposal = this.document.proposals.find(
+        (candidate) => candidate.proposalId === proposalId
+      )
+      const operation: StudioResolveProposalOp = {
+        type: 'resolve_proposal',
+        proposalId,
+        decision
+      }
+      let nextDocument: StudioDocument
+      try {
+        nextDocument = applyStudioDocumentOperation(this.document, operation)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: error.code,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
+      }
+
+      const revision = await this.commitOperationLocked(operation, nextDocument)
+      return {
+        ok: true as const,
+        revision,
+        proposalId,
+        decision,
+        ...(decision === 'accept' && proposal !== undefined
+          ? { appliedOp: structuredClone(proposal.op) }
+          : {})
+      }
     })
   }
 
@@ -690,28 +919,8 @@ export class StudioRevisionStore {
         throw error
       }
 
-      const line: StudioJournalLine = {
-        format: STUDIO_JOURNAL_FORMAT,
-        v: 1,
-        revision: this.currentRevision + 1,
-        committedAtIso: new Date().toISOString(),
-        op: structuredClone(operation)
-      }
-      const serialised = `${JSON.stringify(line)}\n`
-      const handle = await this.journalFileHandle()
-      await handle.appendFile(serialised, 'utf8')
-      await handle.datasync()
-      this.document = nextDocument
-      this.currentRevision += 1
-      this.journalOpsSinceSnapshot += 1
-      this.journalBytesSinceSnapshot += Buffer.byteLength(serialised)
-      if (
-        this.journalOpsSinceSnapshot >= this.compactEveryOps ||
-        this.journalBytesSinceSnapshot >= this.compactWhenJournalBytes
-      ) {
-        await this.compactLocked()
-      }
-      return { ok: true as const, revision: this.currentRevision, asset }
+      const revision = await this.commitOperationLocked(operation, nextDocument)
+      return { ok: true as const, revision, asset }
     })
   }
 
@@ -732,6 +941,35 @@ export class StudioRevisionStore {
       () => undefined
     )
     return result
+  }
+
+  /** Append, sync, and publish one already-validated operation from inside the write queue. */
+  private async commitOperationLocked(
+    operation: StudioDocumentOperation,
+    nextDocument: StudioDocument
+  ): Promise<number> {
+    const line: StudioJournalLine = {
+      format: STUDIO_JOURNAL_FORMAT,
+      v: 1,
+      revision: this.currentRevision + 1,
+      committedAtIso: new Date().toISOString(),
+      op: structuredClone(operation)
+    }
+    const serialised = `${JSON.stringify(line)}\n`
+    const handle = await this.journalFileHandle()
+    await handle.appendFile(serialised, 'utf8')
+    await handle.datasync()
+    this.document = nextDocument
+    this.currentRevision += 1
+    this.journalOpsSinceSnapshot += 1
+    this.journalBytesSinceSnapshot += Buffer.byteLength(serialised)
+    if (
+      this.journalOpsSinceSnapshot >= this.compactEveryOps ||
+      this.journalBytesSinceSnapshot >= this.compactWhenJournalBytes
+    ) {
+      await this.compactLocked()
+    }
+    return this.currentRevision
   }
 
   private async resolveMediaAsset(requested: StudioMediaAsset): Promise<StudioMediaAsset> {
