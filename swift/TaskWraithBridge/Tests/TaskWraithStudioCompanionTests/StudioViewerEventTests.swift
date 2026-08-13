@@ -270,3 +270,77 @@ final class StudioViewerGradeHudTests: XCTestCase {
         XCTAssertEqual(view.gradeLabel, "Original", "Original never claims FX")
     }
 }
+
+/// The review loop borrows the transport's ONE loop authority. The operator's
+/// own In/Out must survive that — they are different features and overwriting
+/// one to serve the other makes it unusable.
+@MainActor
+final class StudioReviewLoopTests: XCTestCase {
+    func testTheReviewLoopParksAndRestoresTheOperatorsOwnMarks() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let view = StudioViewerView(
+            renderer: renderer,
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+
+        // The operator's own marks, set before any review begins.
+        let host = CACurrentMediaTime()
+        view.transport.setInPoint(ticks: 1000, atHost: host)
+        view.transport.setOutPoint(ticks: 2000, atHost: host)
+
+        let op = StudioInsertRangeOp(
+            itemId: "i1", assetId: "a1", trackId: nil,
+            sourceIn: StudioRationalTime(n: 0, d: 600)!,
+            sourceOut: StudioRationalTime(n: 600, d: 600)!,
+            at: StudioRationalTime(n: 3000, d: 600)!)
+        view.adopt(
+            reviewTimeline: try XCTUnwrap(
+                StudioProposedTimeline(
+                    proposal: StudioEditProposal(
+                        proposalId: "p1", createdRevision: 1, op: op),
+                    timebase: timebase)))
+
+        view.toggleReviewLoop(atHost: host)
+        XCTAssertEqual(view.transport.inPointTicks, 2400, "loop starts one second before")
+        XCTAssertEqual(view.transport.outPointTicks, 4200)
+        XCTAssertTrue(view.transport.isLoopingRange)
+
+        view.toggleReviewLoop(atHost: host)
+        XCTAssertEqual(
+            view.transport.inPointTicks, 1000,
+            "the operator's In was destroyed by a feature that only borrowed it")
+        XCTAssertEqual(view.transport.outPointTicks, 2000)
+        XCTAssertFalse(view.transport.isLoopingRange)
+    }
+
+    /// A resolved ghost must not leave the transport looping a range that no
+    /// longer refers to anything.
+    func testResolvingAGhostExitsTheReviewLoop() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let view = StudioViewerView(
+            renderer: renderer,
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let op = StudioInsertRangeOp(
+            itemId: "i1", assetId: "a1", trackId: nil,
+            sourceIn: StudioRationalTime(n: 0, d: 600)!,
+            sourceOut: StudioRationalTime(n: 600, d: 600)!,
+            at: StudioRationalTime(n: 3000, d: 600)!)
+        view.adopt(
+            reviewTimeline: try XCTUnwrap(
+                StudioProposedTimeline(
+                    proposal: StudioEditProposal(
+                        proposalId: "p1", createdRevision: 1, op: op),
+                    timebase: timebase)))
+        view.toggleReviewLoop(atHost: CACurrentMediaTime())
+        XCTAssertTrue(view.transport.isLoopingRange)
+
+        view.adopt(reviewTimeline: nil)
+        XCTAssertFalse(
+            view.transport.isLoopingRange,
+            "a resolved proposal left the transport looping a dead range")
+        XCTAssertNil(view.parkedMarks)
+    }
+}

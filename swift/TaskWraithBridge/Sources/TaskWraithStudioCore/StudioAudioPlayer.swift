@@ -175,6 +175,10 @@ public final class StudioAudioTrack {
 public final class StudioAudioPlayer {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    /// Whether an audio track is resident. Surfaced for outcome 9's player
+    /// count, which must report what is actually attached rather than assume.
+    public var isAttached: Bool { track != nil }
+
     private var track: StudioAudioTrack?
     private var clock: StudioAudioClock?
     private var isEngineRunning = false

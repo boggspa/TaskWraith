@@ -109,6 +109,14 @@ public struct StudioProposedTimeline: Equatable, Sendable {
         StudioLoopRange(startTicks: insertionTicks, endTicks: insertionTicks &+ spanTicks)
     }
 
+    /// Default roll: ONE SECOND of the sequence, derived from the timebase
+    /// rather than assumed, so a 25fps sequence rolls 25 frames and a 30000/1001
+    /// sequence rolls 30. A fixed tick count would roll a different duration on
+    /// every asset.
+    public static func defaultRollTicks(timebase: StudioTimebase) -> Int64 {
+        max(timebase.frameDurationTicks, Int64(timebase.timescale))
+    }
+
     /// The affected range with pre- and post-roll (mission outcome 3).
     ///
     /// Roll exists so a reviewer hears and sees the CUT rather than the clip:

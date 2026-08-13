@@ -174,3 +174,90 @@ final class StudioProductWiringTests: XCTestCase {
         1.0 1.0 1.0
         """
 }
+
+/// Outcome 3's review loop and outcome 9's missing diagnostics.
+final class StudioReviewLoopAndDiagnosticsTests: XCTestCase {
+    private let timebase = StudioTimebase(timescale: 600, frameDurationTicks: 20)!
+
+    private func timeline(insertAt: Int64, span: Int64) throws -> StudioProposedTimeline {
+        let op = StudioInsertRangeOp(
+            itemId: "i1", assetId: "a1", trackId: nil,
+            sourceIn: StudioRationalTime(n: 0, d: 600)!,
+            sourceOut: StudioRationalTime(n: span, d: 600)!,
+            at: StudioRationalTime(n: insertAt, d: 600)!)
+        let proposal = StudioEditProposal(proposalId: "p1", createdRevision: 1, op: op)
+        return try XCTUnwrap(StudioProposedTimeline(proposal: proposal, timebase: timebase))
+    }
+
+    /// Roll is ONE SECOND OF THE SEQUENCE, derived from the timebase. A fixed
+    /// tick count would roll a different duration on every asset.
+    func testRollIsOneSecondDerivedFromTheTimebase() throws {
+        XCTAssertEqual(StudioProposedTimeline.defaultRollTicks(timebase: timebase), 600)
+        let fast = StudioTimebase(timescale: 30000, frameDurationTicks: 1001)!
+        XCTAssertEqual(StudioProposedTimeline.defaultRollTicks(timebase: fast), 30000)
+        // And never smaller than a frame, or the loop would be degenerate.
+        let coarse = StudioTimebase(timescale: 2, frameDurationTicks: 5)!
+        XCTAssertEqual(StudioProposedTimeline.defaultRollTicks(timebase: coarse), 5)
+    }
+
+    /// The whole point of roll: the loop must include material BEFORE and AFTER
+    /// the insert, or a reviewer sees the clip and never the cut.
+    func testTheReviewRangeSurroundsTheCutRatherThanTheClip() throws {
+        let t = try timeline(insertAt: 3000, span: 600)
+        let roll = StudioProposedTimeline.defaultRollTicks(timebase: timebase)
+        let range = try XCTUnwrap(t.reviewRange(preRollTicks: roll, postRollTicks: roll))
+        XCTAssertEqual(range.startTicks, 2400, "one second before the insert")
+        XCTAssertEqual(range.endTicks, 4200, "insert plus span plus one second")
+        XCTAssertLessThan(
+            range.startTicks, t.insertionTicks,
+            "a loop starting AT the insert shows the new material and not the join")
+        XCTAssertGreaterThan(range.endTicks, t.insertionTicks + t.spanTicks)
+    }
+
+    /// An insert near the head must not produce a negative start.
+    func testPreRollClampsAtTheHeadOfTheSequence() throws {
+        let t = try timeline(insertAt: 100, span: 600)
+        let range = try XCTUnwrap(t.reviewRange(preRollTicks: 600, postRollTicks: 600))
+        XCTAssertEqual(range.startTicks, 0)
+        XCTAssertGreaterThan(range.endTicks, range.startTicks)
+    }
+
+    /// THE THREE DIAGNOSTICS THAT WERE COMPUTED AND NEVER DISPLAYED. Asserting
+    /// the fields exist would prove nothing; this asserts they reach the drawn
+    /// HUD line, which is the layer that was missing.
+    func testTheHudLineShowsCachesTexturesAndPlayers() throws {
+        let viewport = StudioOverlayViewport(width: 1280, height: 720, scale: 2)
+        var state = StudioOverlayState(
+            viewport: viewport, positionTicks: 0, durationTicks: 6000,
+            timecodeText: "00:00:00:00", sourceLabel: "a1")
+        state.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 9, droppedFrameCount: 1, retainedFrameCount: 2,
+            hardwareDecodeLabel: "hw", syncLabel: "a/v 3ms", memoryLabel: "rss 87MB",
+            cacheHitCount: 41, boundTextureCount: 7, playerCount: 3)
+        let drawn = StudioOverlayLayout.build(state).texts.map(\.string).joined(separator: " ")
+
+        XCTAssertTrue(drawn.contains("cache 41"), "caches must reach the screen: \(drawn)")
+        XCTAssertTrue(drawn.contains("tex 7"), "textures must reach the screen: \(drawn)")
+        XCTAssertTrue(drawn.contains("play 3"), "players must reach the screen: \(drawn)")
+        // The four that already worked must not have been displaced.
+        for existing in ["drop 1", "held 2", "shown 9", "rss 87MB", "a/v 3ms"] {
+            XCTAssertTrue(drawn.contains(existing), "\(existing) regressed: \(drawn)")
+        }
+    }
+
+    /// The player count reports SOURCES, not a pool, and moves when one attaches.
+    func testThePlayerCountFollowsResidentSources() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
+        let renderer = try StudioViewerRenderer(device: device)
+        XCTAssertEqual(renderer.activeSourceCount, 0)
+        renderer.attach(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [32], device: device))
+        XCTAssertEqual(renderer.activeSourceCount, 1)
+        renderer.attachProposed(
+            source: try StudioTestMedia.makeFrameSource(lumaLevels: [64], device: device),
+            assetId: "a2", timebase: timebase)
+        XCTAssertEqual(renderer.activeSourceCount, 2, "a ghost under review is a second source")
+        renderer.detachProposedSource()
+        XCTAssertEqual(renderer.activeSourceCount, 1)
+    }
+}

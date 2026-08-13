@@ -184,6 +184,15 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     /// memory, so RSS alone would under-report the viewer's dominant allocation
     /// class. The two numbers together are the honest picture.
     public let memoryLabel: String
+    /// Outcome 9 names seven diagnostics. These three were COMPUTED AND NEVER
+    /// DISPLAYED — cacheHitCount in StudioVideoFrameSource, boundFrameCount in
+    /// StudioVideoTextureBridge — and players had no counter at all. A number
+    /// nothing shows is the same shape as a seam nothing calls.
+    public let cacheHitCount: Int
+    public let boundTextureCount: Int
+    /// Resident media players: decode sources plus the audio engine. Honest
+    /// about what it counts rather than implying a pool that does not exist.
+    public let playerCount: Int
 
     public init(
         presentedFrameCount: Int,
@@ -191,13 +200,19 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         retainedFrameCount: Int,
         hardwareDecodeLabel: String,
         syncLabel: String = "a/v --",
-        memoryLabel: String = "rss --"
+        memoryLabel: String = "rss --",
+        cacheHitCount: Int = 0,
+        boundTextureCount: Int = 0,
+        playerCount: Int = 0
     ) {
         self.presentedFrameCount = presentedFrameCount
         self.droppedFrameCount = droppedFrameCount
         self.retainedFrameCount = retainedFrameCount
         self.hardwareDecodeLabel = hardwareDecodeLabel
         self.syncLabel = syncLabel
+        self.cacheHitCount = cacheHitCount
+        self.boundTextureCount = boundTextureCount
+        self.playerCount = playerCount
         self.memoryLabel = memoryLabel
     }
 }
@@ -620,6 +635,9 @@ public enum StudioOverlayLayout {
                 + "  drop \(diagnostics.droppedFrameCount)"
                 + "  held \(diagnostics.retainedFrameCount)"
                 + "  shown \(diagnostics.presentedFrameCount)"
+                + "  cache \(diagnostics.cacheHitCount)"
+                + "  tex \(diagnostics.boundTextureCount)"
+                + "  play \(diagnostics.playerCount)"
                 + "  \(diagnostics.memoryLabel)"
             let lineWidth =
                 StudioOverlayRenderMetrics.advance(forPointSize: labelSize) * Double(line.count)

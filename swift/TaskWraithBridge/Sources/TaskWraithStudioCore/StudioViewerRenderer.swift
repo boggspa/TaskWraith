@@ -146,6 +146,17 @@ public final class StudioViewerRenderer {
     /// product-unreachable is not shipped.
     public var grade = StudioGradeSettings()
 
+    /// Resident decode sources: the open asset plus a proposal's second source
+    /// while a ghost is under review. Counts SOURCES, not a pool.
+    public var activeSourceCount: Int {
+        (source == nil ? 0 : 1) + (proposedSource == nil ? 0 : 1)
+    }
+
+    /// Cache hits and bound textures, surfaced from the frame source so the
+    /// viewer can display them without reaching through two more layers.
+    public var cacheHitCount: Int { source?.diagnostics.cacheHitCount ?? 0 }
+    public var boundTextureCount: Int { source?.diagnostics.boundFrameCount ?? 0 }
+
     /// Whether the current grade would leave the picture untouched, accounting
     /// for whether a LUT is actually resident. The renderer is the only place
     /// that knows both halves.

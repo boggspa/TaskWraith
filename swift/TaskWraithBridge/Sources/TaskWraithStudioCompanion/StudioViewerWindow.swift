@@ -58,6 +58,11 @@ final class StudioViewerView: NSView {
     /// machinery existed and NOTHING CALLED IT.
     private var reviewTimeline: StudioProposedTimeline?
     private var reviewVersion: StudioReviewVersion = .current
+    /// The operator's own In/Out, parked while the review loop borrows the
+    /// transport's one loop authority. Restored on exit — overwriting an
+    /// operator's marks to loop a proposal would make one of the two features
+    /// unusable, and they are DIFFERENT features.
+    var parkedMarks: (inTicks: Int64?, outTicks: Int64?)?
     /// Grading is Core-complete and was unreachable: no Companion code built a
     /// non-default settings value, so the product was pinned to Original.
     var gradeSettings = StudioGradeSettings()
@@ -271,7 +276,12 @@ final class StudioViewerView: NSView {
     /// must stop being reviewable, in both directions.
     func adopt(reviewTimeline: StudioProposedTimeline?) {
         self.reviewTimeline = reviewTimeline
-        if reviewTimeline == nil { reviewVersion = .current }
+        if reviewTimeline == nil {
+            reviewVersion = .current
+            // A resolved ghost must not leave the transport looping a range
+            // that no longer refers to anything.
+            if parkedMarks != nil { toggleReviewLoop(atHost: CACurrentMediaTime()) }
+        }
         needsDisplay = true
     }
 
@@ -322,7 +332,11 @@ final class StudioViewerView: NSView {
                 hardwareDecodeLabel: hardwareDecodeLabel,
                 // "a/v --" when there is no audio, never a measured zero.
                 syncLabel: syncMeter?.summaryText ?? "a/v --",
-                memoryLabel: memoryLabel
+                memoryLabel: memoryLabel,
+                cacheHitCount: renderer.cacheHitCount,
+                boundTextureCount: renderer.boundTextureCount,
+                // Decode sources plus the audio engine when one is attached.
+                playerCount: renderer.activeSourceCount + (audioPlayer.isAttached ? 1 : 0)
             )
         )
         state.reviewVersion = reviewTimeline == nil ? nil : reviewVersion
@@ -505,6 +519,48 @@ final class StudioViewerView: NSView {
         }
         // Restores whatever the transport was doing before the gesture.
         transport.endScrub(atHost: CACurrentMediaTime())
+    }
+
+    /// Loops the AFFECTED RANGE of the open proposal with pre/post-roll.
+    ///
+    /// Distinct from the transport's In/Out loop, which is the operator's own
+    /// mark pair: roll exists so a reviewer sees the CUT rather than the clip,
+    /// because looping the inserted span alone shows the new material perfectly
+    /// and says nothing about whether it joins. Implemented by BORROWING the
+    /// one loop authority rather than adding a second one — and the operator's
+    /// marks are parked and restored, not overwritten.
+    func toggleReviewLoop(atHost host: CFTimeInterval) {
+        if let parked = parkedMarks {
+            transport.setLoopingRange(false, atHost: host)
+            transport.setInPoint(ticks: parked.inTicks, atHost: host)
+            transport.setOutPoint(ticks: parked.outTicks, atHost: host)
+            parkedMarks = nil
+            report(message: "Review loop off — your In/Out restored")
+            return
+        }
+        guard let reviewTimeline else {
+            report(message: "No proposal to review-loop")
+            return
+        }
+        let timebase = transport.clock.timebase
+        let roll = StudioProposedTimeline.defaultRollTicks(timebase: timebase)
+        guard
+            let range = reviewTimeline.reviewRange(
+                preRollTicks: roll,
+                postRollTicks: roll,
+                currentDurationTicks: transport.clock.durationTicks
+            )
+        else {
+            report(message: "Review range is not representable")
+            return
+        }
+        parkedMarks = (transport.inPointTicks, transport.outPointTicks)
+        transport.setInPoint(ticks: range.startTicks, atHost: host)
+        transport.setOutPoint(ticks: range.endTicks, atHost: host)
+        transport.setLoopingRange(true, atHost: host)
+        transport.seek(toTicks: range.startTicks, atHost: host)
+        let rollFrames = roll / max(1, timebase.frameDurationTicks)
+        report(message: "Review loop on — affected range +/- \(rollFrames)f roll")
     }
 
     /// The HUD line for the current grade. Calls isNeutral so a mode claiming
@@ -745,6 +801,8 @@ final class StudioViewerView: NSView {
             transport.playRange(atHost: host)
         case "x":
             transport.clearMarks(atHost: host)
+        case "c":
+            toggleReviewLoop(atHost: host)
         case "d":
             // The display transform was implemented, pixel-tested against a CPU
             // oracle, and reachable by nobody: gradeSettings stayed at its
