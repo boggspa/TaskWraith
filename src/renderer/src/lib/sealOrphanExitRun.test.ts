@@ -6,6 +6,7 @@ import {
   queueProviderChange
 } from '../../../main/providerChangeQueue'
 import {
+  finalizeAcceptedRunCancellationChat,
   finalizeOrphanAgentExitChat,
   sealOrphanExitRun,
   shouldPruneRunningChatIdAfterOrphanExit
@@ -151,6 +152,53 @@ describe('finalizeOrphanAgentExitChat', () => {
       endedAt: NOW
     })
     expect(next).toBe(c)
+  })
+})
+
+describe('finalizeAcceptedRunCancellationChat', () => {
+  it.each(['starting', undefined] as const)(
+    'exact-seals an accepted cancellation from status %s',
+    (status) => {
+      const next = finalizeAcceptedRunCancellationChat(
+        chat([run({ status })]),
+        'run-1',
+        NOW
+      )
+
+      expect(next.runs![0]).toMatchObject({
+        runId: 'run-1',
+        status: 'cancelled',
+        cancelled: true,
+        endedAt: NOW,
+        exitCode: 130
+      })
+    }
+  )
+
+  it('applies a queued solo provider change at the accepted Stop boundary', () => {
+    const queued = queueProviderChange(chat([run({ status: 'starting' })]), {
+      provider: 'claude',
+      providerMetadata: { selectedModelType: 'claude-sonnet' }
+    })
+
+    const next = finalizeAcceptedRunCancellationChat(queued, 'run-1', NOW)
+
+    expect(next.provider).toBe('claude')
+    expect(next.providerMetadata?.selectedModelType).toBe('claude-sonnet')
+    expect(hasPendingProviderChange(next)).toBe(false)
+  })
+
+  it('never seals a foreign or already-terminal run', () => {
+    const active = chat([run({ runId: 'active-run', status: 'starting' })])
+    expect(finalizeAcceptedRunCancellationChat(active, 'foreign-run', NOW)).toBe(active)
+
+    const ended = chat([run({ status: 'success', endedAt: NOW })])
+    expect(finalizeAcceptedRunCancellationChat(ended, 'run-1', NOW)).toBe(ended)
+
+    const terminalWithoutEnd = chat([run({ status: 'failed' })])
+    expect(finalizeAcceptedRunCancellationChat(terminalWithoutEnd, 'run-1', NOW)).toBe(
+      terminalWithoutEnd
+    )
   })
 })
 

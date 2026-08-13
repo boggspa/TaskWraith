@@ -79,6 +79,7 @@ describe('provider dispatch integration', () => {
     )
 
     expect(cancelProvider).toContain('if (queuedJob.provider !== provider) return false')
+    expect(cancelProvider).toContain("queuedJob.status === 'steer_promoting'")
     expect(cancelProvider).toContain('if (runId && !session) {')
     expect(cancelProvider).toContain('orphan.provider === provider')
     expect(cancelProvider).toContain(

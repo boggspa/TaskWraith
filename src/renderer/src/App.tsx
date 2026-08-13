@@ -45,6 +45,7 @@ import { stripElectronInvokeErrorFraming } from './lib/electronInvokeError'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { findChatRunIndex } from './lib/findChatRunIndex'
 import {
+  finalizeAcceptedRunCancellationChat,
   finalizeOrphanAgentExitChat,
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
@@ -645,6 +646,7 @@ import {
   IDLE_STEER_STATE,
   getSteerIndicatorMessage,
   isSteerInFlight,
+  resolveSteerCancelTargetRunId,
   type SteerState
 } from './lib/steerState'
 import { attemptLiveSteering } from './lib/liveSteering'
@@ -14310,6 +14312,7 @@ function App(): React.JSX.Element {
         runId: currentRunId,
         provider: effectiveRunProvider,
         startedAt: runStartedAt,
+        status: 'starting',
         promptMessageId,
         rawEventsFile: `run-events/${currentRunId}.jsonl`,
         requestedModel: modelToPass,
@@ -16626,6 +16629,88 @@ function App(): React.JSX.Element {
     return cancelled?.status === 'cancelled'
   }
 
+  const resolveActiveRunContextForChat = (chatId: string): ActiveRunContext | null => {
+    for (const ctx of activeRunsRef.current.values()) {
+      if (ctx.chatId === chatId) return ctx
+    }
+    return null
+  }
+
+  const finalizeAcceptedRendererRunCancellation = (
+    targetChatId: string,
+    runId: string,
+    activeContext: ActiveRunContext | null
+  ): void => {
+    const endedAt = new Date().toISOString()
+    let cancelledRunStartedAt: string | undefined
+    let finalizedChat: ChatRecord | null = null
+    updateChatById(targetChatId, (source) => {
+      cancelledRunStartedAt = source.runs?.find((run) => run.runId === runId)?.startedAt
+      const next = finalizeAcceptedRunCancellationChat(source, runId, endedAt)
+      if (next !== source) finalizedChat = next
+      return next
+    })
+
+    const exactContext = activeContext?.runId === runId ? activeContext : null
+    exactContext?.adapter.end()
+    if (exactContext) {
+      clearActiveRunContext(exactContext)
+    } else if (
+      !Array.from(activeRunsRef.current.values()).some((run) => run.chatId === targetChatId)
+    ) {
+      setRunningChatIds((prev) => {
+        if (!prev.has(targetChatId)) return prev
+        const next = new Set(prev)
+        next.delete(targetChatId)
+        return next
+      })
+    }
+    if (currentChatIdRef.current === targetChatId) {
+      setIsThinking(false)
+      setRunCompleteNotice({
+        timestamp: endedAt,
+        exitCode: 130,
+        startedAt: cancelledRunStartedAt
+      })
+      if (finalizedChat) {
+        applyChatComposerSelection(finalizedChat, getChatProvider(finalizedChat))
+      }
+    }
+    syncRunningState()
+  }
+
+  const cancelExactSoloChatRun = async (targetChat: ChatRecord): Promise<boolean> => {
+    const activeContext = resolveActiveRunContextForChat(targetChat.appChatId)
+    const runId = resolveSteerCancelTargetRunId({
+      chatId: targetChat.appChatId,
+      activeContext,
+      activeRunId: activeRunIdRef.current,
+      activeRunChatId: activeRunChatIdRef.current,
+      runQueueJobs: runQueueJobsRef.current,
+      targetChat
+    })
+    if (!runId) return false
+
+    const queueJob = runQueueJobsRef.current.find((job) => job.runId === runId)
+    const persistedRun = targetChat.runs?.find((run) => run.runId === runId)
+    const provider =
+      activeContext?.provider || queueJob?.provider || persistedRun?.provider || getChatProvider(targetChat)
+    intentionalCancelRunIdsRef.current.add(runId)
+    try {
+      const accepted = await window.api.cancelAgentRun(provider, runId)
+      if (!accepted) {
+        intentionalCancelRunIdsRef.current.delete(runId)
+        syncRunningState()
+        return false
+      }
+      finalizeAcceptedRendererRunCancellation(targetChat.appChatId, runId, activeContext)
+      return true
+    } catch (error) {
+      intentionalCancelRunIdsRef.current.delete(runId)
+      throw error
+    }
+  }
+
   const cancelLinkedChatRun = async (targetChat: ChatRecord) => {
     if (
       await cancelRunningScheduledTaskForChat(
@@ -16642,26 +16727,7 @@ function App(): React.JSX.Element {
       void refreshSingleChat(targetChat.appChatId)
       return
     }
-    let activeContext: ActiveRunContext | null = null
-    for (const ctx of activeRunsRef.current.values()) {
-      if (ctx.chatId === targetChat.appChatId) {
-        activeContext = ctx
-        break
-      }
-    }
-    const targetRun = targetChat.runs?.[targetChat.runs.length - 1]
-    await window.api.cancelAgentRun(
-      getChatProvider(targetChat),
-      activeContext?.runId || targetRun?.runId
-    )
-    syncRunningState()
-  }
-
-  const resolveActiveRunContextForChat = (chatId: string): ActiveRunContext | null => {
-    for (const ctx of activeRunsRef.current.values()) {
-      if (ctx.chatId === chatId) return ctx
-    }
-    return null
+    await cancelExactSoloChatRun(targetChat)
   }
 
   const handleSideCancel = async () => {
@@ -19802,14 +19868,8 @@ function App(): React.JSX.Element {
       void refreshSingleChat(currentChat.appChatId)
       return
     }
-    const runId = currentRun?.runId
-    // Mark the Stop as a user-intentional cancel so the run reads "Cancelled",
-    // not "Failed", when its exit lands (same path as steer).
-    if (runId) {
-      intentionalCancelRunIdsRef.current.add(runId)
-    }
-    await window.api.cancelAgentRun(currentProvider, runId)
-    syncRunningState()
+    if (!currentChat) return
+    await cancelExactSoloChatRun(currentChat)
   }
 
   const handleGeminiTerminalSubmit = async (event: React.FormEvent<HTMLFormElement>) => {

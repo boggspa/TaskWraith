@@ -194,6 +194,21 @@ describe('RunQueue', () => {
     expect(failed.promotionAttempt).toBeUndefined()
     expect(failed.queueMessageId).toBeUndefined()
     expect(failed.promotedAt).toBeUndefined()
+
+    const cancelled = updateRunQueueJobRecord(
+      steering,
+      { status: 'cancelled' },
+      '2026-05-06T00:01:30.000Z'
+    )
+    expect(cancelled.status).toBe('cancelled')
+    expect(cancelled.cancelledAt).toBe('2026-05-06T00:01:30.000Z')
+    expect(cancelled.endedAt).toBe('2026-05-06T00:01:30.000Z')
+    expect(cancelled.promotionOwnerToken).toBeUndefined()
+    expect(cancelled.promotionToken).toBeUndefined()
+    expect(cancelled.transitionVersion).toBeUndefined()
+    expect(cancelled.promotionAttempt).toBeUndefined()
+    expect(cancelled.queueMessageId).toBeUndefined()
+    expect(cancelled.promotedAt).toBeUndefined()
   })
 
   it('allows queued -> steer_promoting -> starting and steer_promoting -> queued transitions', () => {

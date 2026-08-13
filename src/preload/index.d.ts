@@ -747,7 +747,7 @@ declare global {
       cancelGemini: (runId?: string) => Promise<void>
       composeRun: (input: ComposerRunInput) => Promise<ComposerRunPayload>
       runAgent: (payload: AgentRunPayload) => Promise<DispatchResult>
-      cancelAgentRun: (provider?: ProviderId, runId?: string) => Promise<void>
+      cancelAgentRun: (provider?: ProviderId, runId?: string) => Promise<boolean>
       getAgentStatus: (provider: ProviderId, options?: { refreshAuth?: boolean }) => Promise<any>
       getProviderCapabilities: (
         provider: ProviderId,

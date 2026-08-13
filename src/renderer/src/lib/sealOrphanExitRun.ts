@@ -77,6 +77,49 @@ export function finalizeOrphanAgentExitChat(
 }
 
 /**
+ * Immediate renderer-side seal after main accepts an exact Stop request.
+ *
+ * A provider that is still waiting in setup has no transport and therefore no
+ * `agent-exit` event to drive the normal finalizer. Main has already claimed
+ * and persisted cancellation at this boundary, so retaining a live ChatRun in
+ * the renderer would be a ghost. Exact id matching and the accepted IPC result
+ * keep this from terminalizing a sibling run.
+ */
+export function finalizeAcceptedRunCancellationChat(
+  chat: ChatRecord,
+  runId: string | undefined,
+  endedAt: string
+): ChatRecord {
+  if (!runId) return chat
+  const runs = chat.runs || []
+  const index = runs.findIndex((run) => run.runId === runId)
+  if (index < 0) return chat
+  const run = runs[index]
+  if (
+    run.endedAt ||
+    run.status === 'success' ||
+    run.status === 'success_with_warnings' ||
+    run.status === 'failed' ||
+    run.status === 'cancelled' ||
+    run.status === 'completed'
+  ) {
+    return chat
+  }
+
+  const nextRuns = [...runs]
+  nextRuns[index] = {
+    ...run,
+    status: 'cancelled',
+    cancelled: true,
+    endedAt,
+    exitCode: run.exitCode ?? 130
+  }
+  const sealed = { ...chat, runs: nextRuns }
+  if (sealed.chatKind === 'ensemble') return sealed
+  return applyPendingProviderChangeOnFinalize(sealed)
+}
+
+/**
  * Whether an orphan exit may drop `chatId` from `runningChatIds`. Only when no
  * remaining `activeRunsRef` entry still claims that chat (exact id).
  */

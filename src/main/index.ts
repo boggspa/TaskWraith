@@ -32678,7 +32678,12 @@ async function cancelProviderRun(
   runId?: string
 ): Promise<boolean> {
   const queuedJob = runId ? AppStore.getRunQueueJob(runId) : null
-  if (queuedJob && (queuedJob.status === 'queued' || queuedJob.status === 'paused')) {
+  if (
+    queuedJob &&
+    (queuedJob.status === 'queued' ||
+      queuedJob.status === 'paused' ||
+      queuedJob.status === 'steer_promoting')
+  ) {
     if (queuedJob.provider !== provider) return false
     approvalService?.cancelForRun(queuedJob.runId, 'run-cancel-requested')
     cancelPendingAgentQuestionsForRun(queuedJob.runId, 'run-cancel-requested')
