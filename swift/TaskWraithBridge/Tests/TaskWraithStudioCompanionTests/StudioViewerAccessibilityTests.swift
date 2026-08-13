@@ -27,7 +27,7 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
         let view = StudioViewerView(
             renderer: renderer,
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+            authority: StudioPlaybackAuthority(clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000)))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
             styleMask: [.titled], backing: .buffered, defer: false)

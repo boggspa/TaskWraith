@@ -63,7 +63,9 @@ final class StudioViewerEventTests: XCTestCase {
             StudioTimebase(timescale: 600, frameDurationTicks: 20))
         let clock = StudioPlaybackClock(timebase: timebase, durationTicks: 6000)
 
-        let view = StudioViewerView(renderer: renderer, clock: clock)
+        let view = StudioViewerView(
+            renderer: renderer,
+            authority: StudioPlaybackAuthority(clock: clock))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
             styleMask: [.titled],
@@ -208,7 +210,7 @@ final class StudioViewerCoordinateTests: XCTestCase {
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
         let view = StudioViewerView(
             renderer: renderer,
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+            authority: StudioPlaybackAuthority(clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000)))
         view.frame = NSRect(x: 0, y: 0, width: 960, height: 540)
         XCTAssertNil(view.window, "no window, so the 2.0 fallback scale applies")
 
@@ -244,7 +246,7 @@ final class StudioViewerGradeHudTests: XCTestCase {
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
         return StudioViewerView(
             renderer: renderer,
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 600))
+            authority: StudioPlaybackAuthority(clock: StudioPlaybackClock(timebase: timebase, durationTicks: 600)))
     }
 
     /// isNeutral was written to prevent exactly this and was never called, so
@@ -282,7 +284,7 @@ final class StudioReviewLoopTests: XCTestCase {
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
         let view = StudioViewerView(
             renderer: renderer,
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+            authority: StudioPlaybackAuthority(clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000)))
 
         // The operator's own marks, set before any review begins.
         let host = CACurrentMediaTime()
@@ -322,7 +324,7 @@ final class StudioReviewLoopTests: XCTestCase {
         let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
         let view = StudioViewerView(
             renderer: renderer,
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+            authority: StudioPlaybackAuthority(clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000)))
         let op = StudioInsertRangeOp(
             itemId: "i1", assetId: "a1", trackId: nil,
             sourceIn: StudioRationalTime(n: 0, d: 600)!,

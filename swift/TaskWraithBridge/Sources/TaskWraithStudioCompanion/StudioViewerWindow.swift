@@ -37,7 +37,18 @@ final class StudioViewerView: NSView {
     let renderer: StudioViewerRenderer
     /// The tested transport lives in Core; this view only forwards gestures to
     /// it and draws whatever the resulting playhead selects.
-    var transport: StudioTransportController
+    /// THE SHARED AUTHORITY, by reference. Not a stored StudioTransportController:
+    /// that is a value type, so a per-view copy would make two routes into two
+    /// clocks silently and by construction — the outcome the briefing prohibits.
+    let authority: StudioPlaybackAuthority
+
+    /// Reads and writes the ONE transport. Every existing mutating call site
+    /// works unchanged through this computed setter, which is why the shared
+    /// authority could be introduced without rewriting the gesture handlers.
+    var transport: StudioTransportController {
+        get { authority.transport }
+        set { authority.transport = newValue }
+    }
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
@@ -95,9 +106,18 @@ final class StudioViewerView: NSView {
     private(set) var missedDrawableCount: Int = 0
     private(set) var droppedFrameCount: Int = 0
 
-    init(renderer: StudioViewerRenderer, clock: StudioPlaybackClock) {
+    /// The route this view presents. Both routes render from the same
+    /// authority; they differ in what they SHOW, never in what time it is.
+    let route: StudioViewerRoute
+
+    init(
+        renderer: StudioViewerRenderer,
+        authority: StudioPlaybackAuthority,
+        route: StudioViewerRoute = .source
+    ) {
         self.renderer = renderer
-        self.transport = StudioTransportController(clock: clock)
+        self.authority = authority
+        self.route = route
         super.init(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -985,12 +1005,21 @@ final class StudioViewerView: NSView {
 final class StudioViewerWindowController {
     let window: NSWindow
     private let view: StudioViewerView
+    let route: StudioViewerRoute
+    /// This route's OWN renderer, so hiding the route can release its
+    /// decoder/player resources without touching the other route's. The
+    /// briefing requires exactly that, and one shared renderer could not
+    /// deliver it.
+    let renderer: StudioViewerRenderer
 
-    init(renderer: StudioViewerRenderer) {
-        // durationTicks 0 means "unbounded": the synthetic pattern has no end.
-        // A real source replaces this with the decoded asset's duration.
-        let clock = StudioPlaybackClock(timebase: .ntsc2997, durationTicks: 0)
-        view = StudioViewerView(renderer: renderer, clock: clock)
+    init(
+        renderer: StudioViewerRenderer,
+        authority: StudioPlaybackAuthority,
+        route: StudioViewerRoute = .source
+    ) {
+        self.route = route
+        self.renderer = renderer
+        view = StudioViewerView(renderer: renderer, authority: authority, route: route)
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
@@ -998,7 +1027,7 @@ final class StudioViewerWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "TaskWraith Studio — Source"
+        window.title = route.windowTitle
         window.contentView = view
         window.center()
     }
@@ -1043,9 +1072,48 @@ final class StudioViewerAppState {
     let controller: StudioViewerWindowController
     let attachment: StudioMediaAttachment
 
-    init(controller: StudioViewerWindowController, renderer: StudioViewerRenderer) {
+    /// Route visibility and the resource obligation that rides with it.
+    private var routes = StudioRouteVisibility()
+    private let reviewController: StudioViewerWindowController?
+
+    init(
+        controller: StudioViewerWindowController,
+        renderer: StudioViewerRenderer,
+        reviewController: StudioViewerWindowController? = nil
+    ) {
         self.controller = controller
         self.attachment = StudioMediaAttachment(renderer: renderer)
+        self.reviewController = reviewController
+    }
+
+    /// Shows or hides a route. HIDING RELEASES THAT ROUTE'S DECODER/PLAYER
+    /// RESOURCES, which the briefing requires by name — the transition value
+    /// carries the obligation so a caller cannot quietly skip it.
+    @discardableResult
+    func toggleRoute(_ route: StudioViewerRoute) -> StudioRouteTransition {
+        let transition = routes.toggle(route)
+        switch transition {
+        case .shown(let shown):
+            windowController(for: shown)?.show()
+            Self.report("route \(shown.rawValue) shown")
+        case .hidden(let hidden):
+            guard let controller = windowController(for: hidden) else { break }
+            controller.window.orderOut(nil)
+            // The obligation, discharged where the resources actually live.
+            controller.renderer.detachSource()
+            controller.renderer.detachProposedSource()
+            Self.report(
+                "route \(hidden.rawValue) hidden — decoder resources released")
+        case .refused(let reason):
+            Self.report("route toggle refused: \(reason.rawValue)")
+        }
+        return transition
+    }
+
+    private func windowController(
+        for route: StudioViewerRoute
+    ) -> StudioViewerWindowController? {
+        route == .source ? controller : reviewController
     }
 
     /// Transcripts the host has sent, keyed by asset. Held across source
@@ -1171,6 +1239,7 @@ final class StudioViewerAppState {
 /// the host's supervisor lifecycle.
 enum StudioViewerApp {
     @MainActor private static var retainedController: StudioViewerWindowController?
+    @MainActor private static var retainedReviewController: StudioViewerWindowController?
 
     @MainActor
     static func run(hydrateOnce: Bool) -> Never {
@@ -1228,11 +1297,28 @@ enum StudioViewerApp {
 
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
-        let controller = StudioViewerWindowController(renderer: renderer)
+        // ONE AUTHORITY, TWO ROUTES. The briefing is explicit: "two viewers must
+        // never become two clocks". The authority is a reference type held by
+        // both routes, so that is a fact about the object graph rather than a
+        // convention someone has to maintain.
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: .ntsc2997, durationTicks: 0))
+        let controller = StudioViewerWindowController(
+            renderer: renderer, authority: authority, route: .source)
         retainedController = controller
+
+        // Review gets its OWN renderer so hiding it can release that route's
+        // decoder/player resources without disturbing Source.
+        let reviewController = (try? StudioViewerRenderer.makeDefault()).map {
+            StudioViewerWindowController(
+                renderer: $0, authority: authority, route: .review)
+        }
+        retainedReviewController = reviewController
+
         StudioViewerAppState.shared = StudioViewerAppState(
             controller: controller,
-            renderer: renderer
+            renderer: renderer,
+            reviewController: reviewController
         )
         controller.show()
         application.activate()
