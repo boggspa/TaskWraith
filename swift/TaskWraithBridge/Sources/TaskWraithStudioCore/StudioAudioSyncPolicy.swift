@@ -45,15 +45,24 @@ public enum StudioAudioSyncPolicy {
     ///     and belongs to the sync meter; scheduling must compare against the
     ///     sample the device is rendering, or output latency alone would read as
     ///     permanent divergence and re-schedule every frame forever.
+    ///   - soundMatchesPicture: false when the timeline is presenting an asset
+    ///     the attached sound does not belong to. THE HONEST ANSWER THERE IS
+    ///     SILENCE. Sequence audio is not switched at cuts, so continuing to
+    ///     play would put one clip's dialogue under another clip's picture —
+    ///     the audio twin of drawing a neighbouring clip over a timeline gap,
+    ///     which this renderer already refuses to do. A viewer that goes quiet
+    ///     at a cut is visibly unfinished; a viewer that plays the wrong sound
+    ///     is wrong and looks finished, which is worse.
     public static func decide(
         transportIsPlaying: Bool,
         intendedTicks: Int64,
         audioEndTicks: Int64,
         audioIsPlaying: Bool,
         audioPositionTicks: Int64?,
-        toleranceTicks: Int64
+        toleranceTicks: Int64,
+        soundMatchesPicture: Bool = true
     ) -> StudioAudioSyncDecision {
-        guard transportIsPlaying, intendedTicks < audioEndTicks else {
+        guard transportIsPlaying, soundMatchesPicture, intendedTicks < audioEndTicks else {
             return audioIsPlaying ? .pause : .leave
         }
         guard audioIsPlaying, let audioPositionTicks else {

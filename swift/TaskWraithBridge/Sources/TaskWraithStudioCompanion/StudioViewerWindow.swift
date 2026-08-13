@@ -87,6 +87,9 @@ final class StudioViewerView: NSView {
     /// Held here because the display link is the only place that observes a
     /// presented frame, which is one half of the measurement.
     private let audioPlayer = StudioAudioPlayer()
+    /// Which asset the attached sound came from. Nil when nothing is attached.
+    private var audioAssetId: String?
+    private var sequenceAudioMuted = false
     private var syncMeter: StudioAvSyncMeter?
     /// Whether the transport is currently driven by the AUDIO device rather than
     /// host monotonic time.
@@ -238,9 +241,34 @@ final class StudioViewerView: NSView {
     /// Runs every displayed frame and decides from DIVERGENCE, never from a
     /// gesture, so no transport call site has to remember to drive audio — see
     /// StudioAudioSyncPolicy for why that shape was chosen over eleven forwards.
+    /// Whether the attached sound belongs to the picture the timeline is
+    /// presenting right now.
+    ///
+    /// Always true off the sequence path, where there is one asset and the sound
+    /// is by definition its own. On a committed timeline the cut decides which
+    /// asset is on screen, and the audio player still holds whichever asset was
+    /// opened — so past the first cut the sound belongs to a different clip.
+    private func soundMatchesPicture(atTicks ticks: Int64) -> Bool {
+        guard let sequence = renderer.sequence, !sequence.isEmpty else { return true }
+        switch sequence.sample(atTicks: ticks) {
+        case .gap:
+            // Nothing is drawn in a hole, so nothing should sound in one.
+            return false
+        case .item(_, let assetId, _):
+            return assetId == audioAssetId
+        }
+    }
+
     private func reconcileAudio() {
         guard audioPlayer.hasAudio else { return }
         let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
+        let matches = soundMatchesPicture(atTicks: snapshot.positionTicks)
+        if matches != !sequenceAudioMuted {
+            sequenceAudioMuted = !matches
+            if !matches {
+                message = "sequence audio muted — sound belongs to \(audioAssetId ?? "no asset")"
+            }
+        }
         let decision = StudioAudioSyncPolicy.decide(
             transportIsPlaying: snapshot.isPlaying,
             intendedTicks: snapshot.positionTicks,
@@ -249,7 +277,8 @@ final class StudioViewerView: NSView {
             audioPositionTicks: audioPlayer.reading()?.positionTicks,
             toleranceTicks: StudioAudioSyncPolicy.toleranceTicks(
                 for: transport.clock.timebase
-            )
+            ),
+            soundMatchesPicture: matches
         )
         switch decision {
         case .leave:
@@ -498,7 +527,9 @@ final class StudioViewerView: NSView {
     /// audio format the engine will not take, must still leave a working silent
     /// viewer — losing the picture because the sound failed would be a strictly
     /// worse outcome than losing the sound.
-    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase) {
+    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase, assetId: String?) {
+        audioAssetId = track == nil ? nil : assetId
+        sequenceAudioMuted = false
         audioPlayer.detach()
         usingAudioTime = false
         syncMeter = nil
@@ -1151,8 +1182,8 @@ final class StudioViewerWindowController {
         view.report(message: text)
     }
 
-    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase) {
-        view.attachAudio(track: track, timebase: timebase)
+    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase, assetId: String?) {
+        view.attachAudio(track: track, timebase: timebase, assetId: assetId)
     }
 }
 
@@ -1346,7 +1377,11 @@ final class StudioViewerAppState {
                 )
                 // Audio after the clock, so it anchors against the timebase the
                 // viewer just adopted rather than the previous asset's.
-                controller.attachAudio(track: attachment.attachedAudio, timebase: timebase)
+                controller.attachAudio(
+                    track: attachment.attachedAudio,
+                    timebase: timebase,
+                    assetId: assetId
+                )
                 // A source switch must not leave the previous asset's words on
                 // screen: adopt this asset's transcript, or clear the band.
                 openAssetId = assetId

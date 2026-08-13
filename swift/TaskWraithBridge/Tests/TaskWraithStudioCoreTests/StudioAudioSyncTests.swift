@@ -215,6 +215,63 @@ final class StudioAudioSyncTests: XCTestCase {
         )
     }
 
+    // MARK: - Sound that belongs to a different picture
+
+    /// PAST THE FIRST CUT THE SOUND IS THE WRONG CLIP'S. Sequence audio is not
+    /// switched at cuts, so the attached track belongs to whichever asset was
+    /// opened. Continuing to play it puts one clip's dialogue under another
+    /// clip's picture — and unlike a frozen picture, it does not look broken.
+    func testSoundThatBelongsToAnotherClipIsSilencedRatherThanPlayed() {
+        XCTAssertEqual(
+            StudioAudioSyncPolicy.decide(
+                transportIsPlaying: true,
+                intendedTicks: 90_000,
+                audioEndTicks: 300_000,
+                audioIsPlaying: true,
+                audioPositionTicks: 90_000,
+                toleranceTicks: tolerance,
+                soundMatchesPicture: false
+            ),
+            .pause,
+            "the wrong clip's sound must stop, not keep playing in perfect sync with nothing"
+        )
+    }
+
+    /// The control that gives the test above meaning: identical inputs, sound
+    /// that DOES belong to the picture, left alone.
+    func testSoundThatBelongsToThePictureIsNotSilenced() {
+        XCTAssertEqual(
+            StudioAudioSyncPolicy.decide(
+                transportIsPlaying: true,
+                intendedTicks: 90_000,
+                audioEndTicks: 300_000,
+                audioIsPlaying: true,
+                audioPositionTicks: 90_000,
+                toleranceTicks: tolerance,
+                soundMatchesPicture: true
+            ),
+            .leave
+        )
+    }
+
+    /// A mismatch must not be answered with `.reschedule` — restarting the wrong
+    /// track at the right timecode is still the wrong track.
+    func testAMismatchNeverReschedulesTheWrongTrack() {
+        XCTAssertEqual(
+            StudioAudioSyncPolicy.decide(
+                transportIsPlaying: true,
+                intendedTicks: 300,
+                audioEndTicks: 300_000,
+                audioIsPlaying: true,
+                audioPositionTicks: 90_000,
+                toleranceTicks: tolerance,
+                soundMatchesPicture: false
+            ),
+            .pause,
+            "a seek while the wrong clip is attached must silence, never re-address it"
+        )
+    }
+
     /// The tolerance is derived from the timebase, so it means the same thing at
     /// every rate rather than being a millisecond figure that is two frames at
     /// one rate and half a frame at another.
