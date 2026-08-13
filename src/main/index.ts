@@ -341,6 +341,10 @@ import {
   startStudioProductionLifecycle,
   type StudioProductionLifecycle
 } from './studio/StudioProductionLifecycle'
+import {
+  publishStudioTranscriptForAsset,
+  type SpeechRecognitionResult
+} from './studio/StudioTranscriptAdapter'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
@@ -53870,7 +53874,26 @@ if (isGeminiMcpBridgeProcess) {
         const lifecycle = studioProductionLifecycleRef
         if (!lifecycle) return { ok: false, error: 'Studio companion is unavailable.' }
         const outcome = await lifecycle.openMedia(asset)
-        return outcome.ok ? { ok: true } : { ok: false, error: outcome.message }
+        if (!outcome.ok) return { ok: false, error: outcome.message }
+        // Feed the live transcript band from the real on-device recognizer. This
+        // is the production (non-test) caller of setTranscript. It is deliberately
+        // not awaited and swallows its own failure: recognition is slow, and a
+        // denied Speech permission or a silent clip must never fail the
+        // operator's media open. The typed outcome carries the exact reason.
+        void publishStudioTranscriptForAsset(
+          {
+            transcribe: (params) => {
+              const daemon = bridgeDaemonRef
+              if (!daemon) throw new Error('audio bridge daemon is not running')
+              return daemon.request<SpeechRecognitionResult>('audio.transcribe', params, {
+                timeoutMs: 120_000
+              })
+            },
+            setTranscript: (transcript) => lifecycle.setTranscript(transcript)
+          },
+          { assetId: asset.assetId, path: asset.path }
+        ).catch(() => undefined)
+        return { ok: true }
       },
       getRequestingWindow: (event) => {
         const requestingWindow = BrowserWindow.fromWebContents(event.sender)
