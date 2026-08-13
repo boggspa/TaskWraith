@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   consumeSimulatorCanvasOpenRequest,
   getPendingSimulatorCanvasOpenRequest,
+  isSimulatorCanvasPresentationEvent,
   requestSimulatorCanvasOpen,
   subscribeSimulatorCanvasOpenRequests
 } from './simulatorCanvasLaunch'
@@ -18,5 +19,26 @@ describe('simulatorCanvasLaunch', () => {
     expect(getPendingSimulatorCanvasOpenRequest()).toBeNull()
     expect(notifications).toHaveLength(2)
     unsubscribe()
+  })
+
+  it('accepts only chat-scoped agent presentation events', () => {
+    expect(
+      isSimulatorCanvasPresentationEvent(
+        { kind: 'agent.presented', chatId: 'chat-a', tool: 'simulator_screenshot' },
+        'chat-a'
+      )
+    ).toBe(true)
+    expect(
+      isSimulatorCanvasPresentationEvent(
+        { kind: 'agent.presented', chatId: 'chat-b', tool: 'simulator_screenshot' },
+        'chat-a'
+      )
+    ).toBe(false)
+    expect(
+      isSimulatorCanvasPresentationEvent(
+        { kind: 'scene.presented', chatId: 'chat-a', tool: 'simulator_screenshot' },
+        'chat-a'
+      )
+    ).toBe(false)
   })
 })

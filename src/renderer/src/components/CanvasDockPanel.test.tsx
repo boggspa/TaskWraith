@@ -191,6 +191,16 @@ describe('CanvasDockPanel mesh/simulator surface races', () => {
     expect(rehydrateBlock).toContain('shouldOpenMeshFromChatRehydrate')
     expect(rehydrateBlock).toContain('openMeshSurface()')
   })
+
+  it('switches to Simulator Canvas for chat-scoped agent presentation events', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/CanvasDockPanel.tsx'),
+      'utf8'
+    )
+    expect(source).toContain('window.api?.simulatorCanvas')
+    expect(source).toContain('isSimulatorCanvasPresentationEvent(event, chatId)')
+    expect(source).toContain('openSimulatorSurface()')
+  })
 })
 
 describe('CanvasDockPanel (static render)', () => {

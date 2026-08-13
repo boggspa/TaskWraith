@@ -4293,7 +4293,13 @@ const simulatorToolExecutors = createSimulatorToolExecutors({
   idb: simulatorIdbClient,
   getActuationTarget: simulatorActuationTargetForChat,
   sessionStore: simulatorSessionStore,
-  isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false
+  isSimulatorControlEnabled: () => AppStore.getSettings().simulatorControlEnabled !== false,
+  presentCanvas: (event) => {
+    safeSendToWebContents(mainWindow, 'simulator-canvas-event', {
+      kind: 'agent.presented',
+      ...event
+    })
+  }
 })
 const simulatorInteractionBridge = new SimulatorInteractionBridge({
   getControlStatus: (chatId) => {

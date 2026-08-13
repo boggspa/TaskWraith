@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const {
   assertLaunchAuthorized,
+  assertNoPriorStudioOrphans,
   buildStudioAcceptancePlan,
   buildStubSpec,
   descendantsOf,
@@ -25,11 +26,16 @@ const {
     launch: boolean
     reason?: string
   }
+  assertNoPriorStudioOrphans: (
+    plan: { artifactRoot: string },
+    adapters?: Record<string, unknown>
+  ) => Promise<{ scanned: number; trusted: number; orphans: unknown[] }>
   buildStudioAcceptancePlan: (options?: Record<string, unknown>) => Record<string, any>
   buildStubSpec: (options: {
     directory: string
     timeoutMs?: number
     forceAfterMs?: number
+    stubbornGrandchild?: boolean
   }) => Record<string, any>
   descendantsOf: (
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>,
@@ -178,6 +184,11 @@ describe('Studio acceptance harness', () => {
     expect(() => assertLaunchAuthorized({ ...base, acceptLaunch: true }, plan)).toThrow(
       /owner-confirms-existing-orphans-cleared/
     )
+    // The third arm of the matrix: orphan clearance supplied but consent still
+    // missing must fail on consent rather than fall through.
+    expect(() =>
+      assertLaunchAuthorized({ ...base, ownerConfirmsOrphansCleared: true }, plan)
+    ).toThrow(/i-accept-studio-isolated-launch/)
   })
 
   it('materializes a content-addressed video only inside the isolated transcript-media store', async () => {
@@ -323,6 +334,145 @@ describe('Studio acceptance harness', () => {
       }
     }
   )
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses to report a clean reap while a SIGTERM-ignoring descendant survives',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-watchdog-stubborn-')
+      const spec = buildStubSpec({ directory: root, forceAfterMs: 250, stubbornGrandchild: true })
+      const session = await launchUnderWatchdog(spec, {
+        controllerEnv: { TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' }
+      })
+      // Wait for the grandchild's OWN announcement: it is only stubborn once it
+      // has installed its SIGTERM handler, and the leader writes its pid before
+      // that runtime exists.
+      const grandchild = await waitFor(async () => {
+        try {
+          return JSON.parse(
+            await fsPromises.readFile(path.join(root, 'grandchild-ready.json'), 'utf8')
+          )
+        } catch {
+          return null
+        }
+      }, 'stubborn grandchild readiness')
+      expect(processIsAlive(grandchild.pid)).toBe(true)
+
+      try {
+        // The group leader dies on SIGTERM; this grandchild ignores it. A
+        // terminal `reaped` is only honest once the exact group is gone.
+        const terminal = await session.stop()
+        expect(terminal).toMatchObject({ status: 'reaped', groupExitVerified: true })
+        await waitFor(
+          () => (processIsAlive(grandchild.pid) ? null : true),
+          'stubborn grandchild process-group exit'
+        )
+
+        const receipt = JSON.parse(await fsPromises.readFile(session.receiptPath, 'utf8'))
+        expect(receipt).toMatchObject({
+          schemaVersion: 2,
+          status: 'reaped',
+          groupExitVerified: true,
+          groupRequiredForceKill: true
+        })
+      } finally {
+        if (session.pgid) {
+          try {
+            process.kill(-session.pgid, 'SIGKILL')
+          } catch {
+            // Already gone, which is the expected outcome.
+          }
+        }
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses a launch while a prior receipt names a still-live group, and never kills it',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-orphan-live-')
+      const acceptanceRoot = path.join(root, 'acceptance')
+      await fsPromises.mkdir(path.join(acceptanceRoot, 'studioPrior01'), { recursive: true })
+      const orphan = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      orphan.unref()
+      try {
+        // A detached child leads its own group, so pgid === pid. The receipt
+        // claims `reaped` on purpose: that is exactly the false-green shape.
+        await fsPromises.writeFile(
+          path.join(acceptanceRoot, 'studioPrior01', 'watchdog-receipt.json'),
+          JSON.stringify({
+            schemaVersion: 1,
+            status: 'reaped',
+            childPid: orphan.pid,
+            childPgid: orphan.pid
+          })
+        )
+
+        await expect(
+          assertNoPriorStudioOrphans({ artifactRoot: path.join(acceptanceRoot, 'studioNow01') })
+        ).rejects.toThrow(/still alive/)
+        expect(processIsAlive(orphan.pid!)).toBe(true)
+      } finally {
+        try {
+          process.kill(orphan.pid!, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'trusts a v2 receipt that verified its own group exit, so a reused pgid cannot block forever',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-orphan-trusted-')
+      const acceptanceRoot = path.join(root, 'acceptance')
+      await fsPromises.mkdir(path.join(acceptanceRoot, 'studioPrior02'), { recursive: true })
+      const reused = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      reused.unref()
+      try {
+        await fsPromises.writeFile(
+          path.join(acceptanceRoot, 'studioPrior02', 'watchdog-receipt.json'),
+          JSON.stringify({
+            schemaVersion: 2,
+            status: 'reaped',
+            groupExitVerified: true,
+            childPid: reused.pid,
+            childPgid: reused.pid
+          })
+        )
+
+        await expect(
+          assertNoPriorStudioOrphans({ artifactRoot: path.join(acceptanceRoot, 'studioNow02') })
+        ).resolves.toMatchObject({ trusted: 1, orphans: [] })
+      } finally {
+        try {
+          process.kill(reused.pid!, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    }
+  )
+
+  it('fails closed when a prior watchdog receipt cannot be read', async () => {
+    const root = await temporaryRoot('studio-acceptance-orphan-malformed-')
+    const acceptanceRoot = path.join(root, 'acceptance')
+    await fsPromises.mkdir(path.join(acceptanceRoot, 'studioPrior03'), { recursive: true })
+    await fsPromises.writeFile(
+      path.join(acceptanceRoot, 'studioPrior03', 'watchdog-receipt.json'),
+      'this is not a receipt'
+    )
+
+    await expect(
+      assertNoPriorStudioOrphans({ artifactRoot: path.join(acceptanceRoot, 'studioNow03') })
+    ).rejects.toThrow(/could not be read/)
+  })
 
   it('drives the authorized renderer-to-durable-window joins in order without launching Electron', async () => {
     const root = await temporaryRoot('studio-acceptance-joins-')

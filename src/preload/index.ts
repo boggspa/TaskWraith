@@ -1448,7 +1448,12 @@ const api = {
       return ipcRenderer.invoke('simulator-canvas:clipboard-push', chatId, udid, intent.token)
     },
     clipboardPull: (chatId: string, udid: string) =>
-      ipcRenderer.invoke('simulator-canvas:clipboard-pull', chatId, udid)
+      ipcRenderer.invoke('simulator-canvas:clipboard-pull', chatId, udid),
+    onEvent: (handler: (event: unknown) => void) => {
+      const wrapped = (_event: unknown, payload: unknown) => handler(payload)
+      ipcRenderer.on('simulator-canvas-event', wrapped)
+      return () => ipcRenderer.removeListener('simulator-canvas-event', wrapped)
+    }
   },
 
   // Simulator control setup is deliberately separate from AppDrive. It only

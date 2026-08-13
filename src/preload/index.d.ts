@@ -1452,6 +1452,7 @@ declare global {
         ) => Promise<{ ok: boolean; error?: string }>
         clipboardPush: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
         clipboardPull: (chatId: string, udid: string) => Promise<SimulatorHostActionResult>
+        onEvent: (handler: (event: unknown) => void) => () => void
       }
       simulatorControl: {
         status: () => Promise<SimulatorControlSetupStatus>

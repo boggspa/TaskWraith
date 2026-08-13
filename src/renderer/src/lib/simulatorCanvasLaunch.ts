@@ -35,3 +35,15 @@ export function subscribeSimulatorCanvasOpenRequests(listener: () => void): () =
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
+
+/** Main emits this only after a chat-owned agent invokes a Simulator QA tool. */
+export function isSimulatorCanvasPresentationEvent(value: unknown, chatId: string): boolean {
+  if (!value || typeof value !== 'object' || !chatId) return false
+  const record = value as { kind?: unknown; chatId?: unknown; tool?: unknown }
+  return (
+    record.kind === 'agent.presented' &&
+    record.chatId === chatId &&
+    typeof record.tool === 'string' &&
+    record.tool.startsWith('simulator_')
+  )
+}

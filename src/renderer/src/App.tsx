@@ -742,6 +742,7 @@ import {
 import { isCanvasDockPresentationEvent } from './lib/canvasPresentation'
 import {
   getPendingSimulatorCanvasOpenRequest,
+  isSimulatorCanvasPresentationEvent,
   subscribeSimulatorCanvasOpenRequests
 } from './lib/simulatorCanvasLaunch'
 import {
@@ -25543,6 +25544,18 @@ function App(): React.JSX.Element {
     if (!chatId || !api?.onEvent) return
     return api.onEvent((event) => {
       if (!isCanvasDockPresentationEvent(event, chatId)) return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    })
+  }, [currentChat?.appChatId])
+  // Simulator QA tools present the built-in surface for the active chat. A
+  // background chat event never steals the user's current dock context.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    const api = window.api?.simulatorCanvas
+    if (!chatId || !api?.onEvent) return
+    return api.onEvent((event) => {
+      if (!isSimulatorCanvasPresentationEvent(event, chatId)) return
       setIsCanvasDockPanelOpen(true)
       setRightDockTab('canvas')
     })

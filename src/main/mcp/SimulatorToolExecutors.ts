@@ -43,6 +43,21 @@ const SIMULATOR_MUTATING_TOOLS: ReadonlySet<SimulatorMcpToolName> = new Set([
   'simulator_scroll'
 ])
 
+/** Device QA tools present the in-app dock; status and standalone Simulator.app do not. */
+const SIMULATOR_CANVAS_PRESENTING_TOOLS: ReadonlySet<SimulatorMcpToolName> = new Set([
+  'simulator_boot',
+  'simulator_install',
+  'simulator_launch',
+  'simulator_screenshot',
+  'simulator_terminate',
+  'simulator_inspect',
+  'simulator_button',
+  'simulator_rotate',
+  'simulator_tap',
+  'simulator_type',
+  'simulator_scroll'
+])
+
 export function isSimulatorMcpToolName(value: string): value is SimulatorMcpToolName {
   return SIMULATOR_TOOL_NAME_SET.has(value)
 }
@@ -83,6 +98,8 @@ export interface SimulatorToolExecutorDeps {
   sessionStore?: Pick<SimulatorSessionStore, 'upsert'>
   /** User-owned global switch for simulator mutations. */
   isSimulatorControlEnabled?: () => boolean
+  /** Best-effort renderer presentation; never participates in tool success. */
+  presentCanvas?: (event: { chatId: string; tool: SimulatorMcpToolName }) => void
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -230,7 +247,8 @@ export function createSimulatorToolExecutors(
     idb,
     getActuationTarget,
     sessionStore,
-    isSimulatorControlEnabled
+    isSimulatorControlEnabled,
+    presentCanvas
   } = deps
   return {
     async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
@@ -257,6 +275,15 @@ export function createSimulatorToolExecutors(
 
         const udid = stringValue(args.udid, 128)
         if (!udid) return fail(toolName, '`udid` is required.')
+
+        const chatId = stringValue(context.appChatId, 256)
+        if (chatId && SIMULATOR_CANVAS_PRESENTING_TOOLS.has(toolName)) {
+          try {
+            presentCanvas?.({ chatId, tool: toolName })
+          } catch {
+            // Presentation is additive UX only; it cannot fail simulator QA.
+          }
+        }
 
         if (toolName === 'simulator_boot') {
           return actionResult(toolName, await hostControl.boot(udid, control!))

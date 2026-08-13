@@ -31,6 +31,7 @@ import {
 import {
   consumeSimulatorCanvasOpenRequest,
   getPendingSimulatorCanvasOpenRequest,
+  isSimulatorCanvasPresentationEvent,
   subscribeSimulatorCanvasOpenRequests
 } from '../lib/simulatorCanvasLaunch'
 import { shouldOpenMeshFromChatRehydrate } from '../lib/simulatorCanvasPanelHelpers'
@@ -633,6 +634,16 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       if (record?.chatId === chatId && record.kind === 'scene.presented') openMeshSurface()
     })
   }, [chatId, openMeshSurface])
+
+  // Agent Simulator QA presents the dedicated surface inside an already-open
+  // dock; App owns opening the outer dock when it is currently closed.
+  useEffect(() => {
+    const api = window.api?.simulatorCanvas
+    if (!api?.onEvent) return
+    return api.onEvent((event) => {
+      if (isSimulatorCanvasPresentationEvent(event, chatId)) openSimulatorSurface()
+    })
+  }, [chatId, openSimulatorSurface])
 
   const runOpen = async (
     mode: 'web' | 'sketch',

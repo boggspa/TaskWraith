@@ -257,6 +257,26 @@ describe('SimulatorToolExecutors', () => {
     expect(TASKWRAITH_TOOL_ACTIONS.simulator_screenshot.service).toBe('simulatorCanvas')
   })
 
+  it('presents the in-app Canvas for agent QA tools but not status or standalone open', async () => {
+    const presentCanvas = vi.fn()
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-present' }),
+      idb: fakeIdb(),
+      presentCanvas
+    })
+
+    await executeSimulatorTool('simulator_status', {}, runCtx, 'claude')
+    await executeSimulatorTool('simulator_open', {}, runCtx, 'claude')
+    expect(presentCanvas).not.toHaveBeenCalled()
+
+    await executeSimulatorTool('simulator_screenshot', { udid }, runCtx, 'claude')
+    expect(presentCanvas).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      tool: 'simulator_screenshot'
+    })
+  })
+
   it('requires udid / appPath / bundleId before calling the host', async () => {
     const hostControl = fakeHost()
     const { executeSimulatorTool } = createSimulatorToolExecutors({
