@@ -47,6 +47,16 @@ final class StudioViewerView: NSView {
     /// The overlay layout most recently drawn. Hit testing and accessibility
     /// both read it, so neither re-derives geometry the renderer might disagree
     /// with.
+    /// Audio output, and the measured sync between what is seen and heard.
+    /// Held here because the display link is the only place that observes a
+    /// presented frame, which is one half of the measurement.
+    private let audioPlayer = StudioAudioPlayer()
+    private var syncMeter: StudioAvSyncMeter?
+    /// Whether the transport is currently driven by the AUDIO device rather than
+    /// host monotonic time.
+    private var usingAudioTime = false
+    private var lastAudioHostSeconds: Double = 0
+
     private var overlayModel: StudioOverlayModel?
     private var publishedAccessibility: [StudioAccessibilityDescriptor] = []
     private var accessibilityChildElements: [NSAccessibilityElement] = []
@@ -138,9 +148,48 @@ final class StudioViewerView: NSView {
 
     /// One display refresh: ask THE clock which frame is current, then draw it.
     /// The view never keeps its own playhead.
+    /// The oscillator the transport reads.
+    ///
+    /// Audio when it is playing, host monotonic otherwise — picture slaved to
+    /// sound, because a dropped frame is a flicker and an audio glitch is a
+    /// click. There is still ONE authority: StudioPlaybackClock remains the only
+    /// thing that answers "what position are we at". All that changes is which
+    /// physical oscillator supplies its time.
+    private var transportHostSeconds: Double {
+        audioPlayer.audioHostSeconds() ?? CACurrentMediaTime()
+    }
+
+    /// Re-anchors the clock when the oscillator changes.
+    ///
+    /// THE TWO TIMELINES HAVE DIFFERENT ORIGINS. Audio seconds are measured from
+    /// the audio clock's anchor; host seconds are CACurrentMediaTime's epoch.
+    /// Swapping one for the other without re-anchoring teleports the playhead by
+    /// the difference between them, which is however long the machine has been
+    /// up. So the position is read under the OLD source and re-established under
+    /// the NEW one.
+    private func reconcileTimeSource() {
+        let audioSeconds = audioPlayer.audioHostSeconds()
+        let audioActive = audioSeconds != nil
+        if audioActive { lastAudioHostSeconds = audioSeconds ?? 0 }
+        guard audioActive != usingAudioTime else { return }
+
+        let previousHost = usingAudioTime ? lastAudioHostSeconds : CACurrentMediaTime()
+        let position = transport.clock.positionTicks(atHost: previousHost)
+        let wasPlaying = transport.clock.snapshot(atHost: previousHost).isPlaying
+
+        usingAudioTime = audioActive
+        let nextHost = audioActive ? (audioSeconds ?? 0) : CACurrentMediaTime()
+        transport.seek(toTicks: position, atHost: nextHost)
+        if wasPlaying { transport.play(atHost: nextHost) }
+        // Statistics from before an oscillator change describe a different
+        // pipeline, so they are discarded rather than carried forward.
+        syncMeter?.reset()
+    }
+
     private func renderCurrentFrame() {
         guard let metalLayer else { return }
-        let snapshot = transport.clock.snapshot(atHost: CACurrentMediaTime())
+        reconcileTimeSource()
+        let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
         guard let drawable = metalLayer.nextDrawable() else {
             missedDrawableCount += 1
             return
@@ -160,6 +209,17 @@ final class StudioViewerView: NSView {
             presenting: drawable,
             overlay: overlay
         )
+        // MEASURED A/V SYNC. Recorded only for a frame that was actually DRAWN,
+        // against the audio hardware's own playhead — a dropped frame is not
+        // evidence about sync, and counting it as zero error would flatter the
+        // pipeline precisely when it is misbehaving.
+        if outcome.didDraw, let audible = audioPlayer.audiblePositionTicks() {
+            syncMeter?.record(
+                presentedFrameTicks: transport.clock.ticks(ofFrame: snapshot.frameIndex),
+                audiblePositionTicks: audible
+            )
+        }
+
         if outcome.didDraw {
             presentedFrameCount += 1
         } else {
@@ -197,7 +257,9 @@ final class StudioViewerView: NSView {
                 presentedFrameCount: presentedFrameCount,
                 droppedFrameCount: droppedFrameCount,
                 retainedFrameCount: renderer.retainedFrameCount,
-                hardwareDecodeLabel: hardwareDecodeLabel
+                hardwareDecodeLabel: hardwareDecodeLabel,
+                // "a/v --" when there is no audio, never a measured zero.
+                syncLabel: syncMeter?.summaryText ?? "a/v --"
             )
         )
     }
@@ -217,6 +279,27 @@ final class StudioViewerView: NSView {
     /// The asset's timebase is authoritative: frame indices computed against a
     /// different rate address the wrong pictures, and the container's stored
     /// rate is the muxer's choice rather than anything the viewer can assume.
+    /// Starts audio for a newly opened asset, if it has any.
+    ///
+    /// Failure is REPORTED AND SURVIVED. A machine with no output device, or an
+    /// audio format the engine will not take, must still leave a working silent
+    /// viewer — losing the picture because the sound failed would be a strictly
+    /// worse outcome than losing the sound.
+    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase) {
+        audioPlayer.detach()
+        usingAudioTime = false
+        syncMeter = nil
+        guard let track else { return }
+        do {
+            try audioPlayer.attach(track: track, timebase: timebase)
+            try audioPlayer.play(fromTicks: 0)
+            syncMeter = StudioAvSyncMeter(timebase: timebase)
+        } catch {
+            message = "audio unavailable: \(error)"
+            audioPlayer.detach()
+        }
+    }
+
     func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
         transport = StudioTransportController(
             clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
@@ -523,6 +606,10 @@ final class StudioViewerWindowController {
     func report(message text: String?) {
         view.report(message: text)
     }
+
+    func attachAudio(track: StudioAudioTrack?, timebase: StudioTimebase) {
+        view.attachAudio(track: track, timebase: timebase)
+    }
 }
 
 /// Main-thread home for the live viewer, so the stdio pump can hand over an
@@ -552,6 +639,9 @@ final class StudioViewerAppState {
                     durationTicks: durationTicks,
                     label: "\(assetId) · \(frameCount) frames"
                 )
+                // Audio after the clock, so it anchors against the timebase the
+                // viewer just adopted rather than the previous asset's.
+                controller.attachAudio(track: attachment.attachedAudio, timebase: timebase)
                 Self.report("opened \(assetId) (\(frameCount) frames)")
             case .failed(let assetId, let message):
                 // Surfaced ON SCREEN as well as on stderr: a viewer that fails

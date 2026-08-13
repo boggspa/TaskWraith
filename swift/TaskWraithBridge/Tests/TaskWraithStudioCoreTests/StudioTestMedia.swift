@@ -177,6 +177,141 @@ enum StudioTestMedia {
             .appendingPathComponent("studio-test-\(UUID().uuidString).mov")
     }
 
+    /// Writes a REAL .mov carrying an audio track: a sine tone at `frequency`.
+    ///
+    /// Hermetic on purpose. Pointing an audio test at a file some earlier
+    /// command left in /tmp makes it skip silently wherever that file is absent,
+    /// and a skipped test proves nothing — it just looks green.
+    static func writeToneMovie(
+        to url: URL,
+        seconds: Double = 2.0,
+        sampleRate: Double = 44_100,
+        frequency: Double = 440
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ]
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else {
+            throw XCTSkip("asset writer rejected the audio input on this machine")
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw XCTSkip("asset writer could not start: \(String(describing: writer.error))")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: 1,
+                interleaved: false
+            )
+        else {
+            throw XCTSkip("float PCM format unavailable")
+        }
+
+        let totalFrames = Int(sampleRate * seconds)
+        let chunkFrames = 4_096
+        var written = 0
+        while written < totalFrames {
+            let frames = min(chunkFrames, totalFrames - written)
+            guard
+                let buffer = AVAudioPCMBuffer(
+                    pcmFormat: format,
+                    frameCapacity: AVAudioFrameCount(frames)
+                ),
+                let channel = buffer.floatChannelData?[0]
+            else {
+                throw XCTSkip("PCM buffer allocation failed")
+            }
+            buffer.frameLength = AVAudioFrameCount(frames)
+            for index in 0..<frames {
+                let phase = 2.0 * Double.pi * frequency * Double(written + index) / sampleRate
+                channel[index] = Float(sin(phase)) * 0.25
+            }
+            guard let sample = Self.sampleBuffer(from: buffer, startFrame: Int64(written)) else {
+                throw XCTSkip("could not build a CMSampleBuffer for the tone")
+            }
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            input.append(sample)
+            written += frames
+        }
+
+        input.markAsFinished()
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw XCTSkip("tone writer failed: \(String(describing: writer.error))")
+        }
+    }
+
+    private static func sampleBuffer(
+        from buffer: AVAudioPCMBuffer,
+        startFrame: Int64
+    ) -> CMSampleBuffer? {
+        var format: CMFormatDescription?
+        guard
+            CMAudioFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                asbd: buffer.format.streamDescription,
+                layoutSize: 0,
+                layout: nil,
+                magicCookieSize: 0,
+                magicCookie: nil,
+                extensions: nil,
+                formatDescriptionOut: &format
+            ) == noErr,
+            let format
+        else {
+            return nil
+        }
+
+        var sample: CMSampleBuffer?
+        let timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: CMTimeScale(buffer.format.sampleRate)),
+            presentationTimeStamp: CMTime(
+                value: startFrame,
+                timescale: CMTimeScale(buffer.format.sampleRate)
+            ),
+            decodeTimeStamp: .invalid
+        )
+        guard
+            CMSampleBufferCreate(
+                allocator: kCFAllocatorDefault,
+                dataBuffer: nil,
+                dataReady: false,
+                makeDataReadyCallback: nil,
+                refcon: nil,
+                formatDescription: format,
+                sampleCount: CMItemCount(buffer.frameLength),
+                sampleTimingEntryCount: 1,
+                sampleTimingArray: [timing],
+                sampleSizeEntryCount: 0,
+                sampleSizeArray: nil,
+                sampleBufferOut: &sample
+            ) == noErr,
+            let sample,
+            CMSampleBufferSetDataBufferFromAudioBufferList(
+                sample,
+                blockBufferAllocator: kCFAllocatorDefault,
+                blockBufferMemoryAllocator: kCFAllocatorDefault,
+                flags: 0,
+                bufferList: buffer.audioBufferList
+            ) == noErr
+        else {
+            return nil
+        }
+        return sample
+    }
+
     /// Writes a REAL .mov container with an H.264 video track.
     ///
     /// Ingest tests must exercise actual demux, not a second synthesized-sample

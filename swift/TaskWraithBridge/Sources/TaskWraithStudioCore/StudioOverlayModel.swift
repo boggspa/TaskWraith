@@ -170,17 +170,21 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     public let droppedFrameCount: Int
     public let retainedFrameCount: Int
     public let hardwareDecodeLabel: String
+    /// Measured A/V sync summary, or "a/v --" before any measurement exists.
+    public let syncLabel: String
 
     public init(
         presentedFrameCount: Int,
         droppedFrameCount: Int,
         retainedFrameCount: Int,
-        hardwareDecodeLabel: String
+        hardwareDecodeLabel: String,
+        syncLabel: String = "a/v --"
     ) {
         self.presentedFrameCount = presentedFrameCount
         self.droppedFrameCount = droppedFrameCount
         self.retainedFrameCount = retainedFrameCount
         self.hardwareDecodeLabel = hardwareDecodeLabel
+        self.syncLabel = syncLabel
     }
 }
 
@@ -530,7 +534,8 @@ public enum StudioOverlayLayout {
 
         if let diagnostics = state.diagnostics {
             let line =
-                "\(diagnostics.hardwareDecodeLabel)  drop \(diagnostics.droppedFrameCount)"
+                "\(diagnostics.hardwareDecodeLabel)  \(diagnostics.syncLabel)"
+                + "  drop \(diagnostics.droppedFrameCount)"
                 + "  held \(diagnostics.retainedFrameCount)"
                 + "  shown \(diagnostics.presentedFrameCount)"
             let lineWidth =

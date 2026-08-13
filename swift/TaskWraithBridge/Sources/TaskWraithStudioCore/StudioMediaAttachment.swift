@@ -46,6 +46,8 @@ public final class StudioMediaAttachment {
     public private(set) var attachedAssetId: String?
     public private(set) var attachedCount = 0
     public private(set) var failedCount = 0
+    /// Decoded audio for the attached asset, or nil when it has none.
+    public private(set) var attachedAudio: StudioAudioTrack?
 
     public init(renderer: StudioViewerRenderer) {
         self.renderer = renderer
@@ -67,6 +69,12 @@ public final class StudioMediaAttachment {
             renderer.attach(source: loaded.source)
             attachedAssetId = asset.assetId
             attachedCount += 1
+            // Audio is OPTIONAL and its absence is not a failure: plenty of real
+            // media has no audio track, and refusing to show a silent clip
+            // because it is silent would be absurd. A video that opens without
+            // sound is a working viewer with no audio clock; a video that
+            // refuses to open is a broken one.
+            attachedAudio = try? await StudioAudioTrack.load(url: URL(fileURLWithPath: asset.path))
             return .attached(
                 assetId: asset.assetId,
                 frameCount: loaded.media.samples.count,
