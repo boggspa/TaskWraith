@@ -1198,6 +1198,43 @@ final class StudioViewerAppState {
         Self.report("proposal \(openProposalId) resolved — review cleared")
     }
 
+    /// Adopts the committed timeline and makes the Review route able to PLAY
+    /// it: every referenced asset the companion can resolve becomes a resident
+    /// decode source keyed by id.
+    ///
+    /// An asset it cannot resolve is HELD, not substituted — the same refusal
+    /// as a foreign-asset proposal. A timeline that silently played the wrong
+    /// file at a cut would be worse than one that shows nothing there.
+    func adopt(sequence: StudioTimelineSequence, knownAssets: [StudioMediaAsset] = []) async {
+        // Hydration's asset list is the ONLY place a sequence's assets are named
+        // on a cold start: open_media populates the map for assets the user
+        // opened, and a committed timeline routinely references clips this
+        // session never opened. Driving the live binary is what exposed that —
+        // the first run reported "0 assets resident" for an asset the document
+        // plainly carried.
+        for asset in knownAssets { proposalAssets[asset.assetId] = asset }
+        guard let reviewController else { return }
+        guard !sequence.isEmpty else {
+            reviewController.renderer.detachSequenceSources()
+            return
+        }
+        var attached = 0
+        var held: [String] = []
+        for assetId in sequence.referencedAssetIds.sorted() {
+            guard let asset = proposalAssets[assetId] else {
+                held.append(assetId)
+                continue
+            }
+            let outcome = await StudioMediaAttachment(renderer: reviewController.renderer)
+                .attachSequence(asset: asset)
+            if outcome.didAttach { attached += 1 } else { held.append(assetId) }
+        }
+        reviewController.renderer.sequence = sequence
+        Self.report(
+            "sequence adopted — \(sequence.items.count) items, \(attached) assets resident"
+                + (held.isEmpty ? "" : ", held: \(held.joined(separator: ","))"))
+    }
+
     func adopt(transcripts: [StudioTranscript]) {
         for transcript in transcripts {
             known[transcript.assetId] = transcript
@@ -1283,34 +1320,35 @@ enum StudioViewerApp {
         // renderer itself never crosses a thread boundary.
         let pumpThread = Thread {
             exit(
-                StudioCompanionStdioPump.run(
-                    hydrateOnce: hydrateOnce,
-                    onOpenedAssets: { assets in
-                        Task { @MainActor in
-                            await StudioViewerAppState.shared?.open(assets: assets)
+                StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { update in
+                    // ONE hop for everything the session learned. Destructuring
+                    // here rather than in the transport means a forgotten
+                    // payload is visible at this single site instead of being
+                    // silently absent from a callback list.
+                    Task { @MainActor in
+                        guard let state = StudioViewerAppState.shared else { return }
+                        if let revision = update.latestRevision {
+                            state.adopt(revision: revision)
                         }
-                    },
-                    onTranscripts: { transcripts in
-                        Task { @MainActor in
-                            StudioViewerAppState.shared?.adopt(transcripts: transcripts)
+                        if !update.step.openedAssets.isEmpty {
+                            await state.open(assets: update.step.openedAssets)
                         }
-                    },
-                    onRevision: { revision in
-                        Task { @MainActor in
-                            StudioViewerAppState.shared?.adopt(revision: revision)
+                        if !update.step.transcripts.isEmpty {
+                            state.adopt(transcripts: update.step.transcripts)
                         }
-                    },
-                    onProposals: { proposals in
-                        Task { @MainActor in
-                            await StudioViewerAppState.shared?.adopt(proposals: proposals)
+                        if let hydration = update.hydration {
+                            await state.adopt(
+                                sequence: hydration.sequence,
+                                knownAssets: hydration.assets)
                         }
-                    },
-                    onResolvedProposals: { ids in
-                        Task { @MainActor in
-                            StudioViewerAppState.shared?.adopt(resolvedProposals: ids)
+                        if !update.step.proposals.isEmpty {
+                            await state.adopt(proposals: update.step.proposals)
+                        }
+                        if !update.step.resolvedProposalIds.isEmpty {
+                            state.adopt(resolvedProposals: update.step.resolvedProposalIds)
                         }
                     }
-                )
+                }
             )
         }
         pumpThread.name = "taskwraith-studio-stdio"

@@ -87,6 +87,27 @@ public final class StudioMediaAttachment {
         }
     }
 
+    /// Loads `asset` as one resident source of the committed sequence.
+    public func attachSequence(
+        asset: StudioMediaAsset,
+        maxSampleCount: Int = StudioMediaSourceLoader.defaultMaxSampleCount
+    ) async -> StudioMediaAttachmentOutcome {
+        do {
+            let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+                asset: asset, device: renderer.device, maxSampleCount: maxSampleCount)
+            renderer.attachSequence(
+                source: loaded.source, assetId: asset.assetId, timebase: loaded.media.timebase)
+            return .attached(
+                assetId: asset.assetId,
+                frameCount: loaded.media.samples.count,
+                timebase: loaded.media.timebase,
+                durationTicks: loaded.media.durationTicks)
+        } catch {
+            failedCount += 1
+            return .failed(assetId: asset.assetId, message: String(describing: error))
+        }
+    }
+
     /// Detaches the proposed source when a ghost is resolved either way.
     public func detachProposed() {
         renderer.detachProposedSource()

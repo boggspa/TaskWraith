@@ -20,13 +20,33 @@ enum StudioCompanionStdioPump {
     /// - Parameter onTranscripts: called on the PUMP THREAD when the host sends
     ///   or replaces a transcript. Without this the session parses transcripts
     ///   that reach no renderer, which is what the band is for.
+    /// Everything the session learned from one chunk.
+    ///
+    /// WHY ONE VALUE RATHER THAN A CALLBACK PER PAYLOAD. The pump previously
+    /// declared five optional callbacks and dispatched them one by one, so
+    /// adding a field to Step required TWO edits here and nothing forced
+    /// either. That shape dropped proposals silently once, and was about to
+    /// drop the committed sequence the same way — the second time at the same
+    /// seam. The defect was never optionality; it was ENUMERATION. Five
+    /// hand-written forwards are five chances to forget one, and a `= nil`
+    /// default makes forgetting indistinguishable from declining.
+    ///
+    /// Forwarding the whole update removes the opportunity: the pump no longer
+    /// knows what a payload IS, so it cannot fail to mention one. A consumer
+    /// can still ignore a field, but that is now visible at a single site
+    /// rather than hidden in a transport.
+    struct Update: Sendable {
+        let step: StudioCompanionSession.Step
+        /// Revision of the most recent editCommitted, if any.
+        let latestRevision: Int?
+        /// The hydrated document, once getDocument has been answered. Carries
+        /// the committed timeline, which lives outside Step.
+        let hydration: StudioCompanionSession.Hydration?
+    }
+
     static func run(
         hydrateOnce: Bool,
-        onOpenedAssets: (@Sendable ([StudioMediaAsset]) -> Void)? = nil,
-        onTranscripts: (@Sendable ([StudioTranscript]) -> Void)? = nil,
-        onRevision: (@Sendable (Int) -> Void)? = nil,
-        onProposals: (@Sendable ([StudioEditProposal]) -> Void)? = nil,
-        onResolvedProposals: (@Sendable ([String]) -> Void)? = nil
+        onUpdate: (@Sendable (Update) -> Void)? = nil
     ) -> Int32 {
         let session = StudioCompanionSession(hydrateOnce: hydrateOnce)
         let standardInput = FileHandle.standardInput
@@ -56,26 +76,13 @@ enum StudioCompanionStdioPump {
             let step = session.consume(chunk: chunk)
             reportProtocolErrors(step.protocolErrors)
             writeLines(step.outboundLines)
-            if !step.openedAssets.isEmpty {
-                onOpenedAssets?(step.openedAssets)
-            }
-            if !step.transcripts.isEmpty {
-                onTranscripts?(step.transcripts)
-            }
-            if let revision = session.latestRevision {
-                onRevision?(revision)
-            }
-            // Ghosts. The session has parsed these since the proposal slice
-            // landed and the pump discarded them, so every open proposal was
-            // invisible in the running product no matter how well Core handled
-            // it. Resolutions ride the same hop: a ghost that cannot be
-            // dismissed when the host accepts it is worse than one never drawn.
-            if !step.proposals.isEmpty {
-                onProposals?(step.proposals)
-            }
-            if !step.resolvedProposalIds.isEmpty {
-                onResolvedProposals?(step.resolvedProposalIds)
-            }
+            onUpdate?(
+                Update(
+                    step: step,
+                    latestRevision: session.latestRevision,
+                    hydration: session.hydrated
+                )
+            )
             if let code = step.exitCode {
                 return code
             }

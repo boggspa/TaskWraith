@@ -38,7 +38,7 @@ public final class StudioCompanionSession {
 
     /// Result of feeding one chunk: bytes to write to stdout, an exit request,
     /// and human-readable protocol errors for stderr diagnostics.
-    public struct Step {
+    public struct Step: Sendable {
         public let outboundLines: [Data]
         public let exitCode: Int32?
         public let protocolErrors: [String]
