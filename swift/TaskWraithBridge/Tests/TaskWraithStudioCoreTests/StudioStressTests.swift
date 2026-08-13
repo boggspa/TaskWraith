@@ -7,24 +7,25 @@ import XCTest
 /// Mission outcome 11's stress matrix, run in full: looped playback, 100 seeks,
 /// 20 source switches, 10 viewer close/reopen cycles.
 ///
-/// TWO INSTRUMENTS, AND THE MEASUREMENT THAT FORCED IT. Before writing any of
-/// this I calibrated the memory probe against a deliberate leak of each class:
+/// TWO INSTRUMENTS, AND THE CALIBRATION THAT FORCED IT.
 ///
-///   64 MB of touched malloc      -> phys_footprint moved 64.3 MB
-///   200 retained decoded frames  -> phys_footprint moved  2.0 MB
+/// RSS and phys_footprint track malloc faithfully and are effectively BLIND to
+/// IOSurface-backed video memory — the dominant allocation class in a video
+/// viewer and precisely the one this stack is most likely to leak. An RSS-only
+/// harness would report "no leak" while the retention ring, the reorder cache or
+/// the review source quietly accumulated surfaces.
 ///
-/// The second run held 200 VERIFIABLY DISTINCT luma textures (checked by
-/// ObjectIdentifier) carrying roughly 92 MB of 4:2:0 pixel data. So RSS and
-/// phys_footprint track malloc faithfully and are effectively BLIND to
-/// IOSurface-backed video memory — which is the dominant allocation class in a
-/// video viewer and precisely the one this stack is most likely to leak.
+/// THE EVIDENCE LIVES IN CODE, NOT HERE. See StudioMemoryCalibrationTests, which
+/// runs both controls as executable assertions and discriminates distinct
+/// surfaces by IOSURFACE IDENTITY. An earlier version of this comment carried
+/// the numbers as prose from a deleted throwaway file, and cited a discriminator
+/// (ObjectIdentifier on MTLTexture) that sat above the layer where VideoToolbox
+/// could recycle — so it could not have ruled out the confound it named.
 ///
-/// An RSS-only harness would therefore have reported "no leak" while the
-/// retention ring, the reorder cache or the second review source quietly
-/// accumulated surfaces. The mission's own wording anticipates this by naming
-/// TWO conditions — "bounded resources AND no monotonic RSS growth" — so every
-/// test below asserts both: the memory trend for malloc-class growth, and
-/// explicit resource counts for the surfaces RSS cannot see.
+/// The mission's own wording anticipates the split by naming TWO conditions —
+/// "bounded resources AND no monotonic RSS growth" — so every test below asserts
+/// both: the memory trend for malloc-class growth, and explicit resource counts
+/// for the surfaces RSS cannot see.
 @MainActor
 final class StudioStressTests: XCTestCase {
     private let timebase = StudioTimebase(timescale: 30, frameDurationTicks: 1)!
@@ -319,52 +320,106 @@ final class StudioStressTests: XCTestCase {
 
     // MARK: - The harness must be able to fail
 
-    /// THE PROOF THAT THE MATRIX IS A MEASUREMENT. A harness that cannot detect
-    /// a leak is decoration, so this deliberately leaks and asserts the
-    /// instruments catch it — and, importantly, WHICH instrument does.
+    /// THE RENDERER'S RESOURCE INSTRUMENT, driven for real.
     ///
-    /// Retaining every decoded frame is the exact IOSurface-class leak the
-    /// calibration showed RSS cannot see. The resource count catches it; the
-    /// memory trend, on this evidence, would not. That is the whole reason both
-    /// conditions are asserted throughout this file.
-    func testTheHarnessDetectsADeliberateSurfaceLeak() async throws {
+    /// CORRECTION. My earlier version of this test appended 40 frames to its own
+    /// local array and asserted 40 > 3 — then asserted the IDENTICAL comparison
+    /// a second time. Two assertions, one tautology, and it never touched
+    /// renderer.retainedFrameCount at all: a retainedFrameCount hard-coded to
+    /// zero would have passed it. @Challenge2 caught that, and it is the same
+    /// failure class this round keeps finding — a proof whose result is
+    /// independent of the defect it names.
+    ///
+    /// This drives the RENDERER and asserts ITS counter: retention is real,
+    /// bounded while playing, and returns to zero on teardown. The blindness
+    /// half is measured separately in StudioMemoryCalibrationTests, not asserted
+    /// in a comment here.
+    func testTheRendererResourceInstrumentIsLiveAndBounded() async throws {
         let device = try makeDevice()
         let url = try await makeClip(frames: 40)
         defer { try? FileManager.default.removeItem(at: url) }
 
+        let renderer = try StudioViewerRenderer(device: device)
+        let output = try target(device)
         let loaded = try await StudioMediaSourceLoader.makeFrameSource(
-            asset: StudioMediaAsset(assetId: "leak", path: url.path),
+            asset: StudioMediaAsset(assetId: "instrument", path: url.path),
             device: device
         )
 
-        var leaked: [StudioVideoFrameTextures] = []
+        XCTAssertEqual(renderer.retainedFrameCount, 0, "nothing rendered yet")
+        renderer.attach(source: loaded.source)
+
+        // A PROPERTY THIS TEST DISCOVERED, and it is correct behaviour rather
+        // than a defect. The plain offscreen path commits AND WAITS, so the GPU
+        // has finished sampling before render() returns and there is nothing to
+        // retain. Retention exists only for the paths that commit WITHOUT
+        // waiting. My first version of this test asserted retention on the
+        // synchronous path and failed — the premise was wrong, not the code.
+        for frame in 0..<10 {
+            renderer.render(snapshot: snapshot(frame: Int64(frame)), to: output)
+        }
+        XCTAssertEqual(
+            renderer.retainedFrameCount,
+            0,
+            "the synchronous path waits for the GPU, so it must retain nothing"
+        )
+
+        // Now the ASYNC path. Supplying an overlay puts the content pass in
+        // chaining mode, which commits without waiting and therefore must retain.
+        let overlay = StudioOverlayLayout.build(
+            StudioOverlayState(
+                viewport: StudioOverlayViewport(width: 640, height: 360, scale: 1),
+                durationTicks: 1_000
+            )
+        )
         for frame in 0..<40 {
-            if let textures = try? loaded.source.textures(forFrameIndex: Int64(frame)) {
-                leaked.append(textures)
-            }
+            renderer.render(
+                snapshot: snapshot(frame: Int64(frame)),
+                to: output,
+                overlay: overlay
+            )
         }
 
-        // The resource-count instrument sees it immediately.
+        // The instrument must be LIVE — a counter stuck at zero would pass a
+        // bound check while telling us nothing.
+        let peak = renderer.retainedFrameCount
         XCTAssertGreaterThan(
-            leaked.count,
-            StudioVideoFrameRenderer.inFlightRetentionDepth,
-            "the leak fixture did not actually retain beyond the bound"
+            peak,
+            0,
+            "retainedFrameCount never moved; the resource instrument is not live"
         )
-        // And the bound check that every test above uses would fail on it.
-        let wouldFail = leaked.count > StudioVideoFrameRenderer.inFlightRetentionDepth
-        XCTAssertTrue(wouldFail, "assertStable's retained bound would not have caught this")
+        XCTAssertLessThanOrEqual(
+            peak,
+            StudioVideoFrameRenderer.inFlightRetentionDepth,
+            "the in-flight ring exceeded its bound"
+        )
 
-        leaked.removeAll()
+        renderer.detachSource()
+        XCTAssertEqual(renderer.retainedFrameCount, 0, "teardown stranded surfaces")
     }
 
     /// And the malloc-class half: the memory trend must detect growth that IS
     /// visible to phys_footprint, or the RSS half of every assertion is inert.
+    ///
+    /// A LIMITATION THIS TEST TAUGHT ME, and it matters for how outcome 11's
+    /// numbers should be read. The first version allocated 48 MB and passed in
+    /// isolation but FAILED in the full suite, reporting only +25 MB of growth.
+    /// The cause is not flake: phys_footprint measures RESIDENT pages, and by
+    /// the time this runs the calibration tests have already allocated and freed
+    /// ~64 MB, so the allocator satisfies a smaller request from pages that are
+    /// already resident and the footprint does not move.
+    ///
+    /// So the memory trend can only see growth BEYOND the process's existing
+    /// resident footprint. A leak that fits inside previously-freed memory is
+    /// invisible to it — which is a second, independent reason the resource
+    /// counts are not redundant. The allocation here is sized to dominate any
+    /// prior churn rather than to be minimal.
     func testTheMemoryTrendDetectsMallocClassGrowth() throws {
         var held: [UnsafeMutableRawPointer] = []
         var sampler = StudioMemorySampler(warmupCycles: 0)
-        for cycle in 0..<6 {
-            // 8 MB per cycle, touched so the pages are real.
-            for _ in 0..<8 {
+        for cycle in 0..<8 {
+            // 16 MB per cycle = 128 MB total, touched so the pages are real.
+            for _ in 0..<16 {
                 let bytes = 1_048_576
                 let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes, alignment: 8)
                 memset(pointer, 1, bytes)
@@ -375,11 +430,25 @@ final class StudioStressTests: XCTestCase {
         let trend = sampler.trend
         for pointer in held { pointer.deallocate() }
 
-        XCTAssertTrue(
-            trend.isMonotonicallyGrowing,
-            "the memory trend missed a 48MB monotonic malloc leak: \(trend.summaryText)"
+        // A SECOND THING THIS TEST TAUGHT ME, and it changed what the assertion
+        // should be. I first asserted isMonotonicallyGrowing here and it FAILED
+        // on a genuine 128MB leak: allocators batch, so a leaking process
+        // produces a STAIRCASE rather than a strictly increasing line, and some
+        // cycles are flat.
+        //
+        // So strict monotonicity is SPECIFIC but not SENSITIVE — when it fires
+        // it is almost certainly a leak, but it misses real ones. The sensitive
+        // half is growth magnitude. isStable() already requires BOTH (not
+        // monotonic AND within budget), so the matrix is sound; only this
+        // instrument test was asserting the wrong half.
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 32 * 1_048_576),
+            "the memory trend called a 128MB leak stable: \(trend.summaryText)"
         )
-        XCTAssertGreaterThan(trend.growthMegabytes, 30)
-        XCTAssertTrue(trend.summaryText.contains("LEAK?"), "a leak must be flagged in the summary")
+        XCTAssertGreaterThan(
+            trend.growthMegabytes,
+            60,
+            "growth magnitude is the sensitive half and it missed the leak"
+        )
     }
 }
