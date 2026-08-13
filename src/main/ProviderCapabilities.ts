@@ -566,13 +566,15 @@ function approvalContract(
       effectiveMode,
       providerMode:
         requestedMode === 'plan'
-          ? 'read-only / never'
+          ? 'native read-only / never'
           : requestedMode === 'auto_edit'
-            ? 'workspace-write / gated by settings'
-            : 'workspace-write / on-request',
+            ? 'native read-only / TaskWraith broker auto-approved'
+            : 'native read-only / TaskWraith broker on-request',
       inAppApprovals: true,
       supportsWorkspaceGrants: true,
-      notes: ['Codex app-server permission requests are routed through TaskWraith approval cards.']
+      notes: [
+        'Workspace-scoped Codex runs keep provider-native filesystem mutators read-only. Approved shell and file actions use the governed TaskWraith broker and approval cards.'
+      ]
     }
   }
   if (provider === 'gemini') {
@@ -895,8 +897,8 @@ export function buildProviderCapabilityContract({
       'fileChanges',
       services.fileChanges,
       'taskwraith',
-      ['edit_file', 'create_file', 'delete_file'],
-      'Codex file approvals and diffs are routed through TaskWraith.'
+      ['write_file', 'replace', 'apply_patch'],
+      'Codex file approvals and exact mutation transactions are routed through TaskWraith.'
     )
     externalPublish = serviceCapability(
       'externalPublish',

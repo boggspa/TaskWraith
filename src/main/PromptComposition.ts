@@ -28,6 +28,7 @@ import {
   taskWraithToolNamespaceHint
 } from './TaskWraithMcpPromptNames'
 import { stripProviderShellRoutingPromptPrefix } from './ProviderShellRoutingPrompt'
+import { stripProviderFileRoutingPromptPrefix } from './ProviderFileRoutingPrompt'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { shouldUseCoreMcpProfile } from './mcp/McpToolProfiles'
 import {
@@ -219,6 +220,7 @@ export function sanitizeTaskWraithMcpPromptClaims(
   // user/transcript body remains evidence, not something to rewrite.
   if (!input.advertised) {
     sanitized = stripProviderShellRoutingPromptPrefix(sanitized)
+    sanitized = stripProviderFileRoutingPromptPrefix(sanitized)
   }
   // Only touch exact generated prefixes. The same contract text may be quoted
   // later in the user's request and is essential transcript content.

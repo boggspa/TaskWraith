@@ -63,21 +63,30 @@ function subThreadReturn(
 }
 
 describe('sanitizeTaskWraithMcpPromptClaims', () => {
-  it('removes only a leading generated shell-routing envelope when the broker is absent', async () => {
+  it('removes only leading generated routing envelopes when the broker is absent', async () => {
     const { buildProviderShellRoutingPrompt } = await import('./ProviderShellRoutingPrompt')
+    const { buildProviderFileRoutingPrompt } = await import('./ProviderFileRoutingPrompt')
     const shellEnvelope = buildProviderShellRoutingPrompt({
-      provider: 'grok',
+      provider: 'codex',
       effectivePermissions: {
         agenticServices: { shellCommands: 'allow', mcpTools: 'allow' }
       } as never
     })
+    const fileEnvelope = buildProviderFileRoutingPrompt({
+      provider: 'codex',
+      effectivePermissions: {
+        agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+      } as never
+    })
     const literalLaterInUserText =
       '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
-    const prompt = `${shellEnvelope}User work.\n\n${literalLaterInUserText}`
+    const fileLiteralLaterInUserText =
+      '<taskwraith-file-routing-v1>quoted evidence</taskwraith-file-routing-v1>'
+    const prompt = `${shellEnvelope}${fileEnvelope}User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
 
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
-    ).toBe(`User work.\n\n${literalLaterInUserText}`)
+    ).toBe(`User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`)
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: true, coreProfile: false })
     ).toBe(prompt)

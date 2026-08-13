@@ -32,6 +32,7 @@ import {
   type RunSkillHookContext
 } from '../skillsHooks/resolveRunSkillHookContext'
 import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
+import { buildProviderFileRoutingPrompt } from '../ProviderFileRoutingPrompt'
 import {
   ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
   isAntigravityHeadlessPermissionNoOutput
@@ -15579,13 +15580,17 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
+      const fileRoutingPrompt = buildProviderFileRoutingPrompt({
+        provider: participant.provider,
+        effectivePermissions: permissions
+      })
       const projectReferenceAppendix = this.buildProjectReferenceAppendixForSeat(
         runtime,
         participant,
         permissions,
         dispatchChat.workspacePath
       )
-      const promptWithDiscordContext = `${shellRoutingPrompt}${prompt}${formatDiscordContextPromptAppendix(
+      const promptWithDiscordContext = `${shellRoutingPrompt}${fileRoutingPrompt}${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       const resumeFallbackProjection =
@@ -15610,7 +15615,7 @@ export class EnsembleOrchestrator {
             })
           : undefined
       const resumeFallbackPrompt = resumeFallbackProjection
-        ? `${shellRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
+        ? `${shellRoutingPrompt}${fileRoutingPrompt}${resumeFallbackProjection.prompt}${formatDiscordContextPromptAppendix(
             runtime.discordContextSnapshots
           )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
         : undefined
@@ -17776,13 +17781,17 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
+      const fileRoutingPrompt = buildProviderFileRoutingPrompt({
+        provider: participant.provider,
+        effectivePermissions: permissions
+      })
       const projectReferenceAppendix = this.buildProjectReferenceAppendixForSeat(
         runtime,
         participant,
         permissions,
         dispatchChat.workspacePath
       )
-      const promptWithDiscordContext = `${shellRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
+      const promptWithDiscordContext = `${shellRoutingPrompt}${fileRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
       // Mirror the serial path: thread per-participant reasoning/thinking into

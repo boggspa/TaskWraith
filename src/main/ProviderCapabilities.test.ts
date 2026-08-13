@@ -416,6 +416,24 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.delegate.enforcedByTaskWraith).toBe(true)
   })
 
+  it('reports Codex workspace writes as brokered rather than native sandbox writes', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'codex',
+      settings: settings(),
+      approvalMode: 'auto_edit',
+      status: { provider: 'codex', available: true, version: '1.0.0', appServer: 'started' }
+    })
+
+    expect(contract.approvals.providerMode).toBe(
+      'native read-only / TaskWraith broker auto-approved'
+    )
+    expect(contract.approvals.notes).toEqual([
+      expect.stringContaining('provider-native filesystem mutators read-only')
+    ])
+    expect(contract.tools.fileChanges.tools).toEqual(['write_file', 'replace', 'apply_patch'])
+    expect(contract.tools.fileChanges.details).toContain('exact mutation transactions')
+  })
+
   it('keeps a provider runnable when optional metadata has an error', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'codex',

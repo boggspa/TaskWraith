@@ -13792,6 +13792,9 @@ Next action:
     expect(codexPayload.prompt).toContain('TaskWraith shell-routing (effective grant)')
     expect(codexPayload.prompt).toContain('TaskWraith__run_shell_command')
     expect(codexPayload.prompt).toContain('already allowed shell commands')
+    expect(codexPayload.prompt).toContain('TaskWraith file-routing (effective grant)')
+    expect(codexPayload.prompt).toContain('TaskWraith__apply_patch')
+    expect(codexPayload.prompt).toContain('already allowed in-workspace file changes')
   })
 
   // Slice C extension (1.0.3) — ensemble_yield(target:) reorders the
@@ -19713,6 +19716,9 @@ Next action:
       expect(skipped).toBe(false)
       expect(harness.cancelRun).not.toHaveBeenCalled()
       const writerRun = harness.dispatched[1]
+      expect(writerRun.prompt).toContain('TaskWraith file-routing (effective grant)')
+      expect(writerRun.prompt).toContain('TaskWraith__apply_patch')
+      expect(writerRun.prompt).toContain('approved lane scope')
       harness.orchestrator.handleProviderOutput(
         writerRun.provider,
         { appRunId: writerRun.appRunId, appChatId: 'ensemble-chat' },
@@ -22164,7 +22170,7 @@ describe('slim resumed-turn prompts', () => {
     }
   )
 
-  it('allows a stamped Codex seat with a real app-server UUID to use a slim prompt', async () => {
+  it('keeps brokered file routing on a slim resumed Codex app-server prompt', async () => {
     const previous = process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
     process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = '1'
     try {
@@ -22188,8 +22194,14 @@ describe('slim resumed-turn prompts', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
       expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
       expect(harness.dispatched[0].prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+      expect(harness.dispatched[0].prompt).toContain('TaskWraith file-routing (effective grant)')
+      expect(harness.dispatched[0].prompt).toContain('TaskWraith__apply_patch')
       expect(harness.dispatched[0].prompt).not.toContain('Participant roster:')
       expect(harness.dispatched[0].resumeFallbackPrompt).toContain('Participant roster:')
+      expect(harness.dispatched[0].resumeFallbackPrompt).toContain(
+        'TaskWraith file-routing (effective grant)'
+      )
+      expect(harness.dispatched[0].resumeFallbackPrompt).toContain('TaskWraith__apply_patch')
       expect(harness.dispatched[0].resumeFallbackPrompt).not.toContain(
         'TaskWraith Ensemble Mode — resumed turn'
       )
