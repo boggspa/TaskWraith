@@ -107,12 +107,18 @@ public final class StudioCompanionSession {
         public let assets: [StudioMediaAsset]
         public let proposals: [StudioEditProposal]
         public let transcripts: [StudioTranscript]
+        /// The committed timeline, as a PLAYBACK SUBJECT for the Review route.
+        /// Decoded in the document's own millisecond rational space; a viewer
+        /// re-expresses it when it adopts a timebase.
+        public let sequence: StudioTimelineSequence
 
         public var isEmpty: Bool {
-            assets.isEmpty && proposals.isEmpty && transcripts.isEmpty
+            assets.isEmpty && proposals.isEmpty && transcripts.isEmpty && sequence.isEmpty
         }
 
-        public static let empty = Hydration(assets: [], proposals: [], transcripts: [])
+        public static let empty = Hydration(
+            assets: [], proposals: [], transcripts: [],
+            sequence: StudioTimelineSequence(items: []))
     }
 
     /// Nil until the document response arrives.
@@ -319,9 +325,25 @@ public final class StudioCompanionSession {
             .compactMap(StudioMediaAsset.decode(from:))
         let proposals = (document["proposals"] as? [[String: Any]] ?? [])
             .compactMap { try? StudioProposalDecoder.proposal(from: $0) }
+        // TRACKS. Carried by the document since insert_range began
+        // materialising items, and dropped here until now — so the committed
+        // timeline arrived and reached nothing.
+        let trackPayload = document["tracks"] as? [[String: Any]] ?? []
         let transcripts = (document["transcripts"] as? [[String: Any]] ?? [])
             .compactMap { try? StudioTranscriptDecoder.transcript(from: $0) }
-        return Hydration(assets: assets, proposals: proposals, transcripts: transcripts)
+        return Hydration(
+            assets: assets,
+            proposals: proposals,
+            transcripts: transcripts,
+            // The viewer's timebase is not known at hydration, so the sequence
+            // is decoded in the DOCUMENT's own millisecond rational space and
+            // re-expressed when a viewer adopts it. Decoding against a guessed
+            // timebase would bake a wrong one into the item boundaries.
+            sequence: StudioTimelineSequenceDecoder.sequence(
+                fromTracks: trackPayload,
+                timebase: StudioTimebase(timescale: 1000, frameDurationTicks: 1)!
+            )
+        )
     }
 
     /// Extracts a transcript from a studio/editCommitted whose op is
