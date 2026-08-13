@@ -56,6 +56,8 @@ final class StudioViewerView: NSView {
     /// host monotonic time.
     private var usingAudioTime = false
     private var lastAudioHostSeconds: Double = 0
+    private var lastMemorySampleHost: Double = 0
+    private var cachedMemoryLabel = "rss --"
 
     private var overlayModel: StudioOverlayModel?
     private var publishedAccessibility: [StudioAccessibilityDescriptor] = []
@@ -259,9 +261,21 @@ final class StudioViewerView: NSView {
                 retainedFrameCount: renderer.retainedFrameCount,
                 hardwareDecodeLabel: hardwareDecodeLabel,
                 // "a/v --" when there is no audio, never a measured zero.
-                syncLabel: syncMeter?.summaryText ?? "a/v --"
+                syncLabel: syncMeter?.summaryText ?? "a/v --",
+                memoryLabel: memoryLabel
             )
         )
+    }
+
+    /// Process memory, sampled once a second rather than per frame: task_info is
+    /// a kernel call and the display link is not the place for one.
+    private var memoryLabel: String {
+        let now = CACurrentMediaTime()
+        if now - lastMemorySampleHost >= 1.0, let reading = StudioMemoryProbe.read() {
+            lastMemorySampleHost = now
+            cachedMemoryLabel = String(format: "rss %.0fMB", reading.footprintMegabytes)
+        }
+        return cachedMemoryLabel
     }
 
     /// Measured, never inferred — the decoder reports what VideoToolbox actually

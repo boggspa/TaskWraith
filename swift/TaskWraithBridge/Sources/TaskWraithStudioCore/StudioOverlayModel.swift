@@ -177,19 +177,26 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     public let hardwareDecodeLabel: String
     /// Measured A/V sync summary, or "a/v --" before any measurement exists.
     public let syncLabel: String
+    /// Process memory. Paired with retainedFrameCount deliberately: measurement
+    /// showed phys_footprint is effectively blind to IOSurface-backed video
+    /// memory, so RSS alone would under-report the viewer's dominant allocation
+    /// class. The two numbers together are the honest picture.
+    public let memoryLabel: String
 
     public init(
         presentedFrameCount: Int,
         droppedFrameCount: Int,
         retainedFrameCount: Int,
         hardwareDecodeLabel: String,
-        syncLabel: String = "a/v --"
+        syncLabel: String = "a/v --",
+        memoryLabel: String = "rss --"
     ) {
         self.presentedFrameCount = presentedFrameCount
         self.droppedFrameCount = droppedFrameCount
         self.retainedFrameCount = retainedFrameCount
         self.hardwareDecodeLabel = hardwareDecodeLabel
         self.syncLabel = syncLabel
+        self.memoryLabel = memoryLabel
     }
 }
 
@@ -602,6 +609,7 @@ public enum StudioOverlayLayout {
                 + "  drop \(diagnostics.droppedFrameCount)"
                 + "  held \(diagnostics.retainedFrameCount)"
                 + "  shown \(diagnostics.presentedFrameCount)"
+                + "  \(diagnostics.memoryLabel)"
             let lineWidth =
                 StudioOverlayRenderMetrics.advance(forPointSize: labelSize) * Double(line.count)
             texts.append(
