@@ -1,8 +1,35 @@
 import { describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
-import { IdbClient } from './IdbClient'
+import { IdbClient, idbChildEnvironment, summarizeIdbExecutionError } from './IdbClient'
 
 describe('IdbClient', () => {
+  it('pins the resolved companion path in the managed idb environment', () => {
+    const baseEnvironment = { PATH: '/usr/bin', KEEP_ME: 'yes' }
+    const result = idbChildEnvironment('/opt/homebrew/bin/idb_companion', baseEnvironment)
+
+    expect(result).toEqual({
+      PATH: '/usr/bin',
+      KEEP_ME: 'yes',
+      IDB_COMPANION: '/opt/homebrew/bin/idb_companion'
+    })
+    expect(baseEnvironment).toEqual({ PATH: '/usr/bin', KEEP_ME: 'yes' })
+  })
+
+  it('turns a missing-companion traceback into a bounded actionable error', () => {
+    const traceback = [
+      'idb ui failed: Traceback (most recent call last):',
+      '  File "/managed/site-packages/idb/cli/main.py", line 175, in _main',
+      "FileNotFoundError: [Errno 2] No such file or directory: '/usr/local/bin/idb_companion'"
+    ].join('\n')
+
+    expect(summarizeIdbExecutionError(new Error(traceback))).toBe(
+      'Simulator control could not start idb_companion. Re-run Simulator control setup and try again.'
+    )
+    expect(summarizeIdbExecutionError(new Error('idb ui failed: companion down'))).toBe(
+      'idb ui failed: companion down'
+    )
+  })
+
   it('reports unavailable off macOS even when a resolver would find binaries', () => {
     const client = new IdbClient({
       platform: 'linux',

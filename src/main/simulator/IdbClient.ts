@@ -14,6 +14,7 @@ import {
 } from '../../shared/simulatorCanvas'
 
 const IDB_TIMEOUT_MS = 60_000
+const IDB_ERROR_MAX_CHARS = 600
 /** Truncate AX dumps before they swamp MCP/transcript budgets. */
 const DESCRIBE_ALL_MAX_CHARS = 200_000
 const DESCRIBE_ALL_MAX_NODES = 500
@@ -49,13 +50,18 @@ export interface IdbTarget {
 
 function defaultRunner(
   binary: string,
-  args: readonly string[]
+  args: readonly string[],
+  companionPath: string | null
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(
       binary,
       [...args],
-      { maxBuffer: 16 * 1024 * 1024, timeout: IDB_TIMEOUT_MS },
+      {
+        env: idbChildEnvironment(companionPath),
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: IDB_TIMEOUT_MS
+      },
       (err, stdout, stderr) => {
         if (err) {
           reject(
@@ -67,6 +73,52 @@ function defaultRunner(
       }
     )
   })
+}
+
+/**
+ * fb-idb otherwise falls back to `/usr/local/bin/idb_companion`, which is
+ * wrong for Apple Silicon Homebrew. Keep the caller's environment intact and
+ * pin the exact executable already resolved by TaskWraith's host resolver.
+ */
+export function idbChildEnvironment(
+  companionPath: string | null,
+  baseEnvironment: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return {
+    ...baseEnvironment,
+    ...(companionPath ? { IDB_COMPANION: companionPath } : {})
+  }
+}
+
+/** Never send a Python traceback or an unbounded subprocess error to Canvas. */
+export function summarizeIdbExecutionError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const normalized = raw.replace(/\r/g, '').trim()
+  if (!normalized) return 'idb command failed.'
+
+  if (
+    /(?:No such file or directory|FileNotFoundError)[\s\S]*idb_companion/i.test(normalized) ||
+    /idb_companion[\s\S]*(?:No such file or directory|FileNotFoundError)/i.test(normalized)
+  ) {
+    return 'Simulator control could not start idb_companion. Re-run Simulator control setup and try again.'
+  }
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const lastMeaningful =
+    [...lines]
+      .reverse()
+      .find(
+        (line) =>
+          line !== 'Traceback (most recent call last):' &&
+          !line.startsWith('File "') &&
+          !/^at\s/.test(line)
+      ) || normalized
+  return lastMeaningful.length <= IDB_ERROR_MAX_CHARS
+    ? lastMeaningful
+    : `${lastMeaningful.slice(0, IDB_ERROR_MAX_CHARS - 1)}…`
 }
 
 function withUdid(args: string[], udid?: string): string[] {
@@ -184,7 +236,8 @@ export class IdbClient {
   constructor(deps: IdbClientDeps = {}) {
     this.platform = deps.platform ?? process.platform
     this.resolveBinary = deps.resolveBinary ?? ((name) => findExecutableOnHost(name))
-    this.run = deps.run ?? defaultRunner
+    this.run =
+      deps.run ?? ((binary, args) => defaultRunner(binary, args, this.resolveCompanionPath()))
     this.now = deps.now ?? (() => Date.now())
     this.grpcTransport =
       deps.grpcTransport === undefined ? createDefaultIdbGrpcTransport() : deps.grpcTransport
@@ -252,7 +305,7 @@ export class IdbClient {
         ok: false,
         stdout: '',
         stderr: '',
-        error: error instanceof Error ? error.message : String(error)
+        error: summarizeIdbExecutionError(error)
       }
     }
   }
