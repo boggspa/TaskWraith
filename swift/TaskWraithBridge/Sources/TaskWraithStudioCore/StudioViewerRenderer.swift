@@ -10,13 +10,16 @@ public enum StudioViewerFrameOutcome: Equatable, Sendable {
     case decodedFrame(frameIndex: Int64)
     case testPattern(frameIndex: Int64)
     case decodeFailed(frameIndex: Int64, message: String)
+    /// The proposed sequence calls for material no attached source can provide.
+    /// Nothing is drawn — see StudioReviewFrameRequest.unavailable.
+    case proposedMaterialUnavailable(frameIndex: Int64, assetId: String)
     case renderFailed(frameIndex: Int64, message: String)
 
     /// True when something was actually drawn into the target.
     public var didDraw: Bool {
         switch self {
         case .decodedFrame, .testPattern: return true
-        case .decodeFailed, .renderFailed: return false
+        case .decodeFailed, .renderFailed, .proposedMaterialUnavailable: return false
         }
     }
 }
@@ -66,6 +69,17 @@ public final class StudioViewerRenderer {
     let videoRenderer: StudioVideoFrameRenderer
     let overlayRenderer: StudioOverlayRenderer
     private var source: StudioVideoFrameSource?
+
+    /// Second source for a proposal's inserted material (mission outcome 3).
+    ///
+    /// A SECOND DECODER, TEXTURE CACHE AND REORDER BUFFER — deliberately, and
+    /// worth naming because it doubles the allocations outcome 11's stress
+    /// matrix will measure. It is held only while a proposal is open and is
+    /// invalidated the moment it is replaced or detached, exactly like the
+    /// primary, so a review session cannot accumulate decompression sessions.
+    private var proposedSource: StudioVideoFrameSource?
+    private(set) var proposedAssetId: String?
+    private var proposedTimebase: StudioTimebase?
 
     /// Bounded diagnostics for outcome 9.
     public private(set) var decodedFrameCount = 0
@@ -117,11 +131,41 @@ public final class StudioViewerRenderer {
         source = newSource
     }
 
+    /// Attaches the second source a proposal's inserted material decodes from.
+    ///
+    /// Keyed by assetId because a proposal routinely inserts material from a
+    /// DIFFERENT asset than the one open; the router matches on identity so a
+    /// mismatch draws nothing rather than the wrong file.
+    public func attachProposed(
+        source newSource: StudioVideoFrameSource,
+        assetId: String,
+        timebase: StudioTimebase
+    ) {
+        proposedSource?.invalidate()
+        videoRenderer.releaseRetainedFrames()
+        proposedSource = newSource
+        proposedAssetId = assetId
+        proposedTimebase = timebase
+    }
+
+    /// Detaches the proposal's source. Called when a ghost is resolved either
+    /// way: an accepted proposal becomes part of the sequence and a rejected one
+    /// never will be, so neither leaves anything to review.
+    public func detachProposedSource() {
+        proposedSource?.invalidate()
+        proposedSource = nil
+        proposedAssetId = nil
+        proposedTimebase = nil
+        videoRenderer.releaseRetainedFrames()
+    }
+
     /// Detaches and invalidates the current source, reverting to the test
-    /// pattern. Idempotent.
+    /// pattern. Idempotent. Also drops the proposal's source: a review of
+    /// material that is no longer open is not a review.
     public func detachSource() {
         source?.invalidate()
         source = nil
+        detachProposedSource()
         videoRenderer.releaseRetainedFrames()
     }
 
@@ -138,7 +182,8 @@ public final class StudioViewerRenderer {
         snapshot: StudioTransportSnapshot,
         to target: MTLTexture,
         presenting drawable: MTLDrawable? = nil,
-        overlay: StudioOverlayModel? = nil
+        overlay: StudioOverlayModel? = nil,
+        review: StudioReviewContext? = nil
     ) -> StudioViewerFrameOutcome {
         let frameIndex = snapshot.frameIndex
         let chaining = overlay != nil
@@ -147,7 +192,8 @@ public final class StudioViewerRenderer {
             snapshot: snapshot,
             to: target,
             presenting: chaining ? nil : drawable,
-            chaining: chaining
+            chaining: chaining,
+            review: review
         )
 
         guard let overlay else { return outcome }
@@ -179,14 +225,54 @@ public final class StudioViewerRenderer {
         snapshot: StudioTransportSnapshot,
         to target: MTLTexture,
         presenting drawable: MTLDrawable?,
-        chaining: Bool
+        chaining: Bool,
+        review: StudioReviewContext? = nil
     ) -> StudioViewerFrameOutcome {
         let frameIndex = snapshot.frameIndex
 
-        if let source {
+        // WITHOUT A REVIEW CONTEXT THIS IS THE ORIGINAL PATH, unchanged: the
+        // primary source at the snapshot's own frame. Routing only engages when
+        // a proposal is actually being reviewed, so nothing else pays for it.
+        var selectedSource = source
+        var selectedFrame = frameIndex
+        if let review {
+            switch StudioReviewRouter.request(
+                atTicks: snapshot.positionTicks,
+                version: review.version,
+                timeline: review.timeline,
+                availableProposedAssetId: proposedAssetId
+            ) {
+            case .current(let ticks):
+                selectedFrame = ticks / review.timebase.frameDurationTicks
+            case .proposed(_, let ticks):
+                guard let proposedSource, let proposedTimebase else {
+                    failedFrameCount += 1
+                    return .proposedMaterialUnavailable(
+                        frameIndex: frameIndex,
+                        assetId: proposedAssetId ?? "unknown"
+                    )
+                }
+                // The inserted asset may run at a different rate; convert
+                // before indexing or the review shows the wrong picture.
+                let converted = StudioReviewRouter.convert(
+                    ticks: ticks,
+                    from: review.timebase,
+                    to: proposedTimebase
+                )
+                selectedSource = proposedSource
+                selectedFrame = converted / proposedTimebase.frameDurationTicks
+            case .unavailable(let assetId):
+                // Draw NOTHING. A neighbouring frame here would show a
+                // comparison that does not exist.
+                failedFrameCount += 1
+                return .proposedMaterialUnavailable(frameIndex: frameIndex, assetId: assetId)
+            }
+        }
+
+        if let source = selectedSource {
             let textures: StudioVideoFrameTextures
             do {
-                textures = try source.textures(at: snapshot)
+                textures = try source.textures(forFrameIndex: selectedFrame)
             } catch {
                 // Deliberately NOT falling back to the test pattern — see the
                 // fallback policy above.
