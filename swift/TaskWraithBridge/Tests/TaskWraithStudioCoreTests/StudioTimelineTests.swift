@@ -664,3 +664,72 @@ final class StudioTimelineGestureTests: XCTestCase {
         XCTAssertNil(drag.intent, "a zero-length segment must not become a proposal")
     }
 }
+
+/// Keyboard selection order. Without a keyboard path the band's accessibility
+/// descriptors are focusable by nothing, which makes them a claim, not a
+/// control.
+final class StudioTimelineKeyboardTests: XCTestCase {
+    private static func time(_ n: Int64) -> StudioRationalTime {
+        StudioRationalTime(n: n, d: 600)!
+    }
+
+    private let transcript = StudioTranscript(
+        transcriptId: "t1",
+        assetId: "a1",
+        segments: [
+            StudioTranscriptSegment(
+                segmentId: "s1", text: "one", sourceIn: time(0), sourceOut: time(600)),
+            StudioTranscriptSegment(
+                segmentId: "s2", text: "two", sourceIn: time(900), sourceOut: time(1500)),
+            StudioTranscriptSegment(
+                segmentId: "s3", text: "three", sourceIn: time(1800), sourceOut: time(2400)),
+        ]
+    )
+
+    private func step(_ from: String?, _ forward: Bool) -> String? {
+        StudioTimelineLayout.segmentId(steppingFrom: from, forward: forward, in: transcript)
+    }
+
+    /// Tab and Shift-Tab enter the band from opposite ends.
+    func testEnteringTheBandPicksTheEndTheOperatorIsHeadingFor() {
+        XCTAssertEqual(step(nil, true), "s1")
+        XCTAssertEqual(step(nil, false), "s3")
+    }
+
+    func testTabWalksInTimelineOrder() {
+        XCTAssertEqual(step("s1", true), "s2")
+        XCTAssertEqual(step("s2", true), "s3")
+        XCTAssertEqual(step("s3", false), "s2")
+    }
+
+    /// Deliberately no wrap: silently returning to the first segment hides that
+    /// you reached the end, and this band has no scrollbar to show position.
+    func testSelectionStopsAtTheEndsRatherThanWrapping() {
+        XCTAssertEqual(step("s3", true), "s3", "past the last segment must hold, not wrap to s1")
+        XCTAssertEqual(step("s1", false), "s1", "before the first must hold, not wrap to s3")
+    }
+
+    func testAnUnknownOrAbsentSelectionFallsBackToAnEnd() {
+        XCTAssertEqual(step("gone", true), "s1", "a stale id must not strand the keyboard")
+        XCTAssertNil(
+            StudioTimelineLayout.segmentId(steppingFrom: nil, forward: true, in: nil))
+        let empty = StudioTranscript(transcriptId: "t0", assetId: "a1", segments: [])
+        XCTAssertNil(
+            StudioTimelineLayout.segmentId(steppingFrom: nil, forward: true, in: empty))
+    }
+
+    /// A keyboard nudge asks for an EXACT frame, so it must not snap: snapping
+    /// would discard the precision the operator chose the keyboard for.
+    func testAKeyboardNudgeLandsOnTheExactFrameAndDoesNotSnap() throws {
+        var drag = StudioTrimDrag(
+            segmentId: "s2", assetId: "a1", handle: .end,
+            originalStartTicks: 900, originalEndTicks: 1500)
+        // One frame at 600/20 == 20 ticks, repeated toward s3's start at 1800.
+        for _ in 0..<15 {
+            drag.update(toTicks: drag.currentTicks + 20, boundaries: [], toleranceTicks: 0)
+        }
+        XCTAssertFalse(drag.didSnap)
+        XCTAssertEqual(drag.currentTicks, 1800)
+        XCTAssertEqual(try XCTUnwrap(drag.intent).sourceOutTicks, 1800)
+    }
+}

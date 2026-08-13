@@ -408,6 +408,28 @@ public enum StudioTimelineLayout {
         return model.segmentHits.first { $0.frame.contains(x: x, y: y) }
     }
 
+    /// The segment a Tab reaches from `current`, in timeline order.
+    ///
+    /// Nil `current` selects the FIRST segment forward and the LAST backward,
+    /// so Tab and Shift-Tab both enter the band from the end an operator
+    /// expects. Selection deliberately does NOT wrap: arriving back at the
+    /// first segment after the last hides the fact that you reached the end,
+    /// and there is no scrollbar here to show position.
+    public static func segmentId(
+        steppingFrom current: String?,
+        forward: Bool,
+        in transcript: StudioTranscript?
+    ) -> String? {
+        guard let transcript, !transcript.segments.isEmpty else { return nil }
+        let ids = transcript.segments.map(\.segmentId)
+        guard let current, let index = ids.firstIndex(of: current) else {
+            return forward ? ids.first : ids.last
+        }
+        let next = forward ? index + 1 : index - 1
+        guard ids.indices.contains(next) else { return current }
+        return ids[next]
+    }
+
     /// Snap targets for a trim on `segmentId`: every OTHER segment's edges.
     ///
     /// A handle must not snap to its own segment's boundaries — it already sits

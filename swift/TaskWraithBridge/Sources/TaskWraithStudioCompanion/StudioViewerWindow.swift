@@ -31,6 +31,7 @@ final class StudioViewerView: NSView {
         static let keypadEnter: UInt16 = 76
         static let escape: UInt16 = 53
         static let delete: UInt16 = 51
+        static let tab: UInt16 = 48
     }
 
     private let renderer: StudioViewerRenderer
@@ -450,6 +451,56 @@ final class StudioViewerView: NSView {
         transport.endScrub(atHost: CACurrentMediaTime())
     }
 
+    // MARK: - Timeline band keyboard
+
+    /// Moves the selection and CUES THE PLAYHEAD to the segment's start.
+    /// Selection that did not move the picture would leave an operator reading
+    /// a highlight with no idea what was said there.
+    private func selectSegment(forward: Bool, atHost host: CFTimeInterval) {
+        guard
+            let next = StudioTimelineLayout.segmentId(
+                steppingFrom: selectedSegmentId, forward: forward, in: transcript)
+        else { return }
+        selectedSegmentId = next
+        trim = nil
+        if let segment = transcript?.segments.first(where: { $0.segmentId == next }),
+            let range = segment.range(in: transport.clock.timebase)
+        {
+            transport.seek(toTicks: range.startTicks, atHost: host)
+            report(message: segment.text.isEmpty ? next : segment.text)
+        }
+        needsDisplay = true
+    }
+
+    /// Keyboard trim. Opens a drag if none is running, so [ and ] work straight
+    /// from a Tab selection without a mouse ever touching the band.
+    private func nudgeTrim(handle: StudioTrimHandle, frames: Int64) {
+        guard
+            let selectedSegmentId,
+            let transcript,
+            let segment = transcript.segments.first(where: { $0.segmentId == selectedSegmentId }),
+            let range = segment.range(in: transport.clock.timebase)
+        else { return }
+        var drag =
+            (trim?.handle == handle && trim?.segmentId == selectedSegmentId)
+            ? trim!
+            : StudioTrimDrag(
+                segmentId: selectedSegmentId,
+                assetId: transcript.assetId,
+                handle: handle,
+                originalStartTicks: range.startTicks,
+                originalEndTicks: range.endTicks
+            )
+        let step = frames * transport.clock.timebase.frameDurationTicks
+        // Keyboard nudges do NOT snap: the operator is asking for an exact
+        // frame, and a snap would silently discard the precision they chose the
+        // keyboard for.
+        drag.update(toTicks: drag.currentTicks + step, boundaries: [], toleranceTicks: 0)
+        trim = drag
+        report(message: "Trim pending — Return to propose, Escape to discard")
+        needsDisplay = true
+    }
+
     // MARK: - Timeline band gestures
 
     /// A click on a segment SELECTS it. A click on a handle of the already
@@ -553,6 +604,24 @@ final class StudioViewerView: NSView {
         case Key.space:
             transport.togglePlayback(atHost: host)
             return
+        case Key.tab:
+            // Tab walks the transcript band. Without this the accessibility
+            // descriptors the band publishes are focusable by nothing, which
+            // makes them a claim rather than a control.
+            selectSegment(forward: !event.modifierFlags.contains(.shift), atHost: host)
+            return
+        case Key.escape:
+            if trim != nil || selectedSegmentId != nil {
+                trim = nil
+                selectedSegmentId = nil
+                needsDisplay = true
+                return
+            }
+        case Key.returnKey, Key.keypadEnter:
+            if trim != nil {
+                endTimelineDrag()
+                return
+            }
         case Key.leftArrow:
             // Shift steps a second at a time, matching the shuttle habit every
             // NLE trains.
@@ -582,6 +651,10 @@ final class StudioViewerView: NSView {
             transport.playRange(atHost: host)
         case "x":
             transport.clearMarks(atHost: host)
+        case "[":
+            nudgeTrim(handle: .start, frames: event.modifierFlags.contains(.shift) ? -1 : 1)
+        case "]":
+            nudgeTrim(handle: .end, frames: event.modifierFlags.contains(.shift) ? -1 : 1)
         default:
             super.keyDown(with: event)
         }
