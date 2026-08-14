@@ -1247,22 +1247,30 @@ describe('runAcpTurn — mid-turn steering (Strategy A: session/cancel + re-prom
     await handle.closed
   })
 
-  it('newest steer wins while an interrupt is queued; exactly one follow-up prompt is sent', () => {
+  it('batches rapid steers into one follow-up and confirms every delivery', () => {
     const child = new FakeAcpChild()
     const { handle } = baseOptions(child)
     driveToInFlightPrompt(child)
 
-    expect(handle.steer('first')).toBe(true)
-    expect(handle.steer('second')).toBe(true)
+    const firstDelivered = vi.fn()
+    const secondDelivered = vi.fn()
+    expect(handle.steer('first', { onDelivered: firstDelivered })).toBe(true)
+    expect(handle.steer('second', { onDelivered: secondDelivered })).toBe(true)
     const cancels = child.sent().filter((message) => message.method === 'session/cancel')
-    expect(cancels).toHaveLength(2)
+    expect(cancels).toHaveLength(1)
+    expect(firstDelivered).not.toHaveBeenCalled()
+    expect(secondDelivered).not.toHaveBeenCalled()
 
     child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
     const prompts = promptsSent(child)
     expect(prompts).toHaveLength(2)
-    expect(prompts[1]).toMatchObject({
-      params: { prompt: [{ type: 'text', text: 'second' }] }
-    })
+    const followUpText =
+      (prompts[1].params as { prompt: Array<{ text: string }> }).prompt[0]?.text || ''
+    expect(followUpText).toContain('first')
+    expect(followUpText).toContain('second')
+    expect(followUpText.indexOf('first')).toBeLessThan(followUpText.indexOf('second'))
+    expect(firstDelivered).toHaveBeenCalledTimes(1)
+    expect(secondDelivered).toHaveBeenCalledTimes(1)
     handle.cancel()
   })
 

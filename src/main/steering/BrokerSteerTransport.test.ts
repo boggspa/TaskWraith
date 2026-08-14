@@ -27,11 +27,32 @@ describe('BrokerSteerTransport', () => {
     expect(readPending()).toBe('please stop')
   })
 
-  it('sendSteer replaces existing pending text (last write wins)', () => {
+  it('batches rapid steering text and marks every message delivered on drain', () => {
     const { transport, readPending } = makeTransport()
-    transport.sendSteer('first message')
-    transport.sendSteer('second message')
-    expect(readPending()).toBe('second message')
+    const firstDelivered = vi.fn()
+    const secondDelivered = vi.fn()
+    transport.sendSteer('first message', {
+      entryId: 'entry-1',
+      onDelivered: firstDelivered
+    })
+    transport.sendSteer('second message', {
+      entryId: 'entry-2',
+      onDelivered: secondDelivered
+    })
+
+    const pending = readPending()
+    expect(pending).toContain('first message')
+    expect(pending).toContain('second message')
+    expect(pending!.indexOf('first message')).toBeLessThan(pending!.indexOf('second message'))
+    expect(firstDelivered).not.toHaveBeenCalled()
+    expect(secondDelivered).not.toHaveBeenCalled()
+
+    expect(transport.drain()).toBe(pending)
+    expect(firstDelivered).toHaveBeenCalledTimes(1)
+    expect(secondDelivered).toHaveBeenCalledTimes(1)
+    expect(transport.drain()).toBeNull()
+    expect(firstDelivered).toHaveBeenCalledTimes(1)
+    expect(secondDelivered).toHaveBeenCalledTimes(1)
   })
 
   it('sendSteer rejects empty/whitespace-only text', () => {

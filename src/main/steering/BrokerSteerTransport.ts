@@ -24,6 +24,7 @@
  */
 
 import type { LiveSteerDeliveryHooks, LiveSteerTransport, RunSession } from '../RunManager'
+import { appendSteeringMessage } from './SteeringMessageBatch'
 
 export interface BrokerSteerTransport extends LiveSteerTransport {
   /** Read the currently pending steering text without consuming it. */
@@ -43,19 +44,21 @@ export function createBrokerSteerTransport(
   setPending: (text: string | null) => void,
   getPending: () => string | null
 ): BrokerSteerTransport {
-  let pendingHooks: LiveSteerDeliveryHooks | undefined
+  let pendingHooks: LiveSteerDeliveryHooks[] = []
   return {
     sendSteer(text: string, hooks?: LiveSteerDeliveryHooks): boolean {
       if (!text.trim()) return false
-      // Replace any existing pending steer — the newest one wins.
-      setPending(text)
-      pendingHooks = hooks
+      // A live boundary may not drain immediately. Preserve every message in
+      // arrival order so a later host or peer steer cannot overwrite an
+      // earlier one while the model is still working.
+      setPending(appendSteeringMessage(getPending(), text))
+      if (hooks) pendingHooks.push(hooks)
       return true
     },
 
     cancel(): void {
       setPending(null)
-      pendingHooks = undefined
+      pendingHooks = []
     },
 
     peek(): string | null {
@@ -67,8 +70,14 @@ export function createBrokerSteerTransport(
       if (text !== null) {
         setPending(null)
         const hooks = pendingHooks
-        pendingHooks = undefined
-        hooks?.onDelivered()
+        pendingHooks = []
+        for (const hook of hooks) {
+          try {
+            hook.onDelivered()
+          } catch {
+            // Receipt evidence must not stop later receipts or live delivery.
+          }
+        }
       }
       return text
     }

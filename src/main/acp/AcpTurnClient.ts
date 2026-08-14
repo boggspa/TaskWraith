@@ -39,6 +39,7 @@ import {
   type AcpPermissionDecision
 } from './AcpProtocol'
 import { isTransientAcpPromptFailure } from './AcpTransientPromptFailure'
+import { appendSteeringMessage } from '../steering/SteeringMessageBatch'
 
 /** Minimal child-process surface this client needs (subset of ChildProcess). */
 export interface AcpChildProcess {
@@ -252,9 +253,9 @@ export interface AcpTurnHandle {
    * settled, cancelled, closed, or empty text). The caller must then fall back
    * to boundary delivery — a false return NEVER delivers the text.
    *
-   * A second call before the first interrupt lands replaces the pending text
-   * (newest steer wins); the provider still receives exactly one follow-up
-   * prompt per closed turn.
+   * Calls received before the first interrupt lands are batched in arrival
+   * order; the provider still receives exactly one follow-up prompt per closed
+   * turn, and every included delivery hook fires after that prompt is sent.
    */
   steer: (text: string, hooks?: AcpSteerDeliveryHooks) => boolean
   /**
@@ -533,7 +534,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
    * close is left for the boundary-delivery path, exactly like pi's undrained
    * steering queue (see PiSteerDelivery finding 3).
    */
-  let pendingSteer: { text: string; hooks?: AcpSteerDeliveryHooks } | null = null
+  let pendingSteer: { text: string; hooks: AcpSteerDeliveryHooks[] } | null = null
   // Text of the prompt currently in flight — the recovery prompt, not the
   // original, once recovery has taken over. A transient retry must re-send
   // whatever actually failed.
@@ -644,7 +645,13 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     pendingSteer = null
     if (!pending || cancelRequested || closed || stdinClosed || !sessionId) return false
     if (sendPrompt(pending.text) === null) return false
-    pending.hooks?.onDelivered()
+    for (const hook of pending.hooks) {
+      try {
+        hook.onDelivered()
+      } catch {
+        // Receipt evidence must not stop later receipts or live delivery.
+      }
+    }
     return true
   }
 
@@ -1270,10 +1277,16 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       // caller falls back to boundary delivery.
       if (cancelRequested || closed || stdinClosed || turnComplete) return false
       if (!sessionId || activePromptRpcId === null) return false
-      // Newest steer wins if one is already queued for this boundary; the
-      // provider still receives exactly one follow-up prompt per closed turn.
-      pendingSteer = { text: steerText, hooks }
-      writeRpc(null, 'session/cancel', { sessionId })
+      // Preserve every message that arrives before the interrupted prompt
+      // closes. Only the first message needs to issue session/cancel; the
+      // combined follow-up carries the whole ordered batch.
+      if (pendingSteer) {
+        pendingSteer.text = appendSteeringMessage(pendingSteer.text, steerText)
+        if (hooks) pendingSteer.hooks.push(hooks)
+      } else {
+        pendingSteer = { text: steerText, hooks: hooks ? [hooks] : [] }
+        writeRpc(null, 'session/cancel', { sessionId })
+      }
       return true
     },
     cancelSteer: () => {
