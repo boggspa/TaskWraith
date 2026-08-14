@@ -9,8 +9,10 @@
  *
  *  - **It runs at most once per install.** The watermark is stamped BEFORE the
  *    walk, so a crash still burns an attempt; three failures and it is
- *    abandoned. A module-level guard bounds it to one per process on top of
- *    that, for the case where the rollup file cannot be written at all.
+ *    abandoned. The stamp is then READ BACK, and the walk is skipped outright
+ *    if it did not survive — because every persistence failure here is
+ *    swallowed, and without on-disk state to count with, the per-process guard
+ *    would bound this to once per LAUNCH rather than once per install.
  *  - **It never touches the shared 90-day file cache.** That cache is pruned to
  *    whatever window the current pass used, so a wide pass and a narrow pass
  *    would delete each other's entries and re-parse the corpus on every
@@ -126,12 +128,23 @@ export function recordCompletedScanInDailyRollup(
   }, deps.onError)
 }
 
+/**
+ * Delete the backfill's scratch caches.
+ *
+ * Called both before and after a walk. The `finally` after covers a worker
+ * crash or timeout but NOT the process exiting mid-walk, and the file cache is
+ * checkpointed after every provider — so a partial one exists within seconds of
+ * starting. Built over 400 days it is a superset of the live 90-day cache,
+ * which has been measured in the hundreds of MB. On a machine this repo has
+ * already seen filled to 926 GB, that is worth clearing on the way in as well
+ * as on the way out.
+ */
 async function removeScratchCaches(deps: DailyUsageRollupPipelineDeps): Promise<void> {
   for (const path of [deps.backfillFileCachePath, deps.backfillCursorCachePath]) {
     try {
       await fs.rm(path, { force: true })
     } catch {
-      // Best-effort: a leftover scratch cache costs disk, never correctness.
+      // Best-effort; a leftover scratch cache costs disk, never correctness.
     }
   }
 }
@@ -162,8 +175,14 @@ async function runDailyUsageBackfill(deps: DailyUsageRollupPipelineDeps): Promis
   backfillStartedThisProcess = true
 
   const startedAt = now()
+  // A scratch cache orphaned by a previous process exiting mid-walk is never
+  // cleaned by that run's `finally`. Clear before starting so at most one can
+  // exist, rather than one per abandoned attempt.
+  await removeScratchCaches(deps)
+
   // Stamp the attempt BEFORE walking: a crash mid-walk must still cost one, or
   // a reliably-dying backfill re-walks the corpus on every launch.
+  const attempts = (existing.backfill?.attempts ?? 0) + 1
   await enqueue(async () => {
     const base = await readRollup(deps.dailyRollupPath)
     await persistDailyUsageRollup(
@@ -174,12 +193,25 @@ async function runDailyUsageBackfill(deps: DailyUsageRollupPipelineDeps): Promis
           startedAt,
           completedAt: 0,
           lookbackDays: DAILY_USAGE_BACKFILL_LOOKBACK_DAYS,
-          attempts: (base.backfill?.attempts ?? 0) + 1
+          attempts: Math.max(attempts, (base.backfill?.attempts ?? 0) + 1)
         }
       },
       Date.now()
     )
   }, deps.onError)
+
+  // If the stamp did not survive — unwritable userData, a full disk, an
+  // oversized payload, all of which `persistDailyUsageRollup` swallows — then
+  // nothing on disk bounds a retry, and this multi-GB walk would run again on
+  // every single launch. Refuse rather than let that loop form: the per-process
+  // guard alone bounds it per LAUNCH, which is not the same as per install.
+  const stamped = await loadDailyUsageRollup(deps.dailyRollupPath)
+  if (!stamped?.backfill || stamped.backfill.attempts < attempts) {
+    deps.onError?.(
+      new Error('Daily usage backfill attempt could not be recorded; skipping the walk.')
+    )
+    return false
+  }
 
   try {
     const days = await deps.runBackfill({

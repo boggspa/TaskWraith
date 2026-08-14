@@ -150,11 +150,39 @@ describe('foldUsageRecordsIntoDailyRollup', () => {
     expect(folded['2026-06-10'].codex.tokens).toBe(100)
   })
 
-  it('drops a fully-observed day that the scan reports as empty', () => {
-    // Observed and genuinely zero — the day really did have no activity.
+  it('KEEPS a stored day the incoming set says nothing about', () => {
+    // Absence from `incoming` is not evidence of absence in the world: the
+    // scan's records reach only as far back as the provider logs go.
     const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 500, runs: 2 } } }
     const folded = foldUsageRecordsIntoDailyRollup(base, [], windowOver(9, 11))
-    expect(folded['2026-06-10']).toBeUndefined()
+    expect(folded['2026-06-10'].codex.tokens).toBe(500)
+  })
+
+  it('KEEPS a provider the incoming set never mentions, on an observed day', () => {
+    // The deep backfill is external-only and cannot see TaskWraith's journal,
+    // so folding it must not erase ollama/mistral/pi from every day it covers.
+    const base: DailyUsageDays = {
+      '2026-06-10': { codex: { tokens: 500, runs: 2 }, ollama: { tokens: 90, runs: 3 } }
+    }
+    const folded = foldUsageRecordsIntoDailyRollup(
+      base,
+      [record('codex', noon(2026, 6, 10), 700)],
+      windowOver(9, 11)
+    )
+    expect(folded['2026-06-10'].codex.tokens).toBe(700)
+    expect(folded['2026-06-10'].ollama).toEqual({ tokens: 90, runs: 3 })
+  })
+
+  it('still lets an observed provider be corrected DOWNWARDS', () => {
+    // The one thing per-provider replace must preserve: a dedupe fix has to be
+    // able to lower a total, or every correction is one-way.
+    const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 900, runs: 9 } } }
+    const folded = foldUsageRecordsIntoDailyRollup(
+      base,
+      [record('codex', noon(2026, 6, 10), 100)],
+      windowOver(9, 11)
+    )
+    expect(folded['2026-06-10'].codex).toEqual({ tokens: 100, runs: 1 })
   })
 
   it('MAX-merges the partial boundary day instead of shrinking it', () => {

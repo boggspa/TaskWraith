@@ -212,6 +212,40 @@ describe('runDailyUsageBackfillIfNeeded', () => {
     expect(rollup!.backfill!.completedAt).toBe(0)
   })
 
+  it('REFUSES to walk when the attempt cannot be recorded', async () => {
+    // Every persistence failure here is swallowed. With no on-disk state to
+    // count with, the per-process guard bounds this to once per LAUNCH, not
+    // once per install — so an unwritable userData would re-walk a multi-GB
+    // corpus on every single start. Refusing is the only thing that holds.
+    const unwritable = join(dir, 'rollup-is-a-directory')
+    await fs.mkdir(unwritable)
+    const onError = vi.fn()
+    const ran = await runDailyUsageBackfillIfNeeded({
+      ...deps,
+      dailyRollupPath: unwritable,
+      onError
+    })
+    expect(ran).toBe(false)
+    expect(runBackfill).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalled()
+  })
+
+  it('clears an orphaned scratch cache before starting', async () => {
+    // A process exiting mid-walk never runs the cleanup `finally`, and the file
+    // cache is checkpointed per provider, so a partial one outlives it.
+    await fs.writeFile(deps.backfillFileCachePath, 'orphan from a killed run')
+    let sawOrphan: boolean | null = null
+    runBackfill.mockImplementation(async () => {
+      sawOrphan = await fs
+        .stat(deps.backfillFileCachePath)
+        .then(() => true)
+        .catch(() => false)
+      return {}
+    })
+    await runDailyUsageBackfillIfNeeded(deps)
+    expect(sawOrphan).toBe(false)
+  })
+
   it('leaves already-folded days intact when the walk fails', async () => {
     await persistDailyUsageRollup(deps.dailyRollupPath, {
       updatedAt: 1,

@@ -9,14 +9,20 @@
  * rollup holds the long tail — days the 90-day scan can no longer reach — but
  * it is only as fresh as the last completed scan, and on a new install it is
  * empty until one finishes. So the live records the renderer already has are
- * folded OVER it through the same shared rule main uses: the live window
- * replaces the days it covers, the rollup keeps everything older. The recent
- * end is therefore always current and the far end always present.
+ * folded OVER it through the same shared rule main uses.
+ *
+ * That fold is PER PROVIDER and treats absence as "not observed" rather than
+ * "zero", which is what makes this safe: the renderer knows how far back it
+ * ASKED to look but not how far the records actually reach, and an earlier
+ * per-day version of the rule deleted 75 days of real history on a real corpus
+ * because of exactly that gap. See `dailyUsageRollup.ts`.
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
 import {
   DAILY_USAGE_HEATMAP_DAYS,
+  dailyUsageDayBounds,
+  dailyUsageDayKey,
   foldUsageRecordsIntoDailyRollup,
   type DailyUsageDays
 } from '../../../shared/dailyUsageRollup'
@@ -33,11 +39,18 @@ import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import { buildExternalActivityPresentationRecords } from '../lib/externalActivityPresentation'
 
 /**
- * Mirrors `DEFAULT_LOOKBACK_DAYS` in `src/main/ExternalProviderActivity.ts`.
- * Restated rather than imported: `guard:architecture` admits no renderer edge
- * into main. It only has to be an UNDER-estimate to stay correct — a shorter
- * window means the fold trusts the rollup for a few more days, never that it
- * overwrites days the live records did not really cover.
+ * How far back the live records are treated as a possible CORRECTION rather
+ * than merely an addition. Mirrors `DEFAULT_LOOKBACK_DAYS` in
+ * `src/main/ExternalProviderActivity.ts`, restated because
+ * `guard:architecture` admits no renderer edge into main.
+ *
+ * Getting this wrong is no longer destructive in either direction. An earlier
+ * version of this file claimed authority over the whole window and deleted
+ * every day inside it that the records did not mention — measured against a
+ * real corpus, records spanned 15 days against this 90, so 75 days of real
+ * history vanished from the chart. The fold is now per-provider and treats
+ * absence as "not observed" rather than "zero", so this constant only decides
+ * whether an overlapping day may move DOWN.
  */
 const EXTERNAL_SCAN_WINDOW_DAYS = 90
 
@@ -90,22 +103,22 @@ export function DailyActivityHeatmap({
   rollupDays: providedRollupDays,
   externalRecords: providedExternalRecords
 }: DailyActivityHeatmapProps) {
-  const [rollupDays, setRollupDays] = useState<DailyUsageDays>(providedRollupDays ?? {})
-  const [externalRecords, setExternalRecords] = useState<UsageRecord[]>(
-    providedExternalRecords ?? []
-  )
+  const [loadedRollupDays, setLoadedRollupDays] = useState<DailyUsageDays>({})
+  const [loadedExternalRecords, setLoadedExternalRecords] = useState<UsageRecord[]>([])
   const [providerFilter, setProviderFilter] = useState<HeatmapProviderFilter>('all')
 
+  // Props win outright rather than being mirrored into state — a setState in an
+  // effect body just to copy a prop is a cascading render for nothing.
+  const rollupDays = providedRollupDays ?? loadedRollupDays
+  const externalRecords = providedExternalRecords ?? loadedExternalRecords
+
   useEffect(() => {
-    if (providedRollupDays) {
-      setRollupDays(providedRollupDays)
-      return
-    }
+    if (providedRollupDays) return
     let cancelled = false
     void (async () => {
       try {
         const payload = await window.api?.getDailyUsageRollup?.()
-        if (!cancelled && payload?.days) setRollupDays(payload.days)
+        if (!cancelled && payload?.days) setLoadedRollupDays(payload.days)
       } catch {
         // The live-record overlay below still renders the recent window.
       }
@@ -116,15 +129,12 @@ export function DailyActivityHeatmap({
   }, [providedRollupDays, refreshKey])
 
   useEffect(() => {
-    if (providedExternalRecords) {
-      setExternalRecords(providedExternalRecords)
-      return
-    }
+    if (providedExternalRecords) return
     let cancelled = false
     void (async () => {
       try {
         const records = await loadRendererUsageRecords('external')
-        if (!cancelled) setExternalRecords(records)
+        if (!cancelled) setLoadedExternalRecords(records)
       } catch {
         // Rollup-only is a valid render.
       }
@@ -135,7 +145,10 @@ export function DailyActivityHeatmap({
   }, [providedExternalRecords, refreshKey])
 
   const grid = useMemo(() => {
-    const now = Date.now()
+    // `new Date()` inside the memo, as the sibling heatmap and token chart do:
+    // the memo only re-runs when its inputs change, and `Date.now` in the
+    // render body is an impure call the lint rule rightly refuses.
+    const now = dailyUsageDayBounds(dailyUsageDayKey(new Date()))?.endMs ?? new Date().getTime()
     const presentation = buildExternalActivityPresentationRecords(
       externalRecords,
       supplementalTaskWraithRecords ?? []

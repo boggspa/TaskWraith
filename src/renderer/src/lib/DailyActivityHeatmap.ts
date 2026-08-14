@@ -124,7 +124,8 @@ function providerBreakdown(
 }
 
 export interface BuildDailyHeatmapGridOptions {
-  now?: number
+  /** Required for the same reason as the fold's: keeps the builder pure. */
+  now: number
   dayCount?: number
   /** Canonical provider label lookup, injected so this module stays pure. */
   labelFor?: (id: string) => string
@@ -142,9 +143,9 @@ export interface BuildDailyHeatmapGridOptions {
  */
 export function buildDailyHeatmapGrid(
   days: DailyUsageDays,
-  options: BuildDailyHeatmapGridOptions = {}
+  options: BuildDailyHeatmapGridOptions
 ): DailyHeatmapGrid {
-  const now = options.now ?? Date.now()
+  const now = options.now
   const dayCount = Math.max(1, Math.round(options.dayCount ?? DAILY_USAGE_HEATMAP_DAYS))
   const labelFor = options.labelFor ?? ((id: string) => id)
   const filter = options.providerFilter ?? 'all'

@@ -11,12 +11,11 @@
  *
  * Two invariants make that safe to run repeatedly:
  *
- * 1. **A fold REPLACES the days its scan actually covered and KEEPS every other
- *    day.** Adding would double-count on the next scan; replacing wholesale
- *    outside the observed window would erase the tail this store exists to hold.
- *    A day only partially covered by the scan (the rolling `sinceMs` cutoff
- *    always slices its oldest day) takes a per-provider max instead, because the
- *    incoming total for that day is known to be short.
+ * 1. **A fold REPLACES only what it actually observed, PER PROVIDER, and keeps
+ *    everything else.** Adding would double-count on the next scan; replacing a
+ *    whole day would erase providers and dates the caller never saw. Absence
+ *    from an incoming set is never evidence of absence in the world — see
+ *    `foldDailyUsageDaysIntoRollup`, where that distinction is argued in full.
  *
  * 2. **Day keys are LOCAL wall-clock**, matching `buildDailyTokenSeries` and
  *    `externalActivityWindowBounds`, so a rollup day and a heatmap column are
@@ -74,7 +73,10 @@ export interface DailyUsageFoldOptions {
    */
   observedFromMs: number
   observedToMs: number
-  now?: number
+  /** Required, not defaulted: an implicit `Date.now()` inside a fold makes it
+   * non-deterministic, and a React memo calling it can no longer be proven
+   * pure. Every caller already knows its own clock. */
+  now: number
   maxDays?: number
 }
 
@@ -165,33 +167,37 @@ export function buildDailyUsageTotals(
   return days
 }
 
-function mergeByMax(
-  existing: DailyUsageDayTotals | undefined,
-  incoming: DailyUsageDayTotals | undefined
-): DailyUsageDayTotals {
-  const merged: DailyUsageDayTotals = {}
-  for (const provider of new Set([
-    ...Object.keys(existing ?? {}),
-    ...Object.keys(incoming ?? {})
-  ])) {
-    const a = existing?.[provider] ?? emptyTotal()
-    const b = incoming?.[provider] ?? emptyTotal()
-    merged[provider] = { tokens: Math.max(a.tokens, b.tokens), runs: Math.max(a.runs, b.runs) }
-  }
-  return merged
-}
-
 /**
  * Fold already-bucketed days into the stored rollup.
  *
- * See the module header: replace fully-observed days, max-merge the partial
- * boundary day, keep everything else. Idempotent for a fixed scan window, which
- * is what lets this run on every completed scan.
+ * AUTHORITY IS PER PROVIDER, NOT PER DAY, and that distinction is the whole
+ * correctness argument. A caller states the window it looked at, but "looked
+ * at" is never the same as "saw": the external scan's records reach only as far
+ * back as the provider logs actually go, the deep backfill runs external-only
+ * inside the utility process and cannot see TaskWraith's own journal at all,
+ * and the capped lanes (Kimi, Gemini) truncate to their newest N files. So a
+ * per-DAY replace lets any of those callers delete history it merely failed to
+ * observe. Measured on a real corpus: live records spanned 15 days against an
+ * assumed 90-day window, erasing 75 days of real data from the display.
  *
- * This is the days-in entry point, used by the deep backfill, which buckets
- * inside the scan utility process so a wide record array never crosses the
- * process boundary. `foldUsageRecordsIntoDailyRollup` is the records-in wrapper
- * over the same rule — there is deliberately only one implementation of it.
+ * The rule, per provider on each day:
+ *   - present in `incoming`, day fully observed -> REPLACE (a correction, and
+ *     the only way a total may legitimately fall)
+ *   - present in `incoming`, day partial or outside -> MAX-merge; the rolling
+ *     cutoff always slices its oldest day, so that value is short by
+ *     construction
+ *   - present only in `base` -> KEPT, untouched. Absence from `incoming` is
+ *     never evidence of absence in the world.
+ *
+ * A consequence worth stating: a provider that truly stops on a day it once had
+ * usage will linger. That is deliberate — it is a far smaller error than
+ * erasing days no scan can ever reproduce.
+ *
+ * Idempotent for a fixed window, which is what lets it run on every scan. This
+ * is the days-in entry point, used by the deep backfill (which buckets inside
+ * the utility process so a wide record array never crosses the boundary);
+ * `foldUsageRecordsIntoDailyRollup` is the records-in wrapper over the same
+ * rule — there is deliberately only one implementation.
  */
 export function foldDailyUsageDaysIntoRollup(
   base: DailyUsageDays,
@@ -204,23 +210,34 @@ export function foldDailyUsageDaysIntoRollup(
   for (const key of new Set([...Object.keys(base), ...Object.keys(incoming)])) {
     const bounds = dailyUsageDayBounds(key)
     if (!bounds) continue
-    const outsideWindow = bounds.endMs < observedFromMs || bounds.startMs > observedToMs
-    if (outsideWindow) {
-      const kept = base[key]
-      if (kept) next[key] = kept
+    const stored = base[key]
+    const arriving = incoming[key]
+    if (!arriving) {
+      if (stored) next[key] = stored
       continue
     }
     const fullyObserved = bounds.startMs >= observedFromMs && bounds.endMs <= observedToMs
-    if (fullyObserved) {
-      const replacement = incoming[key]
-      // A fully-observed day with no records is a genuine zero, not a gap.
-      if (replacement) next[key] = replacement
+    if (!stored) {
+      next[key] = arriving
       continue
     }
-    next[key] = mergeByMax(base[key], incoming[key])
+    // Start from what is stored so providers absent from `incoming` survive.
+    const merged: DailyUsageDayTotals = { ...stored }
+    for (const [provider, value] of Object.entries(arriving)) {
+      const existing = stored[provider]
+      if (!existing || fullyObserved) {
+        merged[provider] = value
+        continue
+      }
+      merged[provider] = {
+        tokens: Math.max(existing.tokens, value.tokens),
+        runs: Math.max(existing.runs, value.runs)
+      }
+    }
+    next[key] = merged
   }
 
-  return pruneDailyUsageRollupDays(next, options.now ?? Date.now(), options.maxDays)
+  return pruneDailyUsageRollupDays(next, options.now, options.maxDays)
 }
 
 /** Records-in wrapper over `foldDailyUsageDaysIntoRollup`. */

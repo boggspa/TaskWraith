@@ -205,11 +205,20 @@ const DAILY_USAGE_BACKFILL_AFTER_SCAN_MS = 30_000
  * Fold every completed full-window scan into the daily rollup, and seed its
  * tail once.
  *
- * The backfill is triggered by the FIRST completed scan rather than a timer.
- * That single signal proves everything a fixed delay could only guess at: the
- * app is well past launch, the ordinary scan is finished so the two wide walks
- * cannot overlap, and the worker path is known to work. `runDailyUsageBackfill-
- * IfNeeded` is idempotent per process, so later completions are free.
+ * The backfill is triggered by the FIRST completed scan rather than a timer,
+ * which proves what a fixed delay could only guess at: the app is well past
+ * launch, an ordinary scan has just finished, and the worker path works.
+ * `runDailyUsageBackfillIfNeeded` is idempotent per process, so later
+ * completions are free.
+ *
+ * It does NOT guarantee the two never overlap, and it would be wrong to write
+ * that down as if it did. A forced refresh or the 6h TTL expiring mid-walk can
+ * start an ordinary scan alongside it: `startExternalScan` only joins its own
+ * in-flight scan, and the backfill deliberately bypasses that front door, so
+ * the two are mutually invisible. Both run BELOW_NORMAL in separate utility
+ * processes and neither touches Electron main, so the cost is CPU and page
+ * cache contention for a few minutes, once per install — acceptable, but real,
+ * and worth recognising rather than being surprised by.
  */
 function installDailyUsageRollupPipeline(deps: UsageRatesHandlerDeps): void {
   const paths = (() => {
