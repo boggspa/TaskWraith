@@ -142,13 +142,17 @@ export function EnsembleOrchestrationRow({
         100
     )
   )
+  // A running round is immutable evidence of what MAIN admitted. It can differ
+  // from the next-round chat setting, so the visible pill follows the round
+  // until it terminates instead of implying a capability the round does not have.
+  const displayedFanoutPolicy = isRoundRunning ? activeFanoutPolicy : fanoutPolicy
   const selectedFanoutValue: FanoutPickerValue =
-    fanoutPolicy === 'all'
+    displayedFanoutPolicy === 'all'
       ? 'all'
-      : fanoutPolicy === 'locked_writers_with_boss' ||
-          fanoutPolicy === 'locked_writers_user_preflight'
+      : displayedFanoutPolicy === 'locked_writers_with_boss' ||
+          displayedFanoutPolicy === 'locked_writers_user_preflight'
         ? 'write'
-        : fanoutPolicy
+        : displayedFanoutPolicy
   const fanoutTitle = (() => {
     if (!concurrentLanesAvailable) {
       return 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'

@@ -34,6 +34,21 @@ describe('orchestration row control text', () => {
     expect(active).toMatch(/color:\s*var\(--accent-color\)/)
   })
 
+  it('shows the admitted round fan-out policy while a round is running', () => {
+    const source = readFileSync(new URL('./EnsembleOrchestrationRow.tsx', import.meta.url), 'utf8')
+    expect(source).toContain(
+      'const displayedFanoutPolicy = isRoundRunning ? activeFanoutPolicy : fanoutPolicy'
+    )
+    const selectionStart = source.indexOf('const displayedFanoutPolicy =')
+    const selectionEnd = source.indexOf('const fanoutTitle =', selectionStart)
+    expect(selectionStart).toBeGreaterThan(-1)
+    expect(selectionEnd).toBeGreaterThan(selectionStart)
+    const selection = source.slice(selectionStart, selectionEnd)
+    expect(selection).toContain("displayedFanoutPolicy === 'all'")
+    expect(selection).toContain("displayedFanoutPolicy === 'locked_writers_with_boss'")
+    expect(selection).not.toContain("fanoutPolicy === 'all'")
+  })
+
   it('opens the Isolate popover through the shared picker chrome with all three policies', () => {
     // The Isolate control is a trigger + portaled popover like its Fan-Out
     // neighbour — NOT a cycle toggle. The popover must reuse the exact
