@@ -3,10 +3,12 @@ import * as fsPromises from 'node:fs/promises'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION as STUDIO_EFFECT_PREVIEW_SOURCE_SCHEMA_VERSION } from './StudioEffectPreviewSource'
+import {
+  STUDIO_EFFECT_PREVIEW_MAX_BYTES,
+  STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION as STUDIO_EFFECT_PREVIEW_SOURCE_SCHEMA_VERSION
+} from './StudioEffectPreviewSource'
 import {
   STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
-  STUDIO_MAX_NDJSON_LINE_BYTES,
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   type StudioInsertRangeOp,
@@ -762,15 +764,21 @@ describe('StudioRevisionStore', () => {
     ).toEqual(['cubeByteLength', 'cubeText', 'effectId', 'schemaVersion'])
   })
 
-  it('refuses a preview whose declared identity or length does not match its bytes', async () => {
+  it('recomputes the hash on commit, so a well-formed wrong identity cannot persist', async () => {
+    // This test previously carried an identity claim it did not check: it only
+    // exercised uppercase hex, a length mismatch and an oversized payload, so a
+    // LOWERCASE 64-hex id belonging to DIFFERENT bytes committed happily. That
+    // is the case adversarial review found, and it is the first one here.
     const store = await StudioRevisionStore.open(await makeStoreDirectory())
     const cubeText = 'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0 0 0').join('\n')
     const honest = createHash('sha256').update(cubeText, 'utf8').digest('hex')
+    const wrongButWellFormed = createHash('sha256').update('different bytes', 'utf8').digest('hex')
+    expect(wrongButWellFormed).toMatch(/^[0-9a-f]{64}$/)
 
     await expect(
       store.setEffectPreview(store.revision, {
         schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
-        effectId: honest.toUpperCase(),
+        effectId: wrongButWellFormed,
         cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
         cubeText
       })
@@ -785,20 +793,96 @@ describe('StudioRevisionStore', () => {
       })
     ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
 
-    // An undeliverable payload must never be committed: persisting it would
-    // wedge every later hydration behind an oversized NDJSON line.
-    const huge = 'LUT_3D_SIZE 2\n' + 'x'.repeat(STUDIO_MAX_NDJSON_LINE_BYTES)
+    // An honest hash of a structurally broken cube must still be refused: the
+    // durable layer re-parses rather than trusting that a loader once did.
+    const brokenCube = 'LUT_3D_SIZE 2\n0 0 0\n'
     await expect(
       store.setEffectPreview(store.revision, {
         schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
-        effectId: createHash('sha256').update(huge, 'utf8').digest('hex'),
-        cubeByteLength: Buffer.byteLength(huge, 'utf8'),
-        cubeText: huge
+        effectId: createHash('sha256').update(brokenCube, 'utf8').digest('hex'),
+        cubeByteLength: Buffer.byteLength(brokenCube, 'utf8'),
+        cubeText: brokenCube
       })
+    ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+
+    // The ratified content cap is 1 MiB, not a fraction of the NDJSON bound.
+    const oversize = 'LUT_3D_SIZE 2\n' + 'x'.repeat(STUDIO_EFFECT_PREVIEW_MAX_BYTES)
+    await expect(
+      store.setEffectPreview(store.revision, {
+        schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+        effectId: createHash('sha256').update(oversize, 'utf8').digest('hex'),
+        cubeByteLength: Buffer.byteLength(oversize, 'utf8'),
+        cubeText: oversize
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+
+    // An extra key — a path above all — must not ride along into the document.
+    await expect(
+      store.setEffectPreview(store.revision, {
+        schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+        effectId: honest,
+        cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+        cubeText,
+        path: '/etc/passwd'
+      } as never)
     ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
 
     expect(store.getDocument().effectPreview).toBeNull()
     await store.close()
+  })
+
+  it('refuses tokens JavaScript would coerce but Swift rejects', async () => {
+    // parseInt('2junk') is 2 and Number('0x1') is 1, while Swift's Int()/Float()
+    // return nil for both. Accepting them would persist a "validated" preview
+    // the Companion then refuses — a durable document the product cannot load.
+    const store = await StudioRevisionStore.open(await makeStoreDirectory())
+    for (const cubeText of [
+      'LUT_3D_SIZE 2junk\n' + Array.from({ length: 8 }, () => '0 0 0').join('\n'),
+      'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0x1 0 0').join('\n')
+    ]) {
+      await expect(
+        store.setEffectPreview(store.revision, {
+          schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+          effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
+          cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+          cubeText
+        })
+      ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+    }
+    expect(store.getDocument().effectPreview).toBeNull()
+    await store.close()
+  })
+
+  it('fails a snapshot closed rather than loading a tampered preview onto the document', async () => {
+    const directory = await makeStoreDirectory()
+    const cubeText = 'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0 0 0').join('\n')
+    await fsPromises.writeFile(
+      nodePath.join(directory, STUDIO_SNAPSHOT_FILENAME),
+      JSON.stringify({
+        format: STUDIO_SNAPSHOT_FORMAT,
+        v: 1,
+        revision: 4,
+        document: {
+          formatVersion: STUDIO_DOCUMENT_FORMAT_VERSION,
+          assets: [],
+          proposals: [],
+          transcripts: [],
+          tracks: [],
+          effectPreview: {
+            schemaVersion: 1,
+            effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
+            cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+            cubeText,
+            path: '/etc/passwd'
+          }
+        }
+      })
+    )
+
+    // A raw cast used to forward whatever the file held straight onto
+    // getDocument and the wire. Opening now fails CLOSED and names the exact
+    // offending field, so the tampered payload never becomes document state.
+    await expect(StudioRevisionStore.open(directory)).rejects.toThrow(/unexpected_field/)
   })
 
   it('pins the wire schema constant to the loader that produces it', () => {

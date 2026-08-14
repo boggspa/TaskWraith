@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import * as fsPromises from 'node:fs/promises'
 import * as nodeEvents from 'node:events'
 import * as nodeStream from 'node:stream'
@@ -311,6 +312,54 @@ describe('StudioCompanionSupervisor', () => {
     expect(harness.store.getDocument()).toMatchObject({
       proposals: [],
       tracks: [{ items: [{ itemId: 'sup-item-1' }] }]
+    })
+    await harness.supervisor.stop()
+  })
+
+  it('delivers an effect preview set and its null clear as exact editCommitted lines', async () => {
+    // Adversarial review found this hop entirely untested: deleting supervisor
+    // delivery left the whole Studio TS suite green. This asserts the actual
+    // operation the companion receives, for both set AND the null clear.
+    const harness = await createHarness()
+    harness.supervisor.start()
+    await until(() => harness.children.length >= 1)
+    const child = harness.children[0]
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    await until(() => child.messages.length >= 1)
+    child.send({ jsonrpc: '2.0', id: 2, method: STUDIO_METHODS.getDocument })
+    await until(() => child.messages.length >= 2)
+
+    const cubeText = 'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0 0 0').join('\n')
+    const effectId = createHash('sha256').update(cubeText, 'utf8').digest('hex')
+
+    await expect(
+      harness.supervisor.setEffectPreview({
+        schemaVersion: 1,
+        effectId,
+        cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+        cubeText
+      })
+    ).resolves.toMatchObject({ ok: true, revision: 1 })
+    await until(() => child.messages.length >= 3)
+    expect(child.messages[2]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: { revision: 1, op: { type: 'set_effect_preview', effectPreview: { effectId } } }
+    })
+
+    await expect(harness.supervisor.setEffectPreview(null)).resolves.toMatchObject({
+      ok: true,
+      revision: 2,
+      effectPreview: null
+    })
+    await until(() => child.messages.length >= 4)
+    expect(child.messages[3]).toMatchObject({
+      method: STUDIO_METHODS.editCommitted,
+      params: { revision: 2, op: { type: 'set_effect_preview', effectPreview: null } }
     })
     await harness.supervisor.stop()
   })

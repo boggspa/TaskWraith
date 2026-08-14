@@ -49,6 +49,9 @@ export type StudioEffectPreviewRejection =
   | 'malformed_entry'
   | 'non_finite_value'
   | 'entry_count_mismatch'
+  | 'invalid_payload'
+  | 'unexpected_field'
+  | 'identity_mismatch'
 
 export class StudioEffectPreviewError extends Error {
   readonly code: StudioEffectPreviewRejection
@@ -71,6 +74,29 @@ export interface StudioEffectPreview {
 function reject(code: StudioEffectPreviewRejection, message: string): never {
   throw new StudioEffectPreviewError(code, message)
 }
+
+/**
+ * Swift's `Int()` / `Float()` are STRICTER than JavaScript's `parseInt()` /
+ * `Number()`. `Int("2junk")` and `Int("0x10")` are nil in Swift, while
+ * `parseInt("2junk")` is 2 and `Number("0x1")` is 1. Accepting those here would
+ * persist a "validated" preview the Companion then refuses — a durable document
+ * the product cannot load.
+ *
+ * These patterns are a deliberate SUBSET of what both parsers accept, which
+ * makes the host marginally stricter than Swift (it refuses exotic hex-float
+ * literals like `0x1p3`). That asymmetry is the safe direction: refusing an
+ * exotic file at the boundary costs one clear rejection code, whereas accepting
+ * one wedges a document the Companion will not load.
+ */
+const SWIFT_INT_TOKEN = /^[+-]?[0-9]+$/
+const SWIFT_DECIMAL_TOKEN = /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/
+/**
+ * Swift's `Float()` DOES accept these, so they must parse here too and then be
+ * refused by the finiteness check — exactly as the Companion refuses them with
+ * `valueOutOfRange`. Filtering them out as unparseable instead would make the
+ * non-finite branch unreachable and report the wrong reason.
+ */
+const SWIFT_NONFINITE_TOKEN = /^[+-]?(inf(inity)?|nan)$/i
 
 /**
  * Require the candidate to live inside one of the configured roots. Roots are
@@ -203,6 +229,7 @@ function assertParsableCube(text: string): void {
       // is tolerated there and must be tolerated here too.
       const declared = line
         .split(' ')
+        .filter((token) => SWIFT_INT_TOKEN.test(token))
         .map((token) => Number.parseInt(token, 10))
         .find((value) => Number.isInteger(value))
       if (declared === undefined) {
@@ -225,8 +252,10 @@ function assertParsableCube(text: string): void {
     const numbers = line
       .split(/[ \t]+/)
       .filter(Boolean)
-      .map((token) => Number(token))
-      .filter((value) => !Number.isNaN(value))
+      .filter((token) => SWIFT_DECIMAL_TOKEN.test(token) || SWIFT_NONFINITE_TOKEN.test(token))
+      .map((token) =>
+        SWIFT_NONFINITE_TOKEN.test(token) ? Number.POSITIVE_INFINITY : Number(token)
+      )
     if (numbers.length !== 3) {
       reject('malformed_entry', `malformed entry at line ${index + 1}`)
     }
@@ -240,6 +269,76 @@ function assertParsableCube(text: string): void {
   const expected = size * size * size
   if (entryCount !== expected) {
     reject('entry_count_mismatch', `expected ${expected} entries, found ${entryCount}`)
+  }
+}
+
+/** The exact wire/document keys. Anything else is refused, never ignored. */
+const STUDIO_EFFECT_PREVIEW_KEYS = ['cubeByteLength', 'cubeText', 'effectId', 'schemaVersion']
+
+/**
+ * The single validation authority for an inline preview, wherever it arrives
+ * from: a freshly read file, a journal replay, or a snapshot on disk.
+ *
+ * Adversarial review found the durable path was NOT enforcing what the loader
+ * proved. A lowercase 64-hex id belonging to DIFFERENT bytes was accepted and
+ * journaled, the cube was never re-parsed, and the cap was 2 MiB instead of the
+ * ratified 1 MiB. Everything that can place a preview into the document now
+ * comes through here, so those three can no longer diverge.
+ *
+ * It returns a FRESH four-key object, which is what stops a hand-edited
+ * snapshot carrying an extra `path` key from reaching the document or the wire:
+ * the extra key is refused outright, and even a passing payload is rebuilt.
+ */
+export function assertValidStudioEffectPreview(candidate: unknown): StudioEffectPreview {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    reject('invalid_payload', 'effect preview must be an object')
+  }
+  const record = candidate as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  if (keys.length !== STUDIO_EFFECT_PREVIEW_KEYS.length) {
+    reject(
+      'unexpected_field',
+      `effect preview must carry exactly ${STUDIO_EFFECT_PREVIEW_KEYS.join(', ')}`
+    )
+  }
+  for (let index = 0; index < keys.length; index += 1) {
+    if (keys[index] !== STUDIO_EFFECT_PREVIEW_KEYS[index]) {
+      reject('unexpected_field', `effect preview carries an unexpected field: ${keys[index]}`)
+    }
+  }
+  if (record.schemaVersion !== STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION) {
+    reject(
+      'invalid_payload',
+      `effect preview requires schemaVersion ${STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION}`
+    )
+  }
+  const cubeText = record.cubeText
+  if (typeof cubeText !== 'string' || cubeText.length === 0) {
+    reject('invalid_payload', 'cubeText must be a non-empty string')
+  }
+  const actualByteLength = Buffer.byteLength(cubeText, 'utf8')
+  if (actualByteLength > STUDIO_EFFECT_PREVIEW_MAX_BYTES) {
+    reject('too_large', `effect preview exceeds ${STUDIO_EFFECT_PREVIEW_MAX_BYTES} bytes`)
+  }
+  if (record.cubeByteLength !== actualByteLength) {
+    reject(
+      'invalid_payload',
+      `cubeByteLength ${String(record.cubeByteLength)} does not match the ${actualByteLength} byte payload`
+    )
+  }
+  const expectedId = createHash('sha256').update(cubeText, 'utf8').digest('hex')
+  if (record.effectId !== expectedId) {
+    // The load-bearing one: a lowercase 64-hex id of DIFFERENT bytes used to
+    // pass. Identity is recomputed, never merely pattern-matched.
+    reject('identity_mismatch', 'effectId is not the SHA-256 of cubeText')
+  }
+  assertParsableCube(cubeText)
+
+  return {
+    schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+    effectId: expectedId,
+    cubeByteLength: actualByteLength,
+    cubeText
   }
 }
 
@@ -274,12 +373,13 @@ export function loadStudioEffectPreview(options: {
 
   const bytes = readDescriptorBound(canonical)
   const cubeText = decodeBoundedText(bytes)
-  assertParsableCube(cubeText)
 
-  return {
+  // Deliberately routed through the same authority the durable path uses, so
+  // the file boundary and the replay boundary cannot drift apart again.
+  return assertValidStudioEffectPreview({
     schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
     effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
     cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
     cubeText
-  }
+  })
 }

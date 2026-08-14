@@ -27,7 +27,6 @@ import {
   type StudioRationalTime
 } from './StudioRationalTime'
 import {
-  STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
   STUDIO_MAX_NDJSON_LINE_BYTES,
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_TRANSCRIPT_SCHEMA_VERSION,
@@ -46,6 +45,10 @@ import {
   type StudioTranscript,
   type StudioTranscriptSegment
 } from './StudioProtocol'
+import {
+  StudioEffectPreviewError,
+  assertValidStudioEffectPreview
+} from './StudioEffectPreviewSource'
 
 export const STUDIO_DOCUMENT_FORMAT_VERSION = 3
 export const STUDIO_DEFAULT_TRACK_ID = 'V1'
@@ -519,42 +522,34 @@ function applySetEffectPreview(
 ): StudioDocument {
   const requested = operation.effectPreview
   if (requested === null) return { ...document, effectPreview: null }
-  if (typeof requested !== 'object') {
-    throw new StudioEditError('invalid_params', 'effectPreview must be an object or null')
+
+  // ONE authority, shared with the file loader. The previous inline copy only
+  // pattern-matched the id as lowercase hex and never recomputed the hash or
+  // re-parsed the cube, so a 64-hex id belonging to different bytes replayed
+  // happily out of a hand-edited journal.
+  let preview: StudioEffectPreview
+  try {
+    preview = assertValidStudioEffectPreview(requested)
+  } catch (error) {
+    const detail =
+      error instanceof StudioEffectPreviewError ? `${error.code}: ${error.message}` : String(error)
+    throw new StudioEditError('invalid_params', `effectPreview is invalid — ${detail}`)
   }
-  if (requested.schemaVersion !== STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION) {
+
+  // The preview rides one NDJSON line to the companion, so measure the ACTUAL
+  // encoded bytes of the framed operation rather than assuming the content cap
+  // leaves room. JSON escaping of quote/backslash-heavy metadata can more than
+  // double the payload, and committing an unframable line would wedge every
+  // later hydration.
+  const framedBytes = Buffer.byteLength(
+    JSON.stringify({ type: 'set_effect_preview', effectPreview: preview }),
+    'utf8'
+  )
+  if (framedBytes > STUDIO_MAX_NDJSON_LINE_BYTES) {
     throw new StudioEditError(
       'invalid_params',
-      `effectPreview requires schemaVersion ${STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION}`
+      `effect preview frames to ${framedBytes} bytes, beyond the ${STUDIO_MAX_NDJSON_LINE_BYTES} byte NDJSON line bound`
     )
-  }
-  if (typeof requested.effectId !== 'string' || !/^[0-9a-f]{64}$/.test(requested.effectId)) {
-    throw new StudioEditError('invalid_params', 'effectId must be lowercase SHA-256 hex')
-  }
-  if (typeof requested.cubeText !== 'string' || requested.cubeText.length === 0) {
-    throw new StudioEditError('invalid_params', 'cubeText must be a non-empty string')
-  }
-  const actualByteLength = Buffer.byteLength(requested.cubeText, 'utf8')
-  if (requested.cubeByteLength !== actualByteLength) {
-    throw new StudioEditError(
-      'invalid_params',
-      `cubeByteLength ${requested.cubeByteLength} does not match the ${actualByteLength} byte payload`
-    )
-  }
-  // The preview rides one NDJSON line to the companion, so a payload that
-  // cannot be delivered must never be committed: persisting it would wedge
-  // every later hydration behind an oversized line.
-  if (actualByteLength > STUDIO_MAX_NDJSON_LINE_BYTES / 2) {
-    throw new StudioEditError(
-      'invalid_params',
-      `effect preview of ${actualByteLength} bytes cannot be framed within the NDJSON line bound`
-    )
-  }
-  const preview: StudioEffectPreview = {
-    schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
-    effectId: requested.effectId,
-    cubeByteLength: actualByteLength,
-    cubeText: requested.cubeText
   }
   return { ...document, effectPreview: preview }
 }
@@ -678,6 +673,30 @@ function isMissingFileError(error: unknown): boolean {
   )
 }
 
+/**
+ * A snapshot's preview is untrusted bytes on disk.
+ *
+ * Absent stays null — snapshots written before the field existed must migrate,
+ * and that is the only representation of "no preview". A PRESENT field is
+ * revalidated through the same authority the loader uses, because the previous
+ * raw cast would have let a hand-edited snapshot put an extra `path` key, a
+ * wrong hash, or an unparseable cube straight onto getDocument and the wire.
+ * Malformed fails closed into normal store recovery rather than loading.
+ */
+function normalizeSnapshotEffectPreview(value: unknown, path: string): StudioEffectPreview | null {
+  if (value === undefined || value === null) return null
+  try {
+    return assertValidStudioEffectPreview(value)
+  } catch (error) {
+    const detail =
+      error instanceof StudioEffectPreviewError ? `${error.code}: ${error.message}` : String(error)
+    throw new StudioStoreCorruptError(
+      'snapshot_unreadable',
+      `${path}: effectPreview is invalid — ${detail}`
+    )
+  }
+}
+
 function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
   let parsed: unknown
   try {
@@ -751,10 +770,7 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
         documentFormatVersion === STUDIO_DOCUMENT_FORMAT_VERSION
           ? (document.transcripts as StudioTranscript[])
           : [],
-      // Snapshots written before the effect preview existed simply have no such
-      // field. They must hydrate to null, not undefined, so every reader sees
-      // one representation of "no preview".
-      effectPreview: (document.effectPreview ?? null) as StudioEffectPreview | null,
+      effectPreview: normalizeSnapshotEffectPreview(document.effectPreview, path),
       tracks: document.tracks as StudioTrack[]
     }
   }
