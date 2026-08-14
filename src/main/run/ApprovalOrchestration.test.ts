@@ -1609,6 +1609,10 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
   const screenshotCommands: Array<{ command: string; reason: string }> = [
     { command: 'git diff --check', reason: 'readonly_shell' },
     {
+      command: 'git rev-parse HEAD && git status --porcelain',
+      reason: 'inspection_shell'
+    },
+    {
       command: 'git log -n 5 --oneline && git rev-list --count origin/master..master',
       reason: 'inspection_shell'
     },

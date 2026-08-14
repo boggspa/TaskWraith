@@ -1,7 +1,7 @@
 /**
  * Fail-closed classifier for the read-only git shell commands every permission
  * posture may run without a prompt: pure `git status`, `git diff`, `git log`,
- * and narrowly screened `git rev-list` invocations.
+ * and narrowly screened `git rev-list` / `git rev-parse` invocations.
  *
  * WHY: the MCP `git_status` / `git_diff` / `git_log` tools are auto-allowed in
  * every posture (MCP_AUTO_ALLOWED_TOOLS — fixed-argv, non-mutating). Agents
@@ -23,7 +23,8 @@
  *    `-C <dir>` (repo of the agent's choosing), `--exec-path`, `--git-dir`,
  *    `--work-tree`, `-p`/`--paginate` (pager exec — POSITION-SENSITIVE:
  *    `git -p log` is the pager, `git log -p` is the patch read), `--output`;
- *  - the subcommand must be one of `status` / `diff` / `log` / `rev-list`,
+ *  - the subcommand must be one of `status` / `diff` / `log` / `rev-list` /
+ *    `rev-parse`,
  *    followed only by that subcommand's allow-listed read flags and metacharacter-free
  *    pathspecs/refs. NOT allow-listed (and therefore rejected) on diff/log:
  *    `--no-index` (diffs ARBITRARY files outside the repo — a read of any path
@@ -212,6 +213,13 @@ const GIT_READ_SUBCOMMANDS: Record<string, GitReadSubcommandSpec> = {
   'rev-list': {
     exact: new Set(['--count']),
     prefixes: []
+  },
+  // `rev-parse` also exposes repository paths and option-driven behaviours.
+  // The approval-ledger use is narrower: resolve the current commit identity.
+  // A dedicated argument check below admits only the literal `HEAD` form.
+  'rev-parse': {
+    exact: new Set(),
+    prefixes: []
   }
 }
 
@@ -242,6 +250,10 @@ export function isReadOnlyGitShellCommand(command: unknown): boolean {
     : undefined
   if (!spec) return false
   index += 1
+
+  if (subcommand === 'rev-parse') {
+    return tokens.length === index + 1 && tokens[index] === 'HEAD'
+  }
 
   for (; index < tokens.length; index += 1) {
     const token = tokens[index]

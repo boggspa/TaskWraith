@@ -126,6 +126,26 @@ describe('isReadOnlyGitShellCommand — git rev-list', () => {
   })
 })
 
+describe('isReadOnlyGitShellCommand — git rev-parse', () => {
+  it('accepts only the fixed current-commit identity read', () => {
+    expect(isReadOnlyGitShellCommand('git rev-parse HEAD')).toBe(true)
+    expect(isReadOnlyGitShellCommand('git --no-pager rev-parse HEAD')).toBe(true)
+  })
+
+  it('rejects the wider rev-parse option and revision surface', () => {
+    for (const command of [
+      'git rev-parse',
+      'git rev-parse main',
+      'git rev-parse HEAD main',
+      'git rev-parse --verify HEAD',
+      'git rev-parse --show-toplevel',
+      'git rev-parse --git-path hooks'
+    ]) {
+      expect(isReadOnlyGitShellCommand(command), command).toBe(false)
+    }
+  })
+})
+
 describe('isReadOnlyGitShellCommand — git log', () => {
   it('accepts the read-only log forms agents actually run', () => {
     for (const command of [

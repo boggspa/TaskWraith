@@ -14,6 +14,9 @@ describe('promptFreeReadOnlyShellReason', () => {
         'git log -n 5 --oneline && git rev-list --count origin/master..master'
       )
     ).toBe('inspection_shell')
+    expect(promptFreeReadOnlyShellReason('git rev-parse HEAD && git status --porcelain')).toBe(
+      'inspection_shell'
+    )
     expect(promptFreeReadOnlyShellReason('ls -la && git status --short')).toBe('inspection_shell')
   })
 
