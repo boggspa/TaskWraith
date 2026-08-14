@@ -1,25 +1,17 @@
 /**
- * Credential-free quota snapshots supplied by a local helper.
- *
- * The hook contract is intentionally smaller than either application's quota
- * model. It carries only display-ready quota and balance fields; credentials,
- * raw provider responses, paths, and account identifiers have no place in the
- * schema and are discarded by the main-process parser before IPC.
+ * TaskWraith-owned supplemental quota snapshots for providers that are not
+ * first-class TaskWraith seat ids. The contract carries only display-ready
+ * fields; credentials, raw responses, paths, and account identifiers never
+ * cross the main-process boundary.
  */
 
-export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = [
-  'antigravity',
-  'deepseek',
-  'cerebras',
-  'meta'
-] as const
+export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = ['deepseek', 'cerebras', 'meta'] as const
 
 export type QuotaSnapshotHookProviderId = (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]
 
-/** How old a helper reading may get before it must be flagged stale. Shared
- * because two sides apply the same horizon: the main-process parser stamps
- * `stale` when it decodes the helper cache, and the renderer's keep-last-known
- * merge re-derives it while serving cached snapshots through a read outage. */
+/** How old a provider reading may get before it must be flagged stale. The
+ * main process stamps network readings, and the renderer re-derives the flag
+ * while serving a last-known snapshot through a transient outage. */
 export const QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS = 30 * 60 * 1000
 
 export interface QuotaSnapshotHookWindow {
@@ -46,10 +38,11 @@ export interface QuotaSnapshotHookBalance {
 
 export interface QuotaSnapshotHookSnapshot {
   provider: QuotaSnapshotHookProviderId
-  source: 'limit-counter-sanitized-cache'
-  configured: true
+  source: 'taskwraith-native'
+  configured: boolean
   fetchedAt: string
   stale: boolean
+  error?: string
   planType?: string
   windows: QuotaSnapshotHookWindow[]
   balances: QuotaSnapshotHookBalance[]

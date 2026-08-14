@@ -3,9 +3,9 @@ import type { QuotaSnapshotHookProviderId } from '../../../shared/quotaSnapshotH
 
 /**
  * Provider identities that can appear on the display-only Model Usage surface.
- * DeepSeek, Cerebras, and Meta (Muse API Credits) are Limit Counter billing
- * meters mirrored into TaskWraith; they deliberately do not widen the governed
- * ProviderId union (Meta is not a TaskWraith seat id — Muse is).
+ * DeepSeek, Cerebras, and Meta (Muse API Credits) are supplemental native
+ * meters; they deliberately do not widen the governed ProviderId union (Meta
+ * is not a TaskWraith seat id — Muse is).
  */
 export type ModelUsageProviderId = ProviderId | QuotaSnapshotHookProviderId
 

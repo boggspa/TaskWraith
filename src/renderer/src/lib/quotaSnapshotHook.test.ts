@@ -13,7 +13,7 @@ describe('buildQuotaSnapshotHookAggregates', () => {
     const snapshots: QuotaSnapshotHookSnapshot[] = [
       {
         provider: 'deepseek',
-        source: 'limit-counter-sanitized-cache',
+        source: 'taskwraith-native',
         configured: true,
         fetchedAt: '2026-08-02T01:54:22.000Z',
         stale: false,
@@ -47,7 +47,7 @@ describe('buildQuotaSnapshotHookAggregates', () => {
         provider: 'deepseek',
         model: 'usage limits',
         planName: 'API Credits',
-        quotaSource: 'limit-counter-sanitized-cache',
+        quotaSource: 'taskwraith-native',
         quotaConfigured: true,
         quotaStale: false,
         windows: [
@@ -70,15 +70,14 @@ describe('buildQuotaSnapshotHookAggregates', () => {
     ])
   })
 
-  it('admits Limit Counter Meta API Credits into the TaskWraith sidebar lane', () => {
-    // Regression: meta was present in Limit Counter's App Group cache but
-    // filtered out of QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS, so Muse/Meta meters
-    // never reached MODEL USAGE despite a successful grant.
+  it('admits native Meta API estimates into the TaskWraith sidebar lane', () => {
+    // Meta is not a TaskWraith ProviderId (Muse is), so the supplemental
+    // allowlist must retain it for the sidebar projection.
     expect(QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS).toContain('meta')
     const aggregates = buildQuotaSnapshotHookAggregates([
       {
         provider: 'meta',
-        source: 'limit-counter-sanitized-cache',
+        source: 'taskwraith-native',
         configured: true,
         fetchedAt: '2026-08-10T20:00:00.000Z',
         stale: false,
@@ -119,7 +118,7 @@ describe('mergeQuotaSnapshotHookSnapshots', () => {
   ): QuotaSnapshotHookSnapshot {
     return {
       provider,
-      source: 'limit-counter-sanitized-cache',
+      source: 'taskwraith-native',
       configured: true,
       fetchedAt: '2026-08-05T11:55:00.000Z',
       stale: false,
@@ -140,24 +139,16 @@ describe('mergeQuotaSnapshotHookSnapshots', () => {
   }
 
   it('keeps every last-known meter when a read misses the UI deadline (null)', () => {
-    const previous = [
-      hookSnapshot('antigravity'),
-      hookSnapshot('deepseek'),
-      hookSnapshot('cerebras')
-    ]
+    const previous = [hookSnapshot('deepseek'), hookSnapshot('cerebras'), hookSnapshot('meta')]
 
     const merged = mergeQuotaSnapshotHookSnapshots(previous, null, MERGE_NOW)
 
-    expect(merged.map((snapshot) => snapshot.provider)).toEqual([
-      'antigravity',
-      'deepseek',
-      'cerebras'
-    ])
+    expect(merged.map((snapshot) => snapshot.provider)).toEqual(['deepseek', 'cerebras', 'meta'])
     // A five-minute-old reading served from cache is not stale.
     expect(merged.map((snapshot) => snapshot.stale)).toEqual([false, false, false])
   })
 
-  it('keeps every last-known meter when a helper hiccup produces an empty read', () => {
+  it('keeps every last-known meter when a native read produces an empty result', () => {
     const previous = [hookSnapshot('deepseek'), hookSnapshot('cerebras')]
 
     const merged = mergeQuotaSnapshotHookSnapshots(previous, [], MERGE_NOW)
@@ -166,23 +157,17 @@ describe('mergeQuotaSnapshotHookSnapshots', () => {
   })
 
   it('fills providers missing from a partial read from the cache, in canonical order', () => {
-    // Limit Counter rewrites entries per provider while it refetches, so one
-    // provider can be temporarily absent while the others read fine.
     const previous = [
-      hookSnapshot('antigravity', { fetchedAt: '2026-08-05T11:40:00.000Z' }),
+      hookSnapshot('meta', { fetchedAt: '2026-08-05T11:40:00.000Z' }),
       hookSnapshot('deepseek')
     ]
-    const fresh = [hookSnapshot('cerebras'), hookSnapshot('antigravity')]
+    const fresh = [hookSnapshot('cerebras'), hookSnapshot('meta')]
 
     const merged = mergeQuotaSnapshotHookSnapshots(previous, fresh, MERGE_NOW)
 
-    expect(merged.map((snapshot) => snapshot.provider)).toEqual([
-      'antigravity',
-      'deepseek',
-      'cerebras'
-    ])
-    // The fresh antigravity read replaced the cached one.
-    expect(merged[0]!.fetchedAt).toBe('2026-08-05T11:55:00.000Z')
+    expect(merged.map((snapshot) => snapshot.provider)).toEqual(['deepseek', 'cerebras', 'meta'])
+    // The fresh Meta read replaced the cached one.
+    expect(merged[2]!.fetchedAt).toBe('2026-08-05T11:55:00.000Z')
   })
 
   it('lets a fresh reading replace the cache even when its numbers went down', () => {
@@ -210,6 +195,23 @@ describe('mergeQuotaSnapshotHookSnapshots', () => {
     expect(merged).toHaveLength(1)
     expect(merged[0]!.windows[0]!.valueText).toBe('$2.50')
     expect(merged[0]!.windows[0]!.usedPercent).toBe(25)
+  })
+
+  it('lets a configured-false tombstone clear a removed provider', () => {
+    const previous = [hookSnapshot('deepseek')]
+    const fresh = [
+      hookSnapshot('deepseek', {
+        configured: false,
+        windows: [],
+        balances: []
+      })
+    ]
+
+    const merged = mergeQuotaSnapshotHookSnapshots(previous, fresh, MERGE_NOW)
+
+    expect(merged).toEqual([
+      expect.objectContaining({ provider: 'deepseek', configured: false, windows: [] })
+    ])
   })
 
   it('re-derives staleness for readings served from the cache', () => {

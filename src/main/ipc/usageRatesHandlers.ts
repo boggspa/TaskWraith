@@ -36,6 +36,8 @@ type UsageSnapshotWindowLike = {
 
 type UsageSnapshotLike = {
   windows?: UsageSnapshotWindowLike[]
+  planType?: string | null
+  planName?: string | null
 }
 
 type UsageSnapshotFetcher = () => Promise<UsageSnapshotLike | null>
@@ -92,6 +94,7 @@ export interface UsageRatesHandlerDeps {
   fetchClaudeUsageSnapshot: UsageSnapshotFetcher
   fetchKimiUsageSnapshot: UsageSnapshotFetcher
   fetchCursorUsageSnapshot: UsageSnapshotFetcher
+  fetchAntigravityUsageSnapshot: NormalizedUsageSnapshotFetcher
   fetchQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
   getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
   getPluginActivationSnapshot?: () => TaskWraithPluginActivationSnapshot
@@ -258,7 +261,8 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
         ['codex', deps.fetchCodexUsageSnapshot],
         ['claude', deps.fetchClaudeUsageSnapshot],
         ['kimi', deps.fetchKimiUsageSnapshot],
-        ['cursor', deps.fetchCursorUsageSnapshot]
+        ['cursor', deps.fetchCursorUsageSnapshot],
+        ['antigravity', deps.fetchAntigravityUsageSnapshot]
       ]
 
       const [entries, hookSnapshots] = await Promise.all([
@@ -276,7 +280,10 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
                   limitLabel: window?.limitLabel,
                   ...(window?.resetAt ? { resetAt: window.resetAt } : {})
                 }))
-              return windows.length > 0 ? { provider, windows } : null
+              const planName = String(snapshot?.planType || snapshot?.planName || '').trim()
+              return windows.length > 0
+                ? { provider, ...(planName ? { planName } : {}), windows }
+                : null
             } catch {
               return null
             }
@@ -305,10 +312,10 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
           })
         }
       }
-      // Native quota windows plus the credential-free helper projection form
-      // the provider list above. Spend and the AntiGravity soft budget are
-      // additive companion detail: older iOS builds ignore those fields and
-      // retain the quota-only view.
+      // Native quota windows plus TaskWraith's credential-free supplemental
+      // projection form the provider list above. Spend and the AntiGravity soft
+      // budget are additive companion detail: older iOS builds ignore those
+      // fields and retain the quota-only view.
       const extras = projectRemoteModelUsageExtras({
         records: deps.getUsage(),
         settings: deps.getSettings(),

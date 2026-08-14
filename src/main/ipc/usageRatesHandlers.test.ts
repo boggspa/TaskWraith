@@ -61,6 +61,7 @@ function createDeps() {
       fetchClaudeUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchKimiUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchCursorUsageSnapshot: vi.fn(async (): Promise<any> => null),
+      fetchAntigravityUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchQuotaSnapshotHook: vi.fn(async (): Promise<any[]> => []),
       getProviderCapabilityContract: vi.fn(async () => null as any),
       getCurrentFxRates: vi.fn(() => ({ rates: { USD: 1 }, source: 'live' })),
@@ -266,11 +267,11 @@ describe('registerUsageRatesHandlers', () => {
     expect(deps.getExternalUsageCached).not.toHaveBeenCalled()
   })
 
-  it('serves the credential-free quota hook only to the main renderer', async () => {
+  it('serves the credential-free native quota hook only to the main renderer', async () => {
     const { deps } = createDeps()
     const snapshot = {
       provider: 'deepseek' as const,
-      source: 'limit-counter-sanitized-cache' as const,
+      source: 'taskwraith-native' as const,
       configured: true as const,
       fetchedAt: '2026-08-02T01:54:22.000Z',
       stale: false,
@@ -351,33 +352,34 @@ describe('registerUsageRatesHandlers', () => {
     expect(deps.broadcastModelUsage).toHaveBeenCalledTimes(1)
   })
 
-  it('adds sanitized AntiGravity and API-credit hook meters to the iOS projection', async () => {
+  it('adds native AntiGravity and supplemental API-credit meters to the iOS projection', async () => {
     const { deps, callbacks } = createDeps()
     registerUsageRatesHandlers(deps)
 
+    deps.fetchAntigravityUsageSnapshot.mockResolvedValue({
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: true,
+      fetchedAt: '2026-08-02T01:54:22.000Z',
+      planType: 'Google AI Pro',
+      windows: [
+        {
+          id: 'agy-weekly',
+          label: 'Gemini Weekly',
+          runs: 0,
+          totalTokens: 0,
+          usedPercent: 0.03235,
+          remainingPercent: 99.96765,
+          limitLabel: '99.97% remaining',
+          resetAt: '2026-08-08T17:20:35.000Z',
+          trackingOnly: false
+        }
+      ]
+    })
     deps.fetchQuotaSnapshotHook.mockResolvedValue([
       {
-        provider: 'antigravity',
-        source: 'limit-counter-sanitized-cache',
-        configured: true,
-        fetchedAt: '2026-08-02T01:54:22.000Z',
-        stale: false,
-        planType: 'Google AI Pro',
-        windows: [
-          {
-            id: 'agy-weekly',
-            label: 'Gemini Weekly',
-            usedPercent: 0.03235,
-            remainingPercent: 99.96765,
-            limitLabel: '99.97% remaining',
-            resetAt: '2026-08-08T17:20:35.000Z'
-          }
-        ],
-        balances: []
-      },
-      {
         provider: 'deepseek',
-        source: 'limit-counter-sanitized-cache',
+        source: 'taskwraith-native',
         configured: true,
         fetchedAt: '2026-08-02T01:54:22.000Z',
         stale: false,

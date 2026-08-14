@@ -2205,9 +2205,9 @@ function App(): React.JSX.Element {
     mistral: [],
     muse: []
   })
-  // Last-known Limit Counter hook snapshots (antigravity/deepseek/cerebras/meta).
+  // Last-known TaskWraith supplemental snapshots (DeepSeek/Cerebras/Meta).
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
-  // empty or deadline-missed helper read must not blank those meters.
+  // empty or deadline-missed network read must not blank those meters.
   const lastQuotaSnapshotHookRef = useRef<QuotaSnapshotHookSnapshot[]>([])
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')
@@ -8708,7 +8708,15 @@ function App(): React.JSX.Element {
     // Usage records route through the shared renderer cache (30s TTL,
     // in-flight dedup) so the settings table / API-spend view join this
     // fetch instead of issuing their own identical IPC calls.
-    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, hookSnapshots, allUsageRecords] =
+    const [
+      codexSnap,
+      claudeSnap,
+      kimiSnap,
+      cursorSnap,
+      antigravitySnap,
+      hookSnapshots,
+      allUsageRecords
+    ] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
           ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
@@ -8716,6 +8724,9 @@ function App(): React.JSX.Element {
         loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
         loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
         loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
+        loadQuotaInBackground(() =>
+          window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
+        ),
         typeof window.api.getQuotaSnapshotHook === 'function'
           ? loadQuotaInBackground(() => window.api.getQuotaSnapshotHook())
           : Promise.resolve([]),
@@ -8927,13 +8938,44 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('cursor', cursorWindows, cursorSnap))
     }
 
-    // AntiGravity plus Pi's API-credit/PAYG upstreams arrive through Limit
-    // Counter's credential-free normalized cache. TaskWraith never opens the
-    // AGY session, Pi key store, provider keychain entries, or raw responses.
-    // Merged over the last-known snapshots per provider (the hook lane's
-    // `resolveWithCache`): the helper cache is re-read on every refresh, so a
-    // torn write, plutil hiccup, or missed UI deadline used to blank all three
-    // meters until the next successful poll.
+    // AntiGravity is TaskWraith-native. Automatic refreshes are cache-only;
+    // the documented interactive `agy /usage` panel is opened only by the
+    // explicit refresh button and remains clamped by main-process policy.
+    const antigravityFresh = (
+      Array.isArray(antigravitySnap?.windows) ? antigravitySnap.windows : []
+    )
+      .map((w: any, i: number) =>
+        normalizeQuotaWindow('antigravity', w, `antigravity-quota-${i}`)
+      )
+      .filter((w): w is UsageWindowAggregate => Boolean(w))
+    const hasAntigravitySnapshot =
+      antigravitySnap !== null &&
+      antigravitySnap !== undefined &&
+      typeof antigravitySnap === 'object'
+    const antigravityWindows = hasAntigravitySnapshot
+      ? antigravityFresh
+      : resolveWithCache('antigravity', antigravityFresh)
+    if (hasAntigravitySnapshot) {
+      // A structured native result is authoritative even when it has no
+      // windows: that can be an unconfigured tombstone or an explicit error.
+      // Only a deadline miss (`null`) is allowed to retain the last reading.
+      lastUsageWindowsByProviderRef.current.antigravity = antigravityFresh
+    }
+    if (
+      antigravityWindows.length > 0 ||
+      hasUsageBalances(antigravitySnap?.balances) ||
+      (antigravitySnap?.configured === true && typeof antigravitySnap?.error === 'string')
+    ) {
+      ordered.push(
+        buildQuotaAggregate('antigravity', antigravityWindows, antigravitySnap)
+      )
+    }
+
+    // DeepSeek, Cerebras, and Meta are projected by main from TaskWraith-owned
+    // sources: the encrypted Pi key + official DeepSeek balance endpoint, and
+    // the local usage journal/rate table for clearly labelled estimates. A
+    // missed UI deadline keeps the last-known reading; configured-false
+    // tombstones deliberately clear a provider whose key/login was removed.
     const hookSnapshotsMerged = mergeQuotaSnapshotHookSnapshots(
       lastQuotaSnapshotHookRef.current,
       Array.isArray(hookSnapshots) ? hookSnapshots : null,

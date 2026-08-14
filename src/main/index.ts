@@ -1813,7 +1813,7 @@ import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPrese
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
-import { createCachedLimitCounterQuotaSnapshotHook } from './usage/LimitCounterQuotaSnapshotHook'
+import { createTaskWraithQuotaSnapshotHook } from './usage/TaskWraithQuotaSnapshotHook'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
 import { registerRunQueueHandlers, type RendererRunQueueMutation } from './ipc/runQueueHandlers'
@@ -17696,6 +17696,9 @@ let antigravityUsageProbeCache: {
   snapshot: NormalizedProviderUsageSnapshot
   fetchedAt: number
 } | null = null
+let antigravityUsageSnapshotFetcherRef:
+  | ((options?: { force?: unknown }) => Promise<NormalizedProviderUsageSnapshot>)
+  | null = null
 
 function updateCliProviderSession(
   state: CliProviderStreamState,
@@ -53190,7 +53193,18 @@ if (isGeminiMcpBridgeProcess) {
       fetchClaudeUsageSnapshot,
       fetchKimiUsageSnapshot,
       fetchCursorUsageSnapshot,
-      fetchQuotaSnapshotHook: createCachedLimitCounterQuotaSnapshotHook(),
+      fetchAntigravityUsageSnapshot: () =>
+        antigravityUsageSnapshotFetcherRef?.() ?? Promise.resolve(null),
+      fetchQuotaSnapshotHook: createTaskWraithQuotaSnapshotHook({
+        loadPiKeys: () => piKeyStoreRef?.loadKeys(),
+        getUsageRecords: () => AppStore.getUsage(),
+        getProviderRates: () => getCurrentProviderRates(),
+        getMuseConfigured: () =>
+          managedRunConfiguredProviderDiscovery
+            .statusSnapshot(settingsService.getSettings())
+            .configuredProviders.has('muse'),
+        getMuseMonthlySpendCapUsd: () => settingsService.getSettings().museMonthlySpendCapUsd
+      }),
       getProviderCapabilityContract,
       getPluginActivationSnapshot: () =>
         pluginContributionManagerRef?.getActivationSnapshot() || {
@@ -54119,6 +54133,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
     })
+    antigravityUsageSnapshotFetcherRef = getAntigravityRateLimits
 
     registerAntigravityRateLimitHandler(
       ipcMain,

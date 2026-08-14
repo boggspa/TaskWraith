@@ -9,8 +9,7 @@ const HOOK_PROVIDER_ORDER = new Map(
   QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS.map((provider, index) => [provider, index])
 )
 
-/** A cached reading keeps the `stale` flag the parser stamped when it was
- * decoded; re-derive it at serve time so a reading held through a long read
+/** Re-derive staleness at serve time so a network reading held through an
  * outage cannot keep presenting itself as current. */
 function withRecomputedStaleness(
   snapshot: QuotaSnapshotHookSnapshot,
@@ -25,17 +24,14 @@ function withRecomputedStaleness(
 }
 
 /**
- * Merge a fresh hook read over the last-known snapshots, per provider.
+ * Merge a fresh native read over the last-known snapshots, per provider.
  *
- * The Limit Counter lane is the only quota source without a keep-last-known
- * cache behind it: the helper cache is re-read (via plutil) on every refresh,
- * and any one read can come back empty or late — a torn plist write while the
- * helper refetches a provider, a plutil hiccup, or the renderer's 1s UI
- * deadline resolving to null. Without this merge each of those blanked the
- * AntiGravity/DeepSeek/Cerebras/Meta meters until the next successful poll.
+ * DeepSeek's balance call can be empty or late while offline, and the
+ * renderer's one-second UI deadline can resolve to null. Without this merge a
+ * transient miss would blank a last-known reading until the next poll.
  *
  * Semantics: a provider present in `fresh` always wins — measured truth, even
- * when its numbers went down (cycle resets do that). Only a provider absent
+ * when its numbers went down or it became unconfigured. Only a provider absent
  * from the read falls back to its cached snapshot, with staleness re-derived.
  * `fresh: null` means the read never completed, so the whole cache is served.
  */
@@ -59,9 +55,9 @@ export function mergeQuotaSnapshotHookSnapshots(
 }
 
 /**
- * Convert the main process's allowlisted helper projection into the renderer's
+ * Convert the main process's allowlisted native projection into the renderer's
  * existing quota aggregate. This function never accepts provider credentials
- * or raw responses; its input type is the credential-free shared hook schema.
+ * or raw responses; its input type is the credential-free shared schema.
  */
 export function buildQuotaSnapshotHookAggregates(
   snapshots: ReadonlyArray<QuotaSnapshotHookSnapshot>
@@ -101,6 +97,7 @@ export function buildQuotaSnapshotHookAggregates(
     quotaSource: snapshot.source,
     quotaFetchedAt: snapshot.fetchedAt,
     quotaConfigured: snapshot.configured,
+    quotaError: snapshot.error,
     quotaStale: snapshot.stale
   }))
 }
