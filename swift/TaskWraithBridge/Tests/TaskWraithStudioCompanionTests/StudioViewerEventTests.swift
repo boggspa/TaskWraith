@@ -463,3 +463,60 @@ final class StudioRouteContentTests: XCTestCase {
             "content may differ between routes; TIME may not")
     }
 }
+
+/// The HUD timecode must be one frame's transport snapshot, not a second clock sample.
+@MainActor
+final class StudioViewerHudTimecodeTests: XCTestCase {
+    private func makeViewer(durationTicks: Int64 = 6000) throws -> StudioViewerView {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let clock = StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
+        let view = StudioViewerView(
+            renderer: renderer,
+            authority: StudioPlaybackAuthority(clock: clock))
+        view.frame = NSRect(x: 0, y: 0, width: 960, height: 540)
+        view.layoutSubtreeIfNeeded()
+        return view
+    }
+
+    private func makeTexture(for view: StudioViewerView) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor()
+        descriptor.width = 960
+        descriptor.height = 540
+        descriptor.pixelFormat = .bgra8Unorm
+        descriptor.textureType = .type2D
+        descriptor.usage = [.renderTarget, .shaderRead]
+        return try XCTUnwrap(view.renderer.device.makeTexture(descriptor: descriptor))
+    }
+
+    /// Reproduces the VFR/HUD blocker: a per-frame snapshot taken ~5 seconds
+    /// into playback must not be replaced by an absolute-host read that clamps
+    /// to the 10-minute duration. Deleting the overlay/snapshot join must fail
+    /// this control.
+    func testOverlayTimecodeUsesTheSameTransportSnapshot() throws {
+        let view = try makeViewer(durationTicks: 360_000) // 10 minutes, matching the endurance fixture.
+        let timebase = view.transport.clock.timebase
+        view.transport.play(atHost: 0)
+
+        // A per-frame transport snapshot taken ~5 seconds into playback.
+        let fiveSecondSnapshot = view.transport.clock.snapshot(atHost: 5.0)
+        XCTAssertEqual(fiveSecondSnapshot.frameIndex, 150,
+            "the test snapshot must land near five seconds, not at the end")
+
+        // An absolute-host read at a huge host time would clamp to the duration.
+        let absoluteHost = Double(view.transport.clock.durationTicks) / Double(timebase.timescale) + 1000.0
+        let absoluteTimecode = try view.transport.currentTimecode(atHost: absoluteHost)
+        XCTAssertEqual(absoluteTimecode.text, "00:10:00:00",
+            "absolute-host read must clamp to duration for this red control to mean anything")
+
+        let texture = try makeTexture(for: view)
+        let overlay = view.overlayState(snapshot: fiveSecondSnapshot, drawable: texture)
+
+        XCTAssertEqual(overlay.timecodeText, "00:00:05:00",
+            "HUD timecode must be derived from the per-frame snapshot, not from a fresh absolute-host sample")
+    }
+}

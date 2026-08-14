@@ -542,7 +542,7 @@ final class StudioViewerView: NSView {
         trim = nil
     }
 
-    private func overlayState(
+    func overlayState(
         snapshot: StudioTransportSnapshot,
         drawable: MTLTexture
     ) -> StudioOverlayState {
@@ -559,7 +559,7 @@ final class StudioViewerView: NSView {
             outPointTicks: transport.outPointTicks,
             isLoopingRange: transport.isLoopingRange,
             isScrubbing: transport.isScrubbing,
-            timecodeText: currentTimecodeText,
+            timecodeText: timecodeText(for: snapshot),
             sourceLabel: sourceLabel,
             entry: timecodeField.snapshot,
             message: message,
@@ -690,10 +690,15 @@ final class StudioViewerView: NSView {
         message = text
     }
 
-    /// Current playhead as timecode, for diagnostics and for the on-screen
-    /// readout a later slice will draw.
-    var currentTimecodeText: String {
-        (try? transport.currentTimecode(atHost: CACurrentMediaTime()).text) ?? "--:--:--:--"
+    /// Timecode text for a snapshot already taken from the one transport clock.
+    /// The overlay uses this so its readout agrees with the frame it is drawing,
+    /// instead of taking a second sample that can mix absolute host time with
+    /// the audio-relative transport epoch.
+    private func timecodeText(for snapshot: StudioTransportSnapshot) -> String {
+        (try? StudioTimecodeConverter.timecode(
+            forFrame: snapshot.frameIndex,
+            timebase: transport.clock.timebase
+        ).text) ?? "--:--:--:--"
     }
 
     // MARK: - Pointer scrubbing
