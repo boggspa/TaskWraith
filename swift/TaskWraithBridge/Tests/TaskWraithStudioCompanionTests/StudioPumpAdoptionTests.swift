@@ -67,7 +67,7 @@ final class StudioPumpAdoptionTests: XCTestCase {
         XCTAssertEqual(
             fields,
             [
-                "exitCode", "openedAssets", "outboundLines", "proposals",
+                "effectPreview", "exitCode", "openedAssets", "outboundLines", "proposals",
                 "protocolErrors", "resolvedProposalIds", "transcripts",
             ],
             "StudioCompanionSession.Step changed shape — does "
@@ -84,7 +84,7 @@ final class StudioPumpAdoptionTests: XCTestCase {
             .children.compactMap(\.label).sorted()
         XCTAssertEqual(
             fields,
-            ["assets", "proposals", "sequence", "transcripts"],
+            ["assets", "effectPreview", "proposals", "sequence", "transcripts"],
             "StudioCompanionSession.Hydration changed shape — adopt(update:) reads "
                 + "sequence and assets from it; a new field reaches nothing until it "
                 + "is added there"
@@ -244,6 +244,144 @@ final class StudioPumpAdoptionTests: XCTestCase {
             60,
             "an open hydrated ghost must win over the committed sequence at its affected range"
         )
+    }
+
+    /// Executes the hydration -> app state -> two real renderer hop. The pixel
+    /// assertions distinguish a delivered LUT from a payload merely reflected
+    /// in state: Effect changes, Original bypasses, rejection holds, and clear
+    /// restores neutral output.
+    func testEffectPreviewHydratesBothRenderersAndClearRestoresNeutralOutput() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie(lumaLevels: [128])
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        var presentationCount = 0
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: { presentationCount += 1 }
+        )
+        let cubeText = """
+        LUT_3D_SIZE 2
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        """
+        let preview = try StudioEffectPreview(
+            schemaVersion: 1,
+            effectId: StudioEffectPreview.effectId(forCubeText: cubeText),
+            cubeByteLength: cubeText.lengthOfBytes(using: .utf8),
+            cubeText: cubeText
+        )
+        let asset = StudioMediaAsset(assetId: "preview-asset", path: movie.path)
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [], exitCode: nil, protocolErrors: []
+                ),
+                latestRevision: 3,
+                hydration: StudioCompanionSession.Hydration(
+                    assets: [asset],
+                    proposals: [],
+                    transcripts: [],
+                    effectPreview: .set(preview),
+                    sequence: StudioTimelineSequence(items: [])
+                )
+            )
+        )
+        XCTAssertEqual(presentationCount, 0, "hydration must not foreground Studio")
+        XCTAssertTrue(sourceRenderer.diagnostics.hasSource)
+        XCTAssertTrue(reviewRenderer.diagnostics.hasSource)
+
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 0, atHost: 0)
+        let snapshot = clock.snapshot(atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128
+        )
+        func pixel(
+            _ renderer: StudioViewerRenderer,
+            grade: StudioGradeMode
+        ) throws -> StudioPixel {
+            renderer.grade = StudioGradeSettings(mode: grade)
+            XCTAssertTrue(renderer.render(snapshot: snapshot, to: target).didDraw)
+            return try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64)
+        }
+
+        let sourceOriginal = try pixel(sourceRenderer, grade: .original)
+        let reviewOriginal = try pixel(reviewRenderer, grade: .original)
+        let sourceEffect = try pixel(sourceRenderer, grade: .effect)
+        let reviewEffect = try pixel(reviewRenderer, grade: .effect)
+        XCTAssertEqual(
+            sourceOriginal,
+            try pixel(sourceRenderer, grade: .original),
+            "Original must bypass a resident preview in the Source renderer"
+        )
+        XCTAssertEqual(
+            reviewOriginal,
+            try pixel(reviewRenderer, grade: .original),
+            "Original must bypass a resident preview in the Review renderer"
+        )
+        XCTAssertNotEqual(sourceEffect, sourceOriginal, "Source Effect never received the LUT")
+        XCTAssertNotEqual(reviewEffect, reviewOriginal, "Review Effect never received the LUT")
+
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .rejected("effectIdMismatch")
+                ),
+                latestRevision: 4,
+                hydration: nil
+            )
+        )
+        XCTAssertEqual(
+            try pixel(sourceRenderer, grade: .effect),
+            sourceEffect,
+            "a rejected replacement must not substitute Source's valid preview"
+        )
+        XCTAssertEqual(
+            try pixel(reviewRenderer, grade: .effect),
+            reviewEffect,
+            "a rejected replacement must not substitute Review's valid preview"
+        )
+
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .clear
+                ),
+                latestRevision: 5,
+                hydration: nil
+            )
+        )
+        XCTAssertEqual(try pixel(sourceRenderer, grade: .effect), sourceOriginal)
+        XCTAssertEqual(try pixel(reviewRenderer, grade: .effect), reviewOriginal)
     }
 
     /// Exercises the product handoff between two distinct controllers. The

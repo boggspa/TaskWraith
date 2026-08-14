@@ -191,4 +191,94 @@ final class StudioHydrationTests: XCTestCase {
         // And it is still not a proposal, despite sharing the notification.
         XCTAssertTrue(step.proposals.isEmpty)
     }
+
+    func testEffectPreviewHydrationAndCommittedSetClearAreExplicit() throws {
+        let cubeText = """
+        LUT_3D_SIZE 2
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        """
+        let preview: [String: Any] = [
+            "schemaVersion": 1,
+            "effectId": StudioEffectPreview.effectId(forCubeText: cubeText),
+            "cubeByteLength": cubeText.lengthOfBytes(using: .utf8),
+            "cubeText": cubeText,
+        ]
+        let expected = try StudioEffectPreview.decode(from: preview)
+        var document = fullDocument()
+        document["effectPreview"] = preview
+        let session = try hydrate(document: document)
+        XCTAssertEqual(session.hydrated?.effectPreview, .set(expected))
+
+        let set = session.consume(
+            chunk: try line([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": [
+                    "revision": 6,
+                    "op": ["type": "set_effect_preview", "effectPreview": preview],
+                ],
+            ])
+        )
+        XCTAssertEqual(set.effectPreview, .set(expected))
+
+        let clear = session.consume(
+            chunk: try line([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": [
+                    "revision": 7,
+                    "op": ["type": "set_effect_preview", "effectPreview": NSNull()],
+                ],
+            ])
+        )
+        XCTAssertEqual(clear.effectPreview, .clear)
+
+        let encodedNull = try JSONEncoder().encode(AnyCodable(NSNull()))
+        XCTAssertEqual(String(data: encodedNull, encoding: .utf8), "null")
+        let decodedNull = try JSONDecoder().decode(AnyCodable.self, from: encodedNull)
+        XCTAssertTrue(decodedNull.value is NSNull)
+
+        var wrongHash = preview
+        wrongHash["effectId"] = String(repeating: "a", count: 64)
+        let rejectedHash = session.consume(
+            chunk: try line([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": [
+                    "revision": 8,
+                    "op": ["type": "set_effect_preview", "effectPreview": wrongHash],
+                ],
+            ])
+        )
+        if case .rejected = rejectedHash.effectPreview {
+            XCTAssertEqual(rejectedHash.protocolErrors.count, 1)
+        } else {
+            XCTFail("a wrong effectId must be held as a rejected replacement")
+        }
+
+        var wrongLength = preview
+        wrongLength["cubeByteLength"] = 1
+        let rejectedLength = session.consume(
+            chunk: try line([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": [
+                    "revision": 9,
+                    "op": ["type": "set_effect_preview", "effectPreview": wrongLength],
+                ],
+            ])
+        )
+        if case .rejected = rejectedLength.effectPreview {
+            XCTAssertEqual(rejectedLength.protocolErrors.count, 1)
+        } else {
+            XCTFail("a wrong UTF-8 length must be held as a rejected replacement")
+        }
+    }
 }

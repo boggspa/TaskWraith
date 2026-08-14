@@ -125,7 +125,9 @@ public struct AnyCodable: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let string = try? container.decode(String.self) {
+        if container.decodeNil() {
+            self.init(NSNull())
+        } else if let string = try? container.decode(String.self) {
             self.init(string)
         } else if let int = try? container.decode(Int.self) {
             self.init(int)
@@ -148,6 +150,8 @@ public struct AnyCodable: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch value {
+        case _ as NSNull:
+            try container.encodeNil()
         case let string as String:
             try container.encode(string)
         case let int as Int:

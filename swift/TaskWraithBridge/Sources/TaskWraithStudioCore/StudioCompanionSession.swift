@@ -1,4 +1,106 @@
+import CryptoKit
 import Foundation
+
+/// The host-authorized preview payload carried across the Companion wire.
+///
+/// The host owns the only filesystem read. The Companion sees bounded inline
+/// text, then validates it again before the text can reach either renderer.
+public struct StudioEffectPreview: Equatable, Sendable {
+    public static let schemaVersion = 1
+    public static let maximumCubeByteLength = 1_048_576
+
+    public let schemaVersion: Int
+    public let effectId: String
+    public let cubeByteLength: Int
+    public let cubeText: String
+
+    public init(
+        schemaVersion: Int,
+        effectId: String,
+        cubeByteLength: Int,
+        cubeText: String
+    ) throws {
+        guard schemaVersion == Self.schemaVersion else {
+            throw StudioEffectPreviewError.unsupportedSchemaVersion(schemaVersion)
+        }
+        guard cubeByteLength > 0, cubeByteLength <= Self.maximumCubeByteLength else {
+            throw StudioEffectPreviewError.invalidCubeByteLength(cubeByteLength)
+        }
+        let actualByteLength = cubeText.lengthOfBytes(using: .utf8)
+        guard actualByteLength == cubeByteLength else {
+            throw StudioEffectPreviewError.byteLengthMismatch(
+                declared: cubeByteLength, actual: actualByteLength)
+        }
+        let expectedEffectId = Self.effectId(forCubeText: cubeText)
+        guard effectId == expectedEffectId else {
+            throw StudioEffectPreviewError.effectIdMismatch
+        }
+        do {
+            _ = try StudioColorLut.parseCube(cubeText)
+        } catch let error as StudioLutError {
+            throw StudioEffectPreviewError.invalidCube(error)
+        } catch {
+            throw StudioEffectPreviewError.invalidCube(.missingSize)
+        }
+
+        self.schemaVersion = schemaVersion
+        self.effectId = effectId
+        self.cubeByteLength = cubeByteLength
+        self.cubeText = cubeText
+    }
+
+    public static func decode(from payload: [String: Any]) throws -> StudioEffectPreview {
+        guard let schemaVersion = payload["schemaVersion"] as? Int else {
+            throw StudioEffectPreviewError.missingField("schemaVersion")
+        }
+        guard let effectId = payload["effectId"] as? String else {
+            throw StudioEffectPreviewError.missingField("effectId")
+        }
+        guard let cubeByteLength = payload["cubeByteLength"] as? Int else {
+            throw StudioEffectPreviewError.missingField("cubeByteLength")
+        }
+        guard let cubeText = payload["cubeText"] as? String else {
+            throw StudioEffectPreviewError.missingField("cubeText")
+        }
+        return try StudioEffectPreview(
+            schemaVersion: schemaVersion,
+            effectId: effectId,
+            cubeByteLength: cubeByteLength,
+            cubeText: cubeText
+        )
+    }
+
+    public static func effectId(forCubeText cubeText: String) -> String {
+        SHA256.hash(data: Data(cubeText.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// Parses again at the application boundary. The model stays safe even if a
+    /// future caller constructs it differently, and the existing fail-closed
+    /// parser remains the only cube parser in the product.
+    public func parsedLut() throws -> StudioColorLut {
+        try StudioColorLut.parseCube(cubeText)
+    }
+}
+
+public enum StudioEffectPreviewError: Error, Equatable {
+    case missingField(String)
+    case unsupportedSchemaVersion(Int)
+    case invalidCubeByteLength(Int)
+    case byteLengthMismatch(declared: Int, actual: Int)
+    case effectIdMismatch
+    case invalidCube(StudioLutError)
+}
+
+/// Explicitly distinguishes a non-preview event, an intentional clear, a
+/// validated replacement, and an invalid payload held by the app state.
+public enum StudioEffectPreviewChange: Equatable, Sendable {
+    case unchanged
+    case clear
+    case set(StudioEffectPreview)
+    case rejected(String)
+}
 
 /// Deterministic, I/O-free state machine for the TaskWraith Studio companion.
 /// main.swift pumps stdin chunks in and writes the returned NDJSON lines out;
@@ -62,6 +164,9 @@ public final class StudioCompanionSession {
         public let resolvedProposalIds: [String]
         /// Transcripts the host published in this chunk.
         public let transcripts: [StudioTranscript]
+        /// Set, clear, or rejected effect preview notification. This is not an
+        /// optional: absence must not be confused with an intentional clear.
+        public let effectPreview: StudioEffectPreviewChange
 
         public init(
             outboundLines: [Data],
@@ -70,7 +175,8 @@ public final class StudioCompanionSession {
             openedAssets: [StudioMediaAsset] = [],
             proposals: [StudioEditProposal] = [],
             resolvedProposalIds: [String] = [],
-            transcripts: [StudioTranscript] = []
+            transcripts: [StudioTranscript] = [],
+            effectPreview: StudioEffectPreviewChange = .unchanged
         ) {
             self.outboundLines = outboundLines
             self.exitCode = exitCode
@@ -79,6 +185,7 @@ public final class StudioCompanionSession {
             self.proposals = proposals
             self.resolvedProposalIds = resolvedProposalIds
             self.transcripts = transcripts
+            self.effectPreview = effectPreview
         }
     }
 
@@ -107,17 +214,37 @@ public final class StudioCompanionSession {
         public let assets: [StudioMediaAsset]
         public let proposals: [StudioEditProposal]
         public let transcripts: [StudioTranscript]
+        /// Durable set/clear/invalid state for the host-owned effect preview.
+        /// A legacy document omits it and therefore leaves the current preview
+        /// unchanged; a durable null is an explicit clear.
+        public let effectPreview: StudioEffectPreviewChange
         /// The committed timeline, as a PLAYBACK SUBJECT for the Review route.
         /// Decoded in the document's own millisecond rational space; a viewer
         /// re-expresses it when it adopts a timebase.
         public let sequence: StudioTimelineSequence
 
+        public init(
+            assets: [StudioMediaAsset],
+            proposals: [StudioEditProposal],
+            transcripts: [StudioTranscript],
+            effectPreview: StudioEffectPreviewChange = .unchanged,
+            sequence: StudioTimelineSequence
+        ) {
+            self.assets = assets
+            self.proposals = proposals
+            self.transcripts = transcripts
+            self.effectPreview = effectPreview
+            self.sequence = sequence
+        }
+
         public var isEmpty: Bool {
-            assets.isEmpty && proposals.isEmpty && transcripts.isEmpty && sequence.isEmpty
+            assets.isEmpty && proposals.isEmpty && transcripts.isEmpty
+                && effectPreview == .unchanged && sequence.isEmpty
         }
 
         public static let empty = Hydration(
             assets: [], proposals: [], transcripts: [],
+            effectPreview: .unchanged,
             sequence: StudioTimelineSequence(items: []))
     }
 
@@ -166,6 +293,7 @@ public final class StudioCompanionSession {
         var proposed: [StudioEditProposal] = []
         var resolved: [String] = []
         var transcripts: [StudioTranscript] = []
+        var effectPreview: StudioEffectPreviewChange = .unchanged
         var exitCode: Int32?
         for event in decoder.push(chunk: chunk) {
             if exitCode != nil { break }
@@ -209,6 +337,19 @@ public final class StudioCompanionSession {
                     case .notATranscript:
                         break
                     }
+                    let previewChange = Self.effectPreviewChange(in: message)
+                    switch previewChange {
+                    case .unchanged:
+                        break
+                    case .set, .clear:
+                        effectPreview = previewChange
+                    case .rejected(let reason):
+                        // Refusal is observable but never changes a renderer:
+                        // an invalid replacement must hold the last valid LUT.
+                        effectPreview = previewChange
+                        protocolErrorCount += 1
+                        errors.append("set_effect_preview rejected: \(reason)")
+                    }
                 }
                 exitCode = outcome.exit
             }
@@ -220,7 +361,8 @@ public final class StudioCompanionSession {
             openedAssets: opened,
             proposals: proposed,
             resolvedProposalIds: resolved,
-            transcripts: transcripts
+            transcripts: transcripts,
+            effectPreview: effectPreview
         )
     }
 
@@ -331,10 +473,12 @@ public final class StudioCompanionSession {
         let trackPayload = document["tracks"] as? [[String: Any]] ?? []
         let transcripts = (document["transcripts"] as? [[String: Any]] ?? [])
             .compactMap { try? StudioTranscriptDecoder.transcript(from: $0) }
+        let effectPreview = Self.effectPreviewChange(inDocument: document)
         return Hydration(
             assets: assets,
             proposals: proposals,
             transcripts: transcripts,
+            effectPreview: effectPreview,
             // The viewer's timebase is not known at hydration, so the sequence
             // is decoded in the DOCUMENT's own millisecond rational space and
             // re-expressed when a viewer adopts it. Decoding against a guessed
@@ -369,6 +513,51 @@ public final class StudioCompanionSession {
         do {
             return .decoded(
                 try StudioTranscriptDecoder.transcript(fromSetTranscript: operation))
+        } catch {
+            return .rejected(String(describing: error))
+        }
+    }
+
+    /// Decodes a revisioned set_effect_preview notification. The presence of
+    /// the operation without its preview field is a rejection, not a clear.
+    static func effectPreviewChange(in message: StudioMessage) -> StudioEffectPreviewChange {
+        guard let operation = message.params?["op"]?.value as? [String: Any],
+            operation["type"] as? String == "set_effect_preview"
+        else {
+            return .unchanged
+        }
+        guard operation.keys.contains("effectPreview") else {
+            return .rejected("missing effectPreview")
+        }
+        guard let rawPreview = operation["effectPreview"] else {
+            return .rejected("missing effectPreview")
+        }
+        if rawPreview is NSNull { return .clear }
+        guard let preview = rawPreview as? [String: Any] else {
+            return .rejected("effectPreview must be an object or null")
+        }
+        do {
+            return .set(try StudioEffectPreview.decode(from: preview))
+        } catch {
+            return .rejected(String(describing: error))
+        }
+    }
+
+    /// The durable document uses the same nullable field as a committed
+    /// operation. Missing is legacy unchanged; explicit null is durable clear.
+    static func effectPreviewChange(inDocument document: [String: Any])
+        -> StudioEffectPreviewChange
+    {
+        guard document.keys.contains("effectPreview") else { return .unchanged }
+        guard let rawPreview = document["effectPreview"] else {
+            return .rejected("missing effectPreview")
+        }
+        if rawPreview is NSNull { return .clear }
+        guard let preview = rawPreview as? [String: Any] else {
+            return .rejected("effectPreview must be an object or null")
+        }
+        do {
+            return .set(try StudioEffectPreview.decode(from: preview))
         } catch {
             return .rejected(String(describing: error))
         }

@@ -1415,6 +1415,7 @@ final class StudioViewerAppState {
         if !update.step.transcripts.isEmpty {
             adopt(transcripts: update.step.transcripts)
         }
+        adopt(effectPreview: update.step.effectPreview)
         if let hydration = update.hydration {
             await adopt(hydration: hydration)
         }
@@ -1436,6 +1437,7 @@ final class StudioViewerAppState {
         if !hydration.transcripts.isEmpty {
             adopt(transcripts: hydration.transcripts)
         }
+        adopt(effectPreview: hydration.effectPreview)
         await adopt(sequence: hydration.sequence, knownAssets: hydration.assets)
         if !hydration.proposals.isEmpty {
             await adopt(proposals: hydration.proposals)
@@ -1540,12 +1542,63 @@ final class StudioViewerAppState {
     private var proposalAssets: [String: StudioMediaAsset] = [:]
     private var activeSequence: StudioTimelineSequence?
     private var activeReviewTimeline: StudioProposedTimeline?
+    /// The last preview accepted by both route renderers. A malformed inbound
+    /// payload is reported and leaves this exact preview resident.
+    private var installedEffectPreview: StudioEffectPreview?
 
     /// Testable system-wide count: Source, Review, proposal, and sequence slots
     /// all draw from the same pool, so this cannot hide a second route-local
     /// decoder behind an individual renderer's count.
     var sharedDecoderCreationCount: Int { sourcePool.decoderCreationCount }
     var sharedResidentDecoderCount: Int { sourcePool.residentDecoderCount }
+
+    /// Applies the host-authorized inline LUT to both real route renderers.
+    /// Invalid content holds the last valid preview; it is never silently
+    /// substituted with a parser fallback or applied to just one route.
+    private func adopt(effectPreview change: StudioEffectPreviewChange) {
+        switch change {
+        case .unchanged:
+            return
+        case .rejected(let reason):
+            Self.report("effect preview rejected — " + reason)
+        case .clear:
+            do {
+                let previous = try installedEffectPreview?.parsedLut()
+                do {
+                    try setLutOnBothRoutes(nil)
+                    installedEffectPreview = nil
+                    Self.report("effect preview cleared")
+                } catch {
+                    try? setLutOnBothRoutes(previous)
+                    throw error
+                }
+            } catch {
+                Self.report("effect preview clear held — " + String(describing: error))
+            }
+        case .set(let preview):
+            do {
+                let lut = try preview.parsedLut()
+                let previous = try installedEffectPreview?.parsedLut()
+                do {
+                    try setLutOnBothRoutes(lut)
+                    installedEffectPreview = preview
+                    Self.report("effect preview " + preview.effectId + " adopted")
+                } catch {
+                    // A route-local upload failure must not leave the Source and
+                    // Review windows grading different pictures.
+                    try? setLutOnBothRoutes(previous)
+                    throw error
+                }
+            } catch {
+                Self.report("effect preview held — " + String(describing: error))
+            }
+        }
+    }
+
+    private func setLutOnBothRoutes(_ lut: StudioColorLut?) throws {
+        try controller.renderer.setLut(lut)
+        try reviewController?.renderer.setLut(lut)
+    }
 
     /// Adopts the host's transcripts. Only the one matching the open asset is
     /// shown: a transcript for a different asset is kept, not drawn, because a
