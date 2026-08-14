@@ -849,13 +849,13 @@ interface ActiveParticipantRun {
    */
   pendingFanoutDispatches?: Set<Promise<void>>
   /**
-   * User cancellation/skip landed while an explicit fan-out call was still
-   * inside its dispatch window. Unlike an ordinary answered/yielded terminal
-   * owner, this owner must not accept a late dispatch receipt: the target may
-   * have been seeded before the provider adapter registered it, so cancellation
-   * is repeated after the receipt to close that race.
+   * User cancellation/skip landed while this run or one of its explicit
+   * fan-out calls was still inside a dispatch window. Unlike an ordinary
+   * answered/yielded terminal owner, this run must not accept a late dispatch
+   * receipt: the provider may have been seeded before its adapter registered,
+   * so cancellation is repeated after the receipt to close that race.
    */
-  fanoutDispatchCancelled?: boolean
+  dispatchCancellationRequested?: boolean
   /** Per-owner tail that serializes explicit fan-out dispatch windows. */
   fanoutDispatchQueue?: Promise<void>
   /**
@@ -4022,7 +4022,7 @@ export class EnsembleOrchestrator {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
     }
-    run.fanoutDispatchCancelled = true
+    run.dispatchCancellationRequested = true
     run.suppressOwnedFanoutTranscriptRelease = true
     run.status = 'cancelled'
     run.terminalReason = reason
@@ -5447,7 +5447,7 @@ export class EnsembleOrchestrator {
       .filter((run): run is ActiveParticipantRun => Boolean(run?.laneId))
     // Finalise/suppress first, then terminally cancel every lane this owner is
     // awaiting so the serial loop can advance without a provider callback.
-    active.fanoutDispatchCancelled = true
+    active.dispatchCancellationRequested = true
     this.finalizeRun(active, 'skipped', 'Skipped by user.')
     if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
     for (const lane of ownedLanes) {
@@ -8623,7 +8623,7 @@ export class EnsembleOrchestrator {
           error: 'initial_pass_preserves_roster'
         }
       }
-      active.fanoutDispatchCancelled = true
+      active.dispatchCancellationRequested = true
       this.finalizeRun(active, 'skipped', reason)
       if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
       runtime.activeScoutRunIds?.delete(active.runId)
@@ -11187,7 +11187,7 @@ export class EnsembleOrchestrator {
       const activeRun =
         targetRun || (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
       if (activeRun) {
-        activeRun.fanoutDispatchCancelled = true
+        activeRun.dispatchCancellationRequested = true
         this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Boss.')
         if (runtime.activeRunId === activeRun.runId) runtime.activeRunId = undefined
         runtime.activeScoutRunIds?.delete(activeRun.runId)
@@ -15737,15 +15737,38 @@ export class EnsembleOrchestrator {
         failureMessage?: string
       } | null = null
       let dispatchFailure: DispatchFailureReason | null = null
+      let adapterInvoked = false
+      // Record provider admission independently from provider completion. In
+      // production RunCoordinator awaits the adapter operation, so a normal
+      // terminal event can precede the dispatch promise's accepted result.
+      const acceptAdapterInvocation = (): void => {
+        if (adapterInvoked) return
+        adapterInvoked = true
+        run.transportDispatchState = 'accepted'
+        runtime.lastForegroundParticipantId = participant.id
+        // Review F2c — record prompt receipts only once the provider actually
+        // received the prompt. The observer fires at adapter invocation rather
+        // than after the adapter operation terminalizes.
+        run.promptShellStamp = promptShellStamp
+        run.promptDynamicStateVersion = dynamicStateSnapshot.version
+        run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+        run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
+        if (!run.terminalFinalized) this.startCursorCompletionWatchdog(run)
+      }
       run.transportDispatchState = 'pending'
       try {
         dispatchedResult = await this.deps.dispatch(
           payload,
           { sender: runtime.sender },
-          undefined,
+          { onAdapterInvoked: acceptAdapterInvocation },
           { suppliedMessageIds }
         )
-        run.transportDispatchState = dispatchedResult.dispatched ? 'accepted' : 'rejected'
+        if (dispatchedResult.dispatched) {
+          // Test/fallback dispatch facades may not implement the observer.
+          acceptAdapterInvocation()
+        } else if (!adapterInvoked) {
+          run.transportDispatchState = 'rejected'
+        }
       } catch (error) {
         // Adapter entry may publish a process/controller before rejecting. Stop
         // that exact run before failed bookkeeping clears its only handle.
@@ -15754,7 +15777,7 @@ export class EnsembleOrchestrator {
         dispatchFailure = classifyDispatchError(error)
       }
       const dispatchCancellationWon =
-        !this.ownsRunningRound(runtime) || run.fanoutDispatchCancelled === true
+        !this.ownsRunningRound(runtime) || run.dispatchCancellationRequested === true
       if (dispatchedResult?.dispatched && dispatchCancellationWon) {
         // Stop/Skip/history deletion may have reached cancelRun before dispatch
         // registered this run. An accepted receipt is the first point at which
@@ -15859,18 +15882,6 @@ export class EnsembleOrchestrator {
         this.finalizeRun(run, 'failed', note)
       } else {
         dispatchAttempts += 1
-        runtime.lastForegroundParticipantId = participant.id
-        if (!run.terminalFinalized) this.startCursorCompletionWatchdog(run)
-        // Review F2c — record the shell stamp only once the provider
-        // actually RECEIVED this prompt. Stamping before dispatch let a
-        // spawn/preflight failure persist a stamp for a shell the session
-        // never saw, wrongly slim-qualifying the next turn. Same rule for
-        // the injected blackboard ids: a prompt the session never saw must
-        // not mark entries seen.
-        run.promptShellStamp = promptShellStamp
-        run.promptDynamicStateVersion = dynamicStateSnapshot.version
-        run.ensemblePromptUsageTelemetry = promptUsageTelemetry
-        run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         await completion
         // History cancellation resolves the local completion only to release
         // this activity join. It has already removed the run/runtime under a
@@ -17520,7 +17531,7 @@ export class EnsembleOrchestrator {
         : undefined
     const sourceOwner = sourceRun && !sourceRun.laneId ? sourceRun : undefined
     const dispatchWasCancelled = (): boolean =>
-      runtime.cancelled || sourceOwner?.fanoutDispatchCancelled === true
+      runtime.cancelled || sourceOwner?.dispatchCancellationRequested === true
     const mode = options.mode || 'read_only'
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')

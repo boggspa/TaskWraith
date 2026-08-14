@@ -18733,6 +18733,16 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const bossRunId = harness.dispatched[0].appRunId!
+    const foregroundRun = (
+      harness.orchestrator as unknown as {
+        runsByRunId: Map<
+          string,
+          { transportDispatchState?: string; promptShellStamp?: string }
+        >
+      }
+    ).runsByRunId.get(bossRunId)
+    expect(foregroundRun?.transportDispatchState).toBe('accepted')
+    expect(foregroundRun?.promptShellStamp).toBeTruthy()
     const fanout = harness.orchestrator.fanoutForRun(bossRunId, {
       targets: ['Reviewer', 'Researcher'],
       prompt: 'Inspect in two independent lanes.'
