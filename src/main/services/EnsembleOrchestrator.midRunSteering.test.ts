@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 import type { WorkspaceChurnSample } from '../WorkspaceChurn'
+import type {
+  EnsembleSideMessageSteeringInput,
+  EnsembleSideMessageSteeringResult
+} from '../steering/EnsembleSideMessageSteering'
 import { EnsembleOrchestrator, type EnsembleDispatchPromptEvidence } from './EnsembleOrchestrator'
 import { deriveActiveEnsembleWorkingPresentations } from '../../renderer/src/lib/workingIndicatorPresentation'
 
@@ -76,6 +80,24 @@ function makeHarness(
   const accepted: boolean[] = []
   const cancelRun = vi.fn(async () => true)
   const getPendingMidRunSteeringEntryIds = vi.fn(() => [...pendingEntryIds])
+  const deliverSideMessageSteering = vi.fn(
+    (input: EnsembleSideMessageSteeringInput): EnsembleSideMessageSteeringResult => {
+      // Persistence is the fallback contract: routing may begin only after the
+      // exact visible row is readable from the chat store.
+      expect(chat.messages.some((message) => message.id === input.messageId)).toBe(true)
+      const entryId = `side-steer-${input.messageId}`
+      return {
+        entryId,
+        attempts: input.targets.map((target) => ({
+          participantId: target.participantId,
+          runId: target.runId,
+          status: 'injected',
+          strategy: 'acp-interrupt',
+          entryId
+        }))
+      }
+    }
+  )
   const appendMidRunSteering = vi.fn((input: { chatId: string; roundId: string; text: string }) => {
     expect(input.chatId).toBe(CHAT_ID)
     expect(input.roundId).toBe(chat.ensemble?.activeRound?.roundId)
@@ -148,6 +170,7 @@ function makeHarness(
     nowIso: () => `2026-07-29T03:00:0${counter}.000Z`,
     appendMidRunSteering,
     getPendingMidRunSteeringEntryIds,
+    deliverSideMessageSteering,
     awaitPendingSeatCompaction: options.awaitPendingSeatCompaction,
     sampleWorkspaceChurn: options.sampleWorkspaceChurn
   })
@@ -158,6 +181,7 @@ function makeHarness(
     accepted,
     appendMidRunSteering,
     cancelRun,
+    deliverSideMessageSteering,
     dispatched,
     getPendingMidRunSteeringEntryIds,
     orchestrator,
@@ -550,6 +574,96 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     ).toBe(true)
     // Additive: the original speaker is never interrupted to make room.
     expect(harness.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('routes a persisted side message into the exact active parallel recipient run', async () => {
+    const roster = [
+      participant('work-1', 'codex', 1, { role: 'Work1' }),
+      participant('work-3', 'kimi', 2, { role: 'Work3' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Work1 owns the serial task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: '@Work3 inspect the parallel safety controls.',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      }).status
+    ).toBe('steered')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'kimi',
+      ensembleRun: { participantId: 'work-3' }
+    })
+
+    const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+      to: 'Work3',
+      message: 'Hold the commit until the two safety controls are present.',
+      reason: 'Advisor requested a publication hold.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      liveSteerRequestedParticipantIds: ['work-3']
+    })
+    expect(result.boundaryDeliveryParticipantIds).toBeUndefined()
+    expect(result.message).toContain('Immediate live steer requested for Work3')
+    expect(harness.deliverSideMessageSteering).toHaveBeenCalledOnce()
+    expect(harness.deliverSideMessageSteering.mock.calls[0]?.[0]).toMatchObject({
+      chatId: CHAT_ID,
+      fromParticipantId: 'work-1',
+      fromLabel: 'Work1',
+      toParticipantIds: ['work-3'],
+      toLabels: ['Work3'],
+      message: 'Hold the commit until the two safety controls are present.',
+      targets: [
+        {
+          participantId: 'work-3',
+          runId: harness.dispatched[1].appRunId,
+          provider: 'kimi'
+        }
+      ]
+    })
+    expect(
+      harness.chat.messages.find((message) => message.metadata?.kind === 'ensembleSideMessage')
+        ?.content
+    ).toBe(
+      '↪ Work1 to Work3: Hold the commit until the two safety controls are present.\nReason: Advisor requested a publication hold.'
+    )
+  })
+
+  it('keeps an idle recipient on the durable next-prompt path without a false live receipt', async () => {
+    const roster = [
+      participant('work-1', 'codex', 1, { role: 'Work1' }),
+      participant('work-3', 'kimi', 2, { role: 'Work3' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Work1 owns the serial task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+      to: 'Work3',
+      message: 'Read this when your turn begins.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      boundaryDeliveryParticipantIds: ['work-3']
+    })
+    expect(result.liveSteerRequestedParticipantIds).toBeUndefined()
+    expect(result.message).toContain('next prompt boundary')
+    expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
   })
 
   // A directed absorb carries routing intent for the seats still to speak. It

@@ -12,6 +12,15 @@ export interface EnsembleSideMessageSteeringTarget {
   provider: ProviderId
 }
 
+export interface EnsembleSideMessageActiveRunCandidate {
+  chatId: string
+  roundId: string
+  runId: string
+  participant: { id: string; provider: ProviderId }
+  terminalFinalized?: boolean
+  dispatchCancellationRequested?: boolean
+}
+
 export interface EnsembleSideMessageSteeringInput {
   chatId: string
   messageId: string
@@ -33,6 +42,125 @@ export interface EnsembleSideMessageSteeringAttempt extends SteeringAttemptResul
 export interface EnsembleSideMessageSteeringResult {
   entryId?: string
   attempts: EnsembleSideMessageSteeringAttempt[]
+}
+
+export interface PersistedEnsembleSideMessageDeliveryResult {
+  liveSteerRequestedParticipantIds: string[]
+  boundaryDeliveryParticipantIds: string[]
+  summaryText: string
+}
+
+/** Select only exact, still-actionable recipient runs from the live round. */
+export function selectEnsembleSideMessageSteeringTargets(input: {
+  chatId: string
+  roundId: string
+  recipientParticipantIds: string[]
+  activeRuns: Iterable<EnsembleSideMessageActiveRunCandidate>
+}): EnsembleSideMessageSteeringTarget[] {
+  const recipientOrder = new Map(
+    input.recipientParticipantIds.map((participantId, index) => [participantId, index])
+  )
+  const targets = [...input.activeRuns]
+    .filter(
+      (run) =>
+        run.chatId === input.chatId &&
+        run.roundId === input.roundId &&
+        recipientOrder.has(run.participant.id) &&
+        run.terminalFinalized !== true &&
+        run.dispatchCancellationRequested !== true
+    )
+    .sort((left, right) => {
+      const order =
+        (recipientOrder.get(left.participant.id) ?? Number.MAX_SAFE_INTEGER) -
+        (recipientOrder.get(right.participant.id) ?? Number.MAX_SAFE_INTEGER)
+      return order || left.runId.localeCompare(right.runId)
+    })
+    .map((run) => ({
+      participantId: run.participant.id,
+      runId: run.runId,
+      provider: run.participant.provider
+    }))
+  return [...new Map(targets.map((target) => [target.runId, target])).values()]
+}
+
+/**
+ * Resolve, attempt, and summarize live delivery after the visible transcript
+ * row has been saved. This keeps provider-policy branching out of the
+ * EnsembleOrchestrator composition root.
+ */
+export function deliverPersistedEnsembleSideMessage(input: {
+  chatId: string
+  roundId: string
+  messageId: string
+  createdAtIso: string
+  fromParticipantId: string
+  fromLabel: string
+  toParticipantIds: string[]
+  toLabels: string[]
+  message: string
+  reason?: string
+  activeRuns: Iterable<EnsembleSideMessageActiveRunCandidate>
+  deliver?: (input: EnsembleSideMessageSteeringInput) => EnsembleSideMessageSteeringResult
+}): PersistedEnsembleSideMessageDeliveryResult {
+  const targets = selectEnsembleSideMessageSteeringTargets({
+    chatId: input.chatId,
+    roundId: input.roundId,
+    recipientParticipantIds: input.toParticipantIds,
+    activeRuns: input.activeRuns
+  })
+  let steeringResult: EnsembleSideMessageSteeringResult = { attempts: [] }
+  if (targets.length > 0 && input.deliver) {
+    try {
+      steeringResult = input.deliver({
+        chatId: input.chatId,
+        messageId: input.messageId,
+        createdAtIso: input.createdAtIso,
+        fromParticipantId: input.fromParticipantId,
+        fromLabel: input.fromLabel,
+        toParticipantIds: input.toParticipantIds,
+        toLabels: input.toLabels,
+        message: input.message,
+        ...(input.reason ? { reason: input.reason } : {}),
+        targets
+      })
+    } catch {
+      // Persistence already succeeded; transport failure is a boundary fallback.
+    }
+  }
+  const liveSteerRequestedParticipantIds = [
+    ...new Set(
+      steeringResult.attempts
+        .filter((attempt) => attempt.status === 'injected' || attempt.status === 'broker-pending')
+        .map((attempt) => attempt.participantId)
+    )
+  ]
+  const liveSteered = new Set(liveSteerRequestedParticipantIds)
+  const boundaryDeliveryParticipantIds = input.toParticipantIds.filter(
+    (participantId) => !liveSteered.has(participantId)
+  )
+  const labelForParticipantId = new Map(
+    input.toParticipantIds.map((participantId, index) => [
+      participantId,
+      input.toLabels[index] || participantId
+    ])
+  )
+  const liveLabels = liveSteerRequestedParticipantIds.map(
+    (participantId) => labelForParticipantId.get(participantId) || participantId
+  )
+  const boundaryLabels = boundaryDeliveryParticipantIds.map(
+    (participantId) => labelForParticipantId.get(participantId) || participantId
+  )
+  return {
+    liveSteerRequestedParticipantIds,
+    boundaryDeliveryParticipantIds,
+    summaryText: `${
+      liveLabels.length > 0 ? ` Immediate live steer requested for ${liveLabels.join(', ')}.` : ''
+    }${
+      boundaryLabels.length > 0
+        ? ` The durable note remains available to ${boundaryLabels.join(', ')} at their next prompt boundary.`
+        : ''
+    }`
+  }
 }
 
 /**

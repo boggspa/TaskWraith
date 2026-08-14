@@ -189,6 +189,11 @@ import {
   planEnsembleMidRunSteeringBoundary,
   type EnsembleMidRunSteeringBoundaryState
 } from './EnsembleMidRunSteering'
+import {
+  deliverPersistedEnsembleSideMessage,
+  type EnsembleSideMessageSteeringInput,
+  type EnsembleSideMessageSteeringResult
+} from '../steering/EnsembleSideMessageSteering'
 import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
@@ -718,6 +723,14 @@ export interface EnsembleOrchestratorDeps {
    * needed.
    */
   getPendingMidRunSteeringEntryIds?: (chatId: string) => string[]
+  /**
+   * Best-effort live transport for a side message that is already durable in
+   * the transcript. Exact target run ids are resolved by this orchestrator;
+   * the main composition root owns RunManager/provider transport access.
+   */
+  deliverSideMessageSteering?: (
+    input: EnsembleSideMessageSteeringInput
+  ) => EnsembleSideMessageSteeringResult
   transitionRunQueueJob?: (
     runIdOrId: string,
     status: RunQueueJobStatus,
@@ -1496,6 +1509,10 @@ export interface EnsembleSideMessageResult {
   tool: 'ensemble_send'
   message: string
   toParticipantIds?: string[]
+  /** Active target seats whose provider accepted an immediate steer attempt. */
+  liveSteerRequestedParticipantIds?: string[]
+  /** Targets retaining only the durable transcript / next-prompt fallback. */
+  boundaryDeliveryParticipantIds?: string[]
   error?: 'no_active_run' | 'not_ensemble' | 'missing_message' | 'invalid_target'
 }
 
@@ -12455,6 +12472,7 @@ export class EnsembleOrchestrator {
     const recipientLabels = recipients.map(
       (participant) => participant.role || providerLabel(participant.provider)
     )
+    const recipientParticipantIds = recipients.map((participant) => participant.id)
     const content = `↪ ${senderLabel} to ${recipientLabels.join(', ')}: ${message}${
       input.reason ? `\nReason: ${input.reason}` : ''
     }`
@@ -12476,7 +12494,7 @@ export class EnsembleOrchestrator {
         fromParticipantId: run.participant.id,
         fromProvider: run.participant.provider,
         fromRole: run.participant.role,
-        toParticipantIds: recipients.map((participant) => participant.id),
+        toParticipantIds: recipientParticipantIds,
         toProviders: recipients.map((participant) => participant.provider),
         toRoles: recipients.map((participant) => participant.role),
         ...laneTranscriptMetadata(run),
@@ -12491,11 +12509,31 @@ export class EnsembleOrchestrator {
       },
       'round-updated'
     )
+    const delivery = deliverPersistedEnsembleSideMessage({
+      chatId: run.chatId,
+      roundId: run.roundId,
+      messageId: sideMessage.id,
+      createdAtIso: timestamp,
+      fromParticipantId: run.participant.id,
+      fromLabel: senderLabel,
+      toParticipantIds: recipientParticipantIds,
+      toLabels: recipientLabels,
+      message,
+      ...(input.reason ? { reason: input.reason } : {}),
+      activeRuns: this.runsByRunId.values(),
+      deliver: this.deps.deliverSideMessageSteering
+    })
     return {
       ok: true,
       tool: 'ensemble_send',
-      toParticipantIds: recipients.map((participant) => participant.id),
-      message: `ensemble_send: delivered visible side message to ${recipientLabels.join(', ')}.`
+      toParticipantIds: recipientParticipantIds,
+      ...(delivery.liveSteerRequestedParticipantIds.length > 0
+        ? { liveSteerRequestedParticipantIds: delivery.liveSteerRequestedParticipantIds }
+        : {}),
+      ...(delivery.boundaryDeliveryParticipantIds.length > 0
+        ? { boundaryDeliveryParticipantIds: delivery.boundaryDeliveryParticipantIds }
+        : {}),
+      message: `ensemble_send: recorded visible side message to ${recipientLabels.join(', ')}.${delivery.summaryText}`
     }
   }
 
