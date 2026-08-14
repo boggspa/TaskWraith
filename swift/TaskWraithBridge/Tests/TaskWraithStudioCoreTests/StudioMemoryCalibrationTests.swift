@@ -33,8 +33,6 @@ final class StudioMemoryCalibrationTests: XCTestCase {
     /// the ORDER-OF-MAGNITUDE difference between the two allocation classes, not
     /// a precise figure; a tight bound would make this flaky without making it
     /// more informative.
-    private let mallocMegabytes = 64
-    private let mallocMinimumObservedMB = 40.0
     private let surfaceFrameCount = 200
     private let surfaceWidth = 640
     private let surfaceHeight = 480
@@ -42,29 +40,40 @@ final class StudioMemoryCalibrationTests: XCTestCase {
     /// of that; the threshold sits far below it and far above the noise floor.
     private let surfaceMaximumObservedMB = 25.0
 
-    // MARK: - Control A: the probe works
+    // MARK: - Control A: allocation classes stay distinct
 
-    /// Without this the next test proves nothing: a footprint reading that never
-    /// moves would "show blindness" to everything.
-    func testFootprintTracksMallocClassAllocation() throws {
-        let before = try XCTUnwrap(StudioMemoryProbe.read())
-        var held: [UnsafeMutableRawPointer] = []
-        for _ in 0..<mallocMegabytes {
-            let bytes = 1_048_576
-            let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes, alignment: 8)
-            // Touched, or the pages are never faulted in and nothing is resident.
-            memset(pointer, 1, bytes)
-            held.append(pointer)
-        }
-        let after = try XCTUnwrap(StudioMemoryProbe.read())
-        let delta = after.footprintMegabytes - before.footprintMegabytes
-        for pointer in held { pointer.deallocate() }
+    /// This used to allocate 64 MB and demand a cold-process footprint jump.
+    /// That was a real observation, but process-global allocator reuse made the
+    /// assertion order-dependent and could warm later tests. The verdict does
+    /// not need another cold run: it needs an allocation-class-aware baseline
+    /// that proves steady page metrics cannot conceal live malloc growth.
+    func testAllocationClassVerdictRejectsWarmMallocGrowthWithoutPageGrowth() {
+        let trend = StudioMemoryTrend(
+            samples: [
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 20 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 52 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 84 * 1_048_576
+                ),
+            ],
+            liveIOSurfaceIDSamples: [[], [], []]
+        )
 
-        XCTAssertGreaterThan(
-            delta,
-            mallocMinimumObservedMB,
-            "phys_footprint did not track \(mallocMegabytes)MB of touched malloc — "
-                + "the probe itself is broken, so every other memory claim is void"
+        XCTAssertEqual(trend.growthBytes, 0, "the page baseline must stay quiet")
+        XCTAssertEqual(trend.mallocGrowthBytes, 64 * 1_048_576)
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 24 * 1_048_576, surfaceCountLimit: 6),
+            "the allocation-class verdict must reject malloc growth after page warm-up"
         )
     }
 
@@ -139,13 +148,12 @@ final class StudioMemoryCalibrationTests: XCTestCase {
         retained.removeAll()
     }
 
-    // MARK: - The consequence, measured rather than asserted
+    // MARK: - The allocation-class verdict, measured with real surfaces
 
-    /// The half my earlier test only claimed in a comment: the memory TREND does
-    /// not flag a surface leak. Measured by running the real sampler across
-    /// cycles that accumulate surfaces, and showing it stays quiet while the
-    /// surface count climbs.
-    func testTheMemoryTrendDoesNotFlagAGrowingSurfaceLeak() async throws {
+    /// This fixture retains real, distinct IOSurfaces. Page metrics can vary
+    /// slightly by process history, but the integrated verdict must reject the
+    /// live-set growth independently of that noise.
+    func testAllocationClassVerdictRejectsAGrowingIOSurfaceLeak() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device available on this machine")
         }
@@ -171,8 +179,13 @@ final class StudioMemoryCalibrationTests: XCTestCase {
                     leaked.append(textures)
                 }
             }
-            sampler.record(cycle: cycle)
-            _ = cycle
+            var liveSurfaceIDs: Set<UInt32> = []
+            for frame in leaked {
+                if let surface = frame.luma.iosurface {
+                    liveSurfaceIDs.insert(IOSurfaceGetID(surface))
+                }
+            }
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: liveSurfaceIDs)
         }
         let trend = sampler.trend
         var surfaceIds: Set<UInt32> = []
@@ -182,11 +195,21 @@ final class StudioMemoryCalibrationTests: XCTestCase {
 
         // The leak is real and large.
         XCTAssertGreaterThan(surfaceIds.count, 100, "the leak fixture did not accumulate surfaces")
-        // And the trend does not see it. THIS is why the resource count exists.
+        // The separate footprint calibration above proves the page-metric blind
+        // spot. This run contributes a real live IOSurface identity set to the
+        // integrated verdict without assuming process-history-independent RSS.
+        // The integrated allocation-class verdict closes the former blind spot.
         XCTAssertFalse(
-            trend.isMonotonicallyGrowing,
-            "the memory trend DID flag a pure surface leak — if this fails, RSS is no longer "
-                + "blind and the resource-count instrument may be redundant: \(trend.summaryText)"
+            trend.isStable(
+                withinGrowthBytes: 24 * 1_048_576,
+                surfaceCountLimit: StudioVideoFrameSource.defaultReorderCacheDepth
+            ),
+            "growing live IOSurface identities must make the verdict unstable: \(trend.summaryText)"
+        )
+        XCTAssertTrue(
+            trend.hasGrowingLiveIOSurfaceRetention
+                || trend.peakLiveIOSurfaceCount > StudioVideoFrameSource.defaultReorderCacheDepth,
+            "the fixture did not carry its live IOSurface evidence into the verdict"
         )
         leaked.removeAll()
     }

@@ -92,11 +92,29 @@ public enum StudioMemoryProbe {
 /// over enough cycles is a real signal; a delta is an anecdote.
 public struct StudioMemoryTrend: Equatable, Sendable {
     public let samples: [StudioMemoryReading]
+    /// Live IOSurface identities held at the same point as each memory sample.
+    ///
+    /// These are SETS, not a cumulative "ever seen" counter: a bounded decoder
+    /// cache is allowed to recycle one surface for another. A leak is a live set
+    /// that grows or exceeds the bound, not ordinary cache turnover.
+    public let liveIOSurfaceIDSamples: [Set<UInt32>]
     /// Cycles discarded before measurement began.
     public let warmupCycles: Int
 
-    public init(samples: [StudioMemoryReading], warmupCycles: Int = 0) {
+    public init(
+        samples: [StudioMemoryReading],
+        warmupCycles: Int = 0,
+        liveIOSurfaceIDSamples: [Set<UInt32>] = []
+    ) {
+        precondition(
+            liveIOSurfaceIDSamples.isEmpty || liveIOSurfaceIDSamples.count == samples.count,
+            "IOSurface samples must align with memory samples"
+        )
         self.samples = samples
+        self.liveIOSurfaceIDSamples =
+            liveIOSurfaceIDSamples.isEmpty
+            ? Array(repeating: [], count: samples.count)
+            : liveIOSurfaceIDSamples
         self.warmupCycles = warmupCycles
     }
 
@@ -135,21 +153,59 @@ public struct StudioMemoryTrend: Equatable, Sendable {
 
     public var mallocGrowthMegabytes: Double { Double(mallocGrowthBytes) / 1_048_576 }
 
-    /// Whether the run stayed inside a stated budget AND did not show the leak
-    /// shape. Both conditions, because either alone is escapable: a slow leak
-    /// can sit inside a generous budget, and a one-off cache fill can exceed a
-    /// tight one without leaking anything.
-    public func isStable(withinGrowthBytes budget: Int64) -> Bool {
-        !isMonotonicallyGrowing && growthBytes <= budget
+    /// The largest simultaneous live IOSurface set. Surface identity is the
+    /// layer at which decoder-pool reuse is observable; a texture wrapper
+    /// identity is too high to prove retention.
+    public var peakLiveIOSurfaceCount: Int {
+        liveIOSurfaceIDSamples.map(\.count).max() ?? 0
+    }
+
+    /// Detects three consecutive samples where the live IOSurface set only
+    /// accumulates. A bounded cache may replace one identity with another, but
+    /// it must not retain every old identity while adding new ones.
+    public var hasGrowingLiveIOSurfaceRetention: Bool {
+        guard liveIOSurfaceIDSamples.count >= 3 else { return false }
+        for index in 2..<liveIOSurfaceIDSamples.count {
+            let first = liveIOSurfaceIDSamples[index - 2]
+            let second = liveIOSurfaceIDSamples[index - 1]
+            let third = liveIOSurfaceIDSamples[index]
+            let firstGrows = first.isSubset(of: second) && first != second
+            let secondGrows = second.isSubset(of: third) && second != third
+            if firstGrows && secondGrows {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether every allocation class stayed inside the stated budget and none
+    /// reports a leak shape. RSS/phys_footprint remain reported because they are
+    /// required operational signals; neither may stand in for malloc zones or
+    /// live IOSurface retention after allocator/cache warm-up.
+    public func isStable(
+        withinGrowthBytes budget: Int64,
+        surfaceCountLimit: Int
+    ) -> Bool {
+        !isMonotonicallyGrowing
+            && growthBytes <= budget
+            && mallocGrowthBytes <= budget
+            && peakLiveIOSurfaceCount <= surfaceCountLimit
+            && !hasGrowingLiveIOSurfaceRetention
     }
 
     public var summaryText: String {
         guard !samples.isEmpty else { return "rss --" }
+        let leakMarker =
+            isMonotonicallyGrowing || hasGrowingLiveIOSurfaceRetention
+            ? " LEAK?"
+            : ""
         return String(
-            format: "rss %.1fMB %+.1fMB%@",
+            format: "rss %.1fMB %+.1fMB malloc %+.1fMB iosurf %d%@",
             Double(samples.last?.footprintBytes ?? 0) / 1_048_576,
             growthMegabytes,
-            isMonotonicallyGrowing ? " LEAK?" : ""
+            mallocGrowthMegabytes,
+            peakLiveIOSurfaceCount,
+            leakMarker
         )
     }
 }
@@ -158,6 +214,7 @@ public struct StudioMemoryTrend: Equatable, Sendable {
 public struct StudioMemorySampler {
     public let warmupCycles: Int
     private var samples: [StudioMemoryReading] = []
+    private var liveIOSurfaceIDSamples: [Set<UInt32>] = []
 
     /// - Parameter warmupCycles: discarded before measurement starts. Real and
     ///   necessary: the first passes fill shader caches, decoder pools and
@@ -167,12 +224,19 @@ public struct StudioMemorySampler {
         self.warmupCycles = max(0, warmupCycles)
     }
 
-    public mutating func record(cycle: Int) {
+    /// Records page/malloc memory and the live decoder-surface set together.
+    /// Empty is meaningful for a path that owns no IOSurface-backed frames.
+    public mutating func record(cycle: Int, liveIOSurfaceIDs: Set<UInt32> = []) {
         guard cycle >= warmupCycles, let reading = StudioMemoryProbe.read() else { return }
         samples.append(reading)
+        liveIOSurfaceIDSamples.append(liveIOSurfaceIDs)
     }
 
     public var trend: StudioMemoryTrend {
-        StudioMemoryTrend(samples: samples, warmupCycles: warmupCycles)
+        StudioMemoryTrend(
+            samples: samples,
+            warmupCycles: warmupCycles,
+            liveIOSurfaceIDSamples: liveIOSurfaceIDSamples
+        )
     }
 }

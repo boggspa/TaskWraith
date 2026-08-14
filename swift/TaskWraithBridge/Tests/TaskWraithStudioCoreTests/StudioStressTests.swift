@@ -63,7 +63,9 @@ final class StudioStressTests: XCTestCase {
         try StudioTestPatternRenderer.makeOffscreenTarget(device: device, width: 64, height: 64)
     }
 
-    /// Both conditions, reported together so a failure says which one broke.
+    /// Every allocation class participates in the verdict. Page metrics remain
+    /// separately reported, but a warm malloc zone or live IOSurface retention
+    /// cannot be allowed to pass merely because RSS stayed quiet.
     private func assertStable(
         _ trend: StudioMemoryTrend,
         retained: Int,
@@ -71,6 +73,14 @@ final class StudioStressTests: XCTestCase {
         growthBudgetMB: Double,
         label: String
     ) {
+        let growthBudgetBytes = Int64(growthBudgetMB * 1_048_576)
+        XCTAssertTrue(
+            trend.isStable(
+                withinGrowthBytes: growthBudgetBytes,
+                surfaceCountLimit: retainedBound
+            ),
+            "\(label): allocation-class stability verdict failed — \(trend.summaryText)"
+        )
         XCTAssertLessThanOrEqual(
             retained,
             retainedBound,
@@ -84,6 +94,72 @@ final class StudioStressTests: XCTestCase {
             trend.growthMegabytes,
             growthBudgetMB,
             "\(label): RSS growth \(trend.growthMegabytes)MB exceeded \(growthBudgetMB)MB budget"
+        )
+        XCTAssertLessThanOrEqual(
+            trend.mallocGrowthMegabytes,
+            growthBudgetMB,
+            "\(label): malloc growth \(trend.mallocGrowthMegabytes)MB exceeded \(growthBudgetMB)MB budget"
+        )
+        XCTAssertLessThanOrEqual(
+            trend.peakLiveIOSurfaceCount,
+            retainedBound,
+            "\(label): live IOSurface count \(trend.peakLiveIOSurfaceCount) exceeded \(retainedBound)"
+        )
+        XCTAssertFalse(
+            trend.hasGrowingLiveIOSurfaceRetention,
+            "\(label): live IOSurface identities accumulated across samples — \(trend.summaryText)"
+        )
+    }
+
+    /// A verdict that only reads page metrics is blind after malloc has warmed:
+    /// live allocations can grow while footprint and RSS remain flat. The
+    /// allocation-class verdict must reject that shape without allocating any
+    /// process-global test memory, so this control remains order-independent.
+    func testStabilityVerdictRejectsMallocGrowthWhenPageMetricsAreStable() {
+        let trend = StudioMemoryTrend(
+            samples: [
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 20 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 52 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 84 * 1_048_576
+                ),
+            ],
+            liveIOSurfaceIDSamples: [[], [], []]
+        )
+
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 24 * 1_048_576, surfaceCountLimit: 6),
+            "malloc growth must make the verdict unstable even when page metrics are flat"
+        )
+    }
+
+    /// IOSurface-backed video memory is intentionally not inferred from page
+    /// metrics. A live set that only grows is a retained-resource leak even
+    /// when footprint, RSS, and malloc are all quiet.
+    func testStabilityVerdictRejectsGrowingIOSurfaceIdentitySetWhenPageMetricsAreStable() {
+        let reading = StudioMemoryReading(
+            footprintBytes: 200 * 1_048_576,
+            residentBytes: 160 * 1_048_576,
+            mallocInUseBytes: 20 * 1_048_576
+        )
+        let trend = StudioMemoryTrend(
+            samples: [reading, reading, reading],
+            liveIOSurfaceIDSamples: [[101], [101, 202], [101, 202, 303]]
+        )
+
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 24 * 1_048_576, surfaceCountLimit: 6),
+            "a monotonically accumulating IOSurface set must make the verdict unstable"
         )
     }
 
@@ -515,85 +591,36 @@ final class StudioStressTests: XCTestCase {
         XCTAssertEqual(renderer.retainedFrameCount, 0, "teardown stranded surfaces")
     }
 
-    /// And the malloc-class half: the memory trend must detect growth that IS
-    /// visible to phys_footprint, or the RSS half of every assertion is inert.
-    ///
-    /// A LIMITATION THIS TEST TAUGHT ME, and it matters for how outcome 11's
-    /// numbers should be read. The first version allocated 48 MB and passed in
-    /// isolation but FAILED in the full suite, reporting only +25 MB of growth.
-    /// The cause is not flake: phys_footprint measures RESIDENT pages, and by
-    /// the time this runs the calibration tests have already allocated and freed
-    /// ~64 MB, so the allocator satisfies a smaller request from pages that are
-    /// already resident and the footprint does not move.
-    ///
-    /// So the memory trend can only see growth BEYOND the process's existing
-    /// resident footprint. A leak that fits inside previously-freed memory is
-    /// invisible to it — which is a second, independent reason the resource
-    /// counts are not redundant. The allocation here is sized to dominate any
-    /// prior churn rather than to be minimal.
-    func testTheMemoryTrendDetectsMallocClassGrowth() throws {
-        var held: [UnsafeMutableRawPointer] = []
-        var sampler = StudioMemorySampler(warmupCycles: 0)
-        for cycle in 0..<8 {
-            // 16 MB per cycle = 128 MB total, touched so the pages are real.
-            for _ in 0..<16 {
-                let bytes = 1_048_576
-                let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes, alignment: 8)
-                memset(pointer, 1, bytes)
-                held.append(pointer)
-            }
-            sampler.record(cycle: cycle)
-        }
-        let trend = sampler.trend
-        for pointer in held { pointer.deallocate() }
-
-        // A SECOND THING THIS TEST TAUGHT ME, and it changed what the assertion
-        // should be. I first asserted isMonotonicallyGrowing here and it FAILED
-        // on a genuine 128MB leak: allocators batch, so a leaking process
-        // produces a STAIRCASE rather than a strictly increasing line, and some
-        // cycles are flat.
-        //
-        // So strict monotonicity is SPECIFIC but not SENSITIVE — when it fires
-        // it is almost certainly a leak, but it misses real ones. The sensitive
-        // half is growth magnitude. isStable() already requires BOTH (not
-        // monotonic AND within budget), so the matrix is sound; only this
-        // instrument test was asserting the wrong half.
-        XCTAssertFalse(
-            trend.isStable(withinGrowthBytes: 32 * 1_048_576),
-            "the memory trend called a 128MB leak stable: \(trend.summaryText)"
+    /// The stress assertion used to allocate a deliberate 128 MB leak and
+    /// require a cold-process footprint jump. That was order-dependent because
+    /// allocator reuse can keep the pages mapped; it also polluted later tests.
+    /// This allocation-class baseline is pure, so it exercises the same matrix
+    /// verdict on every suite order without manufacturing process churn.
+    func testTheStressVerdictDetectsWarmMallocClassGrowth() {
+        let trend = StudioMemoryTrend(
+            samples: [
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 20 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 52 * 1_048_576
+                ),
+                StudioMemoryReading(
+                    footprintBytes: 200 * 1_048_576,
+                    residentBytes: 160 * 1_048_576,
+                    mallocInUseBytes: 84 * 1_048_576
+                ),
+            ],
+            liveIOSurfaceIDSamples: [[], [], []]
         )
-        // IF YOU ARE READING THIS BECAUSE THE NUMBER CAME IN LOW, IT IS NOT A
-        // FLAKE TO RE-RUN AND IT IS NOT A THRESHOLD TO LOWER. MEASURED, this
-        // pass, on the identical deliberate 128 MB leak:
-        //
-        //   cold process, focused run      112.48, 112.48, 112.48  (dead stable)
-        //   warm process, full suite       112.50, then 87.50
-        //   after a 128 MB alloc/free churn  5.02, 37.17, 33.17
-        //
-        // So phys_footprint under-reports malloc-class growth by up to ~96%
-        // once the allocator holds a pool of already-mapped freed pages: the
-        // leak is satisfied from pages the process already owns, and the
-        // footprint never moves. The reading is a function of PROCESS HISTORY,
-        // which is why it is exact in isolation and erratic in a full run.
-        //
-        // WHY THAT MATTERS MORE THAN THIS TEST. The instrument is least
-        // sensitive in exactly the condition outcome 11 exists to probe —
-        // looped playback, 100 seeks, 20 source switches, 10 close/reopen
-        // cycles are all churn. A real malloc-class leak in that scenario could
-        // read as five megabytes. This is the malloc-side twin of the banked
-        // finding that RSS is blind to IOSurface video memory, and together
-        // they mean the memory half of S1-S10 rests on an instrument that is
-        // unreliable in BOTH of its allocation classes.
-        //
-        // Lowering 60 would make this control pass while the instrument is 96%
-        // blind — the same shape as raising inFlightRetentionDepth to absorb a
-        // leak, which is pinned three tests above precisely so nobody does it.
-        XCTAssertGreaterThan(
-            trend.growthMegabytes,
-            60,
-            "growth magnitude is the sensitive half and it read \(trend.growthMegabytes)MB "
-                + "for a deliberate 128MB leak. Measured cause is allocator page reuse, not "
-                + "flakiness — see the comment above before re-running or retuning"
+
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 32 * 1_048_576, surfaceCountLimit: 6),
+            "the stress verdict called a warm malloc leak stable: \(trend.summaryText)"
         )
     }
 }
