@@ -157,6 +157,37 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['provider-row', 'host-row'])
   })
 
+  it('coalesces a canonical Image View activity using its retained raw wrapper identity', () => {
+    const parameters = { paths: ['one.png', 'two.png'], imageCount: 2 }
+    const resultSummary = '{"ok":true,"tool":"image_view","imageCount":2}'
+    const providerActivity = activity('toolu_images', 'read', {
+      toolName: 'image_view',
+      displayName: 'Image View',
+      startedAt: '2026-08-14T10:16:54.223Z',
+      endedAt: '2026-08-14T10:16:54.346Z',
+      parameters,
+      resultSummary,
+      rawUseEvent: { tool_name: 'mcp__TaskWraith__image_view' },
+      metadata: { provider: 'claude', ensembleProvider: 'claude' }
+    })
+    const hostActivity = activity('claude-mcp-image_view-1786702614341-x4nook6pff', 'read', {
+      toolName: 'image_view',
+      displayName: 'Image View',
+      startedAt: '2026-08-14T10:16:54.342Z',
+      endedAt: '2026-08-14T10:16:54.343Z',
+      parameters: { ...parameters, cwd: '/workspace' },
+      resultSummary,
+      metadata: { provider: 'claude', ensembleProvider: 'claude' }
+    })
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity])
+    ])
+
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_images'])
+  })
+
   it('keeps similar Claude MCP calls when mirror proof does not match', () => {
     const base = activity('toolu_fanout', 'unknown', {
       toolName: 'mcp__TaskWraith__ensemble_fanout',

@@ -440,17 +440,15 @@ describe('ToolParser', () => {
       expect(getToolDisplayName('mcp_taskwraith-broker-delegate_to_subthread', {})).toBe(
         'Delegated to sub-thread'
       )
-      expect(getToolDisplayName('taskwraith__attached_window_capture', {})).toBe(
-        'Captured attached window'
-      )
+      expect(getToolDisplayName('taskwraith__attached_window_capture', {})).toBe('Image View')
     })
     it('uses the dictionary for editor / IDE transport tools', () => {
       expect(getToolDisplayName('reveal_in_finder', {})).toBe('Revealed in Finder')
       expect(getToolDisplayName('open_in_ide_at_position', {})).toBe('Opened in IDE at position')
     })
-    it('uses the dictionary for AppWatch and browser monitoring tools', () => {
-      expect(getToolDisplayName('appwatch_latest_frame', {})).toBe('Latest AppWatch frame')
-      expect(getToolDisplayName('appwatch_frames', {})).toBe('AppWatch frames')
+    it('coalesces image-returning monitors while retaining non-image browser labels', () => {
+      expect(getToolDisplayName('appwatch_latest_frame', {})).toBe('Image View')
+      expect(getToolDisplayName('appwatch_frames', {})).toBe('Image View')
       expect(getToolDisplayName('browser_navigate', {})).toBe('Navigated browser')
       expect(getToolDisplayName('mcp__TaskWraith__browser_snapshot', {})).toBe('Browser snapshot')
     })
@@ -500,6 +498,55 @@ describe('ToolParser', () => {
       expect(activity.category).toBe('read')
       expect(activity.displayName).toBe('Read /repo/src/App.tsx')
       expect(activity.metadata).toEqual({ provider: 'antigravity' })
+    })
+    it('canonicalizes provider image viewers and screenshot producers', () => {
+      const native = createToolActivity({
+        type: 'tool_use',
+        provider: 'codex',
+        tool_name: 'view_image',
+        tool_kind: 'execute',
+        tool_id: 'image-1',
+        parameters: { paths: ['a.png', 'b.png'] }
+      })
+      const appshots = createToolActivity({
+        type: 'tool_use',
+        provider: 'kimi',
+        tool_name: 'appshots',
+        tool_id: 'image-2',
+        parameters: { count: 4 }
+      })
+
+      expect(native).toMatchObject({
+        toolName: 'image_view',
+        displayName: 'Image View',
+        category: 'read',
+        parameters: { imageCount: 2 }
+      })
+      expect(appshots).toMatchObject({
+        toolName: 'image_view',
+        displayName: 'Image View',
+        category: 'read',
+        parameters: { imageCount: 4 }
+      })
+      expect(appshots.rawUseEvent).toMatchObject({ tool_name: 'appshots' })
+    })
+    it('coalesces Codex exec source carried in a string input', () => {
+      const input =
+        'const paths = ["one.png", "two.png", "three.png", "four.png"]; for (const path of paths) await tools.view_image({ path });'
+      const activity = createToolActivity({
+        type: 'tool_use',
+        provider: 'codex',
+        tool_name: 'exec',
+        tool_id: 'codex-images',
+        input
+      })
+
+      expect(activity).toMatchObject({
+        toolName: 'image_view',
+        displayName: 'Image View',
+        category: 'read',
+        parameters: { input, imageCount: 4 }
+      })
     })
     // The Grok ACP transport labels tool calls with a freeform human title
     // (toolName) plus a canonical `tool_kind`. The kind must drive the category
@@ -554,6 +601,45 @@ describe('ToolParser', () => {
       expect(result.resultSummary).toBe('file content here')
       expect(result.endedAt).toBeDefined()
       expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    })
+    it('records the actual returned image count on the canonical activity', () => {
+      const use = createToolActivity({
+        type: 'tool_use',
+        tool_name: 'image_view',
+        tool_id: 'images',
+        parameters: { count: 4 }
+      })
+      const result = pairToolResult(use, {
+        type: 'tool_result',
+        content: [
+          { type: 'image', mimeType: 'image/png', data: 'one' },
+          { type: 'image', mimeType: 'image/png', data: 'two' }
+        ]
+      })
+      expect(result).toMatchObject({
+        toolName: 'image_view',
+        displayName: 'Image View',
+        category: 'read',
+        parameters: { imageCount: 2 }
+      })
+    })
+    it('upgrades a legacy raw viewer activity when its result is paired', () => {
+      const use = {
+        ...createToolActivity({ type: 'tool_use', tool_name: 'read_file', tool_id: 'legacy-image' }),
+        toolName: 'view_image',
+        displayName: 'View image'
+      }
+      const result = pairToolResult(use, {
+        type: 'tool_result',
+        content: [{ type: 'image', mimeType: 'image/png', data: 'one' }]
+      })
+
+      expect(result).toMatchObject({
+        toolName: 'image_view',
+        displayName: 'Image View',
+        category: 'read',
+        parameters: { imageCount: 1 }
+      })
     })
     it('infers edited-file presentation for nameless Cursor tool results', () => {
       const use = createToolActivity({

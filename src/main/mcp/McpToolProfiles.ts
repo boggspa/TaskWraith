@@ -689,6 +689,36 @@ export const GATEWAY_V16_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v17 promotes the canonical existing-image viewer to the fresh direct
+ * surface. Provider-native viewer spellings and screenshot producers still
+ * execute under their exact names, but transcript activity coalesces them to
+ * this same identity. Frozen v1-v16 memberships remain byte-for-byte stable.
+ */
+export const GATEWAY_V17_ADDED_TOOL_NAMES = Object.freeze([
+  'image_view'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V17_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V16_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V17_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V17_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V17_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V17_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V16_MESH_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V17_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -751,6 +781,16 @@ const GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   ensemble_roster_edit: 'Edit Ensemble roster participants/settings. Gated.',
   blackboard_post:
     'Post a Blackboard entry/poll. ttlMinutes=self-delete, else durable. Poll: 2–6 pollOptions; vote via ensemble_poll_response. Images ≤4: attachmentIds (chat) or workspaceImagePaths (workspace-confined); readers inspect via inspect_chat_attachment.'
+} satisfies Partial<Record<TaskWraithMcpToolName, string>>)
+
+// v17 spends one new direct slot on Image View. Its full canonical guidance is
+// retained for discovery/settings, while the wire receipt compacts that schema
+// plus the largest remaining delegation definition. This keeps both normal and
+// Mesh fresh births below the 40k provider transport ceiling without removing
+// a capability or changing any pre-v17 receipt.
+const GATEWAY_V17_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
+  image_view: 'View up to 8 existing workspace/chat raster images. Read-only.',
+  delegate_to_subthread: 'Delegate one task to a provider sub-thread. Gated.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
 function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {
@@ -820,6 +860,16 @@ export function compactGatewayV15MeshToolDefinitionsForTransport<
   return compactToolDefinitionsForTransport(
     definitions,
     GATEWAY_V15_MESH_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
+  )
+}
+
+/** v17-only wire compaction; membership, schemas, and runtime behavior stay unchanged. */
+export function compactGatewayV17ToolDefinitionsForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  return compactToolDefinitionsForTransport(
+    definitions,
+    GATEWAY_V17_COMPACT_TOOL_DESCRIPTIONS as Readonly<Record<string, string | undefined>>
   )
 }
 
@@ -1034,6 +1084,16 @@ export const GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V16_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+// image_view is birth-direct, so the v17 discovery universe remains the exact
+// v16 universe (the same direct-only shape used by delegate_wave on v13).
+export const GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -1046,6 +1106,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v17-mesh') return GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v17') return GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v16-mesh') return GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v16') return GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_HIDDEN_TOOL_NAMES
@@ -1079,6 +1141,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v17-mesh') return GATEWAY_V17_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v17') return GATEWAY_V17_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v16-mesh') return GATEWAY_V16_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v16') return GATEWAY_V16_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v15-mesh') return GATEWAY_V15_MESH_MCP_DIRECT_TOOLS
@@ -1177,7 +1241,10 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v16 adds canvas_render_chart through discovery without growing either
   // direct catalogue.
   'taskwraith-gateway-v16': GATEWAY_V16_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v16-mesh': GATEWAY_V16_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v16-mesh': GATEWAY_V16_MESH_MCP_ADVERTISE_TOOLS,
+  // v17 adds the canonical Image View read tool directly.
+  'taskwraith-gateway-v17': GATEWAY_V17_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v17-mesh': GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

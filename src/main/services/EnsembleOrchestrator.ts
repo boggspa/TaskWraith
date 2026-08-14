@@ -100,6 +100,14 @@ import type { SeatRosterSeat } from '../../shared/seatChange'
 import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
 import {
+  canonicalImageViewToolName,
+  IMAGE_VIEW_DISPLAY_NAME,
+  IMAGE_VIEW_TOOL_NAME,
+  imageViewCountFromParameters,
+  imageViewCountFromResult,
+  isImageViewToolUse
+} from '../../shared/imageViewIdentity'
+import {
   findAllMentions,
   resolvePhraseToParticipant,
   resolveYieldTargetDetail,
@@ -2399,7 +2407,8 @@ function extractToolParameters(event: any): Record<string, unknown> {
       const parsed = JSON.parse(raw)
       return parsed && typeof parsed === 'object' ? parsed : {}
     } catch {
-      return {}
+      // Native wrapper tools can carry executable source instead of JSON.
+      return { input: raw }
     }
   }
   return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
@@ -3057,11 +3066,18 @@ function buildEnsembleToolActivity(
   participant?: EnsembleParticipant,
   roster?: readonly EnsembleParticipant[]
 ): ToolActivity {
-  const toolName = extractToolName(event)
+  const rawToolName = extractToolName(event)
   const toolKind = extractToolKind(event)
+  const rawParameters = extractToolParameters(event)
+  const toolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const parameterImageCount =
+    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(rawParameters) : undefined
+  const parameters = parameterImageCount
+    ? { ...rawParameters, imageCount: parameterImageCount }
+    : rawParameters
   const canonicalToolName = stripToolNamespace(toolName)
-  const parameters = extractToolParameters(event)
-  const category = getEnsembleToolCategory(toolName, toolKind)
+  const category =
+    toolName === IMAGE_VIEW_TOOL_NAME ? 'read' : getEnsembleToolCategory(rawToolName, toolKind)
   const parameterFilePath =
     typeof parameters.file_path === 'string'
       ? (parameters.file_path as string)
@@ -3098,7 +3114,10 @@ function buildEnsembleToolActivity(
   return {
     id: extractToolId(event),
     toolName,
-    displayName: getEnsembleToolDisplayName(toolName, parameters, participant, roster),
+    displayName:
+      toolName === IMAGE_VIEW_TOOL_NAME
+        ? IMAGE_VIEW_DISPLAY_NAME
+        : getEnsembleToolDisplayName(rawToolName, parameters, participant, roster),
     category,
     status: 'running',
     startedAt,
@@ -3173,8 +3192,11 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
   )
   const cap = reasoningTool ? 100_000 : 500
   const truncated = output.length > cap ? `${output.substring(0, cap)}...` : output
-  const displayName =
-    status === 'success' && stripToolNamespace(activity.toolName) === 'ensemble_yield'
+  const imageView = isImageViewToolUse(activity.toolName, activity.parameters)
+  const returnedImageCount = imageView ? imageViewCountFromResult(event) : undefined
+  const displayName = imageView
+    ? IMAGE_VIEW_DISPLAY_NAME
+    : status === 'success' && stripToolNamespace(activity.toolName) === 'ensemble_yield'
       ? activity.displayName.replace(/\byielding\b/i, 'yielded')
       : activity.displayName
   const resultRecord =
@@ -3198,6 +3220,15 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
   const filePath = activity.filePath || singleDiffFilePath(diffSummary)
   return {
     ...activity,
+    ...(imageView
+      ? {
+          toolName: IMAGE_VIEW_TOOL_NAME,
+          category: 'read' as const,
+          parameters: returnedImageCount
+            ? { ...(activity.parameters || {}), imageCount: returnedImageCount }
+            : activity.parameters
+        }
+      : {}),
     status,
     displayName,
     endedAt,

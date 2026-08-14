@@ -91,6 +91,9 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   appshots: 'AppShots capture',
   appshots_status: 'AppShots status',
 
+  // ── Canonical raster inspection ─────────────────────────────
+  image_view: 'Image View',
+
   // ── Workspace / project introspection ────────────────────────
   workspace_search: 'Workspace search',
   workspace_symbols: 'Workspace symbols',

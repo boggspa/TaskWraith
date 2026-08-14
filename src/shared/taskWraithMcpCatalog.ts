@@ -345,6 +345,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Read-only; bodies stay behind skill_read. See src/main/mcp/SkillToolExecutors.ts.
   'skill_list',
   'skill_read',
+  // Existing-image inspection is a real, canonical read tool so every provider
+  // gets the same auditable Image View identity. It accepts chat media ids or
+  // workspace-jailed raster paths and is auto-allowed like read_file.
+  'image_view',
   // Image processing — edit (blur/redact/crop/resize) an existing image, or
   // rasterize SVG to PNG. Output rides back as a visible transcript attachment.
   // Gated as a file change (mutating/compute; denied under read-only), NEVER

@@ -142,14 +142,23 @@ describe('toolNameToFamily', () => {
   it('maps browser_* tools to the browser family', () => {
     expect(toolNameToFamily('browser_open')).toBe('browser')
     expect(toolNameToFamily('browser_click')).toBe('browser')
-    expect(toolNameToFamily('browser_screenshot')).toBe('browser')
+    expect(toolNameToFamily('browser_screenshot')).toBe('image-view')
     expect(toolNameToFamily('browser_console')).toBe('browser')
   })
 
   it('maps canvas tools to the canvas family', () => {
     expect(toolNameToFamily('canvas_open')).toBe('canvas')
-    expect(toolNameToFamily('canvas_screenshot')).toBe('canvas')
+    expect(toolNameToFamily('canvas_screenshot')).toBe('image-view')
     expect(toolNameToFamily('canvas_eval')).toBe('canvas')
+  })
+
+  it('coalesces viewer aliases and screenshot results to the image-view family', () => {
+    expect(toolNameToFamily('image_view')).toBe('image-view')
+    expect(toolNameToFamily('view_image')).toBe('image-view')
+    expect(toolNameToFamily('mcp__TaskWraith__image_view')).toBe('image-view')
+    expect(toolNameToFamily('appshots')).toBe('image-view')
+    expect(toolNameToFamily('appwatch_frames')).toBe('image-view')
+    expect(toolNameToFamily('simulator_screenshot')).toBe('image-view')
   })
 
   it('maps mesh scene tools to the mesh family', () => {
@@ -176,8 +185,8 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('video_thumbnail')).toBe('video')
   })
 
-  it('maps attached_window_* tools to window-context (Appshots)', () => {
-    expect(toolNameToFamily('attached_window_capture')).toBe('window-context')
+  it('keeps attached-window status distinct from its image-returning capture', () => {
+    expect(toolNameToFamily('attached_window_capture')).toBe('image-view')
     expect(toolNameToFamily('attached_window_status')).toBe('window-context')
   })
 
@@ -324,6 +333,7 @@ describe('toolNameToFamily', () => {
       'browser',
       'window-context',
       'canvas',
+      'image-view',
       'image',
       'audio',
       'video',

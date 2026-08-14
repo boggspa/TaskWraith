@@ -30,6 +30,7 @@ import {
   compactGatewayV8MeshToolDefinitionsForTransport,
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
+  compactGatewayV17ToolDefinitionsForTransport,
   GATEWAY_V8_ADDED_TOOL_NAMES,
   GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
@@ -1764,9 +1765,16 @@ export function handleMcpJsonRpcMessage(
       gatewaySubsetOnly && meshTopologyDirect
         ? compactGatewayV15MeshToolDefinitionsForTransport(transportDirectTools)
         : transportDirectTools
+    // Presence is the immutable receipt signal: only v17+ direct catalogues
+    // contain image_view, so no extra launch flag is needed and old receipts
+    // retain their exact wire prose.
+    const imageViewCompactedTools =
+      gatewaySubsetOnly && directTools.some((tool) => tool.name === 'image_view')
+        ? compactGatewayV17ToolDefinitionsForTransport(profileCompactedTools)
+        : profileCompactedTools
     const baseTools = gatewaySubsetOnly
-      ? [...profileCompactedTools, ...gatewayToolDefinitions()]
-      : profileCompactedTools
+      ? [...imageViewCompactedTools, ...gatewayToolDefinitions()]
+      : imageViewCompactedTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return

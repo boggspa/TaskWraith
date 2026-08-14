@@ -2153,6 +2153,7 @@ export const TASKWRAITH_TOOL_ACTIONS = {
   ),
   skill_list: tool('orchestration', 'mcpTools', 'control.read', 'skills', 'none', 'none'),
   skill_read: tool('orchestration', 'mcpTools', 'control.read', 'skills', 'none', 'none'),
+  image_view: tool('workspace_read', 'mcpTools', 'media.read', 'image-tools', 'none', 'none'),
   image_edit: tool(
     'workspace_write',
     'mcpTools',

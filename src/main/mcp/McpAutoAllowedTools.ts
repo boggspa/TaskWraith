@@ -141,6 +141,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'find_files',
   'workspace_search',
   'workspace_symbols',
+  // Existing raster bytes only: source paths are workspace/grant realpath-
+  // jailed and sourceMediaIds must belong to this chat. No capture or mutation.
+  'image_view',
   // Runs a fixed-argv git status snapshot; it does not stage, modify, or
   // otherwise mutate the repository, so read-only and plan seats may inspect
   // their working tree without an approval prompt.

@@ -347,6 +347,7 @@ import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
 import {
+  applyBridgeToolResultIdentity,
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
   buildBridgeToolActivity
@@ -12846,6 +12847,10 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
     (id && [...state.activities].reverse().find((entry) => entry.id === id)) ||
     [...state.activities].reverse().find((entry) => entry.status === 'running')
   if (!activity) return
+  applyBridgeToolResultIdentity(
+    activity,
+    payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+  )
   // Codex streams INTERIM results while a patch builds (status 'running',
   // growing preview each time). Those must not flip the activity to
   // success / stamp endedAt — they refresh the stats below so remote

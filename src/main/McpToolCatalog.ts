@@ -5361,6 +5361,46 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'image_view',
+      description:
+        'View one or more EXISTING raster images and return them as image content blocks the model can inspect. ' +
+        'Use `path` / `paths` for PNG, JPEG, WebP, GIF, or BMP files inside the active workspace (or an explicit external-path grant), ' +
+        'or `sourceMediaId` / `sourceMediaIds` for image attachments already owned by this chat. Up to 8 images per call. ' +
+        'This does not capture a live app window: use appshots, appwatch_frames, canvas_screenshot, or simulator_screenshot for capture; ' +
+        'those pixel-returning calls share the same Image View transcript identity. Read-only and auto-approved.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'One workspace-relative or in-workspace absolute raster image path.'
+          },
+          paths: {
+            type: 'array',
+            maxItems: 8,
+            items: { type: 'string' },
+            description: 'Up to 8 workspace raster image paths, returned in this order.'
+          },
+          sourceMediaId: {
+            type: 'string',
+            description: 'One image attachment id already owned by this chat.'
+          },
+          sourceMediaIds: {
+            type: 'array',
+            maxItems: 8,
+            items: { type: 'string' },
+            description: 'Up to 8 image attachment ids already owned by this chat.'
+          }
+        }
+      }
+    },
+    {
       name: 'image_edit',
       description:
         'Edit an EXISTING image and return the result as a PNG attachment shown inline in the chat. ' +

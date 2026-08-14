@@ -49,10 +49,78 @@ function build(overrides: {
 }
 
 describe('isImageMcpToolName', () => {
-  it('recognizes the two image tools only', () => {
+  it('recognizes the three image tools only', () => {
+    expect(isImageMcpToolName('image_view')).toBe(true)
     expect(isImageMcpToolName('image_edit')).toBe(true)
     expect(isImageMcpToolName('svg_rasterize')).toBe(true)
     expect(isImageMcpToolName('canvas_screenshot')).toBe(false)
+  })
+})
+
+describe('image_view', () => {
+  it('returns one content block per ordered workspace path', async () => {
+    const { executors, resolveRasterSource } = build()
+    const result = await executors.executeImageTool(
+      'image_view',
+      { paths: ['screens/one.png', 'screens/two.png'] },
+      { workspacePath: '/workspace' }
+    )
+
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      tool: 'image_view',
+      imageCount: 2
+    })
+    expect(result.content?.filter((block) => block.type === 'image')).toHaveLength(2)
+    expect(resolveRasterSource).toHaveBeenNthCalledWith(
+      1,
+      { sourcePath: 'screens/one.png' },
+      { workspacePath: '/workspace' }
+    )
+    expect(resolveRasterSource).toHaveBeenNthCalledWith(
+      2,
+      { sourcePath: 'screens/two.png' },
+      { workspacePath: '/workspace' }
+    )
+  })
+
+  it('accepts chat-owned media ids', async () => {
+    const { executors, resolveRasterSource } = build()
+    const result = await executors.executeImageTool(
+      'image_view',
+      { sourceMediaIds: ['media-a', 'media-b'] },
+      { appChatId: 'chat-1' }
+    )
+    expect(result.content?.filter((block) => block.type === 'image')).toHaveLength(2)
+    expect(resolveRasterSource).toHaveBeenNthCalledWith(
+      1,
+      { sourceMediaId: 'media-a' },
+      { appChatId: 'chat-1' }
+    )
+  })
+
+  it('rejects empty and oversized batches', async () => {
+    const { executors, resolveRasterSource } = build()
+    const empty = await executors.executeImageTool('image_view', {}, {})
+    const oversized = await executors.executeImageTool(
+      'image_view',
+      { paths: Array.from({ length: 9 }, (_, index) => `${index}.png`) },
+      {}
+    )
+    expect(empty.isError).toBe(true)
+    expect(oversized.isError).toBe(true)
+    expect(oversized.text).toContain('max 8')
+    expect(resolveRasterSource).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a resolved source is not a raster image', async () => {
+    const { executors } = build({
+      raster: { ok: true, buffer: SVG_BYTES, mimeType: 'image/svg+xml' }
+    })
+    const result = await executors.executeImageTool('image_view', { path: 'fake.png' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('supported raster image')
   })
 })
 

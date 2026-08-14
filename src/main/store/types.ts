@@ -888,6 +888,10 @@ export type TaskWraithMcpProfileId =
   // either v15 direct birth catalogue.
   | 'taskwraith-gateway-v16'
   | 'taskwraith-gateway-v16-mesh'
+  // v17 promotes the canonical read-only image viewer to every fresh direct
+  // catalogue without mutating a receipted v16 session.
+  | 'taskwraith-gateway-v17'
+  | 'taskwraith-gateway-v17-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

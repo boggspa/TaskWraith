@@ -159,6 +159,15 @@ const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   // Diagnostics / web
   readlints: 'get_diagnostics',
   getdiagnostics: 'get_diagnostics',
+  // Existing raster-image inspection. Execution remains the exact broker
+  // `image_view` name; these aliases only coalesce provider-native transcript
+  // labels and historical telemetry onto that canonical identity.
+  viewimage: 'image_view',
+  imageview: 'image_view',
+  inspectimage: 'image_view',
+  openimage: 'image_view',
+  readimage: 'image_view',
+  displayimage: 'image_view',
   // Todos (Cursor createPlan stays non-catalog; todo_write is catalog)
   todo: 'todo_write',
   todowrite: 'todo_write'

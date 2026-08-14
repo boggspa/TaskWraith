@@ -36,6 +36,7 @@ export type ToolFamily =
   | 'browser'
   | 'window-context'
   | 'canvas'
+  | 'image-view'
   | 'image'
   | 'audio'
   | 'video'
@@ -136,6 +137,26 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
 
   // Exact-name buckets (most specific first).
   switch (normalised) {
+    case 'image_view':
+    case 'view_image':
+    case 'viewimage':
+    case 'imageview':
+    case 'inspect_image':
+    case 'inspectimage':
+    case 'open_image':
+    case 'openimage':
+    case 'read_image':
+    case 'readimage':
+    case 'display_image':
+    case 'displayimage':
+    case 'appshots':
+    case 'appwatch_latest_frame':
+    case 'appwatch_frames':
+    case 'attached_window_capture':
+    case 'browser_screenshot':
+    case 'canvas_screenshot':
+    case 'simulator_screenshot':
+      return 'image-view'
     case 'apply_patch':
     case 'applypatch':
       return 'patch'
@@ -184,7 +205,6 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'cancel_subthread':
     case 'collabtoolcall':
       return 'subthread'
-    case 'attached_window_capture':
     case 'attached_window_status':
       return 'window-context'
     case 'create_handoff_card':
@@ -307,7 +327,6 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_list':
     case 'canvas_status':
     case 'canvas_snapshot':
-    case 'canvas_screenshot':
     case 'canvas_inspect':
     case 'canvas_network':
     case 'canvas_console':
@@ -750,6 +769,15 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M5.8 16.4 9.5 12.3 12.4 15.2 14.6 12.9 18.5 16.5" />
           <circle cx="15.7" cy="8.3" r="1.45" />
           <path d="M7 7.4 11 7.3" />
+        </g>
+      )
+    case 'image-view':
+      return (
+        <g>
+          <path d="M6.3 4.5 19.7 4.8 19.2 16.3 5.9 16Z" />
+          <path d="M4 7.5 4.6 19.5 17.7 19.1" />
+          <path d="M7.6 13.7 10.4 10.8 12.7 13 14.7 11.1 17.6 13.8" />
+          <circle cx="15.8" cy="8" r="1.2" />
         </g>
       )
     case 'audio':

@@ -60,6 +60,18 @@ function activityProvider(activity: ToolActivity): string {
   return activity.metadata?.ensembleProvider || activity.metadata?.provider || ''
 }
 
+function rawActivityToolName(activity: ToolActivity): string {
+  const raw = activity.rawUseEvent
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ''
+  const record = raw as Record<string, unknown>
+  const nestedFunction =
+    record.function && typeof record.function === 'object' && !Array.isArray(record.function)
+      ? (record.function as Record<string, unknown>)
+      : {}
+  const value = record.tool_name || record.toolName || record.name || nestedFunction.name
+  return typeof value === 'string' ? value : ''
+}
+
 function stableParameterValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableParameterValue)
   if (!value || typeof value !== 'object') return value
@@ -90,9 +102,15 @@ function isMirroredClaudeTaskWraithActivity(
   providerActivity: ToolActivity,
   hostActivity: ToolActivity
 ): boolean {
-  const wrapperMatch = providerActivity.toolName.match(
-    /^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i
+  // Canonical activity projection can replace a provider wrapper name (for
+  // example mcp__TaskWraith__image_view -> image_view). Mirror proof still
+  // needs the exact wrapper, so recover it from the retained raw event.
+  const providerWrapperName = /^mcp__(?:taskwraith|taskwraith-broker)__/i.test(
+    providerActivity.toolName
   )
+    ? providerActivity.toolName
+    : rawActivityToolName(providerActivity)
+  const wrapperMatch = providerWrapperName.match(/^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i)
   if (!wrapperMatch || !providerActivity.id.startsWith('toolu_')) return false
   if (
     activityProvider(providerActivity) !== 'claude' ||

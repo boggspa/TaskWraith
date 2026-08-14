@@ -7,7 +7,7 @@ import {
 import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
 
 /**
- * image_edit + svg_rasterize MCP tool executors.
+ * image_view + image_edit + svg_rasterize MCP tool executors.
  *
  * Engine split (see OffscreenImageRenderer for the Electron impl):
  *  - crop / resize: pure `nativeImage` (no renderer).
@@ -25,7 +25,7 @@ import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMed
  *    cuts all network egress (XXE/SSRF containment).
  */
 
-export const IMAGE_MCP_TOOL_NAMES = ['image_edit', 'svg_rasterize'] as const
+export const IMAGE_MCP_TOOL_NAMES = ['image_view', 'image_edit', 'svg_rasterize'] as const
 export type ImageMcpToolName = (typeof IMAGE_MCP_TOOL_NAMES)[number]
 
 export function isImageMcpToolName(name: string): name is ImageMcpToolName {
@@ -42,6 +42,7 @@ export const MAX_OFFSCREEN_RENDER_PIXELS = 24_000_000
 const MAX_BLUR_RADIUS = 200
 const RENDER_TIMEOUT_MS = 20_000
 const MAX_SVG_CHARS = 2_000_000
+export const MAX_IMAGE_VIEW_ITEMS = 8
 
 export interface ImageRect {
   x: number
@@ -123,6 +124,37 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
 }
 
+interface ImageViewSource extends Record<string, unknown> {
+  sourcePath?: string
+  sourceMediaId?: string
+}
+
+function nonEmptyStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    : []
+}
+
+function imageViewSources(args: Record<string, unknown>): ImageViewSource[] {
+  const sources: ImageViewSource[] = []
+  const sourcePath = String(args.sourcePath || args.source_path || args.path || '').trim()
+  const sourceMediaId = String(
+    args.sourceMediaId || args.source_media_id || args.mediaId || args.media_id || ''
+  ).trim()
+  if (sourcePath) sources.push({ sourcePath })
+  if (sourceMediaId) sources.push({ sourceMediaId })
+
+  for (const path of nonEmptyStrings(args.sourcePaths ?? args.source_paths ?? args.paths)) {
+    sources.push({ sourcePath: path.trim() })
+  }
+  for (const mediaId of nonEmptyStrings(
+    args.sourceMediaIds ?? args.source_media_ids ?? args.mediaIds ?? args.media_ids
+  )) {
+    sources.push({ sourceMediaId: mediaId.trim() })
+  }
+  return sources
+}
+
 /** Wrap a produced PNG into a tool result AFTER the C2 output sniff. */
 function pngResult(toolName: string, value: Record<string, unknown>, png: Buffer): McpToolExecutionResult {
   const sniffed = sniffImageMime(png)
@@ -200,6 +232,68 @@ function parseRegion(raw: unknown, imgW: number, imgH: number): ImageRect | { er
 
 export function createImageToolExecutors(deps: ImageToolExecutorDeps): ImageToolExecutors {
   const { engine, resolveRasterSource, resolveSvgSource } = deps
+
+  async function executeImageView(
+    args: Record<string, unknown>,
+    ctx: ImageToolContext
+  ): Promise<McpToolExecutionResult> {
+    const sources = imageViewSources(args)
+    if (sources.length === 0) {
+      return fail(
+        'image_view',
+        'provide path/paths for workspace images or sourceMediaId/sourceMediaIds for chat images'
+      )
+    }
+    if (sources.length > MAX_IMAGE_VIEW_ITEMS) {
+      return fail(
+        'image_view',
+        `too many images (${sources.length}; max ${MAX_IMAGE_VIEW_ITEMS} per call)`
+      )
+    }
+
+    const blocks: McpToolContentBlock[] = []
+    const images: Array<Record<string, unknown>> = []
+    for (const sourceArgs of sources) {
+      const source = await resolveRasterSource(sourceArgs, ctx)
+      if (!source.ok) {
+        const label = sourceArgs.sourcePath || sourceArgs.sourceMediaId || 'image'
+        return fail('image_view', `could not read ${label}: ${source.reason}`)
+      }
+      const mimeType = sniffImageMime(source.buffer)
+      if (!isTranscriptRasterImageMime(mimeType) || isTranscriptSvgMime(mimeType)) {
+        return fail('image_view', 'source is not a supported raster image')
+      }
+      if (source.buffer.byteLength > TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES) {
+        return fail(
+          'image_view',
+          `image is too large (${source.buffer.byteLength} bytes; max ${TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES})`
+        )
+      }
+      blocks.push({
+        type: 'image',
+        mimeType: mimeType as string,
+        data: source.buffer.toString('base64')
+      })
+      images.push({
+        ...sourceArgs,
+        mimeType,
+        byteLength: source.buffer.byteLength
+      })
+    }
+
+    const value = {
+      ok: true,
+      tool: 'image_view',
+      imageCount: blocks.length,
+      images
+    }
+    const text = JSON.stringify(value)
+    return {
+      text,
+      structuredContent: value,
+      content: [{ type: 'text', text }, ...blocks]
+    }
+  }
 
   async function executeImageEdit(
     args: Record<string, unknown>,
@@ -298,6 +392,7 @@ export function createImageToolExecutors(deps: ImageToolExecutorDeps): ImageTool
   return {
     executeImageTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
+      if (toolName === 'image_view') return executeImageView(args, ctx)
       if (toolName === 'image_edit') return executeImageEdit(args, ctx)
       return executeSvgRasterize(args, ctx)
     }

@@ -12710,6 +12710,58 @@ Next action:
     expect(participantMessages[2].content).toContain('Found it')
   })
 
+  it('coalesces Codex exec image viewers in ensemble transcript metadata', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Inspect the screenshots.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    const input =
+      'const paths = ["one.png", "two.png", "three.png", "four.png"]; for (const path of paths) await tools.view_image({ path });'
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_use',
+      tool_id: 'codex-images',
+      tool_name: 'exec',
+      input
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'codex-images',
+      content: [
+        { type: 'image', mimeType: 'image/png', data: 'one' },
+        { type: 'image', mimeType: 'image/png', data: 'two' }
+      ]
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    expect(
+      harness.chat.messages.find((message) => message.role === 'tool')?.toolActivities?.[0]
+    ).toMatchObject({
+      toolName: 'image_view',
+      displayName: 'Image View',
+      category: 'read',
+      parameters: { input, imageCount: 2 }
+    })
+  })
+
   it('preserves ensemble transcript row timestamps across streaming re-flushes', async () => {
     let tick = 0
     const harness = makeHarness({
@@ -18735,10 +18787,7 @@ Next action:
     const bossRunId = harness.dispatched[0].appRunId!
     const foregroundRun = (
       harness.orchestrator as unknown as {
-        runsByRunId: Map<
-          string,
-          { transportDispatchState?: string; promptShellStamp?: string }
-        >
+        runsByRunId: Map<string, { transportDispatchState?: string; promptShellStamp?: string }>
       }
     ).runsByRunId.get(bossRunId)
     expect(foregroundRun?.transportDispatchState).toBe('accepted')

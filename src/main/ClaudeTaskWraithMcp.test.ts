@@ -12,8 +12,8 @@ import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
   GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V13_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS
+  GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V17_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
@@ -150,11 +150,13 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args).not.toContain('--core-subset')
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V13_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V13_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(GATEWAY_V17_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_V17_MCP_ADVERTISE_TOOLS) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
+    expect(allowed).toContain('image_view')
+    expect(allowed).toContain('mcp__TaskWraith__image_view')
     expect(allowed).toContain('canvas_sketch_open')
     expect(allowed).toContain('canvas_sketch_get')
     expect(allowed).toContain('canvas_sketch_update')

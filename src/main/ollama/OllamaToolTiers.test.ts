@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_V16_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V17_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES,
@@ -15,10 +15,10 @@ import {
 } from './OllamaToolTiers'
 
 describe('Ollama tool surface governance', () => {
-  it('uses the exact immutable fresh gateway-v16 direct membership as the catalog alias', () => {
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V16_MCP_DIRECT_TOOLS)
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(GATEWAY_V16_MCP_DIRECT_TOOLS.length)
-    for (const name of GATEWAY_V16_MCP_DIRECT_TOOLS) {
+  it('uses the exact immutable fresh gateway-v17 direct membership as the catalog alias', () => {
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V17_MCP_DIRECT_TOOLS)
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(GATEWAY_V17_MCP_DIRECT_TOOLS.length)
+    for (const name of GATEWAY_V17_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)
     }
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toEqual(
@@ -26,6 +26,7 @@ describe('Ollama tool surface governance', () => {
     )
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toContain('ensemble_control')
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toContain('delegate_wave')
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toContain('image_view')
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).not.toContain('ensemble_bossman_control')
     expect(isOllamaAdvertisedTool('video_thumbnail')).toBe(false)
     expect(isOllamaAdvertisedTool('simulator_status')).toBe(false)
@@ -36,14 +37,14 @@ describe('Ollama tool surface governance', () => {
   it('hard-excludes sub-thread tools from the live Ollama advertise/callable surface', () => {
     const advertised = ollamaAdvertisedToolNames()
     const excludedDirectCount = OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES.filter((name) =>
-      (GATEWAY_V16_MCP_DIRECT_TOOLS as readonly string[]).includes(name)
+      (GATEWAY_V17_MCP_DIRECT_TOOLS as readonly string[]).includes(name)
     ).length
     expect(advertised).not.toContain('delegate_to_subthread')
     expect(advertised).not.toContain('delegate_wave')
     expect(advertised).not.toContain('list_subthreads')
     expect(advertised).not.toContain('read_subthread_result')
     expect(advertised).not.toContain('cancel_subthread')
-    expect(advertised).toHaveLength(GATEWAY_V16_MCP_DIRECT_TOOLS.length - excludedDirectCount)
+    expect(advertised).toHaveLength(GATEWAY_V17_MCP_DIRECT_TOOLS.length - excludedDirectCount)
     expect(isOllamaExcludedSubthreadTool('delegate_to_subthread')).toBe(true)
     expect(isOllamaExcludedSubthreadTool('delegate_wave')).toBe(true)
     expect(ollamaCallableToolNames()).not.toContain('delegate_to_subthread')
@@ -80,12 +81,13 @@ describe('Ollama tool surface governance', () => {
 
   it('intersects the gateway set with the shared safe set for read-only runs', () => {
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
-    const expected = GATEWAY_V16_MCP_DIRECT_TOOLS.filter(
+    const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
       (name) => safeNames.has(name) && !isOllamaExcludedSubthreadTool(name)
     )
     const actual = ollamaAdvertisedToolNames({ readOnly: true })
     expect(actual).toEqual(expected)
     expect(actual).toContain('read_file')
+    expect(actual).toContain('image_view')
     expect(actual).toContain('ask_user_question')
     expect(actual).toContain('blackboard_read')
     expect(actual).not.toContain('write_file')
@@ -100,7 +102,7 @@ describe('Ollama tool surface governance', () => {
 
   it('adds approval-gated Sketch mutation for Plan without exposing general writes', () => {
     const planNames = new Set(PLAN_MCP_ADVERTISE_TOOLS)
-    const expected = GATEWAY_V16_MCP_DIRECT_TOOLS.filter(
+    const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
       (name) => planNames.has(name) && !isOllamaExcludedSubthreadTool(name)
     )
     const actual = ollamaAdvertisedToolNames({ readOnly: true, plan: true })
@@ -135,7 +137,7 @@ describe('Ollama tool surface governance', () => {
     const edits = ollamaToolNamesForTier('approved_edits')
     const shell = ollamaToolNamesForTier('approved_shell')
     const parity = ollamaToolNamesForTier('provider_parity')
-    const expected = GATEWAY_V16_MCP_DIRECT_TOOLS.filter(
+    const expected = GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
       (name) => !isOllamaExcludedSubthreadTool(name)
     )
 

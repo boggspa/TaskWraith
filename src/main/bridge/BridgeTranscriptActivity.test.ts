@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyBridgeToolResultIdentity,
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
   buildBridgeToolActivity
@@ -127,5 +128,56 @@ describe('BridgeTranscriptActivity', () => {
       deletions: 0,
       source: 'content'
     })
+  })
+
+  it('coalesces a Codex exec wrapper carrying native Image View source', () => {
+    const input =
+      'const paths = ["one.png", "two.png", "three.png", "four.png"]; for (const path of paths) await tools.view_image({ path });'
+    const activity = buildBridgeToolActivity({
+      provider: 'codex',
+      activityIndex: 0,
+      payload: {
+        tool_id: 'codex-images',
+        tool_name: 'exec',
+        input
+      }
+    })
+
+    expect(activity).toMatchObject({
+      toolName: 'image_view',
+      displayName: 'Image View',
+      category: 'read',
+      parameters: { input, imageCount: 4 }
+    })
+  })
+
+  it('persists one canonical Image View identity and result count', () => {
+    const payload = {
+      tool_id: 'images-1',
+      tool_name: 'appshots',
+      parameters: { count: 4 }
+    }
+    const activity = buildBridgeToolActivity({
+      provider: 'codex',
+      activityIndex: 0,
+      nowIso: () => '2026-08-14T10:50:00.000Z',
+      payload
+    })
+
+    expect(activity).toMatchObject({
+      toolName: 'image_view',
+      displayName: 'Image View',
+      category: 'read',
+      parameters: { imageCount: 4 },
+      rawUseEvent: payload
+    })
+
+    applyBridgeToolResultIdentity(activity, {
+      content: [
+        { type: 'image', mimeType: 'image/png', data: 'one' },
+        { type: 'image', mimeType: 'image/png', data: 'two' }
+      ]
+    })
+    expect(activity.parameters).toMatchObject({ imageCount: 2 })
   })
 })

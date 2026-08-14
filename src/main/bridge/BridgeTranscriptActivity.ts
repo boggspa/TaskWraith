@@ -1,5 +1,13 @@
 import type { ChatMessage, ProviderId, ToolActivity } from '../store/types'
 import { bridgeToolDiffStats } from './BridgeToolDiffStats'
+import {
+  canonicalImageViewToolName,
+  IMAGE_VIEW_DISPLAY_NAME,
+  IMAGE_VIEW_TOOL_NAME,
+  imageViewCountFromParameters,
+  imageViewCountFromResult,
+  isImageViewToolUse
+} from '../../shared/imageViewIdentity'
 
 const BRIDGE_TOOL_CATEGORY_RULES: Array<{
   pattern: RegExp
@@ -31,7 +39,8 @@ function parametersRecord(value: unknown): Record<string, unknown> {
     try {
       return recordValue(JSON.parse(value))
     } catch {
-      return {}
+      // Native wrapper tools can carry executable source instead of JSON.
+      return { input: value }
     }
   }
   return recordValue(value)
@@ -84,6 +93,7 @@ export function bridgeToolCategory(name: string, kind = ''): ToolActivity['categ
 }
 
 export function bridgeToolDisplayName(name: string): string {
+  if (isImageViewToolUse(name)) return IMAGE_VIEW_DISPLAY_NAME
   const cleaned = name.replace(/^mcp__\w+__/i, '').replace(/[_-]+/g, ' ').trim()
   return cleaned ? cleaned[0].toUpperCase() + cleaned.slice(1) : name
 }
@@ -138,9 +148,22 @@ export function buildBridgeToolActivity(input: {
       payload.toolCallId ||
       `bridge-tool-${activityIndex + 1}`
   )
-  const parameters = parametersRecord(
+  const rawParameters = parametersRecord(
     payload.parameters ?? payload.input ?? payload.arguments ?? payload.params
   )
+  const innerName =
+    /^(use_tool|call_tool|mcp)$/i.test(toolName) && typeof rawParameters.tool_name === 'string'
+      ? rawParameters.tool_name
+      : undefined
+  const effectiveName = innerName || toolName
+  const canonicalName = canonicalImageViewToolName(effectiveName, rawParameters)
+  const parameterImageCount =
+    canonicalName === IMAGE_VIEW_TOOL_NAME
+      ? imageViewCountFromParameters(rawParameters)
+      : undefined
+  const parameters = parameterImageCount
+    ? { ...rawParameters, imageCount: parameterImageCount }
+    : rawParameters
   const filePath =
     stringValue(parameters.path) ||
     stringValue(parameters.file_path) ||
@@ -154,11 +177,6 @@ export function buildBridgeToolActivity(input: {
     stringValue(parameters.destinationPath) ||
     stringValue(parameters.destination_path) ||
     undefined
-  const innerName =
-    /^(use_tool|call_tool|mcp)$/i.test(toolName) && typeof parameters.tool_name === 'string'
-      ? parameters.tool_name
-      : undefined
-  const effectiveName = innerName || toolName
   const toolKind =
     stringValue(payload.tool_kind) ||
     stringValue(payload.toolKind) ||
@@ -174,14 +192,35 @@ export function buildBridgeToolActivity(input: {
 
   return {
     id,
-    toolName,
-    displayName: bridgeToolDisplayName(effectiveName),
-    category: bridgeToolCategory(effectiveName, toolKind),
+    toolName: canonicalName,
+    displayName:
+      canonicalName === IMAGE_VIEW_TOOL_NAME
+        ? IMAGE_VIEW_DISPLAY_NAME
+        : bridgeToolDisplayName(effectiveName),
+    category:
+      canonicalName === IMAGE_VIEW_TOOL_NAME ? 'read' : bridgeToolCategory(effectiveName, toolKind),
     status: 'running',
     startedAt: nowIso(),
     parameters,
+    rawUseEvent: payload,
     metadata: { provider },
     ...(effectiveFilePath ? { filePath: effectiveFilePath } : {}),
     ...(diffSummary ? { diffSummary } : {})
+  }
+}
+
+/** Apply result-derived Image View count/identity at the bridge ingestion seam. */
+export function applyBridgeToolResultIdentity(
+  activity: ToolActivity,
+  payload: Record<string, unknown>
+): void {
+  activity.rawResultEvent = payload
+  if (!isImageViewToolUse(activity.toolName, activity.parameters)) return
+  const imageCount = imageViewCountFromResult(payload)
+  activity.toolName = IMAGE_VIEW_TOOL_NAME
+  activity.displayName = IMAGE_VIEW_DISPLAY_NAME
+  activity.category = 'read'
+  if (imageCount) {
+    activity.parameters = { ...(activity.parameters || {}), imageCount }
   }
 }

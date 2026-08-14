@@ -90,6 +90,11 @@ import {
 } from './DiffHoverPreview'
 import { TranscriptFileTarget } from './TranscriptFileTarget'
 import { CollapsedTranscriptRow } from './CollapsedTranscriptRow'
+import {
+  IMAGE_VIEW_DISPLAY_NAME,
+  isImageViewToolUse,
+  resolveImageViewCount
+} from '../../../shared/imageViewIdentity'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -1477,7 +1482,14 @@ function getBaseName(path: string): string {
 }
 
 /** Compact-group summary buckets — mirror the settled-stack one-liner voice. */
-type CompactLabelFamily = 'read' | 'write' | 'search' | 'shell' | 'task' | 'other'
+type CompactLabelFamily =
+  | 'image-view'
+  | 'read'
+  | 'write'
+  | 'search'
+  | 'shell'
+  | 'task'
+  | 'other'
 
 const COMPACT_LABEL_MAX_PARTS = 4
 
@@ -1492,6 +1504,7 @@ function pluralizeCompact(count: number, singular: string, plural = `${singular}
  * shell and task glyphs.
  */
 function resolveCompactLabelFamily(activity: ToolActivity): CompactLabelFamily {
+  if (isImageViewToolUse(activity.toolName, activity.parameters)) return 'image-view'
   if (isSearchActivity(activity) || activity.category === 'search') return 'search'
   if (activity.category === 'read') return 'read'
   if (activity.category === 'write' || isWriteLikeToolName(activity.toolName || '')) return 'write'
@@ -1501,6 +1514,8 @@ function resolveCompactLabelFamily(activity: ToolActivity): CompactLabelFamily {
   const family = toolNameToFamily(activity.toolName)
   if (!family) return 'other'
   switch (family) {
+    case 'image-view':
+      return 'image-view'
     case 'search':
       return 'search'
     case 'file':
@@ -1522,6 +1537,8 @@ function resolveCompactLabelFamily(activity: ToolActivity): CompactLabelFamily {
 
 function compactLabelPart(family: CompactLabelFamily, count: number): string {
   switch (family) {
+    case 'image-view':
+      return `Viewed ${pluralizeCompact(count, 'image')}`
     case 'read':
       return `Read ${pluralizeCompact(count, 'file')}`
     case 'write':
@@ -1558,7 +1575,11 @@ export function buildCompactGroupLabel(activities: readonly ToolActivity[]): str
   for (const activity of activities) {
     const family = resolveCompactLabelFamily(activity)
     if (!counts.has(family)) order.push(family)
-    counts.set(family, (counts.get(family) || 0) + 1)
+    const increment =
+      family === 'image-view'
+        ? resolveImageViewCount(activity.parameters, activity.rawResultEvent)
+        : 1
+    counts.set(family, (counts.get(family) || 0) + increment)
   }
   const parts = order.map((family) => compactLabelPart(family, counts.get(family) || 0))
   return joinCompactLabelParts(parts)
@@ -1750,7 +1771,11 @@ export function buildCompactGroupTargetSummary(
  * reads (distinct tools). */
 function activityFamilyKey(activity: ToolActivity): string {
   const actor = activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? ''
-  const family = isSearchActivity(activity) ? 'search' : activity.category
+  const family = isImageViewToolUse(activity.toolName, activity.parameters)
+    ? 'image-view'
+    : isSearchActivity(activity)
+      ? 'search'
+      : activity.category
   return `${actor}|${family}`
 }
 
@@ -2376,6 +2401,10 @@ function getInlineActivityTitle(
     return <CallMcpToolEasterEgg />
   }
 
+  if (isImageViewToolUse(activity.toolName, activity.parameters)) {
+    return <>{IMAGE_VIEW_DISPLAY_NAME}</>
+  }
+
   if (filePath) {
     return (
       <ActivityTitle
@@ -2472,6 +2501,10 @@ function ActivityTitle({
 }) {
   if (isCallMcpToolActivity(activity)) {
     return <CallMcpToolEasterEgg />
+  }
+
+  if (isImageViewToolUse(activity.toolName, activity.parameters)) {
+    return <>{IMAGE_VIEW_DISPLAY_NAME}</>
   }
 
   // 1.0.4 — same structured render as the inline path for

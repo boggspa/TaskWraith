@@ -284,6 +284,31 @@ describe('buildCompactGroupLabel', () => {
     ).toBe('Searched ×2')
   })
 
+  it('counts viewed images rather than wrapper tool calls', () => {
+    expect(
+      buildCompactGroupLabel([
+        activity({
+          id: 'images-1',
+          category: 'read',
+          toolName: 'image_view',
+          parameters: { paths: ['one.png', 'two.png', 'three.png', 'four.png'] }
+        })
+      ])
+    ).toBe('Viewed 4 images')
+
+    expect(
+      buildCompactGroupLabel([
+        activity({
+          id: 'images-2',
+          category: 'unknown',
+          toolName: 'appshots',
+          parameters: { imageCount: 2 }
+        }),
+        activity({ id: 'read-1', category: 'read', toolName: 'read_file' })
+      ])
+    ).toBe('Viewed 2 images · Read 1 file')
+  })
+
   it('joins mixed families with · in first-appearance order', () => {
     expect(
       buildCompactGroupLabel([

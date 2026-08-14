@@ -36,6 +36,8 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveCatalogToolName('create_file')).toBe('write_file')
     expect(resolveCatalogToolName('delete_file')).toBe('delete_path')
     expect(resolveCatalogToolName('run_terminal_command')).toBe('run_shell_command')
+    expect(resolveCatalogToolName('view_image')).toBe('image_view')
+    expect(resolveCatalogToolName('InspectImage')).toBe('image_view')
   })
 
   it('preserves explicit TaskWraith catalog names', () => {

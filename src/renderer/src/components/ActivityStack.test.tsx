@@ -103,6 +103,29 @@ describe('ActivityStack provider accent scope', () => {
     expect(html).toContain('activity-tool-call-viewport')
     expect(html).not.toContain('--provider-pi-color')
   })
+
+  it('renders a canonical Image View row with the provider-accent monoline glyph', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          {
+            id: 'image-view-1',
+            toolName: 'image_view',
+            displayName: 'Image View',
+            category: 'read',
+            status: 'success',
+            parameters: { paths: ['one.png', 'two.png'] }
+          }
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Image View')
+    expect(html).toContain('activity-inline-icon category-read')
+    expect(html).toContain('M6.3 4.5 19.7 4.8 19.2 16.3 5.9 16Z')
+    expect(html).toContain('--accent:var(--provider-codex-color, var(--accent))')
+  })
 })
 
 describe('ActivityStack ensemble_yield rendering', () => {

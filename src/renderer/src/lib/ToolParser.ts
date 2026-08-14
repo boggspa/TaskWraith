@@ -12,6 +12,14 @@ import {
   catalogToolOperationCategory,
   isCatalogFileEditTool
 } from '../../../shared/canonicalToolCoalesce'
+import {
+  canonicalImageViewToolName,
+  IMAGE_VIEW_DISPLAY_NAME,
+  IMAGE_VIEW_TOOL_NAME,
+  imageViewCountFromParameters,
+  imageViewCountFromResult,
+  isImageViewToolUse
+} from '../../../shared/imageViewIdentity'
 
 export function extractToolName(event: any): string {
   if (!event || typeof event !== 'object') return 'unknown'
@@ -60,7 +68,7 @@ export function extractParentToolCallId(event: any): string | undefined {
 
 export function extractParameters(event: any): Record<string, unknown> {
   if (!event || typeof event !== 'object') return {}
-  return (
+  const raw =
     event.parameters ||
     event.params ||
     event.payload ||
@@ -68,7 +76,20 @@ export function extractParameters(event: any): Record<string, unknown> {
     event.input ||
     event.arguments ||
     {}
-  )
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // Provider-native wrapper tools (notably Codex `exec`) carry source text.
+    }
+    return { input: raw }
+  }
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {}
 }
 
 /**
@@ -471,6 +492,7 @@ export function isReasoningToolName(toolName: string): boolean {
 export function getToolCategory(toolName: string): ToolCategory {
   const name = (toolName || '').toLowerCase()
   const unqualifiedName = stripToolNamespace(name)
+  if (isImageViewToolUse(toolName)) return 'read'
   if (TASK_LIKE_TOOL_NAMES.has(unqualifiedName)) return 'task'
   if (isReasoningToolName(unqualifiedName)) return 'task'
   const operationCategory = catalogToolOperationCategory(toolName)
@@ -605,6 +627,8 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
     (params.draftPath as string) ||
     ''
   const target = getFirstStringParam(params, ['target', 'participant', 'to', 'next'])
+
+  if (isImageViewToolUse(toolName, params)) return IMAGE_VIEW_DISPLAY_NAME
 
   if (unqualifiedName === 'creative_app_status') return 'Creative app status'
   if (unqualifiedName === 'creative_app_capabilities') return 'Creative app capabilities'
@@ -1035,13 +1059,22 @@ export function deriveToolDiffSummary(
 }
 
 export function createToolActivity(toolUseEvent: any): ToolActivity {
-  const toolName = extractToolName(toolUseEvent)
-  const parameters = extractParameters(toolUseEvent)
+  const rawToolName = extractToolName(toolUseEvent)
+  const rawParameters = extractParameters(toolUseEvent)
+  const toolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const parameterImageCount =
+    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(rawParameters) : undefined
+  const parameters = parameterImageCount
+    ? { ...rawParameters, imageCount: parameterImageCount }
+    : rawParameters
   // Prefer a transport-supplied canonical kind (e.g. Grok ACP `tool_kind`) for
   // the category icon — the human tool label is often a freeform title ("Write
   // `package.json`") that name-based resolution can't categorise. Fall back to
   // name-based resolution when no usable kind is present.
-  const category = mapToolKindToCategory(extractToolKind(toolUseEvent)) ?? getToolCategory(toolName)
+  const category =
+    toolName === IMAGE_VIEW_TOOL_NAME
+      ? 'read'
+      : mapToolKindToCategory(extractToolKind(toolUseEvent)) ?? getToolCategory(toolName)
   const displayName = getToolDisplayName(toolName, parameters)
   const filePath = getPathFromRecord(parameters)
   const parentToolCallId = extractParentToolCallId(toolUseEvent)
@@ -1162,10 +1195,23 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
   const inferred = inferNamelessActivityFromResult(activity, resultOutput)
   const inferredToolName = inferred.toolName || activity.toolName
   const inferredParameters = inferred.parameters || activity.parameters
+  const imageView = isImageViewToolUse(inferredToolName, inferredParameters)
+  const returnedImageCount = imageView ? imageViewCountFromResult(toolResultEvent) : undefined
+  const pairedParameters = returnedImageCount
+    ? { ...(inferredParameters || {}), imageCount: returnedImageCount }
+    : inferredParameters
 
   return {
     ...activity,
     ...inferred,
+    ...(imageView
+      ? {
+          toolName: IMAGE_VIEW_TOOL_NAME,
+          displayName: IMAGE_VIEW_DISPLAY_NAME,
+          category: 'read' as const
+        }
+      : {}),
+    parameters: pairedParameters,
     status,
     endedAt,
     durationMs,
@@ -1175,7 +1221,7 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     // that; every estimate-versus-estimate outcome below is unchanged.
     diffSummary: preserveMeasuredDiffSummary(
       activity.diffSummary,
-      deriveToolDiffSummary(inferredToolName, inferredParameters, resultOutput) ||
+      deriveToolDiffSummary(inferredToolName, pairedParameters, resultOutput) ||
         inferred.diffSummary ||
         activity.diffSummary
     ),
