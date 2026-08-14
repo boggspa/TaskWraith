@@ -13,7 +13,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 
 // v2 receipts carry `groupExitVerified`. A v1 receipt cannot distinguish "the
 // whole group is gone" from "the group leader exited and we assumed the rest
@@ -25,6 +25,8 @@ const GROUP_EXIT_POLL_MS = 50
 const GROUP_EXIT_GRACE_MS = 5_000
 const MIN_RUN_TIMEOUT_MS = 30_000
 const MAX_RUN_TIMEOUT_MS = 30 * 60 * 1_000
+const PROCESS_TABLE_MAX_BYTES = 2 * 1024 * 1024
+const PROCESS_TABLE_TIMEOUT_MS = 2_000
 
 let child = null
 let spec = null
@@ -37,6 +39,12 @@ let forceKillSentAt = null
 let deadlineTimer = null
 let groupExitTimer = null
 let terminal = false
+let artifactHome = null
+let artifactHomeAliases = []
+let baselinePids = new Set()
+let artifactScanError = null
+let lastProcessRows = []
+const detachedProcessGroups = new Map()
 
 function boundedTail(previous, chunk) {
   const next = previous + String(chunk)
@@ -131,6 +139,122 @@ function validateSpec(candidate) {
   }
 }
 
+function parseProcessRows(stdout) {
+  const rows = []
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+    if (!match) continue
+    rows.push({
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      pgid: Number(match[3]),
+      command: match[4]
+    })
+  }
+  return rows
+}
+
+function sampleProcessRows() {
+  const result = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], {
+    encoding: 'utf8',
+    timeout: PROCESS_TABLE_TIMEOUT_MS,
+    maxBuffer: PROCESS_TABLE_MAX_BYTES
+  })
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+    artifactScanError = String(
+      result.error?.message || result.stderr || `ps exited with status ${String(result.status)}`
+    ).slice(0, 1000)
+    return null
+  }
+  artifactScanError = null
+  lastProcessRows = parseProcessRows(result.stdout)
+  return lastProcessRows
+}
+
+function commandContainsBoundedPath(command, boundedPath) {
+  let offset = 0
+  while (offset <= command.length) {
+    const index = command.indexOf(boundedPath, offset)
+    if (index < 0) return false
+    const before = index === 0 ? '' : command[index - 1]
+    const afterIndex = index + boundedPath.length
+    const after = afterIndex >= command.length ? '' : command[afterIndex]
+    const beforeIsBoundary = index === 0 || /[\s="'(,]/.test(before)
+    const afterIsBoundary = after === '' || after === path.sep || /[\s"'),:]/.test(after)
+    if (beforeIsBoundary && afterIsBoundary) return true
+    offset = index + boundedPath.length
+  }
+  return false
+}
+
+function commandReferencesArtifactHome(command) {
+  return artifactHomeAliases.some((home) => commandContainsBoundedPath(command, home))
+}
+
+function discoverDetachedProcessGroups() {
+  if (!artifactHome || process.platform === 'win32') return true
+  const rows = sampleProcessRows()
+  if (!rows) return false
+  const candidates = new Map()
+  for (const row of rows) {
+    if (
+      !Number.isSafeInteger(row.pgid) ||
+      row.pgid <= 0 ||
+      row.pgid === childPgid ||
+      !commandReferencesArtifactHome(row.command)
+    ) {
+      continue
+    }
+    const evidencePids = candidates.get(row.pgid) || []
+    evidencePids.push(row.pid)
+    candidates.set(row.pgid, evidencePids)
+  }
+
+  for (const [pgid, evidencePids] of candidates.entries()) {
+    const members = rows.filter((row) => row.pgid === pgid)
+    const known = detachedProcessGroups.get(pgid) || {
+      pgid,
+      evidencePids: new Set(),
+      memberPids: new Set(),
+      requiredForceKill: false
+    }
+    for (const pid of evidencePids) known.evidencePids.add(pid)
+    for (const member of members) known.memberPids.add(member.pid)
+    detachedProcessGroups.set(pgid, known)
+  }
+  return true
+}
+
+function detachedGroupsHaveMembers() {
+  const scanSucceeded = discoverDetachedProcessGroups()
+  if (!scanSucceeded) return true
+  const knownPgids = new Set(detachedProcessGroups.keys())
+  return lastProcessRows.some((row) => knownPgids.has(row.pgid))
+}
+
+function signalDetachedProcessGroups(signal) {
+  discoverDetachedProcessGroups()
+  for (const group of detachedProcessGroups.values()) {
+    try {
+      process.kill(-group.pgid, signal)
+      if (signal === 'SIGKILL') group.requiredForceKill = true
+    } catch {
+      // ESRCH means the exact detached group is already gone. The poll proves it.
+    }
+  }
+}
+
+function detachedProcessGroupReceipt() {
+  return [...detachedProcessGroups.values()]
+    .sort((left, right) => left.pgid - right.pgid)
+    .map((group) => ({
+      pgid: group.pgid,
+      evidencePids: [...group.evidencePids].sort((left, right) => left - right),
+      memberPids: [...group.memberPids].sort((left, right) => left - right),
+      ...(group.requiredForceKill ? { requiredForceKill: true } : {})
+    }))
+}
+
 function receipt(status, extra = {}) {
   if (!spec) return
   const payload = {
@@ -140,6 +264,11 @@ function receipt(status, extra = {}) {
     controllerPid: process.pid,
     childPid: child && Number.isInteger(child.pid) ? child.pid : null,
     childPgid,
+    artifactHome,
+    artifactHomeAliases,
+    baselineProcessCount: baselinePids.size,
+    detachedProcessGroups: detachedProcessGroupReceipt(),
+    ...(artifactScanError ? { artifactScanError } : {}),
     instanceId: spec.env.TASKWRAITH_INSTANCE_ID || null,
     command: spec.command,
     startedAt: receipt.startedAt || new Date().toISOString(),
@@ -202,12 +331,14 @@ function ownedGroupHasMembers() {
 }
 
 function forceKillOwnedGroup() {
-  if (process.platform === 'win32' || !childPgid) return
-  try {
-    process.kill(-childPgid, 'SIGKILL')
-  } catch {
-    // ESRCH only means the group is already gone; the poll below confirms it.
+  if (process.platform !== 'win32' && childPgid) {
+    try {
+      process.kill(-childPgid, 'SIGKILL')
+    } catch {
+      // ESRCH only means the group is already gone; the poll below confirms it.
+    }
   }
+  signalDetachedProcessGroups('SIGKILL')
 }
 
 function scheduleForceKill(reason) {
@@ -233,6 +364,8 @@ function complete(status, extra = {}) {
     childPid: child && Number.isInteger(child.pid) ? child.pid : null,
     childPgid,
     groupExitVerified: extra.groupExitVerified === true,
+    detachedGroupExitVerified: extra.detachedGroupExitVerified === true,
+    detachedProcessGroups: detachedProcessGroupReceipt(),
     reason: extra.reason || null,
     receiptPath: spec && spec.receiptPath
   })
@@ -251,26 +384,39 @@ function complete(status, extra = {}) {
  */
 function finalizeAfterChildExit(status, extra) {
   if (terminal) return
-  if (!ownedGroupHasMembers()) {
+  const groupsHaveMembers = () => ({
+    primary: ownedGroupHasMembers(),
+    detached: detachedGroupsHaveMembers()
+  })
+  const first = groupsHaveMembers()
+  if (!first.primary && !first.detached) {
     complete(status, {
       ...extra,
       groupExitVerified: true,
+      detachedGroupExitVerified: true,
       ...(forceKillSentAt !== null ? { groupRequiredForceKill: true } : {})
     })
     return
   }
 
-  receipt('group_survived_leader', extra)
+  receipt('group_survived_leader', {
+    ...extra,
+    primaryGroupSurvived: first.primary,
+    detachedGroupSurvived: first.detached
+  })
   if (!reapingReason) {
     signalOwnedGroup('SIGTERM')
+    signalDetachedProcessGroups('SIGTERM')
     scheduleForceKill(extra.reason || 'child_exit')
   }
   const poll = () => {
     if (terminal) return
-    if (!ownedGroupHasMembers()) {
+    const remaining = groupsHaveMembers()
+    if (!remaining.primary && !remaining.detached) {
       complete(status, {
         ...extra,
         groupExitVerified: true,
+        detachedGroupExitVerified: true,
         ...(forceKillSentAt !== null ? { groupRequiredForceKill: true } : {})
       })
       return
@@ -278,8 +424,13 @@ function finalizeAfterChildExit(status, extra) {
     if (forceKillSentAt !== null && Date.now() >= forceKillSentAt + GROUP_EXIT_GRACE_MS) {
       complete('reap_incomplete', {
         ...extra,
-        groupExitVerified: false,
-        error: `process group ${childPgid} still had members ${GROUP_EXIT_GRACE_MS}ms after SIGKILL`
+        groupExitVerified: !remaining.primary,
+        detachedGroupExitVerified: !remaining.detached,
+        error: artifactScanError
+          ? `artifact-bound process scan failed after SIGKILL: ${artifactScanError}`
+          : `owned process groups still had members ${GROUP_EXIT_GRACE_MS}ms after SIGKILL (primary=${String(
+              remaining.primary
+            )}, detached=${String(remaining.detached)})`
       })
       return
     }
@@ -293,6 +444,7 @@ function beginReap(reason) {
   reapingReason = reason
   receipt('reaping', { reason })
   signalOwnedGroup('SIGTERM')
+  signalDetachedProcessGroups('SIGTERM')
   scheduleForceKill(reason)
 }
 
@@ -301,6 +453,22 @@ function launch(candidate) {
   spec = validateSpec(candidate)
   if (!process.connected) {
     throw new Error('owner IPC disconnected before launch')
+  }
+
+  if (typeof spec.env.HOME === 'string') {
+    const configuredHome = requireAbsolutePath(spec.env.HOME, 'env.HOME')
+    artifactHome = fs.realpathSync(configuredHome)
+    artifactHomeAliases = [...new Set([configuredHome, artifactHome])]
+    if (artifactHome === path.parse(artifactHome).root) {
+      throw new Error('env.HOME must identify a bounded disposable acceptance directory')
+    }
+    const baselineRows = sampleProcessRows()
+    if (!baselineRows) {
+      throw new Error(`could not capture pre-launch process baseline: ${artifactScanError}`)
+    }
+    baselinePids = new Set(baselineRows.map((row) => row.pid))
+  } else if (spec.kind === 'electron') {
+    throw new Error('Electron launch requires an absolute disposable env.HOME')
   }
 
   child = spawn(spec.command, spec.args, {

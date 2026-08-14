@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
@@ -17,7 +17,9 @@ const {
   buildStubSpec,
   descendantsOf,
   driveStudioUiJourney,
+  findAcceptanceArtifactGroups,
   launchUnderWatchdog,
+  materializeIsolatedProviderGuards,
   materializeOwnedMedia,
   parseArgs,
   parseProcessTable,
@@ -65,6 +67,15 @@ const {
     target: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  findAcceptanceArtifactGroups: (
+    rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>,
+    artifactHomes: string[],
+    baselinePids?: Set<number>
+  ) => Array<{
+    pgid: number
+    evidencePids: number[]
+    members: Array<{ pid: number; ppid: number; pgid: number; command: string }>
+  }>
   launchUnderWatchdog: (
     spec: Record<string, unknown>,
     adapters?: Record<string, unknown>
@@ -74,6 +85,10 @@ const {
     pgid?: number
     receiptPath: string
     stop: () => Promise<Record<string, unknown>>
+  }>
+  materializeIsolatedProviderGuards: (options: { home: string }) => Promise<{
+    grokBinaryPath: string
+    sha256: string
   }>
   materializeOwnedMedia: (options: {
     mediaPath: string
@@ -150,6 +165,20 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function processGroupRows(
+  pgid: number
+): Array<{ pid: number; ppid: number; pgid: number; command: string }> {
+  const sample = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], {
+    encoding: 'utf8',
+    timeout: 2_000,
+    maxBuffer: 2 * 1024 * 1024
+  })
+  if (sample.error || sample.status !== 0) {
+    throw sample.error || new Error(`ps exited with status ${String(sample.status)}`)
+  }
+  return parseProcessTable(sample.stdout).filter((row) => row.pgid === pgid)
+}
+
 describe('Studio acceptance harness', () => {
   it('is plan-only by default and uses the sanctioned isolated profile posture', () => {
     const plan = buildStudioAcceptancePlan({
@@ -185,6 +214,20 @@ describe('Studio acceptance harness', () => {
       realTranscriptRequired: true,
       evidenceAfterVerifiedGroupExit: true
     })
+  })
+
+  it('carries an explicit bounded transcript wait into the acceptance plan', () => {
+    const args = parseArgs(['--transcript-timeout-ms=720000'])
+    expect(args.transcriptTimeoutMs).toBe(720_000)
+    const plan = buildStudioAcceptancePlan({
+      instanceId: 'studioWait01',
+      repoRoot: '/virtual/repo',
+      home: '/virtual/repo/.local-only/studio/home',
+      platform: 'darwin',
+      transcriptTimeoutMs: args.transcriptTimeoutMs,
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+    expect(plan.transcriptTimeoutMs).toBe(720_000)
   })
 
   it('refuses a real launch without both explicit consent and orphan clearance', () => {
@@ -234,6 +277,41 @@ describe('Studio acceptance harness', () => {
     expect(asset.assetPath.startsWith((await fsPromises.realpath(userDataPath)) + path.sep)).toBe(
       true
     )
+  })
+
+  it('shadows the interactive Grok usage probe inside the disposable HOME', async () => {
+    const root = await temporaryRoot('studio-acceptance-provider-guard-')
+    const home = path.join(root, 'home')
+
+    const guard = await materializeIsolatedProviderGuards({ home })
+
+    expect(guard.grokBinaryPath).toBe(path.join(home, '.grok', 'bin', 'grok'))
+    expect(guard.sha256).toMatch(/^[a-f0-9]{64}$/)
+    const stat = await fsPromises.stat(guard.grokBinaryPath)
+    expect(stat.isFile()).toBe(true)
+    expect(stat.mode & 0o777).toBe(0o700)
+    expect(await fsPromises.readFile(guard.grokBinaryPath, 'utf8')).toContain(
+      'TaskWraith Studio isolated acceptance: provider probe disabled'
+    )
+  })
+
+  it('finds a reparented group from an exact disposable-home command even when its leader hides the path', () => {
+    const home = '/virtual/acceptance/prior/home'
+    const rows = parseProcessTable(
+      [
+        '9000 1 9000 /Applications/Firefox.app/Contents/MacOS/firefox',
+        `9001 9000 9000 /Applications/Firefox.app/Contents/MacOS/plugin-container -profile ${home}/Library/Application Support/Firefox/Profiles/fixture`,
+        '9100 1 9100 /Applications/Firefox.app/Contents/MacOS/firefox'
+      ].join('\n')
+    )
+
+    expect(findAcceptanceArtifactGroups(rows, [home])).toEqual([
+      {
+        pgid: 9000,
+        evidencePids: [9001],
+        members: [rows[0], rows[1]]
+      }
+    ])
   })
 
   it('derives only exact descendants when locating the Studio child', () => {
@@ -306,6 +384,105 @@ describe('Studio acceptance harness', () => {
         reason: 'owner_requested'
       })
     }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'reaps a detached process group that remains bound to the disposable acceptance home',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-watchdog-detached-')
+      const detachedBody = [
+        "const fs=require('node:fs');",
+        "const path=require('node:path');",
+        'const home=__dirname;',
+        "process.on('SIGTERM',()=>{});",
+        "fs.writeFileSync(path.join(home,'detached-ready.json'),JSON.stringify({pid:process.pid})+'\\n');",
+        'setInterval(()=>{},1000);'
+      ].join('')
+      const detachedScript = path.join(root, 'detached-child.cjs')
+      await fsPromises.writeFile(detachedScript, detachedBody, 'utf8')
+      const leaderBody = [
+        "const fs=require('node:fs');",
+        "const path=require('node:path');",
+        "const {spawn}=require('node:child_process');",
+        'const detachedScript=process.argv[1];',
+        'const home=process.argv[2];',
+        "const detached=spawn(process.execPath,[detachedScript],{detached:true,stdio:'ignore'});",
+        'detached.unref();',
+        "fs.writeFileSync(path.join(home,'detached.json'),JSON.stringify({pid:detached.pid})+'\\n');",
+        "process.on('SIGTERM',()=>process.exit(0));",
+        'setInterval(()=>{},1000);'
+      ].join('')
+      const spec = {
+        kind: 'stub',
+        command: process.execPath,
+        args: ['-e', leaderBody, detachedScript, root],
+        cwd: root,
+        env: {
+          TASKWRAITH_INSTANCE_ID: 'studioDetached',
+          IOS_REMOTE_TRUE: '0',
+          TASKWRAITH_STUDIO_COMPANION: '1',
+          HOME: root
+        },
+        timeoutMs: 5_000,
+        forceAfterMs: 250,
+        receiptPath: path.join(root, 'watchdog-receipt.json')
+      }
+      const session = await launchUnderWatchdog(spec, {
+        controllerEnv: { TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' }
+      })
+      const detached = await waitFor(async () => {
+        try {
+          return JSON.parse(
+            await fsPromises.readFile(path.join(root, 'detached-ready.json'), 'utf8')
+          )
+        } catch {
+          return null
+        }
+      }, 'detached acceptance-owned process readiness')
+      expect(processIsAlive(detached.pid)).toBe(true)
+
+      try {
+        const terminal = await session.stop()
+        expect(terminal).toMatchObject({
+          status: 'reaped',
+          groupExitVerified: true,
+          detachedGroupExitVerified: true
+        })
+        const receipt = JSON.parse(await fsPromises.readFile(session.receiptPath, 'utf8'))
+        expect(receipt.artifactHome).toBe(await fsPromises.realpath(root))
+        expect(receipt.artifactScanError).toBeUndefined()
+        expect(receipt).toMatchObject({
+          schemaVersion: 2,
+          status: 'reaped',
+          detachedGroupExitVerified: true,
+          detachedProcessGroups: [
+            {
+              pgid: detached.pid,
+              evidencePids: [detached.pid]
+            }
+          ]
+        })
+        await waitFor(() => {
+          const rows = processGroupRows(detached.pid)
+          if (rows.length > 0) throw new Error(JSON.stringify(rows))
+          return true
+        }, 'detached acceptance-owned process-group exit')
+      } finally {
+        try {
+          process.kill(-detached.pid, 'SIGKILL')
+        } catch {
+          // Already gone, which is the expected outcome.
+        }
+        if (session.pgid) {
+          try {
+            process.kill(-session.pgid, 'SIGKILL')
+          } catch {
+            // Already gone, which is the expected outcome.
+          }
+        }
+      }
+    },
+    12_000
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -582,6 +759,45 @@ describe('Studio acceptance harness', () => {
     }
   )
 
+  it('refuses a trusted prior receipt when a detached process group still references that artifact home', async () => {
+    const receiptPath = '/virtual/acceptance/prior/watchdog-receipt.json'
+    const priorHome = '/virtual/acceptance/prior/home'
+    const execFile = vi.fn(async (_file: string, args: string[]) => {
+      if (args.some((argument) => argument.includes('command='))) {
+        return {
+          stdout: [
+            '9000 1 9000 /Applications/Firefox.app/Contents/MacOS/firefox',
+            `9001 9000 9000 /Applications/Firefox.app/Contents/MacOS/plugin-container -profile ${priorHome}/Library/Application Support/Firefox/Profiles/acceptance`
+          ].join('\\n'),
+          stderr: ''
+        }
+      }
+      return { stdout: '', stderr: '' }
+    })
+
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/acceptance/current' },
+        {
+          readPriorReceipts: async () => [
+            {
+              receiptPath,
+              receipt: {
+                kind: 'taskwraith-studio-acceptance-watchdog',
+                schemaVersion: 2,
+                status: 'reaped',
+                groupExitVerified: true,
+                childPid: 8000,
+                childPgid: 8000
+              }
+            }
+          ],
+          execFile
+        }
+      )
+    ).rejects.toThrow(/artifact-bound.*still alive|detached/i)
+  })
+
   it('excludes the owner installed TaskWraith Studio group from a legacy pgid collision without signaling it', async () => {
     const installedPgid = 93870
     const execFile = vi.fn(async () => ({
@@ -622,7 +838,7 @@ describe('Studio acceptance harness', () => {
       ]
     })
     expect(execFile).toHaveBeenCalledOnce()
-    expect(execFile).toHaveBeenCalledWith('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,comm='])
+    expect(execFile).toHaveBeenCalledWith('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='])
   })
 
   it('does not exempt a Studio-looking descendant unless the exact installed app owns the group', async () => {
@@ -960,7 +1176,7 @@ describe('Studio acceptance harness', () => {
     const calls: string[] = []
     let proposalNumber = 0
     const receipt = await driveStudioUiJourney(
-      { artifactRoot: '/virtual/acceptance/studioJourney01' },
+      { artifactRoot: '/virtual/acceptance/studioJourney01', transcriptTimeoutMs: 720_000 },
       {
         companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
         electronPgid: 7001,
@@ -977,7 +1193,14 @@ describe('Studio acceptance harness', () => {
         }
       },
       {
-        waitForJournalOperation: async (_plan: unknown, expectation: Record<string, unknown>) => {
+        waitForJournalOperation: async (
+          _plan: unknown,
+          expectation: Record<string, unknown>,
+          options: Record<string, unknown>
+        ) => {
+          if (expectation.type === 'set_transcript') {
+            expect(options).toMatchObject({ afterRevision: 0, timeoutMs: 720_000 })
+          }
           calls.push(
             `journal:${String(expectation.type)}:${String(
               expectation.decision ?? expectation.assetId ?? ''
@@ -1135,7 +1358,8 @@ describe('Studio acceptance harness', () => {
     const watchdogTerminal = {
       status: 'reaped',
       reason: 'owner_requested',
-      groupExitVerified: true
+      groupExitVerified: true,
+      detachedGroupExitVerified: true
     }
     let journeyError: Error | null = null
     const session = {

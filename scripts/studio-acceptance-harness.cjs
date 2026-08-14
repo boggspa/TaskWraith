@@ -84,7 +84,8 @@ function parseArgs(argv) {
     mimeType: null,
     remoteDebuggingPort: null,
     mainInspectorPort: null,
-    timeoutMs: DEFAULT_TIMEOUT_MS
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    transcriptTimeoutMs: DEFAULT_WAIT_MS
   }
   for (const argument of argv) {
     if (argument === '--launch') parsed.launch = true
@@ -100,6 +101,8 @@ function parseArgs(argv) {
       parsed.remoteDebuggingPort = Number(argument.slice(24))
     } else if (argument.startsWith('--main-inspector-port=')) {
       parsed.mainInspectorPort = Number(argument.slice(22))
+    } else if (argument.startsWith('--transcript-timeout-ms=')) {
+      parsed.transcriptTimeoutMs = Number(argument.slice(24))
     } else if (argument.startsWith('--timeout-ms=')) {
       parsed.timeoutMs = Number(argument.slice(13))
     } else {
@@ -125,6 +128,17 @@ function assertStudioInstanceId(raw) {
 function buildStudioAcceptancePlan(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '..'))
   const instanceId = assertStudioInstanceId(options.instanceId || defaultInstanceId(options.pid))
+  const transcriptTimeoutMs =
+    options.transcriptTimeoutMs === undefined
+      ? DEFAULT_WAIT_MS
+      : Number(options.transcriptTimeoutMs)
+  if (
+    !Number.isSafeInteger(transcriptTimeoutMs) ||
+    transcriptTimeoutMs < 1_000 ||
+    transcriptTimeoutMs > 30 * 60 * 1_000
+  ) {
+    throw new Error('transcriptTimeoutMs must be an integer 1000–1800000')
+  }
   const artifactRoot = path.resolve(
     options.artifactRoot ||
       path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance', instanceId)
@@ -160,6 +174,7 @@ function buildStudioAcceptancePlan(options = {}) {
     repoRoot,
     artifactRoot,
     home,
+    transcriptTimeoutMs,
     profile,
     spawnPlan,
     receiptPath,
@@ -201,6 +216,16 @@ function assertLaunchAuthorized(args, plan) {
   }
   if (process.platform !== 'darwin') {
     throw new Error('Studio acceptance launch is macOS-only')
+  }
+  if (
+    !Number.isSafeInteger(args.timeoutMs) ||
+    args.timeoutMs < 30_000 ||
+    args.timeoutMs > 30 * 60 * 1_000
+  ) {
+    throw new Error('timeoutMs must be an integer 30000–1800000')
+  }
+  if (plan.transcriptTimeoutMs > args.timeoutMs) {
+    throw new Error('transcriptTimeoutMs cannot exceed the watchdog timeoutMs')
   }
   if (!args.mediaPath || !path.isAbsolute(args.mediaPath)) {
     throw new Error('Real launch requires --media=<absolute video path>')
@@ -270,6 +295,54 @@ async function materializeOwnedMedia(options) {
     assetPath: await fsPromises.realpath(target),
     byteLength: before.size
   }
+}
+
+const ISOLATED_GROK_GUARD = [
+  '#!/bin/sh',
+  '# TaskWraith Studio isolated acceptance: provider probe disabled',
+  'exit 0',
+  ''
+].join('\n')
+
+async function materializeIsolatedProviderGuards(options) {
+  const home = path.resolve(options.home)
+  const grokDirectory = path.join(home, '.grok', 'bin')
+  const grokBinaryPath = path.join(grokDirectory, 'grok')
+  const sha256 = crypto.createHash('sha256').update(ISOLATED_GROK_GUARD).digest('hex')
+
+  await fsPromises.mkdir(grokDirectory, { recursive: true, mode: 0o700 })
+  try {
+    const existing = await fsPromises.lstat(grokBinaryPath)
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw new Error('Existing isolated Grok guard is not a safe regular file')
+    }
+    const content = await fsPromises.readFile(grokBinaryPath, 'utf8')
+    if (content !== ISOLATED_GROK_GUARD) {
+      throw new Error('Existing isolated Grok guard content does not match the acceptance guard')
+    }
+    await fsPromises.chmod(grokBinaryPath, 0o700)
+    return { grokBinaryPath, sha256 }
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error
+  }
+
+  const temp = path.join(
+    grokDirectory,
+    `.grok-acceptance-${process.pid}-${crypto.randomUUID()}.tmp`
+  )
+  try {
+    await fsPromises.writeFile(temp, ISOLATED_GROK_GUARD, {
+      encoding: 'utf8',
+      mode: 0o700,
+      flag: 'wx'
+    })
+    await fsPromises.chmod(temp, 0o700)
+    await fsPromises.link(temp, grokBinaryPath)
+  } finally {
+    await fsPromises.rm(temp, { force: true }).catch(() => undefined)
+  }
+
+  return { grokBinaryPath, sha256 }
 }
 
 function launchUnderWatchdog(spec, adapters = {}) {
@@ -458,6 +531,62 @@ function parseProcessTable(stdout) {
   return rows
 }
 
+function commandContainsBoundedPath(command, boundedPath) {
+  let offset = 0
+  while (offset <= command.length) {
+    const index = command.indexOf(boundedPath, offset)
+    if (index < 0) return false
+    const before = index === 0 ? '' : command[index - 1]
+    const afterIndex = index + boundedPath.length
+    const after = afterIndex >= command.length ? '' : command[afterIndex]
+    const beforeIsBoundary = index === 0 || /[\s="'(,]/.test(before)
+    const afterIsBoundary = after === '' || after === path.sep || /[\s"'),:]/.test(after)
+    if (beforeIsBoundary && afterIsBoundary) return true
+    offset = index + boundedPath.length
+  }
+  return false
+}
+
+function commandReferencesArtifactHome(command, artifactHome) {
+  const home = path.resolve(artifactHome)
+  if (home === path.parse(home).root) return false
+  return commandContainsBoundedPath(command, home)
+}
+
+function findAcceptanceArtifactGroups(rows, artifactHomes, baselinePids = new Set()) {
+  const homes = [...new Set(artifactHomes.map((home) => path.resolve(home)))].filter(
+    (home) => home !== path.parse(home).root
+  )
+  const byPgid = new Map()
+  for (const row of rows) {
+    if (
+      baselinePids.has(row.pid) ||
+      !Number.isSafeInteger(row.pgid) ||
+      row.pgid <= 0 ||
+      !homes.some((home) => commandReferencesArtifactHome(row.command, home))
+    ) {
+      continue
+    }
+    const evidence = byPgid.get(row.pgid) || []
+    evidence.push(row.pid)
+    byPgid.set(row.pgid, evidence)
+  }
+
+  const groups = []
+  for (const [pgid, evidencePids] of byPgid.entries()) {
+    const members = rows.filter((row) => row.pgid === pgid)
+    // Never claim a group that already contained a process before the
+    // acceptance launch. A mixed-ownership group is not safe to signal.
+    if (members.some((row) => baselinePids.has(row.pid))) continue
+    groups.push({
+      pgid,
+      evidencePids: [...new Set(evidencePids)].sort((left, right) => left - right),
+      members: [...members].sort((left, right) => left.pid - right.pid)
+    })
+  }
+  return groups.sort((left, right) => left.pgid - right.pgid)
+}
+
 function descendantsOf(rows, rootPid) {
   const descendants = new Set([rootPid])
   let changed = true
@@ -598,14 +727,22 @@ function validatePriorWatchdogReceipt(entry) {
   return { ...entry, trusted, pgid: receipt.childPgid }
 }
 
+function commandRunsExactExecutable(command, executable) {
+  return command === executable || command.startsWith(`${executable} `)
+}
+
 function isProtectedInstalledTaskWraithStudioGroup(pgid, members) {
   const installedOwner = members.some(
-    (row) => row.pid === pgid && row.command === INSTALLED_TASKWRAITH_EXECUTABLE
+    (row) =>
+      row.pid === pgid && commandRunsExactExecutable(row.command, INSTALLED_TASKWRAITH_EXECUTABLE)
   )
   if (!installedOwner) return false
 
   return members.some(
-    (row) => row.ppid === pgid && row.pgid === pgid && row.command === INSTALLED_STUDIO_EXECUTABLE
+    (row) =>
+      row.ppid === pgid &&
+      row.pgid === pgid &&
+      commandRunsExactExecutable(row.command, INSTALLED_STUDIO_EXECUTABLE)
   )
 }
 
@@ -664,9 +801,9 @@ async function assertNoPriorStudioOrphans(plan, adapters = {}) {
       recordedStatus: typeof entry.receipt.status === 'string' ? entry.receipt.status : null
     })
   }
-  if (suspects.length === 0) {
+  if (priors.length === 0) {
     return {
-      scanned: priors.length,
+      scanned: 0,
       trusted,
       protectedInstalledGroups: [],
       orphans: []
@@ -674,8 +811,23 @@ async function assertNoPriorStudioOrphans(plan, adapters = {}) {
   }
 
   const runExec = adapters.execFile || defaultExecFile
-  const sample = await runExec('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,comm='])
+  const sample = await runExec('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='])
   const rows = parseProcessTable(sample.stdout)
+  const priorHomes = validated.map((entry) => path.join(path.dirname(entry.receiptPath), 'home'))
+  const artifactGroups = findAcceptanceArtifactGroups(rows, priorHomes)
+  if (artifactGroups.length > 0) {
+    throw new Error(
+      `Refusing launch: ${artifactGroups.length} prior Studio acceptance artifact-bound detached process group(s) are still alive. Nothing was killed — adjudicate manually:\n${artifactGroups
+        .map(
+          (group) =>
+            `  pgid ${group.pgid}, evidence pids ${group.evidencePids.join(', ')}, members: ${group.members
+              .map((row) => `${row.pid} ${row.command}`)
+              .join(', ')}`
+        )
+        .join('\n')}`
+    )
+  }
+
   const orphans = []
   const protectedInstalledGroups = []
   for (const suspect of suspects) {
@@ -716,6 +868,7 @@ function assertCleanWatchdogTerminal(terminal) {
     !isRecord(terminal) ||
     terminal.status !== 'reaped' ||
     terminal.groupExitVerified !== true ||
+    terminal.detachedGroupExitVerified !== true ||
     terminal.reason !== 'owner_requested'
   ) {
     throw new Error(
@@ -1117,7 +1270,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       ...(assetId ? { assetId } : {}),
       requireNonEmptyTranscript: true
     },
-    { afterRevision: 0 }
+    { afterRevision: 0, timeoutMs: plan.transcriptTimeoutMs }
   )
   let afterRevision = transcript.revision
   const driverReceipts = []
@@ -1296,6 +1449,7 @@ async function writeEvidence(plan, evidence) {
 async function runStudioAcceptance(args, adapters = {}) {
   const plan = buildStudioAcceptancePlan({
     instanceId: args.instanceId || undefined,
+    transcriptTimeoutMs: args.transcriptTimeoutMs,
     remoteDebuggingPort: args.remoteDebuggingPort,
     mainInspectorPort: args.mainInspectorPort,
     ...(adapters.planOptions || {})
@@ -1313,6 +1467,9 @@ async function runStudioAcceptance(args, adapters = {}) {
 
   await fsPromises.mkdir(plan.home, { recursive: true, mode: 0o700 })
   await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
+  const providerGuards = await (
+    adapters.materializeProviderGuards || materializeIsolatedProviderGuards
+  )({ home: plan.home })
   const asset = await materializeOwnedMedia({
     mediaPath: args.mediaPath,
     mimeType: args.mimeType,
@@ -1393,6 +1550,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       companion,
       window,
       asset,
+      providerGuards,
       openResult,
       durable,
       journey,
@@ -1525,6 +1683,7 @@ Optional:
   --remote-debugging-port=<port>
   --main-inspector-port=<port>
   --timeout-ms=<30000..1800000>
+  --transcript-timeout-ms=<1000..1800000; must not exceed timeout-ms>
   --pretty
 `
 }
@@ -1559,9 +1718,11 @@ module.exports = {
   buildStudioAcceptancePlan,
   assertLaunchAuthorized,
   materializeOwnedMedia,
+  materializeIsolatedProviderGuards,
   launchUnderWatchdog,
   evaluateByValue,
   parseProcessTable,
+  findAcceptanceArtifactGroups,
   descendantsOf,
   readPriorWatchdogReceipts,
   assertNoPriorStudioOrphans,
