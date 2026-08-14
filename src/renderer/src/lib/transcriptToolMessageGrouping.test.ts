@@ -109,6 +109,88 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['t1', 't2'])
   })
 
+  it('coalesces Claude provider and host mirrors of one TaskWraith MCP call', () => {
+    const resultSummary = JSON.stringify({
+      ok: false,
+      tool: 'ensemble_fanout',
+      error: 'not_authorized'
+    })
+    const parameters = {
+      mode: 'locked_writers',
+      targets: ['Work2', 'Work3']
+    }
+    const providerActivity = activity('toolu_fanout', 'unknown', {
+      toolName: 'mcp__TaskWraith__ensemble_fanout',
+      displayName: 'Ensemble Fanout',
+      status: 'error',
+      startedAt: '2026-08-14T10:16:54.223Z',
+      endedAt: '2026-08-14T10:16:54.346Z',
+      durationMs: 123,
+      parameters,
+      resultSummary,
+      metadata: { provider: 'claude', ensembleProvider: 'claude' }
+    })
+    const hostActivity = activity(
+      'claude-mcp-ensemble_fanout-1786702614341-x4nook6pff',
+      'unknown',
+      {
+        toolName: 'ensemble_fanout',
+        displayName: 'Ensemble Fanout',
+        status: 'error',
+        startedAt: '2026-08-14T10:16:54.342Z',
+        endedAt: '2026-08-14T10:16:54.343Z',
+        durationMs: 1,
+        parameters: { ...parameters, cwd: '/workspace' },
+        resultSummary,
+        metadata: { provider: 'claude', ensembleProvider: 'claude' }
+      }
+    )
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity])
+    ])
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_fanout'])
+    expect(grouped[0].toolActivities?.[0].durationMs).toBe(123)
+    expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['provider-row', 'host-row'])
+  })
+
+  it('keeps similar Claude MCP calls when mirror proof does not match', () => {
+    const base = activity('toolu_fanout', 'unknown', {
+      toolName: 'mcp__TaskWraith__ensemble_fanout',
+      status: 'error',
+      startedAt: '2026-08-14T10:16:54.223Z',
+      endedAt: '2026-08-14T10:16:54.346Z',
+      parameters: { mode: 'locked_writers', targets: ['Work2'] },
+      resultSummary: '{"error":"not_authorized"}',
+      metadata: { provider: 'claude', ensembleProvider: 'claude' }
+    })
+    const differentResult = activity(
+      'claude-mcp-ensemble_fanout-1786702614341-x4nook6pff',
+      'unknown',
+      {
+        toolName: 'ensemble_fanout',
+        status: 'error',
+        startedAt: '2026-08-14T10:16:54.342Z',
+        endedAt: '2026-08-14T10:16:54.343Z',
+        parameters: { mode: 'locked_writers', targets: ['Work2'], cwd: '/workspace' },
+        resultSummary: '{"error":"different_failure"}',
+        metadata: { provider: 'claude', ensembleProvider: 'claude' }
+      }
+    )
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [base]),
+      toolMessage('host-row', [differentResult])
+    ])
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual([
+      base.id,
+      differentResult.id
+    ])
+  })
+
   it('reports source ranges for grouped tool runs', () => {
     const ranges = groupAdjacentToolMessagesWithRanges([
       textMessage('before'),

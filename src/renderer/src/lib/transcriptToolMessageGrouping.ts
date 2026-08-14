@@ -1,4 +1,5 @@
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
@@ -55,6 +56,103 @@ function sameToolRunBoundary(a: ChatMessage, b: ChatMessage): boolean {
   return toolAttributionSignature(a) === toolAttributionSignature(b)
 }
 
+function activityProvider(activity: ToolActivity): string {
+  return activity.metadata?.ensembleProvider || activity.metadata?.provider || ''
+}
+
+function stableParameterValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableParameterValue)
+  if (!value || typeof value !== 'object') return value
+  const record = value as Record<string, unknown>
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, stableParameterValue(record[key])])
+  )
+}
+
+function mirroredParameterSignature(parameters?: Record<string, unknown>): string {
+  const comparable = { ...(parameters || {}) }
+  // The host mirror adds its effective workspace cwd after the provider has
+  // already emitted the same MCP request. That transport context does not make
+  // it a second user-visible tool call.
+  delete comparable.cwd
+  return JSON.stringify(stableParameterValue(comparable))
+}
+
+function parsedActivityTime(value?: string): number | null {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isMirroredClaudeTaskWraithActivity(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): boolean {
+  const wrapperMatch = providerActivity.toolName.match(
+    /^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i
+  )
+  if (!wrapperMatch || !providerActivity.id.startsWith('toolu_')) return false
+  if (
+    activityProvider(providerActivity) !== 'claude' ||
+    activityProvider(hostActivity) !== 'claude'
+  ) {
+    return false
+  }
+
+  const canonicalToolName = resolveCanonicalToolName(wrapperMatch[1])
+  if (resolveCanonicalToolName(hostActivity.toolName) !== canonicalToolName) return false
+  if (!hostActivity.id.toLowerCase().startsWith(`claude-mcp-${canonicalToolName}-`)) {
+    return false
+  }
+  if (providerActivity.status !== hostActivity.status) return false
+  if (
+    !providerActivity.resultSummary ||
+    providerActivity.resultSummary !== hostActivity.resultSummary
+  ) {
+    return false
+  }
+  if (
+    mirroredParameterSignature(providerActivity.parameters) !==
+    mirroredParameterSignature(hostActivity.parameters)
+  ) {
+    return false
+  }
+
+  const providerStart = parsedActivityTime(providerActivity.startedAt)
+  const providerEnd = parsedActivityTime(providerActivity.endedAt)
+  const hostStart = parsedActivityTime(hostActivity.startedAt)
+  const hostEnd = parsedActivityTime(hostActivity.endedAt)
+  if (providerStart === null || providerEnd === null || hostStart === null || hostEnd === null) {
+    return false
+  }
+  return (
+    hostStart >= providerStart &&
+    hostStart - providerStart <= 1_000 &&
+    hostEnd >= hostStart &&
+    hostEnd <= providerEnd + 250
+  )
+}
+
+/**
+ * Claude reports TaskWraith MCP execution twice: its provider-native `toolu_`
+ * wrapper and the host's `claude-mcp-*` execution receipt. Keep the provider
+ * activity (the real round-trip duration) only when identity, payload, result,
+ * attribution, and nested timing all prove that the following row is a mirror.
+ */
+export function coalesceMirroredClaudeTaskWraithActivities(
+  activities: readonly ToolActivity[]
+): ToolActivity[] {
+  const coalesced: ToolActivity[] = []
+  for (const activity of activities) {
+    const previous = coalesced[coalesced.length - 1]
+    if (previous && isMirroredClaudeTaskWraithActivity(previous, activity)) continue
+    coalesced.push(activity)
+  }
+  return coalesced
+}
+
 export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage): boolean {
   return isPlainToolMessage(a) && isPlainToolMessage(b) && sameToolRunBoundary(a, b)
 }
@@ -62,6 +160,9 @@ export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage):
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
   if (run.length === 1) return run[0]
   const first = run[0]
+  const toolActivities = coalesceMirroredClaudeTaskWraithActivities(
+    run.flatMap((message) => message.toolActivities || [])
+  )
   return {
     ...first,
     // Identity is derived from the FIRST message only, so it stays STABLE as
@@ -74,7 +175,7 @@ function mergeToolRun(run: ChatMessage[]): ChatMessage {
     // full constituent list is preserved in `groupedToolMessageIds` below, so
     // nothing depends on the churning id.
     id: `tool-group-${first.id}`,
-    toolActivities: run.flatMap((message) => message.toolActivities || []),
+    toolActivities,
     metadata: {
       ...first.metadata,
       kind: first.metadata?.kind,
