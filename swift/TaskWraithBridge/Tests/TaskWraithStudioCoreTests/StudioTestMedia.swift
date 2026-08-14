@@ -66,6 +66,50 @@ enum StudioTestMedia {
         return pixelBuffer
     }
 
+    /// A moving-content frame: a bright bar sweeping right, a dark block
+    /// sweeping down, and a checker patch that flips phase every frame, over a
+    /// mid-gray field. The flat fixtures cannot see temporal corruption — a
+    /// stale reference frame leaves the same flat luma — while a stale
+    /// reference here leaves visible trails of these shapes.
+    static func movingPixelBuffer(
+        frameIndex: Int,
+        width: Int = defaultWidth,
+        height: Int = defaultHeight
+    ) throws -> CVPixelBuffer {
+        let pixelBuffer = try flatPixelBuffer(luma: 100, width: width, height: height)
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else {
+            return pixelBuffer
+        }
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let planeWidth = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+        let planeHeight = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+        let pointer = base.assumingMemoryBound(to: UInt8.self)
+        let barX = (frameIndex * 5) % max(1, planeWidth)
+        let barWidth = max(4, planeWidth / 16)
+        let blockY = (frameIndex * 3) % max(1, planeHeight)
+        let blockHeight = max(8, planeHeight / 8)
+        let patch = min(32, planeWidth, planeHeight)
+        for y in 0..<planeHeight {
+            for x in 0..<planeWidth {
+                var value: UInt8 = 100
+                if x >= barX && x < barX + barWidth { value = 235 }
+                if y >= blockY && y < blockY + blockHeight,
+                    x >= planeWidth / 4 && x < planeWidth * 3 / 4
+                {
+                    value = 16
+                }
+                if x < patch && y >= planeHeight - patch {
+                    let on = ((x / 8) + (y / 8) + frameIndex) % 2 == 0
+                    value = on ? 220 : 40
+                }
+                pointer[y * stride + x] = value
+            }
+        }
+        return pixelBuffer
+    }
+
     private final class EncodeCollector: @unchecked Sendable {
         var encoded: [(pts: CMTime, sample: CMSampleBuffer)] = []
         var failure: OSStatus = noErr
@@ -328,6 +372,50 @@ enum StudioTestMedia {
         frameRate: Int32 = 30,
         forceKeyFrames: Bool = true
     ) async throws {
+        try await writeMovie(
+            frameCount: lumaLevels.count,
+            to: url,
+            width: width,
+            height: height,
+            frameRate: frameRate,
+            forceKeyFrames: forceKeyFrames
+        ) { index in
+            try flatPixelBuffer(luma: lumaLevels[index], width: width, height: height)
+        }
+    }
+
+    /// Writes a REAL inter-coded .mov whose frames MOVE, so temporal reference
+    /// corruption becomes visible as trails instead of hiding inside a flat
+    /// luma field.
+    static func writeMovingMovie(
+        frameCount: Int,
+        to url: URL,
+        width: Int = defaultWidth,
+        height: Int = defaultHeight,
+        frameRate: Int32 = 30,
+        forceKeyFrames: Bool = false
+    ) async throws {
+        try await writeMovie(
+            frameCount: frameCount,
+            to: url,
+            width: width,
+            height: height,
+            frameRate: frameRate,
+            forceKeyFrames: forceKeyFrames
+        ) { index in
+            try movingPixelBuffer(frameIndex: index, width: width, height: height)
+        }
+    }
+
+    private static func writeMovie(
+        frameCount: Int,
+        to url: URL,
+        width: Int,
+        height: Int,
+        frameRate: Int32,
+        forceKeyFrames: Bool,
+        makeFrame: (Int) throws -> CVPixelBuffer
+    ) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         var outputSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -364,8 +452,8 @@ enum StudioTestMedia {
         }
         writer.startSession(atSourceTime: .zero)
 
-        for (index, level) in lumaLevels.enumerated() {
-            let buffer = try flatPixelBuffer(luma: level, width: width, height: height)
+        for index in 0..<frameCount {
+            let buffer = try makeFrame(index)
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(nanoseconds: 1_000_000)
             }
@@ -375,7 +463,7 @@ enum StudioTestMedia {
             )
             XCTAssertTrue(
                 appended,
-                "append failed for level \(level): \(String(describing: writer.error))"
+                "append failed for frame \(index): \(String(describing: writer.error))"
             )
         }
 

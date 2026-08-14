@@ -243,4 +243,97 @@ final class StudioGopDecodeTests: XCTestCase {
         XCTAssertTrue(source.isAllIntra)
         XCTAssertEqual(source.diagnostics.syncSampleCount, 3)
     }
+
+    // MARK: - Pixel integrity across seeks
+
+    private let movingFrameCount = 24
+
+    private func makeMovingHarness(device: MTLDevice) async throws -> Harness {
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        try await StudioTestMedia.writeMovingMovie(
+            frameCount: movingFrameCount,
+            to: url,
+            forceKeyFrames: false
+        )
+        let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+            asset: StudioMediaAsset(assetId: "moving", path: url.path, mediaKind: .video),
+            device: device
+        )
+        XCTAssertFalse(
+            loaded.media.allSamplesAreSyncSamples,
+            "the moving fixture must be inter-coded or this control proves nothing"
+        )
+        return Harness(
+            source: loaded.source,
+            media: loaded.media,
+            renderer: try StudioVideoFrameRenderer(device: device),
+            target: try StudioTestPatternRenderer.makeOffscreenTarget(
+                device: device,
+                width: size,
+                height: size
+            ),
+            url: url
+        )
+    }
+
+    /// FULL-frame readback, not a centre pixel: the packaged defect showed up
+    /// as area trails that a single-pixel probe cannot see. Test-only; the
+    /// do-not-repeat note keeps readback off the presentation path.
+    private func renderedBytes(_ harness: Harness, frame: Int64) throws -> [UInt8] {
+        let textures = try harness.source.textures(forFrameIndex: frame)
+        try harness.renderer.render(frame: textures, to: harness.target)
+        var bytes = [UInt8](repeating: 0, count: size * size * 4)
+        harness.target.getBytes(
+            &bytes,
+            bytesPerRow: size * 4,
+            from: MTLRegionMake2D(0, 0, size, size),
+            mipmapLevel: 0
+        )
+        return bytes
+    }
+
+    /// The picture for a frame must not depend on the seek history that reached
+    /// it. A flat fixture cannot see the corruption — a stale reference leaves
+    /// the same flat luma — so this uses real moving content and compares every
+    /// byte, after the same backward-seek storm the packaged positioning route
+    /// performs.
+    func testBackwardSeeksOverMovingContentProduceByteIdenticalFrames() async throws {
+        let harness = try await makeMovingHarness(device: try makeDevice())
+        defer {
+            harness.source.invalidate()
+            try? FileManager.default.removeItem(at: harness.url)
+        }
+
+        var reference: [Int64: [UInt8]] = [:]
+        for frame in 0..<Int64(movingFrameCount) {
+            reference[frame] = try renderedBytes(harness, frame: frame)
+        }
+        XCTAssertNotEqual(
+            reference[7], reference[12],
+            "the fixture must actually move or byte-equality is vacuous"
+        )
+
+        // The acceptance positioning route seeks backward hundreds of times;
+        // every backward hop forces a keyframe restart, the state transition
+        // under suspicion. Mix in pseudo-random jumps so the storm is not one
+        // repeated pair the cache could accidentally satisfy.
+        var jump = 13
+        for _ in 0..<60 {
+            _ = try renderedBytes(harness, frame: Int64(movingFrameCount - 1))
+            _ = try renderedBytes(harness, frame: Int64(jump % 6))
+            jump = (jump * 7 + 3) % movingFrameCount
+            _ = try renderedBytes(harness, frame: Int64(jump))
+        }
+
+        // EVERY frame must be byte-identical after the storm — not just the
+        // checkpoints — so a cache-served stale texture fails here too.
+        for frame in 0..<Int64(movingFrameCount) {
+            let after = try renderedBytes(harness, frame: frame)
+            let before = try XCTUnwrap(reference[frame])
+            XCTAssertEqual(
+                after, before,
+                "frame \(frame) changed after repeated backward seeks"
+            )
+        }
+    }
 }
