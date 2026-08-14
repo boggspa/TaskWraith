@@ -1627,7 +1627,10 @@ describe('Studio acceptance harness', () => {
       runBuild: async () => {
         calls.push('build')
       },
-      launchUnderWatchdog: async () => {
+      launchUnderWatchdog: async (spec: { env: Record<string, string> }) => {
+        expect(spec.env.TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE).toBe(
+          path.join(root, 'isolated-home', '.grok', 'bin', 'grok')
+        )
         calls.push('watchdog.launch')
         return session
       },

@@ -1691,6 +1691,7 @@ import {
   type GrokUsageSnapshot,
   type GrokPtyLike
 } from './grok/GrokUsage'
+import { resolveGrokUsageProbeBinary } from './grok/GrokUsageBinaryOverride'
 import {
   createProviderAdapterRegistry,
   defaultProviderDescriptor,
@@ -54399,7 +54400,10 @@ if (isGeminiMcpBridgeProcess) {
       ) {
         return grokUsageProbeCache.snapshot
       }
-      const resolved = await resolveCliProviderBinary('grok')
+      const resolved = await resolveGrokUsageProbeBinary({
+        env: process.env,
+        resolveDefault: () => resolveCliProviderBinary('grok')
+      })
       const binaryPath = resolved.binaryPath
       if (!binaryPath) {
         return parseGrokUsage('', now())

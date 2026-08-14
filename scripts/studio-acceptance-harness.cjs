@@ -1470,6 +1470,7 @@ async function runStudioAcceptance(args, adapters = {}) {
   const providerGuards = await (
     adapters.materializeProviderGuards || materializeIsolatedProviderGuards
   )({ home: plan.home })
+  plan.spawnPlan.env.TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE = providerGuards.grokBinaryPath
   const asset = await materializeOwnedMedia({
     mediaPath: args.mediaPath,
     mimeType: args.mimeType,
