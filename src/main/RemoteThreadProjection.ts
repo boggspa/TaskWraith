@@ -70,6 +70,7 @@ import {
   resolveHealthEntryPresentation
 } from '../shared/ollamaBrandTable'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
+import { isEnsembleSideMessage } from '../shared/ensembleSideMessage'
 import {
   usageCacheCreationInputTokens,
   usageCacheReadInputTokens,
@@ -1646,6 +1647,10 @@ export function classifyRemoteKind(message: ChatMessage): RemoteThreadRowKind {
   // tool row — classifying them 'assistant' keeps remote clients from folding
   // them into adjacent tool groups or suppressing them mid-stream.
   if (metaKind === 'guestParticipantReply') return 'assistant'
+  // Like guest replies, inter-seat notes have a machinery carrier but are
+  // first-class participant conversation. Remote clients group by `kind`, so
+  // promote them without rewriting the persisted role or feedback semantics.
+  if (isEnsembleSideMessage(message)) return 'assistant'
   // Context-compaction cards degrade to a plain system row on the phone — the
   // message `content` carries the formatted "Context compacted · X → Y" summary.
   if (metaKind === 'contextCompaction') return 'system'
@@ -3958,7 +3963,7 @@ export function projectRemoteThread(
   let latestAssistantRowId: string | null = null
   if (opts.mode.kind === 'latestN' || opts.mode.kind === 'latestViewportN') {
     for (let i = visible.length - 1; i >= 0; i -= 1) {
-      if (visible[i]?.role === 'assistant') {
+      if (classifyRemoteKind(visible[i]) === 'assistant') {
         latestAssistantRowId = visible[i].id
         break
       }

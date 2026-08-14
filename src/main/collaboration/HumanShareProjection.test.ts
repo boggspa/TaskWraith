@@ -375,6 +375,38 @@ describe('buildHumanShareProjection v2 vocabulary', () => {
     ])
   })
 
+  it('projects inter-seat notes as visible messages from the sending model seat', () => {
+    const projection = buildHumanShareProjection(
+      chatWith([
+        {
+          id: 'side-1',
+          role: 'system',
+          content: '↪ Builder to Reviewer: Please inspect this edge case.',
+          timestamp: '2026-06-25T00:00:00.000Z',
+          metadata: {
+            kind: 'ensembleSideMessage',
+            ensembleParticipantId: 'seat-a',
+            ensembleProvider: 'codex',
+            ensembleRole: 'Builder'
+          }
+        }
+      ]),
+      share as never,
+      { roster }
+    )
+
+    expect(projection.rows).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        kind: 'message',
+        speaker: 'Builder',
+        authorSeatId: 'seat-a',
+        colorIndex: 2,
+        preview: '↪ Builder to Reviewer: Please inspect this edge case.'
+      })
+    ])
+  })
+
   it('carries the roster, but NEVER the host’s private mute state', () => {
     const projection = buildHumanShareProjection(chatWith([]), share as never, {
       roster: [{ ...roster[0]!, present: false }, ...roster.slice(1)]

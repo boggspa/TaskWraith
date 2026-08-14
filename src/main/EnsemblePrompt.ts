@@ -11,6 +11,7 @@ import type {
 import { resolveEnsembleFanoutIsolationPolicy } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
+import { isEnsembleSideMessage } from '../shared/ensembleSideMessage'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -2472,7 +2473,11 @@ function messageTag(
   // the host's tag by winning a race with the role checks below.
   if (isExternalUntrustedMessage(message)) return EXTERNAL_UNTRUSTED_TAG
   if (message.role === 'user') return 'User'
-  if (message.role === 'assistant') {
+  // `ensemble_send` notes use a system carrier so they do not count as a
+  // completed provider turn. They are still authored by the sending seat: tag
+  // them with that seat's identity in the shared transcript instead of lending
+  // them TaskWraith's `System` authority.
+  if (message.role === 'assistant' || isEnsembleSideMessage(message)) {
     const provider = message.metadata?.ensembleProvider as ProviderId | undefined
     const role =
       typeof message.metadata?.ensembleRole === 'string' ? message.metadata.ensembleRole : ''

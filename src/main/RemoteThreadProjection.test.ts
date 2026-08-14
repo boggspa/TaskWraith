@@ -3329,6 +3329,9 @@ describe('RemoteThreadProjection', () => {
       expect(
         classifyRemoteKind(msg(0, { role: 'tool', metadata: { kind: 'subThreadReturn' } }))
       ).toBe('tool')
+      expect(
+        classifyRemoteKind(msg(0, { role: 'system', metadata: { kind: 'ensembleSideMessage' } }))
+      ).toBe('assistant')
     })
   })
 
@@ -3907,6 +3910,35 @@ describe('RemoteThreadProjection', () => {
       expect(snapshot.rows[0].speaker).toBe('Codex / Adversary2')
       expect(snapshot.rows[1].speaker).toBe('Claude / WriteMain (Fable 5)')
       expect(snapshot.rows[2].speaker).toBeUndefined()
+    })
+
+    it('projects an inter-seat note at assistant hierarchy with its frozen sender identity', () => {
+      const snapshot = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(2, {
+            role: 'system',
+            content: '↪ Reviewer to Worker: Please check the write path.',
+            metadata: {
+              kind: 'ensembleSideMessage',
+              ensembleRoundId: 'round-1',
+              ensembleParticipantId: 'claude-reviewer',
+              ensembleProvider: 'claude',
+              ensembleRole: 'Reviewer'
+            }
+          })
+        ],
+        [],
+        { speakerForMessage: () => undefined }
+      )
+
+      expect(snapshot.rows[0]).toMatchObject({
+        role: 'system',
+        kind: 'assistant',
+        speaker: 'Claude / Reviewer',
+        preview: '↪ Reviewer to Worker: Please check the write path.'
+      })
+      expect(snapshot.rows[0].feedbackEligible).toBeUndefined()
     })
 
     it('projects pooled-agent identity and uses its nickname as speaker', () => {

@@ -1,6 +1,7 @@
 import os from 'os'
 import type { ChatMessage, ChatRecord } from '../store/types'
 import { redactSecrets } from '../../shared/secretRedaction'
+import { isEnsembleSideMessage } from '../../shared/ensembleSideMessage'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import {
   humanCollaboratorMetadata,
@@ -533,7 +534,7 @@ function projectRow(
       kind: 'message'
     }
   }
-  if (message.role === 'assistant') {
+  if (message.role === 'assistant' || isEnsembleSideMessage(message)) {
     // Every model used to flatten to the single speaker "Assistant", so an
     // external saw a named seat row above a transcript where nobody had a name.
     // `metadata` carries an index signature, so the field arrives untyped.

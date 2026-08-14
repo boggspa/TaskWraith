@@ -81,6 +81,33 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.markdown).toContain('### Findings')
   })
 
+  it('exports inter-seat notes as participant-authored assistant messages', () => {
+    const result = buildChatMarkdownTranscript(
+      chat(
+        [
+          message({
+            id: 'side-1',
+            role: 'system',
+            content: '↪ Reviewer to Worker: Please check the write path.',
+            metadata: {
+              kind: 'ensembleSideMessage',
+              ensembleParticipantId: 'claude-reviewer',
+              ensembleProvider: 'claude',
+              ensembleRole: 'Reviewer',
+              ensembleModel: 'claude-sonnet-4-7'
+            }
+          })
+        ],
+        { chatKind: 'ensemble' }
+      )
+    )
+
+    expect(result.markdown).toContain('## 0001 - Claude / Reviewer (claude-sonnet-4-7)')
+    expect(result.markdown).toContain('Role: assistant')
+    expect(result.markdown).toContain('↪ Reviewer to Worker: Please check the write path.')
+    expect(result.markdown).not.toContain('TaskWraith notice')
+  })
+
   it('uses dynamic fences so nested code blocks remain valid markdown', () => {
     const nested = ['Intro', '```ts', 'console.log("hi")', '```', '````', 'four', '````'].join(
       '\n'
@@ -337,6 +364,25 @@ describe('buildChatMessageTranscript', () => {
     expect(estimateChatMessageTranscriptChars(chat([message({ content: result.text })]))).toBe(
       result.charCount
     )
+  })
+
+  it('keeps inter-seat notes in message-only transcript copies', () => {
+    const result = buildChatMessageTranscript(
+      chat([
+        message({ id: 'u1', role: 'user', content: 'Coordinate.' }),
+        message({
+          id: 'side-1',
+          role: 'system',
+          content: '↪ Reviewer to Worker: Please check the write path.',
+          metadata: { kind: 'ensembleSideMessage' }
+        })
+      ])
+    )
+
+    expect(result.text).toBe(
+      'Coordinate.\n\n↪ Reviewer to Worker: Please check the write path.'
+    )
+    expect(result.messageCount).toBe(2)
   })
 })
 

@@ -8,6 +8,7 @@ import {
 } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { THREAD_MESSAGE_TRANSCRIPT_KIND } from '../shared/threadMessage'
+import { isEnsembleSideMessage } from '../shared/ensembleSideMessage'
 
 export interface TranscriptMarkdownExportResult {
   markdown: string
@@ -41,7 +42,7 @@ function exportableTranscriptMessages(chat: ChatRecord): ChatMessage[] {
 function messageOnlyTranscriptMessages(chat: ChatRecord): ChatMessage[] {
   return exportableTranscriptMessages(chat).filter(
     (message) =>
-      (message.role === 'user' || message.role === 'assistant') &&
+      (message.role === 'user' || message.role === 'assistant' || isEnsembleSideMessage(message)) &&
       message.metadata?.kind !== 'subThreadReturn' &&
       message.metadata?.kind !== 'subThreadDelegation' &&
       message.metadata?.kind !== 'taskWraithCloseout'
@@ -238,6 +239,13 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const model = asString(metadata.guestModel)
     return model ? `${provider} / ${role} (${model})` : `${provider} / ${role}`
   }
+  if (isEnsembleSideMessage(message)) {
+    const provider = asString(metadata.ensembleProvider) || chat.provider || 'gemini'
+    const role = asString(metadata.ensembleRole)
+    const model = asString(metadata.ensembleModel)
+    const base = role ? `${providerLabel(provider)} / ${role}` : providerLabel(provider)
+    return model ? `${base} (${model})` : base
+  }
   const pooledNickname =
     pooledAgentNickname(metadata) || pooledAgentNickname(chat.providerMetadata)
   if (pooledNickname && (message.role === 'assistant' || message.role === 'tool')) {
@@ -330,7 +338,9 @@ function serializeMessage(
   const label = speakerLabel(chat, message)
   const lines = [`## ${String(index + 1).padStart(4, '0')} - ${markdownEscapeInline(label)}`]
   if (message.timestamp) lines.push(`Timestamp: ${message.timestamp}`)
-  if (message.role) lines.push(`Role: ${message.role}`)
+  if (message.role) {
+    lines.push(`Role: ${isEnsembleSideMessage(message) ? 'assistant' : message.role}`)
+  }
 
   if (message.metadata?.kind === 'subThreadReturn') {
     const relation = message.metadata.linkedChildRelation === 'sideChat' ? 'side-chat' : 'sub-thread'

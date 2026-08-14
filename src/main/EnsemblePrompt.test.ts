@@ -778,6 +778,40 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('[System]')
   })
 
+  it('attributes inter-seat notes to the sending participant instead of System', () => {
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'side-1',
+        role: 'system',
+        content: '↪ Reviewer to Worker: Please check the write path.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'ensembleSideMessage',
+          ensembleParticipantId: 'claude',
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer',
+          toParticipantIds: ['codex']
+        }
+      }
+    ]
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Continue the round.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain(
+      '[Claude / Reviewer #p1]\n↪ Reviewer to Worker: Please check the write path.'
+    )
+    expect(prompt).not.toContain('[System]\n↪ Reviewer to Worker')
+  })
+
   // ── P2c security review, F2: the untrusted-frame choke point ──────────────
   //
   // These use a row that carries `sourceTrust: 'external_untrusted'` WITHOUT the
