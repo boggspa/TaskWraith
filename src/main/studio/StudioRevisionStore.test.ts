@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto'
 import * as fsPromises from 'node:fs/promises'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION as STUDIO_EFFECT_PREVIEW_SOURCE_SCHEMA_VERSION } from './StudioEffectPreviewSource'
 import {
+  STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+  STUDIO_MAX_NDJSON_LINE_BYTES,
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   type StudioInsertRangeOp,
@@ -683,6 +687,9 @@ describe('StudioRevisionStore', () => {
       assets: [],
       proposals: [],
       transcripts: [],
+      // A snapshot written before the effect preview existed must migrate to an
+      // explicit null, not undefined: "no preview" needs one representation.
+      effectPreview: null,
       tracks: []
     })
     await store.close()
@@ -693,5 +700,111 @@ describe('StudioRevisionStore', () => {
     const next = applyStudioEditOp(document, insertRange())
     expect(document.tracks).toHaveLength(0)
     expect(next.tracks).toHaveLength(1)
+  })
+
+  it('commits an effect preview durably and clears it with null across reopen', async () => {
+    const directory = await makeStoreDirectory()
+    const store = await StudioRevisionStore.open(directory)
+    const cubeText = 'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0.5 0.5 0.5').join('\n')
+    const preview = {
+      schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+      effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
+      cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+      cubeText
+    } as const
+
+    const set = await store.setEffectPreview(store.revision, preview)
+    expect(set).toMatchObject({ ok: true })
+    expect(store.getDocument().effectPreview).toEqual(preview)
+    await store.close()
+
+    // Survives a real reopen: the preview is journal/snapshot durable, not
+    // in-memory state that a restart would silently drop.
+    const reopened = await StudioRevisionStore.open(directory)
+    expect(reopened.getDocument().effectPreview).toEqual(preview)
+
+    const cleared = await reopened.setEffectPreview(reopened.revision, null)
+    expect(cleared).toMatchObject({ ok: true, effectPreview: null })
+    expect(reopened.getDocument().effectPreview).toBeNull()
+    await reopened.close()
+
+    const afterClear = await StudioRevisionStore.open(directory)
+    expect(afterClear.getDocument().effectPreview).toBeNull()
+    await afterClear.close()
+  })
+
+  it('never lets a filesystem path reach the document or the journal', async () => {
+    // LOAD-BEARING. The whole point of the inline payload is that the operator's
+    // path stops at the host boundary. This reads the real journal bytes rather
+    // than trusting the in-memory shape.
+    const directory = await makeStoreDirectory()
+    const store = await StudioRevisionStore.open(directory)
+    const cubeText =
+      'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0.25 0.25 0.25').join('\n')
+    await store.setEffectPreview(store.revision, {
+      schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+      effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
+      cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+      cubeText
+    })
+    await store.close()
+
+    const journal = await fsPromises.readFile(
+      nodePath.join(directory, STUDIO_JOURNAL_FILENAME),
+      'utf8'
+    )
+    expect(journal).toContain('set_effect_preview')
+    expect(journal).toContain('cubeText')
+    expect(journal).not.toContain('.cube')
+    expect(journal).not.toContain(nodePath.sep + 'tmp')
+    expect(
+      Object.keys(JSON.parse(journal.trim().split('\n').pop()!).op.effectPreview).sort()
+    ).toEqual(['cubeByteLength', 'cubeText', 'effectId', 'schemaVersion'])
+  })
+
+  it('refuses a preview whose declared identity or length does not match its bytes', async () => {
+    const store = await StudioRevisionStore.open(await makeStoreDirectory())
+    const cubeText = 'LUT_3D_SIZE 2\n' + Array.from({ length: 8 }, () => '0 0 0').join('\n')
+    const honest = createHash('sha256').update(cubeText, 'utf8').digest('hex')
+
+    await expect(
+      store.setEffectPreview(store.revision, {
+        schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+        effectId: honest.toUpperCase(),
+        cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+        cubeText
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+
+    await expect(
+      store.setEffectPreview(store.revision, {
+        schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+        effectId: honest,
+        cubeByteLength: Buffer.byteLength(cubeText, 'utf8') + 1,
+        cubeText
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+
+    // An undeliverable payload must never be committed: persisting it would
+    // wedge every later hydration behind an oversized NDJSON line.
+    const huge = 'LUT_3D_SIZE 2\n' + 'x'.repeat(STUDIO_MAX_NDJSON_LINE_BYTES)
+    await expect(
+      store.setEffectPreview(store.revision, {
+        schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+        effectId: createHash('sha256').update(huge, 'utf8').digest('hex'),
+        cubeByteLength: Buffer.byteLength(huge, 'utf8'),
+        cubeText: huge
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'invalid_params' })
+
+    expect(store.getDocument().effectPreview).toBeNull()
+    await store.close()
+  })
+
+  it('pins the wire schema constant to the loader that produces it', () => {
+    // Two modules declare this version: the pure protocol and the fs-touching
+    // loader. They cannot import each other without breaking the protocol's
+    // purity, so drift is caught here instead of at runtime.
+    expect(STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION).toBe(STUDIO_EFFECT_PREVIEW_SOURCE_SCHEMA_VERSION)
   })
 })

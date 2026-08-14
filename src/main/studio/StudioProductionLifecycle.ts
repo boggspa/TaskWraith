@@ -7,10 +7,12 @@ import {
   spawnStudioCompanionProcess,
   type StudioCompanionChild,
   type StudioHostOpenMediaOutcome,
+  type StudioHostSetEffectPreviewOutcome,
   type StudioHostSetTranscriptOutcome,
   type StudioSupervisorEvent,
   type StudioSupervisorStatus
 } from './StudioCompanionSupervisor'
+import { StudioEffectPreviewError, loadStudioEffectPreview } from './StudioEffectPreviewSource'
 import {
   resolveStudioCompanionShouldRun,
   type StudioCompanionResolution
@@ -164,6 +166,40 @@ export class StudioProductionLifecycle {
   setTranscript(transcript: StudioTranscript): Promise<StudioHostSetTranscriptOutcome> {
     if (this.disposed) throw new Error('StudioProductionLifecycle is disposed')
     return this.supervisor.setTranscript(transcript)
+  }
+
+  /**
+   * Apply an operator-chosen external `.cube` as the effect preview, or clear
+   * it with null.
+   *
+   * This is the host-owned seam, and the path stops HERE: the file is validated
+   * and read against this lifecycle's own owned media root, and only the
+   * verified inline payload continues to the store and the companion. A refusal
+   * is returned as a typed outcome carrying the exact rejection code rather than
+   * throwing, because a bad LUT is an ordinary operator mistake.
+   */
+  async setEffectPreview(cubePath: string | null): Promise<StudioHostSetEffectPreviewOutcome> {
+    if (this.disposed) throw new Error('StudioProductionLifecycle is disposed')
+    if (cubePath === null) return this.supervisor.setEffectPreview(null)
+
+    let preview
+    try {
+      preview = loadStudioEffectPreview({
+        path: cubePath,
+        allowedMediaRoots: [this.paths.allowedMediaRoot]
+      })
+    } catch (error) {
+      if (error instanceof StudioEffectPreviewError) {
+        return {
+          ok: false,
+          code: 'invalid_params',
+          message: `${error.code}: ${error.message}`,
+          currentRevision: this.store.revision
+        }
+      }
+      throw error
+    }
+    return this.supervisor.setEffectPreview(preview)
   }
 
   async dispose(): Promise<void> {

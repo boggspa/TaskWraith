@@ -21,6 +21,8 @@ export const STUDIO_OPEN_MEDIA_SCHEMA_VERSION = 1
 export const STUDIO_PROPOSAL_SCHEMA_VERSION = 1
 /** Versioned schema for exact, asset-bound transcript segments. */
 export const STUDIO_TRANSCRIPT_SCHEMA_VERSION = 1
+/** Versioned schema for the bounded, inline external effect preview. */
+export const STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION = 1
 
 export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 
@@ -184,12 +186,41 @@ export interface StudioSetTranscriptOp {
   transcript: StudioTranscript
 }
 
+/**
+ * A bounded external colour-grade preview, carried INLINE.
+ *
+ * The operator's filesystem path is deliberately absent from this type. The
+ * host validates and reads the file at its own boundary (see
+ * StudioEffectPreviewSource) and only the verified text travels, so the
+ * companion is never asked to open an arbitrary path and the durable document
+ * cannot leak one. This shape intentionally mirrors the loader's return value;
+ * a test pins the two schema constants together so they cannot drift.
+ */
+export interface StudioEffectPreview {
+  schemaVersion: typeof STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION
+  /** Lowercase SHA-256 hex of the UTF-8 cube text; the stable content identity. */
+  effectId: string
+  cubeByteLength: number
+  cubeText: string
+}
+
+export interface StudioSetEffectPreviewOp {
+  type: 'set_effect_preview'
+  /**
+   * `null` CLEARS the preview. The nullable is load-bearing: an absent field is
+   * not a clear, so a malformed or truncated payload can never be mistaken for
+   * a deliberate removal of the operator's grade.
+   */
+  effectPreview: StudioEffectPreview | null
+}
+
 export type StudioDocumentOperation =
   | StudioEditOp
   | StudioOpenMediaOp
   | StudioProposeEditOp
   | StudioResolveProposalOp
   | StudioSetTranscriptOp
+  | StudioSetEffectPreviewOp
 
 export interface StudioHelloParams {
   protocolVersion: number

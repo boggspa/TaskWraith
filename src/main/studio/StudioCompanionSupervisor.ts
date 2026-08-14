@@ -48,13 +48,15 @@ import {
   type StudioResponseMessage,
   type StudioSetTranscriptResult,
   type StudioSuccessResponseMessage,
-  type StudioTranscript
+  type StudioTranscript,
+  type StudioEffectPreview
 } from './StudioProtocol'
 import { buildEditCommittedNotification, handleStudioMessage } from './StudioDispatcher'
 import type {
   StudioOpenMediaOutcome,
   StudioRevisionStore,
-  StudioSetTranscriptOutcome
+  StudioSetTranscriptOutcome,
+  StudioSetEffectPreviewOutcome
 } from './StudioRevisionStore'
 
 /**
@@ -110,6 +112,15 @@ export type StudioHostOpenMediaOutcome =
 
 export type StudioHostSetTranscriptOutcome =
   | StudioSetTranscriptOutcome
+  | {
+      ok: false
+      code: 'companion_not_ready' | 'delivery_failed'
+      message: string
+      currentRevision: number
+    }
+
+export type StudioHostSetEffectPreviewOutcome =
+  | StudioSetEffectPreviewOutcome
   | {
       ok: false
       code: 'companion_not_ready' | 'delivery_failed'
@@ -419,6 +430,48 @@ export class StudioCompanionSupervisor {
           ok: false,
           code: 'delivery_failed',
           message: 'Studio transcript committed but the companion disconnected before delivery',
+          currentRevision: outcome.revision
+        }
+      }
+      return outcome
+    })
+  }
+
+  /**
+   * Commit and deliver a bounded external effect preview, or clear it with
+   * null. Serialized with every other mutation so a set and a clear cannot
+   * interleave and leave the renderers disagreeing about the active grade.
+   */
+  setEffectPreview(
+    effectPreview: StudioEffectPreview | null
+  ): Promise<StudioHostSetEffectPreviewOutcome> {
+    return this.enqueueSerialized(async () => {
+      const child = this.child
+      if (child === null || this.hydratedChild !== child) {
+        return {
+          ok: false,
+          code: 'companion_not_ready',
+          message: 'Studio companion has not completed document hydration',
+          currentRevision: this.store.revision
+        }
+      }
+      const outcome = await this.store.setEffectPreview(this.store.revision, effectPreview)
+      if (!outcome.ok) return outcome
+      if (
+        this.child !== child ||
+        this.hydratedChild !== child ||
+        !this.writeToChild(
+          child,
+          buildEditCommittedNotification(outcome.revision, {
+            type: 'set_effect_preview',
+            effectPreview: outcome.effectPreview
+          })
+        )
+      ) {
+        return {
+          ok: false,
+          code: 'delivery_failed',
+          message: 'Studio effect preview committed but the companion disconnected before delivery',
           currentRevision: outcome.revision
         }
       }

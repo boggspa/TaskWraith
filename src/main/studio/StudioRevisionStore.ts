@@ -27,9 +27,13 @@ import {
   type StudioRationalTime
 } from './StudioRationalTime'
 import {
+  STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+  STUDIO_MAX_NDJSON_LINE_BYTES,
   STUDIO_PROPOSAL_SCHEMA_VERSION,
   STUDIO_TRANSCRIPT_SCHEMA_VERSION,
   type StudioDocumentOperation,
+  type StudioEffectPreview,
+  type StudioSetEffectPreviewOp,
   type StudioEditOp,
   type StudioEditProposal,
   type StudioInsertRangeOp,
@@ -77,6 +81,12 @@ export interface StudioDocument {
   proposals: StudioEditProposal[]
   /** Exact, asset-bound transcript selection units. */
   transcripts: StudioTranscript[]
+  /**
+   * The bounded external grade preview, or null when none is applied. Null is
+   * the real absence: a document that predates this field hydrates to null
+   * rather than to undefined, so "no preview" has exactly one representation.
+   */
+  effectPreview: StudioEffectPreview | null
   tracks: StudioTrack[]
 }
 
@@ -86,6 +96,7 @@ export function createEmptyStudioDocument(): StudioDocument {
     assets: [],
     proposals: [],
     transcripts: [],
+    effectPreview: null,
     tracks: []
   }
 }
@@ -495,6 +506,59 @@ function applySetTranscript(
   return { ...document, transcripts }
 }
 
+/**
+ * Validate and apply a bounded external effect preview, or clear it.
+ *
+ * Everything here re-checks what the host loader already proved, because the
+ * document is durable: a snapshot replayed months later must not be able to
+ * introduce an unbounded or path-bearing payload through a hand-edited journal.
+ */
+function applySetEffectPreview(
+  document: StudioDocument,
+  operation: StudioSetEffectPreviewOp
+): StudioDocument {
+  const requested = operation.effectPreview
+  if (requested === null) return { ...document, effectPreview: null }
+  if (typeof requested !== 'object') {
+    throw new StudioEditError('invalid_params', 'effectPreview must be an object or null')
+  }
+  if (requested.schemaVersion !== STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION) {
+    throw new StudioEditError(
+      'invalid_params',
+      `effectPreview requires schemaVersion ${STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION}`
+    )
+  }
+  if (typeof requested.effectId !== 'string' || !/^[0-9a-f]{64}$/.test(requested.effectId)) {
+    throw new StudioEditError('invalid_params', 'effectId must be lowercase SHA-256 hex')
+  }
+  if (typeof requested.cubeText !== 'string' || requested.cubeText.length === 0) {
+    throw new StudioEditError('invalid_params', 'cubeText must be a non-empty string')
+  }
+  const actualByteLength = Buffer.byteLength(requested.cubeText, 'utf8')
+  if (requested.cubeByteLength !== actualByteLength) {
+    throw new StudioEditError(
+      'invalid_params',
+      `cubeByteLength ${requested.cubeByteLength} does not match the ${actualByteLength} byte payload`
+    )
+  }
+  // The preview rides one NDJSON line to the companion, so a payload that
+  // cannot be delivered must never be committed: persisting it would wedge
+  // every later hydration behind an oversized line.
+  if (actualByteLength > STUDIO_MAX_NDJSON_LINE_BYTES / 2) {
+    throw new StudioEditError(
+      'invalid_params',
+      `effect preview of ${actualByteLength} bytes cannot be framed within the NDJSON line bound`
+    )
+  }
+  const preview: StudioEffectPreview = {
+    schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+    effectId: requested.effectId,
+    cubeByteLength: actualByteLength,
+    cubeText: requested.cubeText
+  }
+  return { ...document, effectPreview: preview }
+}
+
 /** Apply a timeline edit, media-open mutation, proposal, or transcript transition. */
 export function applyStudioDocumentOperation(
   document: StudioDocument,
@@ -507,6 +571,7 @@ export function applyStudioDocumentOperation(
   if (operation.type === 'propose_edit') return applyProposeEdit(document, operation)
   if (operation.type === 'resolve_proposal') return applyResolveProposal(document, operation)
   if (operation.type === 'set_transcript') return applySetTranscript(document, operation)
+  if (operation.type === 'set_effect_preview') return applySetEffectPreview(document, operation)
   return applyStudioEditOp(document, operation)
 }
 
@@ -517,6 +582,15 @@ export interface StudioStoreRecovery {
   discardedJournalLines: number
   warnings: string[]
 }
+
+export type StudioSetEffectPreviewOutcome =
+  | { ok: true; revision: number; effectPreview: StudioEffectPreview | null }
+  | {
+      ok: false
+      code: StudioEditErrorCode | 'stale_base'
+      message: string
+      currentRevision: number
+    }
 
 export type StudioApplyEditOutcome =
   | { ok: true; revision: number }
@@ -637,6 +711,7 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
     assets?: unknown
     proposals?: unknown
     transcripts?: unknown
+    effectPreview?: unknown
     tracks?: unknown
   }
   const documentFormatVersion = document.formatVersion
@@ -676,6 +751,10 @@ function parseSnapshotFile(raw: string, path: string): StudioSnapshotFile {
         documentFormatVersion === STUDIO_DOCUMENT_FORMAT_VERSION
           ? (document.transcripts as StudioTranscript[])
           : [],
+      // Snapshots written before the effect preview existed simply have no such
+      // field. They must hydrate to null, not undefined, so every reader sees
+      // one representation of "no preview".
+      effectPreview: (document.effectPreview ?? null) as StudioEffectPreview | null,
       tracks: document.tracks as StudioTrack[]
     }
   }
@@ -1077,6 +1156,68 @@ export class StudioRevisionStore {
       }
       const revision = await this.commitOperationLocked(operation, nextDocument)
       return { ok: true as const, revision, transcript: structuredClone(transcript) }
+    })
+  }
+
+  /**
+   * Commit a bounded external effect preview, or clear it with null. The
+   * committed operation carries the VALIDATED payload rather than the caller's,
+   * so the journal can only ever replay a bounded, path-free preview.
+   */
+  setEffectPreview(
+    baseRevision: number,
+    requestedPreview: StudioEffectPreview | null
+  ): Promise<StudioSetEffectPreviewOutcome> {
+    return this.enqueue(async () => {
+      if (this.closed) throw new Error('StudioRevisionStore is closed')
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+        return {
+          ok: false as const,
+          code: 'invalid_params' as const,
+          message: 'baseRevision must be a non-negative safe integer',
+          currentRevision: this.currentRevision
+        }
+      }
+      if (baseRevision !== this.currentRevision) {
+        return {
+          ok: false as const,
+          code: 'stale_base' as const,
+          message: `base revision ${baseRevision} is stale; current revision is ${this.currentRevision}`,
+          currentRevision: this.currentRevision
+        }
+      }
+
+      const requestedOperation: StudioSetEffectPreviewOp = {
+        type: 'set_effect_preview',
+        effectPreview: requestedPreview === null ? null : structuredClone(requestedPreview)
+      }
+      let nextDocument: StudioDocument
+      try {
+        nextDocument = applyStudioDocumentOperation(this.document, requestedOperation)
+      } catch (error) {
+        if (error instanceof StudioEditError) {
+          return {
+            ok: false as const,
+            code: error.code,
+            message: error.message,
+            currentRevision: this.currentRevision
+          }
+        }
+        throw error
+      }
+
+      const operation: StudioSetEffectPreviewOp = {
+        type: 'set_effect_preview',
+        effectPreview:
+          nextDocument.effectPreview === null ? null : structuredClone(nextDocument.effectPreview)
+      }
+      const revision = await this.commitOperationLocked(operation, nextDocument)
+      return {
+        ok: true as const,
+        revision,
+        effectPreview:
+          nextDocument.effectPreview === null ? null : structuredClone(nextDocument.effectPreview)
+      }
     })
   }
 
