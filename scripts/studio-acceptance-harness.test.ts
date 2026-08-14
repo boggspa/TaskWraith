@@ -11,13 +11,18 @@ const {
   assertCleanWatchdogTerminal,
   assertLaunchAuthorized,
   assertNoPriorStudioOrphans,
+  buildStudioAcceptanceJourney,
   buildStudioAcceptancePlan,
+  buildStudioUiDriverRequest,
   buildStubSpec,
   descendantsOf,
+  driveStudioUiJourney,
   launchUnderWatchdog,
   materializeOwnedMedia,
   parseArgs,
   parseProcessTable,
+  runStudioUiDriver,
+  waitForStudioJournalOperation,
   runStudioAcceptance
 } = require('./studio-acceptance-harness.cjs') as {
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
@@ -41,7 +46,9 @@ const {
     }>
     orphans: unknown[]
   }>
+  buildStudioAcceptanceJourney: () => Array<Record<string, any>>
   buildStudioAcceptancePlan: (options?: Record<string, unknown>) => Record<string, any>
+  buildStudioUiDriverRequest: (options: Record<string, any>) => Record<string, any>
   buildStubSpec: (options: {
     directory: string
     timeoutMs?: number
@@ -53,6 +60,11 @@ const {
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>,
     rootPid: number
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
+  driveStudioUiJourney: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   launchUnderWatchdog: (
     spec: Record<string, unknown>,
     adapters?: Record<string, unknown>
@@ -78,6 +90,17 @@ const {
   parseProcessTable: (
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
+  runStudioUiDriver: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    actions: Array<Record<string, unknown>>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
+  waitForStudioJournalOperation: (
+    plan: Record<string, any>,
+    expectation: Record<string, any>,
+    options?: Record<string, any>
+  ) => Promise<Record<string, any>>
   runStudioAcceptance: (
     args: Record<string, any>,
     adapters?: Record<string, any>
@@ -156,7 +179,11 @@ describe('Studio acceptance harness', () => {
       watchdogOwnsSpawn: true,
       parentDisconnectReapsExactGroup: true,
       neverTargetsLiveOrSharedProfile: true,
-      launchRequiresOwnerOrphanClearance: true
+      launchRequiresOwnerOrphanClearance: true,
+      exactCompanionWindowTargeting: true,
+      uiDriverNeverSignalsProcesses: true,
+      realTranscriptRequired: true,
+      evidenceAfterVerifiedGroupExit: true
     })
   })
 
@@ -714,6 +741,300 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/still alive/)
   })
 
+  it('builds a bounded exact-window driver request and refuses unsafe targets', () => {
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 100, y: 120, width: 1280, height: 720 }
+          }
+        ]
+      },
+      artifactRoot: '/virtual/acceptance/studioDriver01'
+    }
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          { type: 'key', key: 'tab' },
+          { type: 'key', key: 'return' }
+        ]
+      })
+    ).toMatchObject({
+      schemaVersion: 1,
+      expectedPid: 7002,
+      expectedPgid: 7001,
+      windowId: 42,
+      actions: [
+        { type: 'key', key: 'tab' },
+        { type: 'key', key: 'return' }
+      ]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        companion: { ...target.companion, pgid: 9999 },
+        actions: [{ type: 'key', key: 'tab' }]
+      })
+    ).toThrow(/process group/)
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        companion: {
+          ...target.companion,
+          command:
+            '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion --viewer'
+        },
+        actions: [{ type: 'key', key: 'tab' }]
+      })
+    ).toThrow(/installed TaskWraith/)
+    expect(() =>
+      buildStudioUiDriverRequest({ ...target, actions: [{ type: 'key', key: 'delete-all' }] })
+    ).toThrow(/unsupported UI action/)
+  })
+
+  it('waits for a real nonempty transcript journal operation', async () => {
+    const root = await temporaryRoot('studio-acceptance-transcript-journal-')
+    const studioStateDirectory = path.join(root, 'studio-companion')
+    await fsPromises.mkdir(studioStateDirectory, { recursive: true })
+    await fsPromises.writeFile(
+      path.join(studioStateDirectory, 'studio-project.journal.jsonl'),
+      [
+        JSON.stringify({
+          format: 'taskwraith-studio-journal',
+          v: 1,
+          revision: 1,
+          op: { type: 'set_transcript', transcript: { assetId: 'asset-a', segments: [] } }
+        }),
+        JSON.stringify({
+          format: 'taskwraith-studio-journal',
+          v: 1,
+          revision: 2,
+          op: {
+            type: 'set_transcript',
+            transcript: {
+              assetId: 'asset-a',
+              segments: [{ segmentId: 'seg-a', text: 'spoken words' }]
+            }
+          }
+        })
+      ].join('\n') + '\n'
+    )
+
+    await expect(
+      waitForStudioJournalOperation(
+        { studioStateDirectory },
+        { type: 'set_transcript', assetId: 'asset-a', requireNonEmptyTranscript: true },
+        { timeoutMs: 100 }
+      )
+    ).resolves.toMatchObject({ revision: 2, op: { type: 'set_transcript' } })
+  })
+
+  it('runs the Swift driver from a bounded request file and validates its receipt', async () => {
+    const root = await temporaryRoot('studio-acceptance-driver-request-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [{ windowId: 42, bounds: { x: 1, y: 2, width: 640, height: 360 } }]
+      }
+    }
+    const execFile = vi.fn(async (_file: string, args: string[]) => {
+      const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+      return {
+        stdout: `${JSON.stringify({
+          schemaVersion: 1,
+          kind: 'taskwraith-studio-ui-driver-receipt',
+          pid: request.expectedPid,
+          pgid: request.expectedPgid,
+          windowId: request.windowId,
+          actions: request.actions.map((action: Record<string, unknown>, index: number) => ({
+            index,
+            type: action.type,
+            key: action.key ?? null,
+            screenshotPath: action.path ?? null,
+            byteLength: action.path ? 4096 : null
+          }))
+        })}\n`,
+        stderr: ''
+      }
+    })
+
+    const receipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [
+        { type: 'key', key: 'tab' },
+        { type: 'screenshot', name: 'transcript-band' }
+      ],
+      { execFile }
+    )
+    expect(receipt).toMatchObject({
+      kind: 'taskwraith-studio-ui-driver-receipt',
+      pid: 7002,
+      pgid: 7001,
+      windowId: 42,
+      actions: [
+        { index: 0, type: 'key', key: 'tab' },
+        { index: 1, type: 'screenshot' }
+      ]
+    })
+    expect(execFile).toHaveBeenCalledOnce()
+    expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
+    expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
+  })
+
+  it('defines and drives the host-authorized accept/reject journey in exact order', async () => {
+    expect(buildStudioAcceptanceJourney().map((stage) => stage.id)).toEqual([
+      'transcript-ready',
+      'propose-accept',
+      'review-current-proposed',
+      'accept',
+      'propose-reject',
+      'reject',
+      'transport-review'
+    ])
+
+    const calls: string[] = []
+    let proposalNumber = 0
+    const receipt = await driveStudioUiJourney(
+      { artifactRoot: '/virtual/acceptance/studioJourney01' },
+      {
+        companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
+        electronPgid: 7001,
+        window: {}
+      },
+      {
+        waitForJournalOperation: async (_plan: unknown, expectation: Record<string, unknown>) => {
+          calls.push(
+            `journal:${String(expectation.type)}:${String(
+              expectation.decision ?? expectation.assetId ?? ''
+            )}`
+          )
+          if (expectation.type === 'set_transcript') {
+            return { revision: 2, op: { type: 'set_transcript' } }
+          }
+          if (expectation.type === 'propose_edit') {
+            proposalNumber += 1
+            return {
+              revision: 2 + proposalNumber * 2 - 1,
+              op: {
+                type: 'propose_edit',
+                proposal: { proposalId: `proposal-${proposalNumber}` }
+              }
+            }
+          }
+          return {
+            revision: 2 + proposalNumber * 2,
+            op: {
+              type: 'resolve_proposal',
+              proposalId: `proposal-${proposalNumber}`,
+              decision: expectation.decision
+            }
+          }
+        },
+        runUiDriver: async (
+          _plan: unknown,
+          _target: unknown,
+          actions: Array<Record<string, unknown>>
+        ) => {
+          calls.push(`driver:${actions.map((action) => action.key ?? action.name).join(',')}`)
+          return {
+            schemaVersion: 1,
+            kind: 'taskwraith-studio-ui-driver-receipt',
+            pid: 7002,
+            pgid: 7001,
+            windowId: 42,
+            actions: actions.map((action, index) => ({
+              index,
+              type: action.type,
+              key: action.key ?? null,
+              screenshotPath:
+                action.type === 'screenshot' ? `/virtual/${String(action.name)}.png` : null
+            }))
+          }
+        }
+      }
+    )
+
+    expect(receipt).toMatchObject({
+      ok: true,
+      transcript: { revision: 2 },
+      accepted: { proposalId: 'proposal-1', resolutionRevision: 4 },
+      rejected: { proposalId: 'proposal-2', resolutionRevision: 6 }
+    })
+    expect(calls).toEqual([
+      'journal:set_transcript:',
+      'driver:tab,bracket-left,return',
+      'journal:propose_edit:',
+      'driver:ghost',
+      'driver:w,current,v,proposed',
+      'driver:a',
+      'journal:resolve_proposal:accept',
+      'driver:w,tab,bracket-right,return',
+      'journal:propose_edit:',
+      'driver:ghost-reject',
+      'driver:r',
+      'journal:resolve_proposal:reject',
+      'driver:space,right,left,i,o,l,p,c,g,s,final'
+    ])
+    expect(receipt.screenshots).toEqual([
+      '/virtual/ghost.png',
+      '/virtual/current.png',
+      '/virtual/proposed.png',
+      '/virtual/ghost-reject.png',
+      '/virtual/final.png'
+    ])
+  })
+
+  it('fails a partial UI journey without manufacturing a success receipt', async () => {
+    let driverCalls = 0
+    await expect(
+      driveStudioUiJourney(
+        { artifactRoot: '/virtual/acceptance/studioJourneyFail' },
+        {
+          companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
+          electronPgid: 7001,
+          window: {}
+        },
+        {
+          waitForJournalOperation: async (_plan: unknown, expectation: Record<string, unknown>) => {
+            if (expectation.type === 'set_transcript') {
+              return { revision: 2, op: { type: 'set_transcript' } }
+            }
+            return {
+              revision: 3,
+              op: { type: 'propose_edit', proposal: { proposalId: 'proposal-fail' } }
+            }
+          },
+          runUiDriver: async () => {
+            driverCalls += 1
+            if (driverCalls === 2) throw new Error('screenshot failed')
+            return { actions: [] }
+          }
+        }
+      )
+    ).rejects.toThrow(/screenshot failed/)
+  })
+
   it.each([
     [{ status: 'reap_incomplete', reason: 'owner_requested', groupExitVerified: false }],
     [{ status: 'exited', reason: 'child_exit', groupExitVerified: true }],
@@ -728,11 +1049,12 @@ describe('Studio acceptance harness', () => {
     await fsPromises.writeFile(source, 'fixture')
     const calls: string[] = []
     const renderer = { close: () => calls.push('renderer.close') }
-    let watchdogTerminal = {
+    const watchdogTerminal = {
       status: 'reaped',
       reason: 'owner_requested',
       groupExitVerified: true
     }
+    let journeyError: Error | null = null
     const session = {
       pid: 7001,
       pgid: 7001,
@@ -791,7 +1113,22 @@ describe('Studio acceptance harness', () => {
       },
       probeWindow: async () => {
         calls.push('window.probe')
-        return { pid: 7002, visibleWindowCount: 1, windows: [{ title: 'TaskWraith Studio' }] }
+        return {
+          pid: 7002,
+          visibleWindowCount: 1,
+          windows: [
+            {
+              windowId: 42,
+              title: 'TaskWraith Studio',
+              bounds: { x: 100, y: 100, width: 1280, height: 720 }
+            }
+          ]
+        }
+      },
+      driveUiJourney: async () => {
+        calls.push('journey.drive')
+        if (journeyError) throw journeyError
+        return { ok: true, screenshots: ['/virtual/final.png'] }
       },
       writeEvidence: async () => {
         calls.push('evidence.write')
@@ -808,6 +1145,7 @@ describe('Studio acceptance harness', () => {
         companion: { pid: 7002 },
         window: { visibleWindowCount: 1 },
         durable: { revision: 1 },
+        journey: { ok: true, screenshots: ['/virtual/final.png'] },
         watchdogTerminal
       }
     })
@@ -821,18 +1159,15 @@ describe('Studio acceptance harness', () => {
       'journal.verify',
       'companion.find',
       'window.probe',
+      'journey.drive',
       'renderer.close',
       'watchdog.stop',
       'evidence.write'
     ])
 
     calls.length = 0
-    watchdogTerminal = {
-      status: 'reap_incomplete',
-      reason: 'owner_requested',
-      groupExitVerified: false
-    }
-    await expect(runStudioAcceptance(args, adapters)).rejects.toThrow(/did not confirm clean/)
+    journeyError = new Error('mid-action failure')
+    await expect(runStudioAcceptance(args, adapters)).rejects.toThrow(/mid-action failure/)
     expect(calls).toEqual([
       'ports.free',
       'build',
@@ -843,6 +1178,7 @@ describe('Studio acceptance harness', () => {
       'journal.verify',
       'companion.find',
       'window.probe',
+      'journey.drive',
       'renderer.close',
       'watchdog.stop'
     ])

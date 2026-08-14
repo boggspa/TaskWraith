@@ -35,6 +35,7 @@ const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
 
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const WINDOW_PROBE_PATH = path.join(__dirname, 'studio-acceptance-window-probe.swift')
+const UI_DRIVER_PATH = path.join(__dirname, 'studio-acceptance-ui-driver.swift')
 const TRANSCRIPT_MEDIA_DIR = 'transcript-media'
 const STUDIO_STATE_DIR = 'studio-companion'
 const STUDIO_JOURNAL_FILE = 'studio-project.journal.jsonl'
@@ -176,7 +177,12 @@ function buildStudioAcceptancePlan(options = {}) {
       neverAutoDeletesArtifacts: true,
       neverTargetsLiveOrSharedProfile: true,
       launchRequiresOwnerOrphanClearance: true,
-      refusesLaunchOnPriorLiveGroup: true
+      refusesLaunchOnPriorLiveGroup: true,
+      exactCompanionWindowTargeting: true,
+      boundedUiActionAllowlist: true,
+      uiDriverNeverSignalsProcesses: true,
+      realTranscriptRequired: true,
+      evidenceAfterVerifiedGroupExit: true
     }
   }
 }
@@ -757,6 +763,419 @@ async function findStudioCompanion(rootPid, adapters = {}) {
   })
 }
 
+const STUDIO_JOURNAL_MAX_BYTES = 16 * 1024 * 1024
+const STUDIO_UI_DRIVER_MAX_ACTIONS = 32
+const STUDIO_UI_KEYS = new Set([
+  'space',
+  'tab',
+  'return',
+  'left',
+  'right',
+  'bracket-left',
+  'bracket-right',
+  'i',
+  'o',
+  'l',
+  'p',
+  'c',
+  'g',
+  's',
+  'v',
+  'w',
+  'a',
+  'r'
+])
+
+function assertSafeUiDriverTarget(options) {
+  const companion = options.companion
+  const electronPgid = options.electronPgid
+  const window = options.window
+  if (
+    !isRecord(companion) ||
+    !Number.isSafeInteger(companion.pid) ||
+    companion.pid <= 0 ||
+    !Number.isSafeInteger(companion.pgid) ||
+    companion.pgid <= 0
+  ) {
+    throw new Error('Studio UI driver requires an exact positive Companion pid and pgid')
+  }
+  if (!Number.isSafeInteger(electronPgid) || companion.pgid !== electronPgid) {
+    throw new Error(
+      `Studio UI driver process group mismatch: companion ${companion.pgid}, watchdog ${electronPgid}`
+    )
+  }
+  const command = String(companion.command || '')
+  if (command.includes('/Applications/TaskWraith.app/')) {
+    throw new Error('Studio UI driver refuses the installed TaskWraith process group')
+  }
+  const executableMatch = /(^.*\/TaskWraithStudioCompanion)(?:\s|$)/.exec(command)
+  if (!executableMatch || !path.isAbsolute(executableMatch[1])) {
+    throw new Error('Studio UI driver target is not the exact Companion executable')
+  }
+  if (
+    !isRecord(window) ||
+    window.pid !== companion.pid ||
+    window.visibleWindowCount !== 1 ||
+    !Array.isArray(window.windows) ||
+    window.windows.length !== 1
+  ) {
+    throw new Error(
+      'Studio UI driver requires exactly one visible window for the exact Companion pid'
+    )
+  }
+  const exactWindow = window.windows[0]
+  const bounds = exactWindow && exactWindow.bounds
+  if (
+    !isRecord(exactWindow) ||
+    !Number.isSafeInteger(exactWindow.windowId) ||
+    exactWindow.windowId <= 0 ||
+    !isRecord(bounds) ||
+    ![bounds.x, bounds.y, bounds.width, bounds.height].every(
+      (value) => typeof value === 'number' && Number.isFinite(value)
+    ) ||
+    bounds.width <= 1 ||
+    bounds.height <= 1
+  ) {
+    throw new Error('Studio UI driver requires an exact positive window id and finite bounds')
+  }
+  return {
+    companion,
+    exactWindow,
+    bounds,
+    expectedExecutablePath: path.resolve(executableMatch[1])
+  }
+}
+
+function buildStudioUiDriverRequest(options) {
+  const { companion, exactWindow, bounds, expectedExecutablePath } =
+    assertSafeUiDriverTarget(options)
+  const artifactRoot = path.resolve(String(options.artifactRoot || ''))
+  const actions = options.actions
+  if (
+    !Array.isArray(actions) ||
+    actions.length < 1 ||
+    actions.length > STUDIO_UI_DRIVER_MAX_ACTIONS
+  ) {
+    throw new Error(`Studio UI driver requires 1–${STUDIO_UI_DRIVER_MAX_ACTIONS} bounded actions`)
+  }
+  const normalizedActions = actions.map((action) => {
+    if (!isRecord(action)) throw new Error('unsupported UI action: action must be an object')
+    if (action.type === 'key' && STUDIO_UI_KEYS.has(action.key)) {
+      return { type: 'key', key: action.key }
+    }
+    if (action.type === 'screenshot' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(action.name)) {
+      const screenshotPath = path.resolve(artifactRoot, 'screenshots', `${String(action.name)}.png`)
+      if (!screenshotPath.startsWith(`${artifactRoot}${path.sep}`)) {
+        throw new Error('unsupported UI action: screenshot escaped the artifact root')
+      }
+      return { type: 'screenshot', name: action.name, path: screenshotPath }
+    }
+    throw new Error(`unsupported UI action: ${JSON.stringify(action).slice(0, 200)}`)
+  })
+  return {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-ui-driver-request',
+    expectedPid: companion.pid,
+    expectedPgid: companion.pgid,
+    expectedExecutablePath,
+    windowId: exactWindow.windowId,
+    windowBounds: bounds,
+    artifactRoot,
+    actions: normalizedActions
+  }
+}
+
+async function readStudioJournalOperations(plan) {
+  const journalPath = path.join(plan.studioStateDirectory, STUDIO_JOURNAL_FILE)
+  let stat
+  try {
+    stat = await fsPromises.lstat(journalPath)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return []
+    throw error
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('Studio journal is not a safe regular file')
+  }
+  if (stat.size > STUDIO_JOURNAL_MAX_BYTES) {
+    throw new Error(`Studio journal exceeds ${STUDIO_JOURNAL_MAX_BYTES} bytes`)
+  }
+  const raw = await fsPromises.readFile(journalPath, 'utf8')
+  const entries = []
+  for (const [index, line] of raw.split('\n').entries()) {
+    if (!line.trim()) continue
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      throw new Error(`Studio journal line ${index + 1} is not valid JSON`)
+    }
+    if (
+      !isRecord(entry) ||
+      entry.format !== 'taskwraith-studio-journal' ||
+      entry.v !== 1 ||
+      !Number.isSafeInteger(entry.revision) ||
+      entry.revision < 1 ||
+      !isRecord(entry.op) ||
+      typeof entry.op.type !== 'string'
+    ) {
+      throw new Error(`Studio journal line ${index + 1} has an invalid shape`)
+    }
+    entries.push(entry)
+  }
+  return entries
+}
+
+function studioJournalOperationMatches(entry, expectation, afterRevision) {
+  if (entry.revision <= afterRevision || entry.op.type !== expectation.type) return false
+  if (
+    expectation.assetId !== undefined &&
+    entry.op.transcript &&
+    entry.op.transcript.assetId !== expectation.assetId
+  ) {
+    return false
+  }
+  if (
+    expectation.proposalId !== undefined &&
+    (entry.op.proposalId || entry.op.proposal?.proposalId) !== expectation.proposalId
+  ) {
+    return false
+  }
+  if (expectation.decision !== undefined && entry.op.decision !== expectation.decision) {
+    return false
+  }
+  if (expectation.requireNonEmptyTranscript) {
+    const segments = entry.op.transcript && entry.op.transcript.segments
+    if (
+      !Array.isArray(segments) ||
+      !segments.some(
+        (segment) => isRecord(segment) && typeof segment.text === 'string' && segment.text.trim()
+      )
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+async function waitForStudioJournalOperation(plan, expectation, options = {}) {
+  const afterRevision = Number.isSafeInteger(options.afterRevision) ? options.afterRevision : 0
+  return waitFor({
+    label: `durable Studio ${expectation.type} journal operation`,
+    timeoutMs: options.timeoutMs,
+    intervalMs: options.intervalMs || 100,
+    probe: async () => {
+      const entries = await (options.readJournalOperations || readStudioJournalOperations)(plan)
+      return (
+        entries.find((entry) => studioJournalOperationMatches(entry, expectation, afterRevision)) ||
+        null
+      )
+    }
+  })
+}
+
+async function runStudioUiDriver(plan, target, actions, adapters = {}) {
+  const request = buildStudioUiDriverRequest({
+    ...target,
+    artifactRoot: plan.artifactRoot,
+    actions
+  })
+  await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
+  const requestDirectory = path.join(plan.artifactRoot, 'ui-driver-requests')
+  await fsPromises.mkdir(requestDirectory, { recursive: true, mode: 0o700 })
+  const requestPath = path.join(requestDirectory, `${crypto.randomUUID()}.json`)
+  const temp = `${requestPath}.tmp-${process.pid}`
+  await fsPromises.writeFile(temp, `${JSON.stringify(request, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+  await fsPromises.rename(temp, requestPath)
+
+  const runExec = adapters.execFile || defaultExecFile
+  const result = await runExec('/usr/bin/swift', [UI_DRIVER_PATH, requestPath], {
+    timeoutMs: 60_000
+  })
+  let receipt
+  try {
+    receipt = JSON.parse(result.stdout)
+  } catch {
+    throw new Error('Studio UI driver did not return a JSON receipt')
+  }
+  if (
+    !isRecord(receipt) ||
+    receipt.schemaVersion !== 1 ||
+    receipt.kind !== 'taskwraith-studio-ui-driver-receipt' ||
+    receipt.pid !== request.expectedPid ||
+    receipt.pgid !== request.expectedPgid ||
+    receipt.windowId !== request.windowId ||
+    !Array.isArray(receipt.actions) ||
+    receipt.actions.length !== request.actions.length
+  ) {
+    throw new Error(`Studio UI driver returned an invalid receipt: ${result.stdout.slice(0, 1000)}`)
+  }
+  for (const [index, action] of request.actions.entries()) {
+    const observed = receipt.actions[index]
+    if (!isRecord(observed) || observed.index !== index || observed.type !== action.type) {
+      throw new Error('Studio UI driver action receipt does not match the bounded request')
+    }
+    if (action.type === 'key' && observed.key !== action.key) {
+      throw new Error('Studio UI driver key receipt does not match the bounded request')
+    }
+    if (
+      action.type === 'screenshot' &&
+      (observed.screenshotPath !== action.path ||
+        !Number.isSafeInteger(observed.byteLength) ||
+        observed.byteLength < 1)
+    ) {
+      throw new Error('Studio UI driver screenshot receipt does not match the bounded request')
+    }
+  }
+  return { ...receipt, requestPath }
+}
+
+function buildStudioAcceptanceJourney() {
+  return [
+    { id: 'transcript-ready', wait: { type: 'set_transcript', requireNonEmptyTranscript: true } },
+    {
+      id: 'propose-accept',
+      actions: ['tab', 'bracket-left', 'return'],
+      wait: { type: 'propose_edit' }
+    },
+    {
+      id: 'review-current-proposed',
+      actions: ['w', 'v'],
+      screenshots: ['current', 'proposed']
+    },
+    { id: 'accept', actions: ['a'], wait: { type: 'resolve_proposal', decision: 'accept' } },
+    {
+      id: 'propose-reject',
+      actions: ['w', 'tab', 'bracket-right', 'return'],
+      wait: { type: 'propose_edit' }
+    },
+    { id: 'reject', actions: ['r'], wait: { type: 'resolve_proposal', decision: 'reject' } },
+    {
+      id: 'transport-review',
+      actions: ['space', 'right', 'left', 'i', 'o', 'l', 'p', 'c', 'g', 's'],
+      screenshot: 'final'
+    }
+  ]
+}
+
+function screenshotPaths(receipt) {
+  return receipt.actions
+    .filter((action) => action && action.type === 'screenshot')
+    .map((action) => action.screenshotPath)
+}
+
+async function driveStudioUiJourney(plan, target, adapters = {}) {
+  const waitJournal = adapters.waitForJournalOperation || waitForStudioJournalOperation
+  const runDriver = adapters.runUiDriver || runStudioUiDriver
+  const assetId = target.asset && target.asset.sha256
+  const transcript = await waitJournal(
+    plan,
+    {
+      type: 'set_transcript',
+      ...(assetId ? { assetId } : {}),
+      requireNonEmptyTranscript: true
+    },
+    { afterRevision: 0 }
+  )
+  let afterRevision = transcript.revision
+  const driverReceipts = []
+  const screenshots = []
+
+  const drive = async (actions) => {
+    const receipt = await runDriver(
+      plan,
+      target,
+      actions.map((action) => (typeof action === 'string' ? { type: 'key', key: action } : action)),
+      adapters.driverAdapters || {}
+    )
+    driverReceipts.push(receipt)
+    screenshots.push(...screenshotPaths(receipt))
+    return receipt
+  }
+
+  await drive(['tab', 'bracket-left', 'return'])
+  const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
+  const acceptedProposalId = acceptedProposal.op?.proposal?.proposalId
+  if (typeof acceptedProposalId !== 'string' || !acceptedProposalId) {
+    throw new Error('Studio accept journey did not journal a proposal identity')
+  }
+  afterRevision = acceptedProposal.revision
+  await drive([{ type: 'screenshot', name: 'ghost' }])
+  await drive([
+    'w',
+    { type: 'screenshot', name: 'current' },
+    'v',
+    { type: 'screenshot', name: 'proposed' }
+  ])
+  await drive(['a'])
+  const acceptedResolution = await waitJournal(
+    plan,
+    {
+      type: 'resolve_proposal',
+      proposalId: acceptedProposalId,
+      decision: 'accept'
+    },
+    { afterRevision }
+  )
+  afterRevision = acceptedResolution.revision
+
+  await drive(['w', 'tab', 'bracket-right', 'return'])
+  const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
+  const rejectedProposalId = rejectedProposal.op?.proposal?.proposalId
+  if (typeof rejectedProposalId !== 'string' || !rejectedProposalId) {
+    throw new Error('Studio reject journey did not journal a proposal identity')
+  }
+  afterRevision = rejectedProposal.revision
+  await drive([{ type: 'screenshot', name: 'ghost-reject' }])
+  await drive(['r'])
+  const rejectedResolution = await waitJournal(
+    plan,
+    {
+      type: 'resolve_proposal',
+      proposalId: rejectedProposalId,
+      decision: 'reject'
+    },
+    { afterRevision }
+  )
+  afterRevision = rejectedResolution.revision
+  await drive([
+    'space',
+    'right',
+    'left',
+    'i',
+    'o',
+    'l',
+    'p',
+    'c',
+    'g',
+    's',
+    { type: 'screenshot', name: 'final' }
+  ])
+
+  return {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-ui-journey-receipt',
+    ok: true,
+    transcript: { revision: transcript.revision },
+    accepted: {
+      proposalId: acceptedProposalId,
+      proposalRevision: acceptedProposal.revision,
+      resolutionRevision: acceptedResolution.revision
+    },
+    rejected: {
+      proposalId: rejectedProposalId,
+      proposalRevision: rejectedProposal.revision,
+      resolutionRevision: rejectedResolution.revision
+    },
+    finalRevision: afterRevision,
+    screenshots,
+    driverReceipts
+  }
+}
+
 async function probeNativeWindow(pid, adapters = {}) {
   const runExec = adapters.execFile || defaultExecFile
   const result = await runExec('/usr/bin/swift', [WINDOW_PROBE_PATH, String(pid)], {
@@ -903,6 +1322,16 @@ async function runStudioAcceptance(args, adapters = {}) {
       companion.pid,
       adapters.windowAdapters || {}
     )
+    const journey = await (adapters.driveUiJourney || driveStudioUiJourney)(
+      plan,
+      {
+        companion,
+        electronPgid: session.pgid || null,
+        window,
+        asset
+      },
+      adapters.journeyAdapters || {}
+    )
     evidence = {
       ok: true,
       instanceId: plan.instanceId,
@@ -917,6 +1346,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       asset,
       openResult,
       durable,
+      journey,
       watchdogReceiptPath: plan.receiptPath,
       priorOrphanScan,
       safety: plan.safety
@@ -1089,6 +1519,13 @@ module.exports = {
   assertCleanWatchdogTerminal,
   runStudioAcceptanceBuild,
   findStudioCompanion,
+  probeNativeWindow,
+  buildStudioUiDriverRequest,
+  readStudioJournalOperations,
+  waitForStudioJournalOperation,
+  runStudioUiDriver,
+  buildStudioAcceptanceJourney,
+  driveStudioUiJourney,
   verifyDurableOpen,
   buildStubSpec,
   runAbandonOwnerSelfTest,
