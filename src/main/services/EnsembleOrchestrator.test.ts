@@ -18668,6 +18668,139 @@ Next action:
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 
+  it('re-summons Boss when its provider terminalizes before foreground dispatch returns', async () => {
+    const firstForegroundDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
+    let foregroundDispatchCount = 0
+    const harness = makeHarness({
+      dispatch: async (payload, _event, observer) => {
+        observer?.onAdapterInvoked?.({
+          provider: payload.provider,
+          appRunId: payload.appRunId || '',
+          ...(payload.workspace ? { effectiveWorkspacePath: payload.workspace } : {})
+        })
+        if (!payload.ensembleRun?.laneId && foregroundDispatchCount++ === 0) {
+          return firstForegroundDispatch.promise
+        }
+        return { dispatched: true, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 8
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'researcher',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'worker',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 4,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Boss must retain authority until every fan-out lane settles.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossRunId = harness.dispatched[0].appRunId!
+    const fanout = harness.orchestrator.fanoutForRun(bossRunId, {
+      targets: ['Reviewer', 'Researcher'],
+      prompt: 'Inspect in two independent lanes.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    await expect(fanout).resolves.toMatchObject({
+      ok: true,
+      participantIds: ['reviewer', 'researcher']
+    })
+
+    // One lane returns, then the foreground provider closes its own turn while
+    // RunCoordinator is still awaiting the adapter operation for that dispatch.
+    completeDispatchedRun(harness, 1)
+    completeDispatchedRun(harness, 0)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(3)
+
+    firstForegroundDispatch.resolve({ dispatched: true, appRunId: bossRunId })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('boss')
+    expect(harness.dispatched[3].ensembleRun?.laneId).toBeUndefined()
+    expect(harness.cancelRun).not.toHaveBeenCalledWith('codex', bossRunId)
+    expect(
+      harness.chat.runs?.find((run) => run.runId === harness.dispatched[2].appRunId)?.status
+    ).toBe('running')
+
+    await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
+  })
+
+  it('re-cancels a foreground transport accepted after Skip during dispatch', async () => {
+    const firstForegroundDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
+    let foregroundDispatchCount = 0
+    const harness = makeHarness({
+      dispatch: async (payload, _event, observer) => {
+        observer?.onAdapterInvoked?.({
+          provider: payload.provider,
+          appRunId: payload.appRunId || '',
+          ...(payload.workspace ? { effectiveWorkspacePath: payload.workspace } : {})
+        })
+        if (foregroundDispatchCount++ === 0) return firstForegroundDispatch.promise
+        return { dispatched: true, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Skip the first seat while its foreground dispatch is pending.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const skippedRunId = harness.dispatched[0].appRunId!
+
+    await expect(harness.orchestrator.skipActiveParticipant('ensemble-chat')).resolves.toBe(true)
+    expect(harness.cancelRun).toHaveBeenCalledWith('claude', skippedRunId)
+
+    firstForegroundDispatch.resolve({ dispatched: true, appRunId: skippedRunId })
+    await vi.waitFor(() => {
+      const exactCancellationCount = harness.cancelRun.mock.calls.filter(
+        ([provider, runId]) => provider === 'claude' && runId === skippedRunId
+      ).length
+      expect(exactCancellationCount).toBeGreaterThanOrEqual(2)
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('codex')
+
+    completeDispatchedRun(harness, 1)
+  })
+
   it('re-summons Boss after a silent fan-out exit instead of advancing ordinary writers', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'

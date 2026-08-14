@@ -15753,10 +15753,14 @@ export class EnsembleOrchestrator {
         await this.requestExactRunCancellation(run).catch(() => false)
         dispatchFailure = classifyDispatchError(error)
       }
-      if (dispatchedResult?.dispatched && (runtime.cancelled || run.terminalFinalized === true)) {
-        // Stop/history deletion may have reached cancelRun before dispatch
+      const dispatchCancellationWon =
+        !this.ownsRunningRound(runtime) || run.fanoutDispatchCancelled === true
+      if (dispatchedResult?.dispatched && dispatchCancellationWon) {
+        // Stop/Skip/history deletion may have reached cancelRun before dispatch
         // registered this run. An accepted receipt is the first point at which
-        // the exact transport can be cancelled authoritatively.
+        // the exact transport can be cancelled authoritatively. Ordinary
+        // provider terminalization is not cancellation: its completed run must
+        // fall through to post-turn authority routing below.
         await this.requestExactRunCancellation(run).catch(() => false)
         if (this.runsByRunId.get(run.runId) === run) {
           this.finalizeRun(run, 'cancelled', 'Round cancelled during provider dispatch.')
@@ -15856,7 +15860,7 @@ export class EnsembleOrchestrator {
       } else {
         dispatchAttempts += 1
         runtime.lastForegroundParticipantId = participant.id
-        this.startCursorCompletionWatchdog(run)
+        if (!run.terminalFinalized) this.startCursorCompletionWatchdog(run)
         // Review F2c — record the shell stamp only once the provider
         // actually RECEIVED this prompt. Stamping before dispatch let a
         // spawn/preflight failure persist a stamp for a shell the session
