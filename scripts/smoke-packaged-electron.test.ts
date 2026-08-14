@@ -19,7 +19,8 @@ interface MacSigningIdentity {
 const {
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
-  describeMacSigningPosture
+  describeMacSigningPosture,
+  readMacSigningIdentity
 }: {
   evaluateMacSigningIdentity: (output: string, exitCode: number | null) => MacSigningIdentity
   collectMacSigningPostureFailures: (options: {
@@ -28,6 +29,7 @@ const {
     requireProduction?: boolean
   }) => string[]
   describeMacSigningPosture: (identity: MacSigningIdentity) => string
+  readMacSigningIdentity: (codePath: string) => MacSigningIdentity
 } = require('./smoke-packaged-electron.cjs')
 
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
@@ -236,6 +238,71 @@ describe('notarized macOS production-signing gate', () => {
     expect(notarizedBuild).toMatch(
       /(?:^|&&\s*)TASKWRAITH_REQUIRE_PRODUCTION_SIGNING=1 node scripts\/smoke-packaged-electron\.cjs dist(?:\s*&&|$)/
     )
+  })
+})
+
+describe('production-signing gate covers every notarizing build', () => {
+  const scripts =
+    (
+      JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as {
+        scripts?: Record<string, string>
+      }
+    ).scripts ?? {}
+
+  const notarizing = Object.entries(scripts).filter(([, body]) => /notarize=true/.test(body))
+
+  // Guards the scan itself. If the flag is ever renamed, `notarizing` becomes
+  // empty and the check below would pass while inspecting nothing — the same
+  // vacuous-pass shape this suite exists to catch.
+  it('finds the notarizing scripts it claims to be checking', () => {
+    expect(notarizing.map(([name]) => name)).toEqual(
+      expect.arrayContaining(['build:mac:notarized', 'build:debug:mac:notarized'])
+    )
+  })
+
+  // Notarization requires a Developer ID signature and the hardened runtime, so
+  // every script that notarizes must run the packaged smoke under the hard
+  // production posture. Naming one script explicitly cannot see a second one.
+  it('gates the packaged smoke in every script that notarizes', () => {
+    const ungated: string[] = []
+    for (const [name, body] of notarizing) {
+      const calls = body.match(/(?:\S+=\S+\s+)*node scripts\/smoke-packaged-electron\.cjs \S+/g)
+      for (const call of calls ?? []) {
+        if (!/TASKWRAITH_REQUIRE_PRODUCTION_SIGNING=1/.test(call)) ungated.push(`${name}: ${call}`)
+      }
+    }
+    expect(ungated).toEqual([])
+  })
+})
+
+// The parser above is exercised with captured text. These drive the real spawn
+// wrapper against a binary macOS is guaranteed to have signed, so a wrapper
+// that never invoked the tool, or drifted from its actual output, fails here.
+describe.skipIf(process.platform !== 'darwin')('real signature reads', () => {
+  it('parses a genuinely signed system binary through the spawn wrapper', () => {
+    const identity = readMacSigningIdentity('/bin/ls')
+
+    expect(identity.readable).toBe(true)
+    expect(identity.adhoc).toBe(false)
+    expect(identity.leafAuthority).toBe('Software Signing')
+    expect(identity.authorities).toContain('Apple Root CA')
+    // The real report for a platform binary literally says
+    // "TeamIdentifier=not set". Proving the guard against actual output is
+    // worth more than proving it against a fixture I wrote myself.
+    expect(identity.teamIdentifier).toBeNull()
+  })
+
+  // Apple's own platform signature satisfies "is it signed" and "does it chain
+  // to Apple Root CA", which is exactly why those questions are insufficient:
+  // it is still not a Developer ID distribution identity.
+  it('refuses an Apple platform signature as a distribution identity', () => {
+    const failures = collectMacSigningPostureFailures({
+      identity: readMacSigningIdentity('/bin/ls'),
+      label: 'Packaged app'
+    })
+
+    expect(failures.join('\n')).toMatch(/Developer ID Application/)
+    expect(failures.join('\n')).toMatch(/Team Identifier/)
   })
 })
 

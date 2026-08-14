@@ -1257,5 +1257,6 @@ function fail(message) {
 module.exports = {
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
-  describeMacSigningPosture
+  describeMacSigningPosture,
+  readMacSigningIdentity
 }
