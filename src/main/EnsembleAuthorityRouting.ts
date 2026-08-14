@@ -1,4 +1,4 @@
-import type { EnsembleParticipant } from './store/types'
+import type { ActiveGoal, EnsembleParticipant } from './store/types'
 import { resolveYieldTargetDetail } from './services/EnsembleMentionAlias'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
@@ -59,6 +59,21 @@ export function shouldResummonAuthorityForUnresolvedRouting(input: {
   return (
     input.orchestrationMode === 'continuous' && Boolean(input.selectionRequired) && !input.decision
   )
+}
+
+/**
+ * Whether this round owns a newly-terminal goal. A terminal goal carried in
+ * from before the round is stale context, while a goal that left `active`
+ * during the round supersedes any still-open authority routing checkpoint.
+ */
+export function goalBecameTerminalDuringRound(input: {
+  activeGoal: ActiveGoal | undefined
+  roundStartGoalId: string | undefined
+  roundStartGoalWasTerminal: boolean | undefined
+}): boolean {
+  const goal = input.activeGoal
+  if (!goal || goal.status === 'active') return false
+  return !(input.roundStartGoalWasTerminal && goal.id === input.roundStartGoalId)
 }
 
 /**

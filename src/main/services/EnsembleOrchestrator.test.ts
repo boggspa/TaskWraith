@@ -1035,6 +1035,61 @@ describe('EnsembleOrchestrator', () => {
     ).toBe(true)
   })
 
+  it('keeps a host-bound completing Boss answered when goal closure supersedes its routing checkpoint', async () => {
+    const initialChat = makeAntigravityGoalChat()
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      fanoutPolicy: 'all',
+      participants: initialChat.ensemble!.participants.map((participant) => ({
+        ...participant,
+        permissionPresetId: 'workspace_write'
+      }))
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result and close the goal without routing another seat.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+    expect(harness.dispatched[0].prompt).toContain('Authority routing checkpoint')
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: `All requested checks pass.\n${antigravityGoalCompletionSignal()}`
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    const states = new Map(
+      harness.chat.ensemble?.activeRound?.participants.map((participant) => [
+        participant.participantId,
+        participant
+      ])
+    )
+    expect(states.get('antigravity')?.status).toBe('answered')
+    expect(states.get('codex-worker')?.status).toBe('skipped')
+    expect(
+      harness.chat.messages.some((message) =>
+        /re-summoning before ordinary serial writers/i.test(message.content)
+      )
+    ).toBe(false)
+    expect(
+      harness.chat.ensemble?.escalationSignals?.some(
+        (signal) =>
+          signal.roundId === harness.chat.ensemble?.activeRound?.roundId && signal.kind === 'stuck'
+      ) ?? false
+    ).toBe(false)
+  })
+
   it('does not infer official-agy goal completion from ordinary prose', async () => {
     const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
     harness.orchestrator.startRound({

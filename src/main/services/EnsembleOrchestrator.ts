@@ -118,6 +118,7 @@ import {
 import {
   applyQueuedAuthorityRosterSelection,
   collectAuthorityOnlyContinuationCandidateIds,
+  goalBecameTerminalDuringRound,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -16541,6 +16542,11 @@ export class EnsembleOrchestrator {
         }
       }
       if (
+        !goalBecameTerminalDuringRound({
+          activeGoal: this.deps.getChat(runtime.chatId)?.activeGoal,
+          roundStartGoalId: runtime.roundStartGoalId,
+          roundStartGoalWasTerminal: runtime.roundStartGoalWasTerminal
+        }) &&
         shouldResummonAuthorityForUnresolvedRouting({
           orchestrationMode: runtime.orchestrationMode,
           selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
@@ -18750,8 +18756,16 @@ export class EnsembleOrchestrator {
   ): void {
     if (remaining.length === 0) return
     const goal = chat.activeGoal
-    if (!goal || goal.status === 'active') return
-    if (runtime.roundStartGoalWasTerminal && goal.id === runtime.roundStartGoalId) return
+    if (
+      !goal ||
+      !goalBecameTerminalDuringRound({
+        activeGoal: goal,
+        roundStartGoalId: runtime.roundStartGoalId,
+        roundStartGoalWasTerminal: runtime.roundStartGoalWasTerminal
+      })
+    ) {
+      return
+    }
     const survivors: EnsembleParticipant[] = []
     const preempted: EnsembleParticipant[] = []
     for (const participant of remaining) {

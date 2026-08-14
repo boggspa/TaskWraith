@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyQueuedAuthorityRosterSelection,
   collectAuthorityOnlyContinuationCandidateIds,
+  goalBecameTerminalDuringRound,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -173,6 +174,46 @@ describe('Continuous Boss ownership helpers', () => {
         decision: undefined
       })
     ).toBe(false)
+  })
+
+  it('distinguishes a goal terminalized during this round from stale terminal context', () => {
+    const activeGoal = {
+      id: 'goal-live',
+      objective: 'Ship the verified result.',
+      status: 'active' as const,
+      mode: 'taskwraith_steered' as const,
+      provider: 'claude' as const,
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    expect(
+      goalBecameTerminalDuringRound({
+        activeGoal,
+        roundStartGoalId: activeGoal.id,
+        roundStartGoalWasTerminal: false
+      })
+    ).toBe(false)
+    expect(
+      goalBecameTerminalDuringRound({
+        activeGoal: { ...activeGoal, status: 'completed' },
+        roundStartGoalId: activeGoal.id,
+        roundStartGoalWasTerminal: false
+      })
+    ).toBe(true)
+    expect(
+      goalBecameTerminalDuringRound({
+        activeGoal: { ...activeGoal, status: 'completed' },
+        roundStartGoalId: activeGoal.id,
+        roundStartGoalWasTerminal: true
+      })
+    ).toBe(false)
+    expect(
+      goalBecameTerminalDuringRound({
+        activeGoal: { ...activeGoal, id: 'goal-new', status: 'blocked' },
+        roundStartGoalId: activeGoal.id,
+        roundStartGoalWasTerminal: true
+      })
+    ).toBe(true)
   })
 
   it('collects authority-only fan-out, yield-return, and optional synthesizer seats', () => {
