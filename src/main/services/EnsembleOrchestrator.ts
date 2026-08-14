@@ -15146,16 +15146,19 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // Parallel fan-out. Default/safe path: fan out read-only
-    // participants first, then continue with writer-capable
-    // participants serially. Writer-capable lanes only run in parallel
-    // after either Boss authorization via ensemble_fanout or, when no
-    // Boss is assigned, a host-owned user-preflight claim + ack pass.
+    // Parallel fan-out. The explicit Read policy clamps the opening scout
+    // stage to read-only. The user-selected All policy keeps each scout's own
+    // configured posture: `scout` remains a work/stage instruction and must
+    // not silently replace Accept Edits with Plan. Writer-capable lanes under
+    // narrower policies still require either Boss authorization via
+    // ensemble_fanout or, when no Boss is assigned, a host-owned user-preflight
+    // claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
     const roundFanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
     const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
     const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
     const shouldRunReadOnlyFanout = readFanoutRequested
+    const openingScoutUsesOwnPermissions = roundFanoutPolicy === 'all'
     const shouldRunOpeningScoutFanout =
       !options.skipPreamble || options.repeatOpeningScoutFanout === true
     const shouldRunOpeningWriterFanout = !options.skipPreamble
@@ -15171,8 +15174,9 @@ export class EnsembleOrchestrator {
       // and never consults the seat's configured preset. Three-way partition:
       //   readers  — explicit stage 'scout' (any preset), or unstaged seats
       //              whose OWN permissions resolve read-only (the pre-stage
-      //              legacy inference) → round-start parallel pass, every
-      //              lane dispatched under the signed read_only lane clamp.
+      //              legacy inference) → round-start parallel pass. The Read
+      //              policy signs the read_only clamp; All signs each seat's
+      //              configured posture instead.
       //   writers  — explicit stage 'worker' (any preset, including presets
       //              that resolve read-only: it still takes its serial turn
       //              and must NOT be silently dropped from BOTH buckets — a
@@ -15228,10 +15232,10 @@ export class EnsembleOrchestrator {
         remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only',
-          // Readers may include write-postured explicit scouts; the flag
-          // routes the pre-dispatch check through the same read_only lane
-          // clamp the dispatch itself already uses.
-          forceReadOnlyDispatch: true,
+          // Fan-out All is explicit user authority for each lane to inherit its
+          // configured posture. Fan-out Read retains the historical clamp.
+          forceReadOnlyDispatch: !openingScoutUsesOwnPermissions,
+          dispatchOwnPermissions: openingScoutUsesOwnPermissions,
           label: 'Automatic read stage'
         })
       } else if (shouldRunOpeningScoutFanout && readFanoutRequested && readers.length > 0) {

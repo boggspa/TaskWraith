@@ -21366,11 +21366,10 @@ describe('staged fan-out (stageRole)', () => {
   })
 
   // Stage roles are permission-agnostic: a stage is a fan-out dispatch role,
-  // never a permission requirement. Wave lanes always dispatch under the
-  // signed read_only ("Ask") lane clamp regardless of the seat's configured
-  // preset — the seat's own posture governs only its ordinary serial turns.
-  // The only role-based permission distinction in ensembles stays Boss/
-  // Captain authority, which is stage-independent.
+  // never a permission requirement. The explicit Read policy clamps wave
+  // lanes to signed read_only ("Ask"); Fan-out All preserves each seat's own
+  // posture. The only role-based permission distinction in ensembles stays
+  // Boss/Captain authority, which is stage-independent.
 
   it('dispatches a write-postured scout in the opening wave under the read-only lane clamp', async () => {
     const harness = makeHarness()
@@ -21436,6 +21435,72 @@ describe('staged fan-out (stageRole)', () => {
       message.content?.includes('Automatic read stage · 2 participant(s) dispatched concurrently')
     )
     expect(waveNote).toBeTruthy()
+  })
+
+  it('preserves configured scout postures in the opening wave under Fan-out All', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'all'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'antigravity-scout',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'Scout A',
+        instructions: 'Investigate without changing the task assignment.',
+        order: 1,
+        permissionPresetId: 'default',
+        stageRole: 'scout'
+      },
+      {
+        id: 'kimi-scout',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Scout B',
+        instructions: 'Investigate.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'scout'
+      },
+      {
+        id: 'claude-builder',
+        provider: 'claude',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Investigate, then build.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const antigravity = harness.dispatched.find((payload) => payload.provider === 'antigravity')
+    const kimi = harness.dispatched.find((payload) => payload.provider === 'kimi')
+    expect(antigravity).toMatchObject({
+      approvalMode: 'default',
+      effectivePermissions: {
+        presetId: 'default',
+        readOnly: false,
+        agenticServices: { shellCommands: 'allow' }
+      }
+    })
+    expect(kimi).toMatchObject({
+      approvalMode: 'plan',
+      effectivePermissions: { presetId: 'read_only', readOnly: true }
+    })
+    const antigravityRun = harness.chat.runs.find((run) => run.runId === antigravity?.appRunId)
+    const kimiRun = harness.chat.runs.find((run) => run.runId === kimi?.appRunId)
+    expect(antigravityRun?.ensembleLaneIntent).toBe('write')
+    expect(kimiRun?.ensembleLaneIntent).toBe('read')
+
+    completeRun(harness, 0, 'Scout A findings.')
+    completeRun(harness, 1, 'Scout B findings.')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('claude')
   })
 
   it('runs write-postured reviewers as a closing review wave under the read-only lane clamp', async () => {
