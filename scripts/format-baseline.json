@@ -1,5 +1,5 @@
 {
-  "unformattedFiles": 1186,
-  "consideredFiles": 4335,
+  "unformattedFiles": 1185,
+  "consideredFiles": 4399,
   "note": "Ratchet baseline. Lower this when the count drops; never raise it. See scripts/format-ratchet.cjs."
 }
