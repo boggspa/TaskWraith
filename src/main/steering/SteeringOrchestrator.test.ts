@@ -95,6 +95,45 @@ describe('routeSteerDelivery', () => {
     expect(result.status).toBe('boundary')
   })
 
+  it('live-delivers explicitly framed Ensemble participant text', () => {
+    const { runManager, registry, deps } = makeFixture()
+    startRun(runManager, 'kimi')
+    const transport = steerTransport()
+    runManager.registerLiveSteerTransport('run-1', transport)
+    const peerEntry = registry.register({
+      chatId: 'chat-1',
+      messageId: 'msg-peer',
+      text: '[TaskWraith inter-seat steer]\nAuthority: peer Ensemble participant.',
+      source: 'ensembleSideMessage',
+      authorKind: 'ensembleParticipant',
+      createdAtIso: new Date().toISOString()
+    })
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry: peerEntry,
+      provider: 'kimi'
+    })
+    expect(result.status).toBe('injected')
+    expect(result.strategy).toBe('acp-interrupt')
+    expect(transport.sendSteer).toHaveBeenCalledWith(peerEntry.text)
+  })
+
+  it('does not route through a session registered for a different provider', () => {
+    const { runManager, deps, entry } = makeFixture()
+    startRun(runManager, 'mistral')
+    const transport = steerTransport()
+    runManager.registerLiveSteerTransport('run-1', transport)
+    const result = routeSteerDelivery(deps, {
+      chatId: 'chat-1',
+      runId: 'run-1',
+      entry,
+      provider: 'kimi'
+    })
+    expect(result.status).toBe('boundary')
+    expect(transport.sendSteer).not.toHaveBeenCalled()
+  })
+
   it('acp-interrupt: sends through the registered live transport (kimi)', () => {
     const { runManager, deps, entry } = makeFixture()
     startRun(runManager, 'kimi')
@@ -232,7 +271,7 @@ describe('cancelPendingSteer', () => {
 
   it('cancels the live transport and unregisters it without touching the run', () => {
     const { runManager, deps, entry } = makeFixture()
-    startRun(runManager, 'kimi')
+    startRun(runManager, 'cursor')
     // Broker injection exposes concrete pending state on the session.
     routeSteerDelivery(deps, {
       chatId: 'chat-1',

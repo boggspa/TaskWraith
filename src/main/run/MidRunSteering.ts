@@ -33,7 +33,11 @@
  */
 import type { ChatMessage, ProviderId, ScheduledTask } from '../store/types'
 
-export type MidRunSteeringSource = 'ensembleSteer' | 'scheduledTask' | 'liveSteer'
+export type MidRunSteeringSource =
+  | 'ensembleSteer'
+  | 'ensembleSideMessage'
+  | 'scheduledTask'
+  | 'liveSteer'
 
 export interface MidRunSteeringEntry {
   id: string
@@ -185,7 +189,10 @@ export class MidRunSteeringRegistry {
    */
   undeliveredToAnyParticipant(chatId: string): MidRunSteeringEntry[] {
     return (this.entriesByChatId.get(chatId) || []).filter(
-      (entry) => !entry.deliveredAtIso && entry.deliveredToParticipantIds.length === 0
+      (entry) =>
+        entry.source === 'ensembleSteer' &&
+        !entry.deliveredAtIso &&
+        entry.deliveredToParticipantIds.length === 0
     )
   }
 
@@ -276,7 +283,13 @@ export type MidRunSteeringAuthor =
       collaboratorDisplayName: string
     }
 
-export type MidRunSteeringAuthorKind = MidRunSteeringAuthor['kind']
+/**
+ * `ensembleParticipant` is transport-only: side-message transcript rows have
+ * their own `ensembleSideMessage` shape, so they never pass through
+ * `buildMidRunSteeringMessage`. Keeping it out of `MidRunSteeringAuthor`
+ * prevents a peer row from accidentally taking that builder's user carrier.
+ */
+export type MidRunSteeringAuthorKind = MidRunSteeringAuthor['kind'] | 'ensembleParticipant'
 
 /** The host steering their own run — every caller in the app today. */
 export const HOST_MIDRUN_STEERING_AUTHOR: MidRunSteeringAuthor = { kind: 'host' }
@@ -585,7 +598,12 @@ export function planMidTurnSteeringDelivery(input: {
 }): { kind: MidTurnSteeringStrategyKind } {
   if (!input.enabled) return { kind: 'boundary' }
   if (!input.text.trim()) return { kind: 'boundary' }
-  if (input.authorKind !== 'host') return { kind: 'boundary' }
+  // External collaborators remain boundary-only. A peer Ensemble participant
+  // is admitted only after the caller has applied the explicit lower-authority
+  // transport frame; see EnsembleSideMessageSteering.
+  if (input.authorKind !== 'host' && input.authorKind !== 'ensembleParticipant') {
+    return { kind: 'boundary' }
+  }
   if (input.runSettled) return { kind: 'boundary' }
 
   const cap = midTurnSteeringCapabilityForProvider(input.provider)

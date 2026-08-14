@@ -87,6 +87,17 @@ describe('MidRunSteeringRegistry', () => {
     expect(registry.undeliveredToAnyParticipant('chat-1')).toHaveLength(0)
   })
 
+  it('does not promote a directed peer side message into the generic user boundary turn', () => {
+    const registry = new MidRunSteeringRegistry()
+    const sideMessage = register(registry, {
+      source: 'ensembleSideMessage',
+      authorKind: 'ensembleParticipant'
+    })
+
+    expect(registry.pendingForChat('chat-1').map((entry) => entry.id)).toEqual([sideMessage.id])
+    expect(registry.undeliveredToAnyParticipant('chat-1')).toEqual([])
+  })
+
   it('a participant-marked entry is not re-marked for later entries only', () => {
     const registry = new MidRunSteeringRegistry()
     register(registry, { messageId: 'msg-a' })

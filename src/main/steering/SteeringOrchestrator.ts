@@ -79,12 +79,13 @@ export function routeSteerDelivery(
   const { chatId, runId, entry, provider, midTool } = input
 
   const session = runManager.get(runId)
-  if (!session || session.appChatId !== chatId) {
+  if (!session || session.appChatId !== chatId || session.provider !== provider) {
     return {
       status: 'boundary',
       strategy: 'boundary',
       entryId: entry.id,
-      reason: 'No matching active session for this chat; falling back to boundary delivery.'
+      reason:
+        'No matching active provider session for this chat; falling back to boundary delivery.'
     }
   }
 
