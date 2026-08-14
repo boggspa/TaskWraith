@@ -84,6 +84,16 @@ const MAX_CODEX_SQLITE_MARKERS_PER_BUCKET = 8
 const EXTERNAL_USAGE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
 const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 const EXTERNAL_USAGE_SNAPSHOT_FILENAME = 'external-activity-snapshot.json'
+const DAILY_USAGE_ROLLUP_FILENAME = 'daily-usage-rollup.json'
+
+// Scratch caches for the one-time deep backfill. They exist so the wide walk
+// never opens the shared 90-day file cache: the per-file cache is pruned to
+// whatever window the CURRENT pass used, so a normal pass running after a wide
+// one would delete every extra entry and rewrite the whole JSONL, and the two
+// would then re-parse the corpus against each other forever. Deleted once the
+// backfill finishes.
+const DAILY_BACKFILL_FILE_CACHE_FILENAME = 'daily-usage-backfill-cache.jsonl'
+const DAILY_BACKFILL_CURSOR_CACHE_FILENAME = 'daily-usage-backfill-cursor-cache.json'
 
 // ── Main-thread duty cycle ──────────────────────────────────────────────────
 // Streaming keeps any single read short, but the scan AS A WHOLE is the
@@ -240,6 +250,30 @@ export function setExternalUsageUpdateListener(listener: ExternalUsageUpdateList
   externalUsageUpdateListener = listener
 }
 
+/**
+ * A completed FULL-window scan, with the window it actually covered.
+ *
+ * Distinct from {@link setExternalUsageUpdateListener}, which also fires for
+ * cold partials and cursor upgrades. The daily rollup folds against this one
+ * because it must know which days the scan is authoritative for: it replaces
+ * those and keeps the rest. A partial would replace days it only half saw.
+ */
+export interface ExternalScanCompletion {
+  records: UsageRecord[]
+  scannedAt: number
+  lookbackDays: number
+}
+
+type ExternalScanCompletionListener = (completion: ExternalScanCompletion) => void
+
+let externalScanCompletionListener: ExternalScanCompletionListener | null = null
+
+export function setExternalScanCompletionListener(
+  listener: ExternalScanCompletionListener | null
+): void {
+  externalScanCompletionListener = listener
+}
+
 function commitExternalUsageRecords(records: UsageRecord[], scannedAt: number = Date.now()): void {
   externalUsageCache = { records, scannedAt }
   try {
@@ -392,6 +426,15 @@ function startExternalScan(
     if (externalUsageSnapshotPath) {
       await persistExternalUsageSnapshot(externalUsageSnapshotPath, { records: full, scannedAt })
     }
+    try {
+      externalScanCompletionListener?.({
+        records: full,
+        scannedAt,
+        lookbackDays: options.lookbackDays || DEFAULT_LOOKBACK_DAYS
+      })
+    } catch {
+      // As for the update listener: a consumer must never poison the scan.
+    }
     return full
   }
 
@@ -441,6 +484,7 @@ export function resetExternalUsageFrontDoorForTests(): void {
   externalScanInFlight = null
   externalScanDriver = null
   externalUsageUpdateListener = null
+  externalScanCompletionListener = null
   cursorRecordsForwarder = null
   automaticScanAdmissionOpen = true
   externalUsageSnapshotPath = null
@@ -501,6 +545,21 @@ export function defaultExternalActivityCachePaths(): {
     externalFileCachePath: resolveExternalFileCachePath(),
     cursorCachePath: resolveCursorExternalCachePath(),
     externalUsageSnapshotPath: resolveExternalUsageSnapshotPath()
+  }
+}
+
+/** Locations for the long-horizon daily rollup and the deep backfill's scratch
+ * caches. Resolved in MAIN for the same reason as the scan caches above. */
+export function defaultDailyUsageRollupPaths(): {
+  dailyRollupPath: string
+  backfillFileCachePath: string
+  backfillCursorCachePath: string
+} {
+  const userData = app.getPath('userData')
+  return {
+    dailyRollupPath: join(userData, DAILY_USAGE_ROLLUP_FILENAME),
+    backfillFileCachePath: join(userData, DAILY_BACKFILL_FILE_CACHE_FILENAME),
+    backfillCursorCachePath: join(userData, DAILY_BACKFILL_CURSOR_CACHE_FILENAME)
   }
 }
 

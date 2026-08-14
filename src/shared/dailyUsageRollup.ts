@@ -168,18 +168,22 @@ function mergeByMax(
 }
 
 /**
- * Fold a scan's records into the stored rollup.
+ * Fold already-bucketed days into the stored rollup.
  *
  * See the module header: replace fully-observed days, max-merge the partial
  * boundary day, keep everything else. Idempotent for a fixed scan window, which
  * is what lets this run on every completed scan.
+ *
+ * This is the days-in entry point, used by the deep backfill, which buckets
+ * inside the scan utility process so a wide record array never crosses the
+ * process boundary. `foldUsageRecordsIntoDailyRollup` is the records-in wrapper
+ * over the same rule — there is deliberately only one implementation of it.
  */
-export function foldUsageRecordsIntoDailyRollup(
+export function foldDailyUsageDaysIntoRollup(
   base: DailyUsageDays,
-  records: readonly DailyUsageTokenRecordLike[],
+  incoming: DailyUsageDays,
   options: DailyUsageFoldOptions
 ): DailyUsageDays {
-  const incoming = buildDailyUsageTotals(records)
   const next: DailyUsageDays = {}
   const { observedFromMs, observedToMs } = options
 
@@ -203,6 +207,15 @@ export function foldUsageRecordsIntoDailyRollup(
   }
 
   return pruneDailyUsageRollupDays(next, options.now ?? Date.now(), options.maxDays)
+}
+
+/** Records-in wrapper over `foldDailyUsageDaysIntoRollup`. */
+export function foldUsageRecordsIntoDailyRollup(
+  base: DailyUsageDays,
+  records: readonly DailyUsageTokenRecordLike[],
+  options: DailyUsageFoldOptions
+): DailyUsageDays {
+  return foldDailyUsageDaysIntoRollup(base, buildDailyUsageTotals(records), options)
 }
 
 /** Keep the newest `maxDays` day keys, dropping days newer than today too —
