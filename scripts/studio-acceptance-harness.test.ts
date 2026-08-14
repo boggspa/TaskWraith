@@ -1230,6 +1230,15 @@ describe('Studio acceptance harness', () => {
         { type: 'key', key: 'return' }
       ]
     })
+    const timecodeActions = [...'0123456789'].map((key) => ({ type: 'key', key }))
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [...timecodeActions, { type: 'key', key: 'return' }]
+      })
+    ).toMatchObject({
+      actions: [...timecodeActions, { type: 'key', key: 'return' }]
+    })
     const dualWindowTarget = {
       ...target,
       window: {
