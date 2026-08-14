@@ -15968,6 +15968,76 @@ Next action:
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
+  it('suppresses the implicit yield-return when the target completes the active goal', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.activeGoal = buildActiveGoal('goal-yield-return')
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'gate',
+        provider: 'claude',
+        enabled: true,
+        role: 'Gate',
+        instructions: 'Delegate the repair.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'fixman',
+        provider: 'codex',
+        enabled: true,
+        role: 'Fixman',
+        instructions: 'Repair and complete the goal.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Repair the issue and stop when the goal is complete.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('gate')
+
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Fix this.', 'Fixman')
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
+
+    const fixmanRoute = {
+      appRunId: harness.dispatched[1].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('codex', fixmanRoute, {
+      type: 'content',
+      text: 'Repair verified; the active goal is complete.'
+    })
+    harness.chat.activeGoal = {
+      ...harness.chat.activeGoal!,
+      status: 'completed',
+      updatedAt: '2026-08-14T13:35:44.985Z'
+    }
+    harness.orchestrator.handleProviderOutput('codex', fixmanRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched.map((payload) => payload.ensembleRun?.participantId)).toEqual([
+      'gate',
+      'fixman'
+    ])
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Yield-return: returning to Gate')
+      )
+    ).toBe(false)
+  })
+
   it('lets a yielded target route onward by @-mention before the implicit yield-return', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'

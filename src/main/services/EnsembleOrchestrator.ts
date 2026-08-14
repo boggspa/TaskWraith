@@ -18507,6 +18507,22 @@ export class EnsembleOrchestrator {
     const stack = runtime.yieldReturnStack
     const frame = stack?.[stack.length - 1]
     if (!stack?.length || frame?.targetParticipantId !== completedParticipant.id) return false
+    if (
+      goalBecameTerminalDuringRound({
+        // `chat` was captured before the provider turn. Goal tools replace the
+        // durable chat projection while that turn is in flight, so read the
+        // current goal instead of consulting the stale iteration snapshot.
+        activeGoal: this.deps.getChat(runtime.chatId)?.activeGoal,
+        roundStartGoalId: runtime.roundStartGoalId,
+        roundStartGoalWasTerminal: runtime.roundStartGoalWasTerminal
+      })
+    ) {
+      // The frame was created by an earlier turn. Once its target completes
+      // this round's goal, that stale implicit return must not resurrect the
+      // yielder through the explicit-routing pre-emption exemption.
+      this.clearYieldReturnStack(runtime)
+      return false
+    }
     stack.pop()
     if (completedStatus !== 'answered') return false
     const returnParticipant = chat.ensemble?.participants.find(
