@@ -275,4 +275,139 @@ final class StudioViewerRendererTests: XCTestCase {
         XCTAssertEqual(diagnostics.sourceDiagnostics?.decodeCount, 2)
         XCTAssertEqual(diagnostics.sourceDiagnostics?.cacheHitCount, 1)
     }
+
+    // MARK: - Reused-target residue (the conditional-clear seam)
+
+    /// Full-frame readback. Test-only, per the AVCDAW note; the packaged
+    /// corruption showed up as area trails a single-pixel probe cannot see.
+    private func fullFrameBytes(_ texture: MTLTexture) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: size * size * 4)
+        texture.getBytes(
+            &bytes,
+            bytesPerRow: size * 4,
+            from: MTLRegionMake2D(0, 0, size, size),
+            mipmapLevel: 0
+        )
+        return bytes
+    }
+
+    /// The exact compositing configuration the packaged viewer runs: overlay
+    /// present, so the content pass chains and the overlay owns the end of the
+    /// frame. `presenting: nil` keeps the result readable offscreen.
+    private func makeOverlayModel() -> StudioOverlayModel {
+        StudioOverlayLayout.build(
+            StudioOverlayState(
+                viewport: StudioOverlayViewport(
+                    width: Double(size), height: Double(size), scale: 1),
+                positionTicks: 0,
+                durationTicks: 24,
+                isPlaying: true,
+                timecodeText: "00:00:00:00",
+                sourceLabel: "moving.mov",
+                diagnostics: StudioOverlayDiagnostics(
+                    presentedFrameCount: 1,
+                    droppedFrameCount: 0,
+                    retainedFrameCount: 0,
+                    hardwareDecodeLabel: "hardware",
+                    syncLabel: "a/v +1.0ms",
+                    memoryLabel: "rss 1MB",
+                    cacheHitCount: 0,
+                    boundTextureCount: 1,
+                    playerCount: 1
+                )
+            )
+        )
+    }
+
+    /// A review whose inserted material has NO attached source, so every frame
+    /// inside the insert is a deterministic drop — the branch that makes the
+    /// overlay clear first.
+    private func makeMissingReview() throws -> StudioReviewContext {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let op = StudioInsertRangeOp(
+            itemId: "i1", assetId: "missing", trackId: nil,
+            sourceIn: try XCTUnwrap(StudioRationalTime(n: 0, d: 30)),
+            sourceOut: try XCTUnwrap(StudioRationalTime(n: 600, d: 30)),
+            at: try XCTUnwrap(StudioRationalTime(n: 0, d: 30)))
+        return StudioReviewContext(
+            version: .proposed,
+            timeline: try XCTUnwrap(
+                StudioProposedTimeline(
+                    proposal: StudioEditProposal(
+                        proposalId: "p1", createdRevision: 1, op: op),
+                    timebase: timebase)),
+            timebase: timebase)
+    }
+
+    /// The packaged viewer renders into a POOLED, RECYCLED drawable, and the
+    /// no-residue guarantee rests on two joins: a successful content pass
+    /// covers the whole target, and a dropped frame makes the overlay clear
+    /// first (`clearingFirst: !outcome.didDraw`). A fresh-target-per-frame
+    /// harness cannot see either join break, so this drives the real
+    /// compositing path into ONE reused target across alternating drawn and
+    /// dropped frames, then compares against fresh-target renders of the same
+    /// snapshots. Reverting the conditional clear fails the dropped-frame
+    /// comparison; anything that leaves residue fails the drawn comparison.
+    func testAReusedTargetAccumulatesNoResidueAcrossDrawnAndDroppedFrames() async throws {
+        let renderer = try makeRenderer()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        try await StudioTestMedia.writeMovingMovie(
+            frameCount: 24, to: url, forceKeyFrames: false)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+            asset: StudioMediaAsset(assetId: "moving", path: url.path, mediaKind: .video),
+            device: renderer.device
+        )
+        defer { loaded.source.invalidate() }
+        renderer.attach(
+            source: loaded.source, assetId: "moving", timebase: loaded.media.timebase)
+
+        let overlay = makeOverlayModel()
+        let review = try makeMissingReview()
+        let reused = try makeTarget(renderer)
+
+        var frame: Int64 = 20
+        for step in 0..<12 {
+            if step % 3 == 2 {
+                let outcome = renderer.render(
+                    snapshot: snapshot(frame: 10), to: reused,
+                    overlay: overlay, review: review)
+                XCTAssertFalse(
+                    outcome.didDraw,
+                    "the missing-asset review must drop the frame")
+            } else {
+                let outcome = renderer.render(
+                    snapshot: snapshot(frame: frame), to: reused, overlay: overlay)
+                XCTAssertTrue(outcome.didDraw)
+                frame = frame >= 6 ? frame - 6 : 20
+            }
+        }
+
+        // Drawn after the storm: a reused target must not change the picture.
+        XCTAssertTrue(
+            renderer.render(snapshot: snapshot(frame: 9), to: reused, overlay: overlay)
+                .didDraw)
+        let reusedDrawn = fullFrameBytes(reused)
+        let freshDrawn = try makeTarget(renderer)
+        XCTAssertTrue(
+            renderer.render(snapshot: snapshot(frame: 9), to: freshDrawn, overlay: overlay)
+                .didDraw)
+        XCTAssertEqual(
+            reusedDrawn, fullFrameBytes(freshDrawn),
+            "a reused target changed the picture: residue survived a successful pass")
+
+        // Dropped after drawn content: the conditional clear must leave the
+        // same pixels as a dropped frame into a fresh target, not the previous
+        // picture under a live HUD.
+        let freshDropped = try makeTarget(renderer)
+        _ = renderer.render(
+            snapshot: snapshot(frame: 10), to: freshDropped,
+            overlay: overlay, review: review)
+        _ = renderer.render(
+            snapshot: snapshot(frame: 10), to: reused,
+            overlay: overlay, review: review)
+        XCTAssertEqual(
+            fullFrameBytes(reused), fullFrameBytes(freshDropped),
+            "a dropped frame on a reused target shows the previous picture")
+    }
 }
