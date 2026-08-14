@@ -29,4 +29,22 @@ describe('window idle ambient pause CSS', () => {
     // A property kill would break useRailFrameRemeasure's transitionend pin.
     expect(ruleBody).not.toMatch(/^\s*transition\s*:/m)
   })
+
+  it('finishes the timed approval reveal without resuming its ambient rim', () => {
+    const css = readCss('32-window-idle-pause.css')
+
+    expect(css).toMatch(
+      new RegExp(
+        `\\.${WINDOW_IDLE_CLASS} \\.composer-permission-card--overlay \\{[^}]*` +
+          'animation-play-state: running !important;'
+      )
+    )
+    expect(css).toContain(`.${WINDOW_IDLE_CLASS} *::before`)
+    expect(css).not.toMatch(
+      new RegExp(
+        `\\.${WINDOW_IDLE_CLASS} \\.composer-permission-card--overlay::before \\{[^}]*` +
+          'animation-play-state: running'
+      )
+    )
+  })
 })

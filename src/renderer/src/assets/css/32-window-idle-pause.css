@@ -16,3 +16,12 @@
 .is-window-idle *::after {
   animation-play-state: paused !important;
 }
+
+/* A timed approval is an interaction surface, not ambient motion. Its finite
+ * entrance animation starts at opacity: 0, so pausing its first frame makes
+ * the request invisible while the main-process auto-deny clock keeps running.
+ * Let only the card's 180ms reveal finish. The animated rim on `::before` and
+ * every descendant still match the blanket pause above. */
+.is-window-idle .composer-permission-card--overlay {
+  animation-play-state: running !important;
+}
