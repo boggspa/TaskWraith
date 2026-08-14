@@ -1239,6 +1239,20 @@ describe('Studio acceptance harness', () => {
     ).toMatchObject({
       actions: [...timecodeActions, { type: 'key', key: 'return' }]
     })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
+      })
+    ).toMatchObject({
+      actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'click', xFraction: 1.1, yFraction: 0.5 }]
+      })
+    ).toThrow(/unsupported UI action/)
     const dualWindowTarget = {
       ...target,
       window: {

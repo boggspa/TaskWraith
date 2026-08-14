@@ -1036,6 +1036,23 @@ function buildStudioUiDriverRequest(options) {
     if (action.type === 'key' && STUDIO_UI_KEYS.has(action.key)) {
       return { type: 'key', key: action.key }
     }
+    if (
+      action.type === 'click' &&
+      typeof action.xFraction === 'number' &&
+      Number.isFinite(action.xFraction) &&
+      action.xFraction > 0 &&
+      action.xFraction < 1 &&
+      typeof action.yFraction === 'number' &&
+      Number.isFinite(action.yFraction) &&
+      action.yFraction > 0 &&
+      action.yFraction < 1
+    ) {
+      return {
+        type: 'click',
+        xFraction: action.xFraction,
+        yFraction: action.yFraction
+      }
+    }
     if (action.type === 'screenshot' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(action.name)) {
       const screenshotPath = path.resolve(artifactRoot, 'screenshots', `${String(action.name)}.png`)
       if (!screenshotPath.startsWith(`${artifactRoot}${path.sep}`)) {

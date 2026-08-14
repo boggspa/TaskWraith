@@ -21,6 +21,8 @@ struct DriverAction: Codable {
     let key: String?
     let name: String?
     let path: String?
+    let xFraction: Double?
+    let yFraction: Double?
 }
 
 struct DriverRequest: Codable {
@@ -42,6 +44,8 @@ struct ActionReceipt: Codable {
     let key: String?
     let screenshotPath: String?
     let byteLength: Int?
+    let xFraction: Double?
+    let yFraction: Double?
 }
 
 struct DriverReceipt: Codable {
@@ -303,7 +307,9 @@ do {
     }
 
     try validateWindow(request)
-    if request.actions.contains(where: { $0.type == "key" }) && !CGPreflightPostEventAccess() {
+    if request.actions.contains(where: { $0.type == "key" || $0.type == "click" }) &&
+        !CGPreflightPostEventAccess()
+    {
         throw DriverFailure.refused("macOS post-event access is unavailable")
     }
     guard application.activate(options: [.activateAllWindows]) else {
@@ -348,7 +354,52 @@ do {
                     type: "key",
                     key: key,
                     screenshotPath: nil,
-                    byteLength: nil
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil
+                )
+            )
+        } else if action.type == "click",
+                  let xFraction = action.xFraction,
+                  let yFraction = action.yFraction,
+                  xFraction.isFinite,
+                  yFraction.isFinite,
+                  xFraction > 0,
+                  xFraction < 1,
+                  yFraction > 0,
+                  yFraction < 1
+        {
+            let point = CGPoint(
+                x: request.windowBounds.x + request.windowBounds.width * xFraction,
+                y: request.windowBounds.y + request.windowBounds.height * yFraction
+            )
+            guard let source = CGEventSource(stateID: .hidSystemState),
+                  let down = CGEvent(
+                    mouseEventSource: source,
+                    mouseType: .leftMouseDown,
+                    mouseCursorPosition: point,
+                    mouseButton: .left
+                  ),
+                  let up = CGEvent(
+                    mouseEventSource: source,
+                    mouseType: .leftMouseUp,
+                    mouseCursorPosition: point,
+                    mouseButton: .left
+                  ) else {
+                throw DriverFailure.refused("could not construct bounded pointer event")
+            }
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "click",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: xFraction,
+                    yFraction: yFraction
                 )
             )
         } else if action.type == "screenshot", let screenshotPath = action.path {
@@ -367,7 +418,9 @@ do {
                     type: "screenshot",
                     key: nil,
                     screenshotPath: destination.path,
-                    byteLength: byteLength
+                    byteLength: byteLength,
+                    xFraction: nil,
+                    yFraction: nil
                 )
             )
         } else {
