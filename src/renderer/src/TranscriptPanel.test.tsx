@@ -2951,6 +2951,67 @@ describe('settled ask_user_question tombstone', () => {
   })
 })
 
+describe('inter-seat transcript rows', () => {
+  it('keeps an ensemble_send note at assistant hierarchy and out of system-notice folds', () => {
+    const participant = ensembleParticipant({
+      id: 'claude-reviewer',
+      provider: 'claude',
+      role: 'Reviewer',
+      model: 'claude-sonnet-4-7'
+    })
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'side-1',
+        role: 'system',
+        content: '↪ Reviewer to Worker: SIDE_MESSAGE_MARKER check `kimi` first.\nReason: handoff',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: {
+          kind: 'ensembleSideMessage',
+          ensembleRoundId: 'round-1',
+          ensembleParticipantId: participant.id,
+          ensembleProvider: participant.provider,
+          ensembleRole: participant.role,
+          ensembleModel: participant.model,
+          toParticipantIds: ['codex-worker']
+        }
+      },
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'Blackboard updated.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const currentChat = activeEnsembleChat(participant)
+    currentChat.messages = messages
+    if (currentChat.ensemble) currentChat.ensemble.activeRound = undefined
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({ messages, currentChat, virtualize: false })}
+      />
+    )
+    const start = html.indexOf('data-message-id="side-1"')
+    const next = html.indexOf('data-message-id="sys-1"', start)
+    const sideBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(sideBlock).toContain('Claude / Reviewer')
+    expect(sideBlock).toContain('message-bubble assistant ensemble-side-message')
+    expect(sideBlock).toContain('SIDE_MESSAGE_MARKER')
+    expect(sideBlock).toContain('<code>kimi</code>')
+    expect(sideBlock).not.toContain('collapsed-activity-stack-summary')
+    expect(html).not.toContain('2 system notices')
+  })
+})
+
 describe('delivered external contribution rows', () => {
   // The row `deliverExternalSeatTurns` writes when the host approves a
   // contribution and the panel reaches that person's seat. It is `role:'system'`

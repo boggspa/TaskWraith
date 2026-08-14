@@ -1048,6 +1048,7 @@ const JUMP_PILL_COUNTABLE_ROLES = new Set(['user', 'assistant', 'error'])
  */
 const JUMP_PILL_COUNTABLE_METADATA_KINDS = new Set([
   'guestParticipantReply',
+  'ensembleSideMessage',
   'agentQuestion',
   'planChoice',
   'approval',

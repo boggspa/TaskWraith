@@ -1768,6 +1768,12 @@ describe('TranscriptScroll', () => {
         })
       ).toBe(true)
       expect(
+        isJumpToLatestCountableMessage({
+          role: 'system',
+          metadata: { kind: 'ensembleSideMessage' }
+        })
+      ).toBe(true)
+      expect(
         isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'agentQuestion' } })
       ).toBe(true)
       expect(

@@ -157,6 +157,11 @@ describe('TranscriptVirtualWindow', () => {
       expect(classifyRowType(msg({ id: 'e', role: 'error' }))).toBe('error')
       expect(classifyRowType(msg({ id: 'a', role: 'assistant' }))).toBe('assistant')
       expect(classifyRowType(msg({ id: 's', role: 'system' }))).toBe('system')
+      expect(
+        classifyRowType(
+          msg({ id: 'side', role: 'system', metadata: { kind: 'ensembleSideMessage' } })
+        )
+      ).toBe('assistant')
     })
   })
 

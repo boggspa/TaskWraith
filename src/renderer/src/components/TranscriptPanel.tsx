@@ -27,6 +27,7 @@ import {
   summarizeCollapsedSuperGroup
 } from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
+import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
 import {
   closeoutProviderFromMetadata,
   TASKWRAITH_CLOSEOUT_KIND
@@ -931,6 +932,10 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isEnsembleRoundHeaderMessage(msg) &&
     !isEnsembleFanoutViewportHeaderMessage(msg) &&
     !isParallelResultViewportHeaderMessage(msg) &&
+    // `ensemble_send` notes are participant-authored conversation carried on a
+    // system row only to avoid changing completed-turn semantics. They keep a
+    // full assistant-level transcript row and never enter notice compaction.
+    !isEnsembleSideMessage(msg) &&
     !isHumanCollaboratorComment(msg) &&
     // A DELIVERED contribution is a person's words, not app chrome. Left in,
     // it folds to an anonymous "System" one-liner and — next to any other
@@ -4199,6 +4204,9 @@ export const TranscriptPanel = memo(
             // byte-identical markup to before this existed.
             const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
+            const isInterSeatMessage = isEnsembleSideMessage(msg)
+            const isAssistantLevelMessage =
+              msg.role === 'assistant' || isGuestReply || isInterSeatMessage
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
             // Deliberately a SEPARATE const rather than widening the one above:
             // `isCollaboratorComment` also gates the "Insert as draft" promote
@@ -4325,6 +4333,8 @@ export const TranscriptPanel = memo(
                   ? 'fan-out result'
                 : isGuestReply
                   ? 'guest participant message'
+                  : isInterSeatMessage
+                    ? 'inter-seat message'
                   : isCollaboratorComment || isDeliveredExternal
                     ? 'collaborator message'
                     : msg.role === 'tool'
@@ -4577,7 +4587,7 @@ export const TranscriptPanel = memo(
               />
             ) : null
             const assistantRunModelKey =
-              msg.role === 'assistant' || isGuestReply
+              isAssistantLevelMessage
                 ? `${assistantRun?.runId || ''}:${assistantRunProvider}:${assistantRunModel || ''}`
                 : ''
             const renameContinuity =
@@ -5154,7 +5164,7 @@ export const TranscriptPanel = memo(
                       isReturnCard ? 'subthread-return-message' : ''
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${
+                    }${isInterSeatMessage ? ' ensemble-side-message' : ''}${
                       isCollaboratorComment || isDeliveredExternal
                         ? ' human-collaborator-comment-message'
                         : ''
@@ -5284,7 +5294,7 @@ export const TranscriptPanel = memo(
                           </div>
                         )
                       }
-                      if (msg.role === 'assistant' || isGuestReply) {
+                      if (isAssistantLevelMessage) {
                         const rawChatPooledIdentity =
                           currentChat?.providerMetadata?.pooledAgentIdentity
                         const chatPooledIdentity =
@@ -5514,6 +5524,8 @@ export const TranscriptPanel = memo(
                                 ? 'system human-collaborator-comment'
                                 : isGuestReply
                                   ? 'assistant guest-participant-reply'
+                                  : isInterSeatMessage
+                                    ? 'assistant ensemble-side-message'
                                   : msg.role
                             }${ensembleRoundStatusClass(msg)}`}
                             onContextMenu={
@@ -5527,6 +5539,8 @@ export const TranscriptPanel = memo(
                                       `${
                                         isGuestReply
                                           ? 'guest participant'
+                                          : isInterSeatMessage
+                                            ? 'inter-seat'
                                           : isDeliveredExternal
                                             ? 'collaborator'
                                             : msg.role
