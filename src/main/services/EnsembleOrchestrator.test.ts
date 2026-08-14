@@ -114,13 +114,9 @@ function buildActiveGoal(id: string): ActiveGoal {
 }
 
 function antigravityGoalCompletionSignal(
-  goalId: string,
-  roundId: string,
   summary = 'Verified every requested check.'
 ): string {
   return `${ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX}${JSON.stringify({
-    goalId,
-    roundId,
     summary
   })}`
 }
@@ -1004,7 +1000,7 @@ describe('EnsembleOrchestrator', () => {
     expect(state?.reason).toContain('read_file')
   })
 
-  it('lets an official-agy Boss complete the matching active goal through the identity-bound host fallback', async () => {
+  it('lets an official-agy Boss complete the active goal through the host-bound fallback', async () => {
     const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -1014,18 +1010,15 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
 
     const dispatched = harness.dispatched[0]
-    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
     expect(dispatched.prompt).toContain('Host goal-lifecycle fallback')
-    expect(dispatched.prompt).toContain('"goalId":"goal-antigravity-fallback"')
-    expect(dispatched.prompt).toContain(`"roundId":"${roundId}"`)
+    expect(dispatched.prompt).toContain('binds this signal to the exact live run')
+    expect(dispatched.prompt).not.toContain('"goalId"')
+    expect(dispatched.prompt).not.toContain('"roundId"')
 
     const route = { appRunId: dispatched.appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'content',
-      text: `All requested checks pass.\n${antigravityGoalCompletionSignal(
-        'goal-antigravity-fallback',
-        roundId
-      )}`
+      text: `All requested checks pass.\n${antigravityGoalCompletionSignal()}`
     })
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'result',
@@ -1037,7 +1030,7 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched).toHaveLength(1)
     expect(
       harness.chat.messages.some((message) =>
-        message.content.includes('identity-bound official-agy goal-completion fallback')
+        message.content.includes('host-bound official-agy goal-completion fallback')
       )
     ).toBe(true)
   })
@@ -1076,12 +1069,11 @@ describe('EnsembleOrchestrator', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
 
-    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
     expect(harness.dispatched[0].prompt).not.toContain('Host goal-lifecycle fallback')
     const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'content',
-      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+      text: antigravityGoalCompletionSignal()
     })
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'result',
@@ -1118,7 +1110,7 @@ describe('EnsembleOrchestrator', () => {
     const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'content',
-      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+      text: antigravityGoalCompletionSignal()
     })
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'result',
@@ -1145,12 +1137,11 @@ describe('EnsembleOrchestrator', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
 
-    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
     expect(harness.dispatched[0].prompt).not.toContain('Host goal-lifecycle fallback')
     const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'content',
-      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+      text: antigravityGoalCompletionSignal()
     })
     harness.orchestrator.handleProviderOutput('antigravity', route, {
       type: 'result',

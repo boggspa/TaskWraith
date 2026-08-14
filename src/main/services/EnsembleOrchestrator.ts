@@ -14153,25 +14153,8 @@ export class EnsembleOrchestrator {
     const runtime = this.roundsByChatId.get(run.chatId)
     if (!runtime || runtime.cancelled || runtime.roundId !== run.roundId) return
     const callerLabel = run.participant.role || providerLabel(run.participant.provider)
-    if (signal.roundId !== runtime.roundId) {
-      this.appendRoundStatus(
-        run.chatId,
-        runtime.roundId,
-        `TaskWraith ignored a stale AntiGravity goal-completion fallback from ${callerLabel}: its round identity does not match this live round.`
-      )
-      return
-    }
-
     const chat = this.deps.getChat(run.chatId)
-    if (!chat?.activeGoal || chat.activeGoal.id !== signal.goalId) {
-      this.appendRoundStatus(
-        run.chatId,
-        runtime.roundId,
-        `TaskWraith ignored a stale AntiGravity goal-completion fallback from ${callerLabel}: its goal identity is no longer active.`
-      )
-      return
-    }
-    if (chat.activeGoal.status !== 'active') return
+    if (!chat?.activeGoal || chat.activeGoal.status !== 'active') return
 
     const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
     if (!authority.ok) {
@@ -14198,7 +14181,7 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         run.chatId,
         runtime.roundId,
-        `TaskWraith accepted ${callerLabel}'s identity-bound official-agy goal-completion fallback.`
+        `TaskWraith accepted ${callerLabel}'s host-bound official-agy goal-completion fallback.`
       )
     }
   }

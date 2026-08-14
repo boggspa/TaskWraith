@@ -1093,10 +1093,7 @@ export function buildEnsembleParticipantPromptProjection(
       authority.bossmanParticipantId === input.participant.id ||
       authority.captainParticipantIds.includes(input.participant.id)
     if (!authority.bossmanParticipantId || !isConfiguredAuthority) return undefined
-    return buildAntigravityGoalCompletionFallbackInstruction({
-      goalId: input.chat.activeGoal.id,
-      roundId: input.roundId
-    })
+    return buildAntigravityGoalCompletionFallbackInstruction()
   })()
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
   const hasWriteIntentLane = Boolean(
