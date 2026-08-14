@@ -612,6 +612,23 @@ type StickyAppWatchStashInput = Readonly<{
   wasStreaming: boolean
 }>
 
+/** Durable active-LUT state as the Studio toolbar renders it. Carries no path. */
+interface StudioEffectPreviewState {
+  active: boolean
+  /** The operator's original filename, or null when it cannot be recovered. */
+  displayName: string | null
+  effectId: string | null
+}
+
+interface StudioEffectPreviewActionResult {
+  ok: boolean
+  /** True when the operator dismissed the file dialog; not a failure. */
+  canceled?: boolean
+  code?: string
+  message?: string
+  state: StudioEffectPreviewState
+}
+
 declare global {
   interface Window {
     api: {
@@ -1534,6 +1551,14 @@ declare global {
         sha256: string,
         mimeType: string
       ) => Promise<{ ok: boolean; error?: string }>
+      /**
+       * Studio effect preview (LUT). These take NO arguments on purpose: the
+       * path originates only from the main-process file dialog, so a renderer
+       * cannot name a file for the host to read.
+       */
+      loadStudioEffectPreview: () => Promise<StudioEffectPreviewActionResult>
+      clearStudioEffectPreview: () => Promise<StudioEffectPreviewActionResult>
+      getStudioEffectPreviewState: () => Promise<StudioEffectPreviewState>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
       getMediaAssetPath: (sha256: string, mimeType: string) => Promise<string | null>
       saveMediaAssetAs: (

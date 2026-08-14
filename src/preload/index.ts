@@ -1589,6 +1589,32 @@ const api = {
       ok: boolean
       error?: string
     }>,
+  // Studio effect preview (LUT). DELIBERATELY PATHLESS — these take no
+  // arguments. Main owns the file dialog, so the renderer is structurally
+  // incapable of naming a file for the host to read. Do not add a path
+  // parameter here; that would reintroduce the exact threat the host-side
+  // import jail exists to prevent.
+  loadStudioEffectPreview: () =>
+    ipcRenderer.invoke('studio:effect-preview-load') as Promise<{
+      ok: boolean
+      canceled?: boolean
+      code?: string
+      message?: string
+      state: { active: boolean; displayName: string | null; effectId: string | null }
+    }>,
+  clearStudioEffectPreview: () =>
+    ipcRenderer.invoke('studio:effect-preview-clear') as Promise<{
+      ok: boolean
+      code?: string
+      message?: string
+      state: { active: boolean; displayName: string | null; effectId: string | null }
+    }>,
+  getStudioEffectPreviewState: () =>
+    ipcRenderer.invoke('studio:effect-preview-state') as Promise<{
+      active: boolean
+      displayName: string | null
+      effectId: string | null
+    }>,
   revealMediaAsset: (sha256: string, mimeType: string) =>
     ipcRenderer.invoke('media-asset:reveal', { sha256, mimeType }) as Promise<{ ok: boolean }>,
   getMediaAssetPath: (sha256: string, mimeType: string) =>

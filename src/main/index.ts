@@ -342,6 +342,7 @@ import {
   type StudioProductionLifecycle
 } from './studio/StudioProductionLifecycle'
 import { type SpeechRecognitionResult } from './studio/StudioTranscriptAdapter'
+import { registerStudioEffectPreviewHandlers } from './studio/StudioEffectPreviewHandlers'
 import { createStudioOpenInStudioHandler } from './studio/StudioOpenMediaHop'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
@@ -53975,6 +53976,25 @@ if (isGeminiMcpBridgeProcess) {
       showItemInFolder: (assetPath) => shell.showItemInFolder(assetPath),
       showSaveDialog: (window, options) => dialog.showSaveDialog(window, options),
       copyFile: (src, dest) => fs.copyFile(src, dest)
+    })
+
+    // Studio effect preview (LUT). The renderer supplies NO path — the dialog
+    // lives here, so the only filesystem path that can reach the host is one the
+    // operator personally selected in a trusted OS dialog.
+    registerStudioEffectPreviewHandlers(ipcMain, {
+      getLifecycle: () => studioProductionLifecycleRef,
+      showOpenDialog: async () => {
+        const options = {
+          title: 'Choose a .cube LUT',
+          properties: ['openFile' as const],
+          filters: [{ name: 'Cube LUT', extensions: ['cube'] }]
+        }
+        const parent = BrowserWindow.getFocusedWindow()
+        const result = parent
+          ? await dialog.showOpenDialog(parent, options)
+          : await dialog.showOpenDialog(options)
+        return { canceled: result.canceled, filePaths: result.filePaths }
+      }
     })
 
     registerImageGenerationHandlers({

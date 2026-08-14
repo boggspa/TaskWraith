@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { MultiviewPaneMediaRef } from '../../../shared/multiviewLayouts'
 import { twMediaUrl } from '../../../shared/twMedia'
+import { StudioEffectPreviewControl } from './StudioEffectPreviewControl'
 import { WaveformAudioPlayer } from './WaveformAudioPlayer'
 
 function thumbnailSrc(mediaRef: MultiviewPaneMediaRef): string | undefined {
@@ -94,6 +95,10 @@ export function MediaPane({
       <span className="media-pane-name" title={mediaRef.name}>
         {mediaRef.name}
       </span>
+      {/* Preview-only LUT control. Video only — a LUT has nothing to grade on an
+          audio pane. It reaches the landed bounded validator/durable store/
+          supervisor chain through pathless IPC; no path is passed from here. */}
+      {mediaRef.kind === 'video' ? <StudioEffectPreviewControl /> : null}
       <button
         type="button"
         className="media-pane-close"
