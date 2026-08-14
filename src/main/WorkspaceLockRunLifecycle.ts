@@ -182,6 +182,30 @@ export class WorkspaceLockRunLifecycleTracker {
     this.deps.onReleased?.(normalizedRunId)
   }
 
+  /**
+   * Reconciles one exact watchdog violation after the caller has proved both
+   * process-tree quiescence and zero durable leases for the run. Unlike the
+   * human recovery path above, this cannot clear a different or merely active
+   * operation.
+   */
+  reconcileUnresolvedOperation(runId: string, operationId: string): boolean {
+    const normalizedRunId = requireRunId(runId)
+    const normalizedOperationId = operationId.trim()
+    if (!normalizedOperationId) return false
+    const run = this.runs.get(normalizedRunId)
+    const operation = run?.operations.get(normalizedOperationId)
+    if (!run?.terminalRequested || !operation?.unresolved || run.releaseState !== 'idle') {
+      return false
+    }
+    if (operation.timer !== undefined) this.clearTimer(operation.timer)
+    run.operations.delete(normalizedOperationId)
+    if (run.operations.size === 0) {
+      run.releaseState = 'released'
+      this.deps.onReleased?.(normalizedRunId)
+    }
+    return true
+  }
+
   private runState(runId: string): TrackedRun {
     const existing = this.runs.get(runId)
     if (existing) return existing

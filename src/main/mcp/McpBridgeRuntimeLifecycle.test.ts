@@ -1,4 +1,5 @@
 import { mkdtemp, rm, stat, unlink } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -312,6 +313,58 @@ describe('McpBridgeRuntime broker lifecycle', () => {
           })
         ).resolves.toMatchObject({ ok: true, text: 'rebound' })
         expect(executeGeminiMcpTool).toHaveBeenCalledOnce()
+      } finally {
+        runtime.closeGeminiMcpBroker()
+        await new Promise((resolve) => setImmediate(resolve))
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'reports an in-flight broker request when its client transport disconnects',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'taskwraith-mcp-abandonment-'))
+      const socketPath = join(directory, 'broker.sock')
+      const execution = deferred<{ text: string }>()
+      const executeGeminiMcpTool = vi.fn(() => execution.promise)
+      const onBrokerRequestAbandoned = vi.fn()
+      const runtime = new McpBridgeRuntime({
+        getGeminiMcpSocketPath: () => socketPath,
+        getGeminiMcpBrokerToken: () => 'token-1',
+        getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
+        executeGeminiMcpTool,
+        onBrokerRequestAbandoned
+      } as never)
+
+      try {
+        await runtime.startGeminiMcpBroker()
+        const request = {
+          id: 759,
+          token: 'token-1',
+          instanceEpoch: TEST_INSTANCE_EPOCH,
+          tool: 'run_shell_command',
+          arguments: { command: 'long-command' },
+          appRunId: 'run-abandoned',
+          appChatId: 'chat-abandoned',
+          parentProvider: 'kimi'
+        }
+        const socket = createConnection(socketPath)
+        await new Promise<void>((resolve, reject) => {
+          socket.once('connect', resolve)
+          socket.once('error', reject)
+        })
+        socket.write(`${JSON.stringify(request)}\n`)
+        await vi.waitFor(() => expect(executeGeminiMcpTool).toHaveBeenCalledOnce())
+        socket.destroy()
+
+        await vi.waitFor(() =>
+          expect(onBrokerRequestAbandoned).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 759, appRunId: 'run-abandoned' }),
+            'client-disconnected'
+          )
+        )
+        execution.resolve({ text: 'late result' })
       } finally {
         runtime.closeGeminiMcpBroker()
         await new Promise((resolve) => setImmediate(resolve))

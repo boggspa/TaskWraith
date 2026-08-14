@@ -426,4 +426,64 @@ describe('createKimiMcpDispatch', () => {
       vi.useRealTimers()
     }
   })
+
+  it('cancels the exact host operation before returning a broker timeout to Kimi', async () => {
+    vi.useFakeTimers()
+    try {
+      const events: string[] = []
+      let proveCancellationSettled!: () => void
+      const cancellationSettled = new Promise<void>((resolve) => {
+        proveCancellationSettled = resolve
+      })
+      const onDispatchTimeout = vi.fn(() => {
+        events.push('cancel')
+        return cancellationSettled
+      })
+      const dispatch = createKimiMcpDispatch({
+        route: { appRunId: 'kimi-timeout-run', appChatId: 'chat-timeout' },
+        workspace: '/workspace',
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
+        timeoutMs: 25,
+        getMcpToolDefinitions: () => [{ name: 'run_shell_command' }],
+        dispatchBrokerRequest: () => new Promise(() => undefined),
+        onDispatchTimeout
+      })
+
+      const response = dispatch({
+        jsonrpc: '2.0',
+        id: 759,
+        method: 'tools/call',
+        params: { name: 'run_shell_command', arguments: { command: 'long-command' } }
+      }).then((value) => {
+        events.push('response')
+        return value
+      })
+
+      await vi.advanceTimersByTimeAsync(25)
+      let responseSettled = false
+      void response.then(() => {
+        responseSettled = true
+      })
+      await Promise.resolve()
+      expect(responseSettled).toBe(false)
+      expect(events).toEqual(['cancel'])
+
+      proveCancellationSettled()
+      await expect(response).resolves.toMatchObject({
+        id: 759,
+        error: { message: 'TaskWraith MCP dispatch timed out.' }
+      })
+      expect(onDispatchTimeout).toHaveBeenCalledWith({
+        appRunId: 'kimi-timeout-run',
+        appChatId: 'chat-timeout',
+        requestId: 759,
+        toolName: 'run_shell_command'
+      })
+      expect(events).toEqual(['cancel', 'response'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

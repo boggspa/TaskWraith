@@ -197,4 +197,40 @@ describe('WorkspaceLockRunLifecycleTracker', () => {
     operation.finish()
     expect(onReleased).toHaveBeenCalledTimes(1)
   })
+
+  it('reconciles only the exact unresolved operation after external quiescence proof', async () => {
+    let timeoutCallback: (() => void) | undefined
+    const onReleased = vi.fn()
+    const tracker = new WorkspaceLockRunLifecycleTracker({
+      releaseRun: vi.fn(async () => undefined),
+      onReleased,
+      onReleaseFailure: vi.fn(),
+      onFailClosed: vi.fn(),
+      unresolvedOperationTimeoutMs: 25,
+      setTimer: vi.fn((callback: () => void) => {
+        timeoutCallback = callback
+        return 91
+      }),
+      clearTimer: vi.fn()
+    })
+    const operation = tracker.begin('run-quiesced')
+    tracker.terminal('run-quiesced')
+    timeoutCallback?.()
+
+    expect(
+      tracker.reconcileUnresolvedOperation('run-quiesced', 'run-quiesced:not-the-operation')
+    ).toBe(false)
+    expect(tracker.snapshot('run-quiesced')?.operations).toHaveLength(1)
+
+    expect(tracker.reconcileUnresolvedOperation('run-quiesced', operation.operationId)).toBe(true)
+    expect(tracker.snapshot('run-quiesced')).toMatchObject({
+      terminalRequested: true,
+      releaseState: 'released',
+      operations: []
+    })
+    expect(onReleased).toHaveBeenCalledWith('run-quiesced')
+    operation.finish()
+    await flushPromises()
+    expect(onReleased).toHaveBeenCalledTimes(1)
+  })
 })

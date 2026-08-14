@@ -67,6 +67,19 @@ export interface WorkspaceLockRuntimeOwnerInput {
   executionPid?: number
 }
 
+export type WorkspaceLockUnresolvedRunReconciliationResult =
+  | { ok: true; runId: string; clearedReason: string }
+  | {
+      ok: false
+      reason:
+        | 'process_tree_live'
+        | 'active_leases'
+        | 'reason_mismatch'
+        | 'pending_reconciliation'
+        | 'invalid_input'
+      activeLeaseCount?: number
+    }
+
 export interface WorkspaceLockRuntimeAcquireInput {
   owner: WorkspaceLockRuntimeOwnerInput
   mutation: WorkspaceMutationCall
@@ -914,6 +927,34 @@ export class WorkspaceLockRuntime {
       .leases.filter(
         (lease) => lease.owner.runId === requestedRunId && lease.status !== 'recovered'
       ).length
+  }
+
+  /**
+   * Clears only the exact health poison produced by an unresolved operation.
+   * The caller must carry process-tree death evidence; durable authority is
+   * re-read here and independently requires zero active leases for this run.
+   */
+  reconcileUnresolvedRunOperation(input: {
+    runId: string
+    expectedUnhealthyReason: string
+    processTreeStopped: boolean
+  }): WorkspaceLockUnresolvedRunReconciliationResult {
+    const runId = input.runId.trim()
+    const expectedReason = input.expectedUnhealthyReason.trim()
+    if (!runId || !expectedReason) return { ok: false, reason: 'invalid_input' }
+    if (!input.processTreeStopped) return { ok: false, reason: 'process_tree_live' }
+    if (this.unhealthyReason !== expectedReason) {
+      return { ok: false, reason: 'reason_mismatch' }
+    }
+    if (this.pendingReconciliations.size > 0) {
+      return { ok: false, reason: 'pending_reconciliation' }
+    }
+    const activeLeaseCount = this.activeLeaseCountForRun(runId)
+    if (activeLeaseCount > 0) {
+      return { ok: false, reason: 'active_leases', activeLeaseCount }
+    }
+    this.unhealthyReason = null
+    return { ok: true, runId, clearedReason: expectedReason }
   }
 
   markUnhealthy(reason: string): void {

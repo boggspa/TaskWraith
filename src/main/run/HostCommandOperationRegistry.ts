@@ -28,6 +28,8 @@ export interface HostCommandChildHandle {
     listener: (code: number | null, signal: NodeJS.Signals | null) => void
   ): unknown
   kill(signal: 'SIGTERM' | 'SIGKILL'): boolean
+  /** Exact process-tree death join, invoked only after the root emits close. */
+  joinProcessTreeAfterClose?: () => Promise<void>
 }
 
 export type HostCommandTransportState = 'awaiting-child' | 'attached' | 'closed' | 'no-child'
@@ -38,6 +40,7 @@ export interface HostCommandOperationController {
   readonly completion: Promise<void>
   readonly transportState: HostCommandTransportState
   readonly terminalProjectionComplete: boolean
+  readonly processTreeQuiescenceProven: boolean
   readonly settled: boolean
   readonly cancelled: boolean
   readonly cancellationReason?: string
@@ -72,6 +75,7 @@ export interface HostCommandProjectionHandle {
 }
 
 export type HostCommandOperationScope =
+  | Readonly<{ kind: 'run'; appRunId: string }>
   | Readonly<{ kind: 'chat'; chatIds: readonly string[] }>
   | Readonly<{
       kind: 'workspace'
@@ -92,6 +96,7 @@ export interface HostCommandOperationCancellation {
   readonly scope: HostCommandOperationScope
   readonly operationIds: readonly string[]
   readonly completion: Promise<void>
+  readonly processTreeStopped: Promise<boolean>
 }
 
 export interface HostCommandOperationOptions {
@@ -142,6 +147,11 @@ function normalizeChatIds(values: readonly string[] | undefined): readonly strin
 
 function normalizeScope(scope: HostCommandOperationScope): HostCommandOperationScope {
   if (scope.kind === 'global') return Object.freeze({ kind: 'global' })
+  if (scope.kind === 'run') {
+    const appRunId = exactId(scope.appRunId, 'Host command run scope id')
+    if (!appRunId) throw new Error('Host command run scope requires an exact run id.')
+    return Object.freeze({ kind: 'run', appRunId })
+  }
   const chatIds = normalizeChatIds(scope.chatIds)
   if (scope.kind === 'chat') return Object.freeze({ kind: 'chat', chatIds })
 
@@ -165,6 +175,7 @@ function scopeMatches(
   identity: HostCommandOperationIdentity
 ): boolean {
   if (scope.kind === 'global') return true
+  if (scope.kind === 'run') return identity.appRunId === scope.appRunId
   if (scope.kind === 'chat') {
     return Boolean(identity.appChatId && scope.chatIds.includes(identity.appChatId))
   }
@@ -198,6 +209,7 @@ class HostCommandOperationControllerImpl implements HostCommandOperationControll
   private killTimer: ReturnType<typeof setTimeout> | undefined
   private _transportState: HostCommandTransportState = 'awaiting-child'
   private _terminalProjectionComplete = false
+  private _processTreeQuiescenceProven = false
   private _settled = false
   private _cancelled = false
   private _cancellationReason: string | undefined
@@ -218,6 +230,10 @@ class HostCommandOperationControllerImpl implements HostCommandOperationControll
 
   get terminalProjectionComplete(): boolean {
     return this._terminalProjectionComplete
+  }
+
+  get processTreeQuiescenceProven(): boolean {
+    return this._processTreeQuiescenceProven
   }
 
   get settled(): boolean {
@@ -241,7 +257,22 @@ class HostCommandOperationControllerImpl implements HostCommandOperationControll
     this.child = child
     this._transportState = 'attached'
     try {
-      child.once('close', () => this.markTransportClosed())
+      child.once('close', () => {
+        if (!child.joinProcessTreeAfterClose) {
+          this.markTransportClosed()
+          return
+        }
+        void Promise.resolve()
+          .then(() => child.joinProcessTreeAfterClose?.())
+          .then(() => {
+            this._processTreeQuiescenceProven = true
+            this.markTransportClosed()
+          })
+          .catch(() => {
+            // Missing process-tree death evidence retains the operation. The
+            // workspace-lock watchdog will keep mutation admission fail closed.
+          })
+      })
     } catch (error) {
       // A broken adapter cannot become an untracked admitted child. Preserve
       // the attached/pending state and still honor a cancellation request; the
@@ -273,6 +304,7 @@ class HostCommandOperationControllerImpl implements HostCommandOperationControll
         `Host command operation ${this.operationId} cannot prove no child from ${this._transportState}.`
       )
     }
+    this._processTreeQuiescenceProven = true
     this._transportState = 'no-child'
     this.maybeSettle()
   }
@@ -398,7 +430,17 @@ export class HostCommandOperationRegistry {
     const completion = Promise.all(selected.map((operation) => operation.completion)).then(
       () => undefined
     )
-    return Object.freeze({ scope, operationIds, completion })
+    const processTreeStopped = completion.then(() =>
+      selected.every((operation) => operation.processTreeQuiescenceProven)
+    )
+    return Object.freeze({ scope, operationIds, completion, processTreeStopped })
+  }
+
+  beginRunCancellation(
+    appRunId: string,
+    reason = 'run-terminal'
+  ): HostCommandOperationCancellation {
+    return this.beginCancellation({ kind: 'run', appRunId }, reason)
   }
 
   cancelAndJoin(scope: HostCommandOperationScope, reason = 'history-deletion'): Promise<void> {

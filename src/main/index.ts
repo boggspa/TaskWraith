@@ -105,7 +105,7 @@ import {
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import { kimiAcpEnabled } from './kimiGate'
 import { startKimiHttpMcpBridge } from './kimi/KimiHttpMcpBridge'
-import { createKimiMcpDispatch } from './kimi/KimiMcpDispatch'
+import { createKimiMcpDispatch, type KimiMcpDispatchTimeout } from './kimi/KimiMcpDispatch'
 import { flushKimiThinkingChunks, queueKimiThinkingChunk } from './kimi/KimiThinkingBatcher'
 import {
   detectKimiManagedAuthState,
@@ -675,6 +675,7 @@ import {
   type HostCommandProjectionHandle,
   type HostCommandOperationScope
 } from './run/HostCommandOperationRegistry'
+import { createHostCommandProcessTreeJoin } from './run/HostCommandProcessTree'
 import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
 import {
   MidRunSteeringRegistry,
@@ -2143,6 +2144,7 @@ import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollM
 import { BlackboardExpiryService } from './blackboard/BlackboardExpiryService'
 import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
 import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
+import { WorkspaceLockTerminalReconciler } from './WorkspaceLockTerminalReconciler'
 import { WorkspaceLockGatedProviderLaunch } from './WorkspaceLockGatedProviderLaunch'
 import { WorkspaceExternalMutationAuthorityIssuer } from './WorkspaceExternalMutationAuthority'
 import { WorkspaceLockProcessIdentityService } from './WorkspaceLockProcessIdentity'
@@ -2409,10 +2411,17 @@ const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordi
   providerDisplayName
 })
 
-function poisonWorkspaceLockMutationAdmission(reason: string): void {
+function poisonWorkspaceLockMutationAdmission(reason: string): string {
   const message = `Workspace-lock mutation admission is fail-closed: ${reason}`
   workspaceLockRuntimeRef?.markUnhealthy(message)
   workspaceLockMutationAdmissionPoisonReason ||= message
+  return message
+}
+
+function clearWorkspaceLockMutationAdmissionPoison(expectedReason: string): boolean {
+  if (workspaceLockMutationAdmissionPoisonReason !== expectedReason) return false
+  workspaceLockMutationAdmissionPoisonReason = null
+  return true
 }
 
 const workProvenanceRecorder = new WorkProvenanceRecorder({
@@ -2443,7 +2452,10 @@ const workspaceLockRunLifecycle = new WorkspaceLockRunLifecycleTracker({
       violation.kind === 'operation-after-terminal'
         ? `Workspace-lock operation started after run ${violation.runId} became terminal.`
         : `Workspace-lock operation ${violation.operationId} for run ${violation.runId} did not settle before its terminal deadline.`
-    poisonWorkspaceLockMutationAdmission(reason)
+    const blockedReason = poisonWorkspaceLockMutationAdmission(reason)
+    if (workspaceLockMutationAdmissionPoisonReason === blockedReason) {
+      workspaceLockTerminalReconcilerRef?.handleViolation(violation, blockedReason)
+    }
     console.error(`[workspace-lock] ${reason}`)
   }
 })
@@ -3183,6 +3195,7 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
   drainPendingSteerText: (appRunId: string) =>
     drainPendingSteerTextFromSession(runManager.get(appRunId)),
+  onBrokerRequestAbandoned: cancelAbandonedBrokerHostCommands,
   installGeminiToolContextForRun,
   sendAgentCompatLine
 })
@@ -3314,6 +3327,42 @@ const providerAdapterRunsInFlight = new Map<string, Promise<void>>()
 const providerTransportOperations = new ProviderOperationRegistry()
 const providerProcessTerminationBackstop = new ProviderProcessTerminationBackstop(4_000)
 const hostCommandOperations = new HostCommandOperationRegistry()
+const workspaceLockTerminalReconcilerRef = new WorkspaceLockTerminalReconciler({
+  lifecycle: workspaceLockRunLifecycle,
+  hostCommands: hostCommandOperations,
+  getRuntime: () => workspaceLockRuntimeRef,
+  getBlockedReason: () => workspaceLockMutationAdmissionPoisonReason,
+  clearBlockedReason: clearWorkspaceLockMutationAdmissionPoison,
+  logError: (message, error) => console.error(`[workspace-lock] ${message}`, error)
+})
+
+async function cancelHostCommandsForRun(appRunId: unknown, reason: string): Promise<void> {
+  if (typeof appRunId !== 'string' || !appRunId.trim()) return
+  try {
+    const cancellation = hostCommandOperations.beginRunCancellation(appRunId.trim(), reason)
+    await cancellation.completion
+    if (
+      cancellation.operationIds.length > 0 &&
+      !(await cancellation.processTreeStopped)
+    ) {
+      await new Promise<void>(() => undefined)
+    }
+  } catch (error) {
+    console.error(`[host-command] Could not cancel commands for run ${appRunId.trim()}:`, error)
+    await new Promise<void>(() => undefined)
+  }
+}
+
+function cancelAbandonedBrokerHostCommands(
+  request: Readonly<Record<string, unknown>>,
+  _reason: 'client-disconnected'
+): void {
+  void cancelHostCommandsForRun(request.appRunId, 'mcp-broker-client-disconnected')
+}
+
+function cancelTimedOutKimiHostCommands(input: KimiMcpDispatchTimeout): Promise<void> {
+  return cancelHostCommandsForRun(input.appRunId, 'kimi-mcp-dispatch-timeout')
+}
 interface ProviderDispatchReservation {
   authority: HistoryClearDispatchAuthority
   gateReservation: HistoryClearDispatchReservation
@@ -8516,7 +8565,7 @@ runManager.onChange((event) => {
   if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
     // Work-lock cleanup is the first terminal side effect. It must run even
     // when later persistence-authority checks return early.
-    workspaceLockRunLifecycle.terminal(event.session.runId)
+    workspaceLockTerminalReconcilerRef.terminal(event.session.runId)
     const stopWorkspace = (event.session.workspacePath || '').trim()
     if (stopWorkspace) {
       fireStopHooksForWorkspaceRef?.(stopWorkspace, event.session.status, {
@@ -14707,11 +14756,13 @@ function runHostCommand(
       resolveWithoutChild(blockedRunningBundleMutation)
       return
     }
-    // When enabled (Settings → Local servers), run agent commands in their own
-    // process group so the Local Servers panel can group-kill the whole tree
-    // (npm → node → workers), not just the wrapper. Default off — does not
-    // change the blocking/await + timeout contract below.
-    const detachSpawns = AppStore.getSettings().localServersDetachSpawns === true
+    // Brokered mutations always get an exact process-group identity so timeout,
+    // transport abandonment, and run terminalization can join every descendant
+    // rather than treating the wrapper shell's close as settlement. The Local
+    // Servers preference retains the same protection for other host commands.
+    const brokeredMutation = projectionScope?.source === 'brokered-mcp'
+    const detachSpawns =
+      brokeredMutation || AppStore.getSettings().localServersDetachSpawns === true
 
     try {
       if (Array.isArray(command) && command.length > 0) {
@@ -14742,6 +14793,9 @@ function runHostCommand(
       resolveWithoutChild(error instanceof Error ? error.message : String(error))
       return
     }
+
+    const processTree =
+      brokeredMutation && child.pid ? createHostCommandProcessTreeJoin(child.pid) : null
 
     // Track the spawn so the Local Servers panel can attribute + reap any
     // long-running server it (or a descendant) leaves behind. Untracked the
@@ -14785,30 +14839,37 @@ function runHostCommand(
       childError = error
     })
     child.on('close', (code, signal) => {
-      if (settled) return
-      settled = true
       if (timeout) clearTimeout(timeout)
-      if (timeoutKill) clearTimeout(timeoutKill)
-      untrackChild()
-      const cancellationReason = historyOperation.cancellationReason
-      const error = timedOut
-        ? 'Command timed out.'
-        : cancellationReason
-          ? `Command cancelled: ${cancellationReason}.`
-          : childError?.message || (signal ? `Command terminated by ${signal}.` : undefined)
-      resolveCommand({
-        stdout,
-        stderr,
-        exitCode: code,
-        ...(error ? { error } : {}),
-        timedOut,
-        durationMs: Date.now() - startedAt
+      void (async () => {
+        await processTree?.joinAfterRootClose()
+        if (settled) return
+        settled = true
+        if (timeoutKill) clearTimeout(timeoutKill)
+        untrackChild()
+        const cancellationReason = historyOperation.cancellationReason
+        const error = timedOut
+          ? 'Command timed out.'
+          : cancellationReason
+            ? `Command cancelled: ${cancellationReason}.`
+            : childError?.message || (signal ? `Command terminated by ${signal}.` : undefined)
+        resolveCommand({
+          stdout,
+          stderr,
+          exitCode: code,
+          ...(error ? { error } : {}),
+          timedOut,
+          durationMs: Date.now() - startedAt
+        })
+      })().catch((error) => {
+        childError = error instanceof Error ? error : new Error(String(error))
+        console.error('[host-command] Exact process-tree join failed:', childError)
       })
     })
 
     historyOperation.attachChild({
       once: (_event, listener) => child.once('close', listener),
-      kill: signalChild
+      kill: signalChild,
+      ...(processTree ? { joinProcessTreeAfterClose: () => processTree.joinAfterRootClose() } : {})
     })
 
     // Declared here (not above with timeoutKill): the only reader is the
@@ -24608,6 +24669,7 @@ async function runKimiAcpProvider(
               auditSubset: Boolean(payload.auditRun),
               instanceEpoch,
               getMcpToolDefinitions: () => mcpToolDefinitions(),
+              onDispatchTimeout: cancelTimedOutKimiHostCommands,
               dispatchBrokerRequest: (request) =>
                 mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
             })
@@ -28237,6 +28299,7 @@ async function compactKimiProviderContext(payload: {
               brokerToken: geminiMcpBrokerToken,
               instanceEpoch,
               getMcpToolDefinitions: () => mcpToolDefinitions(),
+              onDispatchTimeout: cancelTimedOutKimiHostCommands,
               dispatchBrokerRequest: (request) =>
                 mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
             })

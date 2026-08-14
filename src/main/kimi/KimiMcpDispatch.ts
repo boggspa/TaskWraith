@@ -33,6 +33,14 @@ export interface KimiMcpDispatchOptions {
   getMcpToolDefinitions: () => McpToolDefinition[]
   dispatchBrokerRequest: (request: unknown) => Promise<unknown>
   timeoutMs?: number
+  onDispatchTimeout?: (input: KimiMcpDispatchTimeout) => void | Promise<void>
+}
+
+export interface KimiMcpDispatchTimeout {
+  appRunId?: string
+  appChatId?: string
+  requestId: string | number | null
+  toolName?: string
 }
 
 /**
@@ -141,12 +149,36 @@ export function createKimiMcpDispatch(
 
       if (!settled) {
         timeout = setTimeout(
-          () =>
-            finish({
-              jsonrpc: '2.0',
-              id: message.id ?? null,
-              error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
-            }),
+          () => {
+            const params =
+              message.params && typeof message.params === 'object' && !Array.isArray(message.params)
+                ? (message.params as Record<string, unknown>)
+                : null
+            void (async () => {
+              try {
+                await options.onDispatchTimeout?.({
+                  ...(options.route.appRunId ? { appRunId: options.route.appRunId } : {}),
+                  ...(options.route.appChatId ? { appChatId: options.route.appChatId } : {}),
+                  requestId:
+                    typeof message.id === 'string' || typeof message.id === 'number'
+                      ? message.id
+                      : null,
+                  ...(message.method === 'tools/call' && typeof params?.name === 'string'
+                    ? { toolName: params.name }
+                    : {})
+                })
+              } catch {
+                // Cancellation failure is not settlement evidence. Keep the
+                // dispatch pending so the terminal watchdog remains fail closed.
+                return
+              }
+              finish({
+                jsonrpc: '2.0',
+                id: message.id ?? null,
+                error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
+              })
+            })()
+          },
           // Match the stdio broker's approval-aware request budget (tool-aware:
           // long-poll tools like ensemble_await get their clamp ceiling +
           // grace). Kimi's normal approval window is longer than 30s; resolving

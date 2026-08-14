@@ -383,6 +383,15 @@ export interface McpBridgeRuntimeDeps {
    * when no steering is pending — the broker handler continues normally.
    */
   drainPendingSteerText?: (appRunId: string) => string | null
+  /**
+   * Called when the client transport disappears while an exact broker request
+   * is still executing. The owner can cancel and join run-scoped host work;
+   * disconnect itself is never treated as command settlement.
+   */
+  onBrokerRequestAbandoned?: (
+    request: Readonly<Record<string, unknown>>,
+    reason: 'client-disconnected'
+  ) => void
 }
 
 /**
@@ -2687,9 +2696,21 @@ export class McpBridgeRuntime {
 
       const server = createServer((socket: Socket) => {
         let buffer = ''
+        const inFlightRequests = new Set<Readonly<Record<string, unknown>>>()
         socket.setEncoding('utf8')
         socket.on('error', () => {
           // Broker clients may disconnect while a response is being written.
+        })
+        socket.on('close', () => {
+          for (const request of inFlightRequests) {
+            try {
+              this.deps.onBrokerRequestAbandoned?.(request, 'client-disconnected')
+            } catch {
+              // Abandonment notification is a cancellation trigger, not close
+              // evidence. A callback failure must not destabilize the broker.
+            }
+          }
+          inFlightRequests.clear()
         })
         socket.on('data', (chunk: string) => {
           buffer += chunk
@@ -2709,6 +2730,7 @@ export class McpBridgeRuntime {
               continue
             }
             const parsedRecord = isRecord(parsed) ? parsed : {}
+            inFlightRequests.add(parsedRecord)
             this.handleGeminiMcpBrokerRequest(parsed)
               .then((result) =>
                 safeMcpStreamWrite(
@@ -2723,6 +2745,7 @@ export class McpBridgeRuntime {
                   `${JSON.stringify({ id: parsedRecord.id, ok: false, error: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE })}\n`
                 )
               })
+              .finally(() => inFlightRequests.delete(parsedRecord))
           }
         })
       })

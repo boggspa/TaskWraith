@@ -901,6 +901,62 @@ describe('WorkspaceLockRuntime', () => {
     expect(runtime.activeLeaseCountForRun('   ')).toBe(0)
   })
 
+  it('clears only the matching unresolved-operation poison after exact run quiescence', () => {
+    const { runtime } = harness()
+    const reason =
+      'Workspace-lock mutation admission is fail-closed: Workspace-lock operation run-leaked:7 did not settle before its terminal deadline.'
+    runtime.markUnhealthy(reason)
+
+    expect(
+      runtime.reconcileUnresolvedRunOperation({
+        runId: 'run-leaked',
+        expectedUnhealthyReason: reason,
+        processTreeStopped: true
+      })
+    ).toEqual({ ok: true, runId: 'run-leaked', clearedReason: reason })
+    expect(runtime.getUnhealthyReason()).toBeNull()
+  })
+
+  it('retains fail-closed health without process death, zero leases, and an exact reason', () => {
+    const reason = 'Workspace-lock mutation admission is fail-closed: leaked operation'
+
+    const liveProcess = harness()
+    liveProcess.runtime.markUnhealthy(reason)
+    expect(
+      liveProcess.runtime.reconcileUnresolvedRunOperation({
+        runId: 'run-leaked',
+        expectedUnhealthyReason: reason,
+        processTreeStopped: false
+      })
+    ).toMatchObject({ ok: false, reason: 'process_tree_live' })
+    expect(liveProcess.runtime.getUnhealthyReason()).toBe(reason)
+
+    const leased = harness()
+    const active = projectedLease('active-leak', 'held', '2026-07-29T00:00:00.000Z')
+    active.owner.runId = 'run-leaked'
+    leased.authority.snapshot.mockReturnValue({ ...emptySnapshot(), leases: [active] })
+    leased.runtime.markUnhealthy(reason)
+    expect(
+      leased.runtime.reconcileUnresolvedRunOperation({
+        runId: 'run-leaked',
+        expectedUnhealthyReason: reason,
+        processTreeStopped: true
+      })
+    ).toMatchObject({ ok: false, reason: 'active_leases', activeLeaseCount: 1 })
+    expect(leased.runtime.getUnhealthyReason()).toBe(reason)
+
+    const mismatch = harness()
+    mismatch.runtime.markUnhealthy(reason)
+    expect(
+      mismatch.runtime.reconcileUnresolvedRunOperation({
+        runId: 'run-leaked',
+        expectedUnhealthyReason: `${reason} changed`,
+        processTreeStopped: true
+      })
+    ).toMatchObject({ ok: false, reason: 'reason_mismatch' })
+    expect(mismatch.runtime.getUnhealthyReason()).toBe(reason)
+  })
+
   it('bounds recovered projection history while preserving every active lease', () => {
     const { runtime, authority } = harness()
     const now = Date.now()

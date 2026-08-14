@@ -12,6 +12,8 @@ class FakeHostCommandChild implements HostCommandChildHandle {
   readonly signals: Array<'SIGTERM' | 'SIGKILL'> = []
   private closeListener: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
 
+  joinProcessTreeAfterClose?: () => Promise<void>
+
   once(
     event: 'close',
     listener: (code: number | null, signal: NodeJS.Signals | null) => void
@@ -311,6 +313,46 @@ describe('HostCommandOperationRegistry', () => {
     await expectPending(hold.completion)
     child.close(null, 'SIGTERM')
     await hold.completion
+    await expect(hold.processTreeStopped).resolves.toBe(false)
+  })
+
+  it('cancels only the exact terminal run and joins its proved process-tree death', async () => {
+    const registry = new HostCommandOperationRegistry()
+    const target = registry.register(identity('target-run-operation'))
+    const foreign = registry.register(
+      identity('foreign-run-operation', {
+        appRunId: 'run-b',
+        appChatId: 'chat-b'
+      })
+    )
+    const targetChild = new FakeHostCommandChild()
+    let proveTreeStopped!: () => void
+    const treeStopped = new Promise<void>((resolve) => {
+      proveTreeStopped = resolve
+    })
+    targetChild.joinProcessTreeAfterClose = () => treeStopped
+    const foreignChild = new FakeHostCommandChild()
+    target.attachChild(targetChild)
+    foreign.attachChild(foreignChild)
+
+    const cancellation = registry.beginRunCancellation('run-a', 'run-terminal')
+
+    expect(cancellation.operationIds).toEqual(['target-run-operation'])
+    expect(targetChild.signals).toEqual(['SIGTERM'])
+    expect(foreignChild.signals).toEqual([])
+    target.markTerminalProjectionComplete()
+    targetChild.close(null, 'SIGTERM')
+    await expectPending(cancellation.completion)
+
+    proveTreeStopped()
+    await cancellation.completion
+    await expect(cancellation.processTreeStopped).resolves.toBe(true)
+    expect(target.settled).toBe(true)
+    expect(foreign.settled).toBe(false)
+
+    foreign.markTerminalProjectionComplete()
+    foreignChild.close(0)
+    await foreign.completion
   })
 
   it('keeps global deletion pending for an unowned internal command through forced close', async () => {
