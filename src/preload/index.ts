@@ -118,6 +118,7 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import type { RendererDiagnosticClientSample } from '../shared/rendererDiagnostics'
 import {
   workLockProjectionUpdateIsStale,
   type WorkLockProjectionChangedEvent,
@@ -2614,6 +2615,8 @@ const api = {
   getProductOperationsStatus: () => ipcRenderer.invoke('get-product-operations-status'),
   getProductCrashes: (filter: any = {}) => ipcRenderer.invoke('get-product-crashes', filter),
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),
+  recordRendererDiagnosticSample: (input: RendererDiagnosticClientSample) =>
+    ipcRenderer.invoke('record-renderer-diagnostic-sample', input) as Promise<boolean>,
   exportProductDiagnostics: (path?: string) =>
     ipcRenderer.invoke('export-product-diagnostics', path),
   exportProductAuditBundle: (request?: any) =>

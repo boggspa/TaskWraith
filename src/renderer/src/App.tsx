@@ -53,6 +53,14 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/
 import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
 import { buildChatUpdateAck } from './lib/chatUpdateAck'
 import {
+  RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS,
+  type RendererChatUpdateClientCounters
+} from '../../shared/rendererDiagnostics'
+import {
+  buildRendererDiagnosticClientSample,
+  type RendererDiagnosticPerformance
+} from './lib/rendererDiagnosticSample'
+import {
   TASKWRAITH_CLOSEOUT_KIND,
   closeoutAiSummaryFromMetadata,
   taskWraithRoundCloseoutId,
@@ -3675,6 +3683,21 @@ function App(): React.JSX.Element {
   // contain optimistic or in-flight renderer-only content and is therefore
   // not a safe base for reconstructing main-owned transport patches.
   const chatUpdateBaselineByIdRef = useRef<Map<string, ChatUpdateBaseline>>(new Map())
+  const rendererChatUpdateCountersRef = useRef<RendererChatUpdateClientCounters>({
+    received: 0,
+    snapshots: 0,
+    patches: 0,
+    applyFailures: 0,
+    acksSent: 0
+  })
+  const rendererDiagnosticChatRef = useRef<{ id: string | null; messageCount: number }>({
+    id: null,
+    messageCount: 0
+  })
+  rendererDiagnosticChatRef.current = {
+    id: currentChat?.appChatId || null,
+    messageCount: currentChat?.messages.length || 0
+  }
   const summaryChatUpdateQueueRef = useRef(new ChatUpdateHydrationQueue<ChatRecord>())
   // rAF render-coalescer for streamed deltas (#1). chatByIdRef above stays the
   // synchronous, byte-exact source of truth; these defer the React commit
@@ -5144,6 +5167,26 @@ function App(): React.JSX.Element {
       clearFxBurst()
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window.api.recordRendererDiagnosticSample !== 'function') return
+    const recordSample = (): void => {
+      const activeChat = rendererDiagnosticChatRef.current
+      void window.api
+        .recordRendererDiagnosticSample(
+          buildRendererDiagnosticClientSample({
+            performance: performance as unknown as RendererDiagnosticPerformance,
+            activeChatId: activeChat.id,
+            activeChatMessageCount: activeChat.messageCount,
+            chatUpdates: rendererChatUpdateCountersRef.current
+          })
+        )
+        .catch(() => {})
+    }
+    recordSample()
+    const interval = window.setInterval(recordSample, RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS)
+    return () => window.clearInterval(interval)
+  }, [currentChat?.appChatId])
 
   useEffect(() => {
     if (!isFxEnabled && fxBurstClass) {
@@ -12311,12 +12354,17 @@ function App(): React.JSX.Element {
       // group containing its parent auto-expands too.
       addIpcSubscription(
         window.api.onChatUpdated((delivery) => {
+          const diagnosticCounters = rendererChatUpdateCountersRef.current
+          diagnosticCounters.received += 1
+          if (delivery.kind === 'snapshot') diagnosticCounters.snapshots += 1
+          else diagnosticCounters.patches += 1
           const baselines = chatUpdateBaselineByIdRef.current
           const acknowledge = (
             wasApplied: boolean,
             appliedBaseline?: ChatUpdateBaseline
           ): void => {
             if (!wasApplied) baselines.delete(delivery.chatId)
+            if (!wasApplied) diagnosticCounters.applyFailures += 1
             // ACK means the revision was validated and accepted into renderer
             // state. Waiting for requestAnimationFrame made progress depend on
             // paint: under GC/render pressure (or a throttled hidden window),
@@ -12334,6 +12382,7 @@ function App(): React.JSX.Element {
                   appliedRecordHash: appliedBaseline?.recordHash
                 })
               )
+              diagnosticCounters.acksSent += 1
             }
           }
           const previousBaseline = baselines.get(delivery.chatId)

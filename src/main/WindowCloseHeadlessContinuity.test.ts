@@ -146,6 +146,20 @@ describe('window-all-closed headless continuity', () => {
     expect(browserWindowLifecycle).toContain('rendererResponsivenessTracker.clear')
     expect(browserWindowLifecycle).toContain('rendererCrashRecovery.show')
     expect(browserWindowLifecycle).toContain('activeRunCount: getActiveTaskWraithThreadCount()')
+    const renderGoneHandler = browserWindowLifecycle.indexOf(
+      "window.webContents.on('render-process-gone'"
+    )
+    const terminalDiagnostic = browserWindowLifecycle.indexOf(
+      'rendererDiagnosticRecorder.recordWindowLifecycleSample',
+      renderGoneHandler
+    )
+    const deliveryClearAfterDiagnostic = browserWindowLifecycle.indexOf(
+      'chatUpdateDeliveryCoordinator.clearTarget',
+      terminalDiagnostic
+    )
+    expect(renderGoneHandler).toBeGreaterThan(0)
+    expect(terminalDiagnostic).toBeGreaterThan(renderGoneHandler)
+    expect(deliveryClearAfterDiagnostic).toBeGreaterThan(terminalDiagnostic)
     expect(browserWindowLifecycle).not.toContain('runManager.cancel(')
     expect(browserWindowLifecycle).not.toContain('runManager.finish(')
     expect(browserWindowLifecycle).not.toContain('approvalService?.cancelForRun')

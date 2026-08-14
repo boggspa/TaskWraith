@@ -614,6 +614,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'repair-product-install',
   'get-product-operations-status',
   'get-product-crashes',
+  'record-renderer-diagnostic-sample',
   'submit-bug-report',
   'local-servers-snapshot',
   'local-servers-refresh',

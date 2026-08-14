@@ -2189,6 +2189,11 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { RendererCrashRecovery } from './RendererCrashRecovery'
+import {
+  RendererDiagnosticRecorder,
+  rendererDiagnosticMetadata,
+  rendererDiagnosticTargetFromWindow
+} from './RendererDiagnosticRing'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
 import { startAntigravityGeminiApiSeatSummary } from './antigravity/AntigravityGeminiApiSeatCompactionLifecycle'
 import { OutlookCredentialStore } from './outlook/OutlookCredentialStore'
@@ -41856,6 +41861,21 @@ if (isGeminiMcpBridgeProcess) {
     registerMeshAssetProtocol(meshAssetStore)
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
+    const rendererDiagnosticRecorder = new RendererDiagnosticRecorder({
+      filePath: join(app.getPath('userData'), 'renderer-diagnostics.json'),
+      getAppMetrics: () => app.getAppMetrics(),
+      getChatRecordPath: (chatId) => AppStore.getChatRecordPath(chatId),
+      getChatUpdateTargetStats: (webContentsId) =>
+        chatUpdateDeliveryCoordinator.statsForTarget(webContentsId),
+      getChatUpdateProtocolCounters: () => chatUpdateDeliveryCoordinator.protocolCounters(),
+      shouldRecordWindow: (window) => window === mainWindow,
+      onError: (message, error) => {
+        console.warn(
+          `[renderer-diagnostics] ${message}`,
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+    })
     const antigravityGeminiApiSecretStore = new AntigravityGeminiApiSecretStore({
       userDataPath: app.getPath('userData'),
       safeStorage
@@ -50780,6 +50800,10 @@ if (isGeminiMcpBridgeProcess) {
       window.on('unresponsive', () => {
         const incident = rendererResponsivenessTracker.begin(webContentsId)
         if (!incident || window.isDestroyed() || window.webContents.isDestroyed()) return
+        const rendererDiagnostic = rendererDiagnosticRecorder.recordWindowLifecycleSample(
+          window,
+          'unresponsive'
+        )
         recordProductCrash({
           source: 'renderer',
           severity: 'warning',
@@ -50789,6 +50813,7 @@ if (isGeminiMcpBridgeProcess) {
           metadata: {
             incidentId: incident.incidentId,
             startedAtMs: incident.startedAtMs,
+            ...rendererDiagnosticMetadata(rendererDiagnostic),
             ...rendererResponsivenessMetadata(window)
           }
         })
@@ -50796,6 +50821,10 @@ if (isGeminiMcpBridgeProcess) {
       window.on('responsive', () => {
         const recovery = rendererResponsivenessTracker.recover(webContentsId)
         if (!recovery || window.isDestroyed() || window.webContents.isDestroyed()) return
+        const rendererDiagnostic = rendererDiagnosticRecorder.recordWindowLifecycleSample(
+          window,
+          'responsive'
+        )
         recordProductCrash({
           source: 'renderer',
           severity: 'warning',
@@ -50807,16 +50836,26 @@ if (isGeminiMcpBridgeProcess) {
             startedAtMs: recovery.incident.startedAtMs,
             recoveredAtMs: recovery.recoveredAtMs,
             durationMs: recovery.durationMs,
+            ...rendererDiagnosticMetadata(rendererDiagnostic),
             ...rendererResponsivenessMetadata(window)
           }
         })
       })
       window.once('closed', () => {
         rendererCrashRecovery.dispose()
+        rendererDiagnosticRecorder.clearTarget(webContentsId)
         chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
         rendererResponsivenessTracker.clear(webContentsId)
       })
       window.webContents.on('render-process-gone', (_event, details) => {
+        const rendererDiagnostic =
+          details.reason !== 'clean-exit'
+            ? rendererDiagnosticRecorder.recordWindowLifecycleSample(
+                window,
+                'render-process-gone',
+                { reason: details.reason, exitCode: details.exitCode }
+              )
+            : null
         chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
         rendererResponsivenessTracker.clear(webContentsId)
         if (details.reason === 'clean-exit') {
@@ -50828,7 +50867,10 @@ if (isGeminiMcpBridgeProcess) {
           processType: 'renderer',
           reason: details.reason,
           exitCode: details.exitCode,
-          message: `Renderer process exited: ${details.reason || 'unknown'}`
+          message: `Renderer process exited: ${details.reason || 'unknown'}`,
+          ...(rendererDiagnostic
+            ? { metadata: rendererDiagnosticMetadata(rendererDiagnostic) }
+            : {})
         })
         if (window === mainWindow) {
           rendererCrashRecovery.show({
@@ -53639,6 +53681,16 @@ if (isGeminiMcpBridgeProcess) {
           ...input,
           source: input?.source || 'renderer'
         }),
+      recordRendererDiagnosticSample: (event, input) => {
+        const owner = BrowserWindow.fromWebContents(event.sender)
+        if (!owner || owner.isDestroyed()) {
+          throw new Error('Renderer diagnostic window is unavailable.')
+        }
+        return rendererDiagnosticRecorder.recordClientSample(
+          rendererDiagnosticTargetFromWindow(owner),
+          input
+        )
+      },
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
       verifyProductAuditBundle: (request) => verifyProductAuditBundle(request),
