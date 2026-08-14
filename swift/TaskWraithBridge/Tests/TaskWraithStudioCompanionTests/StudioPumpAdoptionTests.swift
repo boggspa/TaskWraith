@@ -112,6 +112,43 @@ final class StudioPumpAdoptionTests: XCTestCase {
         XCTAssertEqual(fields, ["hydration", "latestRevision", "step"])
         XCTAssertEqual(update.latestRevision, 7, "the envelope must carry what it was given")
     }
+
+    /// A commit that only Source's controller hears about leaves Review resolving
+    /// against a stale base. The packaged run exposed exactly that: Review showed
+    /// Current/Proposed while its hostRevision remained at hello time, so `a`
+    /// cited revision 0 against a store already at 3 and the host refused with
+    /// stale_base.
+    func testRevisionAdoptionReachesTheReviewController() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: {}
+        )
+
+        XCTAssertEqual(sourceController.nextProposalBaseRevision, 0)
+        XCTAssertEqual(reviewController.nextProposalBaseRevision, 0)
+
+        state.adopt(revision: 3)
+
+        XCTAssertEqual(sourceController.nextProposalBaseRevision, 3)
+        XCTAssertEqual(reviewController.nextProposalBaseRevision, 3)
+    }
     /// Executes the real update-adoption path over media that the production
     /// attachment can decode. A hydration that merely mirrors its fields while
     /// leaving the Source picture, transcript band, or ghost empty is broken.

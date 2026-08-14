@@ -85,6 +85,9 @@ final class StudioViewerView: NSView {
     private var trim: StudioTrimDrag?
     /// The revision the operator is looking at. Proposals cite it as their base.
     private var hostRevision = 0
+    /// The base revision the next proposal/resolve will cite. Internal for
+    /// tests; production code sets it through adopt(revision:).
+    var nextProposalBaseRevision: Int { hostRevision }
     /// The open ghost being reviewed, or nil. Built by the Companion from a
     /// proposal the pump now forwards; before this the renderer's review
     /// machinery existed and NOTHING CALLED IT.
@@ -1344,6 +1347,9 @@ final class StudioViewerWindowController {
         view.adopt(revision: revision)
     }
 
+    /// The base revision the next proposal/resolve will cite. Internal for tests.
+    var nextProposalBaseRevision: Int { view.nextProposalBaseRevision }
+
     func report(message text: String?) {
         view.report(message: text)
     }
@@ -1605,6 +1611,7 @@ final class StudioViewerAppState {
     /// band of somebody else's words over this picture is worse than no band.
     func adopt(revision: Int) {
         controller.adopt(revision: revision)
+        reviewController?.adopt(revision: revision)
     }
 
     /// Restores Source after it was hidden while Review remained visible. This
