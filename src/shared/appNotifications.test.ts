@@ -192,6 +192,7 @@ describe('notification registry', () => {
     const ollama = groups.find((g) => g.provider === 'ollama')
     // Newest curated local tags — each spoofs its upstream brand hue.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
       'Nemotron 3.5 Lightning (30B-MLX)',
       'North Mini Code 1.0',
@@ -199,6 +200,7 @@ describe('notification registry', () => {
       'Rnj-1'
     ])
     expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'qwen',
       'meta',
       'nvidia',
       'cohere',

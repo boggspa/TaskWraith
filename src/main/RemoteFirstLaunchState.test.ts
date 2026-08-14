@@ -433,6 +433,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
       'Nemotron 3.5 Lightning (30B-MLX)',
       'North Mini Code 1.0',
@@ -440,6 +441,7 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'qwen',
       'meta',
       'nvidia',
       'cohere',
