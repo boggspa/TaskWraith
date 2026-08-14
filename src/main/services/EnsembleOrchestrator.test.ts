@@ -13844,7 +13844,7 @@ Next action:
     expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
   })
 
-  it('does not queue behind a stale running snapshot with no live dispatch evidence', async () => {
+  it('keeps an exact running runtime authoritative when its snapshot has no live participant evidence', async () => {
     const completedRounds: Array<{ chatId: string; roundId: string; status: string }> = []
     const harness = makeHarness({
       completeSessionCheckpoint: (chatId, roundId, status) =>
@@ -13878,16 +13878,13 @@ Next action:
       mode: 'queue'
     })
 
-    expect(result.status).toBe('started')
+    expect(result.status).toBe('queued')
+    expect(result.roundId).toBe(oldRoundId)
     expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
-    expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(oldRoundId)
-    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
-    expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
-    expect(completedRounds).toContainEqual({
-      chatId: 'ensemble-chat',
-      roundId: oldRoundId,
-      status: 'completed'
-    })
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(oldRoundId)
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBe('Fresh prompt')
+    expect(harness.chat.messages.at(-1)?.content).toBe('Original prompt')
+    expect(completedRounds).toEqual([])
   })
 
   it('can cancel a persisted running round even when its runtime is already gone', async () => {

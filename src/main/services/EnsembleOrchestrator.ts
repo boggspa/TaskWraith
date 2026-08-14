@@ -4755,9 +4755,14 @@ export class EnsembleOrchestrator {
     let existing = this.roundsByChatId.get(input.chatId)
     if (existing) {
       const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
-      const persistedRoundLive =
-        persistedRound?.roundId === existing.roundId && isEnsembleRoundDispatchLive(persistedRound)
-      if (!persistedRoundLive) {
+      // A registered runtime is the exact owner while its async dispatch tail
+      // drains. The persisted liveness predicate is intentionally conservative
+      // for restart recovery and renderer projection; it can read false during
+      // the valid gap after a participant terminalizes but before the provider
+      // adapter settles and the serial loop seeds its successor. Using that
+      // snapshot heuristic here made a message arriving in the gap tear down
+      // the live runtime and start a replacement round.
+      if (!this.ownsRunningRound(existing)) {
         if (persistedRound?.roundId === existing.roundId) {
           this.finalizeInactiveRunningRoundSnapshot(
             input.chatId,
