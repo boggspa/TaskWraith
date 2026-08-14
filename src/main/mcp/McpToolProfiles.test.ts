@@ -535,10 +535,14 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // full, immutable v1, and fresh v13 compact transports are byte-identical;
     // the mesh transport returns under the ceiling (40,513 -> 39,805), takes
     // back its <40,000 assertion, and leaves the over-ceiling inventory.
-    expect(fullChars).toBe(145_229)
-    expect(gatewayChars).toBe(42_578)
-    expect(freshGatewayChars).toBe(37_286)
-    expect(freshMeshGatewayChars).toBe(38_399)
+    // Re-measured 2026-08-14 after ensemble_send clarified that live steering
+    // is attempted delivery, not proof the recipient processed the note. The
+    // canonical description reaches all four transports (+212 each); both
+    // fresh transports retain more than 1,300 characters of 40k headroom.
+    expect(fullChars).toBe(145_441)
+    expect(gatewayChars).toBe(42_790)
+    expect(freshGatewayChars).toBe(37_498)
+    expect(freshMeshGatewayChars).toBe(38_611)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
