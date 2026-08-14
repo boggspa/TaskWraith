@@ -41,6 +41,8 @@ import {
   isUnsupportedAntigravityPermissionClaim,
   qualifyUnsupportedAntigravityPermissionClaim
 } from '../antigravity/AntigravityPermissionClaimEvidence'
+import { parseAntigravityGoalCompletionFallback } from '../antigravity/AntigravityGoalLifecycleFallback'
+import { resolveEnsemblePromptTransportProfile } from '../antigravity/AntigravityEnsemblePromptProfile'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import {
   configuredEnsembleCaptainParticipantIds,
@@ -14137,6 +14139,70 @@ export class EnsembleOrchestrator {
     return true
   }
 
+  private applyAntigravityGoalCompletionFallback(run: ActiveParticipantRun): void {
+    if (
+      run.participant.provider !== 'antigravity' ||
+      resolveEnsemblePromptTransportProfile(run.participant.provider, run.participant.model) !==
+        'antigravity-official-agy'
+    ) {
+      return
+    }
+    const signal = parseAntigravityGoalCompletionFallback(run.content)
+    if (!signal) return
+
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.cancelled || runtime.roundId !== run.roundId) return
+    const callerLabel = run.participant.role || providerLabel(run.participant.provider)
+    if (signal.roundId !== runtime.roundId) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith ignored a stale AntiGravity goal-completion fallback from ${callerLabel}: its round identity does not match this live round.`
+      )
+      return
+    }
+
+    const chat = this.deps.getChat(run.chatId)
+    if (!chat?.activeGoal || chat.activeGoal.id !== signal.goalId) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith ignored a stale AntiGravity goal-completion fallback from ${callerLabel}: its goal identity is no longer active.`
+      )
+      return
+    }
+    if (chat.activeGoal.status !== 'active') return
+
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+    if (!authority.ok) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith ignored an AntiGravity goal-completion fallback from ${callerLabel}: ${authority.message}.`
+      )
+      return
+    }
+
+    const result = this.structuredBossmanControl(
+      runtime,
+      {
+        action: 'update_goal',
+        roundId: runtime.roundId,
+        goalStatus: 'completed',
+        reason: signal.summary
+      },
+      run.participant,
+      authority.role
+    )
+    if (result.ok) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith accepted ${callerLabel}'s identity-bound official-agy goal-completion fallback.`
+      )
+    }
+  }
+
   private recoverAntigravityFalseRefusal(run: ActiveParticipantRun): boolean {
     if (!run.antigravityFalseRefusalRecoveryPending || run.terminalFinalized) return false
     const runtime = this.roundsByChatId.get(run.chatId)
@@ -14478,6 +14544,9 @@ export class EnsembleOrchestrator {
       }
       const emptyAfterProviderDiagnostic =
         Boolean(run.providerDiagnostic) && run.content.trim().length === 0
+      if (!failed && !emptyAfterProviderDiagnostic) {
+        this.applyAntigravityGoalCompletionFallback(run)
+      }
       // A provider-authored permission blocker with no denied tool result is
       // not a completed answer. Stage one bounded retry, but do not release the
       // serial seat until markRunExited proves the first agy process (and its

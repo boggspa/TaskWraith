@@ -44,6 +44,7 @@ import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../sh
 import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
+import { ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX } from '../antigravity/AntigravityGoalLifecycleFallback'
 
 function expectYielded(outcome: EnsembleYieldOutcome): void {
   expect(outcome.kind).toBe('yielded')
@@ -110,6 +111,50 @@ function buildActiveGoal(id: string): ActiveGoal {
     createdAt: '2026-05-24T00:00:00.000Z',
     updatedAt: '2026-05-24T00:00:00.000Z'
   }
+}
+
+function antigravityGoalCompletionSignal(
+  goalId: string,
+  roundId: string,
+  summary = 'Verified every requested check.'
+): string {
+  return `${ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX}${JSON.stringify({
+    goalId,
+    roundId,
+    summary
+  })}`
+}
+
+function makeAntigravityGoalChat(
+  options: { bossmanParticipantId?: string; model?: string } = {}
+): ChatRecord {
+  const initialChat = makeChat()
+  initialChat.activeGoal = buildActiveGoal('goal-antigravity-fallback')
+  initialChat.ensemble = {
+    ...initialChat.ensemble!,
+    orchestrationMode: 'continuous',
+    maxContinuationHops: 4,
+    bossmanParticipantId: options.bossmanParticipantId ?? 'antigravity',
+    participants: [
+      {
+        id: 'antigravity',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Coordinate, verify, and close the active goal.',
+        order: 1,
+        model: options.model ?? 'gemini-3.1-pro-high',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        ...initialChat.ensemble!.participants[1],
+        id: 'codex-worker',
+        role: 'Worker',
+        order: 2
+      }
+    ]
+  }
+  return initialChat
 }
 
 function externalGrant(
@@ -957,6 +1002,163 @@ describe('EnsembleOrchestrator', () => {
     expect(state?.status).toBe('failed')
     expect(state?.reason).toContain('headless mode auto-denied')
     expect(state?.reason).toContain('read_file')
+  })
+
+  it('lets an official-agy Boss complete the matching active goal through the identity-bound host fallback', async () => {
+    const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result and close the goal only when complete.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const dispatched = harness.dispatched[0]
+    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
+    expect(dispatched.prompt).toContain('Host goal-lifecycle fallback')
+    expect(dispatched.prompt).toContain('"goalId":"goal-antigravity-fallback"')
+    expect(dispatched.prompt).toContain(`"roundId":"${roundId}"`)
+
+    const route = { appRunId: dispatched.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: `All requested checks pass.\n${antigravityGoalCompletionSignal(
+        'goal-antigravity-fallback',
+        roundId
+      )}`
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.chat.activeGoal?.status).toBe('completed'))
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('identity-bound official-agy goal-completion fallback')
+      )
+    ).toBe(true)
+  })
+
+  it('does not infer official-agy goal completion from ordinary prose', async () => {
+    const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: 'The active goal is complete and all work is done.'
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  it('rejects an official-agy goal fallback from a non-authority seat', async () => {
+    const harness = makeHarness({
+      initialChat: makeAntigravityGoalChat({ bossmanParticipantId: 'codex-worker' })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
+    expect(harness.dispatched[0].prompt).not.toContain('Host goal-lifecycle fallback')
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('only the assigned Boss, or the single acting Captain')
+      )
+    ).toBe(true)
+  })
+
+  it('keeps review gates authoritative over the official-agy goal fallback', async () => {
+    const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
+    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_review_gate',
+      roundId,
+      gateId: 'gate-antigravity-fallback',
+      targetParticipantId: 'codex-worker',
+      scope: 'final workspace evidence',
+      acceptanceCriteria: 'Worker review must pass.'
+    })
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('goal completion blocked by review gate')
+      )
+    ).toBe(true)
+  })
+
+  it('does not apply the official-agy fallback to the AntiGravity Gemini API transport', async () => {
+    const harness = makeHarness({
+      initialChat: makeAntigravityGoalChat({ model: 'gemini-api:gemini-2.5-flash' })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const roundId = harness.chat.ensemble?.activeRound?.roundId || ''
+    expect(harness.dispatched[0].prompt).not.toContain('Host goal-lifecycle fallback')
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: antigravityGoalCompletionSignal('goal-antigravity-fallback', roundId)
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.activeGoal?.status).toBe('active')
   })
 
   it('retries one unsupported AntiGravity permission refusal after process exit, then bounds recovery', async () => {

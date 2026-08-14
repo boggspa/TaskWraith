@@ -40,6 +40,8 @@ export interface AntigravityOfficialAgyPromptCapsuleInput {
   transcript: string
   permissionRule: string
   yieldExecutionCheck: string
+  /** Identity-bound host protocol used only when this official-agy seat may close a goal. */
+  goalCompletionFallback?: string
 }
 
 export interface AntigravityOfficialAgyPromptEvidence {
@@ -253,6 +255,9 @@ export function buildAntigravityOfficialAgyPromptCapsuleProjection(
       text: '- Only after an explicit denied/error result may you report the exact blocked path and wait for the user. Do not invent a host grant request or bypass the boundary.'
     },
     ...(input.turnBoundary ? [{ text: '' }, { text: boundedText(input.turnBoundary, 1_000) }] : []),
+    ...(input.goalCompletionFallback
+      ? [{ text: '' }, { text: boundedText(input.goalCompletionFallback, 1_200) }]
+      : []),
     { text: '' },
     { text: boundedText(input.yieldExecutionCheck, 700) },
     { text: `Respond now as [${boundedText(input.participantLabel, 320)}].` }

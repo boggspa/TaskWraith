@@ -93,6 +93,7 @@ import {
   resolveEnsemblePromptTransportProfile,
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
+import { buildAntigravityGoalCompletionFallbackInstruction } from './antigravity/AntigravityGoalLifecycleFallback'
 import { qualifyUnsupportedAntigravityPermissionClaim } from './antigravity/AntigravityPermissionClaimEvidence'
 import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
 import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/SkillPromptInjection'
@@ -1080,6 +1081,23 @@ export function buildEnsembleParticipantPromptProjection(
   })()
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  const antigravityGoalCompletionFallback = (() => {
+    if (
+      promptTransportProfile !== 'antigravity-official-agy' ||
+      input.chat.activeGoal?.status !== 'active'
+    ) {
+      return undefined
+    }
+    const authority = normalizeEnsembleAuthority(input.config)
+    const isConfiguredAuthority =
+      authority.bossmanParticipantId === input.participant.id ||
+      authority.captainParticipantIds.includes(input.participant.id)
+    if (!authority.bossmanParticipantId || !isConfiguredAuthority) return undefined
+    return buildAntigravityGoalCompletionFallbackInstruction({
+      goalId: input.chat.activeGoal.id,
+      roundId: input.roundId
+    })
+  })()
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
   const hasWriteIntentLane = Boolean(
     input.config.activeRound?.lanes &&
@@ -1412,7 +1430,8 @@ export function buildEnsembleParticipantPromptProjection(
         seatSummary: seatSummaryBlock,
         transcript,
         permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
-        yieldExecutionCheck
+        yieldExecutionCheck,
+        goalCompletionFallback: antigravityGoalCompletionFallback
       },
       {
         ...(input.currentPromptMessageId
