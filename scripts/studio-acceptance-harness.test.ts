@@ -121,6 +121,24 @@ const {
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
 }
+const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog.cjs') as {
+  classifyDetachedArtifactGroups: (options: {
+    rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>
+    artifactHomeAliases: string[]
+    baselineRows: Array<{ pid: number; ppid: number; pgid: number; command: string }>
+    childPgid: number | null
+    knownPgids: number[]
+  }) => {
+    authorizedGroups: Array<{
+      pgid: number
+      evidencePids: number[]
+      members: Array<{ pid: number; ppid: number; pgid: number; command: string }>
+    }>
+    lostOwnershipGroups: Array<{ pgid: number; memberPids: number[] }>
+    mixedOwnershipGroups: Array<{ pgid: number; memberPids: number[]; baselinePids: number[] }>
+    protectedInstalledGroups: Array<{ pgid: number; memberPids: number[] }>
+  }
+}
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const roots: string[] = []
@@ -386,6 +404,109 @@ describe('Studio acceptance harness', () => {
     }
   )
 
+  it('refuses a detached group that contains an exact pre-launch baseline member', () => {
+    const home = '/private/var/folders/acceptance/home'
+    const baseline = {
+      pid: 7001,
+      ppid: 1,
+      pgid: 7000,
+      command: '/usr/bin/baseline-helper --serve'
+    }
+    const result = classifyDetachedArtifactGroups({
+      rows: [
+        baseline,
+        {
+          pid: 7002,
+          ppid: 7001,
+          pgid: 7000,
+          command: `/usr/bin/node ${home}/detached-child.cjs`
+        }
+      ],
+      artifactHomeAliases: [home],
+      baselineRows: [baseline],
+      childPgid: 6000,
+      knownPgids: []
+    })
+
+    expect(result.authorizedGroups).toEqual([])
+    expect(result.mixedOwnershipGroups).toEqual([
+      { pgid: 7000, memberPids: [7001, 7002], baselinePids: [7001] }
+    ])
+  })
+
+  it('does not confuse a reused pid with its changed process-row identity', () => {
+    const home = '/private/var/folders/acceptance/home'
+    const result = classifyDetachedArtifactGroups({
+      rows: [
+        {
+          pid: 7101,
+          ppid: 1,
+          pgid: 7101,
+          command: `/usr/bin/node ${home}/detached-child.cjs`
+        }
+      ],
+      artifactHomeAliases: [home],
+      baselineRows: [
+        {
+          pid: 7101,
+          ppid: 7000,
+          pgid: 7000,
+          command: '/usr/bin/prelaunch-helper --idle'
+        }
+      ],
+      childPgid: 6000,
+      knownPgids: []
+    })
+
+    expect(result.mixedOwnershipGroups).toEqual([])
+    expect(result.authorizedGroups).toMatchObject([
+      { pgid: 7101, evidencePids: [7101], members: [{ pid: 7101 }] }
+    ])
+  })
+
+  it('refuses an installed TaskWraith group even when another member references the disposable home', () => {
+    const home = '/private/var/folders/acceptance/home'
+    const result = classifyDetachedArtifactGroups({
+      rows: [
+        {
+          pid: 7201,
+          ppid: 1,
+          pgid: 7201,
+          command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
+        },
+        {
+          pid: 7202,
+          ppid: 7201,
+          pgid: 7201,
+          command: `/usr/bin/helper --profile ${home}/browser`
+        },
+        {
+          pid: 7301,
+          ppid: 1,
+          pgid: 7301,
+          command:
+            '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+        },
+        {
+          pid: 7302,
+          ppid: 7301,
+          pgid: 7301,
+          command: `/usr/bin/helper --profile ${home}/studio`
+        }
+      ],
+      artifactHomeAliases: [home],
+      baselineRows: [],
+      childPgid: 6000,
+      knownPgids: []
+    })
+
+    expect(result.authorizedGroups).toEqual([])
+    expect(result.protectedInstalledGroups).toEqual([
+      { pgid: 7201, memberPids: [7201, 7202] },
+      { pgid: 7301, memberPids: [7301, 7302] }
+    ])
+  })
+
   it.runIf(process.platform !== 'win32')(
     'reaps a detached process group that remains bound to the disposable acceptance home',
     async () => {
@@ -480,6 +601,117 @@ describe('Studio acceptance harness', () => {
             // Already gone, which is the expected outcome.
           }
         }
+      }
+    },
+    12_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses to signal a known detached group after its disposable-home evidence disappears',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-watchdog-lost-ownership-')
+      const detachedBody = [
+        "const fs=require('node:fs');",
+        "const path=require('node:path');",
+        'const home=__dirname;',
+        "process.on('SIGTERM',()=>{",
+        "process.title='studio-lost-evidence';",
+        "fs.writeFileSync(path.join(home,'lost-evidence.json'),JSON.stringify({pid:process.pid})+'\\n');",
+        '});',
+        "fs.writeFileSync(path.join(home,'detached-ready.json'),JSON.stringify({pid:process.pid})+'\\n');",
+        'setInterval(()=>{},1000);'
+      ].join('')
+      const detachedScript = path.join(root, 'detached-child.cjs')
+      await fsPromises.writeFile(detachedScript, detachedBody, 'utf8')
+      const leaderBody = [
+        "const fs=require('node:fs');",
+        "const path=require('node:path');",
+        "const {spawn}=require('node:child_process');",
+        'const detachedScript=process.argv[1];',
+        'const home=process.argv[2];',
+        "const detached=spawn(process.execPath,[detachedScript],{detached:true,stdio:'ignore'});",
+        'detached.unref();',
+        "fs.writeFileSync(path.join(home,'detached.json'),JSON.stringify({pid:detached.pid})+'\\n');",
+        "process.on('SIGTERM',()=>process.exit(0));",
+        'setInterval(()=>{},1000);'
+      ].join('')
+      const spec = {
+        kind: 'stub',
+        command: process.execPath,
+        args: ['-e', leaderBody, detachedScript, root],
+        cwd: root,
+        env: {
+          TASKWRAITH_INSTANCE_ID: 'studioLostOwner',
+          IOS_REMOTE_TRUE: '0',
+          TASKWRAITH_STUDIO_COMPANION: '1',
+          HOME: root
+        },
+        timeoutMs: 5_000,
+        forceAfterMs: 250,
+        receiptPath: path.join(root, 'watchdog-receipt.json')
+      }
+      const session = await launchUnderWatchdog(spec, {
+        controllerEnv: { TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' }
+      })
+      const detached = await waitFor(async () => {
+        try {
+          return JSON.parse(
+            await fsPromises.readFile(path.join(root, 'detached-ready.json'), 'utf8')
+          )
+        } catch {
+          return null
+        }
+      }, 'detached lost-ownership fixture readiness')
+
+      try {
+        const terminalPromise = session.stop()
+        await waitFor(async () => {
+          try {
+            return JSON.parse(
+              await fsPromises.readFile(path.join(root, 'lost-evidence.json'), 'utf8')
+            )
+          } catch {
+            return null
+          }
+        }, 'detached fixture dropping disposable-home evidence')
+        const terminal = await terminalPromise
+        expect(terminal).toMatchObject({
+          status: 'reap_incomplete',
+          detachedGroupExitVerified: false
+        })
+        expect(processGroupRows(detached.pid).length).toBeGreaterThan(0)
+
+        const receipt = JSON.parse(await fsPromises.readFile(session.receiptPath, 'utf8'))
+        expect(receipt).toMatchObject({
+          status: 'reap_incomplete',
+          detachedGroupExitVerified: false,
+          lostOwnershipGroups: [{ pgid: detached.pid, memberPids: [detached.pid] }]
+        })
+        expect(receipt.error).toMatch(/manual adjudication/)
+        expect(receipt.detachedProcessGroups).toMatchObject([
+          {
+            pgid: detached.pid,
+            evidencePids: [detached.pid]
+          }
+        ])
+      } finally {
+        try {
+          process.kill(-detached.pid, 'SIGKILL')
+        } catch {
+          // The unsafe implementation kills this group; the corrected one leaves it for adjudication.
+        }
+        if (session.pgid) {
+          try {
+            process.kill(-session.pgid, 'SIGKILL')
+          } catch {
+            // Already gone, which is the expected outcome.
+          }
+        }
+        await waitFor(() => {
+          const rows = processGroupRows(detached.pid)
+          if (rows.length > 0) throw new Error(JSON.stringify(rows))
+          return true
+        }, 'lost-ownership fixture cleanup')
       }
     },
     12_000

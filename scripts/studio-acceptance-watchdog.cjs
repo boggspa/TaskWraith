@@ -27,6 +27,9 @@ const MIN_RUN_TIMEOUT_MS = 30_000
 const MAX_RUN_TIMEOUT_MS = 30 * 60 * 1_000
 const PROCESS_TABLE_MAX_BYTES = 2 * 1024 * 1024
 const PROCESS_TABLE_TIMEOUT_MS = 2_000
+const INSTALLED_TASKWRAITH_EXECUTABLE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
+const INSTALLED_STUDIO_EXECUTABLE =
+  '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
 
 let child = null
 let spec = null
@@ -41,9 +44,14 @@ let groupExitTimer = null
 let terminal = false
 let artifactHome = null
 let artifactHomeAliases = []
-let baselinePids = new Set()
+let baselineRows = []
 let artifactScanError = null
 let lastProcessRows = []
+let detachedSafetyState = {
+  lostOwnershipGroups: [],
+  mixedOwnershipGroups: [],
+  protectedInstalledGroups: []
+}
 const detachedProcessGroups = new Map()
 
 function boundedTail(previous, chunk) {
@@ -187,21 +195,95 @@ function commandContainsBoundedPath(command, boundedPath) {
   return false
 }
 
-function commandReferencesArtifactHome(command) {
-  return artifactHomeAliases.some((home) => commandContainsBoundedPath(command, home))
+function commandReferencesAnyArtifactHome(command, aliases) {
+  return aliases.some((home) => commandContainsBoundedPath(command, home))
 }
 
-function discoverDetachedProcessGroups() {
-  if (!artifactHome || process.platform === 'win32') return true
-  const rows = sampleProcessRows()
-  if (!rows) return false
+function processRowIdentity(row) {
+  return JSON.stringify([row.pid, row.ppid, row.pgid, row.command])
+}
+
+function commandRunsExactExecutable(command, executable) {
+  return command === executable || command.startsWith(`${executable} `)
+}
+
+function classifyDetachedArtifactGroups({
+  rows,
+  artifactHomeAliases: aliases,
+  baselineRows: initialRows,
+  childPgid: primaryPgid,
+  knownPgids
+}) {
+  const baselineIdentities = new Set(initialRows.map(processRowIdentity))
+  const known = new Set(knownPgids)
+  const candidatePgids = new Set(known)
+  for (const row of rows) {
+    if (
+      Number.isSafeInteger(row.pgid) &&
+      row.pgid > 0 &&
+      row.pgid !== primaryPgid &&
+      commandReferencesAnyArtifactHome(row.command, aliases)
+    ) {
+      candidatePgids.add(row.pgid)
+    }
+  }
+
+  const groups = new Map()
+  for (const row of rows) {
+    if (!candidatePgids.has(row.pgid) || row.pgid === primaryPgid) continue
+    const members = groups.get(row.pgid) || []
+    members.push(row)
+    groups.set(row.pgid, members)
+  }
+
+  const authorizedGroups = []
+  const lostOwnershipGroups = []
+  const mixedOwnershipGroups = []
+  const protectedInstalledGroups = []
+  for (const [pgid, unsortedMembers] of [...groups.entries()].sort(
+    ([left], [right]) => left - right
+  )) {
+    const members = [...unsortedMembers].sort((left, right) => left.pid - right.pid)
+    const memberPids = members.map((member) => member.pid)
+    const evidencePids = members
+      .filter((member) => commandReferencesAnyArtifactHome(member.command, aliases))
+      .map((member) => member.pid)
+    const baselinePids = members
+      .filter((member) => baselineIdentities.has(processRowIdentity(member)))
+      .map((member) => member.pid)
+    const containsInstalledExecutable = members.some(
+      (member) =>
+        commandRunsExactExecutable(member.command, INSTALLED_TASKWRAITH_EXECUTABLE) ||
+        commandRunsExactExecutable(member.command, INSTALLED_STUDIO_EXECUTABLE)
+    )
+
+    if (containsInstalledExecutable) {
+      protectedInstalledGroups.push({ pgid, memberPids })
+    } else if (baselinePids.length > 0) {
+      mixedOwnershipGroups.push({ pgid, memberPids, baselinePids })
+    } else if (evidencePids.length > 0) {
+      authorizedGroups.push({ pgid, evidencePids, members })
+    } else if (known.has(pgid)) {
+      lostOwnershipGroups.push({ pgid, memberPids })
+    }
+  }
+
+  return {
+    authorizedGroups,
+    lostOwnershipGroups,
+    mixedOwnershipGroups,
+    protectedInstalledGroups
+  }
+}
+
+function rememberArtifactBoundGroups(rows) {
   const candidates = new Map()
   for (const row of rows) {
     if (
       !Number.isSafeInteger(row.pgid) ||
       row.pgid <= 0 ||
       row.pgid === childPgid ||
-      !commandReferencesArtifactHome(row.command)
+      !commandReferencesAnyArtifactHome(row.command, artifactHomeAliases)
     ) {
       continue
     }
@@ -222,26 +304,92 @@ function discoverDetachedProcessGroups() {
     for (const member of members) known.memberPids.add(member.pid)
     detachedProcessGroups.set(pgid, known)
   }
-  return true
+}
+
+function refreshDetachedSafetyState() {
+  if (!artifactHome || process.platform === 'win32') {
+    detachedSafetyState = {
+      lostOwnershipGroups: [],
+      mixedOwnershipGroups: [],
+      protectedInstalledGroups: []
+    }
+    return {
+      authorizedGroups: [],
+      ...detachedSafetyState
+    }
+  }
+  const rows = sampleProcessRows()
+  if (!rows) return null
+  rememberArtifactBoundGroups(rows)
+  const classification = classifyDetachedArtifactGroups({
+    rows,
+    artifactHomeAliases,
+    baselineRows,
+    childPgid,
+    knownPgids: [...detachedProcessGroups.keys()]
+  })
+  detachedSafetyState = {
+    lostOwnershipGroups: classification.lostOwnershipGroups,
+    mixedOwnershipGroups: classification.mixedOwnershipGroups,
+    protectedInstalledGroups: classification.protectedInstalledGroups
+  }
+  return classification
 }
 
 function detachedGroupsHaveMembers() {
-  const scanSucceeded = discoverDetachedProcessGroups()
-  if (!scanSucceeded) return true
-  const knownPgids = new Set(detachedProcessGroups.keys())
-  return lastProcessRows.some((row) => knownPgids.has(row.pgid))
+  const classification = refreshDetachedSafetyState()
+  if (!classification) return true
+  return (
+    classification.authorizedGroups.length > 0 ||
+    classification.lostOwnershipGroups.length > 0 ||
+    classification.mixedOwnershipGroups.length > 0 ||
+    classification.protectedInstalledGroups.length > 0
+  )
 }
 
 function signalDetachedProcessGroups(signal) {
-  discoverDetachedProcessGroups()
-  for (const group of detachedProcessGroups.values()) {
+  const classification = refreshDetachedSafetyState()
+  if (!classification) return false
+  for (const group of classification.authorizedGroups) {
     try {
       process.kill(-group.pgid, signal)
-      if (signal === 'SIGKILL') group.requiredForceKill = true
+      if (signal === 'SIGKILL') {
+        const known = detachedProcessGroups.get(group.pgid)
+        if (known) known.requiredForceKill = true
+      }
     } catch {
-      // ESRCH means the exact detached group is already gone. The poll proves it.
+      // ESRCH means the exact freshly-authorized group is already gone. The poll proves it.
     }
   }
+  return true
+}
+
+function detachedManualAdjudicationError() {
+  const parts = []
+  if (detachedSafetyState.lostOwnershipGroups.length > 0) {
+    parts.push(
+      `lost ownership pgids=${detachedSafetyState.lostOwnershipGroups
+        .map((group) => group.pgid)
+        .join(',')}`
+    )
+  }
+  if (detachedSafetyState.mixedOwnershipGroups.length > 0) {
+    parts.push(
+      `mixed baseline pgids=${detachedSafetyState.mixedOwnershipGroups
+        .map((group) => group.pgid)
+        .join(',')}`
+    )
+  }
+  if (detachedSafetyState.protectedInstalledGroups.length > 0) {
+    parts.push(
+      `installed-app pgids=${detachedSafetyState.protectedInstalledGroups
+        .map((group) => group.pgid)
+        .join(',')}`
+    )
+  }
+  return parts.length > 0
+    ? `detached process groups require manual adjudication: ${parts.join('; ')}`
+    : null
 }
 
 function detachedProcessGroupReceipt() {
@@ -266,8 +414,11 @@ function receipt(status, extra = {}) {
     childPgid,
     artifactHome,
     artifactHomeAliases,
-    baselineProcessCount: baselinePids.size,
+    baselineProcessCount: baselineRows.length,
     detachedProcessGroups: detachedProcessGroupReceipt(),
+    lostOwnershipGroups: detachedSafetyState.lostOwnershipGroups,
+    mixedOwnershipGroups: detachedSafetyState.mixedOwnershipGroups,
+    protectedInstalledGroups: detachedSafetyState.protectedInstalledGroups,
     ...(artifactScanError ? { artifactScanError } : {}),
     instanceId: spec.env.TASKWRAITH_INSTANCE_ID || null,
     command: spec.command,
@@ -427,8 +578,9 @@ function finalizeAfterChildExit(status, extra) {
         groupExitVerified: !remaining.primary,
         detachedGroupExitVerified: !remaining.detached,
         error: artifactScanError
-          ? `artifact-bound process scan failed after SIGKILL: ${artifactScanError}`
-          : `owned process groups still had members ${GROUP_EXIT_GRACE_MS}ms after SIGKILL (primary=${String(
+          ? `artifact-bound process scan failed during cleanup: ${artifactScanError}`
+          : detachedManualAdjudicationError() ||
+            `owned process groups still had members ${GROUP_EXIT_GRACE_MS}ms after cleanup (primary=${String(
               remaining.primary
             )}, detached=${String(remaining.detached)})`
       })
@@ -462,11 +614,11 @@ function launch(candidate) {
     if (artifactHome === path.parse(artifactHome).root) {
       throw new Error('env.HOME must identify a bounded disposable acceptance directory')
     }
-    const baselineRows = sampleProcessRows()
-    if (!baselineRows) {
+    const capturedBaselineRows = sampleProcessRows()
+    if (!capturedBaselineRows) {
       throw new Error(`could not capture pre-launch process baseline: ${artifactScanError}`)
     }
-    baselinePids = new Set(baselineRows.map((row) => row.pid))
+    baselineRows = capturedBaselineRows
   } else if (spec.kind === 'electron') {
     throw new Error('Electron launch requires an absolute disposable env.HOME')
   }
@@ -516,33 +668,41 @@ function launch(candidate) {
   if (!process.connected) beginReap('owner_disconnected')
 }
 
-process.on('message', (message) => {
-  try {
-    if (!isRecord(message)) throw new Error('controller message must be an object')
-    if (message.type === 'launch') launch(message.spec)
-    else if (message.type === 'stop') beginReap('owner_requested')
-    else throw new Error('unknown controller message')
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (spec) {
-      complete('spawn_failed', { reason: 'invalid_launch', error: message })
-    } else {
-      send({ type: 'error', error: message })
-      setImmediate(() => process.exit(1))
+function installControllerHandlers() {
+  process.on('message', (message) => {
+    try {
+      if (!isRecord(message)) throw new Error('controller message must be an object')
+      if (message.type === 'launch') launch(message.spec)
+      else if (message.type === 'stop') beginReap('owner_requested')
+      else throw new Error('unknown controller message')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (spec) {
+        complete('spawn_failed', { reason: 'invalid_launch', error: message })
+      } else {
+        send({ type: 'error', error: message })
+        setImmediate(() => process.exit(1))
+      }
     }
-  }
-})
+  })
 
-process.on('disconnect', () => {
-  if (child) beginReap('owner_disconnected')
-  else setImmediate(() => process.exit(0))
-})
+  process.on('disconnect', () => {
+    if (child) beginReap('owner_disconnected')
+    else setImmediate(() => process.exit(0))
+  })
 
-process.on('SIGTERM', () => {
-  if (child) beginReap('controller_sigterm')
-  else process.exit(0)
-})
-process.on('SIGINT', () => {
-  if (child) beginReap('controller_sigint')
-  else process.exit(0)
-})
+  process.on('SIGTERM', () => {
+    if (child) beginReap('controller_sigterm')
+    else process.exit(0)
+  })
+  process.on('SIGINT', () => {
+    if (child) beginReap('controller_sigint')
+    else process.exit(0)
+  })
+}
+
+if (require.main === module) installControllerHandlers()
+
+module.exports = {
+  classifyDetachedArtifactGroups
+}
