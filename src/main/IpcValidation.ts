@@ -736,6 +736,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'media-asset:get-path': ['object'],
   'media-asset:save-as': ['object'],
   'media-asset:copy-image': ['object'],
+  // Studio effect-preview controls are deliberately pathless. Main owns the
+  // trusted file dialog and these renderer invocations carry no payload.
+  'studio:effect-preview-load': [],
+  'studio:effect-preview-clear': [],
+  'studio:effect-preview-state': [],
   'favicon:getForUrl': ['nonEmptyString'],
   'start-pty': ['workspacePath', 'optionalString'],
   'stop-pty': ['optionalString'],
@@ -1136,7 +1141,8 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
       channel === 'attach-window:control-session' ||
       channel === 'canvas:clear-browser-profile' ||
       channel.startsWith('channels:') ||
-      channel.startsWith('host-lifecycle:')) &&
+      channel.startsWith('host-lifecycle:') ||
+      channel.startsWith('studio:effect-preview-')) &&
     args.length > schema.length
   ) {
     throw new Error(`${channel} received too many arguments.`)

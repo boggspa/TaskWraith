@@ -45,14 +45,17 @@ describe('IpcValidation', () => {
   // broken up into per-domain modules under `src/main/ipc/`, the scan must
   // follow them — otherwise an extracted channel silently leaves this
   // invariant. So we scan index.ts, every `*.ts` (non-test) file under
-  // `src/main/ipc/`, and the separately factored canvas IPC module.
+  // `src/main/ipc/` and `src/main/studio/`, and the separately factored canvas
+  // IPC module.
   it('registers an arg schema for every ipcMain.handle channel', () => {
     const sources = [readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')]
-    const ipcDir = join(process.cwd(), 'src/main/ipc')
-    if (existsSync(ipcDir)) {
-      for (const entry of readdirSync(ipcDir)) {
-        if (!entry.endsWith('.ts') || entry.endsWith('.test.ts')) continue
-        sources.push(readFileSync(join(ipcDir, entry), 'utf8'))
+    for (const relativeDir of ['src/main/ipc', 'src/main/studio']) {
+      const sourceDir = join(process.cwd(), relativeDir)
+      if (existsSync(sourceDir)) {
+        for (const entry of readdirSync(sourceDir)) {
+          if (!entry.endsWith('.ts') || entry.endsWith('.test.ts')) continue
+          sources.push(readFileSync(join(sourceDir, entry), 'utf8'))
+        }
       }
     }
     sources.push(readFileSync(join(process.cwd(), 'src/main/canvas/CanvasEmbedIpc.ts'), 'utf8'))
@@ -122,6 +125,17 @@ describe('IpcValidation', () => {
     ).not.toThrow()
     expect(() => validateIpcArgs('media-asset:open-in-studio', [])).toThrow(/object/)
     expect(() => validateIpcArgs('media-asset:open-in-studio', ['video.mp4'])).toThrow(/object/)
+  })
+
+  it('keeps the Studio effect-preview controls pathless', () => {
+    for (const channel of [
+      'studio:effect-preview-load',
+      'studio:effect-preview-clear',
+      'studio:effect-preview-state'
+    ]) {
+      expect(() => validateIpcArgs(channel, [])).not.toThrow()
+      expect(() => validateIpcArgs(channel, [{}])).toThrow(/too many arguments/)
+    }
   })
 
   it('shape-gates the closed Channels host contract and rejects trailing data', () => {
