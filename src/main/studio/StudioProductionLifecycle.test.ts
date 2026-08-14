@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TRANSCRIPT_MEDIA_ASSET_DIR } from '../services/TranscriptMediaAssetStore'
 import type { StudioCompanionChild } from './StudioCompanionSupervisor'
+import { importStudioEffectPreview } from './StudioEffectPreviewSource'
 import { STUDIO_METHODS, STUDIO_TRANSCRIPT_SCHEMA_VERSION } from './StudioProtocol'
 import {
   STUDIO_COMPANION_EXECUTABLE,
@@ -231,10 +232,22 @@ describe('StudioProductionLifecycle', () => {
 
     const cubeText = `LUT_3D_SIZE 2\n${Array.from({ length: 8 }, () => '0.5 0.5 0.5').join('\n')}\n`
     const effectId = createHash('sha256').update(cubeText, 'utf8').digest('hex')
-    const ownedCube = nodePath.join(lifecycle.paths.allowedMediaRoot, 'look.cube')
-    await fsPromises.writeFile(ownedCube, cubeText, 'utf8')
+    // Faithful to production: the operator's file lives OUTSIDE every owned
+    // root — as it always does — and reaches the jail only through the real
+    // import hop. This test used to write the cube straight into
+    // `allowedMediaRoot`, which hid the fact that the jail pointed at the
+    // transcript-media CAS, a directory a `.cube` can never legitimately
+    // occupy. That made `setEffectPreview` unsatisfiable in production while
+    // this suite stayed green.
+    const operatorCube = nodePath.join(root, 'operator-files', 'look.cube')
+    await fsPromises.mkdir(nodePath.dirname(operatorCube), { recursive: true })
+    await fsPromises.writeFile(operatorCube, cubeText, 'utf8')
+    const imported = importStudioEffectPreview({
+      sourcePath: operatorCube,
+      destinationRoot: lifecycle.paths.effectPreviewRoot
+    })
 
-    await expect(lifecycle.setEffectPreview(ownedCube)).resolves.toMatchObject({
+    await expect(lifecycle.setEffectPreview(imported.path)).resolves.toMatchObject({
       ok: true,
       revision: 1,
       effectPreview: { effectId, cubeByteLength: Buffer.byteLength(cubeText, 'utf8') }

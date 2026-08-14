@@ -52,6 +52,7 @@ export type StudioEffectPreviewRejection =
   | 'invalid_payload'
   | 'unexpected_field'
   | 'identity_mismatch'
+  | 'import_failed'
 
 export class StudioEffectPreviewError extends Error {
   readonly code: StudioEffectPreviewRejection
@@ -382,4 +383,153 @@ export function loadStudioEffectPreview(options: {
     cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
     cubeText
   })
+}
+
+/**
+ * Separates the content identity from the operator's filename inside the owned
+ * root. Two underscores cannot appear in a 64-hex effectId, so the split point
+ * is unambiguous.
+ */
+const EFFECT_PREVIEW_NAME_SEPARATOR = '__'
+const IMPORTED_NAME_MAX_LENGTH = 64
+
+/**
+ * Reduce an operator filename to a safe single path component. `basename` has
+ * already removed any directory, and this additionally refuses anything outside
+ * a conservative allowlist so a crafted name cannot alter the path shape.
+ */
+function sanitiseImportedName(displayName: string): string {
+  const base = displayName.replace(/\.cube$/i, '')
+  // Spaces are deliberately preserved: `basename` has already removed any
+  // directory, so a space cannot alter the path shape, and rewriting it would
+  // make the restored label differ from the file the operator actually chose.
+  const safe = base
+    .replace(/[^A-Za-z0-9 ._-]/g, '_')
+    .slice(0, IMPORTED_NAME_MAX_LENGTH)
+    .replace(/^[\s.]+|\s+$/g, '')
+  return `${safe.length > 0 ? safe : 'lut'}.cube`
+}
+
+/** Every imported file in `root` whose content identity is exactly `effectId`. */
+function findImportedCubes(root: string, effectId: string): string[] {
+  const prefix = `${effectId}${EFFECT_PREVIEW_NAME_SEPARATOR}`
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(root)
+  } catch {
+    return []
+  }
+  return entries
+    .filter((entry) => entry.startsWith(prefix) && entry.toLowerCase().endsWith('.cube'))
+    .map((entry) => nodePath.join(root, entry))
+}
+
+/**
+ * Recover the operator-facing label for a durable effectId after a restart.
+ * Returns null when the imported file is gone — the preview itself still works,
+ * because the cube text lives in the document, so this degrades the label only.
+ */
+export function resolveImportedEffectPreviewName(root: string, effectId: string): string | null {
+  if (!/^[0-9a-f]{64}$/.test(effectId)) return null
+  const matches = findImportedCubes(root, effectId).sort()
+  const first = matches[0]
+  if (!first) return null
+  return nodePath.basename(first).slice(effectId.length + EFFECT_PREVIEW_NAME_SEPARATOR.length)
+}
+
+/** The result of importing one operator-selected `.cube` into the owned root. */
+export interface StudioEffectPreviewImport {
+  /**
+   * Absolute path INSIDE `destinationRoot`. Safe to hand to
+   * loadStudioEffectPreview, whose jail then re-validates it for real.
+   */
+  path: string
+  preview: StudioEffectPreview
+  /**
+   * The operator's own filename, for UI state ONLY. It is never persisted into
+   * the document, the journal or the wire — the durable payload has no path
+   * field by construction.
+   */
+  displayName: string
+}
+
+/**
+ * Copy one operator-selected `.cube` into the Studio-owned effect-preview root.
+ *
+ * WHY THIS EXISTS: `loadStudioEffectPreview` only accepts paths inside an owned
+ * root, and no operator's LUT starts life there. This is the single hop that
+ * takes a file the operator explicitly chose and places a validated copy inside
+ * the jail, so the jail stays a REAL boundary instead of being widened to
+ * wherever the file happened to live.
+ *
+ * WHY THE SOURCE PATH IS NOT JAILED: it originates from `dialog.showOpenDialog`
+ * in the main process and nowhere else. The renderer cannot supply a path — the
+ * Load IPC deliberately takes no argument — so the threat the jail defends
+ * against (a caller naming an arbitrary file for the host to read) cannot occur
+ * here. Every OTHER protection still applies, and applies BEFORE the copy: the
+ * bytes are read through the same descriptor-bound reader, decoded through the
+ * same bounded UTF-8 decoder, and validated by the same authority. An oversized,
+ * symlinked, non-regular, non-UTF-8 or malformed file is refused without ever
+ * being written into the owned root.
+ */
+export function importStudioEffectPreview(options: {
+  sourcePath: string
+  destinationRoot: string
+}): StudioEffectPreviewImport {
+  const requested = options.sourcePath
+  if (typeof requested !== 'string' || !requested || !nodePath.isAbsolute(requested)) {
+    reject('path_not_absolute', 'effect preview path must be absolute')
+  }
+  if (nodePath.extname(requested).toLowerCase() !== '.cube') {
+    reject('not_a_cube_file', 'effect preview must be a .cube file')
+  }
+
+  // Bounded, descriptor-bound, and validated BEFORE anything is written.
+  const bytes = readDescriptorBound(requested)
+  const cubeText = decodeBoundedText(bytes)
+  const preview = assertValidStudioEffectPreview({
+    schemaVersion: STUDIO_EFFECT_PREVIEW_SCHEMA_VERSION,
+    effectId: createHash('sha256').update(cubeText, 'utf8').digest('hex'),
+    cubeByteLength: Buffer.byteLength(cubeText, 'utf8'),
+    cubeText
+  })
+
+  // Content-addressed, but carrying a sanitised copy of the operator's filename
+  // so the active-LUT label survives a restart. The durable document holds only
+  // the effectId, so without this the UI could only show a hash after relaunch.
+  const displayName = nodePath.basename(requested)
+  const destination = nodePath.join(
+    options.destinationRoot,
+    `${preview.effectId}${EFFECT_PREVIEW_NAME_SEPARATOR}${sanitiseImportedName(displayName)}`
+  )
+  const temporary = nodePath.join(
+    options.destinationRoot,
+    `.${preview.effectId}.${process.pid}.tmp`
+  )
+  try {
+    fs.mkdirSync(options.destinationRoot, { recursive: true })
+    // Write-then-rename so a crash mid-copy can never leave a truncated `.cube`
+    // that the loader would later read as authoritative.
+    fs.writeFileSync(temporary, cubeText, { encoding: 'utf8', mode: 0o600 })
+    // Drop any earlier import of these EXACT bytes under a different filename,
+    // so recovering the label by effectId stays unambiguous.
+    for (const stale of findImportedCubes(options.destinationRoot, preview.effectId)) {
+      if (stale === destination) continue
+      try {
+        fs.unlinkSync(stale)
+      } catch {
+        // A surviving duplicate is cosmetic, not corrupting.
+      }
+    }
+    fs.renameSync(temporary, destination)
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporary)
+    } catch {
+      // Best-effort cleanup; the original failure is what matters.
+    }
+    reject('import_failed', `effect preview could not be imported: ${String(error)}`)
+  }
+
+  return { path: destination, preview, displayName }
 }

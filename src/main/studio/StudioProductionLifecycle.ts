@@ -21,12 +21,29 @@ import type { StudioMediaAsset, StudioTranscript } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 export const STUDIO_PRODUCTION_STATE_DIR = 'studio-companion'
+/** Subdirectory of the Studio state directory holding imported effect-preview LUTs. */
+export const STUDIO_EFFECT_PREVIEW_DIR = 'effect-previews'
 export const STUDIO_COMPANION_BUNDLE_DIR = 'TaskWraith Studio.app'
 export const STUDIO_COMPANION_EXECUTABLE = 'TaskWraithStudioCompanion'
 
 export interface StudioProductionPaths {
   stateDirectory: string
   allowedMediaRoot: string
+  /**
+   * Studio-owned jail for imported effect-preview LUTs.
+   *
+   * Deliberately NOT `allowedMediaRoot`. That root is the chat-owned, ledgered
+   * `transcript-media` CAS: every legitimate entry is `<sha[0:2]>/<sha>.<ext>`
+   * with `ext` drawn from a closed media-MIME allowlist, so a `.cube` can never
+   * live there. Jailing effect previews to it left `setEffectPreview` with an
+   * EMPTY satisfiable input set — every operator-chosen file was refused
+   * `path_outside_allowed_roots`, and only the null-clear branch was reachable.
+   *
+   * It is also the wrong place to import INTO: that root is erasure-governed,
+   * and a global media purge enumerates it and fails closed on any surviving
+   * entry, so a LUT import racing a purge would break "erase all media".
+   */
+  effectPreviewRoot: string
   binaryPath: string
 }
 
@@ -120,6 +137,13 @@ export function resolveStudioProductionPaths(
     // jailed by twmedia://. Do not widen it to userData or duplicate the scheme
     // resolver inside the companion.
     allowedMediaRoot: nodePath.join(options.userDataPath, TRANSCRIPT_MEDIA_ASSET_DIR),
+    // Studio-owned and purge-neutral: nothing else enumerates or erases it, so
+    // an imported LUT survives independently of chat media lifetime.
+    effectPreviewRoot: nodePath.join(
+      options.userDataPath,
+      STUDIO_PRODUCTION_STATE_DIR,
+      STUDIO_EFFECT_PREVIEW_DIR
+    ),
     binaryPath: resolveStudioCompanionBinaryPath(options)
   }
 }
@@ -186,7 +210,11 @@ export class StudioProductionLifecycle {
     try {
       preview = loadStudioEffectPreview({
         path: cubePath,
-        allowedMediaRoots: [this.paths.allowedMediaRoot]
+        // The Studio-owned import root, NOT allowedMediaRoot. See
+        // StudioProductionPaths.effectPreviewRoot: a `.cube` cannot exist under
+        // the transcript-media CAS, so jailing here to allowedMediaRoot made
+        // this method unsatisfiable for every possible input.
+        allowedMediaRoots: [this.paths.effectPreviewRoot]
       })
     } catch (error) {
       if (error instanceof StudioEffectPreviewError) {
@@ -232,6 +260,7 @@ export async function startStudioProductionLifecycle(
   }
 
   await fsPromises.mkdir(paths.allowedMediaRoot, { recursive: true })
+  await fsPromises.mkdir(paths.effectPreviewRoot, { recursive: true })
   const store = await StudioRevisionStore.open(paths.stateDirectory, {
     allowedMediaRoots: [paths.allowedMediaRoot]
   })
