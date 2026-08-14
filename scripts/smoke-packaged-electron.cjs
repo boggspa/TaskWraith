@@ -15,9 +15,15 @@ const maxAsarBytes = readMegabyteLimit('TASKWRAITH_MAX_ASAR_MB', 500)
 const maxZipBytes = readMegabyteLimit('TASKWRAITH_MAX_ZIP_MB', 700)
 const launchSmokeTimeoutMs = readIntegerEnv('TASKWRAITH_PACKAGE_SMOKE_TIMEOUT_MS', 8000)
 
-main().catch((error) => {
-  fail(error instanceof Error ? error.stack || error.message : String(error))
-})
+// Requiring this script — its unit tests do, to exercise the signing-posture
+// helpers — must not launch the smoke run against the real repository. Only
+// direct execution starts main(); every npm script invokes it as the entry
+// point, so this changes nothing for them.
+if (require.main === module) {
+  main().catch((error) => {
+    fail(error instanceof Error ? error.stack || error.message : String(error))
+  })
+}
 
 async function main() {
   if (!searchArg) {
@@ -698,9 +704,11 @@ function validateMacAppSignature(packageRoot) {
     'TaskWraith Studio.app'
   )
   assertDir(studioApp, 'TaskWraith Studio.app')
+  // --deep matches the outer app's verification depth. Without it a broken
+  // seal on code nested inside Studio.app could not be observed here.
   const studioVerification = spawnSync(
     '/usr/bin/codesign',
-    ['--verify', '--strict', '--verbose=2', studioApp],
+    ['--verify', '--deep', '--strict', '--verbose=2', studioApp],
     { encoding: 'utf8' }
   )
   if (studioVerification.status !== 0) {
@@ -715,9 +723,14 @@ function validateMacAppSignature(packageRoot) {
     )
   }
 
+  // Studio.app is signed by the parent inside-out pass and inherits
+  // build/entitlements.mac.plist, so it is the third bundle whose signed
+  // entitlements must actually exist rather than being assumed.
+  const studioEntitlements = readSignedEntitlements(studioApp, false)
   const requiredEntitlementsByPath = new Map([
     [packageRoot, entitlements],
-    [bridgeDaemon, bridgeEntitlements]
+    [bridgeDaemon, bridgeEntitlements],
+    [studioApp, studioEntitlements]
   ])
   for (const [codePath, requiredEntitlements] of requiredEntitlementsByPath) {
     if (!requiredEntitlements) {
@@ -740,8 +753,161 @@ function validateMacAppSignature(packageRoot) {
       )
     }
   }
+  // Seal integrity is now proven; distribution posture is a separate question
+  // that --verify cannot answer. Set TASKWRAITH_REQUIRE_PRODUCTION_SIGNING=1 on
+  // release builds to make an ad-hoc signature a hard failure.
+  const requireProduction = process.env.TASKWRAITH_REQUIRE_PRODUCTION_SIGNING === '1'
+  const postureFailures = []
+  const postureReport = []
+  for (const [codePath, label] of [
+    [packageRoot, 'Packaged app'],
+    [bridgeDaemon, 'TaskWraithBridgeDaemon'],
+    [studioApp, 'TaskWraith Studio.app']
+  ]) {
+    const identity = readMacSigningIdentity(codePath)
+    postureFailures.push(
+      ...collectMacSigningPostureFailures({ identity, label, requireProduction })
+    )
+    postureReport.push(`  ${label}: ${describeMacSigningPosture(identity)}`)
+  }
+  if (postureFailures.length > 0) {
+    fail(
+      `Packaged macOS signing posture is not distributable.\n${postureFailures.join(
+        '\n'
+      )}\nObserved:\n${postureReport.join('\n')}`
+    )
+  }
+
   console.log(
-    `validated packaged app signature and ${signedEntitlementSets} signed entitlement set(s)`
+    `validated packaged app signature and ${signedEntitlementSets} signed entitlement set(s)\n${postureReport.join(
+      '\n'
+    )}`
+  )
+}
+
+const DEVELOPER_ID_LEAF_PREFIX = 'Developer ID Application:'
+
+/**
+ * Parses a `codesign -dv --verbose=4` report into a signing posture.
+ *
+ * `codesign --verify --strict` only proves the seal still matches the bytes on
+ * disk, which an ad-hoc signature satisfies perfectly. Everything that makes a
+ * build distributable — the certificate chain, the team identifier, and the
+ * hardened runtime — appears only in this report, so verify-alone reports
+ * success for an app that has no production signing identity at all.
+ */
+function evaluateMacSigningIdentity(output, exitCode) {
+  const text = typeof output === 'string' ? output : ''
+  // A non-zero exit means unsigned or unreadable. On a machine that can check,
+  // that is a definite negative rather than an "unable to tell".
+  if (exitCode !== 0 || text.trim().length === 0) {
+    return {
+      readable: false,
+      adhoc: false,
+      authorities: [],
+      leafAuthority: null,
+      teamIdentifier: null,
+      hardenedRuntime: false,
+      claimsProductionIdentity: false
+    }
+  }
+
+  const authorities = [...text.matchAll(/^Authority=(.+)$/gm)]
+    .map((match) => match[1].trim())
+    .filter((value) => value.length > 0 && !/^\(unsigned\)$/i.test(value))
+
+  const rawTeamId = text.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim() || null
+  // codesign prints the literal "not set" when a bundle has no team. Carrying
+  // that string forward makes a plain truthiness check pass for an ad-hoc
+  // build and renders as "team not set" in any message that echoes it.
+  const teamIdentifier = rawTeamId && !/^not set$/i.test(rawTeamId) ? rawTeamId : null
+
+  const flags = text.match(/^CodeDirectory\b.*?\bflags=(\S+)/m)?.[1] ?? ''
+  const adhoc = /^Signature=adhoc$/m.test(text) || /\badhoc\b/.test(flags)
+  const hardenedRuntime = /\bruntime\b/.test(flags)
+
+  return {
+    readable: true,
+    adhoc,
+    authorities,
+    leafAuthority: authorities[0] ?? null,
+    teamIdentifier,
+    hardenedRuntime,
+    claimsProductionIdentity: !adhoc && (authorities.length > 0 || teamIdentifier !== null)
+  }
+}
+
+/**
+ * Returns every reason the posture is not distributable, so one run reports all
+ * of them instead of stopping at the first.
+ */
+function collectMacSigningPostureFailures({ identity, label, requireProduction = false }) {
+  const failures = []
+  if (!identity.readable) {
+    failures.push(`${label} has no readable code signature.`)
+    return failures
+  }
+
+  if (!identity.claimsProductionIdentity) {
+    // A local `--dir` build is legitimately ad-hoc, so this must not break the
+    // developer loop. Only an explicit release gate turns it into a failure —
+    // but the posture is reported honestly either way, and never as "validated".
+    if (requireProduction) {
+      failures.push(
+        `${label} is ${
+          identity.adhoc ? 'ad-hoc signed' : 'signed without a distribution identity'
+        }, which cannot be notarized or distributed.`
+      )
+    }
+    return failures
+  }
+
+  if (!identity.leafAuthority || !identity.leafAuthority.startsWith(DEVELOPER_ID_LEAF_PREFIX)) {
+    failures.push(
+      `${label} leaf signing authority must be a "${DEVELOPER_ID_LEAF_PREFIX}" certificate, got ${
+        identity.leafAuthority ?? 'none'
+      }.`
+    )
+  }
+  if (!identity.authorities.includes('Apple Root CA')) {
+    failures.push(`${label} signing chain does not terminate at Apple Root CA.`)
+  }
+  if (!identity.teamIdentifier) {
+    failures.push(`${label} signature carries no Apple Team Identifier.`)
+  }
+  // The team embedded in the leaf certificate and the standalone
+  // TeamIdentifier come from different parts of the report; a disagreement
+  // means the parsed values are not describing one coherent signature.
+  const leafTeam = identity.leafAuthority?.match(/\(([A-Z0-9]{10})\)\s*$/)?.[1] ?? null
+  if (leafTeam && identity.teamIdentifier && leafTeam !== identity.teamIdentifier) {
+    failures.push(
+      `${label} leaf authority team ${leafTeam} does not match TeamIdentifier ${identity.teamIdentifier}.`
+    )
+  }
+  if (!identity.hardenedRuntime) {
+    failures.push(`${label} is not signed with the hardened runtime, which notarization requires.`)
+  }
+  return failures
+}
+
+/** One-line posture for the smoke receipt, so the log records what was proven. */
+function describeMacSigningPosture(identity) {
+  if (!identity.readable) return 'unsigned or unreadable'
+  if (identity.adhoc) return 'ad-hoc, development only'
+  if (!identity.claimsProductionIdentity) return 'signed without a distribution identity'
+  return `${identity.leafAuthority} [team ${identity.teamIdentifier ?? 'absent'}, ${
+    identity.hardenedRuntime ? 'hardened runtime' : 'no hardened runtime'
+  }]`
+}
+
+function readMacSigningIdentity(codePath) {
+  // `codesign -dv` writes its report to stderr, so both streams are collected.
+  const result = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', codePath], {
+    encoding: 'utf8'
+  })
+  return evaluateMacSigningIdentity(
+    [result.stdout, result.stderr].filter(Boolean).join('\n'),
+    result.status
   )
 }
 
@@ -1083,4 +1249,13 @@ function sleep(ms) {
 function fail(message) {
   console.error(message)
   process.exit(1)
+}
+
+// Exported for scripts/smoke-packaged-electron.test.ts. These are pure over a
+// codesign report, so the posture rules are exercised without a packaged app
+// and without invoking codesign.
+module.exports = {
+  evaluateMacSigningIdentity,
+  collectMacSigningPostureFailures,
+  describeMacSigningPosture
 }
