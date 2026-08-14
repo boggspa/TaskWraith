@@ -834,6 +834,32 @@ describe('WorkspaceLockRuntime', () => {
     expect(runtime.getUnhealthyReason()).toBeNull()
   })
 
+  it('keeps exact release healthy through sustained cross-instance contention', async () => {
+    const { runtime, authority } = harness()
+    const busyRelease = {
+      ok: false,
+      reason: 'authority_busy',
+      message: 'another instance is replaying a large WAL'
+    } as never
+    authority.releaseAcquisition
+      .mockResolvedValueOnce(busyRelease)
+      .mockResolvedValueOnce(busyRelease)
+      .mockResolvedValueOnce(busyRelease)
+      .mockResolvedValueOnce(busyRelease)
+      .mockResolvedValueOnce({
+        ok: true,
+        transitionId: 'release-after-sustained-contention',
+        released: []
+      } as never)
+
+    await expect(runtime.releaseAcquisition('run', 'transition')).resolves.toMatchObject({
+      ok: true,
+      transitionId: 'release-after-sustained-contention'
+    })
+    expect(authority.releaseAcquisition).toHaveBeenCalledTimes(5)
+    expect(runtime.getUnhealthyReason()).toBeNull()
+  })
+
   it('reconciles an exact child quarantine without poisoning healthy admission', async () => {
     const { runtime, authority } = harness()
     authority.quarantineChildOwnerAcquisitions

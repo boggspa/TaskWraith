@@ -1188,7 +1188,13 @@ async function retryWorkspaceLockRelease(
   release: () => Promise<WorkspaceLockReleaseResult>,
   onRetry: (reason: string) => void
 ): Promise<WorkspaceLockReleaseResult> {
-  const busyRetryDelaysMs = [15, 40, 100]
+  // A transition holds the machine-shared fence while replaying the durable
+  // WAL. On a long-lived checkout that replay can outgrow the acquisition
+  // retry window, especially while another TaskWraith instance is actively
+  // committing. Exact release is the safety-critical half: exhausting a
+  // normal busy fence poisons this runtime until restart, so give contention
+  // the same bounded reconciliation window as a post-commit error.
+  const busyRetryDelaysMs = [15, 40, 100, 250, 750, 2_000]
   const errorRetryDelaysMs = [15, 40, 100, 250, 750, 2_000]
   let busyAttempt = 0
   let errorAttempt = 0
