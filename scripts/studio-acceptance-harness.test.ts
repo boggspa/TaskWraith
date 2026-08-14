@@ -1261,6 +1261,26 @@ describe('Studio acceptance harness', () => {
         actions: [{ type: 'click', xFraction: 1.1, yFraction: 0.5 }]
       })
     ).toThrow(/unsupported UI action/)
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'audio-probe', durationSeconds: 2 }]
+      })
+    ).toMatchObject({
+      actions: [{ type: 'audio-probe', durationSeconds: 2 }]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'audio-probe', durationSeconds: 0 }]
+      })
+    ).toThrow(/unsupported UI action/)
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'audio-probe', durationSeconds: 601 }]
+      })
+    ).toThrow(/unsupported UI action/)
     const dualWindowTarget = {
       ...target,
       window: {
@@ -1385,7 +1405,28 @@ describe('Studio acceptance harness', () => {
             type: action.type,
             key: action.key ?? null,
             screenshotPath: action.path ?? null,
-            byteLength: action.path ? 4096 : null
+            byteLength: action.path ? 4096 : null,
+            audioProbe:
+              action.type === 'audio-probe'
+                ? {
+                    durationSeconds: action.durationSeconds,
+                    elapsedSeconds: action.durationSeconds,
+                    sampleBufferCount: 24,
+                    frameCount: 96_000,
+                    sampleValueCount: 192_000,
+                    sampleRate: 48_000,
+                    channelCount: 2,
+                    rms: 0.125,
+                    peak: 0.5,
+                    nonSilentFraction: 0.75,
+                    defaultOutputDevice: {
+                      id: 42,
+                      name: 'Acceptance Output',
+                      uid: 'acceptance-output',
+                      nominalSampleRate: 48_000
+                    }
+                  }
+                : null
           }))
         })}\n`,
         stderr: ''
@@ -1397,7 +1438,8 @@ describe('Studio acceptance harness', () => {
       target,
       [
         { type: 'key', key: 'tab' },
-        { type: 'screenshot', name: 'transcript-band' }
+        { type: 'screenshot', name: 'transcript-band' },
+        { type: 'audio-probe', durationSeconds: 75 }
       ],
       { execFile }
     )
@@ -1408,12 +1450,24 @@ describe('Studio acceptance harness', () => {
       windowId: 42,
       actions: [
         { index: 0, type: 'key', key: 'tab' },
-        { index: 1, type: 'screenshot' }
+        { index: 1, type: 'screenshot' },
+        {
+          index: 2,
+          type: 'audio-probe',
+          audioProbe: {
+            durationSeconds: 75,
+            sampleRate: 48_000,
+            channelCount: 2,
+            rms: 0.125,
+            peak: 0.5
+          }
+        }
       ]
     })
     expect(execFile).toHaveBeenCalledOnce()
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
+    expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })
     expect(receipt.receiptPath).toMatch(/ui-driver-receipts\/.*\.json$/)
     await expect(
       fsPromises.readFile(receipt.receiptPath as string, 'utf8').then((raw) => JSON.parse(raw))

@@ -1061,6 +1061,14 @@ function buildStudioUiDriverRequest(options) {
       }
       return { type: 'screenshot', name: action.name, path: screenshotPath }
     }
+    if (
+      action.type === 'audio-probe' &&
+      Number.isSafeInteger(action.durationSeconds) &&
+      action.durationSeconds >= 1 &&
+      action.durationSeconds <= 600
+    ) {
+      return { type: 'audio-probe', durationSeconds: action.durationSeconds }
+    }
     throw new Error(`unsupported UI action: ${JSON.stringify(action).slice(0, 200)}`)
   })
   return {
@@ -1184,8 +1192,13 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
   await fsPromises.rename(temp, requestPath)
 
   const runExec = adapters.execFile || defaultExecFile
+  const longestAudioProbeSeconds = request.actions.reduce(
+    (longest, action) =>
+      action.type === 'audio-probe' ? Math.max(longest, action.durationSeconds) : longest,
+    0
+  )
   const result = await runExec('/usr/bin/swift', [UI_DRIVER_PATH, requestPath], {
-    timeoutMs: 60_000
+    timeoutMs: Math.max(60_000, longestAudioProbeSeconds * 1000 + 30_000)
   })
   let receipt
   try {
@@ -1220,6 +1233,51 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         observed.byteLength < 1)
     ) {
       throw new Error('Studio UI driver screenshot receipt does not match the bounded request')
+    }
+    if (action.type === 'audio-probe') {
+      const probe = observed.audioProbe
+      const output = probe && probe.defaultOutputDevice
+      if (
+        !isRecord(probe) ||
+        probe.durationSeconds !== action.durationSeconds ||
+        typeof probe.elapsedSeconds !== 'number' ||
+        !Number.isFinite(probe.elapsedSeconds) ||
+        probe.elapsedSeconds < action.durationSeconds ||
+        probe.elapsedSeconds > action.durationSeconds + 10 ||
+        !Number.isSafeInteger(probe.sampleBufferCount) ||
+        probe.sampleBufferCount < 0 ||
+        !Number.isSafeInteger(probe.frameCount) ||
+        probe.frameCount < 0 ||
+        !Number.isSafeInteger(probe.sampleValueCount) ||
+        probe.sampleValueCount < 0 ||
+        typeof probe.sampleRate !== 'number' ||
+        !Number.isFinite(probe.sampleRate) ||
+        probe.sampleRate <= 0 ||
+        !Number.isSafeInteger(probe.channelCount) ||
+        probe.channelCount < 1 ||
+        typeof probe.rms !== 'number' ||
+        !Number.isFinite(probe.rms) ||
+        probe.rms < 0 ||
+        typeof probe.peak !== 'number' ||
+        !Number.isFinite(probe.peak) ||
+        probe.peak < 0 ||
+        typeof probe.nonSilentFraction !== 'number' ||
+        !Number.isFinite(probe.nonSilentFraction) ||
+        probe.nonSilentFraction < 0 ||
+        probe.nonSilentFraction > 1 ||
+        !isRecord(output) ||
+        !Number.isSafeInteger(output.id) ||
+        output.id <= 0 ||
+        typeof output.name !== 'string' ||
+        !output.name.trim() ||
+        typeof output.uid !== 'string' ||
+        !output.uid.trim() ||
+        typeof output.nominalSampleRate !== 'number' ||
+        !Number.isFinite(output.nominalSampleRate) ||
+        output.nominalSampleRate <= 0
+      ) {
+        throw new Error('Studio UI driver audio receipt does not match the bounded request')
+      }
     }
   }
   const receiptDirectory = path.join(plan.artifactRoot, 'ui-driver-receipts')

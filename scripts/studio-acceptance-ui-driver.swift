@@ -2,7 +2,10 @@
 
 import AppKit
 import ApplicationServices
+import AudioToolbox
+import CoreAudio
 import CoreGraphics
+import CoreMedia
 import Darwin
 import Foundation
 import ImageIO
@@ -23,6 +26,7 @@ struct DriverAction: Codable {
     let path: String?
     let xFraction: Double?
     let yFraction: Double?
+    let durationSeconds: Int?
 }
 
 struct DriverRequest: Codable {
@@ -38,6 +42,27 @@ struct DriverRequest: Codable {
     let actions: [DriverAction]
 }
 
+struct OutputDeviceReceipt: Codable {
+    let id: UInt32
+    let name: String
+    let uid: String
+    let nominalSampleRate: Double
+}
+
+struct AudioProbeReceipt: Codable {
+    let durationSeconds: Int
+    let elapsedSeconds: Double
+    let sampleBufferCount: Int
+    let frameCount: Int
+    let sampleValueCount: Int
+    let sampleRate: Double
+    let channelCount: Int
+    let rms: Double
+    let peak: Double
+    let nonSilentFraction: Double
+    let defaultOutputDevice: OutputDeviceReceipt
+}
+
 struct ActionReceipt: Codable {
     let index: Int
     let type: String
@@ -46,6 +71,7 @@ struct ActionReceipt: Codable {
     let byteLength: Int?
     let xFraction: Double?
     let yFraction: Double?
+    let audioProbe: AudioProbeReceipt?
 }
 
 struct DriverReceipt: Codable {
@@ -271,6 +297,253 @@ func capture(windowId: UInt32, pid: Int32, to destination: URL) throws -> Int {
     return byteLength
 }
 
+func audioObjectString(
+    objectId: AudioObjectID,
+    selector: AudioObjectPropertySelector
+) throws -> String {
+    var address = AudioObjectPropertyAddress(
+        mSelector: selector,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var value: CFString = "" as CFString
+    var size = UInt32(MemoryLayout<CFString>.size)
+    let status = AudioObjectGetPropertyData(objectId, &address, 0, nil, &size, &value)
+    guard status == noErr else {
+        throw DriverFailure.refused("could not read default output-device identity")
+    }
+    let string = value as String
+    guard !string.isEmpty else {
+        throw DriverFailure.refused("default output-device identity was empty")
+    }
+    return string
+}
+
+func defaultOutputDeviceReceipt() throws -> OutputDeviceReceipt {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceId = AudioObjectID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    let status = AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        0,
+        nil,
+        &size,
+        &deviceId
+    )
+    guard status == noErr, deviceId != kAudioObjectUnknown else {
+        throw DriverFailure.refused("default output device is unavailable")
+    }
+
+    address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var nominalSampleRate = Float64(0)
+    size = UInt32(MemoryLayout<Float64>.size)
+    guard AudioObjectGetPropertyData(
+        deviceId,
+        &address,
+        0,
+        nil,
+        &size,
+        &nominalSampleRate
+    ) == noErr,
+        nominalSampleRate > 0
+    else {
+        throw DriverFailure.refused("default output-device sample rate is unavailable")
+    }
+
+    return OutputDeviceReceipt(
+        id: deviceId,
+        name: try audioObjectString(objectId: deviceId, selector: kAudioObjectPropertyName),
+        uid: try audioObjectString(objectId: deviceId, selector: kAudioDevicePropertyDeviceUID),
+        nominalSampleRate: nominalSampleRate
+    )
+}
+
+final class ExactWindowAudioAccumulator: NSObject, SCStreamOutput, @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: String?
+    private var sampleBuffers = 0
+    private var frames = 0
+    private var sampleValues = 0
+    private var nonSilentValues = 0
+    private var sumSquares = 0.0
+    private var peakValue = 0.0
+    private var observedSampleRate = 0.0
+    private var observedChannelCount = 0
+
+    func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of outputType: SCStreamOutputType
+    ) {
+        guard outputType == .audio, sampleBuffer.isValid else { return }
+        guard let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let format = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee,
+              format.mFormatID == kAudioFormatLinearPCM,
+              format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+              format.mBitsPerChannel == 32,
+              let block = CMSampleBufferGetDataBuffer(sampleBuffer)
+        else {
+            lock.lock()
+            failure = failure ?? "ScreenCaptureKit returned non-Float32 window audio"
+            lock.unlock()
+            return
+        }
+
+        let byteLength = CMBlockBufferGetDataLength(block)
+        guard byteLength > 0, byteLength % MemoryLayout<Float32>.size == 0 else { return }
+        var bytes = [UInt8](repeating: 0, count: byteLength)
+        guard CMBlockBufferCopyDataBytes(
+            block,
+            atOffset: 0,
+            dataLength: byteLength,
+            destination: &bytes
+        ) == noErr else {
+            lock.lock()
+            failure = failure ?? "could not read ScreenCaptureKit window-audio samples"
+            lock.unlock()
+            return
+        }
+
+        var localValues = 0
+        var localNonSilent = 0
+        var localSumSquares = 0.0
+        var localPeak = 0.0
+        bytes.withUnsafeBytes { raw in
+            for value in raw.bindMemory(to: Float32.self) where value.isFinite {
+                let magnitude = abs(Double(value))
+                localValues += 1
+                localSumSquares += magnitude * magnitude
+                localPeak = max(localPeak, magnitude)
+                if magnitude > 0.000_1 { localNonSilent += 1 }
+            }
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+        if observedSampleRate == 0 {
+            observedSampleRate = format.mSampleRate
+            observedChannelCount = Int(format.mChannelsPerFrame)
+        } else if observedSampleRate != format.mSampleRate ||
+                    observedChannelCount != Int(format.mChannelsPerFrame) {
+            failure = failure ?? "window-audio format changed during the bounded probe"
+            return
+        }
+        sampleBuffers += 1
+        frames += CMSampleBufferGetNumSamples(sampleBuffer)
+        sampleValues += localValues
+        nonSilentValues += localNonSilent
+        sumSquares += localSumSquares
+        peakValue = max(peakValue, localPeak)
+    }
+
+    func receipt(
+        durationSeconds: Int,
+        elapsedSeconds: Double,
+        outputDevice: OutputDeviceReceipt
+    ) throws -> AudioProbeReceipt {
+        lock.lock()
+        defer { lock.unlock() }
+        if let failure { throw DriverFailure.refused(failure) }
+        guard sampleBuffers > 0,
+              frames > 0,
+              sampleValues > 0,
+              observedSampleRate > 0,
+              observedChannelCount > 0
+        else {
+            throw DriverFailure.refused("exact Studio window produced no attributable audio samples")
+        }
+        return AudioProbeReceipt(
+            durationSeconds: durationSeconds,
+            elapsedSeconds: elapsedSeconds,
+            sampleBufferCount: sampleBuffers,
+            frameCount: frames,
+            sampleValueCount: sampleValues,
+            sampleRate: observedSampleRate,
+            channelCount: observedChannelCount,
+            rms: sqrt(sumSquares / Double(sampleValues)),
+            peak: peakValue,
+            nonSilentFraction: Double(nonSilentValues) / Double(sampleValues),
+            defaultOutputDevice: outputDevice
+        )
+    }
+}
+
+final class AudioProbeResultBox: @unchecked Sendable {
+    var result: Result<AudioProbeReceipt, Error>?
+}
+
+func captureAudio(
+    windowId: UInt32,
+    pid: Int32,
+    durationSeconds: Int
+) throws -> AudioProbeReceipt {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = AudioProbeResultBox()
+    Task {
+        do {
+            let outputDevice = try defaultOutputDeviceReceipt()
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                true,
+                onScreenWindowsOnly: true
+            )
+            guard let window = content.windows.first(where: {
+                $0.windowID == windowId && $0.owningApplication?.processID == pid
+            }) else {
+                throw DriverFailure.refused(
+                    "ScreenCaptureKit could not find the exact isolated Studio window for audio"
+                )
+            }
+            let accumulator = ExactWindowAudioAccumulator()
+            let configuration = SCStreamConfiguration()
+            configuration.width = 2
+            configuration.height = 2
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            configuration.queueDepth = 3
+            configuration.capturesAudio = true
+            configuration.excludesCurrentProcessAudio = false
+            configuration.sampleRate = 48_000
+            configuration.channelCount = 2
+            let stream = SCStream(
+                filter: SCContentFilter(desktopIndependentWindow: window),
+                configuration: configuration,
+                delegate: nil
+            )
+            let queue = DispatchQueue(label: "studio.acceptance.window-audio")
+            try stream.addStreamOutput(accumulator, type: .audio, sampleHandlerQueue: queue)
+            let started = Date()
+            try await stream.startCapture()
+            try await Task.sleep(nanoseconds: UInt64(durationSeconds) * 1_000_000_000)
+            try await stream.stopCapture()
+            let elapsed = Date().timeIntervalSince(started)
+            box.result = .success(
+                try accumulator.receipt(
+                    durationSeconds: durationSeconds,
+                    elapsedSeconds: elapsed,
+                    outputDevice: outputDevice
+                )
+            )
+        } catch {
+            box.result = .failure(error)
+        }
+        semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + Double(durationSeconds + 20)) == .success,
+          let result = box.result
+    else {
+        throw DriverFailure.refused("exact Studio window audio probe timed out")
+    }
+    return try result.get()
+}
+
 guard CommandLine.arguments.count == 2 else {
     fail("usage: studio-acceptance-ui-driver.swift <request.json>")
 }
@@ -361,7 +634,8 @@ do {
                     screenshotPath: nil,
                     byteLength: nil,
                     xFraction: nil,
-                    yFraction: nil
+                    yFraction: nil,
+                    audioProbe: nil
                 )
             )
         } else if action.type == "click",
@@ -404,7 +678,8 @@ do {
                     screenshotPath: nil,
                     byteLength: nil,
                     xFraction: xFraction,
-                    yFraction: yFraction
+                    yFraction: yFraction,
+                    audioProbe: nil
                 )
             )
         } else if action.type == "screenshot", let screenshotPath = action.path {
@@ -425,7 +700,31 @@ do {
                     screenshotPath: destination.path,
                     byteLength: byteLength,
                     xFraction: nil,
-                    yFraction: nil
+                    yFraction: nil,
+                    audioProbe: nil
+                )
+            )
+        } else if action.type == "audio-probe",
+                  let durationSeconds = action.durationSeconds,
+                  durationSeconds >= 1,
+                  durationSeconds <= 600
+        {
+            let audioProbe = try captureAudio(
+                windowId: request.windowId,
+                pid: request.expectedPid,
+                durationSeconds: durationSeconds
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "audio-probe",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: audioProbe
                 )
             )
         } else {
