@@ -155,12 +155,12 @@ final class StudioVideoDecoderTests: XCTestCase {
         )
         defer { source.invalidate() }
 
-        XCTAssertEqual(source.sample(forFrameIndex: 0).frameIndex, 0)
-        XCTAssertEqual(source.sample(forFrameIndex: 1).frameIndex, 1)
+        XCTAssertEqual(try source.sample(forFrameIndex: 0).frameIndex, 0)
+        XCTAssertEqual(try source.sample(forFrameIndex: 1).frameIndex, 1)
         // Past the last sample the newest frame stays on screen.
-        XCTAssertEqual(source.sample(forFrameIndex: 99).frameIndex, 1)
+        XCTAssertEqual(try source.sample(forFrameIndex: 99).frameIndex, 1)
         // Before the start, the first frame is shown rather than nothing.
-        XCTAssertEqual(source.sample(forFrameIndex: -5).frameIndex, 0)
+        XCTAssertEqual(try source.sample(forFrameIndex: -5).frameIndex, 0)
     }
 
     func testRepeatedRequestsForOneFrameHitTheCache() throws {

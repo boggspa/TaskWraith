@@ -229,7 +229,7 @@ public final class StudioMediaAttachment {
             attachedAudio = lease.audio
             return .attached(
                 assetId: asset.assetId,
-                frameCount: lease.media.samples.count,
+                frameCount: lease.media.sampleProvider.sampleCount,
                 timebase: lease.media.timebase,
                 durationTicks: lease.media.durationTicks
             )
@@ -257,7 +257,7 @@ public final class StudioMediaAttachment {
             sequenceLeases[asset.assetId] = lease
             return .attached(
                 assetId: asset.assetId,
-                frameCount: lease.media.samples.count,
+                frameCount: lease.media.sampleProvider.sampleCount,
                 timebase: lease.media.timebase,
                 durationTicks: lease.media.durationTicks
             )
@@ -301,7 +301,7 @@ public final class StudioMediaAttachment {
             proposedLease = lease
             return .attached(
                 assetId: asset.assetId,
-                frameCount: lease.media.samples.count,
+                frameCount: lease.media.sampleProvider.sampleCount,
                 timebase: lease.media.timebase,
                 durationTicks: lease.media.durationTicks
             )

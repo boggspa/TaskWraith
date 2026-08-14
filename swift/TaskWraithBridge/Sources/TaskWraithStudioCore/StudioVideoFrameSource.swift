@@ -60,8 +60,8 @@ public enum StudioVideoFrameSourceError: Error, Equatable {
 public final class StudioVideoFrameSource {
     private let decoder: StudioVideoDecoder
     private let bridge: StudioVideoTextureBridge
-    /// DECODE order. Never reordered.
-    private let samples: [StudioCompressedSample]
+    /// DECODE-order sample access. The provider may be eager or bounded.
+    private let provider: StudioSampleProvider
     /// (presentation frame, decode position), ascending by frame.
     private let presentationOrder: [(frameIndex: Int64, decodeIndex: Int)]
     /// Decode positions of sync samples, ascending.
@@ -101,9 +101,9 @@ public final class StudioVideoFrameSource {
 
     public var hardwareDecodeStatus: StudioHardwareDecodeStatus { decoder.hardwareDecodeStatus }
     public var isValid: Bool { !invalidated && decoder.isValid }
-    public var sampleCount: Int { samples.count }
+    public var sampleCount: Int { provider.sampleCount }
     /// True when every sample is independently decodable.
-    public var isAllIntra: Bool { syncIndices.count == samples.count }
+    public var isAllIntra: Bool { provider.isAllIntra }
 
     /// Frames of decoded pictures held to absorb B-frame reordering.
     public static let defaultReorderCacheDepth = 6
@@ -115,28 +115,43 @@ public final class StudioVideoFrameSource {
         Set(reorderCache.compactMap { $0.textures.luma.iosurface.map(IOSurfaceGetID) })
     }
 
-    public init(
+    public convenience init(
         formatDescription: CMVideoFormatDescription,
         samples: [StudioCompressedSample],
         device: MTLDevice,
         reorderCacheDepth: Int = defaultReorderCacheDepth
     ) throws {
+        try self.init(
+            formatDescription: formatDescription,
+            provider: EagerStudioSampleProvider(samples: samples),
+            device: device,
+            reorderCacheDepth: reorderCacheDepth
+        )
+    }
+
+    public init(
+        formatDescription: CMVideoFormatDescription,
+        provider: StudioSampleProvider,
+        device: MTLDevice,
+        reorderCacheDepth: Int = defaultReorderCacheDepth
+    ) throws {
         self.reorderCacheDepth = max(1, reorderCacheDepth)
-        guard !samples.isEmpty else {
+        guard provider.sampleCount > 0 else {
             throw StudioVideoFrameSourceError.noSamples
         }
-        guard samples[0].isSyncSample else {
+        guard provider.metadata(atDecodeIndex: 0).isSyncSample else {
             throw StudioVideoFrameSourceError.noLeadingKeyframe
         }
         self.decoder = try StudioVideoDecoder(formatDescription: formatDescription)
         self.bridge = try StudioVideoTextureBridge(device: device)
-        self.samples = samples
+        self.provider = provider
         self.presentationOrder =
-            samples
-            .enumerated()
-            .map { (frameIndex: $0.element.frameIndex, decodeIndex: $0.offset) }
+            (0..<provider.sampleCount)
+            .map { (frameIndex: provider.metadata(atDecodeIndex: $0).frameIndex, decodeIndex: $0) }
             .sorted { $0.frameIndex < $1.frameIndex }
-        self.syncIndices = samples.enumerated().filter { $0.element.isSyncSample }.map(\.offset)
+        self.syncIndices = (0..<provider.sampleCount).filter {
+            provider.metadata(atDecodeIndex: $0).isSyncSample
+        }
     }
 
     // MARK: - Selection
@@ -161,8 +176,14 @@ public final class StudioVideoFrameSource {
         return chosen
     }
 
-    public func sample(forFrameIndex frameIndex: Int64) -> StudioCompressedSample {
-        samples[decodeIndex(forFrameIndex: frameIndex)]
+    public func sample(forFrameIndex frameIndex: Int64) throws -> StudioCompressedSample {
+        let decodeIndex = decodeIndex(forFrameIndex: frameIndex)
+        let meta = provider.metadata(atDecodeIndex: decodeIndex)
+        return StudioCompressedSample(
+            frameIndex: meta.frameIndex,
+            isSyncSample: meta.isSyncSample,
+            sampleBuffer: try provider.sampleBuffer(atDecodeIndex: decodeIndex)
+        )
     }
 
     // MARK: - Frames
@@ -177,7 +198,7 @@ public final class StudioVideoFrameSource {
         }
 
         let target = decodeIndex(forFrameIndex: frameIndex)
-        let targetFrame = samples[target].frameIndex
+        let targetFrame = provider.metadata(atDecodeIndex: target).frameIndex
         if let cached = reorderCache.first(where: { $0.frameIndex == targetFrame }) {
             cacheHitCount += 1
             return cached.textures
@@ -199,7 +220,7 @@ public final class StudioVideoFrameSource {
         for index in start...target {
             let frame: StudioDecodedFrame
             do {
-                frame = try decoder.decode(samples[index].sampleBuffer)
+                frame = try decoder.decode(provider.sampleBuffer(atDecodeIndex: index))
             } catch {
                 // The decoder's reference state is now unknown, so the next
                 // request must not assume it can continue from here.
@@ -224,7 +245,7 @@ public final class StudioVideoFrameSource {
 
         // Verify rather than assume: confirm the picture is for the instant we
         // asked for.
-        let expected = samples[target].presentationTime
+        let expected = provider.metadata(atDecodeIndex: target).presentationTime
         if expected.isValid, decoded.presentationTime.isValid,
             CMTimeCompare(decoded.presentationTime, expected) != 0
         {
@@ -247,7 +268,7 @@ public final class StudioVideoFrameSource {
     /// surface an error to the caller.
     private func remember(_ frame: StudioDecodedFrame, forDecodeIndex index: Int) {
         guard let textures = try? bridge.makeTextures(from: frame.pixelBuffer) else { return }
-        insert(textures, forFrameIndex: samples[index].frameIndex)
+        insert(textures, forFrameIndex: provider.metadata(atDecodeIndex: index).frameIndex)
     }
 
     private func insert(_ textures: StudioVideoFrameTextures, forFrameIndex frameIndex: Int64) {
@@ -271,7 +292,7 @@ public final class StudioVideoFrameSource {
 
     public var diagnostics: Diagnostics {
         Diagnostics(
-            sampleCount: samples.count,
+            sampleCount: provider.sampleCount,
             syncSampleCount: syncIndices.count,
             decodeCount: decodeCount,
             cacheHitCount: cacheHitCount,

@@ -343,4 +343,251 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
         ]
         XCTAssertNil(StudioMediaAsset.fromDocumentOperation(insertRange))
     }
+
+    // MARK: - Bounded long-media provider
+
+    /// Compressed payload samples from both ingest passes must carry the
+    /// format description required by VideoToolbox.
+    func testSampleFormatDescriptionPresence() async throws {
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [32, 96, 160, 224],
+            to: url
+        )
+
+        // Loader path
+        let loaded = try await StudioMediaSourceLoader.load(asset: asset(at: url))
+        let loaderSample = try XCTUnwrap(loaded.samples.first)
+        let loaderFormat = CMSampleBufferGetFormatDescription(loaderSample.sampleBuffer)
+        XCTAssertNotNil(loaderFormat, "loader sample must carry a format description")
+
+        // Fresh reader path
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        output.alwaysCopiesSampleData = false
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var freshPayloadCount = 0
+        while let sample = output.copyNextSampleBuffer() {
+            guard CMSampleBufferGetDataBuffer(sample) != nil else { continue }
+            freshPayloadCount += 1
+            XCTAssertNotNil(
+                CMSampleBufferGetFormatDescription(sample),
+                "every compressed payload sample must carry a format description"
+            )
+        }
+        XCTAssertEqual(freshPayloadCount, 4)
+    }
+
+    func testFormatDescriptionRepairPreservesSampleAttachments() async throws {
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [32, 96],
+            to: url
+        )
+
+        let loaded = try await StudioMediaSourceLoader.load(asset: asset(at: url))
+        let original = try XCTUnwrap(loaded.samples.first?.sampleBuffer)
+        let formatDescription = try XCTUnwrap(
+            CMSampleBufferGetFormatDescription(original)
+        )
+        let dataBuffer = try XCTUnwrap(CMSampleBufferGetDataBuffer(original))
+        var timingInfo = CMSampleTimingInfo()
+        XCTAssertEqual(
+            CMSampleBufferGetSampleTimingInfo(
+                original,
+                at: 0,
+                timingInfoOut: &timingInfo
+            ),
+            noErr
+        )
+        var sampleSize = CMSampleBufferGetSampleSize(original, at: 0)
+        var stripped: CMSampleBuffer?
+        XCTAssertEqual(
+            CMSampleBufferCreate(
+                allocator: kCFAllocatorDefault,
+                dataBuffer: dataBuffer,
+                dataReady: true,
+                makeDataReadyCallback: nil,
+                refcon: nil,
+                formatDescription: nil,
+                sampleCount: 1,
+                sampleTimingEntryCount: 1,
+                sampleTimingArray: &timingInfo,
+                sampleSizeEntryCount: 1,
+                sampleSizeArray: &sampleSize,
+                sampleBufferOut: &stripped
+            ),
+            noErr
+        )
+        let withoutFormat = try XCTUnwrap(stripped)
+        let sourceAttachments = try XCTUnwrap(
+            CMSampleBufferGetSampleAttachmentsArray(
+                withoutFormat,
+                createIfNecessary: true
+            ) as? [NSMutableDictionary]
+        )
+        sourceAttachments[0][kCMSampleAttachmentKey_DependsOnOthers] = true
+
+        let repaired = BoundedStudioSampleProvider.attachingFormatDescription(
+            to: withoutFormat,
+            formatDescription: formatDescription
+        )
+
+        XCTAssertNotNil(CMSampleBufferGetFormatDescription(repaired))
+        let repairedAttachments = try XCTUnwrap(
+            CMSampleBufferGetSampleAttachmentsArray(
+                repaired,
+                createIfNecessary: false
+            ) as? [[CFString: Any]]
+        )
+        XCTAssertEqual(
+            repairedAttachments.first?[kCMSampleAttachmentKey_DependsOnOthers] as? Bool,
+            true
+        )
+    }
+
+    /// The bounded provider must skip non-payload stream buffers and decode
+    /// the first compressed video sample.
+    func testBoundedProviderDecodesFirstFrame() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [32, 96, 160],
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: true
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset(at: url),
+            device: device,
+            payloadCacheLimit: 8
+        )
+        defer { loaded.source.invalidate() }
+
+        let textures = try loaded.source.textures(forFrameIndex: 0)
+        XCTAssertNotNil(textures)
+    }
+
+    /// The mandatory 600s/30fps packaged asset carries ~18,000 samples, far
+    /// past the eager 3,600 cap. The default production factory must fall back
+    /// to a bounded provider while the explicit eager loader still refuses.
+    func testDefaultFrameSourceFallsBackToBoundedProviderPastTheEagerLimit() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // 4,000 frames is past the 3,600 eager ceiling. Small frames keep the
+        // write fast; all-intra keeps each sample independently decodable.
+        let frameCount = 4_000
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: (0..<frameCount).map { UInt8(32 + ($0 % 200)) },
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: true
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeFrameSource(
+            asset: asset(at: url),
+            device: device
+        )
+        defer { loaded.source.invalidate() }
+
+        XCTAssertEqual(loaded.source.sampleCount, frameCount)
+        XCTAssertEqual(
+            loaded.media.samples.count,
+            0,
+            "bounded load must not retain the eager sample array"
+        )
+        XCTAssertTrue(loaded.media.allSamplesAreSyncSamples)
+
+        // Addressability: a frame past the old eager limit must decode.
+        let lateTextures = try loaded.source.textures(forFrameIndex: Int64(frameCount - 1))
+        XCTAssertNotNil(lateTextures)
+
+        // The payload cache must stay bounded even after a wide seek.
+        let bounded = try XCTUnwrap(
+            loaded.media.sampleProvider as? BoundedStudioSampleProvider,
+            "the default production factory must select the bounded provider"
+        )
+        XCTAssertLessThanOrEqual(bounded.cacheCount, 240)
+    }
+
+    func testBoundedProviderSeeksAcrossInterCodedGops() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frameCount = 180
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: (0..<frameCount).map { UInt8(32 + ($0 % 200)) },
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: false
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset(at: url),
+            device: device,
+            payloadCacheLimit: 16
+        )
+        defer { loaded.source.invalidate() }
+        XCTAssertFalse(loaded.media.allSamplesAreSyncSamples)
+
+        XCTAssertNotNil(try loaded.source.textures(forFrameIndex: 150))
+        XCTAssertNotNil(try loaded.source.textures(forFrameIndex: 15))
+        XCTAssertNotNil(try loaded.source.textures(forFrameIndex: 170))
+        let bounded = try XCTUnwrap(
+            loaded.media.sampleProvider as? BoundedStudioSampleProvider
+        )
+        XCTAssertLessThanOrEqual(bounded.cacheCount, 16)
+    }
+
+    /// A seek backwards must restart from the nearest keyframe without growing
+    /// the cache beyond its bound.
+    func testBoundedProviderSeeksBackwardsWithinTheCacheBound() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frameCount = 500
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: (0..<frameCount).map { UInt8(32 + ($0 % 200)) },
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: true
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset(at: url),
+            device: device,
+            payloadCacheLimit: 32
+        )
+        defer { loaded.source.invalidate() }
+
+        // Forward pass.
+        _ = try loaded.source.textures(forFrameIndex: 400)
+        // Backward seek must not blow the bound.
+        _ = try loaded.source.textures(forFrameIndex: 10)
+        // Forward again.
+        _ = try loaded.source.textures(forFrameIndex: 450)
+
+        if let bounded = loaded.media.sampleProvider as? BoundedStudioSampleProvider {
+            XCTAssertLessThanOrEqual(bounded.cacheCount, 32)
+        } else {
+            XCTFail("expected a bounded provider")
+        }
+    }
 }
