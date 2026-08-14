@@ -144,6 +144,8 @@ describe('window-all-closed headless continuity', () => {
     expect(browserWindowLifecycle).toContain("window.webContents.on('render-process-gone'")
     expect(browserWindowLifecycle).toContain('chatUpdateDeliveryCoordinator.clearTarget')
     expect(browserWindowLifecycle).toContain('rendererResponsivenessTracker.clear')
+    expect(browserWindowLifecycle).toContain('rendererCrashRecovery.show')
+    expect(browserWindowLifecycle).toContain('activeRunCount: getActiveTaskWraithThreadCount()')
     expect(browserWindowLifecycle).not.toContain('runManager.cancel(')
     expect(browserWindowLifecycle).not.toContain('runManager.finish(')
     expect(browserWindowLifecycle).not.toContain('approvalService?.cancelForRun')

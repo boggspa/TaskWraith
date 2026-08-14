@@ -2188,6 +2188,7 @@ import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
+import { RendererCrashRecovery } from './RendererCrashRecovery'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
 import { startAntigravityGeminiApiSeatSummary } from './antigravity/AntigravityGeminiApiSeatCompactionLifecycle'
 import { OutlookCredentialStore } from './outlook/OutlookCredentialStore'
@@ -50763,6 +50764,14 @@ if (isGeminiMcpBridgeProcess) {
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
       const webContentsId = window.webContents.id
+      const rendererCrashRecovery = new RendererCrashRecovery(window, {
+        onLoadError: (error) => {
+          console.error(
+            '[renderer-recovery] failed to load recovery surface:',
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      })
       window.webContents.on('did-start-loading', () => {
         // A reload creates a fresh renderer-side patch baseline. Discard any
         // in-flight delivery so the next update is a self-contained snapshot.
@@ -50803,6 +50812,7 @@ if (isGeminiMcpBridgeProcess) {
         })
       })
       window.once('closed', () => {
+        rendererCrashRecovery.dispose()
         chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
         rendererResponsivenessTracker.clear(webContentsId)
       })
@@ -50820,6 +50830,13 @@ if (isGeminiMcpBridgeProcess) {
           exitCode: details.exitCode,
           message: `Renderer process exited: ${details.reason || 'unknown'}`
         })
+        if (window === mainWindow) {
+          rendererCrashRecovery.show({
+            reason: details.reason,
+            exitCode: details.exitCode,
+            activeRunCount: getActiveTaskWraithThreadCount()
+          })
+        }
       })
     })
 
