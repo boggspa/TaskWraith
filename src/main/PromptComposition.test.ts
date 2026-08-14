@@ -1743,6 +1743,21 @@ describe('composeRunPrompt read-only recon steer', () => {
     expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
   })
 
+  it('gives AntiGravity Ask a recoverable per-call approval steer', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      ...base,
+      provider: 'antigravity',
+      providerLabel: 'AntiGravity',
+      workflowMode: 'normal'
+    })
+    expect(result.contextualPrompt).toContain('TaskWraith Ask turn')
+    expect(result.contextualPrompt).toContain('per-call approval')
+    expect(result.contextualPrompt).toContain('declined or unavailable tool call is recoverable')
+    expect(result.contextualPrompt).not.toContain('Writes and shell mutations are unavailable')
+    expect(result.applicationLog).toContain('AntiGravity Ask steer injected')
+  })
+
   it('does NOT inject the steer for Plan workflow, despite the byte-identical posture', () => {
     const result = composeRunPrompt({
       instructionContext: null,

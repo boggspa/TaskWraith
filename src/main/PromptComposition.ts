@@ -314,6 +314,17 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
   'Writes and shell mutations are unavailable on this turn: if a change would be needed, describe what you would change and why instead of attempting it.'
 ].join('\n')
 
+// AntiGravity's verified PreToolUse bridge turns its native mutating tools into
+// attended, per-call operations. Its Ask turn therefore must not receive the
+// generic "mutations are unavailable" recon claim: that claim made the prompt
+// contradict the approval UI and discouraged the provider from using the very
+// bridge that makes an approved change safe and recoverable.
+export const TASKWRAITH_ANTIGRAVITY_ASK_STEER_NOTE = [
+  'TaskWraith Ask turn: answer the request directly and in place; this is not Plan-authoring mode.',
+  'Read-only inspection commands are pre-authorized. When a shell command or file change is needed, request it normally; TaskWraith will obtain per-call approval before execution.',
+  'A declined or unavailable tool call is recoverable: adapt, continue with permitted work, and finish the turn instead of ending the run.'
+].join('\n')
+
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
  * preamble (gemini/claude/kimi/codex/grok/cursor/mistral). Plan-mode/read-only runs
@@ -1745,13 +1756,19 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     approvalMode === 'plan' &&
     input.workflowMode === 'normal'
   ) {
-    contextualPrompt = `${TASKWRAITH_RECON_STEER_NOTE}\n\n${contextualPrompt}`
-    applicationLog = `${applicationLog}; recon steer injected`
+    const askSteer =
+      provider === 'antigravity'
+        ? TASKWRAITH_ANTIGRAVITY_ASK_STEER_NOTE
+        : TASKWRAITH_RECON_STEER_NOTE
+    contextualPrompt = `${askSteer}\n\n${contextualPrompt}`
+    applicationLog = `${applicationLog}; ${
+      provider === 'antigravity' ? 'AntiGravity Ask steer' : 'recon steer'
+    } injected`
     envelopeLayers.push({
       id: 'recon_steer',
-      label: 'Read-only recon steer',
+      label: provider === 'antigravity' ? 'AntiGravity Ask steer' : 'Read-only recon steer',
       state: 'applied',
-      content: TASKWRAITH_RECON_STEER_NOTE
+      content: askSteer
     })
   }
 
