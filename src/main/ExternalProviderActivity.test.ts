@@ -1271,9 +1271,11 @@ describe('getExternalUsageCached front door', () => {
       prewarmExternalUsageCache()
       await vi.waitFor(() => expect(requests).toHaveLength(1))
       await settleExternalScansForTests()
-      await expect(getExternalUsageCached()).resolves.toEqual([fresh])
+      const merged = await getExternalUsageCached()
+      expect(merged).toHaveLength(2)
+      expect(merged.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(200)
       await expect(loadExternalUsageSnapshot(snapshotPath)).resolves.toMatchObject({
-        records: [fresh]
+        records: merged
       })
     } finally {
       await rm(directory, { recursive: true, force: true })
@@ -1304,11 +1306,12 @@ describe('getExternalUsageCached front door', () => {
     await vi.waitFor(() => expect(updates.length).toBe(2))
     await settleExternalScansForTests()
     expect(updates[0]).toEqual(partial)
-    expect(updates[1]).toEqual(full)
+    expect(updates[1].map((record) => record.provider).sort()).toEqual(['claude', 'codex'])
+    expect(updates[1].reduce((sum, record) => sum + record.totalTokens, 0)).toBe(200)
 
     // Warm cache now serves the full set without a new scan.
     const second = await getExternalUsageCached()
-    expect(second).toEqual(full)
+    expect(second).toEqual(updates[1])
   })
 
   it('never requests a partial when forced or when a cached result exists', async () => {
@@ -1323,10 +1326,12 @@ describe('getExternalUsageCached front door', () => {
     await settleExternalScansForTests()
     expect(requests[0]?.partialLookbackDays).toBeNull()
     expect(requests[0]?.options.force).toBe(true)
+    const warm = await getExternalUsageCached()
+    expect(warm.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(100)
 
     // Cache is warm now; a forced refresh again requests no partial (a
     // partial would transiently shrink what is already on screen).
-    await expect(getExternalUsageCached({ force: true })).resolves.toEqual(full)
+    await expect(getExternalUsageCached({ force: true })).resolves.toEqual(warm)
     await settleExternalScansForTests()
     expect(requests[1]?.partialLookbackDays).toBeNull()
   })
@@ -1344,10 +1349,11 @@ describe('getExternalUsageCached front door', () => {
     expect(updates).toEqual([])
   })
 
-  it('merges forwarded cursor records without clobbering other providers', async () => {
-    const codex = usageRecord('c1', 'codex', Date.now())
-    const cursorOld = usageRecord('cu-old', 'cursor', Date.now() - 5000)
-    const cursorNew = { ...usageRecord('cu-new', 'cursor', Date.now()), totalTokens: 40 }
+  it('merges forwarded cursor records without shrinking buckets or clobbering providers', async () => {
+    const now = Date.now()
+    const codex = usageRecord('c1', 'codex', now)
+    const cursorOld = usageRecord('cu-old', 'cursor', now)
+    const cursorNew = { ...usageRecord('cu-new', 'cursor', now), totalTokens: 40 }
     setExternalScanDriver(async () => [codex, cursorOld])
     await getExternalUsageCached()
     await settleExternalScansForTests()
@@ -1358,12 +1364,50 @@ describe('getExternalUsageCached front door', () => {
 
     expect(updates.length).toBe(1)
     const merged = updates[0]
-    // Non-cursor providers pass through untouched; the cursor subset is
-    // REPLACED by the (time-bucketed) new set — the old 100-token record is
-    // gone and the new 40-token one is fully represented.
-    expect(merged).toContainEqual(codex)
+    expect(
+      merged
+        .filter((record) => record.provider === 'codex')
+        .reduce((sum, record) => sum + record.totalTokens, 0)
+    ).toBe(100)
     const cursor = merged.filter((record) => record.provider === 'cursor')
-    expect(cursor.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(40)
+    // A sparse/lower refresh cannot overwrite the populated 100-token bucket.
+    expect(cursor.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(100)
     expect(cursor.reduce((sum, record) => sum + (record.runCount ?? 1), 0)).toBe(1)
+  })
+
+  it('persists a populated snapshot bucket when a full scan returns only a marker', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'taskwraith-external-frontdoor-monotonic-'))
+    const snapshotPath = join(directory, 'external-activity-snapshot.json')
+    try {
+      const timestamp = Date.now() - 8 * 60 * 60 * 1_000
+      const populated = {
+        ...usageRecord('populated', 'codex', timestamp),
+        totalTokens: 900,
+        runCount: 9
+      }
+      const marker = { ...usageRecord('marker', 'codex', timestamp), totalTokens: 0 }
+      await persistExternalUsageSnapshot(snapshotPath, {
+        scannedAt: Date.now() - 100,
+        records: [populated]
+      })
+      let scans = 0
+      setExternalScanDriver(async () => {
+        scans += 1
+        return [marker]
+      })
+
+      await initializeExternalUsageCacheForStartup(snapshotPath)
+      prewarmExternalUsageCache()
+      await vi.waitFor(() => expect(scans).toBe(1))
+      await settleExternalScansForTests()
+
+      const merged = await getExternalUsageCached()
+      expect(merged.find((record) => record.totalTokens > 0)?.totalTokens).toBe(900)
+      expect(merged.find((record) => record.totalTokens === 0)).toBeDefined()
+      const persisted = await loadExternalUsageSnapshot(snapshotPath)
+      expect(persisted?.records.find((record) => record.totalTokens > 0)?.totalTokens).toBe(900)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

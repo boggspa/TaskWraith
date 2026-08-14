@@ -84,6 +84,29 @@ interface BucketAccumulator {
   runCount: number
 }
 
+export interface ExternalUsageMonotonicMergeOptions {
+  /** Inclusive retention bounds. Records outside them are deliberately
+   * forgotten even when they exist only in the retained snapshot. */
+  startMs?: number
+  endMs?: number
+}
+
+function externalUsageBucketKey(record: UsageRecord, nowMs: number): string | null {
+  if ((record.usageKind ?? 'run') !== 'run' || !Number.isFinite(record.timestamp)) return null
+  const effectiveTokens = externalActivityRecordTokens(record)
+  const bucketStart = externalUsageBucketStartMs(record.timestamp, nowMs)
+  return [
+    record.provider ?? '',
+    record.model ?? '',
+    record.costRateModel || record.model || '',
+    record.workspaceId ?? '',
+    record.chatId ?? '',
+    record.runId ?? '',
+    effectiveTokens > 0 ? 't' : 'z',
+    bucketStart
+  ].join('|')
+}
+
 /**
  * Streaming form of {@link aggregateExternalUsageRecords}. External activity
  * scans can encounter more than a million provider turns, so callers must be
@@ -99,22 +122,13 @@ export class ExternalUsageBucketAccumulator {
 
   add(record: UsageRecord): void {
     if (!record) return
-    if ((record.usageKind ?? 'run') !== 'run' || !Number.isFinite(record.timestamp)) {
+    const key = externalUsageBucketKey(record, this.nowMs)
+    if (!key) {
       this.passthrough.push(record)
       return
     }
     const effectiveTokens = externalActivityRecordTokens(record)
     const bucketStart = externalUsageBucketStartMs(record.timestamp, this.nowMs)
-    const key = [
-      record.provider ?? '',
-      record.model ?? '',
-      record.costRateModel || record.model || '',
-      record.workspaceId ?? '',
-      record.chatId ?? '',
-      record.runId ?? '',
-      effectiveTokens > 0 ? 't' : 'z',
-      bucketStart
-    ].join('|')
 
     let bucket = this.buckets.get(key)
     if (!bucket) {
@@ -195,4 +209,68 @@ export function aggregateExternalUsageRecords(
   const accumulator = new ExternalUsageBucketAccumulator(nowMs)
   for (const record of records) accumulator.add(record)
   return accumulator.finish()
+}
+
+/**
+ * Merge a completed scan over the retained external-usage snapshot without
+ * adding the same bucket twice or allowing a sparse scan to shrink history.
+ *
+ * Both inputs are independently re-bucketed against the current clock first.
+ * That matters at the 48-hour granularity boundary: yesterday's snapshot may
+ * still contain minute buckets that today's scan correctly represents as one
+ * hour bucket. Concatenating and aggregating would double-count them.
+ *
+ * For each canonical provider/model/time bucket:
+ * - a missing bucket is filled from whichever side has it;
+ * - a larger token total replaces a smaller one;
+ * - a smaller or zero total cannot erase a populated total;
+ * - run count and duration remain monotonic;
+ * - repeated merges are idempotent, never additive.
+ *
+ * Zero-token activity markers retain their own bucket identity, matching the
+ * ordinary external aggregation contract. They can colour a heatmap cell but
+ * cannot collide with, or replace, a token-bearing bucket.
+ */
+export function mergeExternalUsageRecordsMonotonically(
+  retainedRecords: UsageRecord[],
+  scannedRecords: UsageRecord[],
+  nowMs: number,
+  options: ExternalUsageMonotonicMergeOptions = {}
+): UsageRecord[] {
+  const inRetentionWindow = (record: UsageRecord): boolean => {
+    if (!Number.isFinite(record.timestamp)) return false
+    if (options.startMs !== undefined && record.timestamp < options.startMs) return false
+    if (options.endMs !== undefined && record.timestamp > options.endMs) return false
+    return true
+  }
+  const canonicalRetained = aggregateExternalUsageRecords(retainedRecords, nowMs).filter(
+    inRetentionWindow
+  )
+  const canonicalScanned = aggregateExternalUsageRecords(scannedRecords, nowMs).filter(
+    inRetentionWindow
+  )
+  const merged = new Map<string, UsageRecord>()
+
+  const keyFor = (record: UsageRecord): string =>
+    externalUsageBucketKey(record, nowMs) ?? `passthrough|${record.usageKind ?? 'run'}|${record.id}`
+
+  for (const record of canonicalRetained) merged.set(keyFor(record), record)
+  for (const incoming of canonicalScanned) {
+    const key = keyFor(incoming)
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, incoming)
+      continue
+    }
+    const existingTokens = externalActivityRecordTokens(existing)
+    const incomingTokens = externalActivityRecordTokens(incoming)
+    const stronger = incomingTokens >= existingTokens ? incoming : existing
+    merged.set(key, {
+      ...stronger,
+      durationMs: Math.max(existing.durationMs || 0, incoming.durationMs || 0),
+      runCount: Math.max(usageRecordRunCount(existing), usageRecordRunCount(incoming))
+    })
+  }
+
+  return [...merged.values()].sort((a, b) => b.timestamp - a.timestamp || (a.id < b.id ? -1 : 1))
 }

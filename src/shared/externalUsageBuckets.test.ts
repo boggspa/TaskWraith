@@ -4,6 +4,7 @@ import {
   EXTERNAL_USAGE_MINUTE_BUCKET_WINDOW_MS,
   ExternalUsageBucketAccumulator,
   aggregateExternalUsageRecords,
+  mergeExternalUsageRecordsMonotonically,
   usageRecordRunCount
 } from './externalUsageBuckets'
 
@@ -262,6 +263,99 @@ describe('aggregateExternalUsageRecords', () => {
     for (const entry of records) accumulator.add(entry)
 
     expect(accumulator.finish()).toEqual(aggregateExternalUsageRecords(records, NOW))
+  })
+})
+
+describe('mergeExternalUsageRecordsMonotonically', () => {
+  it('keeps a populated bucket when a later scan reports a smaller total', () => {
+    const hour = new Date(2026, 6, 20, 9, 0, 0, 0).getTime()
+    const merged = mergeExternalUsageRecordsMonotonically(
+      [record({ timestamp: hour + 5 * 60_000, totalTokens: 900, runCount: 9 })],
+      [record({ timestamp: hour + 35 * 60_000, totalTokens: 100, runCount: 1 })],
+      NOW
+    )
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].totalTokens).toBe(900)
+    expect(merged[0].runCount).toBe(9)
+  })
+
+  it('lets zero-token markers colour a cell without erasing its token bucket', () => {
+    const hour = new Date(2026, 6, 20, 9, 0, 0, 0).getTime()
+    const merged = mergeExternalUsageRecordsMonotonically(
+      [record({ timestamp: hour, totalTokens: 900, runCount: 9 })],
+      [record({ timestamp: hour, totalTokens: 0, runCount: 1 })],
+      NOW
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged.find((entry) => entry.totalTokens > 0)?.totalTokens).toBe(900)
+    expect(merged.find((entry) => entry.totalTokens === 0)?.runCount).toBe(1)
+  })
+
+  it('fills empty buckets, allows growth, and never adds a repeated scan', () => {
+    const hour = new Date(2026, 6, 20, 9, 0, 0, 0).getTime()
+    const first = mergeExternalUsageRecordsMonotonically(
+      [],
+      [record({ timestamp: hour, totalTokens: 100, runCount: 2 })],
+      NOW
+    )
+    const grown = mergeExternalUsageRecordsMonotonically(
+      first,
+      [record({ timestamp: hour, totalTokens: 250, runCount: 3 })],
+      NOW
+    )
+    const repeated = mergeExternalUsageRecordsMonotonically(
+      grown,
+      [record({ timestamp: hour, totalTokens: 250, runCount: 3 })],
+      NOW
+    )
+
+    expect(first[0].totalTokens).toBe(100)
+    expect(grown[0].totalTokens).toBe(250)
+    expect(repeated).toEqual(grown)
+  })
+
+  it('re-buckets both sides at the current clock before comparing them', () => {
+    const snapshotNow = new Date(2026, 6, 22, 10, 0, 0, 0).getTime()
+    const hour = new Date(2026, 6, 20, 14, 0, 0, 0).getTime()
+    const raw = [
+      record({ timestamp: hour + 5 * 60_000, totalTokens: 5 }),
+      record({ timestamp: hour + 25 * 60_000, totalTokens: 6 })
+    ]
+    const retainedMinuteBuckets = aggregateExternalUsageRecords(raw, snapshotNow)
+    const scannedHourBucket = aggregateExternalUsageRecords(raw, NOW)
+
+    expect(retainedMinuteBuckets).toHaveLength(2)
+    expect(scannedHourBucket).toHaveLength(1)
+    const merged = mergeExternalUsageRecordsMonotonically(
+      retainedMinuteBuckets,
+      scannedHourBucket,
+      NOW
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0].totalTokens).toBe(11)
+    expect(merged[0].runCount).toBe(2)
+  })
+
+  it('retains missing in-window buckets and prunes expired ones', () => {
+    const inWindow = new Date(2026, 6, 20, 9, 0, 0, 0).getTime()
+    const expired = new Date(2026, 6, 10, 9, 0, 0, 0).getTime()
+    const merged = mergeExternalUsageRecordsMonotonically(
+      [
+        record({ timestamp: inWindow, totalTokens: 100 }),
+        record({ timestamp: expired, totalTokens: 200 })
+      ],
+      [],
+      NOW,
+      {
+        startMs: new Date(2026, 6, 18, 0, 0, 0, 0).getTime(),
+        endMs: new Date(2026, 6, 24, 23, 59, 59, 999).getTime()
+      }
+    )
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].totalTokens).toBe(100)
   })
 })
 

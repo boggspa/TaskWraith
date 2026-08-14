@@ -13,7 +13,8 @@ import {
 } from '../shared/usageAccounting'
 import {
   ExternalUsageBucketAccumulator,
-  aggregateExternalUsageRecords
+  aggregateExternalUsageRecords,
+  mergeExternalUsageRecordsMonotonically
 } from '../shared/externalUsageBuckets'
 import {
   loadCursorIdeUsageEvents,
@@ -255,8 +256,8 @@ export function setExternalUsageUpdateListener(listener: ExternalUsageUpdateList
  *
  * Distinct from {@link setExternalUsageUpdateListener}, which also fires for
  * cold partials and cursor upgrades. The daily rollup folds against this one
- * because it must know which days the scan is authoritative for: it replaces
- * those and keeps the rest. A partial would replace days it only half saw.
+ * because only a completed scan may grow the durable totals. A partial could
+ * mistake a not-yet-seen bucket for an empty one.
  */
 export interface ExternalScanCompletion {
   records: UsageRecord[]
@@ -281,6 +282,20 @@ function commitExternalUsageRecords(records: UsageRecord[], scannedAt: number = 
   } catch {
     // Listener failures must never poison the scan pipeline.
   }
+}
+
+function mergeExternalUsageHistory(
+  scannedRecords: UsageRecord[],
+  scannedAt: number,
+  lookbackDays: number = DEFAULT_LOOKBACK_DAYS
+): UsageRecord[] {
+  const { startMs, endMs } = externalActivityWindowBounds(new Date(scannedAt), lookbackDays)
+  return mergeExternalUsageRecordsMonotonically(
+    externalUsageCache?.records ?? [],
+    scannedRecords,
+    scannedAt,
+    { startMs, endMs }
+  )
 }
 
 async function hydrateConfiguredExternalUsageSnapshot(): Promise<void> {
@@ -343,22 +358,20 @@ export function setCursorRecordsForwarder(fn: ((records: UsageRecord[]) => void)
   cursorRecordsForwarder = fn
 }
 
-/** Merge freshly-converted Cursor records into the cached set (all other
- * providers untouched) and notify listeners. Runs in main for both the local
- * chunk listener and records forwarded from the worker process. */
+/** Monotonically merge freshly-converted Cursor records into the cached set
+ * and notify listeners. Runs in main for both the local chunk listener and
+ * records forwarded from the worker process. A sparse Cursor refresh cannot
+ * erase populated buckets from the retained 90-day snapshot. */
 export function applyCursorUsageRecords(cursorRecords: UsageRecord[]): void {
   if (cursorRecords.length === 0) return
   // Cursor chunk sets bypass loadExternalProviderUsageRecords, so bucket them
   // here — each update carries the COMPLETE cursor set (the merge below
-  // replaces the provider subset wholesale), and aggregation is idempotent,
-  // so worker-forwarded sets that were already bucketed re-group unchanged.
-  const bucketed = aggregateExternalUsageRecords(cursorRecords, Date.now())
-  if (!externalUsageCache) {
-    commitExternalUsageRecords(bucketed)
-    return
-  }
-  const other = externalUsageCache.records.filter((record) => record.provider !== 'cursor')
-  commitExternalUsageRecords([...other, ...bucketed].sort((a, b) => b.timestamp - a.timestamp))
+  // can therefore fill/grow buckets monotonically), and aggregation is
+  // idempotent, so worker-forwarded sets that were already bucketed re-group
+  // unchanged.
+  const scannedAt = Date.now()
+  const bucketed = aggregateExternalUsageRecords(cursorRecords, scannedAt)
+  commitExternalUsageRecords(mergeExternalUsageHistory(bucketed, scannedAt), scannedAt)
 }
 
 function replaceCachedCursorExternalRecords(
@@ -419,8 +432,13 @@ function startExternalScan(
   }
 
   const runWith = async (driver: ExternalScanDriver): Promise<UsageRecord[]> => {
-    const full = await driver(request, commit)
+    const scanned = await driver(request, commit)
     const scannedAt = Date.now()
+    const full = mergeExternalUsageHistory(
+      scanned,
+      scannedAt,
+      options.lookbackDays || DEFAULT_LOOKBACK_DAYS
+    )
     commitExternalUsageRecords(full, scannedAt)
     settleFirst(full)
     if (externalUsageSnapshotPath) {

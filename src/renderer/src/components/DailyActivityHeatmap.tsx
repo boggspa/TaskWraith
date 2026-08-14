@@ -44,13 +44,12 @@ import { buildExternalActivityPresentationRecords } from '../lib/externalActivit
  * `src/main/ExternalProviderActivity.ts`, restated because
  * `guard:architecture` admits no renderer edge into main.
  *
- * Getting this wrong is no longer destructive in either direction. An earlier
- * version of this file claimed authority over the whole window and deleted
- * every day inside it that the records did not mention — measured against a
- * real corpus, records spanned 15 days against this 90, so 75 days of real
- * history vanished from the chart. The fold is now per-provider and treats
- * absence as "not observed" rather than "zero", so this constant only decides
- * whether an overlapping day may move DOWN.
+ * An earlier version of this file claimed authority over the whole window and
+ * deleted every day inside it that the records did not mention — measured
+ * against a real corpus, records spanned 15 days against this 90, so 75 days
+ * of real history vanished from the chart. The fold is now per-provider and
+ * monotonic: absence means "not observed", zero markers cannot erase spend,
+ * and repeated overlays remain idempotent rather than additive.
  */
 const EXTERNAL_SCAN_WINDOW_DAYS = 90
 

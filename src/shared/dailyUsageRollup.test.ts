@@ -120,7 +120,7 @@ describe('buildDailyUsageTotals', () => {
 })
 
 describe('foldUsageRecordsIntoDailyRollup', () => {
-  it('REPLACES a fully-observed day rather than adding to it', () => {
+  it('MAX-MERGES a fully-observed day rather than adding to it', () => {
     // The core invariant: without it, every scan doubles the day's total.
     const first = foldUsageRecordsIntoDailyRollup(
       {},
@@ -173,16 +173,44 @@ describe('foldUsageRecordsIntoDailyRollup', () => {
     expect(folded['2026-06-10'].ollama).toEqual({ tokens: 90, runs: 3 })
   })
 
-  it('still lets an observed provider be corrected DOWNWARDS', () => {
-    // The one thing per-provider replace must preserve: a dedupe fix has to be
-    // able to lower a total, or every correction is one-way.
+  it('does not let an ordinary scan correct a populated provider DOWNWARDS', () => {
     const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 900, runs: 9 } } }
     const folded = foldUsageRecordsIntoDailyRollup(
       base,
       [record('codex', noon(2026, 6, 10), 100)],
       windowOver(9, 11)
     )
+    expect(folded['2026-06-10'].codex).toEqual({ tokens: 900, runs: 9 })
+  })
+
+  it('allows an explicit rebuild to correct a fully-observed provider downwards', () => {
+    const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 900, runs: 9 } } }
+    const folded = foldUsageRecordsIntoDailyRollup(
+      base,
+      [record('codex', noon(2026, 6, 10), 100)],
+      { ...windowOver(9, 11), allowDecrease: true }
+    )
     expect(folded['2026-06-10'].codex).toEqual({ tokens: 100, runs: 1 })
+  })
+
+  it('never lets a zero-token marker erase a populated provider', () => {
+    const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 900, runs: 9 } } }
+    const folded = foldUsageRecordsIntoDailyRollup(
+      base,
+      [record('codex', noon(2026, 6, 10), 0)],
+      windowOver(9, 11)
+    )
+    expect(folded['2026-06-10'].codex).toEqual({ tokens: 900, runs: 9 })
+  })
+
+  it('fills a previously empty provider total and lets it grow', () => {
+    const base: DailyUsageDays = { '2026-06-10': { codex: { tokens: 0, runs: 1 } } }
+    const folded = foldUsageRecordsIntoDailyRollup(
+      base,
+      [record('codex', noon(2026, 6, 10), 700, { runCount: 5 })],
+      windowOver(9, 11)
+    )
+    expect(folded['2026-06-10'].codex).toEqual({ tokens: 700, runs: 5 })
   })
 
   it('MAX-merges the partial boundary day instead of shrinking it', () => {

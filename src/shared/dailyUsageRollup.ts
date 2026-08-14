@@ -11,9 +11,9 @@
  *
  * Two invariants make that safe to run repeatedly:
  *
- * 1. **A fold REPLACES only what it actually observed, PER PROVIDER, and keeps
- *    everything else.** Adding would double-count on the next scan; replacing a
- *    whole day would erase providers and dates the caller never saw. Absence
+ * 1. **A fold MAX-MERGES what it observed, PER PROVIDER, and keeps everything
+ *    else.** Adding would double-count on the next scan; replacing would let a
+ *    deleted source file or zero-token marker erase populated history. Absence
  *    from an incoming set is never evidence of absence in the world — see
  *    `foldDailyUsageDaysIntoRollup`, where that distinction is argued in full.
  *
@@ -67,9 +67,9 @@ export interface DailyUsageRollupPayload {
 
 export interface DailyUsageFoldOptions {
   /**
-   * The period the supplying scan actually covered, inclusive. Days fully
-   * inside it are authoritative and replace what is stored; days straddling a
-   * bound are merged by max; days outside are untouched.
+   * The period the supplying scan actually covered, inclusive. Ordinary folds
+   * are monotonic everywhere; an explicit rebuild may use this boundary to
+   * replace fully-observed provider totals by setting `allowDecrease`.
    */
   observedFromMs: number
   observedToMs: number
@@ -78,6 +78,9 @@ export interface DailyUsageFoldOptions {
    * pure. Every caller already knows its own clock. */
   now: number
   maxDays?: number
+  /** Explicit rebuild/reset escape hatch. Normal scans must leave this false
+   * so sparse files and zero-token markers cannot shrink populated history. */
+  allowDecrease?: boolean
 }
 
 export interface DailyUsageTokenRecordLike {
@@ -180,18 +183,12 @@ export function buildDailyUsageTotals(
  * observe. Measured on a real corpus: live records spanned 15 days against an
  * assumed 90-day window, erasing 75 days of real data from the display.
  *
- * The rule, per provider on each day:
- *   - present in `incoming`, day fully observed -> REPLACE (a correction, and
- *     the only way a total may legitimately fall)
- *   - present in `incoming`, day partial or outside -> MAX-merge; the rolling
- *     cutoff always slices its oldest day, so that value is short by
- *     construction
- *   - present only in `base` -> KEPT, untouched. Absence from `incoming` is
- *     never evidence of absence in the world.
- *
- * A consequence worth stating: a provider that truly stops on a day it once had
- * usage will linger. That is deliberate — it is a far smaller error than
- * erasing days no scan can ever reproduce.
+ * The ordinary rule, per provider on each day, is component-wise MAX. A later
+ * scan can fill an empty value or grow a populated one, but a missing file or
+ * zero-token marker cannot lower it. `allowDecrease` is reserved for an
+ * explicit rebuild/reset and replaces only fully-observed days; its oldest
+ * partial boundary remains a MAX because that scan did not see the whole day.
+ * Providers absent from `incoming` are always kept untouched.
  *
  * Idempotent for a fixed window, which is what lets it run on every scan. This
  * is the days-in entry point, used by the deep backfill (which buckets inside
@@ -225,7 +222,7 @@ export function foldDailyUsageDaysIntoRollup(
     const merged: DailyUsageDayTotals = { ...stored }
     for (const [provider, value] of Object.entries(arriving)) {
       const existing = stored[provider]
-      if (!existing || fullyObserved) {
+      if (!existing || (fullyObserved && options.allowDecrease === true)) {
         merged[provider] = value
         continue
       }
