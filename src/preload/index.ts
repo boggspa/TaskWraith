@@ -730,6 +730,10 @@ const api = {
     ipcRenderer.invoke('get-codex-usage-snapshot', options),
   getExternalUsage: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('get-external-usage', options),
+  // Per-day/per-provider totals reaching further back than the 90-day scan
+  // window. Small by construction (a few hundred days of two integers), so it
+  // crosses the contextBridge deep-copy cheaply where a record array does not.
+  getDailyUsageRollup: () => ipcRenderer.invoke('get-daily-usage-rollup'),
   getQuotaSnapshotHook: () => ipcRenderer.invoke('quota-snapshot-hook:get'),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
   // Mistral's estimated monthly burn. Not a probe and not a vendor figure:

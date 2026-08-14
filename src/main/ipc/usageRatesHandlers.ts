@@ -43,6 +43,18 @@ type UsageSnapshotLike = {
 type UsageSnapshotFetcher = () => Promise<UsageSnapshotLike | null>
 type NormalizedUsageSnapshotFetcher = () => Promise<NormalizedProviderUsageSnapshot | null>
 
+import { isTaskWraithOnlyProvider } from '../../shared/externalActivityScannerProviders'
+import { loadDailyUsageRollup } from '../DailyUsageRollupStore'
+import {
+  recordCompletedScanInDailyRollup,
+  runDailyUsageBackfillIfNeeded
+} from '../DailyUsageBackfill'
+import {
+  defaultDailyUsageRollupPaths,
+  setExternalScanCompletionListener
+} from '../ExternalProviderActivity'
+import { runDailyUsageBackfillScan } from '../ExternalActivityWorkerScan'
+
 export type UsageRatesSenderScope =
   | { kind: 'main' }
   | { kind: 'chat'; chatId: string; chatScope: 'global'; workspaceId?: never }
@@ -185,6 +197,57 @@ function assertOwnedUsageWrite(
   }
 }
 
+/** Delay between a completed scan and forking the one-time deep backfill, so
+ * the two never contend for CPU and the app has settled after the scan. */
+const DAILY_USAGE_BACKFILL_AFTER_SCAN_MS = 30_000
+
+/**
+ * Fold every completed full-window scan into the daily rollup, and seed its
+ * tail once.
+ *
+ * The backfill is triggered by the FIRST completed scan rather than a timer.
+ * That single signal proves everything a fixed delay could only guess at: the
+ * app is well past launch, the ordinary scan is finished so the two wide walks
+ * cannot overlap, and the worker path is known to work. `runDailyUsageBackfill-
+ * IfNeeded` is idempotent per process, so later completions are free.
+ */
+function installDailyUsageRollupPipeline(deps: UsageRatesHandlerDeps): void {
+  const paths = (() => {
+    try {
+      return defaultDailyUsageRollupPaths()
+    } catch {
+      // No electron `app` (unit tests): the rollup is simply not wired.
+      return null
+    }
+  })()
+  if (!paths) return
+
+  const onError = (error: unknown): void => {
+    console.warn('[daily-usage-rollup] fold failed:', error)
+  }
+
+  setExternalScanCompletionListener((completion) => {
+    // TaskWraith's own records are carried for providers with no scanner lane
+    // only. A scanned provider's CLI history already contains the TaskWraith
+    // run, so adding it again would double-count the day.
+    const taskwraithOnly = deps
+      .getUsage()
+      .filter((record) => isTaskWraithOnlyProvider(record.provider))
+    void recordCompletedScanInDailyRollup(
+      { ...completion, records: [...completion.records, ...taskwraithOnly] },
+      { dailyRollupPath: paths.dailyRollupPath, onError }
+    )
+
+    setTimeout(() => {
+      void runDailyUsageBackfillIfNeeded({
+        ...paths,
+        runBackfill: (options) => runDailyUsageBackfillScan(options),
+        onError
+      })
+    }, DAILY_USAGE_BACKFILL_AFTER_SCAN_MS).unref?.()
+  })
+}
+
 export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   ipcMain.handle('record-usage', (event, usage: Omit<UsageRecord, 'id' | 'timestamp'>) => {
     const scope = deps.resolveSenderUsageScope(event)
@@ -202,6 +265,13 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   ipcMain.handle('get-external-usage', (event, options?: { force?: boolean }) => {
     deps.assertMainRendererSender(event)
     return deps.getExternalUsageCached(options?.force === true ? { maxAgeMs: 0 } : {})
+  })
+
+  ipcMain.handle('get-daily-usage-rollup', async (event) => {
+    deps.assertMainRendererSender(event)
+    const { dailyRollupPath } = defaultDailyUsageRollupPaths()
+    const rollup = await loadDailyUsageRollup(dailyRollupPath)
+    return rollup ?? { updatedAt: 0, days: {}, backfill: null }
   })
 
   ipcMain.handle('quota-snapshot-hook:get', (event) => {
@@ -441,6 +511,8 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   // first paint; this rollup broadcast has to clear launch too or it just
   // re-opens the same door. Both funnel into one in-flight scan, so whichever
   // fires first does the work and the other joins it.
+  installDailyUsageRollupPipeline(deps)
+
   setTimeout(() => {
     void deps.getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
   }, 45_000).unref?.()

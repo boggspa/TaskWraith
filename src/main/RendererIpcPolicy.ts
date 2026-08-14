@@ -97,6 +97,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-diff',
   'get-evidence-packs',
   'get-external-usage',
+  'get-daily-usage-rollup',
   'get-file-icon',
   'get-gemini-auth-status',
   'get-gemini-capabilities',

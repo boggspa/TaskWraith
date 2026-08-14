@@ -7,14 +7,32 @@
  */
 import { utilityProcess } from 'electron'
 import { constants as osConstants, setPriority } from 'os'
+import { join } from 'path'
 import type { UsageRecord } from './store/types'
 import type { DailyUsageDays } from '../shared/dailyUsageRollup'
 import {
   applyCursorUsageRecords,
   defaultExternalActivityCachePaths,
+  type ExternalProviderActivityOptions,
   type ExternalScanDriver,
   type ExternalScanRequest
 } from './ExternalProviderActivity'
+
+/** Both the composition root and this module are bundled to `out/main`, so the
+ * worker sits beside them. Kept here so callers other than the startup wiring
+ * do not have to restate where the worker lives. */
+export function defaultExternalActivityWorkerModulePath(): string {
+  return join(__dirname, 'externalActivityWorker.js')
+}
+
+/** One-shot deep walk for the daily rollup's tail. Returns per-day totals, not
+ * records; see `createDailyUsageBackfillDriver`. */
+export function runDailyUsageBackfillScan(
+  options: ExternalProviderActivityOptions,
+  workerModulePath: string = defaultExternalActivityWorkerModulePath()
+): Promise<DailyUsageDays> {
+  return createDailyUsageBackfillDriver(workerModulePath)({ options, partialLookbackDays: null })
+}
 
 /** A truly cold 90-day walk was measured at ~4 min; this is a hang backstop,
  * not a pace expectation. */

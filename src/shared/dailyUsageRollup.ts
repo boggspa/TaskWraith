@@ -52,6 +52,20 @@ export type DailyUsageDayTotals = Record<string, DailyUsageProviderTotal>
 /** 'YYYY-MM-DD' (local) -> per-provider totals. */
 export type DailyUsageDays = Record<string, DailyUsageDayTotals>
 
+/** What `get-daily-usage-rollup` returns. Deliberately small — a few hundred
+ * days of two integers per provider — so it crosses the contextBridge deep-copy
+ * cheaply, unlike a record array. */
+export interface DailyUsageRollupPayload {
+  updatedAt: number
+  days: DailyUsageDays
+  backfill: {
+    startedAt: number
+    completedAt: number
+    lookbackDays: number
+    attempts: number
+  } | null
+}
+
 export interface DailyUsageFoldOptions {
   /**
    * The period the supplying scan actually covered, inclusive. Days fully

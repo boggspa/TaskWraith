@@ -267,6 +267,20 @@ describe('registerUsageRatesHandlers', () => {
     expect(deps.getExternalUsageCached).not.toHaveBeenCalled()
   })
 
+  it('keeps the long-horizon daily rollup main-only too', async () => {
+    // Same reach as external history: it is a global, cross-workspace record of
+    // when and how much every provider was used.
+    const { deps } = createDeps()
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw new Error('Only the main renderer can read external usage history.')
+    })
+    registerUsageRatesHandlers(deps)
+
+    await expect(handlerFor('get-daily-usage-rollup')({})).rejects.toThrow(
+      'Only the main renderer can read external usage history.'
+    )
+  })
+
   it('serves the credential-free native quota hook only to the main renderer', async () => {
     const { deps } = createDeps()
     const snapshot = {

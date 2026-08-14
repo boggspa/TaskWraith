@@ -85,6 +85,7 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
   LiveSteeringCancelRequest,
@@ -818,6 +819,7 @@ declare global {
       clearCodexUsageCredential: () => Promise<boolean>
       getCodexUsageSnapshot: (options?: { force?: boolean }) => Promise<any>
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
+      getDailyUsageRollup: () => Promise<DailyUsageRollupPayload>
       getQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       /** Locally accumulated Mistral burn estimate; null until the seat has run. */
