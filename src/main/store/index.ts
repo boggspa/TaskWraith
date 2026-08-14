@@ -5278,9 +5278,7 @@ export class AppStore {
             })
             const activeRound = stored?.activeRound
               ? (() => {
-                  const runtimeOwnedRound = discardForeignEnsembleTurnTransition(
-                    stored.activeRound
-                  )
+                  const runtimeOwnedRound = discardForeignEnsembleTurnTransition(stored.activeRound)
                   const roundAuthority = normalizeEnsembleAuthority({
                     participants: runtimeOwnedRound.participants.map((participant) => ({
                       id: participant.participantId,

@@ -209,9 +209,7 @@ describe('deriveFocusedTranscriptIsThinking', () => {
         updatedAt: '2026-06-09T00:02:00.000Z'
       }
     })
-    expect(
-      chatHasInFlightThinkingWork({ chat, runningChatIds: new Set() })
-    ).toBe(true)
+    expect(chatHasInFlightThinkingWork({ chat, runningChatIds: new Set() })).toBe(true)
     expect(deriveFocusedTranscriptIsThinking({ rendererIsThinking: true, chat })).toBe(true)
   })
 
