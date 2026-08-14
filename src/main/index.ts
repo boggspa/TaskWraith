@@ -691,6 +691,7 @@ import {
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
+import { steerEnsembleSideMessageToActiveRuns } from './steering/EnsembleSideMessageSteering'
 import { drainPendingSteerTextFromSession } from './steering/BrokerSteerTransport'
 import { midTurnSteerEnabled } from './steering/SteeringFeatureGate'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
@@ -56121,6 +56122,16 @@ if (isGeminiMcpBridgeProcess) {
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
       appendMidRunSteering: ({ chatId, text, imageAttachments, imageThumbnails }) =>
         appendEnsembleSteerIntoLiveRound(chatId, text, { imageAttachments, imageThumbnails }),
+      deliverSideMessageSteering: (input) =>
+        steerEnsembleSideMessageToActiveRuns(
+          {
+            runManager,
+            registry: midRunSteeringRegistry,
+            midTurnSteeringEnabled: midTurnSteerEnabled(),
+            piLiveSteerEnabled: piLiveSteerEnabled()
+          },
+          input
+        ),
       getPendingMidRunSteeringEntryIds: (chatId) =>
         midRunSteeringRegistry.undeliveredToAnyParticipant(chatId).map((entry) => entry.id),
       completeSessionCheckpoint: (chatId, roundId, status) => {

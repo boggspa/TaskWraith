@@ -2447,7 +2447,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_send',
       description:
-        'In Ensemble Mode, send a visible participant-to-participant note into the main transcript. Use this for agent-to-agent side communication that should become context for later participants. The message is not private or hidden from the user.',
+        'In Ensemble Mode, send a visible participant-to-participant note into the main transcript. If an exact recipient run is active and its provider supports live steering, TaskWraith immediately steers that run with the peer-authored note; otherwise the durable note remains available at the recipient’s next prompt boundary. The message is not private or hidden from the user.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

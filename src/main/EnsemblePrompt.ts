@@ -1626,7 +1626,7 @@ export function buildEnsembleParticipantPromptProjection(
       : []),
     '',
     'Rules:',
-    '- Everyone sees the same tagged transcript. @mentions are routing hints, not private messages. A unique in-round @Role/@Model mention routes that remaining participant forward. For a visible participant-to-participant note, call ensemble_send only when it is listed; otherwise write the note in your response with a unique mention.',
+    '- Everyone sees the same tagged transcript. @mentions are routing hints, not private messages. A unique in-round @Role/@Model mention routes that remaining participant forward. For a visible participant-to-participant note, call ensemble_send only when it is listed: an exact active recipient is live-steered when its provider supports it, while every other recipient sees the durable note at its next prompt boundary. Otherwise write the note in your response with a unique mention.',
     // 1.0.5-EW18 — Strong tagging-form directive. The roster lines
     // above now carry "address with @Role or @Model" hints; this
     // rule reinforces them. Pre-EW18 agents reached for `@codex`
