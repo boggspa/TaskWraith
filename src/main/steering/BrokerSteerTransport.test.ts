@@ -78,6 +78,8 @@ describe('formatSteeringInjection', () => {
   it('wraps text in a distinguishable prefix and suffix', () => {
     const result = formatSteeringInjection('Please review the tests.')
     expect(result).toContain('[TaskWraith Steering]')
+    expect(result).toContain('The following steering message arrived while you were working')
+    expect(result).not.toContain('The user sent')
     expect(result).toContain('Please review the tests.')
     expect(result).toContain('--- end steering ---')
   })

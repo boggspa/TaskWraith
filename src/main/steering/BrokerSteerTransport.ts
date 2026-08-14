@@ -83,7 +83,7 @@ export function createBrokerSteerTransport(
  * the tool's own output so the model can clearly see this as an interjection.
  */
 export function formatSteeringInjection(text: string): string {
-  return `[TaskWraith Steering] The user sent the following message while you were working:\n\n${text}\n\n--- end steering ---`
+  return `[TaskWraith Steering] The following steering message arrived while you were working:\n\n${text}\n\n--- end steering ---`
 }
 
 /**
