@@ -131,6 +131,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'qwen3.5:9b': 262_144,
   'qwen3.6:35b': 262_144,
   'qwen3.6:35b-a3b': 262_144,
+  // Official Ollama model config (`max_position_embeddings`), verified 2026-08-14.
+  'qwen3.8:27b-mlx': 262_144,
   'gemma3:4b': 131_072,
   'gemma4:12b': 262_144,
   'gemma4:12b-it-qat': 262_144,

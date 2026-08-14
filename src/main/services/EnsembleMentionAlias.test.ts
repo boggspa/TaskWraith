@@ -162,6 +162,12 @@ describe('generateModelAliases', () => {
     expect(aliases).toContain('qwen 3.5')
   })
 
+  it('ollama: supports the Qwen 3.8 MLX tag as a complete model alias', () => {
+    const aliases = generateModelAliases('ollama', 'qwen3.8:27b-mlx')
+    expect(aliases).toContain('qwen 3.8 27b mlx')
+    expect(aliases).toContain('qwen 3.8')
+  })
+
   it('ollama: supports Ornith as a branded mention alias', () => {
     const aliases = generateModelAliases('ollama', 'ornith:35b')
     expect(aliases).toContain('ornith 35b')

@@ -207,6 +207,7 @@ export function resolveOllamaThinkingLevel(
   const family = resolveOllamaModelFamily(modelId)
   return family === 'gpt_oss_20b' ||
     family === 'qwen3_6_35b' ||
+    family === 'qwen3_8_27b' ||
     // The 3.5 family reports `thinking` in `/api/show` capabilities for all
     // three dense sizes, and the family moves together — a size split
     // here would be an undocumented product difference, not a capability one.

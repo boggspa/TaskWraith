@@ -13,6 +13,7 @@ describe('ProviderInstallCommands', () => {
       'ollama run rnj-1',
       'ollama run glm-4.7-flash:q4_K_M',
       'ollama run north-mini-code-1.0:q4_K_M',
+      'ollama run qwen3.8:27b-mlx',
       'ollama run nemotron-3.5-lightning:30b-mlx',
       'ollama run muse-glimmer:30b-mlx',
       'ollama run llama3.2:3b',
@@ -28,6 +29,7 @@ describe('ProviderInstallCommands', () => {
     }
     expect(html).toContain('Ollama 0.15.0+')
     expect(html).toContain('Ollama 0.30.10+')
+    expect(html).toContain('Ollama 0.32.12+')
   })
 
   it('lists the official Mistral Vibe installer for the first-class Vibe seat', () => {

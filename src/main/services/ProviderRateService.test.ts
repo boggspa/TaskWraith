@@ -408,6 +408,7 @@ describe('BAKED_IN_RATES', () => {
         'ministral-3:3b',
         'deepseek-r1:1.5b',
         'qwen3.6:35b',
+        'qwen3.8:27b-mlx',
         'ornith',
         'ornith:latest',
         'ornith:9b',

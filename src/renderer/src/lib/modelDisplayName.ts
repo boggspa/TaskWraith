@@ -160,6 +160,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'qwen3.5:4b': 'Qwen 3.5 (4B Param)',
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
   'qwen3.6:35b': 'Qwen 3.6 (35B-A3B)',
+  'qwen3.8:27b-mlx': 'Qwen 3.8 (27B-MLX)',
   'gemma3:4b': 'Gemma 3 (4B Param)',
   'gemma4:12b': 'Gemma 4 (12B Param)',
   'gemma4:12b-it-qat': 'Gemma 4 (12B Param)',
@@ -375,6 +376,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('qwen3.6:35b-')) {
     return 'Qwen 3.6 (35B-A3B)'
+  }
+  if (provider === 'ollama' && key.startsWith('qwen3.8:27b-mlx-')) {
+    return 'Qwen 3.8 (27B-MLX)'
   }
   if (provider === 'ollama' && key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'

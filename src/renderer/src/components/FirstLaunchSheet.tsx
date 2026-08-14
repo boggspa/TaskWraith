@@ -410,7 +410,7 @@ export function FirstLaunchSheet({
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable
         ? 'Pick Local / Ollama in the provider picker, then choose an installed model in Settings or the composer.'
-        : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, and North Mini Code 1.0 needs 0.30.10+.',
+        : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, North Mini Code 1.0 needs 0.30.10+, and Qwen 3.8 needs 0.32.12+.',
       deemphasised: true,
       optional: true,
       localOnly: true,

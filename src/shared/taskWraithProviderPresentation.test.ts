@@ -67,6 +67,7 @@ describe('TaskWraith TUI provider presentation', () => {
       expect(taskWraithModelLabel('cursor', modelId)).toBe('Grok 4.6')
     }
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
+    expect(taskWraithModelLabel('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
     expect(taskWraithModelLabel('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')

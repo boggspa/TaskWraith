@@ -628,6 +628,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'qwen3.8:27b-mlx',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Alibaba Qwen 3.8 27B-MLX running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'gemma3:4b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,

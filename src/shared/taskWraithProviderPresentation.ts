@@ -140,6 +140,7 @@ function titleWords(value: string): string {
 function ollamaModelLabel(model: string): string | undefined {
   const key = model.trim().toLowerCase()
   const known: Array<[RegExp, string]> = [
+    [/^qwen3\.8:27b-mlx(?:-|$)/, 'Qwen 3.8 (27B-MLX)'],
     [/^qwen3\.6:35b(?:-|$)/, 'Qwen 3.6 (35B-A3B)'],
     [/^qwen3\.5:9b(?:-|$)/, 'Qwen 3.5 (9B Param)'],
     [/^qwen3\.5:4b(?:-|$)/, 'Qwen 3.5 (4B Param)'],

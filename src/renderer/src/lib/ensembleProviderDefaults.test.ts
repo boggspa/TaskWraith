@@ -849,6 +849,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'qwen3.5:4b',
       'qwen3.5:9b',
       'qwen3.6:35b',
+      'qwen3.8:27b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'ornith:9b',

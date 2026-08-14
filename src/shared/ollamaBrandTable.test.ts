@@ -8,6 +8,10 @@ describe('resolveHealthEntryPresentation', () => {
       displayProviderLabel: 'Alibaba',
       displayHueClass: 'alibaba'
     })
+    expect(resolveHealthEntryPresentation('ollama', 'qwen3.8:27b-mlx', 'Ollama')).toEqual({
+      displayProviderLabel: 'Alibaba',
+      displayHueClass: 'alibaba'
+    })
     expect(
       resolveHealthEntryPresentation('ollama', 'nemotron-3.5-lightning:30b-mlx', 'Ollama')
     ).toEqual({
@@ -105,6 +109,7 @@ describe('matchOllamaBrand', () => {
     expect(matchOllamaBrand('ministral-3:3b')?.providerClass).toBe('mistral')
     expect(matchOllamaBrand('granite4:3b')?.providerClass).toBe('ibm')
     expect(matchOllamaBrand('qwen3.5:2b')?.providerClass).toBe('alibaba')
+    expect(matchOllamaBrand('qwen3.8:27b-mlx')?.providerClass).toBe('alibaba')
     expect(matchOllamaBrand('deepseek-r1:1.5b')?.providerClass).toBe('deepseek')
     expect(matchOllamaBrand('nemotron-3-nano:4b')?.providerClass).toBe('nvidia')
     expect(matchOllamaBrand('nemotron-3.5-lightning:30b-mlx')).toMatchObject({

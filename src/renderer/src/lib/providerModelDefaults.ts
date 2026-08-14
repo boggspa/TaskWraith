@@ -365,6 +365,11 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking'
   },
   {
+    id: 'qwen3.8:27b-mlx',
+    label: 'Qwen 3.8 (27B-MLX)',
+    description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking'
+  },
+  {
     id: 'gemma3:4b',
     label: 'Gemma 3 (4B Param)',
     description: 'Google Gemma 3 4B via Ollama · 131k context · vision'

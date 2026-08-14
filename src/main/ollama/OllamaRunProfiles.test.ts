@@ -38,6 +38,9 @@ describe('OllamaRunProfiles', () => {
   it('uses larger context caps for known high-context local coding models', () => {
     expect(resolveOllamaRunProfile('ornith:35b', 'provider_parity').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('qwen3.6:35b', 'provider_parity').contextCapTokens).toBe(262_144)
+    expect(resolveOllamaRunProfile('qwen3.8:27b-mlx', 'provider_parity').contextCapTokens).toBe(
+      262_144
+    )
     // 2026-07-30: the working profiles' ceiling rose 131_072 -> 262_144, so a
     // 262K model is capped by ITS OWN window rather than by the profile.
     expect(resolveOllamaRunProfile('ornith:35b', 'verify_with_shell').contextCapTokens).toBe(262_144)
@@ -126,6 +129,9 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('qwen3.6:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
+    expect(
+      resolveOllamaThinkingLevel('qwen3.8:27b-mlx', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('minicpm-v4.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)

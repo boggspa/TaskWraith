@@ -98,6 +98,13 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines).toContain('checkpoint state')
   })
 
+  it('adds Qwen 3.8 multimodal thinking and verification guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('qwen3.8:27b-mlx').join(' ')
+    expect(lines).toContain('Qwen 3.8 27B')
+    expect(lines).toContain('configurable thinking')
+    expect(lines).toContain('explicit')
+  })
+
   it('gives the 3.5 4B tag its own lightweight profile, not the unknown fallback', () => {
     const lines = ollamaModelFamilyPromptLines('qwen3.5:4b').join(' ')
     expect(lines).toContain('Qwen 3.5 4B')

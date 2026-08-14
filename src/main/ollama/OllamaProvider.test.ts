@@ -3239,6 +3239,7 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
+    expect(humanizeOllamaModelId('qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
     expect(humanizeOllamaModelId('gemma4:12b')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('ornith')).toBe('Ornith 1.0 (9B Param)')

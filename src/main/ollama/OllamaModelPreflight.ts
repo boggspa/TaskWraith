@@ -7,6 +7,7 @@ export type OllamaModelFamily =
   | 'qwen3_5_4b'
   | 'qwen3_5_9b'
   | 'qwen3_6_35b'
+  | 'qwen3_8_27b'
   | 'gemma3_4b'
   | 'gemma4_12b'
   | 'ornith_9b'
@@ -106,6 +107,7 @@ export function resolveOllamaModelFamily(
     return 'north_mini_code_1_0'
   }
   if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) return 'llama3_2_3b'
+  if (key === 'qwen3.8:27b-mlx' || key.startsWith('qwen3.8:27b-mlx-')) return 'qwen3_8_27b'
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) return 'qwen3_6_35b'
   if (key === 'minicpm-v4.5:8b' || key.startsWith('minicpm-v4.5:8b-')) return 'minicpm_v45_8b'
   if (key === 'granite4:3b' || key.startsWith('granite4:3b-')) return 'granite4_3b'
@@ -225,6 +227,7 @@ export function resolveOllamaModelFamily(
   ) {
     return 'muse_glimmer_30b'
   }
+  if (meta.includes('qwen3.8') || meta.includes('qwen38')) return 'qwen3_8_27b'
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
   // `qwen35` covers all three dense 3.5 sizes (the 35B MoE tags report
   // `qwen35moe` and are caught above), so the family splits on parameter size.
@@ -322,7 +325,7 @@ export function estimateOllamaModelRamGb(input: {
   const params = input.parameterBillions
   if (params == null) return null
   const quant = String(input.quantizationLevel || '').toUpperCase()
-  const bytesPerParam = quant.includes('MXFP4')
+  const bytesPerParam = quant.includes('MXFP4') || quant.includes('NVFP4')
     ? 0.53125
     : quant.includes('Q8')
       ? 1.0
@@ -364,6 +367,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a strong local reasoning model with a large context window and native tool support.`,
         delegateHint:
           'For long implementation loops or release-critical edits, pair the run with an explicit verification pass before landing broad changes.'
+      }
+    case 'qwen3_8_27b':
+      return {
+        guidance: `${modelLabel} is a multimodal long-context agent model with native tools and configurable thinking.`,
+        delegateHint:
+          'Use it for scoped tool-driven work, preserve supplied thinking across turns, and close release-sensitive changes with explicit verification. This registry build requires Ollama 0.32.12 or newer.'
       }
     case 'qwen3_4b':
       return {
@@ -558,6 +567,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 9
     case 'qwen3_6_35b':
       return 36
+    case 'qwen3_8_27b':
+      return 27
     case 'minicpm_v45_8b':
       return 8
     case 'gemma3_4b':

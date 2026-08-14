@@ -171,6 +171,11 @@ describe('buildRemoteFirstLaunchState', () => {
           command: 'ollama run nemotron-3.5-lightning:30b-mlx'
         },
         {
+          id: 'qwen3.8:27b-mlx',
+          label: 'Qwen 3.8 (27B-MLX; Ollama 0.32.12+)',
+          command: 'ollama run qwen3.8:27b-mlx'
+        },
+        {
           id: 'muse-glimmer:30b-mlx',
           label: 'Muse Glimmer (30B-MLX)',
           command: 'ollama run muse-glimmer:30b-mlx'

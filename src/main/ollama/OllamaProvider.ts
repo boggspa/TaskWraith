@@ -763,6 +763,9 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) {
     return 'Qwen 3.6 (35B-A3B)'
   }
+  if (key === 'qwen3.8:27b-mlx' || key.startsWith('qwen3.8:27b-mlx-')) {
+    return 'Qwen 3.8 (27B-MLX)'
+  }
   if (key === 'gemma3:4b' || key.startsWith('gemma3:4b-')) {
     return 'Gemma 3 (4B Param)'
   }

@@ -178,6 +178,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
         maxWorkingMemoryChars: 7200
       })
     case 'qwen3_6_35b':
+    case 'qwen3_8_27b':
     case 'ornith_35b':
     case 'laguna_xs_2_1':
     case 'nemotron3_33b':

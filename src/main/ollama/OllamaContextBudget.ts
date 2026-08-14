@@ -183,6 +183,7 @@ export function resolveOllamaContextBudget(
     case 'rnj_1_8b':
       return midCodingBudget(trimmedModelId, measured)
     case 'qwen3_6_35b':
+    case 'qwen3_8_27b':
     case 'ornith_35b':
     case 'laguna_xs_2_1':
     case 'granite4_1_30b':

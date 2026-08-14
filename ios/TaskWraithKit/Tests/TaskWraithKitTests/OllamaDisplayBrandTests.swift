@@ -14,6 +14,11 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "qwen3.6:35b", modelLabel: "Qwen 3.6 (35B-A3B)")?
                 .providerClass == "alibaba")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "qwen3.8:27b-mlx")?.providerClass == "alibaba")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "qwen3.8:27b-mlx")?.modelLabel
+                == "Qwen 3.8 (27B-MLX)")
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "ornith:35b", modelLabel: "Ornith 1.0 (35B Param)")?
                 .providerLabel == "Deep Reinforce")
         #expect(

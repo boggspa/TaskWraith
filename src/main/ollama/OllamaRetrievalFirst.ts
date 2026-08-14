@@ -6,6 +6,7 @@ const RETRIEVAL_FIRST_FAMILIES = new Set([
   'qwen3_5_2b',
   'qwen3_5_4b',
   'qwen3_6_35b',
+  'qwen3_8_27b',
   'qwen3_4b',
   'minicpm_v45_8b',
   'gemma3_4b',

@@ -20,6 +20,7 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('ornith:9b')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('ornith:35b')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('qwen3.8:27b-mlx')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('laguna-xs-2.1:q8_0')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('gpt-oss:20b')).toBe(131_072)
     // A round 128k, not 128Ki — corrected against the daemon 2026-07-30.

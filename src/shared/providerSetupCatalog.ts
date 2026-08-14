@@ -102,6 +102,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)', command: 'ollama run qwen3.5:4b' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)', command: 'ollama run qwen3.5:9b' },
   { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)', command: 'ollama run qwen3.6:35b' },
+  {
+    id: 'qwen3.8:27b-mlx',
+    label: 'Qwen 3.8 (27B-MLX; Ollama 0.32.12+)',
+    command: 'ollama run qwen3.8:27b-mlx'
+  },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)', command: 'ollama run gemma3:4b' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },

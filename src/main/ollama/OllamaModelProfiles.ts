@@ -44,6 +44,12 @@ export function ollamaModelFamilyPromptLines(
         'Prefer native tool calls and keep each tool payload focused on the next concrete step.',
         'For release-critical edits, summarize verification gaps and ask for a second-provider review when useful.'
       ]
+    case 'qwen3_8_27b':
+      return [
+        'Model profile (Qwen 3.8 27B): multimodal long-context agent model with native tools and configurable thinking.',
+        'Search before reading unfamiliar files, keep tool payloads focused, and preserve supplied thinking across turns.',
+        'For release-critical edits, make verification gaps explicit before landing changes.'
+      ]
     case 'qwen3_4b':
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
@@ -493,6 +499,7 @@ export function ollamaTierAwareWorkflowHint(
   const capableScoutFamily =
     family === 'qwen3_5_9b' ||
     family === 'qwen3_6_35b' ||
+    family === 'qwen3_8_27b' ||
     family === 'qwen3_4b' ||
     family === 'qwen3_5_2b' ||
     family === 'minicpm_v45_8b' ||

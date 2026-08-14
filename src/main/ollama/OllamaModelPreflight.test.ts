@@ -14,6 +14,7 @@ describe('resolveOllamaModelFamily', () => {
   it('maps curated TaskWraith model tags to families', () => {
     expect(resolveOllamaModelFamily('qwen3.5:9b')).toBe('qwen3_5_9b')
     expect(resolveOllamaModelFamily('qwen3.6:35b')).toBe('qwen3_6_35b')
+    expect(resolveOllamaModelFamily('qwen3.8:27b-mlx')).toBe('qwen3_8_27b')
     expect(resolveOllamaModelFamily('qwen3:4b-instruct')).toBe('qwen3_4b')
     expect(resolveOllamaModelFamily('minicpm-v4.5:8b')).toBe('minicpm_v45_8b')
     expect(resolveOllamaModelFamily('gemma4:12b-it-q4_K_M')).toBe('gemma4_12b')
@@ -105,6 +106,14 @@ describe('resolveOllamaModelFamily', () => {
         show: { model_info: { 'general.basename': 'Nemotron-3.5-Lightning' } }
       })
     ).toBe('nemotron3_5_lightning_30b')
+    expect(
+      resolveOllamaModelFamily('custom-qwen:latest', {
+        id: 'custom-qwen:latest',
+        label: 'Custom Qwen',
+        family: 'qwen3.8',
+        parameterSize: '27B'
+      })
+    ).toBe('qwen3_8_27b')
     expect(
       resolveOllamaModelFamily('custom-legacy-llama:latest', {
         id: 'custom-legacy-llama:latest',
@@ -305,6 +314,9 @@ describe('estimateOllamaModelRamGb', () => {
       estimateOllamaModelRamGb({ parameterBillions: 20.9, quantizationLevel: 'MXFP4' })
     ).toBeLessThan(14)
     expect(
+      estimateOllamaModelRamGb({ parameterBillions: 27, quantizationLevel: 'NVFP4' })
+    ).toBeLessThan(19)
+    expect(
       estimateOllamaModelRamGb({ sizeBytes: 14_000_000_000, quantizationLevel: 'MXFP4' })
     ).toBe(17.5)
   })
@@ -356,6 +368,28 @@ describe('evaluateOllamaModelPreflight', () => {
     expect(result.delegateHint).toContain('confirm the needed Ollama tier')
     expect(result.delegateHint).not.toContain('Codex or Claude')
     expect(result.warnings[0].id).toBe('ollama-model-guidance')
+  })
+
+  it('surfaces Qwen 3.8 multimodal thinking guidance and its Ollama version floor', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'qwen3.8:27b-mlx',
+      modelLabel: 'Qwen 3.8 (27B-MLX)',
+      modelInfo: {
+        id: 'qwen3.8:27b-mlx',
+        label: 'Qwen 3.8 (27B-MLX)',
+        parameterSize: '27B',
+        quantizationLevel: 'NVFP4',
+        sizeBytes: 18_000_000_000,
+        capabilities: ['completion', 'vision', 'tools', 'thinking']
+      },
+      installedModelIds: ['qwen3.8:27b-mlx'],
+      totalMemoryBytes: 64 * GB
+    })
+
+    expect(result.family).toBe('qwen3_8_27b')
+    expect(result.guidance).toContain('multimodal long-context agent model')
+    expect(result.delegateHint).toContain('Ollama 0.32.12 or newer')
+    expect(result.checks.find((check) => check.id === 'tools')?.ok).toBe(true)
   })
 
   it('surfaces new large local model guidance without treating it as unknown', () => {

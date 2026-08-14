@@ -20,6 +20,16 @@ describe('mergeOllamaModelCatalog', () => {
     )
   })
 
+  it('keeps the curated Qwen 3.8 MLX label when live Ollama returns the raw tag', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'qwen3.8:27b-mlx', label: 'qwen3.8:27b-mlx' }
+    ])
+
+    expect(models.find((model) => model.id === 'qwen3.8:27b-mlx')?.label).toBe(
+      'Qwen 3.8 (27B-MLX)'
+    )
+  })
+
   it('keeps the curated Muse Glimmer MLX label when live Ollama returns the raw tag', () => {
     const models = mergeOllamaModelCatalog([
       { id: 'muse-glimmer:30b-mlx', label: 'muse-glimmer:30b-mlx' }

@@ -13,6 +13,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Alibaba',
       providerClass: 'alibaba'
     })
+    expect(resolveOllamaDisplayBrand('qwen3.8:27b-mlx')).toMatchObject({
+      providerLabel: 'Alibaba',
+      providerClass: 'alibaba',
+      modelLabel: 'Qwen 3.8 (27B-MLX)'
+    })
     expect(resolveOllamaDisplayBrand('ornith:35b', 'Ornith 1.0 (35B Param)')).toMatchObject({
       providerLabel: 'Deep Reinforce',
       providerClass: 'deep-reinforce'

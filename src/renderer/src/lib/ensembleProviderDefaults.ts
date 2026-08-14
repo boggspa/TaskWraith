@@ -315,6 +315,7 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
   { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)' },
+  { id: 'qwen3.8:27b-mlx', label: 'Qwen 3.8 (27B-MLX)' },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)' },

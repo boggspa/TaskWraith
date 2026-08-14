@@ -203,6 +203,10 @@ describe('buildModelContextLengthGroups', () => {
       label: 'Nemotron 3.5 Lightning (30B-MLX)',
       contextWindow: 262_144
     })
+    expect(byId.get('qwen3.8:27b-mlx')).toMatchObject({
+      label: 'Qwen 3.8 (27B-MLX)',
+      contextWindow: 262_144
+    })
     expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
   })
 
