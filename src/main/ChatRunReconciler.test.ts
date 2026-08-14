@@ -648,6 +648,32 @@ describe('reconcileOrphanedRunQueueJobs', () => {
     ).toEqual([])
   })
 
+  it('never mistakes another active ChatRun status for a terminal seal', () => {
+    const activeRunStatuses = [
+      'running',
+      'queued',
+      'starting',
+      'cancelling',
+      'steer_promoting',
+      'active',
+      'paused'
+    ]
+    const activeRuns = new Map(
+      activeRunStatuses.map((status, index) => [`run-active-${index}`, status])
+    )
+
+    expect(
+      reconcileOrphanedRunQueueJobs(
+        activeRunStatuses.map((_status, index) => ({
+          runId: `run-active-${index}`,
+          status: 'active',
+          chatId: 'chat-1'
+        })),
+        activeRuns
+      )
+    ).toEqual([])
+  })
+
   it('leaves already-terminal jobs alone', () => {
     expect(
       reconcileOrphanedRunQueueJobs(

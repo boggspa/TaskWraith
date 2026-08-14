@@ -407,7 +407,11 @@ export function reconcileOrphanedRunQueueJobs(
   for (const job of jobs) {
     if (!(ORPHANED_RUN_QUEUE_JOB_STATUSES as readonly string[]).includes(job.status)) continue
     const runStatus = terminalRunStatusById.get(job.runId)
-    if (!runStatus || runStatus === 'running') continue
+    // Treat the complete active-status vocabulary as live, not only `running`.
+    // A freshly dispatched ChatRun can remain `starting` while its queue job is
+    // already `active`; accepting that row as a terminal seal false-fails the
+    // job underneath a provider turn that is still making progress.
+    if (!runStatus || isActiveChatRunStatus(runStatus)) continue
     settlements.push({
       runId: job.runId,
       ...(job.chatId ? { chatId: job.chatId } : {}),
