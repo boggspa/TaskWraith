@@ -1,5 +1,5 @@
 import type { EnsembleRoundState, ProviderId } from '../../../main/store/types'
-import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
+import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLifecycle'
 
 /**
  * A subset of `AgentApprovalRequest` that the visibility helper actually
@@ -93,7 +93,7 @@ export function visibleRunningChatIds(
  */
 export function hasKnownInactiveEnsembleRound(chat: RunningChatRecordLike): boolean {
   const activeRound = chat.ensemble?.activeRound
-  return Boolean(activeRound && !isEnsembleRoundDispatchLive(activeRound))
+  return Boolean(activeRound && !isEnsembleRoundPresentationLive(activeRound))
 }
 
 /**
@@ -118,7 +118,7 @@ function isRunQueueJobSupersededByInactiveEnsembleRound(
   chat: RunningChatRecordLike
 ): boolean {
   const activeRound = chat.ensemble?.activeRound
-  if (!activeRound || isEnsembleRoundDispatchLive(activeRound)) return false
+  if (!activeRound || isEnsembleRoundPresentationLive(activeRound)) return false
   const roundEndMs = Date.parse(activeRound.endedAt || '')
   const jobMs = runQueueJobTimeMs(job)
   if (Number.isFinite(roundEndMs) && Number.isFinite(jobMs)) return jobMs <= roundEndMs

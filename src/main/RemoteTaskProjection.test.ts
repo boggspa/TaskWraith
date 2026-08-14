@@ -964,6 +964,48 @@ describe('RemoteTaskProjection', () => {
     expect(card.ensembleState?.queuedPrompts).toBeUndefined()
   })
 
+  it('keeps a between-turn ensemble transition running on remote surfaces', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        runs: [run({ runId: 'run-1', status: 'success', startedAt: ISO })],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            turnTransition: {
+              phase: 'settling-provider',
+              runtimeInstanceId: 'runtime-1',
+              sourceParticipantId: 'p1',
+              sourceRunId: 'run-1',
+              startedAt: ISO
+            },
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'codex',
+                role: 'Implementer',
+                order: 1,
+                status: 'answered',
+                runId: 'run-1',
+                endedAt: ISO
+              }
+            ]
+          }
+        }
+      })
+    )
+
+    expect(card.status).toBe('running')
+    expect(card.completionNotificationEligible).toBe(false)
+    expect(card.ensembleState?.status).toBe('running')
+  })
+
   it('does not duplicate the legacy queuedPrompt head when queuedPrompts has the full FIFO', () => {
     const activeRound = {
       roundId: 'round-1',

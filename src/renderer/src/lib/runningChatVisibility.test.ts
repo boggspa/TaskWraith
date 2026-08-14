@@ -274,6 +274,38 @@ describe('hasKnownInactiveEnsembleRound', () => {
       })
     ).toBe(false)
   })
+
+  it('returns false while the orchestrator owns a between-turn transition', () => {
+    expect(
+      hasKnownInactiveEnsembleRound({
+        appChatId: 'ensemble-chat',
+        ensemble: {
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'go',
+            startedAt: '2026-07-01T20:00:00.000Z',
+            turnTransition: {
+              phase: 'settling-provider',
+              runtimeInstanceId: 'runtime-1',
+              sourceParticipantId: 'p1',
+              sourceRunId: 'run-1',
+              startedAt: '2026-07-01T20:00:10.000Z'
+            },
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'codex',
+                role: 'Worker',
+                order: 0,
+                status: 'answered'
+              }
+            ]
+          }
+        }
+      })
+    ).toBe(false)
+  })
 })
 
 describe('isRunQueueJobVisibleForChat', () => {

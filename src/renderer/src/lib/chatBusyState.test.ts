@@ -157,6 +157,24 @@ describe('isEnsembleActiveRoundDispatchLive', () => {
     ).toBe(false)
   })
 
+  it('keeps composer controls attached while main owns a between-turn transition', () => {
+    const transitioning = round({
+      activeParticipantId: undefined,
+      participants: [{ ...round().participants[0], status: 'answered' }],
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'p1',
+        sourceRunId: 'run-1',
+        targetParticipantId: 'p1',
+        startedAt: '2026-06-30T00:01:00.000Z'
+      }
+    })
+
+    expect(isEnsembleActiveRoundDispatchLive(transitioning)).toBe(true)
+    expect(activeEnsembleRoundForComposer(transitioning)).toBe(transitioning)
+  })
+
   it('keeps terminal round mode and hop state out of idle composer controls', () => {
     const live = round({
       orchestrationMode: 'continuous',

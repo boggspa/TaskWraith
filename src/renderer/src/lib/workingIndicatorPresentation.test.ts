@@ -184,6 +184,48 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     })
   })
 
+  it('uses a neutral truthful presentation while the round is between participant turns', () => {
+    const chat = ensembleChat([
+      participant({ id: 'codex-builder', role: 'Builder' }),
+      participant({ id: 'claude-reviewer', provider: 'claude', role: 'Reviewer' })
+    ])
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'codex-builder',
+        sourceRunId: 'codex-run-1',
+        targetParticipantId: 'claude-reviewer',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      participants: chat.ensemble!.activeRound!.participants.map((item) =>
+        item.participantId === 'codex-builder'
+          ? {
+              ...item,
+              status: 'answered',
+              endedAt: '2026-07-01T00:00:01.000Z'
+            }
+          : item
+      )
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toEqual({
+      participantId: null,
+      runId: 'codex-run-1',
+      startedAt: '2026-07-01T00:00:01.000Z',
+      tokenAccumulatorBase: 0,
+      providerLabel: 'Ensemble',
+      provider: null,
+      providerClass: null,
+      roleLabel: null,
+      modelBadge: null,
+      activity: 'transitioning',
+      statusLabel: 'Handing off to Reviewer'
+    })
+  })
+
   it('falls back to the live lane participant when activeParticipantId is not set', () => {
     const chat = ensembleChat([
       participant({ id: 'claude-planner', provider: 'claude', role: 'Planner' }),

@@ -30,7 +30,7 @@ import { normalizeThreadTitle } from '../shared/threadTitles'
 import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../shared/themeAccentColor'
 import {
   LIVE_ENSEMBLE_LANE_STATUSES,
-  isEnsembleRoundDispatchLive
+  isEnsembleRoundPresentationLive
 } from '../shared/ensembleRoundLifecycle'
 import type {
   TaskWraithPluginActivatedMobileProjection,
@@ -1712,7 +1712,7 @@ function deriveTaskStatus(
   // it exactly once at end-of-round. While the round is still running, the
   // card never reports a terminal status off a single participant's run.
   const round = options.ensembleRound
-  if (isEnsembleRoundDispatchLive(round)) return 'running'
+  if (isEnsembleRoundPresentationLive(round)) return 'running'
   if (round?.status === 'completed' && combinedQueuedPrompts(round).length > 0) return 'running'
   if (options.hasQueuedFollowup) return 'running'
   if (!run) return 'idle'
@@ -2003,7 +2003,7 @@ function projectEnsembleRoundStatus(
 ): RemoteEnsembleState['status'] {
   if (!activeRound) return 'idle'
   if (activeRound.status !== 'running') return activeRound.status
-  return isEnsembleRoundDispatchLive(activeRound) ? 'running' : 'completed'
+  return isEnsembleRoundPresentationLive(activeRound) ? 'running' : 'completed'
 }
 
 function projectEnsembleParticipant(

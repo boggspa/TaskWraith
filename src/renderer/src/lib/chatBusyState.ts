@@ -1,7 +1,7 @@
 import type { ChatRecord, RunQueueJobStatus } from '../../../main/store/types'
-import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
+import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLifecycle'
 export {
-  isEnsembleRoundDispatchLive as isEnsembleActiveRoundDispatchLive
+  isEnsembleRoundPresentationLive as isEnsembleActiveRoundDispatchLive
 } from '../../../shared/ensembleRoundLifecycle'
 
 type EnsembleRoundState = NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
@@ -13,7 +13,7 @@ type EnsembleRoundState = NonNullable<NonNullable<ChatRecord['ensemble']>['activ
 export function activeEnsembleRoundForComposer(
   round: EnsembleRoundState | null | undefined
 ): EnsembleRoundState | undefined {
-  if (!round || !isEnsembleRoundDispatchLive(round)) return undefined
+  if (!round || !isEnsembleRoundPresentationLive(round)) return undefined
   return round
 }
 

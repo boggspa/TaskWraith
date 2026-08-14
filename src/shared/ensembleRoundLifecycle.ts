@@ -50,3 +50,17 @@ export function isEnsembleRoundDispatchLive(
     LIVE_ENSEMBLE_PARTICIPANT_STATUSES.has(participant.status)
   )
 }
+
+/**
+ * Renderer/interaction liveness includes the main-owned interval between two
+ * foreground seats. Keep this separate from dispatch-evidence liveness: restart
+ * recovery must still be able to identify a persisted running snapshot whose
+ * in-memory orchestrator no longer exists.
+ */
+export function isEnsembleRoundPresentationLive(
+  round: EnsembleRoundState | null | undefined
+): boolean {
+  if (round?.status !== 'running') return false
+  if (round.turnTransition) return true
+  return isEnsembleRoundDispatchLive(round)
+}

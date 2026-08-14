@@ -428,6 +428,47 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('message-working-sparkles')
   })
 
+  it('renders a neutral handoff status without claiming that either seat is working', () => {
+    const chat = activeEnsembleChat(ensembleParticipant())
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'codex-builder',
+        sourceRunId: 'codex-run-1',
+        targetParticipantId: 'codex-builder',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      participants: chat.ensemble!.activeRound!.participants.map((item) => ({
+        ...item,
+        status: 'answered',
+        endedAt: '2026-07-01T00:00:01.000Z'
+      }))
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('Ensemble')
+    expect(html).toContain('Handing off to Builder')
+    expect(html).not.toContain('Role: Builder')
+    expect(html).not.toContain('message-working-telemetry')
+  })
+
   it('uses Ollama display-brand label and hue for an active Ensemble local model', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

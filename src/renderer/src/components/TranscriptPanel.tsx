@@ -1246,6 +1246,7 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 }
 
 function workingStatusLabel(presentation: WorkingIndicatorPresentation): string {
+  if (presentation.statusLabel) return presentation.statusLabel
   const activity =
     presentation.activity === 'compacting' ? 'compacting context' : 'working'
   return presentation.roleLabel
@@ -1254,6 +1255,7 @@ function workingStatusLabel(presentation: WorkingIndicatorPresentation): string 
 }
 
 function workingIndicatorLabel(presentation: WorkingIndicatorPresentation): string {
+  if (presentation.statusLabel) return presentation.statusLabel
   return presentation.activity === 'compacting' ? 'Compacting' : 'Working'
 }
 
@@ -1268,6 +1270,7 @@ function workingIndicatorKey(
     presentation.providerClass || presentation.provider || 'agent',
     presentation.roleLabel || '',
     presentation.modelBadge || '',
+    presentation.statusLabel || '',
     index
   ].join(':')
 }
@@ -2399,11 +2402,14 @@ export const TranscriptPanel = memo(
                 providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
                 roleLabel: workingRoleLabel,
                 modelBadge: workingModelBadge,
-                activity: contextCompactionProgress.some(
-                  (event) => event.status === 'started' && !event.participantId
-                )
-                  ? 'compacting'
-                  : 'working'
+                statusLabel: ensembleWorkingPresentation?.statusLabel,
+                activity:
+                  ensembleWorkingPresentation?.activity ||
+                  (contextCompactionProgress.some(
+                    (event) => event.status === 'started' && !event.participantId
+                  )
+                    ? 'compacting'
+                    : 'working')
               }
             ],
       [
@@ -2411,6 +2417,8 @@ export const TranscriptPanel = memo(
         currentRun?.runId,
         currentRun?.startedAt,
         currentProviderLabel,
+        ensembleWorkingPresentation?.activity,
+        ensembleWorkingPresentation?.statusLabel,
         ensembleWorkingPresentations,
         workingModelBadge,
         workingProvider,
@@ -5995,26 +6003,28 @@ export const TranscriptPanel = memo(
                           : undefined
                       }
                       telemetry={
-                        <MemoizedParticipantWorkingTelemetry
-                          key={
-                            presentation.runId ||
-                            presentation.startedAt ||
-                            presentation.participantId ||
-                            `working-${index}`
-                          }
-                          runId={presentation.runId}
-                          startedAt={presentation.startedAt}
-                          tokenAccumulatorBase={presentation.tokenAccumulatorBase}
-                          fallbackTargetTokens={
-                            tokenTarget?.targetTokens ?? presentation.tokenAccumulatorBase
-                          }
-                          estimatedCurrentTurnTokens={
-                            tokenTarget?.estimatedCurrentTurnTokens ?? 0
-                          }
-                          estimatedToolResultTokens={
-                            tokenTarget?.estimatedToolResultTokens ?? 0
-                          }
-                        />
+                        presentation.activity === 'transitioning' ? undefined : (
+                          <MemoizedParticipantWorkingTelemetry
+                            key={
+                              presentation.runId ||
+                              presentation.startedAt ||
+                              presentation.participantId ||
+                              `working-${index}`
+                            }
+                            runId={presentation.runId}
+                            startedAt={presentation.startedAt}
+                            tokenAccumulatorBase={presentation.tokenAccumulatorBase}
+                            fallbackTargetTokens={
+                              tokenTarget?.targetTokens ?? presentation.tokenAccumulatorBase
+                            }
+                            estimatedCurrentTurnTokens={
+                              tokenTarget?.estimatedCurrentTurnTokens ?? 0
+                            }
+                            estimatedToolResultTokens={
+                              tokenTarget?.estimatedToolResultTokens ?? 0
+                            }
+                          />
+                        )
                       }
                     />
                     {presentation.activity === 'working' && (

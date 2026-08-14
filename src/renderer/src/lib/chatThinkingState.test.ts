@@ -209,6 +209,46 @@ describe('deriveFocusedTranscriptIsThinking', () => {
         updatedAt: '2026-06-09T00:02:00.000Z'
       }
     })
+    expect(
+      chatHasInFlightThinkingWork({ chat, runningChatIds: new Set() })
+    ).toBe(true)
+    expect(deriveFocusedTranscriptIsThinking({ rendererIsThinking: true, chat })).toBe(true)
+  })
+
+  it('keeps Working visible while an ensemble round is between turns', () => {
+    const chat = baseChat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 6,
+        participants: [],
+        activeRound: {
+          roundId: 'round-2',
+          status: 'running',
+          prompt: 'continue',
+          startedAt: '2026-06-09T00:02:00.000Z',
+          turnTransition: {
+            phase: 'settling-provider',
+            runtimeInstanceId: 'runtime-1',
+            sourceParticipantId: 'p1',
+            sourceRunId: 'run-1',
+            startedAt: '2026-06-09T00:02:10.000Z'
+          },
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'codex',
+              role: 'Worker',
+              order: 0,
+              status: 'answered'
+            }
+          ]
+        },
+        updatedAt: '2026-06-09T00:02:10.000Z'
+      }
+    })
+
+    expect(chatHasInFlightThinkingWork({ chat, runningChatIds: new Set() })).toBe(true)
     expect(deriveFocusedTranscriptIsThinking({ rendererIsThinking: true, chat })).toBe(true)
   })
 

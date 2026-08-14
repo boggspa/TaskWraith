@@ -18,7 +18,7 @@ import {
 } from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
 
-export type WorkingIndicatorActivity = 'working' | 'compacting'
+export type WorkingIndicatorActivity = 'working' | 'compacting' | 'transitioning'
 
 export type WorkingIndicatorPresentation = {
   /** Stable seat identity; null only for a non-Ensemble fallback row. */
@@ -35,6 +35,8 @@ export type WorkingIndicatorPresentation = {
   roleLabel: string | null
   modelBadge: string | null
   activity: WorkingIndicatorActivity
+  /** Truthful round-level copy used when no participant owns the interval. */
+  statusLabel?: string
 }
 
 export type WorkingIndicatorProviderPresentation = {
@@ -125,8 +127,47 @@ function activeParticipantId(chat: ChatRecord): string | undefined {
   )
   if (activeLane?.participantId) return activeLane.participantId
 
+  // An idle participant is eligible for a future turn, not the owner of the
+  // adapter-settlement interval. Prefer the explicit round transition instead
+  // of painting that not-yet-seeded seat as Working.
+  if (round.turnTransition) return undefined
+
   return round.participants.find((participant) => isLiveRoundParticipantStatus(participant.status))
     ?.participantId
+}
+
+function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentation | null {
+  const round = chat.ensemble?.activeRound
+  const transition = round?.turnTransition
+  if (!round || round.status !== 'running' || !transition) return null
+  const target = transition.targetParticipantId
+    ? chat.ensemble?.participants.find(
+        (participant) => participant.id === transition.targetParticipantId
+      ) ||
+      round.participants.find(
+        (participant) => participant.participantId === transition.targetParticipantId
+      )
+    : undefined
+  const targetLabel = target?.role?.trim()
+  const statusLabel =
+    transition.phase === 'handoff' && targetLabel
+      ? `Handing off to ${targetLabel}`
+      : transition.phase === 'handoff'
+        ? 'Preparing next turn'
+        : 'Finalizing turn'
+  return {
+    participantId: null,
+    runId: transition.sourceRunId,
+    startedAt: transition.startedAt,
+    tokenAccumulatorBase: 0,
+    providerLabel: 'Ensemble',
+    provider: null,
+    providerClass: null,
+    roleLabel: null,
+    modelBadge: null,
+    activity: 'transitioning',
+    statusLabel
+  }
 }
 
 function compactingParticipantIds(
@@ -295,7 +336,7 @@ export function deriveActiveEnsembleWorkingPresentation(
   if (chat?.chatKind !== 'ensemble') return null
   const participantId =
     activeParticipantId(chat) || compactingParticipantIds(chat, contextCompactionProgress)[0]
-  if (!participantId) return null
+  if (!participantId) return turnTransitionPresentation(chat)
   return workingPresentationForParticipant(chat, participantId, contextCompactionProgress)
 }
 

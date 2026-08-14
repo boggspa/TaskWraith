@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleRoundState } from '../main/store/types'
-import { isEnsembleRoundDispatchLive } from './ensembleRoundLifecycle'
+import {
+  isEnsembleRoundDispatchLive,
+  isEnsembleRoundPresentationLive
+} from './ensembleRoundLifecycle'
 
 function makeRound(patch: Partial<EnsembleRoundState> = {}): EnsembleRoundState {
   return {
@@ -63,5 +66,47 @@ describe('isEnsembleRoundDispatchLive', () => {
         })
       )
     ).toBe(true)
+  })
+
+  it('keeps a between-turn transition visible without inventing participant dispatch evidence', () => {
+    const round = makeRound({
+      activeParticipantId: undefined,
+      participants: [
+        {
+          participantId: 'p1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 0,
+          status: 'answered',
+          endedAt: '2026-07-01T00:01:00.000Z'
+        }
+      ],
+      turnTransition: {
+        phase: 'settling-provider',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'p1',
+        sourceRunId: 'run-1',
+        startedAt: '2026-07-01T00:01:00.000Z'
+      }
+    })
+
+    expect(isEnsembleRoundDispatchLive(round)).toBe(false)
+    expect(isEnsembleRoundPresentationLive(round)).toBe(true)
+  })
+
+  it('never lets a transition revive a terminal round', () => {
+    const round = makeRound({
+      status: 'completed',
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'p1',
+        sourceRunId: 'run-1',
+        targetParticipantId: 'p2',
+        startedAt: '2026-07-01T00:01:00.000Z'
+      }
+    })
+
+    expect(isEnsembleRoundPresentationLive(round)).toBe(false)
   })
 })
