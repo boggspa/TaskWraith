@@ -148,6 +148,7 @@ import type {
   ProjectWorkProfile
 } from '../../shared/projects'
 import { createDefaultEnsembleConfig, withMinimumEnsembleRoster } from '../EnsembleDefaults'
+import { discardForeignEnsembleTurnTransition } from '../EnsembleRuntimeIdentity'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
@@ -5277,17 +5278,20 @@ export class AppStore {
             })
             const activeRound = stored?.activeRound
               ? (() => {
+                  const runtimeOwnedRound = discardForeignEnsembleTurnTransition(
+                    stored.activeRound
+                  )
                   const roundAuthority = normalizeEnsembleAuthority({
-                    participants: stored.activeRound.participants.map((participant) => ({
+                    participants: runtimeOwnedRound.participants.map((participant) => ({
                       id: participant.participantId,
                       order: participant.order
                     })),
-                    bossmanParticipantId: stored.activeRound.bossmanParticipantId,
-                    captainParticipantIds: stored.activeRound.captainParticipantIds,
-                    secondInCommandParticipantId: stored.activeRound.secondInCommandParticipantId
+                    bossmanParticipantId: runtimeOwnedRound.bossmanParticipantId,
+                    captainParticipantIds: runtimeOwnedRound.captainParticipantIds,
+                    secondInCommandParticipantId: runtimeOwnedRound.secondInCommandParticipantId
                   })
                   return {
-                    ...stored.activeRound,
+                    ...runtimeOwnedRound,
                     bossmanParticipantId: roundAuthority.bossmanParticipantId,
                     captainParticipantIds: roundAuthority.captainParticipantIds,
                     secondInCommandParticipantId: roundAuthority.secondInCommandParticipantId

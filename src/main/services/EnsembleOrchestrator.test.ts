@@ -19035,6 +19035,113 @@ Next action:
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 
+  it('keeps the round owned and projects its handoff while a terminal provider dispatch settles', async () => {
+    const firstForegroundDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
+    const secondForegroundDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
+    let foregroundDispatchCount = 0
+    const harness = makeHarness({
+      dispatch: async (payload, _event, observer) => {
+        observer?.onAdapterInvoked?.({
+          provider: payload.provider,
+          appRunId: payload.appRunId || '',
+          ...(payload.workspace ? { effectiveWorkspacePath: payload.workspace } : {})
+        })
+        if (!payload.ensembleRun?.laneId) {
+          const dispatchIndex = foregroundDispatchCount++
+          if (dispatchIndex === 0) return firstForegroundDispatch.promise
+          if (dispatchIndex === 1) return secondForegroundDispatch.promise
+        }
+        return { dispatched: true, appRunId: payload.appRunId || '' }
+      }
+    })
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Lead',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'finisher',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Finisher',
+        instructions: 'Finish.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+
+    const started = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review, then hand off to the finisher.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const leadRunId = harness.dispatched[0].appRunId!
+    completeDispatchedRun(harness, 0)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.chat.ensemble?.activeRound?.turnTransition).toMatchObject({
+      phase: 'settling-provider',
+      runtimeInstanceId: expect.any(String),
+      sourceParticipantId: 'lead',
+      sourceRunId: leadRunId
+    })
+    expect(harness.dispatched).toHaveLength(1)
+
+    firstForegroundDispatch.resolve({ dispatched: true, appRunId: leadRunId })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const reviewerRunId = harness.dispatched[1].appRunId!
+
+    expectYielded(
+      harness.orchestrator.markYielded(
+        reviewerRunId,
+        'The finisher should take the next turn.',
+        'finisher'
+      )
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(harness.chat.ensemble?.activeRound?.activeParticipantId).toBeUndefined()
+    expect(harness.chat.ensemble?.activeRound?.turnTransition).toMatchObject({
+      phase: 'handoff',
+      runtimeInstanceId: expect.any(String),
+      sourceParticipantId: 'reviewer',
+      sourceRunId: reviewerRunId,
+      targetParticipantId: 'finisher'
+    })
+    expect(harness.dispatched).toHaveLength(2)
+
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Include this while handing off.',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(queued).toMatchObject({ status: 'queued', roundId: started.roundId })
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(started.roundId)
+
+    secondForegroundDispatch.resolve({ dispatched: true, appRunId: reviewerRunId })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('finisher')
+    expect(harness.chat.ensemble?.activeRound?.activeParticipantId).toBe('finisher')
+    expect(harness.chat.ensemble?.activeRound?.turnTransition).toBeUndefined()
+
+    await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
+  })
+
   it('re-summons Boss when its provider terminalizes before foreground dispatch returns', async () => {
     const firstForegroundDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
     let foregroundDispatchCount = 0

@@ -1219,6 +1219,22 @@ export interface EnsembleQueuedPromptState {
   externalPathGrants?: ExternalPathGrant[]
 }
 
+/**
+ * Main-owned projection for the interval after one foreground seat has
+ * terminalized but before the provider adapter has settled and the next seat
+ * can be seeded. It is persisted with the round so every renderer surface sees
+ * the same truthful state, but the runtime instance id prevents a projection
+ * from surviving an app restart after its owning orchestrator has disappeared.
+ */
+export interface EnsembleRoundTurnTransition {
+  phase: 'settling-provider' | 'handoff'
+  runtimeInstanceId: string
+  sourceParticipantId: string
+  sourceRunId: string
+  targetParticipantId?: string
+  startedAt: string
+}
+
 export interface EnsembleRoundState {
   roundId: string
   status: 'running' | 'completed' | 'cancelled' | 'failed'
@@ -1226,6 +1242,8 @@ export interface EnsembleRoundState {
   startedAt: string
   endedAt?: string
   activeParticipantId?: string
+  /** Round-level ownership while no participant truthfully owns execution. */
+  turnTransition?: EnsembleRoundTurnTransition
   /** User-addressed single-seat scope captured for a targeted/DM round. */
   dmTargetParticipantId?: string
   orchestrationMode?: EnsembleOrchestrationMode

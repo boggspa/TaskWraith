@@ -48,6 +48,7 @@ import {
   configuredEnsembleCaptainParticipantIds,
   resolveActingCaptainParticipantId
 } from '../EnsembleAuthorityResolution'
+import { currentEnsembleRuntimeInstanceId } from '../EnsembleRuntimeIdentity'
 import type {
   ActiveGoal,
   ActiveGoalStatus,
@@ -4017,6 +4018,72 @@ export class EnsembleOrchestrator {
     )
   }
 
+  private turnTransitionForFinalizingRun(
+    run: ActiveParticipantRun,
+    startedAt: string,
+    currentRound: EnsembleRoundState | undefined
+  ): EnsembleRoundState['turnTransition'] {
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (
+      !runtime ||
+      runtime.roundId !== run.roundId ||
+      runtime.activeRunId !== run.runId
+    ) {
+      return currentRound?.turnTransition
+    }
+    if (!this.ownsRunningRound(runtime)) return undefined
+
+    const targetParticipantId =
+      runtime.yieldRouting?.kind === 'queue'
+        ? runtime.yieldRouting.targetParticipantId
+        : undefined
+    const existing = currentRound?.turnTransition
+    if (existing?.sourceRunId === run.runId) {
+      return targetParticipantId && existing.targetParticipantId !== targetParticipantId
+        ? {
+            ...existing,
+            phase: 'handoff',
+            targetParticipantId
+          }
+        : existing
+    }
+    return {
+      phase: targetParticipantId ? 'handoff' : 'settling-provider',
+      runtimeInstanceId: currentEnsembleRuntimeInstanceId(),
+      sourceParticipantId: run.participant.id,
+      sourceRunId: run.runId,
+      ...(targetParticipantId ? { targetParticipantId } : {}),
+      startedAt
+    }
+  }
+
+  private updateTurnTransitionTarget(
+    runtime: ActiveRoundRuntime,
+    targetParticipantId: string
+  ): void {
+    if (!this.ownsRunningRound(runtime)) return
+    const transition = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound?.turnTransition
+    if (
+      !transition ||
+      (transition.phase === 'handoff' &&
+        transition.targetParticipantId === targetParticipantId)
+    ) {
+      return
+    }
+    this.updateChatRound(runtime.chatId, (round) =>
+      round?.roundId === runtime.roundId && round.turnTransition
+        ? {
+            ...round,
+            turnTransition: {
+              ...round.turnTransition,
+              phase: 'handoff',
+              targetParticipantId
+            }
+          }
+        : round
+    )
+  }
+
   private async requestExactRunCancellation(run: ActiveParticipantRun): Promise<boolean> {
     const cancelled = await this.deps.cancelRun(run.participant.provider, run.runId)
     if (cancelled === true) run.transportCancellationConfirmed = true
@@ -5290,6 +5357,7 @@ export class EnsembleOrchestrator {
               queuedPrompts: [],
               queuedPromptEntries: [],
               activeParticipantId: undefined,
+              turnTransition: undefined,
               endedAt,
               participants: current.participants.map((participant) =>
                 participant.status === 'idle' || participant.status === 'running'
@@ -5367,6 +5435,7 @@ export class EnsembleOrchestrator {
             queuedPrompts: [],
             queuedPromptEntries: [],
             activeParticipantId: undefined,
+            turnTransition: undefined,
             endedAt,
             participants: round.participants.map((participant) =>
               participant.status === 'idle' || participant.status === 'running'
@@ -15509,6 +15578,7 @@ export class EnsembleOrchestrator {
       const resumeWakeup =
         runtime.resumeWakeup?.participantId === participant.id ? runtime.resumeWakeup : undefined
       if (resumeWakeup) runtime.resumeWakeup = undefined
+      this.updateTurnTransitionTarget(runtime, participant.id)
       // Wave 3 — a seat compaction in flight (post-round auto or manual) may be
       // about to REPLACE this participant's provider session; dispatching
       // against the old one would strand the turn in an abandoned session.
@@ -19809,18 +19879,30 @@ export class EnsembleOrchestrator {
       }
       return next
     })
+    const participantRound = updateRoundParticipant(
+      chat.ensemble.activeRound,
+      run.participant.id,
+      {
+        status: visibleStatus,
+        runId: silentMaintenanceRecovery ? undefined : run.runId,
+        ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
+        ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
+      },
+      { setActive: !run.laneId }
+    )
+    const transitionRound =
+      participantRound && effectiveFinal && !run.laneId && !silentMaintenanceRecovery
+        ? {
+            ...participantRound,
+            turnTransition: this.turnTransitionForFinalizingRun(
+              run,
+              timestamp,
+              participantRound
+            )
+          }
+        : participantRound
     const activeRound = updateLaneInRound(
-      updateRoundParticipant(
-        chat.ensemble.activeRound,
-        run.participant.id,
-        {
-          status: visibleStatus,
-          runId: silentMaintenanceRecovery ? undefined : run.runId,
-          ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
-          ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
-        },
-        { setActive: !run.laneId }
-      ),
+      transitionRound,
       run.laneId,
       visibleStatus,
       timestamp,
@@ -19977,6 +20059,7 @@ export class EnsembleOrchestrator {
       ...activeRound,
       status,
       activeParticipantId: undefined,
+      turnTransition: undefined,
       ...persistedQueueFields,
       endedAt,
       participants: activeRound.participants.map((participant) =>
@@ -21331,6 +21414,8 @@ function updateRoundParticipant(
         : round.activeParticipantId === participantId
           ? undefined
           : round.activeParticipantId,
+    turnTransition:
+      setActive && partial.status === 'running' ? undefined : round.turnTransition,
     participants: round.participants.map((participant) =>
       participant.participantId === participantId ? { ...participant, ...partial } : participant
     )
