@@ -222,6 +222,23 @@ describe('packaged macOS signing posture', () => {
   })
 })
 
+describe('notarized macOS production-signing gate', () => {
+  // The packaged smoke defaults to reporting an ad-hoc identity without failing
+  // so local unsigned builds remain usable. The real notarized build must opt
+  // into the hard production posture at the exact smoke invocation; otherwise
+  // every parser assertion above is dormant in the release path.
+  it('activates production signing checks for the notarized packaged smoke', () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')
+    ) as { scripts?: Record<string, string> }
+    const notarizedBuild = packageJson.scripts?.['build:mac:notarized'] ?? ''
+
+    expect(notarizedBuild).toMatch(
+      /(?:^|&&\s*)TASKWRAITH_REQUIRE_PRODUCTION_SIGNING=1 node scripts\/smoke-packaged-electron\.cjs dist(?:\s*&&|$)/
+    )
+  })
+})
+
 describe('packaged macOS signature coverage', () => {
   const source = fs.readFileSync(
     path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
