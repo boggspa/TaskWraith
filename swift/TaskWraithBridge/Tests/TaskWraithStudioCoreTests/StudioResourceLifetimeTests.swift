@@ -127,6 +127,75 @@ final class StudioResourceLifetimeTests: XCTestCase {
         XCTAssertEqual(renderer.diagnostics.retainedFrameCount, 0)
     }
 
+    func testSourceCacheIOSurfacesAreBoundedAndClearedOnDetach() throws {
+        let renderer = try makeRenderer()
+        let source = try StudioTestMedia.makeFrameSource(
+            lumaLevels: [32, 48, 64, 80, 96, 112, 128, 144],
+            device: renderer.device
+        )
+        renderer.attach(source: source)
+
+        for frame in 0..<8 {
+            _ = try source.textures(forFrameIndex: Int64(frame))
+        }
+
+        XCTAssertLessThanOrEqual(
+            source.liveIOSurfaceIDs.count,
+            source.reorderCacheCapacity,
+            "eviction must cap the source's live IOSurface set"
+        )
+        XCTAssertEqual(renderer.liveIOSurfaceIDs, source.liveIOSurfaceIDs)
+        XCTAssertEqual(
+            renderer.liveIOSurfaceCapacity,
+            source.reorderCacheCapacity + StudioVideoFrameRenderer.inFlightRetentionDepth
+        )
+
+        renderer.detachSource()
+
+        XCTAssertTrue(renderer.liveIOSurfaceIDs.isEmpty)
+        XCTAssertEqual(renderer.liveIOSurfaceCapacity, 0)
+    }
+
+    func testViewerUnionsPrimaryProposedAndInFlightIOSurfaceSets() throws {
+        let renderer = try makeRenderer()
+        let primary = try StudioTestMedia.makeFrameSource(
+            lumaLevels: [32, 64],
+            device: renderer.device
+        )
+        let proposed = try StudioTestMedia.makeFrameSource(
+            lumaLevels: [160, 224],
+            device: renderer.device
+        )
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+
+        renderer.attach(source: primary)
+        renderer.attachProposed(
+            source: proposed,
+            assetId: "proposed",
+            timebase: timebase
+        )
+        renderer.videoRenderer.retain(try primary.textures(forFrameIndex: 0))
+        _ = try proposed.textures(forFrameIndex: 0)
+
+        let expected = primary.liveIOSurfaceIDs
+            .union(proposed.liveIOSurfaceIDs)
+            .union(renderer.videoRenderer.liveIOSurfaceIDs)
+        XCTAssertEqual(renderer.liveIOSurfaceIDs, expected)
+        XCTAssertEqual(
+            renderer.liveIOSurfaceCapacity,
+            primary.reorderCacheCapacity
+                + proposed.reorderCacheCapacity
+                + StudioVideoFrameRenderer.inFlightRetentionDepth
+        )
+
+        renderer.detachProposedSource()
+
+        XCTAssertEqual(renderer.liveIOSurfaceIDs, primary.liveIOSurfaceIDs)
+        renderer.detachSource()
+        XCTAssertTrue(renderer.liveIOSurfaceIDs.isEmpty)
+        XCTAssertEqual(renderer.liveIOSurfaceCapacity, 0)
+    }
+
     // MARK: - Defect 2: hardware diagnostic must be measured
 
     /// `.unknown` is the value the decoder holds when nothing has queried the

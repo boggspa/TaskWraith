@@ -195,6 +195,21 @@ public final class StudioViewerRenderer {
         return sources.filter { seen.insert(ObjectIdentifier($0)).inserted }
     }
 
+    /// Exact IOSurface identities owned by every resident source and the present ring.
+    public var liveIOSurfaceIDs: Set<UInt32> {
+        allSources.reduce(into: videoRenderer.liveIOSurfaceIDs) { ids, source in
+            ids.formUnion(source.liveIOSurfaceIDs)
+        }
+    }
+
+    /// Bound derived from the actual resident source set, not a universal cache depth.
+    public var liveIOSurfaceCapacity: Int {
+        guard !allSources.isEmpty else { return 0 }
+        return allSources.reduce(videoRenderer.liveIOSurfaceCapacity) {
+            $0 + $1.reorderCacheCapacity
+        }
+    }
+
     /// AGGREGATED ACROSS EVERY RESIDENT SOURCE, and that is not cosmetic. These
     /// read `source?` alone until this commit, which was correct while at most
     /// two sources existed and one was the A/B partner. A sequence holds N, so a

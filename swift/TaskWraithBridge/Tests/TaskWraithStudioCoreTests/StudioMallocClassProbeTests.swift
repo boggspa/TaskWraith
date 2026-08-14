@@ -9,6 +9,52 @@ import XCTest
 /// shared XCTest process makes later page-metric controls order-dependent.
 final class StudioMallocClassProbeTests: XCTestCase {
 
+    private func allocateTouchedMegabytes(_ count: Int) -> [UnsafeMutableRawPointer] {
+        var pointers: [UnsafeMutableRawPointer] = []
+        pointers.reserveCapacity(count)
+        for _ in 0..<count {
+            let bytes = 1_048_576
+            let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes, alignment: 8)
+            memset(pointer, 1, bytes)
+            pointers.append(pointer)
+        }
+        return pointers
+    }
+
+    private func deallocate(_ pointers: inout [UnsafeMutableRawPointer]) {
+        for pointer in pointers { pointer.deallocate() }
+        pointers.removeAll()
+    }
+
+    /// The real malloc probe must distinguish retained allocator growth after
+    /// warm-pool reuse. No footprint or RSS assertion belongs here: allocator
+    /// page reuse is the condition that made those controls non-load-bearing.
+    func testLiveMallocProbeDetectsRetainedGrowthAfterAllocatorChurn() throws {
+        var churn = allocateTouchedMegabytes(128)
+        deallocate(&churn)
+
+        let baseline = try XCTUnwrap(StudioMemoryProbe.read())
+        var retained = allocateTouchedMegabytes(128)
+        defer { deallocate(&retained) }
+        let afterRetention = try XCTUnwrap(StudioMemoryProbe.read())
+
+        let trend = StudioMemoryTrend(
+            samples: [baseline, baseline, afterRetention],
+            liveIOSurfaceIDSamples: [[], [], []]
+        )
+
+        XCTAssertGreaterThan(
+            trend.mallocGrowthMegabytes,
+            100,
+            "the live malloc probe missed 128MB retained after allocator churn: "
+                + "\(trend.mallocGrowthMegabytes)MB"
+        )
+        XCTAssertFalse(
+            trend.isStable(withinGrowthBytes: 32 * 1_048_576, surfaceCountLimit: 6),
+            "the integrated verdict called live retained malloc stable: \(trend.summaryText)"
+        )
+    }
+
     /// This confirms the process probe is live without allocating or warming the
     /// shared malloc pool. Growth behaviour belongs to deterministic trend
     /// controls below, where suite order cannot alter the observation.

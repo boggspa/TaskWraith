@@ -70,6 +70,7 @@ final class StudioStressTests: XCTestCase {
         _ trend: StudioMemoryTrend,
         retained: Int,
         retainedBound: Int,
+        surfaceCountBound: Int,
         growthBudgetMB: Double,
         label: String
     ) {
@@ -77,7 +78,7 @@ final class StudioStressTests: XCTestCase {
         XCTAssertTrue(
             trend.isStable(
                 withinGrowthBytes: growthBudgetBytes,
-                surfaceCountLimit: retainedBound
+                surfaceCountLimit: surfaceCountBound
             ),
             "\(label): allocation-class stability verdict failed — \(trend.summaryText)"
         )
@@ -102,8 +103,8 @@ final class StudioStressTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             trend.peakLiveIOSurfaceCount,
-            retainedBound,
-            "\(label): live IOSurface count \(trend.peakLiveIOSurfaceCount) exceeded \(retainedBound)"
+            surfaceCountBound,
+            "\(label): live IOSurface count \(trend.peakLiveIOSurfaceCount) exceeded \(surfaceCountBound)"
         )
         XCTAssertFalse(
             trend.hasGrowingLiveIOSurfaceRetention,
@@ -184,7 +185,7 @@ final class StudioStressTests: XCTestCase {
             for frame in 0..<30 {
                 renderer.render(snapshot: snapshot(frame: Int64(frame)), to: output)
             }
-            sampler.record(cycle: cycle)
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: renderer.liveIOSurfaceIDs)
         }
 
         assertStable(
@@ -192,6 +193,7 @@ final class StudioStressTests: XCTestCase {
             retained: renderer.retainedFrameCount,
             // The in-flight ring is bounded at 3 by construction.
             retainedBound: StudioVideoFrameRenderer.inFlightRetentionDepth,
+            surfaceCountBound: renderer.liveIOSurfaceCapacity,
             growthBudgetMB: 24,
             label: "looped playback (\(cycles) cycles x 30 frames)"
         )
@@ -227,7 +229,7 @@ final class StudioStressTests: XCTestCase {
                 seekIndex += 1
                 _ = step
             }
-            sampler.record(cycle: cycle)
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: renderer.liveIOSurfaceIDs)
         }
         XCTAssertEqual(seekIndex, 100, "the matrix says 100 seeks")
 
@@ -235,6 +237,7 @@ final class StudioStressTests: XCTestCase {
             sampler.trend,
             retained: renderer.retainedFrameCount,
             retainedBound: StudioVideoFrameRenderer.inFlightRetentionDepth,
+            surfaceCountBound: renderer.liveIOSurfaceCapacity,
             growthBudgetMB: 24,
             label: "100 scattered seeks"
         )
@@ -268,13 +271,14 @@ final class StudioStressTests: XCTestCase {
             for frame in 0..<6 {
                 renderer.render(snapshot: snapshot(frame: Int64(frame)), to: output)
             }
-            sampler.record(cycle: switchIndex)
+            sampler.record(cycle: switchIndex, liveIOSurfaceIDs: renderer.liveIOSurfaceIDs)
         }
 
         assertStable(
             sampler.trend,
             retained: renderer.retainedFrameCount,
             retainedBound: StudioVideoFrameRenderer.inFlightRetentionDepth,
+            surfaceCountBound: renderer.liveIOSurfaceCapacity,
             // Each switch decodes a fresh file; a slightly wider budget, still
             // far below what 20 leaked sources would cost.
             growthBudgetMB: 40,
@@ -364,7 +368,7 @@ final class StudioStressTests: XCTestCase {
                 0,
                 "cycle \(cycle) left \(lastRetained) surfaces retained after teardown"
             )
-            sampler.record(cycle: cycle)
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: [])
         }
 
         XCTAssertEqual(lastRetained, 0, "teardown left surfaces retained")
@@ -372,6 +376,7 @@ final class StudioStressTests: XCTestCase {
             sampler.trend,
             retained: lastRetained,
             retainedBound: 0,
+            surfaceCountBound: 0,
             growthBudgetMB: 40,
             label: "10 viewer close/reopen cycles"
         )
@@ -426,13 +431,14 @@ final class StudioStressTests: XCTestCase {
                 "a hidden route still held surfaces at cycle \(cycle)")
 
             routes.toggle(.review)
-            sampler.record(cycle: cycle)
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: [])
         }
 
         assertStable(
             sampler.trend,
             retained: renderer.retainedFrameCount,
             retainedBound: 0,
+            surfaceCountBound: 0,
             growthBudgetMB: 40,
             label: "10 route hide/show cycles on a retained renderer"
         )
@@ -499,13 +505,14 @@ final class StudioStressTests: XCTestCase {
                     )
                 }
             }
-            sampler.record(cycle: cycle)
+            sampler.record(cycle: cycle, liveIOSurfaceIDs: renderer.liveIOSurfaceIDs)
         }
 
         assertStable(
             sampler.trend,
             retained: renderer.retainedFrameCount,
             retainedBound: StudioVideoFrameRenderer.inFlightRetentionDepth,
+            surfaceCountBound: renderer.liveIOSurfaceCapacity,
             growthBudgetMB: 32,
             label: "review A/B toggling with two sources"
         )

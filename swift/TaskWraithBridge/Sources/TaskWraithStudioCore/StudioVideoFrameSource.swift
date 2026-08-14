@@ -1,5 +1,6 @@
 import CoreMedia
 import Foundation
+import IOSurface
 import Metal
 
 /// One compressed sample, its presentation frame, and whether it can be decoded
@@ -106,6 +107,13 @@ public final class StudioVideoFrameSource {
 
     /// Frames of decoded pictures held to absorb B-frame reordering.
     public static let defaultReorderCacheDepth = 6
+
+    public var reorderCacheCapacity: Int { reorderCacheDepth }
+
+    /// Exact IOSurface identities currently retained by the bounded reorder cache.
+    public var liveIOSurfaceIDs: Set<UInt32> {
+        Set(reorderCache.compactMap { $0.textures.luma.iosurface.map(IOSurfaceGetID) })
+    }
 
     public init(
         formatDescription: CMVideoFormatDescription,

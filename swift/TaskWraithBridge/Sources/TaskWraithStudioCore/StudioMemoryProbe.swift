@@ -104,17 +104,14 @@ public struct StudioMemoryTrend: Equatable, Sendable {
     public init(
         samples: [StudioMemoryReading],
         warmupCycles: Int = 0,
-        liveIOSurfaceIDSamples: [Set<UInt32>] = []
+        liveIOSurfaceIDSamples: [Set<UInt32>]
     ) {
         precondition(
-            liveIOSurfaceIDSamples.isEmpty || liveIOSurfaceIDSamples.count == samples.count,
+            liveIOSurfaceIDSamples.count == samples.count,
             "IOSurface samples must align with memory samples"
         )
         self.samples = samples
-        self.liveIOSurfaceIDSamples =
-            liveIOSurfaceIDSamples.isEmpty
-            ? Array(repeating: [], count: samples.count)
-            : liveIOSurfaceIDSamples
+        self.liveIOSurfaceIDSamples = liveIOSurfaceIDSamples
         self.warmupCycles = warmupCycles
     }
 
@@ -226,7 +223,7 @@ public struct StudioMemorySampler {
 
     /// Records page/malloc memory and the live decoder-surface set together.
     /// Empty is meaningful for a path that owns no IOSurface-backed frames.
-    public mutating func record(cycle: Int, liveIOSurfaceIDs: Set<UInt32> = []) {
+    public mutating func record(cycle: Int, liveIOSurfaceIDs: Set<UInt32>) {
         guard cycle >= warmupCycles, let reading = StudioMemoryProbe.read() else { return }
         samples.append(reading)
         liveIOSurfaceIDSamples.append(liveIOSurfaceIDs)

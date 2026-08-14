@@ -1,4 +1,5 @@
 import Foundation
+import IOSurface
 import Metal
 
 /// Renders decoded YCbCr plane textures to RGB entirely on the GPU.
@@ -329,6 +330,13 @@ public final class StudioVideoFrameRenderer {
     /// Number of frames currently held by the in-flight ring. Bounded
     /// diagnostics for outcome 9; a value above the retention depth is a bug.
     public var retainedFrameCount: Int { retainedFrames.count }
+
+    /// Exact IOSurface identities retained until presented command buffers finish.
+    public var liveIOSurfaceIDs: Set<UInt32> {
+        Set(retainedFrames.compactMap { $0.luma.iosurface.map(IOSurfaceGetID) })
+    }
+
+    public var liveIOSurfaceCapacity: Int { Self.inFlightRetentionDepth }
 
     /// Drops all retained frames. Only safe once no submitted command buffer is
     /// still sampling them — for example after the viewer stops presenting.
