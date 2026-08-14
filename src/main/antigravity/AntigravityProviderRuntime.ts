@@ -7,6 +7,7 @@
 
 import type { AgenticServicesSettings, AppSettings, EffectiveRunPermissions } from '../store/types'
 import { agenticServicesDenyWrites } from '../AgenticServiceWriteClamp'
+import { isReconRunPosture } from '../ReconPosture'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from './AntigravityGeminiApiKeyConfiguredSignal'
 import { verifyAgyBinaryProvenance, type AgyBinaryProvenance } from './AntigravityBinaryProvenance'
@@ -29,6 +30,12 @@ export interface PrepareAntigravityProviderLaunchInput {
   model?: string | null
   reasoningEffort?: string | null
   approvalMode?: string | null
+  /**
+   * Post-clamp workflow discriminator. Ask and Plan share `approvalMode: plan`
+   * and `readOnly: true`; only the signed normal/read_only tuple identifies an
+   * attended Ask turn whose native writes may be opened behind the live hook.
+   */
+  workflowMode?: string | null
   effectivePermissions?:
     | (Pick<EffectiveRunPermissions, 'readOnly'> &
         Partial<Pick<EffectiveRunPermissions, 'presetId'>>)
@@ -103,13 +110,26 @@ export interface AntigravityProviderStatusDependencies {
 }
 
 function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
-  if (input.effectivePermissions?.readOnly === true) return false
+  const reconPermissions = input.effectivePermissions?.presetId
+    ? {
+        presetId: input.effectivePermissions.presetId,
+        readOnly: input.effectivePermissions.readOnly
+      }
+    : null
+  const bridgeArbitratedAsk =
+    input.perToolApprovalBridge === true &&
+    isReconRunPosture({
+      approvalMode: input.approvalMode,
+      workflowMode: input.workflowMode,
+      effectivePermissions: reconPermissions
+    })
+  if (input.effectivePermissions?.readOnly === true && !bridgeArbitratedAsk) return false
   // A service the user set to `deny` is honoured here, before the child
   // starts. Same predicate ProviderCapabilities reports with, so the contract
   // cannot claim plan while the argv says accept-edits.
   if (agenticServicesDenyWrites(input.agenticServices)) return false
   const mode = typeof input.approvalMode === 'string' ? input.approvalMode.trim() : ''
-  if (!mode || mode === 'plan') return false
+  if (!mode || (mode === 'plan' && !bridgeArbitratedAsk)) return false
   // Either containment is sufficient: writes are isolated from the base
   // checkout, or every individual write is arbitrated by the approval gate.
   // With neither, a shared checkout stays plan-only.

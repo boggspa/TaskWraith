@@ -33985,6 +33985,7 @@ async function runAntigravityAgyProvider(
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
+      workflowMode: payload.workflowMode,
       effectivePermissions: payload.effectivePermissions,
       agenticServices: AppStore.getSettings().agenticServices,
       // Two independent routes to write capability: an isolated worktree, or a
@@ -34192,8 +34193,9 @@ async function runAntigravityAgyProvider(
         antigravityPolicyIsPregranted(permissions?.agenticServices?.shellCommands))
     const allowWrite =
       launch.mode === 'accept-edits' &&
-      permissions?.readOnly !== true &&
-      (arbitratedByHook || antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges))
+      (arbitratedByHook ||
+        (permissions?.readOnly !== true &&
+          antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges)))
     try {
       permissionLease = await antigravityPermissionLeases.acquire({
         settingsPath: antigravityCliSettingsPath(),

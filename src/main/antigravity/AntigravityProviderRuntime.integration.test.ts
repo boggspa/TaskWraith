@@ -33,6 +33,7 @@ describe('AntiGravity S3 runtime integration', () => {
     const prepare = probe.callsTo(agy, 'prepareAntigravityProviderLaunch')
     expect(prepare).toHaveLength(1)
     expect(probe.propText(prepare[0], 0, 'settings')).toBe('AppStore.getSettings()')
+    expect(probe.propText(prepare[0], 0, 'workflowMode')).toBe('payload.workflowMode')
     // Resumption: the prior conversation goes in, and the id agy actually used
     // is re-learned from its own receipt after the turn. Both halves are
     // required — passing an id agy does not recognise silently starts a fresh
@@ -55,6 +56,18 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
     // Literal argv content — a string check is the right tool for these.
     expect(probe.text(agy)).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('lets a live hook arbitrate the write lease after an accept-edits launch', () => {
+    const agy = probe.fn('runAntigravityAgyProvider')
+    const source = probe.text(agy)
+
+    // Ask retains `readOnly: true` in its signed posture, so the live bridge
+    // must be the first alternative. An unbridged posture still reaches the
+    // readOnly check and cannot open the settings write rule.
+    expect(source).toMatch(
+      /const allowWrite\s*=\s*launch\.mode === 'accept-edits' &&\s*\(arbitratedByHook \|\|\s*\(permissions\?\.readOnly !== true &&/
+    )
   })
 
   it('settles a setup failure rather than leaving the run unfinished', () => {

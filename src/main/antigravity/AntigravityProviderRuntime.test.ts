@@ -178,18 +178,72 @@ describe('prepareAntigravityProviderLaunch', () => {
       }
     })
 
-    it('keeps both read-only tiers plan-only even with a live bridge', async () => {
-      // read_only ("Ask") and plan both resolve to approvalMode 'plan' +
-      // readOnly true, so agy stays physically plan-contained on this lane.
-      for (const permissions of [{ readOnly: true }, { readOnly: false }]) {
+    it('opens the exact attended Ask posture only when its per-tool bridge is live', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix after asking.',
+          approvalMode: 'plan',
+          workflowMode: 'normal',
+          perToolApprovalBridge: true,
+          effectivePermissions: { presetId: 'read_only', readOnly: true },
+          agenticServices: { shellCommands: 'ask', fileChanges: 'ask' }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('accept-edits')
+      expect(launch.args).toContain('accept-edits')
+      expect(launch.args).not.toContain('--dangerously-skip-permissions')
+    })
+
+    it('keeps Plan and incomplete Ask claims plan-only over the bridge', async () => {
+      const postures = [
+        { workflowMode: 'plan', effectivePermissions: { presetId: 'plan', readOnly: true } },
+        {
+          workflowMode: 'normal',
+          effectivePermissions: { presetId: 'plan', readOnly: true }
+        },
+        {
+          workflowMode: 'normal',
+          effectivePermissions: { presetId: 'read_only', readOnly: false }
+        }
+      ] as const
+      for (const posture of postures) {
         const launch = await prepareAntigravityProviderLaunch(
           {
             settings: OPTED_IN,
             prompt: 'Apply the fix.',
             approvalMode: 'plan',
             perToolApprovalBridge: true,
-            effectivePermissions: permissions,
+            ...posture,
             agenticServices: { shellCommands: 'allow', fileChanges: 'allow' }
+          },
+          { resolveBinary }
+        )
+        expect(launch.mode).toBe('plan')
+      }
+    })
+
+    it('keeps the exact Ask posture plan-only if its bridge or write service is unavailable', async () => {
+      for (const input of [
+        {
+          perToolApprovalBridge: false,
+          agenticServices: { shellCommands: 'ask' as const, fileChanges: 'ask' as const }
+        },
+        {
+          perToolApprovalBridge: true,
+          agenticServices: { shellCommands: 'ask' as const, fileChanges: 'deny' as const }
+        }
+      ]) {
+        const launch = await prepareAntigravityProviderLaunch(
+          {
+            settings: OPTED_IN,
+            prompt: 'Apply the fix after asking.',
+            approvalMode: 'plan',
+            workflowMode: 'normal',
+            effectivePermissions: { presetId: 'read_only', readOnly: true },
+            ...input
           },
           { resolveBinary }
         )
