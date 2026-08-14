@@ -20,7 +20,7 @@ import {
   midTurnSteeringCapabilityForProvider,
   planMidTurnSteeringDelivery
 } from '../run/MidRunSteering'
-import { createBrokerSteerTransport } from './BrokerSteerTransport'
+import { createBrokerSteerTransport, formatBrokerSteeringElement } from './BrokerSteerTransport'
 import type { ProviderId } from '../store/types'
 import type {
   LiveSteeringDeliveryStatus,
@@ -202,7 +202,7 @@ export function routeSteerDelivery(
       // Sending through the broker transport arms the injection.
       const sent = sendThroughTransport(
         session.liveSteerTransport,
-        entry.text,
+        formatBrokerSteeringElement(entry.text, entry.authorKind),
         input.deliveryHooks
       )
       if (!sent) {

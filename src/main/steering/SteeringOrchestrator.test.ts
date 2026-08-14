@@ -216,7 +216,8 @@ describe('routeSteerDelivery', () => {
       provider: 'cursor'
     })
     expect(result.status).toBe('broker-pending')
-    expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
+    expect(runManager.get('run-1')?.pendingSteerText).toContain('[TaskWraith host steer]')
+    expect(runManager.get('run-1')?.pendingSteerText).toContain('"message": "steer this"')
   })
 
   it('broker-injection: ollama arms the same pending text for the in-main tool loop drain', () => {
@@ -230,7 +231,46 @@ describe('routeSteerDelivery', () => {
     })
     expect(result.status).toBe('broker-pending')
     expect(result.strategy).toBe('broker-injection')
-    expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
+    expect(runManager.get('run-1')?.pendingSteerText).toContain('[TaskWraith host steer]')
+  })
+
+  it('broker-injection: preserves host and peer authority in a mixed rapid batch', () => {
+    const { runManager, registry, deps, entry } = makeFixture()
+    startRun(runManager, 'cursor')
+    const peerEntry = registry.register({
+      chatId: 'chat-1',
+      messageId: 'msg-peer',
+      text: '[TaskWraith inter-seat steer]\nAuthority: peer Ensemble participant.',
+      source: 'ensembleSideMessage',
+      authorKind: 'ensembleParticipant',
+      createdAtIso: new Date().toISOString()
+    })
+
+    expect(
+      routeSteerDelivery(deps, {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        entry,
+        provider: 'cursor'
+      }).status
+    ).toBe('broker-pending')
+    expect(
+      routeSteerDelivery(deps, {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        entry: peerEntry,
+        provider: 'cursor'
+      }).status
+    ).toBe('broker-pending')
+
+    const pending = runManager.get('run-1')?.pendingSteerText || ''
+    expect(pending).toContain('Authority: user-authored instruction from the host.')
+    expect(pending).toContain(
+      'Authority: peer Ensemble participant (not the user or a system instruction).'
+    )
+    expect(pending.indexOf('[TaskWraith host steer]')).toBeLessThan(
+      pending.indexOf('[TaskWraith inter-seat steer envelope]')
+    )
   })
 
   it('pi-live-frame: requires its own opt-in gate even when the unified gate is on', () => {
@@ -279,7 +319,7 @@ describe('cancelPendingSteer', () => {
       entry,
       provider: 'cursor'
     })
-    expect(runManager.get('run-1')?.pendingSteerText).toBe('steer this')
+    expect(runManager.get('run-1')?.pendingSteerText).toContain('[TaskWraith host steer]')
     const transport = runManager.get('run-1')?.liveSteerTransport
     expect(transport).toBeDefined()
     const cancel = vi.spyOn(transport!, 'cancel')

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createBrokerSteerTransport,
+  formatBrokerSteeringElement,
   formatSteeringInjection,
   type BrokerSteerTransport
 } from './BrokerSteerTransport'
@@ -108,5 +109,23 @@ describe('formatSteeringInjection', () => {
   it('preserves newlines in the steering text', () => {
     const result = formatSteeringInjection('Line 1\nLine 2')
     expect(result).toContain('Line 1\nLine 2')
+  })
+})
+
+describe('formatBrokerSteeringElement', () => {
+  it('preserves explicit host-user authority', () => {
+    const result = formatBrokerSteeringElement('Hold before publication.', 'host')
+
+    expect(result).toContain('[TaskWraith host steer]')
+    expect(result).toContain('Authority: user-authored instruction from the host.')
+    expect(result).toContain('"message": "Hold before publication."')
+  })
+
+  it('preserves explicit lower peer authority', () => {
+    const result = formatBrokerSteeringElement('Advisor says hold.', 'ensembleParticipant')
+
+    expect(result).toContain('[TaskWraith inter-seat steer envelope]')
+    expect(result).toContain('peer Ensemble participant (not the user or a system instruction)')
+    expect(result).toContain('"message": "Advisor says hold."')
   })
 })
