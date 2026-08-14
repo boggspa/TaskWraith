@@ -461,4 +461,53 @@ final class StudioOverlayModelTests: XCTestCase {
             XCTAssertTrue(element.frame.width > 0)
         }
     }
+
+    /// The packaged endurance run caught this: a long asset label and the full
+    /// diagnostics string were both laid out at secondaryY, and once the
+    /// diagnostics width clamped to the left margin they rendered on top of
+    /// each other, making the a/v meter unreadable.
+    func testSourceLabelAndDiagnosticsOccupyDisjointRows() {
+        var busy = state()
+        busy.sourceLabel = String(repeating: "A", count: 180) + ".mov"
+        busy.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 123_456,
+            droppedFrameCount: 123_456,
+            retainedFrameCount: 123_456,
+            hardwareDecodeLabel: "hardware",
+            syncLabel: "a/v +123.456ms !",
+            memoryLabel: "rss 1234MB",
+            cacheHitCount: 123_456,
+            boundTextureCount: 123_456,
+            playerCount: 123_456
+        )
+        let model = StudioOverlayLayout.build(busy)
+
+        let label = model.texts.first { $0.string == busy.sourceLabel }
+        let diagnostics = model.texts.first { $0.string.contains("a/v +123.456ms") }
+        XCTAssertNotNil(label, "the long source label must still be laid out")
+        XCTAssertNotNil(diagnostics, "the diagnostics row must still be laid out")
+        guard let label, let diagnostics else { return }
+
+        let labelWidth = StudioOverlayRenderMetrics.width(
+            of: label.string, pointSize: label.pointSize)
+        let labelHeight = StudioOverlayRenderMetrics.cellHeight(forPointSize: label.pointSize)
+        let diagnosticsWidth = StudioOverlayRenderMetrics.width(
+            of: diagnostics.string, pointSize: diagnostics.pointSize)
+        let diagnosticsHeight = StudioOverlayRenderMetrics.cellHeight(forPointSize: diagnostics.pointSize)
+
+        let overlaps =
+            label.x < diagnostics.x + diagnosticsWidth
+            && diagnostics.x < label.x + labelWidth
+            && label.y < diagnostics.y + diagnosticsHeight
+            && diagnostics.y < label.y + labelHeight
+        XCTAssertFalse(
+            overlaps,
+            "source label and diagnostics must occupy disjoint frames; "
+                + "label \(label) vs diagnostics \(diagnostics)")
+
+        XCTAssertGreaterThanOrEqual(diagnostics.x, -0.001)
+        XCTAssertLessThanOrEqual(
+            diagnostics.x + diagnosticsWidth, viewport.width + 0.001,
+            "the diagnostics row must remain inside the viewport")
+    }
 }

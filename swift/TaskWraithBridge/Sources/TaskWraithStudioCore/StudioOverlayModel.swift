@@ -291,7 +291,7 @@ public struct StudioOverlayState: Equatable, Sendable {
 /// was drawn straight through the scrub bar. `testNoTextRowOverlapsTheScrubTrack`
 /// is what keeps that from coming back.
 public enum StudioOverlayMetrics {
-    public static let hudHeight: Double = 76
+    public static let hudHeight: Double = 92
     public static let horizontalMargin: Double = 18
     public static let trackHeight: Double = 5
     /// Distance from the top of the HUD strip to the top of the track.
@@ -306,6 +306,10 @@ public enum StudioOverlayMetrics {
     public static let readoutRowTop: Double = 24
     /// Nudged down against the taller readout so the two read as one row.
     public static let statusRowTop: Double = 30
+    /// Diagnostics get their own row BELOW the source label so a long asset
+    /// label and a worst-case counters string cannot be drawn on top of each
+    /// other. The HUD strip is taller by exactly that row's height.
+    public static let diagnosticsRowTop: Double = 72
     public static let infoRowTop: Double = 56
 }
 
@@ -629,6 +633,10 @@ public enum StudioOverlayLayout {
             )
         )
 
+        // Diagnostics sit on their own row. Sharing the source label's row made
+        // the right-aligned line clamp to the same left margin as soon as it
+        // grew past the viewport, so the two strings overwrote each other.
+        let diagnosticsY = hudTop + metric(StudioOverlayMetrics.diagnosticsRowTop)
         if let diagnostics = state.diagnostics {
             let line =
                 "\(diagnostics.hardwareDecodeLabel)  \(diagnostics.syncLabel)"
@@ -645,7 +653,7 @@ public enum StudioOverlayLayout {
                 StudioOverlayText(
                     string: line,
                     x: max(margin, width - margin - lineWidth),
-                    y: secondaryY,
+                    y: diagnosticsY,
                     pointSize: labelSize,
                     color: .dimText
                 )
