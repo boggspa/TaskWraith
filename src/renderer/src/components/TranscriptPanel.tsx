@@ -65,8 +65,17 @@ import {
 } from '../lib/TranscriptScroll'
 import {
   getChatTranscriptStore,
+  revealChatTranscriptMessage,
+  showLatestChatTranscriptPage,
+  showNewerChatTranscriptPage,
+  showOlderChatTranscriptPage,
   useChatTranscript
 } from '../lib/useChatTranscript'
+import {
+  TranscriptHistoryPageBoundary,
+  buildTranscriptHistoryPageBoundaryMessages,
+  readTranscriptHistoryPageBoundary
+} from './TranscriptHistoryPageBoundary'
 import {
   deriveActiveEnsembleWorkingPresentation,
   deriveActiveEnsembleWorkingPresentations,
@@ -929,6 +938,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
   // un-collapsed or expanded.
   return (
     msg.role === 'system' &&
+    msg.metadata?.kind !== 'transcriptHistoryPageBoundary' &&
     !isEnsembleRoundHeaderMessage(msg) &&
     !isEnsembleFanoutViewportHeaderMessage(msg) &&
     !isParallelResultViewportHeaderMessage(msg) &&
@@ -3210,12 +3220,29 @@ export const TranscriptPanel = memo(
     // Ensemble round cards: completed rounds collapse into expandable
     // header rows (older collapsed by default). The range-based path keeps
     // unchanged transcript prefixes cached while the live tail grows.
-    const displayMessages = useIncrementalMessageGrouping(
+    const roundDisplayMessages = useIncrementalMessageGrouping(
       participantFilteredMessages,
       buildRoundCardRanges,
       roundCardGroupingRegroupStart,
       roundCardResetKey
     )
+    const historyPageBoundaries = useMemo(
+      () => buildTranscriptHistoryPageBoundaryMessages(storeTranscript),
+      [
+        storeTranscript.hasNewer,
+        storeTranscript.hasOlder,
+        storeTranscript.totalMessageCount,
+        storeTranscript.windowEnd,
+        storeTranscript.windowStart
+      ]
+    )
+    const displayMessages = useMemo(() => {
+      if (!storeReady || isWelcomeChat) return roundDisplayMessages
+      const next = [...roundDisplayMessages]
+      if (historyPageBoundaries.older) next.unshift(historyPageBoundaries.older)
+      if (historyPageBoundaries.newer) next.push(historyPageBoundaries.newer)
+      return next
+    }, [historyPageBoundaries, isWelcomeChat, roundDisplayMessages, storeReady])
     // Map every (pre-collapse) message id → its round id, so navigation
     // (jump-to-message, pinned, side-chat seed) can auto-expand the round
     // a target lives in before scrolling — otherwise a jump into a
@@ -4045,6 +4072,18 @@ export const TranscriptPanel = memo(
         // carrying it forward would seed a pending focus target whose rowKey
         // can never be satisfied, which pins the retry loop open forever.
         const effectiveRowKey = isHiddenRoundMarkerRowKey(rowKey) ? undefined : rowKey
+        if (
+          chatId &&
+          storeReady &&
+          !storeTranscript.messages.some((message) => message.id === messageId)
+        ) {
+          const revealed = revealChatTranscriptMessage(chatId, messageId)
+          if (revealed && revealed !== storeTranscript) {
+            prepareManualTranscriptJump()
+            setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+            return
+          }
+        }
         // If the target lives in a collapsed ensemble round, expand it
         // first; the pending-focus retry loop below then finds the row
         // once it re-renders into the window.
@@ -4054,7 +4093,15 @@ export const TranscriptPanel = memo(
         setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
         estimateScrollToMessage(messageId, effectiveRowKey, { animate: true })
       },
-      [ensureRoundExpandedForMessage, estimateScrollToMessage, focusMessageBlock]
+      [
+        chatId,
+        ensureRoundExpandedForMessage,
+        estimateScrollToMessage,
+        focusMessageBlock,
+        prepareManualTranscriptJump,
+        storeReady,
+        storeTranscript
+      ]
     )
 
     const jumpToTranscriptStart = useCallback(() => {
@@ -4082,6 +4129,38 @@ export const TranscriptPanel = memo(
         }
       })
     }, [autoFollowRef, getScrollAnimator, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
+
+    const positionAfterTranscriptPageChange = useCallback(
+      (edge: 'start' | 'end'): void => {
+        window.requestAnimationFrame(() => {
+          const scroller = scrollRef.current
+          if (!scroller) return
+          const nextScrollTop = edge === 'end' ? scroller.scrollHeight : 0
+          scroller.scrollTop = nextScrollTop
+          syncVirtualizerScrollPosition(nextScrollTop)
+        })
+      },
+      [scrollRef, syncVirtualizerScrollPosition]
+    )
+    const loadOlderTranscriptPage = useCallback(() => {
+      if (!chatId) return
+      prepareManualTranscriptJump()
+      showOlderChatTranscriptPage(chatId)
+      positionAfterTranscriptPageChange('end')
+    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
+    const loadNewerTranscriptPage = useCallback(() => {
+      if (!chatId) return
+      prepareManualTranscriptJump()
+      showNewerChatTranscriptPage(chatId)
+      positionAfterTranscriptPageChange('start')
+    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
+    const returnToLatestTranscriptPage = useCallback(() => {
+      if (!chatId) return
+      showLatestChatTranscriptPage(chatId)
+      if (autoFollowRef) autoFollowRef.current = true
+      onJumpToLatest?.()
+      positionAfterTranscriptPageChange('end')
+    }, [autoFollowRef, chatId, onJumpToLatest, positionAfterTranscriptPageChange])
 
     useEffect(() => {
       const request = jumpToMessageRequest
@@ -4128,6 +4207,7 @@ export const TranscriptPanel = memo(
 
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return
+      ensureRoundExpandedForMessage(pendingFocusTarget.messageId)
       // While a glide toward this target is in flight, hold the retry loop:
       // don't burn attempts or issue competing scroll writes. The effect
       // re-runs naturally each glide frame (renderedRows changes as the
@@ -4158,7 +4238,13 @@ export const TranscriptPanel = memo(
         )
       })
       return () => window.cancelAnimationFrame(frame)
-    }, [estimateScrollToMessage, focusMessageBlock, pendingFocusTarget, renderedRows])
+    }, [
+      ensureRoundExpandedForMessage,
+      estimateScrollToMessage,
+      focusMessageBlock,
+      pendingFocusTarget,
+      renderedRows
+    ])
 
     return (
       <div
@@ -4202,6 +4288,25 @@ export const TranscriptPanel = memo(
             />
           )}
           {renderedRows.map(({ msg, rowKey }) => {
+            const historyBoundary = readTranscriptHistoryPageBoundary(msg)
+            if (historyBoundary) {
+              return (
+                <div
+                  key={`message-block-${rowKey}`}
+                  className="transcript-message-block transcript-history-page-boundary"
+                  data-vrow-id={rowKey}
+                  data-message-id={msg.id}
+                  ref={virtualizeEnabled ? virtualBlockRef : undefined}
+                >
+                  <TranscriptHistoryPageBoundary
+                    data={historyBoundary}
+                    onOlder={loadOlderTranscriptPage}
+                    onNewer={loadNewerTranscriptPage}
+                    onLatest={returnToLatestTranscriptPage}
+                  />
+                </div>
+              )
+            }
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isFleetWaveCard = isFleetWaveMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)

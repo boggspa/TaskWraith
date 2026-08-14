@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import { ChatTranscriptStore, EMPTY_CHAT_TRANSCRIPT_PAYLOAD } from './chatTranscriptStore'
+import {
+  ChatTranscriptStore,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  EMPTY_CHAT_TRANSCRIPT_PAYLOAD,
+  selectTranscriptPageEndingAt
+} from './chatTranscriptStore'
 import { isChatSummaryRecord } from './chatRecordMerge'
 
 function message(id: string, content: string): ChatMessage {
@@ -182,5 +188,151 @@ describe('ChatTranscriptStore', () => {
     store.ingest(chat('chat-z'))
     expect(listener).not.toHaveBeenCalled()
     unsub()
+  })
+
+  it('publishes the latest bounded page while retaining the full authoritative chat', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 3, maxBytesPerPage: 1_000_000 })
+    const full = {
+      ...chat('paged'),
+      messages: Array.from({ length: 10 }, (_, index) => message(`m${index}`, `message ${index}`))
+    }
+    const payload = store.ingest(full)!
+
+    expect(payload.messages.map((entry) => entry.id)).toEqual(['m7', 'm8', 'm9'])
+    expect(payload).toMatchObject({
+      totalMessageCount: 10,
+      windowStart: 7,
+      windowEnd: 10,
+      hasOlder: true,
+      hasNewer: false
+    })
+    expect(store.stats().messageCount).toBe(3)
+
+    const chromeOnly = { ...full, messages: [], runs: [] }
+    expect(store.applyToChat(chromeOnly).messages).toBe(full.messages)
+    expect(store.applyToChat(chromeOnly).messages).toHaveLength(10)
+  })
+
+  it('replaces pages in both directions instead of accumulating history', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 3, maxBytesPerPage: 1_000_000 })
+    const full = {
+      ...chat('paging'),
+      messages: Array.from({ length: 10 }, (_, index) => message(`m${index}`, `message ${index}`))
+    }
+    store.ingest(full)
+
+    expect(store.showOlderPage('paging')?.messages.map((entry) => entry.id)).toEqual([
+      'm4',
+      'm5',
+      'm6'
+    ])
+    expect(store.stats().messageCount).toBe(3)
+    expect(store.showOlderPage('paging')?.messages.map((entry) => entry.id)).toEqual([
+      'm1',
+      'm2',
+      'm3'
+    ])
+    expect(store.showNewerPage('paging')?.messages.map((entry) => entry.id)).toEqual([
+      'm4',
+      'm5',
+      'm6'
+    ])
+    expect(store.showLatestPage('paging')?.messages.map((entry) => entry.id)).toEqual([
+      'm7',
+      'm8',
+      'm9'
+    ])
+  })
+
+  it('keeps an explicitly historical page stable while live updates append', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 3, maxBytesPerPage: 1_000_000 })
+    const first = {
+      ...chat('live-history'),
+      messages: Array.from({ length: 8 }, (_, index) => message(`m${index}`, `message ${index}`))
+    }
+    store.ingest(first)
+    store.showOlderPage('live-history')
+    expect(store.get('live-history')?.messages.map((entry) => entry.id)).toEqual(['m2', 'm3', 'm4'])
+
+    store.ingest({
+      ...first,
+      updatedAt: 3,
+      messages: [...first.messages, message('m8', 'new tail')]
+    })
+    expect(store.get('live-history')?.messages.map((entry) => entry.id)).toEqual(['m2', 'm3', 'm4'])
+    expect(store.get('live-history')).toMatchObject({
+      totalMessageCount: 9,
+      windowStart: 2,
+      windowEnd: 5,
+      hasNewer: true
+    })
+  })
+
+  it('reveals an omitted message in one bounded page', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 4, maxBytesPerPage: 1_000_000 })
+    const full = {
+      ...chat('reveal'),
+      messages: Array.from({ length: 12 }, (_, index) => message(`m${index}`, `message ${index}`))
+    }
+    store.ingest(full)
+
+    const revealed = store.revealMessage('reveal', 'm2')!
+    expect(revealed.messages.map((entry) => entry.id)).toEqual(['m0', 'm1', 'm2'])
+    expect(revealed.hasNewer).toBe(true)
+    expect(store.stats().messageCount).toBeLessThanOrEqual(4)
+  })
+
+  it('enforces the byte bound while always admitting one oversized message', () => {
+    const messages = [
+      message('small', 'a'),
+      message('large', 'x'.repeat(2_000)),
+      message('tail', 'b')
+    ]
+    const tail = selectTranscriptPageEndingAt(messages, messages.length, {
+      maxMessagesPerPage: 20,
+      maxBytesPerPage: 500
+    })
+    expect(tail).toMatchObject({ start: 2, end: 3 })
+
+    const oversized = selectTranscriptPageEndingAt(messages, 2, {
+      maxMessagesPerPage: 20,
+      maxBytesPerPage: 500
+    })
+    expect(oversized).toMatchObject({ start: 1, end: 2 })
+    expect(oversized.estimatedBytes).toBeGreaterThan(500)
+  })
+
+  it('keeps a five-figure tool-heavy transcript out of the presentation model', () => {
+    const full = {
+      ...chat('tool-heavy'),
+      messages: Array.from(
+        { length: 11_574 },
+        (_, index): ChatMessage => ({
+          id: `tool-${index}`,
+          role: 'tool',
+          content: '',
+          timestamp: '1',
+          toolActivities: [
+            {
+              id: `activity-${index}`,
+              toolName: 'exec_command',
+              displayName: 'Shell command',
+              category: 'shell',
+              status: 'success',
+              parameters: { command: `inspect-${index}`, paths: ['a', 'b', 'c'] },
+              resultSummary: 'x'.repeat(2_048)
+            }
+          ]
+        })
+      )
+    }
+    const store = new ChatTranscriptStore()
+    const payload = store.ingest(full)!
+
+    expect(payload.totalMessageCount).toBe(11_574)
+    expect(payload.messages.length).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(payload.windowEstimatedBytes).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
+    expect(store.stats().messageCount).toBe(payload.messages.length)
+    expect(store.applyToChat({ ...full, messages: [], runs: [] }).messages).toBe(full.messages)
   })
 })

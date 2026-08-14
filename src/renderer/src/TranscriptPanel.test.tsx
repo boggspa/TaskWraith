@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import { TranscriptPanel } from './App'
+import {
+  TranscriptHistoryPageBoundary,
+  buildTranscriptHistoryPageBoundaryMessages
+} from './components/TranscriptHistoryPageBoundary'
 import { setSessionRoundExpanded } from './lib/ensembleRoundCards'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../shared/taskWraithCloseout'
 import { makeDeliveredExternalContribution } from '../../main/collaboration/HumanCollaboratorMessages'
@@ -234,6 +238,54 @@ function spacerHeight(html: string, cls: string): number {
   const m = slice.match(/height:(\d+)/)
   return m ? parseInt(m[1], 10) : -1
 }
+
+describe('TranscriptPanel history page boundaries', () => {
+  it('builds truthful bounded-history rows for both omitted directions', () => {
+    const boundaries = buildTranscriptHistoryPageBoundaryMessages({
+      hasOlder: true,
+      hasNewer: true,
+      windowStart: 1_500,
+      windowEnd: 3_000,
+      totalMessageCount: 4_250
+    })
+
+    expect(boundaries.older?.metadata).toMatchObject({
+      kind: 'transcriptHistoryPageBoundary',
+      transcriptHistoryDirection: 'older',
+      transcriptHistoryHiddenCount: 1_500
+    })
+    expect(boundaries.newer?.metadata).toMatchObject({
+      kind: 'transcriptHistoryPageBoundary',
+      transcriptHistoryDirection: 'newer',
+      transcriptHistoryHiddenCount: 1_250
+    })
+  })
+
+  it('renders explicit previous, next, and latest recovery controls', () => {
+    const previous = renderToStaticMarkup(
+      <TranscriptHistoryPageBoundary
+        data={{ direction: 'older', hiddenCount: 2_000 }}
+        onOlder={() => {}}
+        onNewer={() => {}}
+        onLatest={() => {}}
+      />
+    )
+    const next = renderToStaticMarkup(
+      <TranscriptHistoryPageBoundary
+        data={{ direction: 'newer', hiddenCount: 250 }}
+        onOlder={() => {}}
+        onNewer={() => {}}
+        onLatest={() => {}}
+      />
+    )
+
+    expect(previous).toContain('2,000 older events kept outside this page')
+    expect(previous).toContain('Load previous page')
+    expect(next).toContain('250 newer events kept outside this page')
+    expect(next).toContain('Load next page')
+    expect(next).toContain('Return to latest')
+  })
+})
 
 describe('TranscriptPanel virtualisation wiring (TV1)', () => {
   it('labels global solo assistant rows with provider and run model instead of Assistant', () => {

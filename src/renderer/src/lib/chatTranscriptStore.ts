@@ -1,31 +1,58 @@
 import type { ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
 import { isChatSummaryRecord } from './chatRecordMerge'
-import { demoteChatToSummary } from './chatByteLru'
+import { demoteChatToSummary, estimateChatMessageBytes } from './chatByteLru'
 
 /**
- * T7a — per-chat external transcript store.
+ * T7a/T7c — per-chat external transcript store with a bounded presentation page.
  *
- * Keeps `messages` / `runs` off the App chrome ChatRecord identity so a
- * sidebar/composer commit can change chat metadata without invalidating the
- * transcript derivation graph. The store is the live source of transcript
- * arrays for focused/pinned chats; demotion drops the arrays from heap while
- * durable disk remains the re-hydrate source of truth (ADR §5.8).
- *
- * Versioned for `useSyncExternalStore`: each chat has a generation that bumps
- * on set/ingest/drop/clear, `getSnapshot` returns a stable payload reference
- * between mutations, and listeners can subscribe per-chat or globally.
+ * Full arrays remain the renderer's authoritative mutation/save source. React
+ * subscribers receive only one count-and-byte-bounded page, so grouping,
+ * indexing, virtualization, and row caches cannot scale with the entire
+ * historical transcript. Paging replaces the presentation page; it never
+ * accumulates older pages in the render model.
  */
+
+export const DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES = 1_500
+export const DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES = 24 * 1024 * 1024
+export const DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS = 512
 
 export interface ChatTranscriptPayload {
   messages: ChatMessage[]
   runs: ChatRun[]
   updatedAt: number
+  totalMessageCount: number
+  windowStart: number
+  windowEnd: number
+  windowEstimatedBytes: number
+  hasOlder: boolean
+  hasNewer: boolean
 }
 
 export interface ChatTranscriptStoreStats {
   chatCount: number
   messageCount: number
   runCount: number
+}
+
+export interface ChatTranscriptStoreOptions {
+  maxMessagesPerPage?: number
+  maxBytesPerPage?: number
+  maxRunsPerPage?: number
+  now?: () => number
+}
+
+export interface TranscriptPageRange {
+  start: number
+  end: number
+  estimatedBytes: number
+}
+
+interface ChatTranscriptEntry {
+  sourceMessages: ChatMessage[]
+  sourceRuns: ChatRun[]
+  sourceUpdatedAt: number
+  followsLatest: boolean
+  payload: ChatTranscriptPayload
 }
 
 export type ChatTranscriptStoreListener = () => void
@@ -37,12 +64,23 @@ const EMPTY_RUNS: ChatRun[] = []
 export const EMPTY_CHAT_TRANSCRIPT_PAYLOAD: ChatTranscriptPayload = {
   messages: EMPTY_MESSAGES,
   runs: EMPTY_RUNS,
-  updatedAt: 0
+  updatedAt: 0,
+  totalMessageCount: 0,
+  windowStart: 0,
+  windowEnd: 0,
+  windowEstimatedBytes: 0,
+  hasOlder: false,
+  hasNewer: false
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return fallback
+  return Math.max(1, Math.floor(value))
 }
 
 function emptyPayload(updatedAt = 0): ChatTranscriptPayload {
   if (updatedAt === 0) return EMPTY_CHAT_TRANSCRIPT_PAYLOAD
-  return { messages: [], runs: [], updatedAt }
+  return { ...EMPTY_CHAT_TRANSCRIPT_PAYLOAD, messages: [], runs: [], updatedAt }
 }
 
 function payloadsReferentiallyEqual(
@@ -53,42 +91,100 @@ function payloadsReferentiallyEqual(
     !!previous &&
     previous.messages === next.messages &&
     previous.runs === next.runs &&
-    previous.updatedAt === next.updatedAt
+    previous.updatedAt === next.updatedAt &&
+    previous.totalMessageCount === next.totalMessageCount &&
+    previous.windowStart === next.windowStart &&
+    previous.windowEnd === next.windowEnd &&
+    previous.windowEstimatedBytes === next.windowEstimatedBytes &&
+    previous.hasOlder === next.hasOlder &&
+    previous.hasNewer === next.hasNewer
   )
 }
 
+export function selectTranscriptPageEndingAt(
+  messages: readonly ChatMessage[],
+  endExclusive: number,
+  options?: Pick<ChatTranscriptStoreOptions, 'maxMessagesPerPage' | 'maxBytesPerPage'>
+): TranscriptPageRange {
+  const maxMessages = positiveInteger(
+    options?.maxMessagesPerPage,
+    DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+  )
+  const maxBytes = positiveInteger(options?.maxBytesPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
+  const end = Math.max(0, Math.min(messages.length, Math.floor(endExclusive)))
+  let start = end
+  let estimatedBytes = 0
+  while (start > 0 && end - start < maxMessages) {
+    const nextBytes = Math.max(0, estimateChatMessageBytes(messages[start - 1]))
+    if (start < end && estimatedBytes + nextBytes > maxBytes) break
+    start -= 1
+    estimatedBytes += nextBytes
+  }
+  return { start, end, estimatedBytes }
+}
+
+export function selectTranscriptPageStartingAt(
+  messages: readonly ChatMessage[],
+  startInclusive: number,
+  options?: Pick<ChatTranscriptStoreOptions, 'maxMessagesPerPage' | 'maxBytesPerPage'>
+): TranscriptPageRange {
+  const maxMessages = positiveInteger(
+    options?.maxMessagesPerPage,
+    DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+  )
+  const maxBytes = positiveInteger(options?.maxBytesPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES)
+  const start = Math.max(0, Math.min(messages.length, Math.floor(startInclusive)))
+  let end = start
+  let estimatedBytes = 0
+  while (end < messages.length && end - start < maxMessages) {
+    const nextBytes = Math.max(0, estimateChatMessageBytes(messages[end]))
+    if (end > start && estimatedBytes + nextBytes > maxBytes) break
+    end += 1
+    estimatedBytes += nextBytes
+  }
+  return { start, end, estimatedBytes }
+}
+
 export class ChatTranscriptStore {
-  private readonly byId = new Map<string, ChatTranscriptPayload>()
+  private readonly byId = new Map<string, ChatTranscriptEntry>()
   private readonly generationById = new Map<string, number>()
   private readonly listenersById = new Map<string, Set<ChatTranscriptStoreListener>>()
   private readonly allListeners = new Set<ChatTranscriptStoreListener>()
+  private readonly maxMessagesPerPage: number
+  private readonly maxBytesPerPage: number
+  private readonly maxRunsPerPage: number
+  private readonly now: () => number
+
+  constructor(options: ChatTranscriptStoreOptions = {}) {
+    this.maxMessagesPerPage = positiveInteger(
+      options.maxMessagesPerPage,
+      DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+    )
+    this.maxBytesPerPage = positiveInteger(
+      options.maxBytesPerPage,
+      DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES
+    )
+    this.maxRunsPerPage = positiveInteger(options.maxRunsPerPage, DEFAULT_TRANSCRIPT_PAGE_MAX_RUNS)
+    this.now = options.now ?? Date.now
+  }
 
   has(chatId: string): boolean {
     return this.byId.has(chatId)
   }
 
   get(chatId: string): ChatTranscriptPayload | null {
-    return this.byId.get(chatId) ?? null
+    return this.byId.get(chatId)?.payload ?? null
   }
 
-  /**
-   * Stable snapshot for `useSyncExternalStore`. Missing chats return the
-   * shared empty payload singleton — never a fresh object per call.
-   */
   getSnapshot(chatId: string | null | undefined): ChatTranscriptPayload {
     if (!chatId) return EMPTY_CHAT_TRANSCRIPT_PAYLOAD
-    return this.byId.get(chatId) ?? EMPTY_CHAT_TRANSCRIPT_PAYLOAD
+    return this.byId.get(chatId)?.payload ?? EMPTY_CHAT_TRANSCRIPT_PAYLOAD
   }
 
-  /** Per-chat generation; 0 when the chat has never been written. */
   generation(chatId: string): number {
     return this.generationById.get(chatId) ?? 0
   }
 
-  /**
-   * Subscribe to one chat's transcript changes. Returns unsubscribe.
-   * Empty / missing chatId is a no-op subscription.
-   */
   subscribe(chatId: string | null | undefined, listener: ChatTranscriptStoreListener): () => void {
     if (!chatId) return () => {}
     const listeners = this.listenersById.get(chatId) ?? new Set<ChatTranscriptStoreListener>()
@@ -102,7 +198,6 @@ export class ChatTranscriptStore {
     }
   }
 
-  /** Subscribe to every chat mutation (set/ingest/drop/clear). */
   subscribeAll(listener: ChatTranscriptStoreListener): () => void {
     this.allListeners.add(listener)
     return () => {
@@ -118,77 +213,102 @@ export class ChatTranscriptStore {
       updatedAt?: number
     }
   ): ChatTranscriptPayload {
-    const rawMessages = Array.isArray(payload.messages) ? payload.messages : EMPTY_MESSAGES
-    const rawRuns = Array.isArray(payload.runs) ? payload.runs : EMPTY_RUNS
-    // Canonical empty arrays so identical empty writes stay referentially stable.
-    const next: ChatTranscriptPayload = {
-      messages: rawMessages.length === 0 ? EMPTY_MESSAGES : rawMessages,
-      runs: rawRuns.length === 0 ? EMPTY_RUNS : rawRuns,
-      updatedAt: payload.updatedAt ?? Date.now()
-    }
-    const previous = this.byId.get(chatId)
-    if (payloadsReferentiallyEqual(previous, next)) {
-      return previous!
-    }
-    this.byId.set(chatId, next)
-    this.bumpGeneration(chatId)
-    this.notify(chatId)
-    return next
-  }
-
-  /** Capture transcript arrays from a full ChatRecord into the store. */
-  ingest(chat: ChatRecord): ChatTranscriptPayload | null {
-    if (!chat?.appChatId || isChatSummaryRecord(chat)) return null
-    const messages = chat.messages.length === 0 ? EMPTY_MESSAGES : chat.messages
-    const runs = chat.runs.length === 0 ? EMPTY_RUNS : chat.runs
-    const previous = this.byId.get(chat.appChatId)
-    if (previous && previous.messages === messages && previous.runs === runs) {
-      // Main-side metadata broadcasts can arrive without transcript changes.
-      // Keep the external-store snapshot stable so the transcript component
-      // does not render merely because ChatRecord.updatedAt changed.
-      return previous
-    }
-    return this.set(chat.appChatId, {
-      messages,
-      runs,
-      updatedAt: chat.updatedAt ?? Date.now()
+    const sourceMessages = Array.isArray(payload.messages) ? payload.messages : EMPTY_MESSAGES
+    const sourceRuns = Array.isArray(payload.runs) ? payload.runs : EMPTY_RUNS
+    const sourceUpdatedAt = payload.updatedAt ?? this.now()
+    const range = this.latestRange(sourceMessages)
+    return this.installEntry(chatId, {
+      sourceMessages,
+      sourceRuns,
+      sourceUpdatedAt,
+      followsLatest: true,
+      payload: this.buildPayload(sourceMessages, sourceRuns, range, sourceUpdatedAt)
     })
   }
 
-  /**
-   * Return a ChatRecord whose messages/runs come from the store when present.
-   * Summary stubs and missing store entries pass through unchanged.
-   */
+  /** Capture full authoritative arrays while publishing one bounded page. */
+  ingest(chat: ChatRecord): ChatTranscriptPayload | null {
+    if (!chat?.appChatId || isChatSummaryRecord(chat)) return null
+    const sourceMessages = chat.messages.length === 0 ? EMPTY_MESSAGES : chat.messages
+    const sourceRuns = chat.runs.length === 0 ? EMPTY_RUNS : chat.runs
+    const previous = this.byId.get(chat.appChatId)
+    if (
+      previous &&
+      previous.sourceMessages === sourceMessages &&
+      previous.sourceRuns === sourceRuns
+    ) {
+      return previous.payload
+    }
+
+    const followsLatest = previous?.followsLatest ?? true
+    const range = followsLatest
+      ? this.latestRange(sourceMessages)
+      : this.forwardRange(
+          sourceMessages,
+          Math.min(previous?.payload.windowStart ?? 0, sourceMessages.length)
+        )
+    const sourceUpdatedAt = chat.updatedAt ?? this.now()
+    return this.installEntry(chat.appChatId, {
+      sourceMessages,
+      sourceRuns,
+      sourceUpdatedAt,
+      followsLatest: followsLatest || range.end === sourceMessages.length,
+      payload: this.buildPayload(sourceMessages, sourceRuns, range, sourceUpdatedAt)
+    })
+  }
+
+  showOlderPage(chatId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry) return null
+    if (entry.payload.windowStart <= 0) return entry.payload
+    const range = this.backwardRange(entry.sourceMessages, entry.payload.windowStart)
+    return this.replacePage(chatId, entry, range, false)
+  }
+
+  showNewerPage(chatId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry) return null
+    if (entry.payload.windowEnd >= entry.sourceMessages.length) return entry.payload
+    const range = this.forwardRange(entry.sourceMessages, entry.payload.windowEnd)
+    return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
+  }
+
+  showLatestPage(chatId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry) return null
+    const range = this.latestRange(entry.sourceMessages)
+    if (entry.followsLatest && range.start === entry.payload.windowStart) return entry.payload
+    return this.replacePage(chatId, entry, range, true)
+  }
+
+  revealMessage(chatId: string, messageId: string): ChatTranscriptPayload | null {
+    const entry = this.byId.get(chatId)
+    if (!entry || !messageId) return entry?.payload ?? null
+    const existingIndex = entry.sourceMessages.findIndex((message) => message.id === messageId)
+    if (existingIndex < 0) return entry.payload
+    if (existingIndex >= entry.payload.windowStart && existingIndex < entry.payload.windowEnd) {
+      return entry.payload
+    }
+    const range = this.backwardRange(entry.sourceMessages, existingIndex + 1)
+    return this.replacePage(chatId, entry, range, range.end === entry.sourceMessages.length)
+  }
+
+  /** Reapply full authoritative arrays; presentation pages must never be saved. */
   applyToChat(chat: ChatRecord): ChatRecord {
     if (!chat?.appChatId || isChatSummaryRecord(chat)) return chat
     const stored = this.byId.get(chat.appChatId)
     if (!stored) return chat
-    if (chat.messages === stored.messages && chat.runs === stored.runs) return chat
-    return {
-      ...chat,
-      messages: stored.messages,
-      runs: stored.runs
-    }
+    if (chat.messages === stored.sourceMessages && chat.runs === stored.sourceRuns) return chat
+    return { ...chat, messages: stored.sourceMessages, runs: stored.sourceRuns }
   }
 
-  /**
-   * Chrome-only view: strip messages/runs from the record while keeping the
-   * arrays in the store (so TranscriptPanel can read them by chat id).
-   */
   detachChrome(chat: ChatRecord): ChatRecord {
     if (!chat?.appChatId || isChatSummaryRecord(chat)) return chat
     this.ingest(chat)
-    if ((chat.messages?.length ?? 0) === 0 && (chat.runs?.length ?? 0) === 0) {
-      return chat
-    }
-    return {
-      ...chat,
-      messages: [],
-      runs: []
-    }
+    if ((chat.messages?.length ?? 0) === 0 && (chat.runs?.length ?? 0) === 0) return chat
+    return { ...chat, messages: [], runs: [] }
   }
 
-  /** Drop stored transcript for a chat (LRU demote / delete / clear-all). */
   drop(chatId: string): boolean {
     if (!this.byId.delete(chatId)) return false
     this.bumpGeneration(chatId)
@@ -196,7 +316,6 @@ export class ChatTranscriptStore {
     return true
   }
 
-  /** Demote a full chat to summary and drop its stored transcript. */
   demote(chat: ChatRecord): ChatListItemLike {
     if (chat?.appChatId) this.drop(chat.appChatId)
     return demoteChatToSummary(chat)
@@ -206,33 +325,108 @@ export class ChatTranscriptStore {
     if (this.byId.size === 0 && this.generationById.size === 0) return
     const chatIds = Array.from(this.byId.keys())
     this.byId.clear()
-    for (const chatId of chatIds) {
-      this.bumpGeneration(chatId)
-    }
-    // Notify per-chat listeners that still remain, then everyone on subscribeAll.
-    for (const chatId of chatIds) {
-      this.notifyChatListeners(chatId)
-    }
+    for (const chatId of chatIds) this.bumpGeneration(chatId)
+    for (const chatId of chatIds) this.notifyChatListeners(chatId)
     this.notifyAllListeners()
   }
 
   stats(): ChatTranscriptStoreStats {
     let messageCount = 0
     let runCount = 0
-    for (const payload of this.byId.values()) {
-      messageCount += payload.messages.length
-      runCount += payload.runs.length
+    for (const entry of this.byId.values()) {
+      messageCount += entry.payload.messages.length
+      runCount += entry.payload.runs.length
     }
+    return { chatCount: this.byId.size, messageCount, runCount }
+  }
+
+  entries(): Array<[string, ChatTranscriptPayload]> {
+    return Array.from(this.byId, ([chatId, entry]) => [chatId, entry.payload])
+  }
+
+  private installEntry(chatId: string, entry: ChatTranscriptEntry): ChatTranscriptPayload {
+    const previous = this.byId.get(chatId)
+    if (payloadsReferentiallyEqual(previous?.payload, entry.payload)) return previous!.payload
+    this.byId.set(chatId, entry)
+    this.bumpGeneration(chatId)
+    this.notify(chatId)
+    return entry.payload
+  }
+
+  private replacePage(
+    chatId: string,
+    entry: ChatTranscriptEntry,
+    range: TranscriptPageRange,
+    followsLatest: boolean
+  ): ChatTranscriptPayload {
+    const payload = this.buildPayload(
+      entry.sourceMessages,
+      entry.sourceRuns,
+      range,
+      Math.max(entry.sourceUpdatedAt, this.now())
+    )
+    return this.installEntry(chatId, { ...entry, followsLatest, payload })
+  }
+
+  private buildPayload(
+    sourceMessages: ChatMessage[],
+    sourceRuns: ChatRun[],
+    range: TranscriptPageRange,
+    updatedAt: number
+  ): ChatTranscriptPayload {
+    const messages =
+      range.start === 0 && range.end === sourceMessages.length
+        ? sourceMessages
+        : sourceMessages.slice(range.start, range.end)
     return {
-      chatCount: this.byId.size,
-      messageCount,
-      runCount
+      messages: messages.length === 0 ? EMPTY_MESSAGES : messages,
+      runs: this.pageRuns(sourceRuns, messages),
+      updatedAt,
+      totalMessageCount: sourceMessages.length,
+      windowStart: range.start,
+      windowEnd: range.end,
+      windowEstimatedBytes: range.estimatedBytes,
+      hasOlder: range.start > 0,
+      hasNewer: range.end < sourceMessages.length
     }
   }
 
-  /** Snapshot for tests / probe meters. */
-  entries(): Array<[string, ChatTranscriptPayload]> {
-    return Array.from(this.byId.entries())
+  private pageRuns(sourceRuns: ChatRun[], messages: ChatMessage[]): ChatRun[] {
+    if (sourceRuns.length === 0) return EMPTY_RUNS
+    if (sourceRuns.length <= this.maxRunsPerPage) return sourceRuns
+    const messageIds = new Set(messages.map((message) => message.id))
+    const runIds = new Set(
+      messages
+        .map((message) => message.runId)
+        .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0)
+    )
+    const relevant = sourceRuns.filter(
+      (run) =>
+        !run.endedAt ||
+        runIds.has(run.runId) ||
+        Boolean(run.promptMessageId && messageIds.has(run.promptMessageId))
+    )
+    return relevant.length <= this.maxRunsPerPage
+      ? relevant
+      : relevant.slice(relevant.length - this.maxRunsPerPage)
+  }
+
+  private latestRange(messages: ChatMessage[]): TranscriptPageRange {
+    return this.backwardRange(messages, messages.length)
+  }
+
+  private backwardRange(messages: ChatMessage[], end: number): TranscriptPageRange {
+    return selectTranscriptPageEndingAt(messages, end, {
+      maxMessagesPerPage: this.maxMessagesPerPage,
+      maxBytesPerPage: this.maxBytesPerPage
+    })
+  }
+
+  private forwardRange(messages: ChatMessage[], start: number): TranscriptPageRange {
+    return selectTranscriptPageStartingAt(messages, start, {
+      maxMessagesPerPage: this.maxMessagesPerPage,
+      maxBytesPerPage: this.maxBytesPerPage
+    })
   }
 
   private bumpGeneration(chatId: string): void {

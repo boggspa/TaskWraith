@@ -44,6 +44,31 @@ export function getChatTranscriptSnapshot(
   return getChatTranscriptStore().getSnapshot(chatId)
 }
 
+export function showOlderChatTranscriptPage(
+  chatId: string | null | undefined
+): ChatTranscriptPayload | null {
+  return chatId ? getChatTranscriptStore().showOlderPage(chatId) : null
+}
+
+export function showNewerChatTranscriptPage(
+  chatId: string | null | undefined
+): ChatTranscriptPayload | null {
+  return chatId ? getChatTranscriptStore().showNewerPage(chatId) : null
+}
+
+export function showLatestChatTranscriptPage(
+  chatId: string | null | undefined
+): ChatTranscriptPayload | null {
+  return chatId ? getChatTranscriptStore().showLatestPage(chatId) : null
+}
+
+export function revealChatTranscriptMessage(
+  chatId: string | null | undefined,
+  messageId: string
+): ChatTranscriptPayload | null {
+  return chatId ? getChatTranscriptStore().revealMessage(chatId, messageId) : null
+}
+
 /**
  * Narrow transcript subscription for one chat.
  * Returns the shared empty payload when `chatId` is nullish or unset.

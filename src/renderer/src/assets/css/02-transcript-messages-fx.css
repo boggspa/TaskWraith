@@ -4382,6 +4382,49 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   gap: var(--space-sm);
 }
 
+.transcript-history-page-boundary {
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+
+.transcript-history-page-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  width: min(100%, 680px);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  border: 1px solid var(--border-subtle, var(--panel-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-elevated, var(--panel-bg)) 72%, transparent);
+}
+
+.transcript-history-page-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.transcript-history-page-actions button {
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  font: inherit;
+  border: 1px solid var(--border-subtle, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  cursor: pointer;
+}
+
+.transcript-history-page-actions button:hover,
+.transcript-history-page-actions button:focus-visible {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
+}
+
 /* .is-side-chat-seed deliberately has NO visual treatment (user decision
  * 2026-07-24). The block's delegated onFocus elects a seed candidate on ANY
  * child click (expanders, copy buttons), so a seed ring reads as a sticky

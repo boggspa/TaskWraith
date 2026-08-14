@@ -10,7 +10,11 @@ import {
   bindChatTranscriptStore,
   getChatTranscriptSnapshot,
   getChatTranscriptStore,
+  revealChatTranscriptMessage,
   resetChatTranscriptStoreBindingForTests,
+  showLatestChatTranscriptPage,
+  showNewerChatTranscriptPage,
+  showOlderChatTranscriptPage,
   subscribeChatTranscript,
   useChatTranscript
 } from './useChatTranscript'
@@ -85,5 +89,31 @@ describe('useChatTranscript binding', () => {
     const second = getChatTranscriptStore()
     expect(second).not.toBe(first)
     expect(second.has('ephemeral')).toBe(false)
+  })
+
+  it('routes page navigation helpers through the bound store', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 2 })
+    bindChatTranscriptStore(store)
+    store.ingest({
+      ...chat('pages'),
+      messages: Array.from({ length: 6 }, (_, index) => message(`m${index}`, `${index}`))
+    })
+
+    expect(showOlderChatTranscriptPage('pages')?.messages.map((entry) => entry.id)).toEqual([
+      'm2',
+      'm3'
+    ])
+    expect(showNewerChatTranscriptPage('pages')?.messages.map((entry) => entry.id)).toEqual([
+      'm4',
+      'm5'
+    ])
+    expect(revealChatTranscriptMessage('pages', 'm0')?.messages.map((entry) => entry.id)).toEqual([
+      'm0'
+    ])
+    expect(showLatestChatTranscriptPage('pages')?.messages.map((entry) => entry.id)).toEqual([
+      'm4',
+      'm5'
+    ])
+    expect(showOlderChatTranscriptPage(null)).toBeNull()
   })
 })
