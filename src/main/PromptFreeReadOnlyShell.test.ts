@@ -17,6 +17,16 @@ describe('promptFreeReadOnlyShellReason', () => {
     expect(promptFreeReadOnlyShellReason('git rev-parse HEAD && git status --porcelain')).toBe(
       'inspection_shell'
     )
+    expect(
+      promptFreeReadOnlyShellReason(
+        'git grep -n "toolbar" swift/ || git grep -n "StudioOverlay" swift/'
+      )
+    ).toBe('inspection_shell')
+    expect(
+      promptFreeReadOnlyShellReason(
+        'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/ || echo "NO_MATCHES"'
+      )
+    ).toBe('inspection_shell')
     expect(promptFreeReadOnlyShellReason('ls -la && git status --short')).toBe('inspection_shell')
   })
 

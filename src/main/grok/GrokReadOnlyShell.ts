@@ -430,11 +430,13 @@ function isReadOnlySegment(segment: string): boolean {
   // No path/script execution, no `VAR=val cmd` prefix, no bare-flag "command".
   if (command.includes('/') || command.includes('=') || command.startsWith('-')) return false
   if (command === 'find') return isReadOnlyFind(rest)
-  // The shared inspection classifier handles screened `git grep` before this
-  // parser reaches a segment. The strict Git classifier admits only its
-  // fail-closed status/diff/log surface, including in otherwise-safe command
-  // sequences; mutating and unknown subcommands still fail closed.
-  if (command === 'git') return isReadOnlyGitShellCommand(segment)
+  // Reuse the screened `git grep` proof for individual segments as well as a
+  // whole command, then fall through to the strict status/diff/log surface.
+  // This keeps safe `git grep ... || echo ...` sequences prompt-free without
+  // admitting mutating or unknown Git subcommands.
+  if (command === 'git') {
+    return isInspectionShellCommand(segment) || isReadOnlyGitShellCommand(segment)
+  }
   if (command === 'rg') return isReadOnlyRg(rest)
   if (command === 'uniq') return isReadOnlyUniq(rest)
   if (command === 'date' || command === 'hostname') return isBareSystemRead(rest)

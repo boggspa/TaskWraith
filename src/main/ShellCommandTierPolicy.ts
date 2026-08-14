@@ -384,9 +384,17 @@ const GIT_GREP_NUMBER_FLAG_PREFIXES = [
  * becoming a zero-click shell capability.
  */
 function gitGrepArgsAreReadOnly(args: readonly string[]): boolean {
-  if (args[0] !== 'grep') return false
+  let subcommandIndex = 0
+  // This exact override disables the repository-configured fsmonitor instead
+  // of naming a hook to execute. All other `git -c` forms remain outside the
+  // prompt-free proof surface.
+  if (args[0] === '-c') {
+    if (args[1] !== 'core.fsmonitor=false') return false
+    subcommandIndex = 2
+  }
+  if (args[subcommandIndex] !== 'grep') return false
   let literalOperands = false
-  for (let index = 1; index < args.length; index += 1) {
+  for (let index = subcommandIndex + 1; index < args.length; index += 1) {
     const token = args[index]
     if (literalOperands) continue
     if (token === '--') {

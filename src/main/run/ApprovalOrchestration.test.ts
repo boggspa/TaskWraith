@@ -1616,6 +1616,15 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
       command: 'git log -n 5 --oneline && git rev-list --count origin/master..master',
       reason: 'inspection_shell'
     },
+    {
+      command: 'git grep -n "toolbar" swift/ || git grep -n "StudioOverlay" swift/',
+      reason: 'inspection_shell'
+    },
+    {
+      command:
+        'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/ || echo "NO_MATCHES"',
+      reason: 'inspection_shell'
+    },
     { command: 'npm run work-guard', reason: 'explicit_user_request' },
     {
       command: 'export PATH=$PATH:/opt/homebrew/bin; npm run work-guard',

@@ -21,6 +21,7 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       'grep -i "canvas panel" src',
       'git grep -i "canvas" src/',
       'git grep -n -C 5 "isCanvasDockPanelOpen" src/renderer/src/App.tsx',
+      'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/',
       "sed -n '401,600p' src/renderer/src/components/CanvasDockPanel.tsx",
       'rg -n neverAutoAllow src/main',
       'diff a.txt b.txt',
@@ -72,6 +73,10 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       'git grep --textconv canvas', // may run a configured text-conversion filter
       'git grep --ext-grep canvas', // may call external grep(1)
       'git grep --no-index canvas /tmp', // arbitrary filesystem search
+      'git -c core.fsmonitor=true grep canvas',
+      'git -c core.fsmonitor=/bin/evil grep canvas',
+      'git -c core.pager=false grep canvas',
+      'git -c core.fsmonitor=false -c alias.grep=evil grep canvas',
       "sed -i '' 's/a/b/' file", // in-place write
       "sed -n -e '1,3p;w out.txt' file", // arbitrary sed program / write command
       "sed -n '1,3p; e touch-pwned' file", // arbitrary sed program / execute command
