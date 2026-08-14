@@ -776,11 +776,40 @@ describe('Studio acceptance harness', () => {
       expectedPid: 7002,
       expectedPgid: 7001,
       windowId: 42,
+      windowTitle: 'TaskWraith Studio',
       actions: [
         { type: 'key', key: 'tab' },
         { type: 'key', key: 'return' }
       ]
     })
+    const dualWindowTarget = {
+      ...target,
+      window: {
+        ...target.window,
+        visibleWindowCount: 2,
+        windows: [
+          ...target.window.windows,
+          {
+            windowId: 43,
+            title: 'TaskWraith Studio — Review',
+            bounds: { x: 101, y: 121, width: 1280, height: 720 }
+          }
+        ]
+      }
+    }
+    expect(
+      buildStudioUiDriverRequest({
+        ...dualWindowTarget,
+        expectedWindowTitle: 'TaskWraith Studio — Review',
+        actions: [{ type: 'key', key: 'a' }]
+      })
+    ).toMatchObject({ windowId: 43, windowTitle: 'TaskWraith Studio — Review' })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...dualWindowTarget,
+        actions: [{ type: 'key', key: 'a' }]
+      })
+    ).toThrow(/one exact visible window identity/)
     expect(() =>
       buildStudioUiDriverRequest({
         ...target,
@@ -854,7 +883,13 @@ describe('Studio acceptance harness', () => {
       window: {
         pid: 7002,
         visibleWindowCount: 1,
-        windows: [{ windowId: 42, bounds: { x: 1, y: 2, width: 640, height: 360 } }]
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 1, y: 2, width: 640, height: 360 }
+          }
+        ]
       }
     }
     const execFile = vi.fn(async (_file: string, args: string[]) => {
@@ -900,6 +935,15 @@ describe('Studio acceptance harness', () => {
     expect(execFile).toHaveBeenCalledOnce()
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
+    expect(receipt.receiptPath).toMatch(/ui-driver-receipts\/.*\.json$/)
+    await expect(
+      fsPromises.readFile(receipt.receiptPath as string, 'utf8').then((raw) => JSON.parse(raw))
+    ).resolves.toMatchObject({
+      kind: 'taskwraith-studio-ui-driver-receipt',
+      pid: 7002,
+      pgid: 7001,
+      windowId: 42
+    })
   })
 
   it('defines and drives the host-authorized accept/reject journey in exact order', async () => {
@@ -920,7 +964,17 @@ describe('Studio acceptance harness', () => {
       {
         companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
         electronPgid: 7001,
-        window: {}
+        window: {
+          pid: 7002,
+          visibleWindowCount: 1,
+          windows: [
+            {
+              windowId: 41,
+              title: 'TaskWraith Studio — Source',
+              bounds: { x: 1, y: 2, width: 640, height: 360 }
+            }
+          ]
+        }
       },
       {
         waitForJournalOperation: async (_plan: unknown, expectation: Record<string, unknown>) => {
@@ -949,6 +1003,25 @@ describe('Studio acceptance harness', () => {
               proposalId: `proposal-${proposalNumber}`,
               decision: expectation.decision
             }
+          }
+        },
+        probeWindow: async () => {
+          calls.push('window:review')
+          return {
+            pid: 7002,
+            visibleWindowCount: 2,
+            windows: [
+              {
+                windowId: 41,
+                title: 'TaskWraith Studio — Source',
+                bounds: { x: 1, y: 2, width: 640, height: 360 }
+              },
+              {
+                windowId: 42,
+                title: 'TaskWraith Studio — Review',
+                bounds: { x: 3, y: 4, width: 640, height: 360 }
+              }
+            ]
           }
         },
         runUiDriver: async (
@@ -983,24 +1056,34 @@ describe('Studio acceptance harness', () => {
     })
     expect(calls).toEqual([
       'journal:set_transcript:',
-      'driver:tab,bracket-left,return',
+      'driver:transcript-band,tab,transcript-selected,bracket-left,trim-pending,return,proposal-sent',
       'journal:propose_edit:',
       'driver:ghost',
-      'driver:w,current,v,proposed',
-      'driver:a',
+      'driver:w',
+      'window:review',
+      'driver:current,v,proposed',
+      'driver:a,accept-sent',
       'journal:resolve_proposal:accept',
       'driver:w,tab,bracket-right,return',
       'journal:propose_edit:',
+      'driver:w',
+      'window:review',
       'driver:ghost-reject',
-      'driver:r',
+      'driver:r,reject-sent',
       'journal:resolve_proposal:reject',
       'driver:space,right,left,i,o,l,p,c,g,s,final'
     ])
     expect(receipt.screenshots).toEqual([
+      '/virtual/transcript-band.png',
+      '/virtual/transcript-selected.png',
+      '/virtual/trim-pending.png',
+      '/virtual/proposal-sent.png',
       '/virtual/ghost.png',
       '/virtual/current.png',
       '/virtual/proposed.png',
+      '/virtual/accept-sent.png',
       '/virtual/ghost-reject.png',
+      '/virtual/reject-sent.png',
       '/virtual/final.png'
     ])
   })

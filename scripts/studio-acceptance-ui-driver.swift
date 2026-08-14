@@ -1,6 +1,7 @@
 #!/usr/bin/env swift
 
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
@@ -29,6 +30,7 @@ struct DriverRequest: Codable {
     let expectedPgid: Int32
     let expectedExecutablePath: String
     let windowId: UInt32
+    let windowTitle: String
     let windowBounds: WindowBounds
     let artifactRoot: String
     let actions: [DriverAction]
@@ -121,6 +123,51 @@ func validateWindow(_ request: DriverRequest) throws {
           closeEnough(width, request.windowBounds.width),
           closeEnough(height, request.windowBounds.height) else {
         throw DriverFailure.refused("exact window identity or bounds changed")
+    }
+}
+
+func focusExactWindow(_ request: DriverRequest) throws {
+    guard AXIsProcessTrusted() else {
+        throw DriverFailure.refused("macOS Accessibility access is unavailable")
+    }
+    let applicationElement = AXUIElementCreateApplication(pid_t(request.expectedPid))
+    var rawWindows: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(
+        applicationElement,
+        kAXWindowsAttribute as CFString,
+        &rawWindows
+    ) == .success,
+        let windows = rawWindows as? [AXUIElement]
+    else {
+        throw DriverFailure.refused("could not inspect the exact Companion accessibility windows")
+    }
+    let matches = windows.filter { window in
+        var rawTitle: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            window,
+            kAXTitleAttribute as CFString,
+            &rawTitle
+        ) == .success,
+            let title = rawTitle as? String
+        else { return false }
+        return title == request.windowTitle
+    }
+    guard matches.count == 1, let window = matches.first else {
+        throw DriverFailure.refused("exact Companion accessibility window identity is unavailable")
+    }
+    guard AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFrontmostAttribute as CFString,
+        kCFBooleanTrue
+    ) == .success,
+        AXUIElementSetAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            window
+        ) == .success,
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
+    else {
+        throw DriverFailure.refused("could not focus the exact Companion accessibility window")
     }
 }
 
@@ -222,6 +269,7 @@ do {
           request.expectedPid > 0,
           request.expectedPgid > 0,
           request.windowId > 0,
+          !request.windowTitle.isEmpty,
           !request.actions.isEmpty,
           request.actions.count <= 32 else {
         throw DriverFailure.refused("request shape is invalid")
@@ -245,10 +293,24 @@ do {
     }
 
     try validateWindow(request)
-    guard application.activate(options: []) else {
+    if request.actions.contains(where: { $0.type == "key" }) && !CGPreflightPostEventAccess() {
+        throw DriverFailure.refused("macOS post-event access is unavailable")
+    }
+    guard application.activate(options: [.activateAllWindows]) else {
         throw DriverFailure.refused("could not activate the exact isolated Companion")
     }
-    usleep(150_000)
+    try focusExactWindow(request)
+    let activationDeadline = Date().addingTimeInterval(3)
+    while Date() < activationDeadline &&
+        (!application.isActive ||
+            NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
+    {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard application.isActive,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
+        throw DriverFailure.refused("exact isolated Companion did not become frontmost")
+    }
     try validateWindow(request)
 
     var receipts: [ActionReceipt] = []
@@ -256,6 +318,10 @@ do {
         let currentPgid = getpgid(pid_t(request.expectedPid))
         guard currentPgid == request.expectedPgid else {
             throw DriverFailure.refused("process group changed during the bounded action list")
+        }
+        guard application.isActive,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
+            throw DriverFailure.refused("exact isolated Companion lost frontmost status")
         }
         try validateWindow(request)
 

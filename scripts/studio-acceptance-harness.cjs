@@ -815,20 +815,30 @@ function assertSafeUiDriverTarget(options) {
   if (
     !isRecord(window) ||
     window.pid !== companion.pid ||
-    window.visibleWindowCount !== 1 ||
+    !Number.isSafeInteger(window.visibleWindowCount) ||
+    window.visibleWindowCount < 1 ||
     !Array.isArray(window.windows) ||
-    window.windows.length !== 1
+    window.windows.length !== window.visibleWindowCount
   ) {
-    throw new Error(
-      'Studio UI driver requires exactly one visible window for the exact Companion pid'
-    )
+    throw new Error('Studio UI driver requires an exact visible-window set for the Companion pid')
   }
-  const exactWindow = window.windows[0]
+  const expectedWindowTitle = options.expectedWindowTitle
+  const candidates = expectedWindowTitle
+    ? window.windows.filter((entry) => isRecord(entry) && entry.title === expectedWindowTitle)
+    : window.visibleWindowCount === 1
+      ? window.windows
+      : []
+  if (candidates.length !== 1) {
+    throw new Error('Studio UI driver requires one exact visible window identity')
+  }
+  const exactWindow = candidates[0]
   const bounds = exactWindow && exactWindow.bounds
   if (
     !isRecord(exactWindow) ||
     !Number.isSafeInteger(exactWindow.windowId) ||
     exactWindow.windowId <= 0 ||
+    typeof exactWindow.title !== 'string' ||
+    !exactWindow.title.trim() ||
     !isRecord(bounds) ||
     ![bounds.x, bounds.y, bounds.width, bounds.height].every(
       (value) => typeof value === 'number' && Number.isFinite(value)
@@ -879,6 +889,7 @@ function buildStudioUiDriverRequest(options) {
     expectedPgid: companion.pgid,
     expectedExecutablePath,
     windowId: exactWindow.windowId,
+    windowTitle: exactWindow.title,
     windowBounds: bounds,
     artifactRoot,
     actions: normalizedActions
@@ -1030,7 +1041,16 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       throw new Error('Studio UI driver screenshot receipt does not match the bounded request')
     }
   }
-  return { ...receipt, requestPath }
+  const receiptDirectory = path.join(plan.artifactRoot, 'ui-driver-receipts')
+  await fsPromises.mkdir(receiptDirectory, { recursive: true, mode: 0o700 })
+  const receiptPath = path.join(receiptDirectory, path.basename(requestPath))
+  const receiptTemp = `${receiptPath}.tmp-${process.pid}`
+  await fsPromises.writeFile(receiptTemp, `${JSON.stringify(receipt, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+  await fsPromises.rename(receiptTemp, receiptPath)
+  return { ...receipt, requestPath, receiptPath }
 }
 
 function buildStudioAcceptanceJourney() {
@@ -1070,6 +1090,25 @@ function screenshotPaths(receipt) {
 async function driveStudioUiJourney(plan, target, adapters = {}) {
   const waitJournal = adapters.waitForJournalOperation || waitForStudioJournalOperation
   const runDriver = adapters.runUiDriver || runStudioUiDriver
+  const probeWindow = adapters.probeWindow || probeNativeWindow
+  const sourceWindowTitle = target.window?.windows?.[0]?.title
+  const sourceTarget = { ...target, expectedWindowTitle: sourceWindowTitle }
+  const reviewWindowTitle = 'TaskWraith Studio — Review'
+  const waitForReviewTarget = () =>
+    waitFor({
+      label: 'exact visible Studio Review window',
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      probe: async () => {
+        const window = await probeWindow(target.companion.pid, adapters.windowAdapters || {})
+        const matches = Array.isArray(window.windows)
+          ? window.windows.filter((entry) => entry?.title === reviewWindowTitle)
+          : []
+        return matches.length === 1
+          ? { ...target, window, expectedWindowTitle: reviewWindowTitle }
+          : null
+      }
+    })
   const assetId = target.asset && target.asset.sha256
   const transcript = await waitJournal(
     plan,
@@ -1084,10 +1123,10 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const driverReceipts = []
   const screenshots = []
 
-  const drive = async (actions) => {
+  const drive = async (actions, driverTarget = sourceTarget) => {
     const receipt = await runDriver(
       plan,
-      target,
+      driverTarget,
       actions.map((action) => (typeof action === 'string' ? { type: 'key', key: action } : action)),
       adapters.driverAdapters || {}
     )
@@ -1096,21 +1135,29 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     return receipt
   }
 
-  await drive(['tab', 'bracket-left', 'return'])
+  await drive([
+    { type: 'screenshot', name: 'transcript-band' },
+    'tab',
+    { type: 'screenshot', name: 'transcript-selected' },
+    'bracket-left',
+    { type: 'screenshot', name: 'trim-pending' },
+    'return',
+    { type: 'screenshot', name: 'proposal-sent' }
+  ])
   const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const acceptedProposalId = acceptedProposal.op?.proposal?.proposalId
   if (typeof acceptedProposalId !== 'string' || !acceptedProposalId) {
     throw new Error('Studio accept journey did not journal a proposal identity')
   }
   afterRevision = acceptedProposal.revision
-  await drive([{ type: 'screenshot', name: 'ghost' }])
-  await drive([
-    'w',
-    { type: 'screenshot', name: 'current' },
-    'v',
-    { type: 'screenshot', name: 'proposed' }
-  ])
-  await drive(['a'])
+  await drive([{ type: 'screenshot', name: 'ghost' }], sourceTarget)
+  await drive(['w'], sourceTarget)
+  const acceptedReviewTarget = await waitForReviewTarget()
+  await drive(
+    [{ type: 'screenshot', name: 'current' }, 'v', { type: 'screenshot', name: 'proposed' }],
+    acceptedReviewTarget
+  )
+  await drive(['a', { type: 'screenshot', name: 'accept-sent' }], acceptedReviewTarget)
   const acceptedResolution = await waitJournal(
     plan,
     {
@@ -1122,15 +1169,17 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   afterRevision = acceptedResolution.revision
 
-  await drive(['w', 'tab', 'bracket-right', 'return'])
+  await drive(['w', 'tab', 'bracket-right', 'return'], sourceTarget)
   const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const rejectedProposalId = rejectedProposal.op?.proposal?.proposalId
   if (typeof rejectedProposalId !== 'string' || !rejectedProposalId) {
     throw new Error('Studio reject journey did not journal a proposal identity')
   }
   afterRevision = rejectedProposal.revision
-  await drive([{ type: 'screenshot', name: 'ghost-reject' }])
-  await drive(['r'])
+  await drive(['w'], sourceTarget)
+  const rejectedReviewTarget = await waitForReviewTarget()
+  await drive([{ type: 'screenshot', name: 'ghost-reject' }], rejectedReviewTarget)
+  await drive(['r', { type: 'screenshot', name: 'reject-sent' }], rejectedReviewTarget)
   const rejectedResolution = await waitJournal(
     plan,
     {
