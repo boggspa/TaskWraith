@@ -923,6 +923,7 @@ const STUDIO_UI_KEYS = new Set([
   'tab',
   'return',
   'left',
+  'shift-left',
   'right',
   'bracket-left',
   'bracket-right',

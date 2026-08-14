@@ -97,6 +97,7 @@ let keyCodes: [String: CGKeyCode] = [
     "tab": 48,
     "space": 49,
     "left": 123,
+    "shift-left": 123,
     "right": 124
 ]
 
@@ -345,6 +346,10 @@ do {
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
                 throw DriverFailure.refused("could not construct bounded keyboard event")
+            }
+            if key == "shift-left" {
+                down.flags = .maskShift
+                up.flags = .maskShift
             }
             down.postToPid(pid_t(request.expectedPid))
             up.postToPid(pid_t(request.expectedPid))

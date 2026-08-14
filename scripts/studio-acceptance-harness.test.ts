@@ -1242,6 +1242,14 @@ describe('Studio acceptance harness', () => {
     expect(
       buildStudioUiDriverRequest({
         ...target,
+        actions: [{ type: 'key', key: 'shift-left' }]
+      })
+    ).toMatchObject({
+      actions: [{ type: 'key', key: 'shift-left' }]
+    })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
         actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
       })
     ).toMatchObject({
