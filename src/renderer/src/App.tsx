@@ -397,6 +397,7 @@ import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
 import { UsageHeatmap } from './components/UsageHeatmap'
+import { DailyActivityHeatmap } from './components/DailyActivityHeatmap'
 import { WorkspaceActivityHeatmap } from './components/WorkspaceActivityHeatmap'
 import { type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
 import { TokenUsageChart } from './components/TokenUsageChart'
@@ -1205,6 +1206,20 @@ function buildWelcomeHeatmapSlots({
           refreshKey={refreshKey}
           showProviderFilter
           className="token-usage-chart--welcome"
+        />
+      )
+    })
+    // The only slot in the cycle that reaches past 90 days: it reads the
+    // persisted daily rollup rather than the scan window, one cell per day.
+    slots.push({
+      key: 'external-year',
+      node: (
+        <DailyActivityHeatmap
+          title="External Activity · Year"
+          supplementalTaskWraithRecords={usageRecords}
+          refreshKey={refreshKey}
+          showProviderFilter
+          className="daily-heatmap--welcome-standalone"
         />
       )
     })

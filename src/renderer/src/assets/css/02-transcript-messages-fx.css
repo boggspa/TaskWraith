@@ -8506,3 +8506,133 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-right: 4px;
   opacity: 0.9;
 }
+
+/* ── DailyActivityHeatmap — the 365-day calendar grid ────────────────────────
+ * A sibling of `.usage-heatmap`, not a modifier: the geometry is different
+ * enough (7 weekday rows x ~53 week columns, one cell per DAY) that sharing
+ * the 30x12 rules would mean overriding almost all of them.
+ *
+ * The gap is the whole reason this needs its own scale. `.usage-heatmap-grid`
+ * uses a flat `2px`, which at 53 columns in a ~700px container is fine, but at
+ * this cell size a fixed gap swallows the cell. `clamp()` keeps the gutter
+ * proportional and never lets it close up entirely. */
+.daily-heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.daily-heatmap-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.daily-heatmap-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.daily-heatmap-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.daily-heatmap-chip {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.daily-heatmap-chip strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.daily-heatmap-provider-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.daily-heatmap-provider-filter::-webkit-scrollbar {
+  display: none;
+}
+.daily-heatmap-provider-filter-tab {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.daily-heatmap-provider-filter-tab[data-active='true'] {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+.daily-heatmap-grid-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  /* A year of columns cannot always shrink to fit; scroll INSIDE rather than
+   * letting the panel scroll sideways. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.daily-heatmap-grid {
+  display: grid;
+  gap: clamp(1px, 0.18cqw, 3px);
+  width: 100%;
+  min-width: 320px;
+  /* Square-ish cells: 7 rows against `columns` columns. Cells place themselves
+   * explicitly by gridRow/gridColumn, so flow direction cannot scramble the
+   * calendar the way DOM order alone would. */
+  aspect-ratio: 53 / 7;
+}
+.daily-heatmap-cell {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  transition: opacity 180ms ease;
+}
+.daily-heatmap-cell[data-outside='true'] {
+  /* Padding that squares off the first and last weeks. Invisible, but it must
+   * still occupy its track or the columns shear. */
+  background: transparent;
+  pointer-events: none;
+}
+[data-reduce-motion='true'] .daily-heatmap-cell {
+  transition: none;
+}
+.daily-heatmap-month-axis {
+  display: grid;
+  width: 100%;
+  min-width: 320px;
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+.daily-heatmap-month-label {
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+/* Welcome-cycle instance: the carousel pane is short, so trade a little cell
+ * height for the month axis staying legible. */
+.daily-heatmap--welcome-standalone .daily-heatmap-grid {
+  aspect-ratio: 62 / 7;
+}
+
+/* Settings instance: sits in the Model Usage activity stack beside the 90-day
+ * panels, which pin `min-height: 92px`. The year grid is shorter per row (7
+ * rows, not 12), so give it a floor rather than letting it collapse next to
+ * its siblings. */
+.daily-heatmap--settings-activity .daily-heatmap-grid {
+  min-height: 72px;
+}

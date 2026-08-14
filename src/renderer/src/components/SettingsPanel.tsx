@@ -130,6 +130,7 @@ import { SettingsModelComparisonsTable } from './SettingsModelComparisonsTable'
 import { PromptCacheSettingsSection } from './PromptCacheSettingsSection'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
+import { DailyActivityHeatmap } from './DailyActivityHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import {
@@ -6447,9 +6448,10 @@ export function SettingsPanel({
               <div className="settings-group settings-dashboard-stats">
                 <label className="settings-label">Welcome activity heatmaps</label>
                 <p className="settings-hint">
-                  Toggle the standalone 90-day heatmaps shown underneath the composer on new chat
-                  welcome screens. The welcome screen cycles through enabled panels one at a time;
-                  sidebar activity stays unchanged.
+                  Toggle the standalone heatmaps shown underneath the composer on new chat welcome
+                  screens. Most cover 90 days; the year panel reads the persisted daily rollup. The
+                  welcome screen cycles through enabled panels one at a time; sidebar activity stays
+                  unchanged.
                 </p>
                 <ul className="settings-dashboard-stats-list">
                   {[
@@ -11396,10 +11398,10 @@ export function SettingsPanel({
 
                 <section
                   className="settings-model-usage-activity-stack"
-                  aria-label="90-day activity and token usage"
+                  aria-label="Activity and token usage"
                 >
                   <div className="settings-model-usage-activity-header">
-                    <span>90-day activity</span>
+                    <span>Activity</span>
                     <span>Workspace · TaskWraith · External</span>
                   </div>
                   <div className="settings-model-usage-activity-list">
@@ -11438,6 +11440,12 @@ export function SettingsPanel({
                       dayCount={90}
                       showProviderFilter
                       className="token-usage-chart--settings"
+                    />
+                    <DailyActivityHeatmap
+                      title="External Activity · Year"
+                      supplementalTaskWraithRecords={usageRecords}
+                      showProviderFilter
+                      className="daily-heatmap--settings-activity"
                     />
                   </div>
                 </section>
