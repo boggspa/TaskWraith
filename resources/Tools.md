@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 206 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 207 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1640,6 +1640,15 @@ Read the full body of an enabled TaskWraith skill by id for the active workspace
 - Access: read-only (no approval needed)
 - Required args: id
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"skill_read","arguments":{"id":"text"}}}}`
+
+## image_view
+
+View one or more EXISTING raster images and return them as image content blocks the model can inspect. Use `path` / `paths` for PNG, JPEG, WebP, GIF, or BMP files inside the active workspace (or an explicit external-path grant), or `sourceMediaId` / `sourceMediaIds` for image attachments already owned by this chat. Up to 8 images per call. This does not capture a live app window: use appshots, appwatch_frames, canvas_screenshot, or simulator_screenshot for capture; those pixel-returning calls share the same Image View transcript identity. Read-only and auto-approved.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: path, paths, sourceMediaId, sourceMediaIds
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"image_view","arguments":{"path":"text"}}}}`
 
 ## image_edit
 

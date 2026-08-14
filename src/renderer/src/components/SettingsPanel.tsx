@@ -2525,6 +2525,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'skill_read'
   ],
   media: [
+    'image_view',
     'image_edit',
     'svg_rasterize',
     'image_generate',
