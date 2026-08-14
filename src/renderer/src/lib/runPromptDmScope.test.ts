@@ -51,7 +51,7 @@ describe('resolveComposerRunDmTarget', () => {
     ).toBeUndefined()
   })
 
-  it('keeps direct composer Steer on the resolved participant with fan-out off', () => {
+  it('keeps configured fan-out until MAIN resolves a directed seat', () => {
     const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     const steerStart = appSource.indexOf('const handleSteer = async')
     const steerEnd = appSource.indexOf('// Guard: if there\'s no active run', steerStart)
@@ -61,11 +61,25 @@ describe('resolveComposerRunDmTarget', () => {
     const ensembleSteer = appSource.slice(steerStart, steerEnd)
     expect(ensembleSteer).toContain('const dmTargetParticipantId = resolveComposerRunDmTarget({')
     expect(ensembleSteer).toContain(
+      'const fanoutPolicy: EnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy('
+    )
+    expect(ensembleSteer).not.toContain(
       'dmTargetParticipantId || request.exactPickerParticipantId'
     )
-    expect(ensembleSteer).toContain("? 'off'")
     expect(ensembleSteer).toContain(
       '...(dmTargetParticipantId ? { dmTargetParticipantId } : {})'
+    )
+
+    const dispatchStart = appSource.indexOf("if (runChat.chatKind === 'ensemble')")
+    const dispatchEnd = appSource.indexOf('const concurrentMode =', dispatchStart)
+    expect(dispatchStart).toBeGreaterThanOrEqual(0)
+    expect(dispatchEnd).toBeGreaterThan(dispatchStart)
+    const initialDispatchPolicy = appSource.slice(dispatchStart, dispatchEnd)
+    expect(initialDispatchPolicy).toContain(
+      'const fanoutPolicy: EnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy('
+    )
+    expect(initialDispatchPolicy).not.toContain(
+      'request.dmTargetParticipantId || request.exactPickerParticipantId'
     )
   })
 })

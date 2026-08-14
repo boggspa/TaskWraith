@@ -13972,13 +13972,13 @@ function App(): React.JSX.Element {
         const mode = isEnsembleActiveRoundDispatchLive(runChat.ensemble?.activeRound)
           ? ('queue' as const)
           : ('normal' as const)
-        const fanoutPolicy: EnsembleFanoutPolicy =
-          request.dmTargetParticipantId || request.exactPickerParticipantId
-            ? 'off'
-            : normalizeEnsembleFanoutPolicy(
-                runChat.ensemble?.fanoutPolicy,
-                runChat.ensemble?.concurrentModeEnabled
-              )
+        // Keep the configured policy on the wire until MAIN resolves the
+        // prompt against its authoritative roster. Renderer ids are only
+        // hints and may coexist with a multi-participant routing request.
+        const fanoutPolicy: EnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy(
+          runChat.ensemble?.fanoutPolicy,
+          runChat.ensemble?.concurrentModeEnabled
+        )
         const concurrentMode = ensembleFanoutPolicyEnabled(fanoutPolicy)
         const optimisticQueuedPrompt = runRequestPromptPreview(request)
         const didOptimisticallyQueue =
@@ -16929,25 +16929,19 @@ function App(): React.JSX.Element {
       if (ensembleSteerInFlightChatIdsRef.current.has(targetChatId)) {
         return
       }
-      // A direct composer Steer must preserve the same single-participant
-      // boundary as a normal send. Previously this branch rebuilt the IPC
-      // request without resolving the structured @mention, so the steer
-      // silently widened back to the whole roster. A directed steer is also
-      // never a concurrent fan-out request: only the addressed participant is
-      // reachable for this round.
+      // A direct composer Steer must preserve the same participant hints as a
+      // normal send. MAIN resolves those hints against the current roster and
+      // clamps fan-out only after it proves the prompt targets one seat.
       const dmTargetParticipantId = resolveComposerRunDmTarget({
         explicitParticipantId: request.dmTargetParticipantId,
         prompt: request.prompt || '',
         participants: targetChat.ensemble?.participants,
         inferFromPrompt: !existingPrompt
       })
-      const fanoutPolicy: EnsembleFanoutPolicy =
-        dmTargetParticipantId || request.exactPickerParticipantId
-          ? 'off'
-          : normalizeEnsembleFanoutPolicy(
-              targetChat.ensemble?.fanoutPolicy,
-              targetChat.ensemble?.concurrentModeEnabled
-            )
+      const fanoutPolicy: EnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy(
+        targetChat.ensemble?.fanoutPolicy,
+        targetChat.ensemble?.concurrentModeEnabled
+      )
       ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
       try {
         await window.api.runEnsembleRound({

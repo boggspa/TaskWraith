@@ -672,6 +672,19 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
     ).toMatchObject({ kind: 'ambiguous' })
   })
 
+  it('keeps two unique participant mentions panel-routed despite renderer hints', () => {
+    const boss = { ...CLAUDE_WRITE, id: 'boss', role: 'Boss' }
+    const work2 = { ...CLAUDE_READ, id: 'work2', role: 'Work2' }
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Boss re-allocate @Work2 and sign off this slice',
+        participants: [boss, work2],
+        advisoryParticipantId: boss.id,
+        exactPickerParticipantId: work2.id
+      })
+    ).toEqual({ kind: 'multiple' })
+  })
+
   it('accepts an advisory exact id only when the prompt has no participant routing signal', () => {
     expect(
       resolveEnsembleDmTargetForDispatch({
