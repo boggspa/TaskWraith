@@ -211,10 +211,63 @@ function assertObservationOnlyRequest(request) {
   return request
 }
 
+const DRIVER_EVIDENCE_PATH_MAX_CHARACTERS = 4096
+const DRIVER_FAILURE_STAGE = /^[a-z][a-z0-9-]{0,63}$/
+
 let latestTransportMutationBracket = null
+
+function boundedAbsoluteEvidencePath(value) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= DRIVER_EVIDENCE_PATH_MAX_CHARACTERS &&
+    path.isAbsolute(value)
+    ? value
+    : null
+}
+
+function studioUiDriverEvidenceDescriptor(value, fallbackFailureStage = null) {
+  const source =
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    value.studioUiDriverEvidence &&
+    typeof value.studioUiDriverEvidence === 'object' &&
+    !Array.isArray(value.studioUiDriverEvidence)
+      ? value.studioUiDriverEvidence
+      : value && typeof value === 'object' && !Array.isArray(value)
+        ? value
+        : {}
+  const rawStdoutByteLength =
+    Number.isSafeInteger(source.rawStdoutByteLength) && source.rawStdoutByteLength >= 0
+      ? source.rawStdoutByteLength
+      : null
+  const rawStdoutSha256 =
+    typeof source.rawStdoutSha256 === 'string' && /^[a-f0-9]{64}$/.test(source.rawStdoutSha256)
+      ? source.rawStdoutSha256
+      : null
+  const suppliedFailureStage =
+    typeof source.failureStage === 'string' && DRIVER_FAILURE_STAGE.test(source.failureStage)
+      ? source.failureStage
+      : null
+  const boundedFallbackStage =
+    typeof fallbackFailureStage === 'string' && DRIVER_FAILURE_STAGE.test(fallbackFailureStage)
+      ? fallbackFailureStage
+      : null
+  return {
+    requestPath: boundedAbsoluteEvidencePath(source.requestPath),
+    rawReceiptPath: boundedAbsoluteEvidencePath(source.rawReceiptPath),
+    rawStdoutSha256,
+    rawStdoutByteLength,
+    validatedReceiptPath: boundedAbsoluteEvidencePath(
+      source.validatedReceiptPath ?? source.receiptPath
+    ),
+    failureStage: suppliedFailureStage ?? boundedFallbackStage
+  }
+}
 
 function normalizeTransportMutationReceipt(receipt) {
   const action = Array.isArray(receipt?.actions) ? receipt.actions[0] : null
+  const evidence = studioUiDriverEvidenceDescriptor(receipt)
   const valid =
     receipt?.inputDelivery === 'background-observation-only' &&
     receipt?.allowForegroundInput !== true &&
@@ -226,18 +279,22 @@ function normalizeTransportMutationReceipt(receipt) {
     action?.accessibilityRole === 'AXStaticText' &&
     action?.accessibilityMatchCount === 1 &&
     typeof action?.accessibilityValue === 'string' &&
-    typeof receipt?.requestPath === 'string' &&
-    path.isAbsolute(receipt.requestPath) &&
-    typeof receipt?.receiptPath === 'string' &&
-    path.isAbsolute(receipt.receiptPath)
+    evidence.requestPath !== null &&
+    evidence.rawReceiptPath !== null &&
+    evidence.rawStdoutSha256 !== null &&
+    evidence.rawStdoutByteLength !== null &&
+    evidence.validatedReceiptPath !== null &&
+    evidence.failureStage === null
   invariant(valid, 'native transport-mutation receipt is missing or mismatched')
   const parsedValue = harness.parseStudioTransportMutationText(action.accessibilityValue)
   return {
-    requestPath: receipt.requestPath,
-    receiptPath: receipt.receiptPath,
+    requestPath: evidence.requestPath,
+    rawReceiptPath: evidence.rawReceiptPath,
+    rawStdoutSha256: evidence.rawStdoutSha256,
+    rawStdoutByteLength: evidence.rawStdoutByteLength,
+    receiptPath: evidence.validatedReceiptPath,
     rawValue: action.accessibilityValue,
-    parsedValue,
-    rawReceipt: receipt
+    parsedValue
   }
 }
 
@@ -253,14 +310,16 @@ function validateTransportMutationBracket(beforeReceipt, afterReceipt, name = 'n
   return {
     ok: true,
     name,
+    stage: 'complete',
     rawValueSha256: sha256Bytes(before.rawValue),
     before,
-    after
+    after,
+    failure: null
   }
 }
 
-async function readTransportMutation(plan, target) {
-  return harness.runStudioUiDriver(plan, target, [{ type: 'read-transport-mutation' }])
+async function readTransportMutation(plan, target, runStudioUiDriver = harness.runStudioUiDriver) {
+  return runStudioUiDriver(plan, target, [{ type: 'read-transport-mutation' }])
 }
 
 function collectRegularFiles(directory) {
@@ -857,17 +916,52 @@ function assertFocusIsolation(before, after, targetPid, label) {
   }
 }
 
-async function captureNative(plan, target, name) {
-  const beforeMutationReceipt = await readTransportMutation(plan, target)
-  const beforeMutation = normalizeTransportMutationReceipt(beforeMutationReceipt)
+async function captureNative(plan, target, name, adapters = {}) {
+  const runStudioUiDriver = adapters.runStudioUiDriver || harness.runStudioUiDriver
   latestTransportMutationBracket = {
     ok: false,
     name,
+    stage: 'before-read',
+    before: null,
+    after: null,
+    failure: null
+  }
+
+  let beforeMutationReceipt
+  try {
+    beforeMutationReceipt = await readTransportMutation(plan, target, runStudioUiDriver)
+  } catch (error) {
+    latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(error, 'before-read')
+    throw error
+  }
+
+  latestTransportMutationBracket.stage = 'before-normalization'
+  latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(
+    beforeMutationReceipt,
+    'before-normalization'
+  )
+  const beforeMutation = normalizeTransportMutationReceipt(beforeMutationReceipt)
+
+  latestTransportMutationBracket = {
+    ok: false,
+    name,
+    stage: 'screenshot',
     before: beforeMutation,
-    after: null
+    after: null,
+    failure: null
   }
   const request = assertObservationOnlyRequest(buildObservationRequest(name))
-  const receipt = await harness.runStudioUiDriver(plan, target, request.actions)
+  let receipt
+  try {
+    receipt = await runStudioUiDriver(plan, target, request.actions)
+  } catch (error) {
+    latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(error, 'screenshot')
+    throw error
+  }
+  latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(
+    receipt,
+    'screenshot-validation'
+  )
   invariant(
     receipt?.inputDelivery === 'background-observation-only' &&
       receipt?.allowForegroundInput !== true,
@@ -876,15 +970,39 @@ async function captureNative(plan, target, name) {
   const action = receipt.actions.find((candidate) => candidate.type === 'screenshot')
   invariant(
     action?.screenshotPath && action.byteLength > 0 && receipt.actions.length === 1,
-    `native screenshot receipt is invalid: ${JSON.stringify(receipt)}`
+    `native screenshot receipt is invalid: ${JSON.stringify(receipt).slice(0, 1000)}`
   )
-  const afterMutationReceipt = await readTransportMutation(plan, target)
-  const afterMutation = normalizeTransportMutationReceipt(afterMutationReceipt)
+
   latestTransportMutationBracket = {
     ok: false,
     name,
+    stage: 'after-read',
     before: beforeMutation,
-    after: afterMutation
+    after: null,
+    failure: null
+  }
+  let afterMutationReceipt
+  try {
+    afterMutationReceipt = await readTransportMutation(plan, target, runStudioUiDriver)
+  } catch (error) {
+    latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(error, 'after-read')
+    throw error
+  }
+
+  latestTransportMutationBracket.stage = 'after-normalization'
+  latestTransportMutationBracket.failure = studioUiDriverEvidenceDescriptor(
+    afterMutationReceipt,
+    'after-normalization'
+  )
+  const afterMutation = normalizeTransportMutationReceipt(afterMutationReceipt)
+
+  latestTransportMutationBracket = {
+    ok: false,
+    name,
+    stage: 'comparison',
+    before: beforeMutation,
+    after: afterMutation,
+    failure: null
   }
   const transportMutationBracket = validateTransportMutationBracket(
     beforeMutationReceipt,
@@ -1847,6 +1965,7 @@ module.exports = {
   assertObservationOnlyRequest,
   buildArtifactManifest,
   buildObservationRequest,
+  captureNative,
   createSyntheticRedReference,
   evaluatePureRedCapture,
   parseCli,

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { PNG } = require('pngjs') as {
@@ -16,6 +16,7 @@ const {
   JOURNEY_PHASES,
   assertObservationOnlyRequest,
   buildObservationRequest,
+  captureNative,
   createSyntheticRedReference,
   evaluatePureRedCapture,
   parseCli,
@@ -30,6 +31,12 @@ const {
   JOURNEY_PHASES: readonly string[]
   assertObservationOnlyRequest: (request: Record<string, any>) => Record<string, any>
   buildObservationRequest: (name: string) => Record<string, any>
+  captureNative: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    name: string,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   createSyntheticRedReference: (options: {
     destination: string
     width: number
@@ -91,6 +98,9 @@ function transportMutationReceipt(
     inputDelivery: 'background-observation-only',
     allowForegroundInput: false,
     requestPath: path.join(directory, `request-${suffix}.json`),
+    rawReceiptPath: path.join(directory, `raw-${suffix}.json.stdout`),
+    rawStdoutSha256: 'a'.repeat(64),
+    rawStdoutByteLength: Buffer.byteLength(accessibilityValue),
     receiptPath: path.join(directory, `receipt-${suffix}.json`),
     actions: [
       {
@@ -100,6 +110,55 @@ function transportMutationReceipt(
         accessibilityRole: 'AXStaticText',
         accessibilityMatchCount: 1,
         accessibilityValue
+      }
+    ]
+  }
+}
+
+function studioUiDriverEvidence(
+  directory: string,
+  suffix: string,
+  failureStage: string | null
+): Record<string, any> {
+  return {
+    requestPath: path.join(directory, `request-${suffix}.json`),
+    rawReceiptPath: path.join(directory, `raw-${suffix}.json.stdout`),
+    rawStdoutSha256: 'b'.repeat(64),
+    rawStdoutByteLength: 128,
+    validatedReceiptPath:
+      failureStage === null ? path.join(directory, `receipt-${suffix}.json`) : null,
+    failureStage
+  }
+}
+
+function studioUiDriverFailure(
+  directory: string,
+  suffix: string,
+  failureStage: string
+): Error & { studioUiDriverEvidence: Record<string, any> } {
+  const failure = new Error(`${suffix} failed at ${failureStage}`) as Error & {
+    studioUiDriverEvidence: Record<string, any>
+  }
+  failure.studioUiDriverEvidence = studioUiDriverEvidence(directory, suffix, failureStage)
+  return failure
+}
+
+function screenshotReceipt(
+  directory: string,
+  suffix: string,
+  screenshotPath: string
+): Record<string, any> {
+  return {
+    inputDelivery: 'background-observation-only',
+    allowForegroundInput: false,
+    ...studioUiDriverEvidence(directory, suffix, null),
+    receiptPath: path.join(directory, `receipt-${suffix}.json`),
+    actions: [
+      {
+        index: 0,
+        type: 'screenshot',
+        screenshotPath,
+        byteLength: fs.statSync(screenshotPath).size
       }
     ]
   }
@@ -186,14 +245,22 @@ describe('studio LUT acceptance runner contract', () => {
     expect(bracket).toMatchObject({
       ok: true,
       name: 'neutral-stable-02',
+      stage: 'complete',
+      failure: null,
       before: {
         requestPath: before.requestPath,
+        rawReceiptPath: before.rawReceiptPath,
+        rawStdoutSha256: before.rawStdoutSha256,
+        rawStdoutByteLength: before.rawStdoutByteLength,
         receiptPath: before.receiptPath,
         rawValue: validTransportMutationText,
         parsedValue: { kind: 'lifecycleAttach', route: 'review' }
       },
       after: {
         requestPath: after.requestPath,
+        rawReceiptPath: after.rawReceiptPath,
+        rawStdoutSha256: after.rawStdoutSha256,
+        rawStdoutByteLength: after.rawStdoutByteLength,
         receiptPath: after.receiptPath,
         rawValue: validTransportMutationText,
         parsedValue: { kind: 'lifecycleAttach', route: 'review' }
@@ -245,20 +312,192 @@ describe('studio LUT acceptance runner contract', () => {
       latestTransportMutationBracket: {
         ok: true,
         name: 'failure-sample',
+        stage: 'complete',
+        failure: null,
         before: {
           requestPath: path.join(directory, 'request-before.json'),
+          rawReceiptPath: path.join(directory, 'raw-before.json.stdout'),
+          rawStdoutSha256: 'a'.repeat(64),
+          rawStdoutByteLength: Buffer.byteLength(validTransportMutationText),
           receiptPath: path.join(directory, 'receipt-before.json'),
           rawValue: validTransportMutationText,
           parsedValue: { kind: 'lifecycleAttach', route: 'review' }
         },
         after: {
           requestPath: path.join(directory, 'request-after.json'),
+          rawReceiptPath: path.join(directory, 'raw-after.json.stdout'),
+          rawStdoutSha256: 'a'.repeat(64),
+          rawStdoutByteLength: Buffer.byteLength(validTransportMutationText),
           receiptPath: path.join(directory, 'receipt-after.json'),
           rawValue: validTransportMutationText,
           parsedValue: { kind: 'lifecycleAttach', route: 'review' }
         }
       }
     })
+  })
+
+  it.each([
+    { label: 'native exec', suffix: 'native-exec', failureStage: 'native-exec' },
+    { label: 'invalid JSON', suffix: 'invalid-json', failureStage: 'json-parse' },
+    { label: 'missing action', suffix: 'missing-action', failureStage: 'receipt-schema' },
+    { label: 'malformed tm1', suffix: 'malformed-tm1', failureStage: 'tm1-validation' }
+  ])(
+    'seals the current before-read attempt for $label failure',
+    async ({ suffix, failureStage }) => {
+      const directory = await temporaryDirectory()
+      const name = `first-${suffix}`
+      const driverFailure = studioUiDriverFailure(directory, suffix, failureStage)
+
+      await expect(
+        captureNative({}, {}, name, {
+          runStudioUiDriver: vi.fn(async () => {
+            throw driverFailure
+          })
+        })
+      ).rejects.toBe(driverFailure)
+      await writeFailureArtifacts(directory, driverFailure)
+
+      const evidence = JSON.parse(
+        await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+      )
+      expect(evidence.latestTransportMutationBracket).toEqual({
+        ok: false,
+        name,
+        stage: 'before-read',
+        before: null,
+        after: null,
+        failure: studioUiDriverEvidence(directory, suffix, failureStage)
+      })
+      expect(evidence.latestTransportMutationBracket.failure).not.toHaveProperty('stdout')
+    }
+  )
+
+  it('seals raw receipt paths when first-read tm1 normalization fails', async () => {
+    const directory = await temporaryDirectory()
+    const name = 'first-normalization'
+    const malformed = transportMutationReceipt(
+      directory,
+      'first-normalization',
+      validTransportMutationText.replace('clamped=0', 'clamped=1')
+    )
+
+    let failure: Error | null = null
+    try {
+      await captureNative({}, {}, name, {
+        runStudioUiDriver: vi.fn(async () => malformed)
+      })
+    } catch (error) {
+      failure = error as Error
+    }
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure?.message).toMatch(/tm1/)
+    await writeFailureArtifacts(directory, failure as Error)
+
+    const evidence = JSON.parse(
+      await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+    )
+    expect(evidence.latestTransportMutationBracket).toMatchObject({
+      ok: false,
+      name,
+      stage: 'before-normalization',
+      before: null,
+      after: null,
+      failure: {
+        requestPath: malformed.requestPath,
+        rawReceiptPath: malformed.rawReceiptPath,
+        rawStdoutSha256: malformed.rawStdoutSha256,
+        rawStdoutByteLength: malformed.rawStdoutByteLength,
+        validatedReceiptPath: malformed.receiptPath,
+        failureStage: 'before-normalization'
+      }
+    })
+  })
+
+  it('seals the valid before receipt and current after-read failure', async () => {
+    const directory = await temporaryDirectory()
+    const name = 'after-malformed-tm1'
+    const screenshotPath = path.join(directory, `${name}.png`)
+    writeCapture(screenshotPath, 'ungraded')
+    const before = transportMutationReceipt(directory, 'before-valid')
+    const afterFailure = studioUiDriverFailure(directory, 'after-malformed', 'tm1-validation')
+    let call = 0
+    const runStudioUiDriver = vi.fn(async () => {
+      call += 1
+      if (call === 1) return before
+      if (call === 2) return screenshotReceipt(directory, 'screenshot-valid', screenshotPath)
+      throw afterFailure
+    })
+
+    await expect(captureNative({}, {}, name, { runStudioUiDriver })).rejects.toBe(afterFailure)
+    await writeFailureArtifacts(directory, afterFailure)
+
+    const evidence = JSON.parse(
+      await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+    )
+    expect(evidence.latestTransportMutationBracket).toMatchObject({
+      ok: false,
+      name,
+      stage: 'after-read',
+      before: {
+        requestPath: before.requestPath,
+        rawReceiptPath: before.rawReceiptPath,
+        receiptPath: before.receiptPath,
+        rawValue: validTransportMutationText
+      },
+      after: null,
+      failure: studioUiDriverEvidence(directory, 'after-malformed', 'tm1-validation')
+    })
+    expect(runStudioUiDriver).toHaveBeenCalledTimes(3)
+  })
+
+  it('seals both current valid receipts when tm1 changes across the screenshot', async () => {
+    const directory = await temporaryDirectory()
+    const name = 'changed-valid-tm1'
+    const screenshotPath = path.join(directory, `${name}.png`)
+    writeCapture(screenshotPath, 'ungraded')
+    const before = transportMutationReceipt(directory, 'before-review')
+    const after = transportMutationReceipt(
+      directory,
+      'after-source',
+      validTransportMutationText.replace('route=review', 'route=source')
+    )
+    let call = 0
+    const runStudioUiDriver = vi.fn(async () => {
+      call += 1
+      if (call === 1) return before
+      if (call === 2) return screenshotReceipt(directory, 'screenshot-valid', screenshotPath)
+      return after
+    })
+
+    let failure: Error | null = null
+    try {
+      await captureNative({}, {}, name, { runStudioUiDriver })
+    } catch (error) {
+      failure = error as Error
+    }
+    expect(failure?.message).toMatch(/changed during native screenshot/)
+    await writeFailureArtifacts(directory, failure as Error)
+
+    const evidence = JSON.parse(
+      await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+    )
+    expect(evidence.latestTransportMutationBracket).toMatchObject({
+      ok: false,
+      name,
+      stage: 'comparison',
+      before: {
+        requestPath: before.requestPath,
+        rawReceiptPath: before.rawReceiptPath,
+        rawValue: validTransportMutationText
+      },
+      after: {
+        requestPath: after.requestPath,
+        rawReceiptPath: after.rawReceiptPath,
+        rawValue: validTransportMutationText.replace('route=review', 'route=source')
+      },
+      failure: null
+    })
+    expect(runStudioUiDriver).toHaveBeenCalledTimes(3)
   })
 
   it('brackets the one native screenshot choke point in exact order', async () => {
@@ -269,13 +508,11 @@ describe('studio LUT acceptance runner contract', () => {
     const start = source.indexOf('async function captureNative(')
     const end = source.indexOf('async function captureGuarded(', start)
     const captureSource = source.slice(start, end)
-    const before = captureSource.indexOf(
-      'const beforeMutationReceipt = await readTransportMutation'
-    )
+    const before = captureSource.indexOf('beforeMutationReceipt = await readTransportMutation')
     const screenshot = captureSource.indexOf(
-      'const receipt = await harness.runStudioUiDriver(plan, target, request.actions)'
+      'receipt = await runStudioUiDriver(plan, target, request.actions)'
     )
-    const after = captureSource.indexOf('const afterMutationReceipt = await readTransportMutation')
+    const after = captureSource.indexOf('afterMutationReceipt = await readTransportMutation')
     const validation = captureSource.indexOf('validateTransportMutationBracket(')
 
     expect(start).toBeGreaterThan(0)
@@ -283,6 +520,14 @@ describe('studio LUT acceptance runner contract', () => {
     expect(screenshot).toBeGreaterThan(before)
     expect(after).toBeGreaterThan(screenshot)
     expect(validation).toBeGreaterThan(after)
+    const beforeStage = captureSource.indexOf("stage: 'before-read'")
+    const afterStage = captureSource.indexOf("stage: 'after-read'")
+    expect(beforeStage).toBeGreaterThan(0)
+    expect(beforeStage).toBeLessThan(before)
+    expect(afterStage).toBeGreaterThan(screenshot)
+    expect(afterStage).toBeLessThan(after)
+    expect(captureSource).toContain("studioUiDriverEvidenceDescriptor(error, 'before-read')")
+    expect(captureSource).toContain("studioUiDriverEvidenceDescriptor(error, 'after-read')")
     expect(captureSource).toContain('latestTransportMutationBracket = {')
     expect(captureSource).toContain('transportMutationBracket')
   })
