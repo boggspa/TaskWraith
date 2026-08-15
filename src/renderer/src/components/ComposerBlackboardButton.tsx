@@ -120,6 +120,9 @@ export interface ComposerBlackboardButtonProps {
   provider: ProviderId
   composerStyle: ComposerStyle
   disabled?: boolean
+  /** Slash-command open request — see `lib/composerSurfaceRequest`. Each new
+   * positive value opens the popover once; 0 is inert. */
+  openSignal?: number
 }
 
 interface ComposerBlackboardPostFormProps {
@@ -277,6 +280,16 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
     null
   )
+
+  // `/blackboard` opens the same popover the icon does. `disabled` is read at
+  // fire time so a later disabling re-render can't retroactively re-open it.
+  const blackboardOpenSignal = props.openSignal
+  const blackboardDisabled = props.disabled
+  useEffect(() => {
+    if (!blackboardOpenSignal || blackboardDisabled) return
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blackboardOpenSignal])
 
   const entries = useMemo(
     () => props.chat?.ensemble?.blackboard ?? [],

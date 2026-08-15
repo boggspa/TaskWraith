@@ -15,6 +15,9 @@ interface ComposerScheduleButtonProps {
   disabled?: boolean
   disabledReason?: string
   hasPrompt: boolean
+  /** Slash-command open request — see `lib/composerSurfaceRequest`. Each new
+   * positive value opens the popover once; 0 is inert. */
+  openSignal?: number
 }
 
 const QUICK_OFFSETS_MINUTES = [
@@ -46,7 +49,8 @@ export function ComposerScheduleButton({
   onSchedule,
   disabled,
   disabledReason,
-  hasPrompt
+  hasPrompt,
+  openSignal
 }: ComposerScheduleButtonProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -54,6 +58,15 @@ export function ComposerScheduleButton({
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [busy, setBusy] = useState(false)
+
+  // `/schedule` opens the same popover the icon does. Keyed on the signal only:
+  // `disabled` is read at fire time so a later re-render that disables the
+  // button doesn't retroactively re-open it.
+  useEffect(() => {
+    if (!openSignal || disabled) return
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal])
 
   useEffect(() => {
     if (!open && !value) return

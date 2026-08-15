@@ -90,6 +90,10 @@ export interface MultiviewLayoutPickerProps {
   disabled?: boolean
   /** Layouts that cannot fit the current window width (kept selectable=false). */
   disabledLayouts?: ReadonlySet<MultiviewLayout>
+  /** Slash-command open request — see `lib/composerSurfaceRequest`. Each new
+   * positive value opens the picker once; 0 is inert. A bare `/multiview`
+   * opens it; `/multiview <layout>` bypasses it and sets the layout directly. */
+  openSignal?: number
 }
 
 export function MultiviewLayoutPicker(props: MultiviewLayoutPickerProps): ReactElement {
@@ -104,6 +108,16 @@ export function MultiviewLayoutPicker(props: MultiviewLayoutPickerProps): ReactE
     props.onSelectLayout,
     props.disabledLayouts
   )
+
+  // Bare `/multiview` opens the same picker the icon does. `disabled` is read
+  // at fire time so a later disabling re-render can't retroactively re-open it.
+  const layoutOpenSignal = props.openSignal
+  const layoutPickerDisabled = props.disabled
+  useEffect(() => {
+    if (!layoutOpenSignal || layoutPickerDisabled) return
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutOpenSignal])
 
   const updatePosition = useCallback((): void => {
     if (typeof window === 'undefined') return

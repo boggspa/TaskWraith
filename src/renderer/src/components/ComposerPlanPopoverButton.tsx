@@ -29,6 +29,9 @@ export interface ComposerPlanPopoverPosition {
 interface ComposerPlanPopoverButtonProps {
   chat?: ChatRecord | null
   composerStyle?: string
+  /** Slash-command open request — see `lib/composerSurfaceRequest`. Each new
+   * positive value opens the popover once; 0 is inert. */
+  openSignal?: number
 }
 
 function activeCount(todos: readonly TodoItem[]): number {
@@ -175,13 +178,21 @@ export function computeComposerPlanPopoverPosition(
 
 export function ComposerPlanPopoverButton({
   chat,
-  composerStyle = 'default'
+  composerStyle = 'default',
+  openSignal
 }: ComposerPlanPopoverButtonProps): React.JSX.Element | null {
   const lanes = useMemo(() => buildComposerPlanLanes(chat), [chat])
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<ComposerPlanPopoverPosition | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  // `/plan` opens the same popover the icon does.
+  useEffect(() => {
+    if (!openSignal) return
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal])
 
   const stats = useMemo(() => {
     const totalActive = lanes.reduce((sum, lane) => sum + activeCount(lane.todos), 0)

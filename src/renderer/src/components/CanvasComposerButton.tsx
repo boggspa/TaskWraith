@@ -21,6 +21,9 @@ export interface CanvasComposerButtonProps {
   disabled?: boolean
   chatId?: string | null
   composerStyle?: string
+  /** Slash-command open request — see `lib/composerSurfaceRequest`. Each new
+   * positive value opens the popover once; 0 is inert. */
+  openSignal?: number
 }
 
 /**
@@ -63,7 +66,8 @@ function sketchBridgeAvailable(): boolean {
 export function CanvasComposerButton({
   disabled,
   chatId,
-  composerStyle = 'default'
+  composerStyle = 'default',
+  openSignal
 }: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -77,6 +81,14 @@ export function CanvasComposerButton({
   useEffect(() => {
     if (!open) setError(null)
   }, [open])
+
+  // `/canvas` opens the same picker the icon does. `disabled` is read at fire
+  // time so a later disabling re-render can't retroactively re-open it.
+  useEffect(() => {
+    if (!openSignal || disabled) return
+    setOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal])
 
   const handleOpen = async (url: string): Promise<void> => {
     setError(null)
