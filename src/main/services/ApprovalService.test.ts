@@ -338,7 +338,8 @@ describe('ApprovalService — registries', () => {
         preview: { command: "sed -n '1,20p' src/main/index.ts" },
         allowedActions: ['accept', 'decline', 'cancel'],
         hasExternalPathDetection: false
-      })
+      }),
+      expect.any(AbortSignal)
     )
     expect(resolveAction).toHaveBeenCalledWith('accept', 'system')
     expect(spies.resolveApprovalLedger).toHaveBeenCalledWith(
@@ -348,6 +349,34 @@ describe('ApprovalService — registries', () => {
       decisionMetadata
     )
     expect(svc.has('boss-review-1')).toBe(false)
+  })
+
+  it('aborts the Boss review when a valid human decision wins the same approval', async () => {
+    let reviewSignal: AbortSignal | undefined
+    const requestBossApprovalReview = vi.fn(
+      async (_candidate: unknown, signal?: AbortSignal) =>
+        await new Promise<null>((resolve) => {
+          reviewSignal = signal
+          signal?.addEventListener('abort', () => resolve(null), { once: true })
+        })
+    ) as NonNullable<ApprovalServiceDeps['requestBossApprovalReview']>
+    const { deps } = makeDeps({ requestBossApprovalReview })
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+
+    svc.registerGeminiTool('human-wins-review', {
+      provider: 'antigravity',
+      service: 'shellCommands',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline'],
+      resolve
+    })
+
+    await vi.waitFor(() => expect(reviewSignal).toBeDefined())
+    expect(reviewSignal?.aborted).toBe(false)
+    await expect(svc.resolve('human-wins-review', 'decline')).resolves.toBe(true)
+    expect(reviewSignal?.aborted).toBe(true)
+    expect(resolve).toHaveBeenCalledWith(false)
   })
 
   it('offers native Codex and Kimi shell/file prompts to the same review seam', async () => {
@@ -381,7 +410,8 @@ describe('ApprovalService — registries', () => {
         provider: 'codex',
         service: 'shellCommands',
         preview: { command: 'npm test' }
-      })
+      }),
+      expect.any(AbortSignal)
     )
     expect(requestBossApprovalReview).toHaveBeenNthCalledWith(
       2,
@@ -391,7 +421,8 @@ describe('ApprovalService — registries', () => {
         provider: 'kimi',
         service: 'fileChanges',
         preview: { path: 'src/main/example.ts' }
-      })
+      }),
+      expect.any(AbortSignal)
     )
   })
 

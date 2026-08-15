@@ -345,7 +345,8 @@ export interface ApprovalServiceDeps {
    * decision that races the human and timeout through the same resolver.
    */
   requestBossApprovalReview?: (
-    candidate: BossApprovalReviewCandidate
+    candidate: BossApprovalReviewCandidate,
+    signal?: AbortSignal
   ) => Promise<BossApprovalReviewDecision | null>
   /** Logger sink. */
   log: (line: string) => void
@@ -361,6 +362,7 @@ export class ApprovalService {
   private pendingCodex = new Map<string, PendingCodexApproval>()
   private pendingKimi = new Map<string, PendingKimiApproval>()
   private pendingHostCommand = new Map<string, PendingHostCommandApproval>()
+  private bossApprovalReviewAbortControllers = new Map<string, AbortController>()
   private scheduler: ApprovalTimeoutScheduler | null = null
   private readonly remoteAttentionFanout: RemoteAttentionApnsFanout
 
@@ -491,7 +493,9 @@ export class ApprovalService {
     if (!requestReview || !isBossApprovalReviewCandidate(candidate)) return
     queueMicrotask(() => {
       if (!this.has(candidate.approvalId)) return
-      void requestReview(candidate)
+      const controller = new AbortController()
+      this.bossApprovalReviewAbortControllers.set(candidate.approvalId, controller)
+      void requestReview(candidate, controller.signal)
         .then(async (decision) => {
           if (!decision || !this.has(candidate.approvalId)) return
           await this.resolve(candidate.approvalId, decision.action, {
@@ -506,7 +510,19 @@ export class ApprovalService {
             }`
           )
         })
+        .finally(() => {
+          if (this.bossApprovalReviewAbortControllers.get(candidate.approvalId) === controller) {
+            this.bossApprovalReviewAbortControllers.delete(candidate.approvalId)
+          }
+        })
     })
+  }
+
+  private abortBossApprovalReview(approvalId: string): void {
+    const controller = this.bossApprovalReviewAbortControllers.get(approvalId)
+    if (!controller) return
+    this.bossApprovalReviewAbortControllers.delete(approvalId)
+    controller.abort()
   }
 
   registerHostCommand(approvalId: string, info: PendingHostCommandApproval): boolean {
@@ -989,6 +1005,7 @@ export class ApprovalService {
       )
       if (!effectiveToolAction) return false
       action = effectiveToolAction
+      this.abortBossApprovalReview(requestId)
       const resolvedAction =
         pendingGeminiTool.requestOnly &&
         (action === 'acceptForSession' || action === 'acceptForWorkspace')
@@ -1116,6 +1133,7 @@ export class ApprovalService {
       )
       if (!effectiveKimiAction) return false
       action = effectiveKimiAction
+      this.abortBossApprovalReview(requestId)
       const strictCanvasAccept = this.isSignedElevatedAccept(pendingKimi.service, action)
       if (
         strictCanvasAccept &&
@@ -1195,6 +1213,7 @@ export class ApprovalService {
     )
     if (!effectiveCodexAction) return false
     action = effectiveCodexAction
+    this.abortBossApprovalReview(requestId)
     const strictCanvasAccept = this.isSignedElevatedAccept(pending.service, action)
     if (
       strictCanvasAccept &&
@@ -1452,6 +1471,7 @@ export class ApprovalService {
         threadId?: string
       }
     ) => {
+      this.abortBossApprovalReview(approvalId)
       this.scheduler?.cancel(approvalId)
       this.deps.runManager.clearApproval(approvalId)
       try {

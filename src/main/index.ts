@@ -57656,6 +57656,9 @@ if (isGeminiMcpBridgeProcess) {
       getApnsTokenStore: () => bridgeApnsTokenStoreRef,
       isUserAtDesktop: userIsAtDesktop,
       workspaceIdForPath: workspaceIdForApprovalPush,
+      requestBossApprovalReview: (candidate, signal) =>
+        ensembleOrchestratorRef?.requestBossApprovalReview(candidate, signal) ??
+        Promise.resolve(null),
       fireCodexNativePostToolUseHook: (input) => {
         const hooksStore = getSkillsHooksSubsystem()?.hooksStore
         if (!hooksStore) return

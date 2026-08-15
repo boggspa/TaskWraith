@@ -45,6 +45,12 @@ import { parseAntigravityGoalCompletionFallback } from '../antigravity/Antigravi
 import { resolveEnsemblePromptTransportProfile } from '../antigravity/AntigravityEnsemblePromptProfile'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import {
+  buildBossApprovalReviewPrompt,
+  isBossApprovalReviewEligible,
+  type BossApprovalReviewCandidate,
+  type BossApprovalReviewDecision
+} from '../BossApprovalReview'
+import {
   configuredEnsembleCaptainParticipantIds,
   resolveActingCaptainParticipantId
 } from '../EnsembleAuthorityResolution'
@@ -444,6 +450,7 @@ const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 1200
 const MAX_BOSSMAN_CONTROL_ITEMS = 40
 const MAX_BOSSMAN_POLL_OPTIONS = 6
+const BOSS_APPROVAL_REVIEW_TIMEOUT_MS = 90 * 1000
 // 1.0.4-AN — binding goal-complete poll. Options are FIXED so resolution is
 // deterministic; a FAILED/vetoed poll sets a cooldown before another may open.
 const BINDING_GOAL_COMPLETE_OPTIONS = ['complete', 'keep-working'] as const
@@ -855,6 +862,8 @@ interface ActiveParticipantRun {
   transportCancellationConfirmed?: boolean
   laneId?: string
   laneIntent?: ConcurrentLane['intent']
+  /** A host-owned background lane must not consume the seat's ordinary turn state. */
+  preserveParticipantRoundStatus?: boolean
   /** Durable dispatch-wave identity for transcript grouping after reload. */
   fanoutWaveId?: string
   fanoutLabel?: string
@@ -3663,6 +3672,19 @@ export class EnsembleOrchestrator {
       chatId: string
       pollId: string
       handle: ReturnType<typeof setTimeout>
+    }
+  >()
+  private pendingBossApprovalReviewsByPollId = new Map<
+    string,
+    {
+      chatId: string
+      pollId: string
+      authorityParticipantId: string
+      authorityRole: 'boss' | 'captain'
+      requesterParticipantId: string
+      signal?: AbortSignal
+      abortListener?: () => void
+      resolve: (decision: BossApprovalReviewDecision | null) => void
     }
   >()
   private queuedPromptIdCounter = 0
@@ -9824,6 +9846,161 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Ask the currently-authoritative idle Boss (or acting Captain) to arbitrate
+   * one approval that is already pending at the human gate. The review itself
+   * is a read-clamped background lane and can only return Allow once or Deny.
+   */
+  requestBossApprovalReview(
+    candidate: BossApprovalReviewCandidate,
+    signal?: AbortSignal
+  ): Promise<BossApprovalReviewDecision | null> {
+    if (signal?.aborted) return Promise.resolve(null)
+    const requester = this.actionableRunForTool(candidate.runId)
+    if (!requester) return Promise.resolve(null)
+    const runtime = this.roundsByChatId.get(requester.chatId)
+    const chat = this.deps.getChat(requester.chatId)
+    if (
+      !runtime ||
+      runtime.cancelled ||
+      runtime.roundId !== requester.roundId ||
+      !chat?.ensemble ||
+      chat.ensemble.activeRound?.roundId !== runtime.roundId ||
+      chat.ensemble.activeRound.status !== 'running'
+    ) {
+      return Promise.resolve(null)
+    }
+
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    if (!bossmanParticipantId) return Promise.resolve(null)
+    const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
+    const authorityParticipantId = primary.unavailable
+      ? this.activeActingCaptainParticipantId(chat, runtime)
+      : bossmanParticipantId
+    if (!authorityParticipantId) return Promise.resolve(null)
+    const authorityResolution = this.resolveBossAuthorityForCaller(
+      chat,
+      runtime,
+      authorityParticipantId
+    )
+    if (!authorityResolution.ok) return Promise.resolve(null)
+    const authority = chat.ensemble.participants.find(
+      (participant) =>
+        participant.id === authorityParticipantId &&
+        participant.enabled &&
+        !isBackgroundParticipant(participant)
+    )
+    if (!authority) return Promise.resolve(null)
+
+    const requesterPermissions = this.resolveParticipantPermissions(
+      chat,
+      requester.participant,
+      runtime.externalPathGrants,
+      isBackgroundParticipant(requester.participant) ? { disallowTrustedSession: true } : {}
+    )
+    const authorityAlreadyRunning = [...this.runsByRunId.values()].some(
+      (run) =>
+        run.chatId === runtime.chatId &&
+        run.roundId === runtime.roundId &&
+        run.participant.id === authorityParticipantId &&
+        run.terminalFinalized !== true
+    )
+    if (
+      !isBossApprovalReviewEligible({
+        candidate,
+        autoApprovals: chat.ensemble.bossmanAutoApprovals,
+        requesterParticipantId: requester.participant.id,
+        authorityParticipantId,
+        authorityAlreadyRunning,
+        requesterReadOnly: requester.laneIntent === 'read' || requesterPermissions.readOnly
+      })
+    ) {
+      return Promise.resolve(null)
+    }
+
+    const authorityRole = authorityResolution.role === 'boss' ? 'boss' : 'captain'
+    const authorityLabel = authorityRole === 'boss' ? 'Boss' : 'Captain'
+    const pollId = this.nextBossmanControlId('approval')
+    const prompt = buildBossApprovalReviewPrompt({
+      candidate,
+      pollId,
+      requesterLabel: participantDisplayName(requester.participant),
+      authorityLabel
+    })
+    if (!prompt) return Promise.resolve(null)
+
+    const timeoutAt = new Date(this.deps.now() + BOSS_APPROVAL_REVIEW_TIMEOUT_MS).toISOString()
+    const poll: EnsembleBossmanPoll = {
+      id: pollId,
+      question: `Allow this one-shot ${candidate.service} request from ${participantDisplayName(requester.participant)}?`,
+      options: ['approve', 'deny'],
+      targetParticipantIds: [authorityParticipantId],
+      includeUser: false,
+      timeoutAt,
+      status: 'open',
+      votes: [],
+      createdAt: this.deps.nowIso(),
+      createdByParticipantId: 'taskwraith-host',
+      roundId: runtime.roundId
+    }
+    this.updateBossmanControlState(runtime, (state) => ({
+      ...state,
+      polls: capBossmanItems([
+        ...(state.polls || []).filter((entry) => entry.id !== poll.id),
+        poll
+      ])
+    }))
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `TaskWraith routed approval ${candidate.approvalId} to ${authorityLabel} for a request-scoped decision; the human modal remains live.`
+    )
+    this.appendBossmanPollMessage(runtime, poll.id, poll.question, poll.options, 'TaskWraith')
+
+    const abortListener = signal
+      ? () => this.settleBossApprovalReview(pollId, null, { resolvedElsewhere: true })
+      : undefined
+    const decisionPromise = new Promise<BossApprovalReviewDecision | null>((resolveDecision) => {
+      this.pendingBossApprovalReviewsByPollId.set(pollId, {
+        chatId: runtime.chatId,
+        pollId,
+        authorityParticipantId,
+        authorityRole,
+        requesterParticipantId: requester.participant.id,
+        signal,
+        abortListener,
+        resolve: resolveDecision
+      })
+    })
+    if (signal && abortListener) {
+      signal.addEventListener('abort', abortListener, { once: true })
+      if (signal.aborted) abortListener()
+    }
+    if (!this.pendingBossApprovalReviewsByPollId.has(pollId)) return decisionPromise
+    this.scheduleBossmanPollTimeout(runtime.chatId, poll.id, poll.timeoutAt)
+    void this.runParallelFanoutPass(
+      runtime,
+      this.deps.getChat(runtime.chatId) || chat,
+      [authority],
+      {
+        prompt,
+        promptAuthority: 'orchestrator',
+        forceReadOnlyDispatch: true,
+        label: `${authorityLabel} approval review`,
+        preserveParticipantRoundStatus: true,
+        waitForCompletion: false,
+        completionDisposition: 'background',
+        onCompleteRuns: () => this.settleBossApprovalReview(pollId, null)
+      }
+    ).then(
+      (laneIds) => {
+        if (laneIds.length === 0) this.settleBossApprovalReview(pollId, null)
+      },
+      () => this.settleBossApprovalReview(pollId, null)
+    )
+    return decisionPromise
+  }
+
   pollResponseForRun(
     runId: string | undefined,
     input: EnsemblePollResponseInput
@@ -9875,6 +10052,7 @@ export class EnsembleOrchestrator {
     // A4-1: a late vote arriving past a BINDING poll's timeout must terminalize
     // it through resolveBindingPoll('timeout') below, not a plain 'expired' mark.
     let bindingPollTimedOut = false
+    let nonBindingPollTimedOut = false
     this.updateBossmanControlState(runtime, (state) => {
       const polls = state.polls || []
       const index = polls.findIndex((poll) => poll.id === pollId)
@@ -9914,6 +10092,7 @@ export class EnsembleOrchestrator {
           return state
         }
         const nextPoll = { ...poll, status: 'expired' as const }
+        nonBindingPollTimedOut = true
         this.clearBossmanPollTimeout(runtime.chatId, pollId)
         response = {
           ok: false,
@@ -9989,12 +10168,39 @@ export class EnsembleOrchestrator {
     })
     if (response.ok) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, response.message)
+      const pendingReview = this.pendingBossApprovalReviewsByPollId.get(pollId)
+      if (
+        pendingReview?.authorityParticipantId === run.participant.id &&
+        (choice === 'approve' || choice === 'deny')
+      ) {
+        const decision = choice === 'approve' ? 'approve' : 'deny'
+        this.settleBossApprovalReview(
+          pollId,
+          {
+            action: decision === 'approve' ? 'accept' : 'decline',
+            metadata: {
+              bossApprovalReview: {
+                pollId,
+                authorityParticipantId: pendingReview.authorityParticipantId,
+                authorityRole: pendingReview.authorityRole,
+                requesterParticipantId: pendingReview.requesterParticipantId,
+                rationale: normalizeBossmanText(input.rationale, 500) || undefined,
+                decision,
+                requestScoped: true
+              }
+            }
+          },
+          { pollAlreadyTerminal: true }
+        )
+      }
       // Binding goal-complete polls terminalize through the atomic resolver
       // (advisory polls no-op inside it, so their behavior is unchanged).
       this.resolveBindingPoll(runtime.chatId, pollId, 'vote')
     } else if (bindingPollTimedOut) {
       // A4-1: a late vote hit the timeout — resolve the binding poll now.
       this.resolveBindingPoll(runtime.chatId, pollId, 'timeout')
+    } else if (nonBindingPollTimedOut) {
+      this.settleBossApprovalReview(pollId, null, { pollAlreadyTerminal: true })
     }
     return response
   }
@@ -10423,6 +10629,41 @@ export class EnsembleOrchestrator {
     this.bossmanPollTimeoutsById.delete(key)
   }
 
+  private settleBossApprovalReview(
+    pollId: string,
+    decision: BossApprovalReviewDecision | null,
+    options: { pollAlreadyTerminal?: boolean; resolvedElsewhere?: boolean } = {}
+  ): void {
+    const pending = this.pendingBossApprovalReviewsByPollId.get(pollId)
+    if (!pending) return
+    this.pendingBossApprovalReviewsByPollId.delete(pollId)
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener('abort', pending.abortListener)
+    }
+    this.clearBossmanPollTimeout(pending.chatId, pollId)
+    if (!options.pollAlreadyTerminal) {
+      const runtime = this.roundsByChatId.get(pending.chatId)
+      if (runtime && !runtime.cancelled) {
+        this.updateBossmanControlState(runtime, (state) => ({
+          ...state,
+          polls: (state.polls || []).map((poll) =>
+            poll.id === pollId && poll.status === 'open'
+              ? { ...poll, status: 'expired' as const }
+              : poll
+          )
+        }))
+        this.appendRoundStatus(
+          pending.chatId,
+          runtime.roundId,
+          options.resolvedElsewhere
+            ? `${pending.authorityRole === 'boss' ? 'Boss' : 'Captain'} approval review ${pollId} closed because another valid approval decision won.`
+            : `${pending.authorityRole === 'boss' ? 'Boss' : 'Captain'} approval review ${pollId} ended without a decision; the human approval remains pending.`
+        )
+      }
+    }
+    pending.resolve(decision)
+  }
+
   private expireBossmanPoll(chatId: string, pollId: string, timeoutAt: string): void {
     const chat = this.deps.getChat(chatId)
     const state = chat?.ensemble?.bossmanControlState
@@ -10460,6 +10701,7 @@ export class EnsembleOrchestrator {
         `Poll ${pollId} expired after reaching its timeout.`
       )
     }
+    this.settleBossApprovalReview(pollId, null, { pollAlreadyTerminal: true })
   }
 
   /**
@@ -17806,6 +18048,8 @@ export class EnsembleOrchestrator {
       acceptedRuns?: ActiveParticipantRun[]
       waitForCompletion?: boolean
       completionDisposition?: 'serial' | 'caller' | 'background'
+      /** Keep a host-owned background lane from changing the seat's normal turn chip. */
+      preserveParticipantRoundStatus?: boolean
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
@@ -17931,6 +18175,7 @@ export class EnsembleOrchestrator {
         ...(fanoutWaveId ? { fanoutWaveId } : {}),
         fanoutLabel: label,
         fanoutCategory,
+        preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
         approvedWriteScopes: permissions.readOnly
           ? undefined
           : options.writeScopesByParticipantId?.get(freshParticipant.id)
@@ -18398,7 +18643,9 @@ export class EnsembleOrchestrator {
           }
         }
         for (const run of laneRuns) {
-          this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
+          if (!run.preserveParticipantRoundStatus) {
+            this.applyPendingParticipantSeatChangeFor(runtime, run.participant.id)
+          }
         }
         options.onCompleteRuns?.(laneRuns)
 
@@ -18495,6 +18742,7 @@ export class EnsembleOrchestrator {
       fanoutLabel?: string
       fanoutCategory?: 'user' | 'orchestrated'
       approvedWriteScopes?: ConcurrentLaneWriteScope[]
+      preserveParticipantRoundStatus?: boolean
     } = {}
   ): ActiveParticipantRun {
     const startedAt = this.deps.nowIso()
@@ -18561,6 +18809,9 @@ export class EnsembleOrchestrator {
       ...(options.approvedWriteScopes?.length
         ? { approvedWriteScopes: options.approvedWriteScopes }
         : {}),
+      ...(options.preserveParticipantRoundStatus
+        ? { preserveParticipantRoundStatus: true }
+        : {}),
       ...(authorityRoutingCheckpoint ? { authorityRoutingCheckpoint } : {}),
       participant,
       promptMessageId,
@@ -18578,16 +18829,18 @@ export class EnsembleOrchestrator {
         ensemble: {
           ...chat.ensemble!,
           activeRound: addLaneToRound(
-            updateRoundParticipant(
-              chat.ensemble!.activeRound,
-              participant.id,
-              {
-                status: 'running',
-                runId,
-                startedAt
-              },
-              { setActive: !options.laneId }
-            ),
+            options.preserveParticipantRoundStatus
+              ? chat.ensemble!.activeRound
+              : updateRoundParticipant(
+                  chat.ensemble!.activeRound,
+                  participant.id,
+                  {
+                    status: 'running',
+                    runId,
+                    startedAt
+                  },
+                  { setActive: !options.laneId }
+                ),
             options.laneId
               ? transitionLane(
                   createLane({
@@ -19423,7 +19676,7 @@ export class EnsembleOrchestrator {
     run.terminalReason = reason
     this.rememberTerminalRun(run)
     const runtime = this.roundsByChatId.get(run.chatId)
-    if (runtime?.roundId === run.roundId) {
+    if (runtime?.roundId === run.roundId && !run.preserveParticipantRoundStatus) {
       this.incrementBossmanBudgetUsage(
         runtime,
         [run.participant.id],
@@ -19966,17 +20219,19 @@ export class EnsembleOrchestrator {
       }
       return next
     })
-    const participantRound = updateRoundParticipant(
-      chat.ensemble.activeRound,
-      run.participant.id,
-      {
-        status: visibleStatus,
-        runId: silentMaintenanceRecovery ? undefined : run.runId,
-        ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
-        ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
-      },
-      { setActive: !run.laneId }
-    )
+    const participantRound = run.preserveParticipantRoundStatus
+      ? chat.ensemble.activeRound
+      : updateRoundParticipant(
+          chat.ensemble.activeRound,
+          run.participant.id,
+          {
+            status: visibleStatus,
+            runId: silentMaintenanceRecovery ? undefined : run.runId,
+            ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
+            ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
+          },
+          { setActive: !run.laneId }
+        )
     const transitionRound =
       participantRound && effectiveFinal && !run.laneId && !silentMaintenanceRecovery
         ? {
@@ -21121,6 +21376,11 @@ export class EnsembleOrchestrator {
   }
 
   private clearRuntimeIfCurrent(runtime: ActiveRoundRuntime): void {
+    for (const [pollId, pending] of [...this.pendingBossApprovalReviewsByPollId]) {
+      if (pending.chatId === runtime.chatId) {
+        this.settleBossApprovalReview(pollId, null, { pollAlreadyTerminal: true })
+      }
+    }
     if (this.roundsByChatId.get(runtime.chatId) === runtime) {
       this.roundsByChatId.delete(runtime.chatId)
     }

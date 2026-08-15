@@ -8953,6 +8953,147 @@ Next action:
     ])
   })
 
+  it.each([
+    { choice: 'approve' as const, action: 'accept' as const },
+    { choice: 'deny' as const, action: 'decline' as const }
+  ])(
+    'routes a pending permission to an idle Boss review lane and maps $choice to $action',
+    async ({ choice, action }) => {
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      initialChat.ensemble!.bossmanAutoApprovals = {
+        enabled: true,
+        mode: 'permission_preset_once',
+        confirmedAt: '2026-08-15T20:00:00.000Z'
+      }
+      const harness = makeHarness({ initialChat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Review, then let the worker implement.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'Initial review complete; the worker can continue.' }
+      )
+      completeDispatchedRun(harness, 0)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(harness.dispatched[1].ensembleRun?.participantId).toBe('codex')
+      const bossStatusBeforeReview =
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'claude'
+        )?.status
+      expect(bossStatusBeforeReview).toBe('answered')
+
+      const decision = harness.orchestrator.requestBossApprovalReview({
+        approvalId: `worker-shell-${choice}`,
+        source: 'codex',
+        provider: 'codex',
+        service: 'shellCommands',
+        runId: harness.dispatched[1].appRunId!,
+        workspacePath: '/repo',
+        method: 'run_command',
+        title: 'Codex shell command',
+        body: 'Run the exact command shown in the preview.',
+        preview: { command: 'git status --short' },
+        allowedActions: ['accept', 'decline', 'cancel'],
+        hasExternalPathDetection: false
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      const reviewRun = harness.dispatched[2]
+      expect(reviewRun.ensembleRun).toMatchObject({
+        participantId: 'claude'
+      })
+      expect(reviewRun.ensembleRun?.laneId).toBeTruthy()
+      expect(reviewRun.effectivePermissions).toMatchObject({ readOnly: true })
+      expect(reviewRun.prompt).toContain('UNTRUSTED APPROVAL REQUEST')
+      expect(reviewRun.prompt).toContain('git status --short')
+      expect(reviewRun.prompt).toContain('ensemble_poll_response')
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'claude'
+        )?.status
+      ).toBe(bossStatusBeforeReview)
+
+      const poll = harness.chat.ensemble?.bossmanControlState?.polls?.find(
+        (entry) => entry.createdByParticipantId === 'taskwraith-host'
+      )
+      expect(poll).toMatchObject({
+        options: ['approve', 'deny'],
+        targetParticipantIds: ['claude'],
+        includeUser: false,
+        status: 'open'
+      })
+      const vote = harness.orchestrator.pollResponseForRun(reviewRun.appRunId, {
+        pollId: poll!.id,
+        choice,
+        rationale: `${choice} this exact request.`
+      })
+
+      expect(vote.ok).toBe(true)
+      await expect(decision).resolves.toMatchObject({
+        action,
+        metadata: {
+          bossApprovalReview: {
+            pollId: poll!.id,
+            authorityParticipantId: 'claude',
+            authorityRole: 'boss',
+            requesterParticipantId: 'codex',
+            decision: choice,
+            requestScoped: true
+          }
+        }
+      })
+      expect(
+        harness.chat.ensemble?.bossmanControlState?.polls?.find(
+          (entry) => entry.id === poll!.id
+        )?.status
+      ).toBe('closed')
+
+      completeDispatchedRun(harness, 2)
+      expect(
+        harness.chat.ensemble?.activeRound?.participants.find(
+          (participant) => participant.participantId === 'claude'
+        )?.status
+      ).toBe(bossStatusBeforeReview)
+    }
+  )
+
+  it('keeps a Boss from reviewing their own permission request', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-08-15T20:00:00.000Z'
+    }
+    initialChat.ensemble!.participants[0].permissionPresetId = 'workspace_write'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    await expect(
+      harness.orchestrator.requestBossApprovalReview({
+        approvalId: 'boss-self-shell',
+        source: 'gemini_tool',
+        provider: 'claude',
+        service: 'shellCommands',
+        runId: harness.dispatched[0].appRunId!,
+        allowedActions: ['accept', 'decline'],
+        hasExternalPathDetection: false
+      })
+    ).resolves.toBeNull()
+    expect(harness.dispatched).toHaveLength(1)
+    expect(harness.chat.ensemble?.bossmanControlState?.polls).toBeUndefined()
+  })
+
   it('persists a poll marker and records optional user poll votes', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
