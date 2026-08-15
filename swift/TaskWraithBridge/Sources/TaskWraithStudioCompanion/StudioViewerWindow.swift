@@ -183,10 +183,6 @@ final class StudioViewerView: NSView {
     private var audioContentAnchorTicks: Int64?
     private var audioTimelineAnchorTicks: Int64?
     private var syncMeter: StudioAvSyncMeter?
-    /// Whether the transport is currently driven by the AUDIO device rather than
-    /// host monotonic time.
-    private var usingAudioTime = false
-    private var lastAudioHostSeconds: Double = 0
     private var lastMemorySampleHost: Double = 0
     private var cachedMemoryLabel = "rss --"
 
@@ -366,14 +362,17 @@ final class StudioViewerView: NSView {
         let seconds: Double
     }
 
-    /// One bounded retained record. Display-link reads never assign it.
-    private(set) var lastTransportMutation: StudioTransportMutationRecord?
+    /// One bounded retained record on the shared authority. Display-link reads
+    /// never assign it, and either route sees the same latest mutation.
+    var lastTransportMutation: StudioTransportMutationRecord? {
+        authority.lastTransportMutation
+    }
 
     private var transportMutationHostReading: TransportHostReading {
-        if usingAudioTime {
+        if authority.transportHostSource == .audio {
             return TransportHostReading(
                 source: .audio,
-                seconds: audioPlayer.audioHostSeconds() ?? lastAudioHostSeconds
+                seconds: audioPlayer.audioHostSeconds() ?? authority.lastAudioHostSeconds
             )
         }
         return TransportHostReading(source: .machine, seconds: CACurrentMediaTime())
@@ -394,6 +393,7 @@ final class StudioViewerView: NSView {
         let afterClock = after.clock
         return StudioTransportMutationRecord(
             kind: kind,
+            route: route,
             beforeSource: beforeSource,
             afterSource: afterSource,
             suppliedHostSeconds: afterHost,
@@ -428,7 +428,7 @@ final class StudioViewerView: NSView {
             return
         }
         transport = after
-        lastTransportMutation = transportMutationRecord(
+        let record = transportMutationRecord(
             kind: kind,
             before: before,
             beforeSource: beforeReading.source,
@@ -438,6 +438,7 @@ final class StudioViewerView: NSView {
             afterHost: afterReading.seconds,
             previousHost: previousHost
         )
+        authority.retainTransportMutation(record)
     }
 
     private func mutateTransport(
@@ -519,6 +520,7 @@ final class StudioViewerView: NSView {
             previousHost: beforeHost,
             recordsDeclaredTransition: true
         )
+        authority.didReanchorTransport(to: afterSource, atHost: afterHost)
     }
 
     /// Re-anchors the clock when the oscillator changes.
@@ -533,11 +535,18 @@ final class StudioViewerView: NSView {
         guard audioSchedulingAuthority.permits(route) else { return }
         let audioSeconds = audioPlayer.audioHostSeconds()
         let audioActive = audioSeconds != nil
-        if audioActive { lastAudioHostSeconds = audioSeconds ?? 0 }
-        guard audioActive != usingAudioTime else { return }
+        let wasUsingAudio = authority.transportHostSource == .audio
 
-        let beforeSource: StudioTransportHostSource = usingAudioTime ? .audio : .machine
-        let previousHost = usingAudioTime ? lastAudioHostSeconds : CACurrentMediaTime()
+        guard audioActive != wasUsingAudio else {
+            if let audioSeconds {
+                authority.didObserveAudioHostSeconds(audioSeconds)
+            }
+            return
+        }
+
+        let beforeSource = authority.transportHostSource
+        let previousHost =
+            wasUsingAudio ? authority.lastAudioHostSeconds : CACurrentMediaTime()
         let position = transport.clock.positionTicks(atHost: previousHost)
         let wasPlaying = transport.clock.snapshot(atHost: previousHost).isPlaying
         let afterSource: StudioTransportHostSource = audioActive ? .audio : .machine
@@ -553,7 +562,6 @@ final class StudioViewerView: NSView {
             controller.seek(toTicks: position, atHost: nextHost)
             if wasPlaying { controller.play(atHost: nextHost) }
         }
-        usingAudioTime = audioActive
         // Statistics from before an oscillator change describe a different
         // pipeline, so they are discarded rather than carried forward.
         syncMeter?.reset()
@@ -675,8 +683,6 @@ final class StudioViewerView: NSView {
         }
         audioContentAnchorTicks = contentTicks
         audioTimelineAnchorTicks = timelineTicks
-        usingAudioTime = true
-        lastAudioHostSeconds = nextHost
         // Sync statistics from before the restart were measured against a
         // different anchor, so they describe a pipeline that no longer exists.
         syncMeter?.reset()
@@ -929,7 +935,6 @@ final class StudioViewerView: NSView {
         audioContentAnchorTicks = nil
         audioTimelineAnchorTicks = nil
         audioPlayer.detach()
-        usingAudioTime = false
         syncMeter = nil
         guard let track else { return }
         do {

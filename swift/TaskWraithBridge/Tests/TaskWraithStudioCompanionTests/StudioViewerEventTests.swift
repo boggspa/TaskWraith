@@ -309,10 +309,13 @@ final class StudioViewerEventTests: XCTestCase {
         }
         let oscillator = try XCTUnwrap(view.lastTransportMutation)
         XCTAssertEqual(oscillator.kind, .oscillatorReconciliation)
+        XCTAssertEqual(oscillator.route, .source)
         XCTAssertEqual(oscillator.beforeSource, .machine)
         XCTAssertEqual(oscillator.afterSource, .audio)
         XCTAssertEqual(oscillator.previousHostSeconds, 100)
         XCTAssertEqual(oscillator.suppliedHostSeconds, 4)
+        XCTAssertEqual(view.authority.transportHostSource, .audio)
+        XCTAssertEqual(view.authority.lastAudioHostSeconds, 4)
 
         view.mutateTransportForSourceTransition(
             .audioReschedule,
@@ -326,10 +329,12 @@ final class StudioViewerEventTests: XCTestCase {
         }
         let reschedule = try XCTUnwrap(view.lastTransportMutation)
         XCTAssertEqual(reschedule.kind, .audioReschedule)
+        XCTAssertEqual(reschedule.route, .source)
         XCTAssertEqual(reschedule.beforeSource, .audio)
         XCTAssertEqual(reschedule.afterSource, .audio)
         XCTAssertEqual(reschedule.previousHostSeconds, 4)
         XCTAssertEqual(reschedule.suppliedHostSeconds, 0)
+        XCTAssertEqual(view.authority.lastAudioHostSeconds, 0)
 
         // A successful device-timeline reset is itself the event being
         // diagnosed. It must remain visible even when it happens to
@@ -703,12 +708,20 @@ final class StudioReviewLoopTests: XCTestCase {
 /// The routes must SHOW different things, or they are one window twice.
 @MainActor
 final class StudioRouteContentTests: XCTestCase {
-    private func makeView(_ route: StudioViewerRoute, _ authority: StudioPlaybackAuthority)
-        throws -> StudioViewerView
-    {
+    private func makeView(
+        _ route: StudioViewerRoute,
+        _ authority: StudioPlaybackAuthority,
+        audioPlayer: StudioAudioPlayer? = nil,
+        audioSchedulingAuthority: StudioAudioSchedulingAuthority? = nil
+    ) throws -> StudioViewerView {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal") }
         let renderer = try StudioViewerRenderer(device: device)
-        let view = StudioViewerView(renderer: renderer, authority: authority, route: route)
+        let view = StudioViewerView(
+            renderer: renderer,
+            authority: authority,
+            route: route,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority)
         view.frame = NSRect(x: 0, y: 0, width: 960, height: 540)
         return view
     }
@@ -774,6 +787,63 @@ final class StudioRouteContentTests: XCTestCase {
             review.transport.clock.snapshot(atHost: CACurrentMediaTime()).positionTicks,
             2400,
             "content may differ between routes; TIME may not")
+    }
+
+    /// Source and Review share both the clock and its oscillator domain. Review
+    /// attaching after Source has audio-anchored near four seconds must not
+    /// derive machine uptime from a fresh per-view flag and clamp to duration.
+    func testReviewLifecycleUsesTheSourceAudioDomainAndPublishesItsRoute() throws {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let audioPlayer = StudioAudioPlayer()
+        let scheduling = StudioAudioSchedulingAuthority(owner: .source)
+        let source = try makeView(
+            .source, authority,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: scheduling)
+        let review = try makeView(
+            .review, authority,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: scheduling)
+
+        let sourceWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        sourceWindow.contentView = source
+
+        var anchored = authority.transport
+        anchored.seek(toTicks: 2400, atHost: 4)
+        anchored.pause(atHost: 4)
+        authority.transport = anchored
+        authority.didReanchorTransport(to: .audio, atHost: 4)
+
+        let reviewWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        reviewWindow.contentView = review
+
+        XCTAssertEqual(
+            authority.transport.clock.positionTicks(atHost: 4), 2400,
+            "Review lifecycle mixed machine uptime into Source's audio anchor")
+        XCTAssertLessThan(
+            authority.transport.clock.positionTicks(atHost: 4),
+            authority.transport.clock.durationTicks)
+        XCTAssertEqual(authority.transportHostSource, .audio)
+        XCTAssertEqual(authority.lastAudioHostSeconds, 4)
+        XCTAssertEqual(authority.lastTransportMutation?.kind, .lifecycleAttach)
+        XCTAssertEqual(authority.lastTransportMutation?.route, .review)
+        XCTAssertEqual(source.lastTransportMutation, review.lastTransportMutation)
+
+        // Detaching or replacing the shared player is not itself permission to
+        // change clock domains. The old audio host remains safe until the
+        // explicit reconciliation re-anchors the transport.
+        source.attachAudio(
+            track: nil, timebase: timebase, syncTimebase: timebase, assetId: nil)
+        XCTAssertEqual(authority.transportHostSource, .audio)
+        XCTAssertEqual(authority.lastAudioHostSeconds, 4)
+
+        withExtendedLifetime((sourceWindow, reviewWindow)) {}
     }
 }
 

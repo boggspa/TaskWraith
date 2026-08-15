@@ -38,6 +38,53 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         return (view, window)
     }
 
+    private func makeSharedViewerPair() throws -> (
+        source: StudioViewerView,
+        review: StudioViewerView,
+        sourceWindow: NSWindow,
+        reviewWindow: NSWindow,
+        scheduling: StudioAudioSchedulingAuthority
+    ) {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let player = StudioAudioPlayer()
+        let scheduling = StudioAudioSchedulingAuthority(owner: .source)
+        let source = StudioViewerView(
+            renderer: try StudioViewerRenderer(device: device),
+            authority: authority, route: .source,
+            audioPlayer: player, audioSchedulingAuthority: scheduling)
+        let review = StudioViewerView(
+            renderer: try StudioViewerRenderer(device: device),
+            authority: authority, route: .review,
+            audioPlayer: player, audioSchedulingAuthority: scheduling)
+        let sourceWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        let reviewWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        sourceWindow.contentView = source
+        reviewWindow.contentView = review
+        source.frame = NSRect(x: 0, y: 0, width: 960, height: 540)
+        review.frame = source.frame
+        source.layoutSubtreeIfNeeded()
+        review.layoutSubtreeIfNeeded()
+        return (source, review, sourceWindow, reviewWindow, scheduling)
+    }
+
+    private func renderWithoutOwningAudio(
+        _ view: StudioViewerView,
+        scheduling: StudioAudioSchedulingAuthority
+    ) {
+        scheduling.activate(view.route == .source ? .review : .source)
+        view.renderCurrentFrame()
+    }
+
     private func makeKeyEvent(
         in window: NSWindow,
         characters: String,
@@ -179,6 +226,69 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         view.playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding(isBound: false)
         XCTAssertFalse(playhead.apply(NSNumber(value: 4000)))
         XCTAssertEqual(view.lastTransportMutation, lastAccepted)
+    }
+
+    /// Both route trees expose the same global tm1 record. A record emitted by
+    /// Review must be visible from Source, and value updates must preserve each
+    /// route's AX element identity through render-only ticks.
+    func testBothRouteTreesExposeOneMutationRecordWithoutRenderChurn() throws {
+        let pair = try makeSharedViewerPair()
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+
+        func detail(_ view: StudioViewerView) throws -> NSAccessibilityElement {
+            try child(
+                labeledChildren(of: view), labeled: "Transport mutation detail")
+        }
+
+        let sourceDetail = try detail(pair.source)
+        let reviewDetail = try detail(pair.review)
+        XCTAssertEqual(
+            sourceDetail.accessibilityValue() as? String,
+            reviewDetail.accessibilityValue() as? String)
+        XCTAssertTrue(
+            try XCTUnwrap(sourceDetail.accessibilityValue() as? String)
+                .contains("route=review"))
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+        XCTAssertTrue(try detail(pair.source) === sourceDetail)
+        XCTAssertTrue(try detail(pair.review) === reviewDetail)
+
+        let sourcePlayback = try XCTUnwrap(
+            try child(labeledChildren(of: pair.source), labeled: "Playback")
+                as? StudioActionAccessibilityElement)
+        XCTAssertTrue(sourcePlayback.accessibilityPerformPress())
+        XCTAssertEqual(pair.source.lastTransportMutation?.route, .source)
+        XCTAssertEqual(pair.source.lastTransportMutation, pair.review.lastTransportMutation)
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+        let sourceAfterSource = try detail(pair.source)
+        let reviewAfterSource = try detail(pair.review)
+        XCTAssertTrue(
+            try XCTUnwrap(reviewAfterSource.accessibilityValue() as? String)
+                .contains("route=source"))
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+        XCTAssertTrue(try detail(pair.source) === sourceAfterSource)
+        XCTAssertTrue(try detail(pair.review) === reviewAfterSource)
+
+        let reviewPlayback = try XCTUnwrap(
+            try child(labeledChildren(of: pair.review), labeled: "Playback")
+                as? StudioActionAccessibilityElement)
+        XCTAssertTrue(reviewPlayback.accessibilityPerformPress())
+        XCTAssertEqual(pair.source.lastTransportMutation?.route, .review)
+        XCTAssertEqual(pair.source.lastTransportMutation, pair.review.lastTransportMutation)
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+        let sourceAfterReview = try detail(pair.source)
+        let reviewAfterReview = try detail(pair.review)
+        XCTAssertEqual(
+            sourceAfterReview.accessibilityValue() as? String,
+            reviewAfterReview.accessibilityValue() as? String)
+        renderWithoutOwningAudio(pair.source, scheduling: pair.scheduling)
+        renderWithoutOwningAudio(pair.review, scheduling: pair.scheduling)
+        XCTAssertTrue(try detail(pair.source) === sourceAfterReview)
+        XCTAssertTrue(try detail(pair.review) === reviewAfterReview)
     }
 
     /// Only a descriptor that NAMES an action may become pressable. Everything

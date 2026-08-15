@@ -50,6 +50,9 @@ public enum StudioTransportHostSource: String, Equatable, Sendable {
 /// diagnostic that grows per frame is a worse defect than the one it explains.
 public struct StudioTransportMutationRecord: Equatable, Sendable {
     public let kind: StudioTransportMutationKind
+    /// The view that initiated the mutation. The controller is shared, so this
+    /// must be explicit rather than inferred from whichever AX tree reads it.
+    public let route: StudioViewerRoute
     /// Source identity before and after. This — not a magnitude threshold — is
     /// what identifies a domain change: a machine host is machine-domain on a
     /// freshly booted machine too, where its value is small.
@@ -77,6 +80,7 @@ public struct StudioTransportMutationRecord: Equatable, Sendable {
 
     public init(
         kind: StudioTransportMutationKind,
+        route: StudioViewerRoute,
         beforeSource: StudioTransportHostSource,
         afterSource: StudioTransportHostSource,
         suppliedHostSeconds: Double,
@@ -95,6 +99,7 @@ public struct StudioTransportMutationRecord: Equatable, Sendable {
         afterRate: Double
     ) {
         self.kind = kind
+        self.route = route
         self.beforeSource = beforeSource
         self.afterSource = afterSource
         self.suppliedHostSeconds = suppliedHostSeconds
@@ -134,6 +139,7 @@ public struct StudioTransportMutationRecord: Equatable, Sendable {
     public var diagnosticsExportText: String {
         let previous = previousHostSeconds.map { String(format: "%.6f", $0) } ?? "-"
         return "tm1 kind=\(kind.rawValue)"
+            + " route=\(route.rawValue)"
             + " preSrc=\(beforeSource.rawValue) postSrc=\(afterSource.rawValue)"
             + " host=\(String(format: "%.6f", suppliedHostSeconds)) prevHost=\(previous)"
             + " preAnchorT=\(beforeAnchorTicks)"

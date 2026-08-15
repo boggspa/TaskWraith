@@ -524,7 +524,8 @@ final class StudioOverlayModelTests: XCTestCase {
         afterPosition: Int64 = 2400
     ) -> StudioTransportMutationRecord {
         StudioTransportMutationRecord(
-            kind: kind, beforeSource: beforeSource, afterSource: afterSource,
+            kind: kind, route: .source,
+            beforeSource: beforeSource, afterSource: afterSource,
             suppliedHostSeconds: host,
             beforeAnchorTicks: beforeAnchorTicks, beforeAnchorHostSeconds: 0,
             beforePositionTicks: beforePosition, beforeDurationTicks: 6000,

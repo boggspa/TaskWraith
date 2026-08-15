@@ -41,6 +41,31 @@ final class StudioViewerRoutesTests: XCTestCase {
         XCTAssertEqual(review.transport.clock.durationTicks, 900)
     }
 
+    /// The oscillator domain belongs to the same authority as the clock. A
+    /// per-view flag lets Review feed machine uptime into a clock Source already
+    /// anchored to audio, recreating the packaged end-of-media teleport.
+    func testTwoRoutesShareTheHostDomainAndRetainedMutation() {
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6000))
+        let source = authority
+        let review = authority
+
+        authority.didReanchorTransport(to: .audio, atHost: 4)
+        XCTAssertEqual(source.transportHostSource, .audio)
+        XCTAssertEqual(review.transportHostSource, .audio)
+        XCTAssertEqual(source.lastAudioHostSeconds, 4)
+        XCTAssertEqual(review.lastAudioHostSeconds, 4)
+
+        authority.didObserveAudioHostSeconds(4.25)
+        XCTAssertEqual(source.lastAudioHostSeconds, 4.25)
+        XCTAssertEqual(review.lastAudioHostSeconds, 4.25)
+
+        authority.didReanchorTransport(to: .machine, atHost: 100)
+        XCTAssertEqual(source.transportHostSource, .machine)
+        XCTAssertEqual(review.transportHostSource, .machine)
+        XCTAssertEqual(source.lastAudioHostSeconds, 4.25)
+    }
+
     /// THE OBLIGATION. Hiding must report that resources are owed, so a caller
     /// cannot silently skip the release the briefing requires.
     func testHidingARouteReportsTheResourceObligation() {

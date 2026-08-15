@@ -33,8 +33,43 @@ public final class StudioPlaybackAuthority {
     /// The single transport. Every route reads and mutates THIS.
     public var transport: StudioTransportController
 
+    /// The oscillator domain of the shared clock anchor. This belongs beside
+    /// the transport rather than on a view: Source and Review mutate the same
+    /// clock, so a per-view answer can feed machine uptime into an audio anchor.
+    public private(set) var transportHostSource: StudioTransportHostSource = .machine
+    /// The last safe reading in the audio domain. Kept across detach until an
+    /// explicit re-anchor moves the shared clock back to machine time.
+    public private(set) var lastAudioHostSeconds: Double = 0
+    /// One global causal record for the one global transport. Both route trees
+    /// expose this same value.
+    public private(set) var lastTransportMutation: StudioTransportMutationRecord?
+
     public init(clock: StudioPlaybackClock) {
         self.transport = StudioTransportController(clock: clock)
+    }
+
+    /// Refreshes the safe audio-domain operand without changing domains.
+    public func didObserveAudioHostSeconds(_ seconds: Double) {
+        guard seconds.isFinite else { return }
+        lastAudioHostSeconds = seconds
+    }
+
+    /// Called only after the transport has actually been re-anchored to the
+    /// supplied source. Merely attaching or detaching a player must not call it.
+    public func didReanchorTransport(
+        to source: StudioTransportHostSource,
+        atHost hostSeconds: Double
+    ) {
+        guard hostSeconds.isFinite else { return }
+        if source == .audio {
+            lastAudioHostSeconds = hostSeconds
+        }
+        transportHostSource = source
+    }
+
+    /// Publishes the latest successful mutation for both route trees.
+    public func retainTransportMutation(_ record: StudioTransportMutationRecord) {
+        lastTransportMutation = record
     }
 
     /// Replaces the clock when a new asset is opened. Routes see it at once
