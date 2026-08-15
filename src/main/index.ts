@@ -284,6 +284,7 @@ import {
   codexCompactionFailureProvesNoLiveTurn,
   updateCodexCompactionLaunchEvidence
 } from './codex/CodexMaintenanceCompactionActivity'
+import { codexShellApprovalPresentation } from './codex/CodexApprovalPresentation'
 import {
   CodexHomeContinuityError,
   ensureTaskWraithCodexHomeForLaunch,
@@ -30405,6 +30406,19 @@ async function settleCodexNativeApprovalRequest(
       isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)
         ? ('shellCommands' as AgenticServiceId)
         : service
+    const shellPresentation =
+      gateService === 'shellCommands'
+        ? codexShellApprovalPresentation(params, formatted.preview)
+        : null
+    if (shellPresentation) {
+      Object.assign(formatted.preview, shellPresentation.preview)
+      if (externalPathDetection) {
+        formatted.body = `${formatted.body}\n\n${shellPresentation.body}`
+      } else {
+        formatted.title = shellPresentation.title
+        formatted.body = shellPresentation.body
+      }
+    }
     const codexCanvasEvalApproval =
       gateService === 'canvasEval'
         ? createCanvasEvalApprovalReceiptFromCanonicalArgs(codexToolArgs, approvalId)
