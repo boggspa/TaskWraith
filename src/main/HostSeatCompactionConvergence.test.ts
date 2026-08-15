@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord, EnsembleParticipant } from './store/types
 import { conversationCompactionEligibleRows } from './PromptComposition'
 import {
   canDisposeGrokSeatAfterCompaction,
+  canResetHostSeatAfterCompaction,
   convergeHostSeatCompaction,
   HOST_SEAT_COMPACTION_DEADLINE_MS,
   HOST_SEAT_COMPACTION_MAX_CHUNKS,
@@ -710,6 +711,56 @@ describe('host seat compaction freshness fences', () => {
         identity: frozenIdentity,
         snapshotEligibleRows: frozenEligibleRows,
         finalSummary: { ...completeSummary, provider: 'kimi' }
+      })
+    ).toBe(false)
+  })
+
+  it('applies the same exact-coverage reset fence to a native AntiGravity seat', () => {
+    const identity: HostSeatCompactionIdentity = {
+      ...frozenIdentity,
+      provider: 'antigravity',
+      model: 'gemini-3.1-pro-high',
+      linkedProviderSessionId: 'agy-project-v1:11111111-1111-4111-8111-111111111111'
+    }
+    const summary: HostSeatContextSummary = {
+      ...completeSummary,
+      provider: 'antigravity'
+    }
+    const participant = seat({
+      provider: 'antigravity',
+      model: identity.model,
+      linkedProviderSessionId: identity.linkedProviderSessionId,
+      contextCompactionSummary: summary
+    })
+
+    expect(
+      canResetHostSeatAfterCompaction({
+        chat: ensembleChat(participant),
+        currentWorkspace: '/workspace',
+        identity,
+        snapshotEligibleRows: frozenEligibleRows,
+        finalSummary: summary
+      })
+    ).toBe(true)
+    expect(
+      canResetHostSeatAfterCompaction({
+        chat: ensembleChat(participant, [
+          ...sixMessageSnapshot(),
+          message('m7', 'user', 'arrived during maintenance')
+        ]),
+        currentWorkspace: '/workspace',
+        identity,
+        snapshotEligibleRows: frozenEligibleRows,
+        finalSummary: summary
+      })
+    ).toBe(false)
+    expect(
+      canDisposeGrokSeatAfterCompaction({
+        chat: ensembleChat(participant),
+        currentWorkspace: '/workspace',
+        identity,
+        snapshotEligibleRows: frozenEligibleRows,
+        finalSummary: summary
       })
     ).toBe(false)
   })

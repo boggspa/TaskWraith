@@ -227,14 +227,19 @@ export function validateHostSeatCheckpointFreshness(
  * the frozen start snapshot is insufficient if an eligible row arrived while
  * maintenance ran; every currently eligible id must still be covered exactly.
  */
-export function canDisposeGrokSeatAfterCompaction(input: {
+export function canResetHostSeatAfterCompaction(input: {
   chat: ChatRecord
   currentWorkspace: string
   identity: HostSeatCompactionIdentity
   snapshotEligibleRows: readonly ConversationCompactionEligibleRow[]
   finalSummary: HostSeatContextSummary
 }): boolean {
-  if (input.identity.provider !== 'grok' || input.finalSummary.provider !== 'grok') return false
+  if (
+    (input.identity.provider !== 'grok' && input.identity.provider !== 'antigravity') ||
+    input.finalSummary.provider !== input.identity.provider
+  ) {
+    return false
+  }
   const freshness = validateHostSeatCheckpointFreshness({
     chat: input.chat,
     currentWorkspace: input.currentWorkspace,
@@ -251,6 +256,13 @@ export function canDisposeGrokSeatAfterCompaction(input: {
     input.finalSummary.provenance
   )
   return sameStrings(coveredIds, eligibleIds)
+}
+
+/** Backward-compatible name for Grok's process-disposal caller. */
+export function canDisposeGrokSeatAfterCompaction(
+  input: Parameters<typeof canResetHostSeatAfterCompaction>[0]
+): boolean {
+  return input.identity.provider === 'grok' && canResetHostSeatAfterCompaction(input)
 }
 
 /**
