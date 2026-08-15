@@ -73,6 +73,77 @@ final class StudioViewerAccessibilityTests: XCTestCase {
             "AX tree labels: \(children.compactMap { $0.accessibilityLabel() })")
     }
 
+    /// A PRESS THAT ACTUALLY MOVES THE TRANSPORT.
+    ///
+    /// Review hydrates paused, and every safe way to start it was inert:
+    /// background key events do nothing while the Companion is inactive, and
+    /// foreground input is the focus theft the acceptance policy forbids. This
+    /// presses the real element and reads the transport back through the same
+    /// AX tree a client sees — no synthesised events anywhere.
+    func testPressingThePlaybackControlTogglesTheRealTransport() throws {
+        let (view, window) = try makeViewer()
+
+        func playbackValue() throws -> String? {
+            try child(labeledChildren(of: view), labeled: "Playback")
+                .accessibilityValue() as? String
+        }
+
+        // Read the state rather than assume it: this harness's default clock
+        // hydrates PLAYING, so asserting a fixed starting value would test the
+        // fixture instead of the control.
+        let initial = try XCTUnwrap(playbackValue())
+        XCTAssertTrue(["playing", "paused"].contains(initial))
+        let opposite = initial == "playing" ? "paused" : "playing"
+
+        let control = try XCTUnwrap(
+            child(labeledChildren(of: view), labeled: "Playback")
+                as? StudioActionAccessibilityElement,
+            "the Playback control must be a pressable element, not an announcement")
+
+        XCTAssertTrue(control.accessibilityPerformPress())
+        view.renderCurrentFrame()
+        XCTAssertEqual(try playbackValue(), opposite, "AXPress did not move the transport")
+        // PER-TICK STABILITY, which is the requirement that matters: a display
+        // refresh that changes nothing must not reallocate the control.
+        //
+        // Identity across a play/pause TRANSITION is deliberately not asserted.
+        // Measured: the status line text carries PLAY/PAUSE, the "Loop marked
+        // range" frame is sized from that line, and frame is part of structure
+        // — so a transition rebuilds the whole tree. That is pre-existing and
+        // independent of this control; claiming it here would be asserting a
+        // property the product does not have.
+        let steady = try child(labeledChildren(of: view), labeled: "Playback")
+        view.renderCurrentFrame()
+        XCTAssertTrue(
+            try child(labeledChildren(of: view), labeled: "Playback") === steady,
+            "an idle display tick reallocated the Playback control")
+
+        XCTAssertTrue(control.accessibilityPerformPress())
+        view.renderCurrentFrame()
+        XCTAssertEqual(try playbackValue(), initial, "AXPress did not move the transport back")
+
+        // The keyboard must reach the SAME behaviour. A key path and an
+        // assistive path that disagree about what "play" means is a defect
+        // only the people relying on the second one would ever hit.
+        view.keyDown(with: makeKeyEvent(in: window, characters: " ", keyCode: 49))
+        view.renderCurrentFrame()
+        XCTAssertEqual(try playbackValue(), opposite, "Space and AXPress have drifted apart")
+    }
+
+    /// Only a descriptor that NAMES an action may become pressable. Everything
+    /// else stays an announcement: advertising a press that reaches nothing is
+    /// worse than advertising none.
+    func testAControlWithoutAnActionIsNotPressable() throws {
+        let (view, _) = try makeViewer()
+        let children = try labeledChildren(of: view)
+
+        XCTAssertFalse(
+            try child(children, labeled: "Timecode") is StudioActionAccessibilityElement)
+        XCTAssertFalse(
+            try child(children, labeled: "Loop marked range")
+                is StudioActionAccessibilityElement)
+    }
+
     /// ASSERTION 1 — the tree a client sees.
     func testTheViewerExposesAnAccessibilityTreeToAClient() throws {
         let (view, _) = try makeViewer()
@@ -229,8 +300,18 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         view.adopt(transcript: Self.transcript)
         view.renderCurrentFrame()
 
+        // Transcript segments are announcement buttons; the pressable
+        // transport control is also a button and is not a segment.
+        func segmentButtons(
+            _ elements: [NSAccessibilityElement]
+        ) -> [NSAccessibilityElement] {
+            elements.filter {
+                $0.accessibilityRole() == .button && !($0 is StudioActionAccessibilityElement)
+            }
+        }
+
         let children = try labeledChildren(of: view)
-        let buttons = children.filter { $0.accessibilityRole() == .button }
+        let buttons = segmentButtons(children)
         XCTAssertEqual(buttons.count, 2, "both segments must be reachable")
         XCTAssertEqual(buttons.first?.accessibilityLabel(), "one")
         XCTAssertEqual(buttons.first?.accessibilityValue() as? String, "Not selected")
@@ -238,7 +319,7 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         view.selectedSegmentId = "s1"
         view.renderCurrentFrame()
         let updated = try labeledChildren(of: view)
-        let selected = updated.filter { $0.accessibilityRole() == .button }
+        let selected = segmentButtons(updated)
         XCTAssertEqual(
             selected.first?.accessibilityValue() as? String, "Selected",
             "selection must be readable by a client, not only drawn")
@@ -363,9 +444,16 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         view.adopt(transcript: Self.transcript)
         view.renderCurrentFrame()
 
+        // Transcript segments are announcement buttons. The pressable
+        // transport control is also a button and is deliberately excluded:
+        // this walk is about focus order through the band, not every button
+        // in the tree.
         func buttonValues() throws -> [String] {
             try labeledChildren(of: view)
-                .filter { $0.accessibilityRole() == .button }
+                .filter {
+                    $0.accessibilityRole() == .button
+                        && !($0 is StudioActionAccessibilityElement)
+                }
                 .map { try XCTUnwrap($0.accessibilityValue() as? String) }
         }
 

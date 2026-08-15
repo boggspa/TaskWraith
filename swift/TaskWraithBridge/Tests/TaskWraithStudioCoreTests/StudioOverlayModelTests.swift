@@ -511,6 +511,68 @@ final class StudioOverlayModelTests: XCTestCase {
             "the diagnostics row must remain inside the viewport")
     }
 
+    // MARK: - A playback control something can actually press
+
+    /// Review hydrates PAUSED, and every safe way to start it was inert:
+    /// background key events do nothing while the Companion is inactive, and
+    /// the only alternative is foreground input, which is exactly the focus
+    /// theft the acceptance policy forbids. A pressable accessibility control
+    /// is the one route that is both safe and real.
+
+    func testThePlaybackControlIsPublishedAsAPressableAction() {
+        var paused = state()
+        paused.isPlaying = false
+        let pausedModel = StudioOverlayLayout.build(paused)
+        let pausedControl = pausedModel.accessibilityElements.first { $0.label == "Playback" }
+        XCTAssertEqual(pausedControl?.value, "paused")
+        XCTAssertEqual(pausedControl?.action, .togglePlayback)
+
+        var playing = state()
+        playing.isPlaying = true
+        let playingControl = StudioOverlayLayout.build(playing)
+            .accessibilityElements.first { $0.label == "Playback" }
+        XCTAssertEqual(playingControl?.value, "playing")
+    }
+
+    /// The value moves every time playback starts or stops; the control does
+    /// not. Republishing on value alone would reallocate the element and hand
+    /// assistive technology a moving target — the same churn the playhead
+    /// slider already avoids.
+    func testThePlaybackControlKeepsItsStructureWhileItsValueMoves() throws {
+        var paused = state()
+        paused.isPlaying = false
+        var playing = state()
+        playing.isPlaying = true
+
+        let pausedControl = try XCTUnwrap(
+            StudioOverlayLayout.build(paused).accessibilityElements
+                .first { $0.label == "Playback" })
+        let playingControl = try XCTUnwrap(
+            StudioOverlayLayout.build(playing).accessibilityElements
+                .first { $0.label == "Playback" })
+
+        XCTAssertNotEqual(pausedControl.value, playingControl.value)
+        XCTAssertTrue(pausedControl.matchesStructure(of: playingControl))
+    }
+
+    /// THE REASON ACTION IS PART OF IDENTITY. Role, label and frame can all
+    /// coincide while the thing the press DOES differs. If structure matching
+    /// ignored the action, an element wired to one behaviour could be reused
+    /// in place for another and the press would silently do the wrong thing.
+    func testTwoControlsThatDifferOnlyByActionAreNotTheSameControl() {
+        let frame = StudioOverlayFrame(x: 1, y: 2, width: 3, height: 4)
+        let pressable = StudioAccessibilityDescriptor(
+            role: .button, label: "Playback", value: "paused",
+            frame: frame, action: .togglePlayback)
+        let inert = StudioAccessibilityDescriptor(
+            role: .button, label: "Playback", value: "paused", frame: frame)
+
+        XCTAssertFalse(
+            pressable.matchesStructure(of: inert),
+            "a pressable control must never be reused in place for an inert one")
+        XCTAssertFalse(inert.matchesStructure(of: pressable))
+    }
+
     // MARK: - The retained A/V sample leaves the process
 
     /// Carries the retained worst A/V reading OUT of the process without a

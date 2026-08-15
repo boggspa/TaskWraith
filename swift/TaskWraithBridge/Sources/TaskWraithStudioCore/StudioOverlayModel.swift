@@ -115,6 +115,17 @@ public struct StudioOverlayText: Equatable, Sendable {
 /// layer can publish accessibility children without re-deriving any layout.
 /// This is outcome-10 groundwork and is deliberately NOT a claim that outcome 10
 /// is met: nothing here has been exercised with VoiceOver.
+/// Names what pressing a control DOES.
+///
+/// Carried as identity, not decoration. Role, label and frame can all coincide
+/// while the behaviour behind a press differs; if structure matching ignored
+/// this, an element already wired to one action could be reused in place for
+/// another and the press would silently do the wrong thing.
+public enum StudioAccessibilityAction: String, Equatable, Sendable {
+    /// Start or stop playback — the same transport toggle Space performs.
+    case togglePlayback
+}
+
 public struct StudioAccessibilityDescriptor: Equatable, Sendable {
     public enum Role: String, Equatable, Sendable {
         case slider
@@ -131,11 +142,22 @@ public struct StudioAccessibilityDescriptor: Equatable, Sendable {
     public let value: String
     public let frame: StudioOverlayFrame
 
-    public init(role: Role, label: String, value: String, frame: StudioOverlayFrame) {
+    /// Nil for a control that only reports. A non-nil action is a promise that
+    /// something can press this and a real behaviour will run.
+    public let action: StudioAccessibilityAction?
+
+    public init(
+        role: Role,
+        label: String,
+        value: String,
+        frame: StudioOverlayFrame,
+        action: StudioAccessibilityAction? = nil
+    ) {
         self.role = role
         self.label = label
         self.value = value
         self.frame = frame
+        self.action = action
     }
 
     /// True when two descriptors describe the SAME control and differ at most in
@@ -151,6 +173,7 @@ public struct StudioAccessibilityDescriptor: Equatable, Sendable {
     /// which keeps the live timecode readable rather than throttling it away.
     public func matchesStructure(of other: StudioAccessibilityDescriptor) -> Bool {
         role == other.role && label == other.label && frame == other.frame
+            && action == other.action
     }
 }
 
@@ -584,6 +607,36 @@ public enum StudioOverlayLayout {
                         * Double(readout.count),
                     height: timecodeSize
                 )
+            )
+        )
+
+        // A playback control something can actually PRESS.
+        //
+        // The HUD already shows PLAY/PAUSE below, and Space already toggles it,
+        // but neither is reachable safely from outside the process: background
+        // key events are inert while the Companion is inactive, and the only
+        // alternative is foreground input — the exact focus theft the
+        // acceptance policy forbids. This publishes no new glyph and shifts no
+        // row; it makes the transport reachable by an accessibility press.
+        accessibility.append(
+            StudioAccessibilityDescriptor(
+                role: .button,
+                label: "Playback",
+                value: state.isPlaying ? "playing" : "paused",
+                // DELIBERATELY INDEPENDENT OF THE TIMECODE TEXT. Sizing this
+                // from the readout's character count would move the frame as
+                // the timecode advanced, and frame is part of structure — so
+                // the whole accessibility tree would be rebuilt every display
+                // tick during playback, which is precisely the churn the
+                // playhead slider already exists to avoid. A stable frame lets
+                // the value update in place.
+                frame: StudioOverlayFrame(
+                    x: margin,
+                    y: readoutY,
+                    width: timecodeSize,
+                    height: timecodeSize
+                ),
+                action: .togglePlayback
             )
         )
 

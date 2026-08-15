@@ -453,7 +453,7 @@ final class StudioTimelineOverlayReachTests: XCTestCase {
 
     func testSegmentsArePublishedToAssistiveTechnology() {
         let model = StudioOverlayLayout.build(state(withTimeline: true))
-        let segments = model.accessibilityElements.filter { $0.role == .button }
+        let segments = model.accessibilityElements.filter { $0.role == .button && $0.action == nil }
         XCTAssertEqual(segments.count, 2)
         XCTAssertEqual(segments.first?.label, "the band is drawn")
         XCTAssertEqual(segments.first?.value, "Selected")
@@ -468,9 +468,9 @@ final class StudioTimelineOverlayReachTests: XCTestCase {
         other.timeline?.selectedSegmentId = "s2"
 
         let a = StudioOverlayLayout.build(selected).accessibilityElements
-            .filter { $0.role == .button }
+            .filter { $0.role == .button && $0.action == nil }
         let b = StudioOverlayLayout.build(other).accessibilityElements
-            .filter { $0.role == .button }
+            .filter { $0.role == .button && $0.action == nil }
         XCTAssertEqual(a.count, b.count)
         for (lhs, rhs) in zip(a, b) {
             XCTAssertTrue(

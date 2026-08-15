@@ -1070,13 +1070,28 @@ final class StudioViewerView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// THE ONE TRANSPORT TOGGLE.
+    ///
+    /// Space and the accessibility Playback control both land here, so the two
+    /// cannot drift into different behaviour — a keyboard path and an
+    /// assistive path that disagree about what "play" means is a defect that
+    /// only shows up for the people relying on the second one.
+    ///
+    /// Audio follows the transport through the existing per-tick
+    /// `reconcileAudio()`; nothing here schedules or re-anchors it.
+    @discardableResult
+    func performPlaybackToggle(atHost host: Double) -> Bool {
+        transport.togglePlayback(atHost: host)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         if handleTimecodeEntry(event) { return }
 
         let host = CACurrentMediaTime()
         switch event.keyCode {
         case Key.space:
-            transport.togglePlayback(atHost: host)
+            performPlaybackToggle(atHost: host)
             return
         case Key.tab:
             // Tab walks the transcript band. Without this the accessibility
@@ -1325,6 +1340,23 @@ final class StudioViewerView: NSView {
                 playhead.setAccessibilityParent(self)
                 applyAccessibilityFrame(descriptor.frame, scale: scale, to: playhead)
                 return playhead
+            }
+            // A descriptor that names an action gets an element that can run
+            // it. Without this branch the control would announce a press that
+            // reaches nothing, which is worse than not advertising one.
+            if let action = descriptor.action {
+                let control = StudioActionAccessibilityElement()
+                control.publish(label: descriptor.label, value: descriptor.value, action: action)
+                control.performAction = { [weak self] in
+                    guard let self else { return false }
+                    switch action {
+                    case .togglePlayback:
+                        return self.performPlaybackToggle(atHost: CACurrentMediaTime())
+                    }
+                }
+                control.setAccessibilityParent(self)
+                applyAccessibilityFrame(descriptor.frame, scale: scale, to: control)
+                return control
             }
             let element = NSAccessibilityElement()
             element.setAccessibilityRole(Self.accessibilityRole(for: descriptor.role))
