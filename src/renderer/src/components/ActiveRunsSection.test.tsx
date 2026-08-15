@@ -324,6 +324,26 @@ describe('deriveVisibleActiveRunEntries', () => {
       deriveVisibleActiveRunEntries({ jobs: [], chats: [completed], surface: 'code' })
     ).toEqual([])
   })
+
+  it('declines a malformed transition whose provider cannot be resolved', () => {
+    const ensemble = transitioningChat()
+    const unresolved = {
+      ...ensemble,
+      provider: undefined,
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [],
+        activeRound: {
+          ...ensemble.ensemble!.activeRound!,
+          participants: []
+        }
+      }
+    } as ChatRecord
+
+    expect(
+      deriveVisibleActiveRunEntries({ jobs: [], chats: [unresolved], surface: 'code' })
+    ).toEqual([])
+  })
 })
 
 describe('resolveActiveRunProviderDisplay', () => {

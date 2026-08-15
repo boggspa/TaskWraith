@@ -297,6 +297,7 @@ function transitionFallbackEntry(chat: ChatRecord): ActiveRunEntry | null {
     (participant) => participant.participantId === participantId
   )
   const provider = configuredParticipant?.provider || roundParticipant?.provider || chat.provider
+  if (!provider) return null
   const job: RunQueueJob = {
     id: `ensemble-transition:${chat.appChatId}:${round.roundId}`,
     runId: transition.sourceRunId,
