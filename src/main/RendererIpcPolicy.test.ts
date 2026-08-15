@@ -136,6 +136,18 @@ describe('RendererIpcPolicy', () => {
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
+  it('keeps the durable Studio effect-preview controls main-renderer-only', () => {
+    for (const channel of [
+      'studio:effect-preview-load',
+      'studio:effect-preview-clear',
+      'studio:effect-preview-state'
+    ]) {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+    }
+  })
+
   it.each([
     'channels:append',
     'channels:approve-human-review',

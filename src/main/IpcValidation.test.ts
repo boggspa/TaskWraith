@@ -138,6 +138,12 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('rejects an unknown Studio effect-preview channel before prefix-specific validation', () => {
+    expect(() => validateIpcArgs('studio:effect-preview-reset', [])).toThrow(
+      /No IPC schema registered/
+    )
+  })
+
   it('shape-gates the closed Channels host contract and rejects trailing data', () => {
     expect(() => validateIpcArgs('channels:list', [])).not.toThrow()
     expect(() => validateIpcArgs('channels:list', [{}])).toThrow(/too many arguments/)

@@ -322,6 +322,12 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // app surface. Popouts never gain an independent start/stop authority.
   'host-lifecycle:status',
   'host-lifecycle:set',
+  // Studio effect-preview state is process-wide and durable. Loading opens a
+  // main-owned native file chooser, while clear/state mutate or project that
+  // same privileged surface; popouts receive no independent LUT authority.
+  'studio:effect-preview-load',
+  'studio:effect-preview-clear',
+  'studio:effect-preview-state',
   // Owner-signed agent membership and zero-click mention authority always
   // require the primary renderer plus a main-owned native confirmation sheet.
   'channels:agent:overview',
