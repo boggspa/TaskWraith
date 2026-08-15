@@ -12277,7 +12277,6 @@ export class EnsembleOrchestrator {
         prompt,
         reason: input.reason,
         mode,
-        forceReadOnlyDispatch: mode === 'read_only',
         sourceRunId: runId,
         writeScopesByParticipantId,
         ...(isolation ? { isolation } : {}),
@@ -12375,8 +12374,9 @@ export class EnsembleOrchestrator {
    * filters (`targetStage`), and per-seat permission ELIGIBILITY filtering
    * are all ignored — every tagged (default: every enabled, idle) seat
    * dispatches concurrently, and each lane runs under the participant's OWN
-   * normal-turn posture instead of a read-only clamp or locked-writer
-   * scopes. What it deliberately does NOT bypass: caller authority (must be
+   * normal-turn posture and derives task intent from it instead of applying
+   * reader intent or locked-writer scopes. What it deliberately does NOT
+   * bypass: caller authority (must be
    * the configured Boss or Captain), the composer-directed
    * one-seat round boundary (user intent), the Boss budget, the roster cap,
    * and every posture clamp inside resolveParticipantPermissions (the
@@ -12566,7 +12566,7 @@ export class EnsembleOrchestrator {
         reason: input.reason,
         sourceRunId: runId,
         label,
-        dispatchOwnPermissions: true,
+        deriveLaneIntentFromPermissions: true,
         ...(isolation ? { isolation } : {}),
         acceptedRuns,
         waitForCompletion: false,
@@ -13434,8 +13434,7 @@ export class EnsembleOrchestrator {
       } {
     const writerTargets = targets.filter(
       (participant) =>
-        !this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'locked_writers')
-          .readOnly
+        !this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
     )
     const scopesByParticipantId = new Map<string, ConcurrentLaneWriteScope[]>()
     if (writerTargets.length === 0) return { ok: true, scopesByParticipantId }
@@ -15538,19 +15537,18 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // Parallel fan-out. The explicit Read policy clamps the opening scout
-    // stage to read-only. The user-selected All policy keeps each scout's own
-    // configured posture: `scout` remains a work/stage instruction and must
-    // not silently replace Accept Edits with Plan. Writer-capable lanes under
-    // narrower policies still require either Boss authorization via
-    // ensemble_fanout or, when no Boss is assigned, a host-owned user-preflight
-    // claim + ack pass.
+    // Parallel fan-out. Read is a WORK-INTENT policy, never a permission
+    // preset: an opening Scout keeps its configured posture while receiving a
+    // read-only lane brief. All additionally lets the lane derive write intent
+    // from that posture. Writer-intent lanes under narrower policies still
+    // require either Boss authorization via ensemble_fanout or, when no Boss
+    // is assigned, a host-owned user-preflight claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
     const roundFanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
     const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
     const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
     const shouldRunReadOnlyFanout = readFanoutRequested
-    const openingScoutUsesOwnPermissions = roundFanoutPolicy === 'all'
+    const openingScoutUsesOwnIntent = roundFanoutPolicy === 'all'
     const shouldRunOpeningScoutFanout =
       !options.skipPreamble || options.repeatOpeningScoutFanout === true
     const shouldRunOpeningWriterFanout = !options.skipPreamble
@@ -15566,9 +15564,9 @@ export class EnsembleOrchestrator {
       // and never consults the seat's configured preset. Three-way partition:
       //   readers  — explicit stage 'scout' (any preset), or unstaged seats
       //              whose OWN permissions resolve read-only (the pre-stage
-      //              legacy inference) → round-start parallel pass. The Read
-      //              policy signs the read_only clamp; All signs each seat's
-      //              configured posture instead.
+      //              legacy inference) → round-start parallel pass. Read keeps
+      //              the task read-only while preserving the configured seat
+      //              posture; All derives task intent from that posture.
       //   writers  — explicit stage 'worker' (any preset, including presets
       //              that resolve read-only: it still takes its serial turn
       //              and must NOT be silently dropped from BOTH buckets — a
@@ -15624,10 +15622,9 @@ export class EnsembleOrchestrator {
         remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only',
-          // Fan-out All is explicit user authority for each lane to inherit its
-          // configured posture. Fan-out Read retains the historical clamp.
-          forceReadOnlyDispatch: !openingScoutUsesOwnPermissions,
-          dispatchOwnPermissions: openingScoutUsesOwnPermissions,
+          // Both policies preserve the seat posture. All also lets the lane's
+          // task intent follow that posture; Read remains inspection-only.
+          deriveLaneIntentFromPermissions: openingScoutUsesOwnIntent,
           label: 'Automatic read stage'
         })
       } else if (shouldRunOpeningScoutFanout && readFanoutRequested && readers.length > 0) {
@@ -15778,8 +15775,8 @@ export class EnsembleOrchestrator {
       // not mark fannedOutParticipantIds — only the ensemble_fanout tool
       // path does). Stage roles are permission-agnostic (2026-08-04): a
       // write-postured reviewer joins the wave like any other. Fan-out Read
-      // signs the read_only clamp; Fan-out All preserves each reviewer's
-      // configured posture, matching the opening Scout wave.
+      // keeps reviewer intent read-only without weakening the seat's configured
+      // posture; Fan-out All derives intent from the posture, matching Scout.
       if (
         reviewerWaveEligible &&
         remaining.length >= 2 &&
@@ -15803,8 +15800,7 @@ export class EnsembleOrchestrator {
           remaining.splice(0, remaining.length, ...rest)
           await this.runParallelFanoutPass(runtime, chat, pendingReviewers, {
             mode: 'read_only',
-            forceReadOnlyDispatch: !openingScoutUsesOwnPermissions,
-            dispatchOwnPermissions: openingScoutUsesOwnPermissions,
+            deriveLaneIntentFromPermissions: openingScoutUsesOwnIntent,
             label: 'Review wave'
           })
           // Closing Review wave ends ordinary serial work for this pass.
@@ -17498,9 +17494,10 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun,
     rawTargets: unknown,
-    /** Eligibility is mode-independent since 2026-08-04 (read_only lanes are
-     * clamped at dispatch; locked_writers lanes still require write scopes
-     * there). Kept in the signature so call sites stay self-documenting. */
+    /** Eligibility is mode-independent since 2026-08-04. `read_only` describes
+     * lane work intent, not its permission preset; locked_writers lanes still
+     * require write scopes at dispatch. Kept in the signature so call sites
+     * stay self-documenting. */
     _mode: EnsembleFanoutMode,
     targetStage?: EnsembleFanoutTargetStage
   ):
@@ -17548,10 +17545,9 @@ export class EnsembleOrchestrator {
       if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') return false
       if (!fanoutTargetStageMatches(participant, targetStage)) return false
       // Eligibility is otherwise permission-agnostic (2026-08-04): broad
-      // discovery matches explicit-target semantics. A seat's configured
-      // preset is immaterial because read_only-mode lanes are dispatched
-      // under the signed read_only clamp; locked_writers lanes still
-      // require write scopes at dispatch.
+      // discovery matches explicit-target semantics. A read_only-mode lane
+      // keeps the seat's configured permission tier while its task remains
+      // inspection-only; locked_writers lanes still require write scopes.
       return true
     }
     if (explicitTargets.length === 0 || explicitTargets.some((target) => /^@?all$/i.test(target))) {
@@ -17610,10 +17606,9 @@ export class EnsembleOrchestrator {
         }
       }
       // An explicit target is an operator-authored routing decision. In
-      // read_only mode its configured seat posture is immaterial because the
-      // actual lane dispatch below is rebuilt with the signed read_only preset,
-      // ignores overrides, and disallows Full Access. Broad/all discovery
-      // applies the same permission-agnostic rule.
+      // read_only mode its configured seat posture remains authoritative while
+      // the lane brief and metadata carry read intent. Broad/all discovery
+      // applies the same permission-agnostic targeting rule.
       targets.push(participant)
     }
     const deduped = dedupeParticipants(targets)
@@ -17770,7 +17765,7 @@ export class EnsembleOrchestrator {
         label: 'User Fan-Out',
         promptAuthority: 'user',
         userPromptSourceMessageId: sourceMessageId,
-        dispatchOwnPermissions: true,
+        deriveLaneIntentFromPermissions: true,
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: 'background'
@@ -17930,7 +17925,7 @@ export class EnsembleOrchestrator {
         sourceRunId: options.sourceRunId,
         label: 'Background',
         ...(posture.mode === 'own_permissions'
-          ? { dispatchOwnPermissions: true }
+          ? { deriveLaneIntentFromPermissions: true }
           : { mode: 'read_only' as const, forceReadOnlyDispatch: true }),
         acceptedRuns,
         waitForCompletion: false,
@@ -17997,8 +17992,10 @@ export class EnsembleOrchestrator {
    * dispatched.") so the user sees the fan-out as it happens.
    *
    * Critical invariants:
-   *   - Read-only mode requires every participant to resolve as
-   *     read-only. Locked-writer mode requires the writer-lane flag.
+   *   - Read-only mode is lane intent, not a permission demotion. Seats keep
+   *     their configured posture unless a caller explicitly requests the
+   *     narrow host/background read clamp. Locked-writer mode requires the
+   *     writer-lane flag.
    *   - Each lane gets its own `runId` (UUID, collision-free).
    *   - Dispatch failures for individual lanes are NOT round-fatal
    *     — the existing typed-error path runs per-lane, marks that
@@ -18032,13 +18029,15 @@ export class EnsembleOrchestrator {
       /** Exact durable source row for a user-directed prompt. Never recover
        * this identity by comparing message content after an async barrier. */
       userPromptSourceMessageId?: string
+      /** Narrow auxiliary-run clamp used by host-owned approval/preflight and
+       * peer-delegated background work. Ordinary read_only fan-out must not set
+       * this: read_only is task intent and preserves the seat's posture. */
       forceReadOnlyDispatch?: boolean
-      /** ensemble_fanout_all: each lane runs under the participant's OWN
-       * normal-turn posture (unattended clamps included via
-       * resolveParticipantPermissions) — no read-only clamp, no
-       * locked-writer scope requirement. Mutually exclusive with mode
-       * validation below. */
-      dispatchOwnPermissions?: boolean
+      /** ensemble_fanout_all and user-authorized own-posture routes derive the
+       * lane's work intent from the participant's normal-turn posture instead
+       * of treating mode=read_only as a reader assignment. Permission posture
+       * itself is preserved for every ordinary lane regardless of this flag. */
+      deriveLaneIntentFromPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       /** Per-call choice, honored only while the chat Isolate policy is
        * 'any' — pinned 'off'/'worktree' policies clamp it. Omitted defers
@@ -18064,39 +18063,37 @@ export class EnsembleOrchestrator {
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
-    if (!options.dispatchOwnPermissions) {
-      for (const participant of participants) {
-        const permissions = options.forceReadOnlyDispatch
-          ? this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'read_only')
-          : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
-        if (mode === 'read_only' && !permissions.readOnly) {
-          throw new Error(
-            `runParallelFanoutPass: non-read-only participant ${participant.id} cannot run in read_only fan-out.`
-          )
-        }
-        if (
-          mode === 'locked_writers' &&
-          !permissions.readOnly &&
-          (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
-        ) {
-          throw new Error(
-            `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
-          )
-        }
+    for (const participant of participants) {
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveForcedReadOnlyFanoutPermissions(chat, runtime, participant)
+        : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
+      if (options.forceReadOnlyDispatch && !permissions.readOnly) {
+        throw new Error(
+          `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${participant.id}.`
+        )
+      }
+      if (
+        mode === 'locked_writers' &&
+        !permissions.readOnly &&
+        (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
+      ) {
+        throw new Error(
+          `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
+        )
       }
     }
 
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
 
-    const readOnlyCount = participants.filter((participant) => {
-      if (options.dispatchOwnPermissions) {
-        return this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
-      }
-      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
-      return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode)
-        .readOnly
+    const readerIntentMode = mode === 'read_only' && !options.deriveLaneIntentFromPermissions
+    const readIntentCount = participants.filter((participant) => {
+      if (readerIntentMode) return true
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveForcedReadOnlyFanoutPermissions(chat, runtime, participant)
+        : this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant)
+      return permissions.readOnly
     }).length
-    const writeCount = participants.length - readOnlyCount
+    const writeIntentCount = participants.length - readIntentCount
     // Worktree isolation applies to WRITE-intent lanes only: read lanes need
     // the live checkout (and cannot mutate it), while parallel writers are the
     // stomping hazard. The chat-level Isolate policy is USER AUTHORITY,
@@ -18114,7 +18111,7 @@ export class EnsembleOrchestrator {
     // chat is NOT an exemption — those lanes fail closed per-lane below
     // instead of silently sharing the checkout.
     const isolateWriteLanes =
-      fanoutIsolation === 'worktree' && writeCount > 0 && chat.scope !== 'global'
+      fanoutIsolation === 'worktree' && writeIntentCount > 0 && chat.scope !== 'global'
     const label =
       options.label || (mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out')
     const ollamaLaneCount = participants.filter((p) => p.provider === 'ollama').length
@@ -18144,9 +18141,13 @@ export class EnsembleOrchestrator {
     const fanoutWaveId = this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      writeCount > 0
-        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${isolationNote}${ollamaRamNote}`
-        : `${label} · ${participants.length} participant(s) dispatched concurrently (read-clamped lanes).${ollamaRamNote}`,
+      writeIntentCount > 0
+        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
+        : options.forceReadOnlyDispatch
+          ? `${label} · ${participants.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
+          : readerIntentMode
+            ? `${label} · ${participants.length} participant(s) dispatched concurrently (reader-intent lanes; seat permissions preserved).${ollamaRamNote}`
+            : `${label} · ${participants.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
       { fanoutCategory, fanoutLabel: label }
     )
 
@@ -18165,18 +18166,18 @@ export class EnsembleOrchestrator {
       const freshParticipant =
         freshChat.ensemble?.participants?.find((candidate) => candidate.id === participant.id) ||
         participant
-      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
-      const permissions = options.dispatchOwnPermissions
-        ? this.resolveFanoutOwnDispatchPermissions(freshChat, runtime, freshParticipant)
-        : this.resolveFanoutDispatchPermissions(freshChat, runtime, freshParticipant, dispatchMode)
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveForcedReadOnlyFanoutPermissions(freshChat, runtime, freshParticipant)
+        : this.resolveFanoutOwnDispatchPermissions(freshChat, runtime, freshParticipant)
+      const laneIntent = readerIntentMode || permissions.readOnly ? 'read' : 'write'
       return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
         laneId: this.nextLaneId(runtime, freshParticipant),
-        laneIntent: permissions.readOnly ? 'read' : 'write',
+        laneIntent,
         ...(fanoutWaveId ? { fanoutWaveId } : {}),
         fanoutLabel: label,
         fanoutCategory,
         preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
-        approvedWriteScopes: permissions.readOnly
+        approvedWriteScopes: laneIntent === 'read'
           ? undefined
           : options.writeScopesByParticipantId?.get(freshParticipant.id)
       })
@@ -18214,7 +18215,6 @@ export class EnsembleOrchestrator {
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
       })
-      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
       const runScopedExternalPathGrants =
         this.deps.issueRunScopedExternalGrants?.({
           chat: dispatchChat,
@@ -18226,32 +18226,38 @@ export class EnsembleOrchestrator {
         ...runScopedExternalPathGrants,
         ...(runtime.externalPathGrants || [])
       ]
-      const permissions = options.dispatchOwnPermissions
-        ? this.resolveParticipantPermissions(
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveForcedReadOnlyFanoutPermissions(
+            dispatchChat,
+            runtime,
+            participant,
+            participantExternalPathGrants
+          )
+        : this.resolveParticipantPermissions(
             dispatchChat,
             participant,
             participantExternalPathGrants,
             isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
-          )
-        : this.resolveFanoutDispatchPermissions(
-            dispatchChat,
-            runtime,
-            participant,
-            dispatchMode,
-            participantExternalPathGrants
           )
       const promptAuthority =
         options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
       const lanePromptAuthor =
         promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
       const explicitLanePrompt = options.prompt?.trim()
-      const promptForLane = explicitLanePrompt
+      const basePromptForLane = explicitLanePrompt
         ? promptAuthority === 'user'
           ? explicitLanePrompt
           : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
               options.reason ? `\n\nReason: ${options.reason}` : ''
             }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
         : runtime.prompt
+      const readerIntentBoundary =
+        run.laneIntent === 'read'
+          ? options.forceReadOnlyDispatch
+            ? '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. This auxiliary lane is runtime read-clamped.'
+            : '\n\nTaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. Your configured permission tier remains active so allowed inspection tools stay non-blocking; that authority does not broaden this reader assignment.'
+          : ''
+      const promptForLane = `${basePromptForLane}${readerIntentBoundary}`
       const userPromptSourceMessage =
         promptAuthority === 'user' && options.userPromptSourceMessageId
           ? dispatchChat.messages.find(
@@ -21407,11 +21413,12 @@ export class EnsembleOrchestrator {
     )
   }
 
-  /** ensemble_fanout_all dispatch posture: the participant's OWN normal-turn
-   * permissions, exactly as a serial rotation turn would resolve them — no
-   * read-only clamp, no eligibility filtering. All safety clamps inside
-   * resolveParticipantPermissions (unattended-round HMAC clamp) still
-   * apply; background seats still never inherit Full Access. */
+  /** Ordinary fan-out dispatch posture: the participant's OWN normal-turn
+   * permissions, exactly as a serial rotation turn would resolve them. A
+   * reader-intent lane still uses this posture; its work boundary lives in the
+   * lane intent/prompt instead of silently replacing Accept Edits with Ask.
+   * All safety clamps inside resolveParticipantPermissions (unattended-round
+   * HMAC clamp) still apply; background seats still never inherit Full Access. */
   private resolveFanoutOwnDispatchPermissions(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
@@ -21425,26 +21432,21 @@ export class EnsembleOrchestrator {
     )
   }
 
-  private resolveFanoutDispatchPermissions(
+  private resolveForcedReadOnlyFanoutPermissions(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     participant: EnsembleParticipant,
-    mode: EnsembleFanoutMode,
     explicitExternalPathGrants: ExternalPathGrant[] = runtime.externalPathGrants || []
   ): EffectiveRunPermissions {
     return this.resolveParticipantPermissions(
       chat,
       participant,
       explicitExternalPathGrants,
-      mode === 'read_only'
-        ? {
-            presetId: 'read_only',
-            ignoreOverrides: true,
-            disallowTrustedSession: true
-          }
-        : isBackgroundParticipant(participant)
-          ? { disallowTrustedSession: true }
-          : {}
+      {
+        presetId: 'read_only',
+        ignoreOverrides: true,
+        disallowTrustedSession: true
+      }
     )
   }
 

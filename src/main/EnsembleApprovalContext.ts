@@ -10,8 +10,10 @@ export interface EnsembleApprovalContextValue {
 
 /**
  * Descriptive context for a pending Ensemble approval. The requesting run's
- * signed effective preset travels with the attribution because the configured
- * roster preset can be wider than an explicitly read-only fan-out lane.
+ * signed effective preset travels with the attribution because host-owned
+ * auxiliary, unattended, preview-risk, or background clamps can differ from
+ * live roster configuration. Ordinary reader-intent fan-out preserves the
+ * configured seat tier.
  */
 export function ensembleApprovalContext(
   identity: EnsembleRunIdentity | undefined,

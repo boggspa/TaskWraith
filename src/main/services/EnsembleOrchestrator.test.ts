@@ -18209,7 +18209,7 @@ Next action:
     expect(result.laneIds).toHaveLength(1)
   })
 
-  it('clamps an explicitly targeted writer seat to read-only for a read_only fan-out', async () => {
+  it('keeps an explicitly targeted Accept Edits seat at its configured tier for reader-intent fan-out', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
@@ -18229,7 +18229,7 @@ Next action:
         role: 'WriterReviewer',
         instructions: 'Normally writes, but inspect only in this lane.',
         order: 2,
-        permissionPresetId: 'workspace_write'
+        permissionPresetId: 'default'
       }
     ]
     harness.chat.ensemble!.bossmanParticipantId = 'captain'
@@ -18248,8 +18248,15 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
     const lane = harness.dispatched[1]
-    expect(lane.approvalMode).toBe('plan')
-    expect(lane.effectivePermissions).toMatchObject({ presetId: 'read_only', readOnly: true })
+    expect(lane.approvalMode).toBe('default')
+    expect(lane.effectivePermissions).toMatchObject({
+      presetId: 'default',
+      readOnly: false,
+      agenticServices: { shellCommands: 'allow' }
+    })
+    expect(lane.prompt).toContain('Your configured permission tier remains active')
+    const chatRun = harness.chat.runs.find((run) => run.runId === lane.appRunId)
+    expect(chatRun?.ensembleLaneIntent).toBe('read')
     completeDispatchedRun(harness, 1)
     await expect(fanout).resolves.toMatchObject({ ok: true })
   })
@@ -21778,12 +21785,13 @@ describe('staged fan-out (stageRole)', () => {
   })
 
   // Stage roles are permission-agnostic: a stage is a fan-out dispatch role,
-  // never a permission requirement. The explicit Read policy clamps wave
-  // lanes to signed read_only ("Ask"); Fan-out All preserves each seat's own
-  // posture. The only role-based permission distinction in ensembles stays
-  // Boss/Captain authority, which is stage-independent.
+  // never a permission requirement. Read and All both preserve each seat's
+  // configured posture; Read fixes the task intent to inspection/review while
+  // All derives task intent from the posture. The only role-based permission
+  // distinction in ensembles stays Boss/Captain authority, which is
+  // stage-independent.
 
-  it('dispatches a write-postured scout in the opening wave under the read-only lane clamp', async () => {
+  it('keeps a write-postured scout at its configured tier in a reader-intent opening wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
@@ -21828,15 +21836,25 @@ describe('staged fan-out (stageRole)', () => {
     expect(new Set(harness.dispatched.map((payload) => payload.provider))).toEqual(
       new Set(['kimi', 'codex'])
     )
-    // Every wave lane carries the signed read_only lane clamp, including the
-    // workspace_write scout.
-    expect(
-      harness.dispatched.every(
-        (payload) =>
-          payload.effectivePermissions?.presetId === 'read_only' &&
-          payload.effectivePermissions?.readOnly === true
-      )
-    ).toBe(true)
+    const kimiScout = harness.dispatched.find((payload) => payload.provider === 'kimi')
+    const codexScout = harness.dispatched.find((payload) => payload.provider === 'codex')
+    expect(kimiScout).toMatchObject({
+      approvalMode: 'plan',
+      effectivePermissions: { presetId: 'read_only', readOnly: true }
+    })
+    expect(codexScout).toMatchObject({
+      approvalMode: 'auto_edit',
+      effectivePermissions: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        agenticServices: { shellCommands: 'allow' }
+      }
+    })
+    expect(codexScout?.prompt).toContain('Your configured permission tier remains active')
+    const scoutRuns = harness.chat.runs.filter((run) =>
+      ['kimi-scout', 'codex-scout'].includes(run.ensembleParticipantId || '')
+    )
+    expect(scoutRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
     completeRun(harness, 0, 'Scout A findings.')
     completeRun(harness, 1, 'Scout B findings.')
     // The unstaged Builder keeps its ordinary serial turn under its OWN posture.
@@ -21915,7 +21933,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[2].provider).toBe('claude')
   })
 
-  it('runs write-postured reviewers as a closing review wave under the read-only lane clamp', async () => {
+  it('keeps write-postured reviewers at their configured tiers in a reader-intent review wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
@@ -21958,8 +21976,8 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[0].provider).toBe('codex')
     completeRun(harness, 0, 'Built the feature.')
     // Pre-change these write-postured reviewers fell through to serial turns.
-    // Now the review wave is stage-driven: both dispatch concurrently, each
-    // lane clamped read-only.
+    // The review wave is stage-driven: both dispatch concurrently, with read
+    // task intent and their configured Full WS Access tier intact.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
       new Set(['claude', 'kimi'])
@@ -21969,10 +21987,16 @@ describe('staged fan-out (stageRole)', () => {
         .slice(1)
         .every(
           (payload) =>
-            payload.effectivePermissions?.presetId === 'read_only' &&
-            payload.effectivePermissions?.readOnly === true
+            payload.approvalMode === 'auto_edit' &&
+            payload.effectivePermissions?.presetId === 'workspace_write' &&
+            payload.effectivePermissions?.readOnly === false &&
+            payload.effectivePermissions?.agenticServices.shellCommands === 'allow'
         )
     ).toBe(true)
+    const reviewRuns = harness.chat.runs.filter((run) =>
+      ['claude-rev', 'kimi-rev'].includes(run.ensembleParticipantId || '')
+    )
+    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
     const waveNote = harness.chat.messages.find((message) =>
       message.content?.includes('Review wave')
     )
@@ -22284,7 +22308,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
   })
 
-  it('broad ensemble_fanout discovery includes write-postured idle seats as clamped lanes', async () => {
+  it('broad reader-intent fan-out includes write-postured seats without demoting them', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
@@ -22325,8 +22349,8 @@ describe('staged fan-out (stageRole)', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('codex')
     // Broad discovery (no targets) used to exclude the write-postured Helper.
-    // Discovery is now permission-agnostic; every lane still dispatches under
-    // the read_only clamp.
+    // Discovery is permission-agnostic and reader intent no longer replaces
+    // the configured posture.
     const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
       prompt: 'Everyone: inspect the failing suite.'
     })
@@ -22335,15 +22359,20 @@ describe('staged fan-out (stageRole)', () => {
     expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
       new Set(['claude', 'kimi'])
     )
-    expect(
-      harness.dispatched
-        .slice(1)
-        .every(
-          (payload) =>
-            payload.effectivePermissions?.presetId === 'read_only' &&
-            payload.effectivePermissions?.readOnly === true
-        )
-    ).toBe(true)
+    const helper = harness.dispatched.find((payload) => payload.provider === 'claude')
+    const researcher = harness.dispatched.find((payload) => payload.provider === 'kimi')
+    expect(helper).toMatchObject({
+      approvalMode: 'auto_edit',
+      effectivePermissions: { presetId: 'workspace_write', readOnly: false }
+    })
+    expect(researcher).toMatchObject({
+      approvalMode: 'plan',
+      effectivePermissions: { presetId: 'read_only', readOnly: true }
+    })
+    const fanoutRuns = harness.chat.runs.filter((run) =>
+      ['claude', 'kimi'].includes(run.ensembleParticipantId || '') && run.ensembleLaneId
+    )
+    expect(fanoutRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
   })
 })
 

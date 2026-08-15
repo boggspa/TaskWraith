@@ -811,11 +811,11 @@ export type EnsembleFanoutPolicy =
  * permission-agnostic since 2026-08-04) — optional per-participant dispatch
  * stage. A stage is a pure fan-out dispatch role with preferred tooling and
  * NEVER a permission requirement: any seat, on any permission preset, can
- * hold any stage. Parallel wave lanes (scout pass / review wave) always
- * dispatch under the signed read_only ("Ask") lane clamp regardless of the
- * seat's preset; the seat's own posture governs its ordinary serial turns.
- * The only role-based permission distinction in ensembles is Boss/Captain
- * authority, which is itself stage-independent.
+ * hold any stage. Parallel wave lanes (scout pass / review wave) carry reader
+ * task intent while preserving the seat's configured permission tier; stage
+ * selection never silently replaces Accept Edits / Full WS / Full Access with
+ * Ask. The only role-based permission distinction in ensembles is
+ * Boss/Captain authority, which is itself stage-independent.
  *
  *   - 'scout'    — joins the round-start parallel read pass (any preset).
  *   - 'worker'   — always takes a serial turn under its own posture, even
@@ -1775,9 +1775,10 @@ export interface EnsembleConfig {
    */
   concurrentModeEnabled?: boolean
   /**
-   * Per-chat fan-out policy. `read_only` runs read-only participants in
-   * parallel before serial writers; writer policies require either Boss-scoped
-   * explicit `ensemble_fanout` scopes or host-owned no-Boss preflight.
+   * Per-chat fan-out policy. `read_only` is task intent: it runs Scout/read
+   * and Reviewer stages in parallel without demoting their configured seat
+   * permissions; writer policies require either Boss-scoped explicit
+   * `ensemble_fanout` scopes or host-owned no-Boss preflight.
    */
   fanoutPolicy?: EnsembleFanoutPolicy
   /**

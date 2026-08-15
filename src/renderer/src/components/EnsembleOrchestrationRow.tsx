@@ -159,7 +159,7 @@ export function EnsembleOrchestrationRow({
     }
     if (selectedFanoutValue === 'off') return 'Run participants serially.'
     if (selectedFanoutValue === 'read_only') {
-      return 'Fan out scouts/read-only participants at the start and reviewers later.'
+      return 'Fan out reader-intent scouts at the start and reviewers later; each seat keeps its configured permission tier.'
     }
     if (!concurrentWriteLanesAvailable) {
       return 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'

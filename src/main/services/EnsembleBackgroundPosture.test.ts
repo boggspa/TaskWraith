@@ -65,7 +65,7 @@ describe('honorSeatPosture orchestrator wiring', () => {
     expect(start).toBeGreaterThan(-1)
     const body = source.slice(start, start + 8000)
     expect(body).toContain('resolveBackgroundDispatchPosture')
-    expect(body).toContain('dispatchOwnPermissions: true')
+    expect(body).toContain('deriveLaneIntentFromPermissions: true')
     expect(body).toContain('forceReadOnlyDispatch: true')
   })
 })

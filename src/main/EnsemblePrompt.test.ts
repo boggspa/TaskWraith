@@ -533,7 +533,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('remains standby while Boss is available')
     expect(prompt).toContain('only the first available Captain in this listed roster order acts')
     expect(prompt).toContain(
-      'broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
+      'Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
     )
     expect(prompt).not.toContain('active Captain after Boss unavailability')
   })

@@ -210,9 +210,10 @@ export interface ApprovalSeatRoster {
  * An approval is the opposite case: it is a request being made right now, by a
  * seat that is mid-turn, and the roster IS what it is running as. There is also
  * The main authority also bakes the signed effective permission preset into the
- * preview. That field outranks live roster configuration because an explicit
- * read-only fan-out lane can be narrower than the seat's configured tier.
- * Legacy approvals without it still fall back to the roster.
+ * preview. That field outranks live roster configuration because host-owned
+ * auxiliary, unattended, preview-risk, or background clamps can still narrow a
+ * run. Ordinary reader-intent fan-out preserves the configured seat tier.
+ * Legacy approvals without an effective preset still fall back to the roster.
  *
  * Identity comes from the ATTRIBUTION, configuration from the roster. That
  * split is deliberate: the attribution is the validated, bounded identity the
