@@ -6,10 +6,8 @@ import type {
   RunQueueJob,
   RunQueueJobStatus
 } from '../../../main/store/types'
-import {
-  resolveOllamaDisplayBrand,
-  resolveProviderHueClass
-} from '../lib/ollamaDisplayBrand'
+import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLifecycle'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 
@@ -36,6 +34,14 @@ interface ActiveRunProviderDisplay {
   label: string
   providerClass: string
   style: ActiveRunProviderStyle
+}
+
+interface ActiveRunEntry {
+  job: RunQueueJob
+  chat: ChatRecord | null
+  isTransitionFallback: boolean
+  statusLabel: string
+  providerModel?: string
 }
 
 export type ActiveRunsSurface = 'chat' | 'code' | 'work'
@@ -128,19 +134,12 @@ export function ActiveRunsSection({
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  const visibleJobs = jobs
-    .map((job) => ({ job, chat: resolveActiveRunChat(job, chats) }))
-    .filter(
-      (
-        entry
-      ): entry is {
-        job: RunQueueJob & { status: ActiveRunQueueStatus }
-        chat: ChatRecord | null
-      } =>
-        isActiveQueueStatus(entry.job.status) &&
-        (!surface || isActiveRunVisibleOnSurface(entry.job, entry.chat, surface, workChatIdSet)) &&
-        isJobBackedByLiveChat(entry.job, entry.chat || undefined)
-    )
+  const visibleJobs = deriveVisibleActiveRunEntries({
+    jobs,
+    chats,
+    surface,
+    workChatIds: workChatIdSet
+  })
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
   // top slot under Search / above Pinned), collapsible like the other
@@ -170,65 +169,162 @@ export function ActiveRunsSection({
               <span>No active runs</span>
             </div>
           )}
-          {visibleJobs.map(({ job, chat }) => {
-            const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
-            const providerDisplay = resolveActiveRunProviderDisplay(job, chat)
-            return (
-              <div
-                key={job.id || job.runId}
-                className="sidebar-active-run-entry"
-              >
-                <button
-                  type="button"
-                  className={`sidebar-active-run-row provider-${providerDisplay.providerClass} ${isCurrent ? 'active' : ''}`}
-                  style={providerDisplay.style}
-                  onClick={() => {
-                    // Open the chat THREAD (transcript), not the Run Inspector.
-                    if (chat) onSelectChat(chat)
-                  }}
-                  disabled={!chat}
-                  title={
-                    chat
-                      ? `${getActiveRunChatLabel(job, chat)} — ${getWorkspaceShortName(job, chat)}`
-                      : job.promptPreview || job.runId
-                  }
-                >
-                  <span
-                    className={`sidebar-active-run-provider provider-${providerDisplay.providerClass}`}
-                  >
-                    {providerDisplay.label}
-                  </span>
-                  <span className="sidebar-active-run-copy">
-                    <span className="sidebar-active-run-title">
-                      {getActiveRunChatLabel(job, chat)}
-                    </span>
-                    <span className="sidebar-active-run-workspace">
-                      {getWorkspaceShortName(job, chat)}
-                    </span>
-                    <span className="sidebar-active-run-elapsed">{formatElapsed(job)}</span>
-                  </span>
-                  <span className={`sidebar-run-status tone-${statusTone(job.status)}`}>
-                    {statusLabel(job.status)}
-                  </span>
-                </button>
-                {onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
+          {visibleJobs.map(
+            ({
+              job,
+              chat,
+              isTransitionFallback,
+              statusLabel: displayStatusLabel,
+              providerModel
+            }) => {
+              const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
+              const providerDisplay = resolveActiveRunProviderDisplay(job, chat, {
+                trustJobProvider: isTransitionFallback,
+                modelId: providerModel
+              })
+              return (
+                <div key={job.id || job.runId} className="sidebar-active-run-entry">
                   <button
                     type="button"
-                    className="sidebar-active-run-board-action"
-                    onClick={() => onAddRunQueueJobToWorkspaceBoard(job)}
-                    title="Add run to workspace board"
-                    aria-label={`Add ${job.promptPreview || job.runId} to workspace board`}
+                    className={`sidebar-active-run-row provider-${providerDisplay.providerClass} ${isCurrent ? 'active' : ''}`}
+                    style={providerDisplay.style}
+                    onClick={() => {
+                      // Open the chat THREAD (transcript), not the Run Inspector.
+                      if (chat) onSelectChat(chat)
+                    }}
+                    disabled={!chat}
+                    title={
+                      chat
+                        ? `${getActiveRunChatLabel(job, chat)} — ${getWorkspaceShortName(job, chat)}`
+                        : job.promptPreview || job.runId
+                    }
                   >
-                    #
+                    <span
+                      className={`sidebar-active-run-provider provider-${providerDisplay.providerClass}`}
+                    >
+                      {providerDisplay.label}
+                    </span>
+                    <span className="sidebar-active-run-copy">
+                      <span className="sidebar-active-run-title">
+                        {getActiveRunChatLabel(job, chat)}
+                      </span>
+                      <span className="sidebar-active-run-workspace">
+                        {getWorkspaceShortName(job, chat)}
+                      </span>
+                      <span className="sidebar-active-run-elapsed">{formatElapsed(job)}</span>
+                    </span>
+                    <span className={`sidebar-run-status tone-${statusTone(job.status)}`}>
+                      {displayStatusLabel}
+                    </span>
                   </button>
-                )}
-              </div>
-            )
-          })}
+                  {!isTransitionFallback && onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
+                    <button
+                      type="button"
+                      className="sidebar-active-run-board-action"
+                      onClick={() => onAddRunQueueJobToWorkspaceBoard(job)}
+                      title="Add run to workspace board"
+                      aria-label={`Add ${job.promptPreview || job.runId} to workspace board`}
+                    >
+                      #
+                    </button>
+                  )}
+                </div>
+              )
+            }
+          )}
         </div>
       )}
     </div>
   )
+}
+
+export function deriveVisibleActiveRunEntries(input: {
+  jobs: readonly RunQueueJob[]
+  chats: readonly ChatRecord[]
+  surface?: ActiveRunsSurface
+  workChatIds?: ReadonlySet<string>
+}): ActiveRunEntry[] {
+  const workChatIds = input.workChatIds || new Set<string>()
+  const visible: ActiveRunEntry[] = input.jobs
+    .map((job) => ({ job, chat: resolveActiveRunChat(job, input.chats) }))
+    .filter(
+      (
+        entry
+      ): entry is {
+        job: RunQueueJob & { status: ActiveRunQueueStatus }
+        chat: ChatRecord | null
+      } =>
+        isActiveQueueStatus(entry.job.status) &&
+        (!input.surface ||
+          isActiveRunVisibleOnSurface(entry.job, entry.chat, input.surface, workChatIds)) &&
+        isJobBackedByLiveChat(entry.job, entry.chat || undefined)
+    )
+    .map(({ job, chat }) => ({
+      job,
+      chat,
+      isTransitionFallback: false,
+      statusLabel: statusLabel(job.status)
+    }))
+
+  const visibleChatIds = new Set(
+    visible.flatMap((entry) => (entry.chat ? [entry.chat.appChatId] : []))
+  )
+  for (const chat of input.chats) {
+    if (visibleChatIds.has(chat.appChatId)) continue
+    const fallback = transitionFallbackEntry(chat)
+    if (!fallback) continue
+    if (
+      input.surface &&
+      !isActiveRunVisibleOnSurface(fallback.job, chat, input.surface, workChatIds)
+    ) {
+      continue
+    }
+    visible.push(fallback)
+  }
+  return visible
+}
+
+function transitionFallbackEntry(chat: ChatRecord): ActiveRunEntry | null {
+  const round = chat.ensemble?.activeRound
+  const transition = round?.turnTransition
+  if (!round || !transition || !isEnsembleRoundPresentationLive(round)) return null
+
+  const participantId = transition.targetParticipantId || transition.sourceParticipantId
+  const configuredParticipant = chat.ensemble?.participants.find(
+    (participant) => participant.id === participantId
+  )
+  const roundParticipant = round.participants.find(
+    (participant) => participant.participantId === participantId
+  )
+  const provider = configuredParticipant?.provider || roundParticipant?.provider || chat.provider
+  const job: RunQueueJob = {
+    id: `ensemble-transition:${chat.appChatId}:${round.roundId}`,
+    runId: transition.sourceRunId,
+    provider,
+    ...(participantId ? { ensembleParticipantId: participantId } : {}),
+    ...(configuredParticipant?.role || roundParticipant?.role
+      ? { ensembleRole: configuredParticipant?.role || roundParticipant?.role }
+      : {}),
+    scope: chat.scope,
+    workspaceId: chat.workspaceId,
+    workspacePath: chat.workspacePath,
+    chatId: chat.appChatId,
+    source: 'system',
+    status: 'active',
+    priority: 0,
+    attempt: 1,
+    promptPreview: round.prompt,
+    createdAt: round.startedAt,
+    updatedAt: transition.startedAt,
+    startedAt: round.startedAt
+  }
+  return {
+    job,
+    chat,
+    isTransitionFallback: true,
+    statusLabel: transition.phase === 'handoff' ? 'Handoff' : 'Settling',
+    ...(configuredParticipant?.model ? { providerModel: configuredParticipant.model } : {})
+  }
 }
 
 function isJobBackedByLiveChat(job: RunQueueJob, chat: ChatRecord | undefined): boolean {
@@ -322,14 +418,13 @@ function statusTone(
 
 export function resolveActiveRunProviderDisplay(
   job: Pick<RunQueueJob, 'provider' | 'request' | 'runId' | 'id'>,
-  chat: ChatRecord | null
+  chat: ChatRecord | null,
+  options: { trustJobProvider?: boolean; modelId?: string } = {}
 ): ActiveRunProviderDisplay {
-  const provider = resolveActiveRunProvider(job.provider, chat?.provider)
-  const modelId = resolveActiveRunModelId(job, chat)
+  const provider = resolveActiveRunProvider(job.provider, chat?.provider, options.trustJobProvider)
+  const modelId = options.modelId || resolveActiveRunModelId(job, chat)
   const brand = provider === 'ollama' ? resolveOllamaDisplayBrand(modelId) : null
-  const providerClass = provider
-    ? resolveProviderHueClass(provider, modelId)
-    : 'unknown'
+  const providerClass = provider ? resolveProviderHueClass(provider, modelId) : 'unknown'
   const providerColor = provider
     ? `var(--provider-${providerClass}-color, var(--provider-${provider}-color, var(--accent)))`
     : 'var(--accent)'
@@ -347,8 +442,10 @@ export function resolveActiveRunProviderDisplay(
 
 function resolveActiveRunProvider(
   jobProvider: ProviderId | undefined,
-  chatProvider: ProviderId | undefined
+  chatProvider: ProviderId | undefined,
+  trustJobProvider = false
 ): ProviderId | null {
+  if (trustJobProvider && jobProvider) return jobProvider
   if (jobProvider && jobProvider !== 'gemini') return jobProvider
   if (chatProvider && chatProvider !== jobProvider) return chatProvider
   return jobProvider || chatProvider || null

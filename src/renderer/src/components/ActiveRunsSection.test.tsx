@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
+  ActiveRunsSection,
+  deriveVisibleActiveRunEntries,
   getActiveRunChatLabel,
   isActiveRunVisibleOnSurface,
   resolveActiveRunChat,
@@ -155,6 +158,171 @@ describe('isActiveRunVisibleOnSurface', () => {
     expect(isActiveRunVisibleOnSurface(job({ chatId: 'missing' }), null, 'work', workChatIds)).toBe(
       false
     )
+  })
+})
+
+describe('deriveVisibleActiveRunEntries', () => {
+  const transitioningChat = (): ChatRecord =>
+    chat('claude', {
+      appChatId: 'ensemble-chat',
+      title: 'Release panel',
+      chatKind: 'ensemble',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      runs: [
+        {
+          runId: 'source-run',
+          provider: 'codex',
+          startedAt: '2026-07-05T01:00:00.000Z',
+          endedAt: '2026-07-05T01:01:00.000Z',
+          status: 'success'
+        }
+      ],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [
+          {
+            id: 'p1',
+            provider: 'codex',
+            enabled: true,
+            role: 'Builder',
+            instructions: '',
+            order: 0
+          },
+          {
+            id: 'p2',
+            provider: 'gemini',
+            enabled: true,
+            role: 'Reviewer',
+            instructions: '',
+            order: 1,
+            model: 'gemini-3.7-pro'
+          }
+        ],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Ship the release',
+          startedAt: '2026-07-05T01:00:00.000Z',
+          turnTransition: {
+            phase: 'handoff',
+            runtimeInstanceId: 'runtime-1',
+            sourceParticipantId: 'p1',
+            sourceRunId: 'source-run',
+            targetParticipantId: 'p2',
+            startedAt: '2026-07-05T01:01:00.000Z'
+          },
+          participants: [
+            {
+              participantId: 'p1',
+              provider: 'codex',
+              role: 'Builder',
+              order: 0,
+              status: 'answered',
+              runId: 'source-run',
+              endedAt: '2026-07-05T01:01:00.000Z'
+            },
+            {
+              participantId: 'p2',
+              provider: 'gemini',
+              role: 'Reviewer',
+              order: 1,
+              status: 'idle'
+            }
+          ]
+        }
+      }
+    })
+
+  it('projects one chat-backed row while the active-job poll is empty between seats', () => {
+    const ensemble = transitioningChat()
+    const entries = deriveVisibleActiveRunEntries({
+      jobs: [],
+      chats: [ensemble],
+      surface: 'code'
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].chat).toBe(ensemble)
+    expect(entries[0]).toMatchObject({
+      isTransitionFallback: true,
+      statusLabel: 'Handoff',
+      providerModel: 'gemini-3.7-pro',
+      job: {
+        id: 'ensemble-transition:ensemble-chat:round-1',
+        runId: 'source-run',
+        chatId: 'ensemble-chat',
+        provider: 'gemini',
+        status: 'active',
+        startedAt: '2026-07-05T01:00:00.000Z'
+      }
+    })
+  })
+
+  it('renders the fallback as the target provider with a truthful handoff badge', () => {
+    const ensemble = transitioningChat()
+    const html = renderToStaticMarkup(
+      <ActiveRunsSection
+        chats={[ensemble]}
+        currentChat={ensemble}
+        surface="code"
+        onSelectChat={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Release panel')
+    expect(html).toContain('Gemini')
+    expect(html).toContain('Handoff')
+    expect(html).toContain('sidebar-active-runs-count">1</span>')
+  })
+
+  it('uses the real target job without duplicating the transitioning chat', () => {
+    const ensemble = transitioningChat()
+    const targetJob = job({
+      id: 'target-run',
+      runId: 'target-run',
+      chatId: ensemble.appChatId,
+      provider: 'gemini',
+      createdAt: '2026-07-05T01:02:00.000Z',
+      updatedAt: '2026-07-05T01:02:00.000Z'
+    })
+
+    const entries = deriveVisibleActiveRunEntries({
+      jobs: [targetJob],
+      chats: [ensemble],
+      surface: 'code'
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      job: targetJob,
+      isTransitionFallback: false,
+      statusLabel: 'Active'
+    })
+  })
+
+  it('does not revive a transition on a terminal round or the wrong surface', () => {
+    const ensemble = transitioningChat()
+    expect(deriveVisibleActiveRunEntries({ jobs: [], chats: [ensemble], surface: 'chat' })).toEqual(
+      []
+    )
+
+    const completed = {
+      ...ensemble,
+      ensemble: {
+        ...ensemble.ensemble!,
+        activeRound: {
+          ...ensemble.ensemble!.activeRound!,
+          status: 'completed' as const,
+          endedAt: '2026-07-05T01:02:00.000Z'
+        }
+      }
+    }
+    expect(
+      deriveVisibleActiveRunEntries({ jobs: [], chats: [completed], surface: 'code' })
+    ).toEqual([])
   })
 })
 
