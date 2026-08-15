@@ -69,7 +69,10 @@ async function temporaryDirectory(): Promise<string> {
   return directory
 }
 
-function writeCapture(destination: string, mode: 'pure-red' | 'ungraded'): void {
+function writeCapture(
+  destination: string,
+  mode: 'pure-red' | 'ungraded' | 'uniform-gray' | 'partial-red'
+): void {
   const width = 160
   const height = 120
   const titleBarHeight = 30
@@ -85,6 +88,15 @@ function writeCapture(destination: string, mode: 'pure-red' | 'ungraded'): void 
         image.data[offset] = 255
         image.data[offset + 1] = 0
         image.data[offset + 2] = 0
+      } else if (mode === 'uniform-gray') {
+        image.data[offset] = 129
+        image.data[offset + 1] = 128
+        image.data[offset + 2] = 129
+      } else if (mode === 'partial-red') {
+        const redDominant = x < width * 0.95
+        image.data[offset] = redDominant ? 255 : 129
+        image.data[offset + 1] = redDominant ? 0 : 128
+        image.data[offset + 2] = redDominant ? 0 : 129
       } else {
         image.data[offset] = (x * 3 + y) % 256
         image.data[offset + 1] = (x + y * 5) % 256
@@ -227,6 +239,55 @@ describe('studio LUT acceptance runner contract', () => {
     expect(result.absolute.redDominantFraction).toBeLessThan(0.97)
   })
 
+  it('uses the absolute gate to reject a uniform gray affine false-fit', async () => {
+    const directory = await temporaryDirectory()
+    const capturePath = path.join(directory, 'capture.png')
+    const referencePath = path.join(directory, 'synthetic-red.png')
+    writeCapture(capturePath, 'uniform-gray')
+    createSyntheticRedReference({
+      destination: referencePath,
+      width: 160,
+      height: 90
+    })
+
+    const result = evaluatePureRedCapture({
+      capturePath,
+      referencePath,
+      windowBounds: { width: 160, height: 120 },
+      hudOverlayHeight: 0
+    })
+
+    expect(result.comparator.clean).toBe(true)
+    expect(result.absolute.clean).toBe(false)
+    expect(result.clean).toBe(false)
+    expect(result.absolute.meanRed).toBe(129)
+    expect(result.absolute.meanGreen).toBe(128)
+    expect(result.absolute.meanBlue).toBe(129)
+  })
+
+  it('rejects a partially red material plane below the 97 percent threshold', async () => {
+    const directory = await temporaryDirectory()
+    const capturePath = path.join(directory, 'capture.png')
+    const referencePath = path.join(directory, 'synthetic-red.png')
+    writeCapture(capturePath, 'partial-red')
+    createSyntheticRedReference({
+      destination: referencePath,
+      width: 160,
+      height: 90
+    })
+
+    const result = evaluatePureRedCapture({
+      capturePath,
+      referencePath,
+      windowBounds: { width: 160, height: 120 },
+      hudOverlayHeight: 0
+    })
+
+    expect(result.absolute.redDominantFraction).toBeCloseTo(0.95, 5)
+    expect(result.absolute.clean).toBe(false)
+    expect(result.clean).toBe(false)
+  })
+
   it('proves an invalid replacement retained the exact active state and journal', () => {
     const activeState = {
       active: true,
@@ -284,6 +345,16 @@ describe('studio LUT acceptance runner contract', () => {
         { active: 'false', label: 'LUT: None' }
       )
     ).toThrow(/durable JSON null/)
+  })
+
+  it('rejects replay state that does not preserve the exact effect identity', () => {
+    expect(() =>
+      validateReplayState(
+        { active: true, displayName: 'Acceptance-Red.cube', effectId: 'wrong-effect' },
+        { active: 'true', label: 'LUT: Acceptance-Red.cube' },
+        'effect-1'
+      )
+    ).toThrow(/restart replay state mismatch/)
   })
 
   it('requires exact watchdog teardown with no detached groups or survivors', () => {
