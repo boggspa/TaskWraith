@@ -104,6 +104,13 @@ import type {
 } from '../lib/ComposerSlashCommands'
 import { parseSideSlashCommand } from '../lib/SideSlashCommand'
 import type { SideSlashCommand } from '../lib/SideSlashCommand'
+import { composerSurfaceOpenSignal } from '../lib/composerSurfaceRequest'
+import type { ComposerSurfaceRequest } from '../lib/composerSurfaceRequest'
+import {
+  fastModeCapableModelIds,
+  fastModeEnabledFor,
+  nextFastModeToggle
+} from '../lib/fastModeToggle'
 import { resolveEnsembleParticipantRetryDispatch } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
@@ -169,10 +176,7 @@ import {
   groupAntigravityModelRows
 } from '../../../shared/antigravityAgyModelGrouping'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
-  CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
-  GROK_45_MODEL_ID,
   GROK_46_MODEL_ID,
   cursorGrokBaseModelId,
   isCursorGrokModelId,
@@ -457,6 +461,18 @@ export interface ComposerProps {
   resumeAppWatchSnapshot: any
   runtimeProfileControl: any
   scheduleControls: any
+  /**
+   * Slash-command request to open one of this composer's own surfaces
+   * (`/terminal`, `/plan`, `/blackboard`, `/canvas`, bare `/multiview`).
+   * Those surfaces hold private popover state that an App-level `run()`
+   * closure cannot reach, so the command publishes a request instead.
+   *
+   * Only the MAIN composer receives a live object. Multiview panes and the
+   * linked-chat composer get `null` and redirect through
+   * `preserveSlashDraftForFocusedFlow` — a shared request would otherwise open
+   * the popover in every mounted composer at once.
+   */
+  composerSurfaceRequest?: ComposerSurfaceRequest | null
   screenWatchUnavailableReason: any
   selectedComposerModelType: any
   selectedModelType: any
@@ -775,6 +791,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     renderPlanImportItems,
     resumeAppWatchSnapshot,
     scheduleControls,
+    composerSurfaceRequest,
     screenWatchUnavailableReason,
     selectedComposerModelType,
     selectedRuntimeProfileId,
@@ -857,6 +874,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentWorkspace
   })
   const canShowTerminal = Boolean(composerGitActionBasePath && !isCurrentGlobalChat)
+
+  // `/terminal` toggles this composer's own shell, exactly like the icon. The
+  // terminal is the one icon-row surface whose state lives here rather than in
+  // a child popover, so it consumes the request directly instead of via an
+  // `openSignal` prop. Toggle (not force-open) so the command closes an open
+  // shell too — that is what clicking the icon does.
+  const terminalSurfaceSignal = composerSurfaceOpenSignal(composerSurfaceRequest, 'terminal')
+  const terminalSurfaceChatId = currentChat?.appChatId
+  useEffect(() => {
+    if (!terminalSurfaceSignal || !canShowTerminal || !terminalSurfaceChatId) return
+    setTerminalOpenForChat(terminalSurfaceChatId, (open: boolean) => !open)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalSurfaceSignal])
 
   const [transcriptRoot, setTranscriptRoot] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
@@ -1112,34 +1142,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       ? [{ id: 'custom', label: 'Custom…' }]
       : [])
   ]
+  /** Thin binding over the shared catalogue so the picker's per-row glyphs and
+   * `/fast`'s availability gate read the same set. */
   const fastModeCapableModelIdsForProvider = (
     targetProvider: ProviderId,
     models: CodexModelOption[] = getProviderModelOptions(targetProvider)
-  ): Set<string> => {
-    if (
-      targetProvider === 'codex' ||
-      targetProvider === 'claude' ||
-      targetProvider === 'kimi'
-    ) {
-      return new Set(
-        models
-          .filter((model) => model.additionalSpeedTiers?.includes('fast'))
-          .map((model) => model.id)
-      )
-    }
-    if (targetProvider === 'cursor') {
-      return new Set([
-        'composer-2.5',
-        'composer-2.5-fast',
-        CURSOR_GROK_46_BASE_MODEL_ID,
-        CURSOR_GROK_45_BASE_MODEL_ID
-      ])
-    }
-    if (targetProvider === 'grok') {
-      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
-    }
-    return new Set<string>()
-  }
+  ): Set<string> => fastModeCapableModelIds(targetProvider, models)
   const buildUnifiedProviderModelGroups = (
     includeCustom: boolean,
     selectedModelId?: string
@@ -4052,98 +4060,80 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                            * Model+Reasoning popover so the user finds it
                            * where they're already adjusting reasoning.
                            */
-                          const fastModeCapableModelIds =
-                            fastModeCapableModelIdsForProvider(
-                              effectiveProvider,
-                              effectiveModelOptionsRaw
-                            )
+                          /*
+                           * Fast's mechanics differ per provider (Codex moves a
+                           * service tier, Claude/Kimi a flag, Cursor a flag OR
+                           * the model itself), and `/fast` drives the exact same
+                           * toggle. `lib/fastModeToggle` owns those rules for
+                           * both surfaces; what stays here is only how THIS
+                           * surface applies the result — a bound ensemble seat
+                           * vs. live composer state.
+                           */
+                          const fastModeSelection = {
+                            provider: effectiveProvider,
+                            selectedModel: effectiveSelectedModel,
+                            codexServiceTier: effectiveCodexServiceTier,
+                            claudeFastMode: effectiveClaudeFastMode,
+                            kimiFastMode: effectiveKimiFastMode,
+                            cursorFastMode: effectiveCursorFastMode
+                          }
+                          const fastModeCapableModelIdSet = fastModeCapableModelIds(
+                            effectiveProvider,
+                            effectiveModelOptionsRaw
+                          )
                           const fastModeEnabledForProvider =
-                            effectiveProvider === 'codex'
-                              ? effectiveCodexServiceTier === 'fast'
-                              : effectiveProvider === 'claude'
-                                ? effectiveClaudeFastMode
-                                : effectiveProvider === 'kimi'
-                                  ? effectiveKimiFastMode
-                                : effectiveProvider === 'cursor'
-                                  ? isCursorGrokModelId(effectiveSelectedModel)
-                                    ? effectiveCursorFastMode
-                                    : effectiveSelectedModel === 'composer-2.5-fast'
-                                  : false
-                          const handleToggleFastMode =
-                            effectiveProvider === 'codex'
-                              ? () => {
-                                  const nextTier =
-                                    effectiveCodexServiceTier === 'fast' ? '' : 'fast'
+                            fastModeEnabledFor(fastModeSelection)
+                          const fastModeDescriptor = nextFastModeToggle(fastModeSelection)
+                          const handleToggleFastMode = fastModeDescriptor
+                            ? () => {
+                                if (fastModeDescriptor.kind === 'model') {
+                                  handleCombinedModelChange(fastModeDescriptor.model)
+                                  return
+                                }
+                                if (fastModeDescriptor.kind === 'codex-tier') {
                                   if (ensembleBinding) {
                                     updateSelectedParticipant({
-                                      serviceTier: nextTier,
-                                      fastModeEnabled: nextTier === 'fast'
+                                      serviceTier: fastModeDescriptor.serviceTier,
+                                      fastModeEnabled: fastModeDescriptor.fastModeEnabled
                                     })
                                     return
                                   }
                                   if (shouldUpdateLiveComposerState) {
-                                    setCodexServiceTier(nextTier)
+                                    setCodexServiceTier(fastModeDescriptor.serviceTier)
                                   }
                                   rememberCurrentChatComposerSelection({
-                                    codexServiceTier: nextTier
+                                    codexServiceTier: fastModeDescriptor.serviceTier
                                   })
+                                  return
                                 }
-                              : effectiveProvider === 'claude'
-                                ? () => {
-                                    const nextFast = !effectiveClaudeFastMode
-                                    if (ensembleBinding) {
-                                      updateSelectedParticipant({ fastModeEnabled: nextFast })
-                                      return
-                                    }
-                                    if (shouldUpdateLiveComposerState) {
-                                      setClaudeFastMode(nextFast)
-                                    }
-                                    rememberCurrentChatComposerSelection({
-                                      claudeFastMode: nextFast
-                                    })
-                                  }
-                                : effectiveProvider === 'kimi'
-                                  ? () => {
-                                      const nextFast = !effectiveKimiFastMode
-                                      if (ensembleBinding) {
-                                        updateSelectedParticipant({
-                                          fastModeEnabled: nextFast,
-                                          serviceTier: nextFast ? 'fast' : 'standard'
-                                        })
-                                        return
-                                      }
-                                      if (shouldUpdateLiveComposerState) {
-                                        setKimiFastMode(nextFast)
-                                      }
-                                      rememberCurrentChatComposerSelection({
-                                        kimiFastMode: nextFast
-                                      })
-                                    }
-                                  : effectiveProvider === 'cursor'
-                                    ? () => {
-                                        if (isCursorGrokModelId(effectiveSelectedModel)) {
-                                          const nextFast = !effectiveCursorFastMode
-                                          if (ensembleBinding) {
-                                            updateSelectedParticipant({
-                                              fastModeEnabled: nextFast
-                                            })
-                                            return
-                                          }
-                                          if (shouldUpdateLiveComposerState) {
-                                            setCursorFastMode(nextFast)
-                                          }
-                                          rememberCurrentChatComposerSelection({
-                                            cursorFastMode: nextFast
-                                          })
-                                          return
-                                        }
-                                        const nextModel =
-                                          effectiveSelectedModel === 'composer-2.5-fast'
-                                            ? 'composer-2.5'
-                                            : 'composer-2.5-fast'
-                                        handleCombinedModelChange(nextModel)
-                                      }
-                                    : undefined
+                                const { fastModeEnabled, serviceTier } = fastModeDescriptor
+                                if (ensembleBinding) {
+                                  updateSelectedParticipant({
+                                    fastModeEnabled,
+                                    ...(serviceTier === undefined ? {} : { serviceTier })
+                                  })
+                                  return
+                                }
+                                if (fastModeDescriptor.provider === 'claude') {
+                                  if (shouldUpdateLiveComposerState) setClaudeFastMode(fastModeEnabled)
+                                  rememberCurrentChatComposerSelection({
+                                    claudeFastMode: fastModeEnabled
+                                  })
+                                  return
+                                }
+                                if (fastModeDescriptor.provider === 'kimi') {
+                                  if (shouldUpdateLiveComposerState) setKimiFastMode(fastModeEnabled)
+                                  rememberCurrentChatComposerSelection({
+                                    kimiFastMode: fastModeEnabled
+                                  })
+                                  return
+                                }
+                                if (shouldUpdateLiveComposerState) setCursorFastMode(fastModeEnabled)
+                                rememberCurrentChatComposerSelection({
+                                  cursorFastMode: fastModeEnabled
+                                })
+                              }
+                            : undefined
 
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
@@ -4255,7 +4245,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 cursorReasoningEffort={effectiveCursorReasoning}
                                 kimiThinkingEnabled={effectiveKimiThinking}
                                 kimiReasoningEffort={effectiveKimiReasoning}
-                                fastModeCapableModelIds={fastModeCapableModelIds}
+                                fastModeCapableModelIds={fastModeCapableModelIdSet}
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
                                 disabled={false}
@@ -5221,6 +5211,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  key={currentChat?.appChatId || 'composer-plan'}
 	                  chat={currentChat}
 	                  composerStyle={appearance.composerStyle}
+	                  openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'plan')}
 	                />
 	                {/* Blackboard quick-access — post a user note, review entries,
 	                    or delete stale ones without opening the right dock. Seen-by
@@ -5230,6 +5221,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                    chat={currentChat}
 	                    provider={currentProvider}
 	                    composerStyle={appearance.composerStyle}
+	                    openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'blackboard')}
 	                  />
 	                )}
 	                <CopyTranscriptButton
@@ -5249,12 +5241,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  onSelectLayout={handleSelectMultiviewLayout}
 	                  provider={currentProvider}
 	                  composerStyle={appearance.composerStyle}
+	                  openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'multiview')}
 	                />
 	                {/* Opens a standalone floating Canvas window (self-contained;
 	                    SSRF-guarded openWindow + inline error in the button). */}
 	                <CanvasComposerButton
 	                  chatId={currentChat?.appChatId ?? null}
 	                  composerStyle={appearance.composerStyle}
+	                  openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'canvas')}
 	                />
 	                <ComposerAboveRowsToggleButton
 	                  minimized={areComposerAboveRowsMinimized}
