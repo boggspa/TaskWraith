@@ -52,6 +52,7 @@ import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
+import { normalizeApiUsageBillingSettings } from '../../shared/apiUsageBilling'
 import {
   coerceLiveProvider,
   isLiveSelectableProvider,
@@ -139,6 +140,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'ollamaBaseUrl',
   'ollamaDefaultModel',
   'piCerebrasMaxCompletionTokens',
+  'apiUsageBilling',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
@@ -1746,6 +1748,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         if (cap === undefined) delete sanitized.piCerebrasMaxCompletionTokens
         else sanitized.piCerebrasMaxCompletionTokens = cap
       }
+    }
+    if ('apiUsageBilling' in sanitized) {
+      sanitized.apiUsageBilling = normalizeApiUsageBillingSettings(sanitized.apiUsageBilling)
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)

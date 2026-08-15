@@ -156,6 +156,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         })
       ],
       getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => undefined,
       getMuseConfigured: () => true,
       getMuseMonthlySpendCapUsd: () => 15,
       fetchImpl,
@@ -221,6 +223,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       loadPiKeys: () => ({ status: 'missing' }),
       getUsageRecords: () => [],
       getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => undefined,
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl,
@@ -233,6 +237,151 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       expect.objectContaining({ provider: 'meta', configured: false, windows: [] })
     ])
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('combines manual API billing anchors with native balances and post-anchor Muse spend', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({
+        status: 'ok',
+        keys: { deepseek: 'ds-secret', cerebras: 'cerebras-secret' }
+      }),
+      getUsageRecords: () => [
+        usage({ id: 'cerebras-usage', model: 'cerebras/gpt-oss-120b' }),
+        usage({ id: 'meta-usage', provider: 'muse', model: 'muse-spark-1.2' })
+      ],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.8 } }),
+      getApiUsageBilling: () => ({
+        deepseek: { totalTopUp: 10, monthlyBudgetUsd: 20 },
+        cerebras: {
+          purchasedCredits: 20,
+          currentBalance: 6.5,
+          currency: 'GBP',
+          monthlyBudgetUsd: 25
+        },
+        meta: {
+          preloadCredits: 15,
+          remainingBalance: 14.95,
+          paymentThreshold: 20,
+          spent: 0.05,
+          currency: 'GBP',
+          resetAt: '2026-09-01T00:00:00.000Z',
+          anchorUpdatedAt: new Date(NOW - 2_000).toISOString()
+        }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => 15,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    expect(snapshots[0]).toEqual(
+      expect.objectContaining({
+        provider: 'deepseek',
+        windows: [
+          expect.objectContaining({
+            label: 'Credit used',
+            valueText: '$0.92',
+            usedPercent: expect.closeTo(9.2)
+          })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Total topped up', amount: 10 })
+        ])
+      })
+    )
+    expect(snapshots[1]).toEqual(
+      expect.objectContaining({
+        provider: 'cerebras',
+        planType: 'Cloud billing anchor',
+        windows: [
+          expect.objectContaining({
+            label: 'Credit used',
+            valueText: '£13.50',
+            usedPercent: 67.5
+          }),
+          expect.objectContaining({ label: 'Estimated this month', valueText: '~$1.10' })
+        ]
+      })
+    )
+    expect(snapshots[2]).toEqual(
+      expect.objectContaining({
+        provider: 'meta',
+        planType: 'API Credits',
+        windows: [
+          expect.objectContaining({
+            label: 'Spend this billing period',
+            valueText: '£4.45'
+          }),
+          expect.objectContaining({ label: 'Credit used', valueText: '£4.45' })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Remaining balance', amount: 10.55, unit: 'GBP' })
+        ])
+      })
+    )
+  })
+
+  it('advances a Meta payment threshold from a zero anchor using later Muse spend', async () => {
+    const now = Date.parse('2026-08-15T12:00:00.000Z')
+    const hook = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: {} }),
+      getUsageRecords: () => [
+        usage({
+          provider: 'muse',
+          model: 'muse-spark-1.2',
+          timestamp: now - 60_000,
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })
+      ],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.8 } }),
+      getApiUsageBilling: () => ({
+        meta: {
+          paymentThreshold: 20,
+          currency: 'USD',
+          anchorUpdatedAt: new Date(now - 120_000).toISOString()
+        }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => null,
+      now: () => now
+    })
+
+    const snapshots = await hook()
+    expect(snapshots[2].windows[0]).toEqual(
+      expect.objectContaining({
+        label: 'Spend this billing period',
+        valueText: '$5.50',
+        limitLabel: expect.stringContaining('$5.50 of $20.00')
+      })
+    )
+  })
+
+  it('keeps a DeepSeek billing anchor visible when its encrypted API key is absent', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({ deepseek: { totalTopUp: 10 } }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(),
+      now: () => NOW
+    })
+
+    await expect(read()).resolves.toEqual([
+      expect.objectContaining({
+        provider: 'deepseek',
+        configured: true,
+        error: expect.stringContaining('DeepSeek key')
+      }),
+      expect.objectContaining({ provider: 'cerebras', configured: false }),
+      expect.objectContaining({ provider: 'meta', configured: false })
+    ])
   })
 
   it('joins concurrent balance reads and keeps the last official reading through a retry failure', async () => {
@@ -251,6 +400,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
       getUsageRecords: () => [],
       getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => undefined,
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl,
@@ -283,6 +434,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
       getUsageRecords: () => [],
       getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => undefined,
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl: vi.fn(async () => response({ message: 'nope' }, 401)),

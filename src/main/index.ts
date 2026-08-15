@@ -1732,10 +1732,8 @@ import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
 import { projectAgyBrainTranscriptAfterTurn } from './antigravity/AntigravityBrainTranscriptProjection'
+import { createAntigravityQuotaClient } from './antigravity/AntigravityQuotaClient'
 import {
-  AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
-  agyQuotaUnavailableSnapshot,
-  agyUsageProbeDecision,
   fetchAuthenticatedAgyQuotaSnapshot,
   type AgyPtyLike
 } from './antigravity/AntigravityUsage'
@@ -17762,15 +17760,6 @@ function rebuildBridgeApnsPusherFromSettings(): void {
 // snapshots are cached; non-observed results fall through to a fresh probe.
 let grokUsageProbeCache: { snapshot: GrokUsageSnapshot; fetchedAt: number } | null = null
 
-// The official `agy /usage` panel is interactive. Cache only complete,
-// observed snapshots so normal quota refreshes do not repeatedly open it.
-// The authenticated configured-provider snapshot is still checked before this
-// cache is read, so consent withdrawal or a disconnected S4 state fails closed.
-let antigravityUsageProbeLastAttemptAt: number | null = null
-let antigravityUsageProbeCache: {
-  snapshot: NormalizedProviderUsageSnapshot
-  fetchedAt: number
-} | null = null
 let antigravityUsageSnapshotFetcherRef:
   | ((options?: { force?: unknown }) => Promise<NormalizedProviderUsageSnapshot>)
   | null = null
@@ -53331,6 +53320,8 @@ if (isGeminiMcpBridgeProcess) {
         loadPiKeys: () => piKeyStoreRef?.loadKeys(),
         getUsageRecords: () => AppStore.getUsage(),
         getProviderRates: () => getCurrentProviderRates(),
+        getFxRates: () => getCurrentFxRates(),
+        getApiUsageBilling: () => settingsService.getSettings().apiUsageBilling,
         getMuseConfigured: () =>
           managedRunConfiguredProviderDiscovery
             .statusSnapshot(settingsService.getSettings())
@@ -54209,57 +54200,12 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    const getAntigravityRateLimits = createAntigravityRateLimitHandler({
-      getSettings: () => AppStore.getSettings(),
-      statusSnapshot: (settings) => managedRunConfiguredProviderDiscovery.statusSnapshot(settings),
-      modelsSnapshot: (settings) => managedRunConfiguredProviderDiscovery.modelsSnapshot(settings),
-      fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
-        fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
-      // Lets a refresh recover authentication provenance that discovery has not
-      // established in this session. Reads the persisted catalogue only — no
-      // PTY, no backend round-trip — so it cannot affect the probe cadence the
-      // block below is careful to clamp.
-      readCachedProvenanceRecord: async () => {
-        const record = await readCachedAgyModelRecord({
-          userDataPath: app.getPath('userData')
-        })
-        return { models: record.models as unknown[], updatedAtMs: record.updatedAtMs }
-      },
-      fetchAuthenticatedQuota: async (settings, force) => {
-        // Every /usage probe is a real authenticated agy session, so cadence
-        // is the fingerprint. The decision helper enforces the doctrine:
-        // automatic callers (the 90s meter heartbeat) are cache-only and can
-        // NEVER reach the PTY; only the manual refresh (`force`) may probe,
-        // clamped to one ATTEMPT per AGY_USAGE_MANUAL_MIN_INTERVAL_MS —
-        // enforced here in main so button-mashing cannot route around it.
-        const probeDecision = agyUsageProbeDecision({
-          force: force === true,
-          nowMs: Date.now(),
-          cacheFetchedAtMs: antigravityUsageProbeCache?.fetchedAt ?? null,
-          lastAttemptAtMs: antigravityUsageProbeLastAttemptAt
-        })
-        if (probeDecision === 'serve-cache' && antigravityUsageProbeCache) {
-          return antigravityUsageProbeCache.snapshot
-        }
-        if (probeDecision !== 'probe') {
-          // Reaching here means the connection IS authenticated (the handler
-          // only calls this path when it is) but no probe ran. Report WHICH of
-          // the two doctrine rules withheld it. This previously returned the
-          // unauthenticated lane's snapshot — configured false, no reason —
-          // which the renderer cannot surface at all, so "the heartbeat is
-          // cache-only by design" and "your ↻ was rate-limited" and "there is
-          // no agy lane" were one indistinguishable blank meter.
-          return agyQuotaUnavailableSnapshot(
-            force === true
-              ? `a manual refresh ran less than ${Math.round(AGY_USAGE_MANUAL_MIN_INTERVAL_MS / 60_000)} minutes ago. Every /usage probe is a real authenticated agy session, so refreshes are deliberately rate-limited — try again shortly.`
-              : 'the agy /usage probe only ever runs on an explicit manual refresh, because each one opens a real authenticated agy session. Press refresh to read your quota.'
-          )
-        }
-        antigravityUsageProbeLastAttemptAt = Date.now()
-
-        // A private temporary cwd keeps the documented interactive panel out
-        // of a real workspace. It is removed only when this exact probe made
-        // it successfully, never by a broad cleanup operation.
+    // Keep agy as the sole credential owner. TaskWraith opens the documented
+    // `/usage` panel in a private temporary PTY, parses only the Gemini quota
+    // rows, and schedules those reads on the former Limit Counter cadence.
+    // No OAuth token file or credential material is read by TaskWraith.
+    const readAntigravityQuota = createAntigravityQuotaClient({
+      fetchQuota: async () => {
         let probeCwd = os.tmpdir()
         try {
           probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'agy-usage-'))
@@ -54268,8 +54214,9 @@ if (isGeminiMcpBridgeProcess) {
         }
         const isTempDir = probeCwd !== os.tmpdir()
         try {
-          const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(settings, true, {
+          return await fetchAuthenticatedAgyQuotaSnapshot(AppStore.getSettings(), true, {
             cwd: probeCwd,
+            confirmAppOwnedCwdTrust: isTempDir,
             spawnPty: (command, args, options): AgyPtyLike => {
               const term = pty.spawn(command, [...args], {
                 name: 'xterm-256color',
@@ -54293,16 +54240,27 @@ if (isGeminiMcpBridgeProcess) {
               }
             }
           })
-          if (snapshot.windows?.length) {
-            antigravityUsageProbeCache = { snapshot, fetchedAt: Date.now() }
-          }
-          return snapshot
         } finally {
           if (isTempDir) {
             await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})
           }
         }
       }
+    })
+    const getAntigravityRateLimits = createAntigravityRateLimitHandler({
+      getSettings: () => AppStore.getSettings(),
+      statusSnapshot: (settings) => managedRunConfiguredProviderDiscovery.statusSnapshot(settings),
+      modelsSnapshot: (settings) => managedRunConfiguredProviderDiscovery.modelsSnapshot(settings),
+      fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
+        fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
+      readCachedProvenanceRecord: async () => {
+        const record = await readCachedAgyModelRecord({
+          userDataPath: app.getPath('userData')
+        })
+        return { models: record.models as unknown[], updatedAtMs: record.updatedAtMs }
+      },
+      fetchAuthenticatedQuota: async (_settings, force) =>
+        readAntigravityQuota({ force })
     })
     antigravityUsageSnapshotFetcherRef = getAntigravityRateLimits
 

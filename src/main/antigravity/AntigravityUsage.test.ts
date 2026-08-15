@@ -8,9 +8,6 @@ import {
   stripAgyUsageTerminalControls,
   type AgyPtyLike,
   type AgyUsageProbeDependencies
-,
-  agyUsageProbeDecision,
-  AGY_USAGE_MANUAL_MIN_INTERVAL_MS
 } from './AntigravityUsage'
 import { isAuthenticatedAgyRateLimitConnection } from './AntigravityCombinedModelCatalog'
 
@@ -79,6 +76,35 @@ function ptyThatRenders(panel: string): { pty: AgyPtyLike; writes: string[]; kil
     },
     writes,
     killed: () => killed
+  }
+}
+
+function ptyThatRequiresTrust(
+  panel: string,
+  selected: 'yes' | 'no' = 'yes'
+): { pty: AgyPtyLike; writes: string[] } {
+  let onData: ((data: string) => void) | null = null
+  let trusted = false
+  const writes: string[] = []
+  return {
+    pty: {
+      onData: (listener) => {
+        onData = listener
+        listener(
+          selected === 'yes'
+            ? 'Do you trust the contents of this project?\n> Yes, I trust this folder\n  No, exit'
+            : 'Do you trust the contents of this project?\n  Yes, I trust this folder\n> No, exit'
+        )
+      },
+      onExit: () => {},
+      write: (data) => {
+        writes.push(data)
+        if (data === '\r') trusted = true
+        if (data === AGY_USAGE_COMMAND && trusted) onData?.(panel)
+      },
+      kill: () => {}
+    },
+    writes
   }
 }
 
@@ -270,6 +296,52 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
     expect(rendered.killed()).toBe(true)
   })
 
+  it('confirms trust only for a TaskWraith-created private probe directory', async () => {
+    const rendered = ptyThatRequiresTrust(observedPanel())
+    const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(optedIn, true, {
+      cwd: '/private/tmp/taskwraith-owned-probe',
+      confirmAppOwnedCwdTrust: true,
+      resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+      spawnPty: () => rendered.pty,
+      now,
+      ...immediateTimers()
+    })
+
+    expect(snapshot.windows).toHaveLength(2)
+    expect(rendered.writes).toEqual(['\r', AGY_USAGE_COMMAND])
+  })
+
+  it('never confirms a trust prompt without an explicit app-owned-directory signal', async () => {
+    const rendered = ptyThatRequiresTrust(observedPanel())
+    const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(optedIn, true, {
+      cwd: '/private/tmp/not-asserted-owned',
+      resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+      spawnPty: () => rendered.pty,
+      now,
+      timeoutMs: 0,
+      ...immediateTimers()
+    })
+
+    expect(rendered.writes).not.toContain('\r')
+    expect(snapshot.error).toContain('timed out')
+  })
+
+  it('does not press Enter unless agy has selected the explicit trust option', async () => {
+    const rendered = ptyThatRequiresTrust(observedPanel(), 'no')
+    const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(optedIn, true, {
+      cwd: '/private/tmp/taskwraith-owned-probe',
+      confirmAppOwnedCwdTrust: true,
+      resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+      spawnPty: () => rendered.pty,
+      now,
+      timeoutMs: 0,
+      ...immediateTimers()
+    })
+
+    expect(rendered.writes).not.toContain('\r')
+    expect(snapshot.error).toContain('timed out')
+  })
+
   it('returns structured quota-unavailable data for timeout, unsupported output, and resolver failure', async () => {
     const silent: AgyPtyLike = {
       onData: () => {},
@@ -309,77 +381,6 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
 })
 
 
-describe('agyUsageProbeDecision', () => {
-  const T0 = 1_000_000
-
-  it('never lets an automatic caller reach the PTY — cache or unavailable', () => {
-    expect(
-      agyUsageProbeDecision({ force: false, nowMs: T0, cacheFetchedAtMs: null, lastAttemptAtMs: null })
-    ).toBe('unavailable')
-    // Even an arbitrarily stale cache is served rather than refreshed.
-    expect(
-      agyUsageProbeDecision({
-        force: false,
-        nowMs: T0 + 24 * 60 * 60 * 1000,
-        cacheFetchedAtMs: T0,
-        lastAttemptAtMs: T0
-      })
-    ).toBe('serve-cache')
-  })
-
-  it('lets the first manual refresh probe, then clamps mashing to the window', () => {
-    expect(
-      agyUsageProbeDecision({ force: true, nowMs: T0, cacheFetchedAtMs: null, lastAttemptAtMs: null })
-    ).toBe('probe')
-    expect(
-      agyUsageProbeDecision({
-        force: true,
-        nowMs: T0 + 30_000,
-        cacheFetchedAtMs: null,
-        lastAttemptAtMs: T0
-      })
-    ).toBe('unavailable')
-    expect(
-      agyUsageProbeDecision({
-        force: true,
-        nowMs: T0 + 30_000,
-        cacheFetchedAtMs: T0,
-        lastAttemptAtMs: T0
-      })
-    ).toBe('serve-cache')
-    expect(
-      agyUsageProbeDecision({
-        force: true,
-        nowMs: T0 + AGY_USAGE_MANUAL_MIN_INTERVAL_MS + 1,
-        cacheFetchedAtMs: T0,
-        lastAttemptAtMs: T0
-      })
-    ).toBe('probe')
-  })
-
-  it('serves a fresh cache to a manual refresh without spawning', () => {
-    expect(
-      agyUsageProbeDecision({
-        force: true,
-        nowMs: T0 + 60_000,
-        cacheFetchedAtMs: T0,
-        lastAttemptAtMs: T0 - 10 * 60 * 1000
-      })
-    ).toBe('serve-cache')
-  })
-
-  it('clamps on ATTEMPT time, not success — a failing probe cannot retry-spam', () => {
-    expect(
-      agyUsageProbeDecision({
-        force: true,
-        nowMs: T0 + 60_000,
-        cacheFetchedAtMs: null,
-        lastAttemptAtMs: T0
-      })
-    ).toBe('unavailable')
-  })
-})
-
 describe('agyQuotaUnavailableSnapshot', () => {
   // These are the states that used to be indistinguishable blanks. The renderer
   // admits a quota entry only when it has windows OR configured+error, so
@@ -399,20 +400,4 @@ describe('agyQuotaUnavailableSnapshot', () => {
     expect(agyQuotaUnavailableSnapshot('nope.', now).windows).toBeUndefined()
   })
 
-  it('distinguishes the awaiting-manual-refresh and rate-limited reasons', () => {
-    // The two doctrine rules that withhold a probe. Before this they returned
-    // one identical configured-false snapshot, so a ↻ that was silently
-    // clamped looked exactly like a ↻ that had never been pressed.
-    const awaiting = agyQuotaUnavailableSnapshot(
-      'the agy /usage probe only ever runs on an explicit manual refresh.',
-      now
-    )
-    const clamped = agyQuotaUnavailableSnapshot(
-      'a manual refresh ran less than 5 minutes ago.',
-      now
-    )
-    expect(awaiting.error).not.toBe(clamped.error)
-    expect(awaiting.configured).toBe(true)
-    expect(clamped.configured).toBe(true)
-  })
 })

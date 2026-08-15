@@ -105,6 +105,7 @@ import { PairingPage } from './PairingPage'
 import { PillButton } from './PillButton'
 import { PiProviderKeysCard } from './PiProviderKeysCard'
 import { MistralQuotaCard } from './MistralQuotaCard'
+import { ApiUsageQuotaCard } from './ApiUsageQuotaCard'
 import { MuseSpendBudgetCard } from './MuseSpendBudgetCard'
 import { SegmentedControl } from './SegmentedControl'
 import { ChannelsManagementPanel } from './ChannelsManagementPanel'
@@ -7480,6 +7481,7 @@ export function SettingsPanel({
                     {renderProviderPauseControls('muse')}
                   </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
+                  <ApiUsageQuotaCard />
                   <MistralQuotaCard />
 
                   <AntigravityOptInCard

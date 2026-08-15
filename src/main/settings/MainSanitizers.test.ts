@@ -988,6 +988,36 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists only normalized non-secret API usage billing readings', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(
+      sanitizeSettingsPatch({
+        apiUsageBilling: {
+          deepseek: { totalTopUp: 10, apiKey: 'must-not-persist' },
+          cerebras: { purchasedCredits: 20, currentBalance: 7.5, currency: 'gbp' },
+          meta: {
+            spent: 0.05,
+            currency: 'eur',
+            resetAt: '2026-09-01',
+            anchorUpdatedAt: '2026-08-15T12:00:00Z'
+          }
+        } as unknown as AppSettings['apiUsageBilling']
+      }).apiUsageBilling
+    ).toEqual({
+      deepseek: { totalTopUp: 10 },
+      cerebras: { purchasedCredits: 20, currentBalance: 7.5, currency: 'GBP' },
+      meta: {
+        spent: 0.05,
+        currency: 'EUR',
+        resetAt: '2026-09-01T00:00:00.000Z',
+        anchorUpdatedAt: '2026-08-15T12:00:00.000Z'
+      }
+    })
+    expect(sanitizeSettingsPatch({ apiUsageBilling: null }).apiUsageBilling).toBeUndefined()
+  })
+
   it('persists a valid appIconVariant and drops invalid ones (SETTINGS_PATCH_KEYS guard)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

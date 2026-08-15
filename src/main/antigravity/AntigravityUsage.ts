@@ -21,40 +21,9 @@ export const AGY_USAGE_TUI_ARGS = ['--sandbox', '--mode', 'plan'] as const
 export const AGY_USAGE_COMMAND = '/usage\r'
 export const AGY_USAGE_FRESH_TTL_MS = 5 * 60 * 1000
 
-/** Minimum spacing between /usage PROBE ATTEMPTS (success or not). Applies to
- * the manual refresh button; the automatic meter heartbeat never probes at
- * all (see agyUsageProbeDecision). Keyed on attempts, not successes, so a
- * mashed button during a failing probe cannot retry-spam the lane. */
+/** Minimum spacing between manual `/usage` probe attempts. Autonomous reads
+ * use the rotating cadence owned by AntigravityQuotaClient. */
 export const AGY_USAGE_MANUAL_MIN_INTERVAL_MS = 5 * 60 * 1000
-
-/**
- * Decide what a quota request may do. The doctrine (2026-07-28): every
- * /usage probe is a real authenticated agy session, so cadence is the
- * fingerprint — only an explicit user action (`force`) may EVER spawn one,
- * and even that is clamped to one attempt per AGY_USAGE_MANUAL_MIN_INTERVAL_MS.
- * The 90-second meter heartbeat and any other automatic caller serves the
- * cache or reports unavailable; it must never reach the PTY. The clamp is
- * enforced here in main, so renderer button-mashing cannot route around it.
- */
-export function agyUsageProbeDecision(input: {
-  force: boolean
-  nowMs: number
-  cacheFetchedAtMs: number | null
-  lastAttemptAtMs: number | null
-}): 'serve-cache' | 'probe' | 'unavailable' {
-  const hasCache = input.cacheFetchedAtMs !== null
-  if (!input.force) {
-    return hasCache ? 'serve-cache' : 'unavailable'
-  }
-  const cacheFresh =
-    input.cacheFetchedAtMs !== null && input.nowMs - input.cacheFetchedAtMs < AGY_USAGE_FRESH_TTL_MS
-  if (cacheFresh) return 'serve-cache'
-  const attemptClamped =
-    input.lastAttemptAtMs !== null &&
-    input.nowMs - input.lastAttemptAtMs < AGY_USAGE_MANUAL_MIN_INTERVAL_MS
-  if (attemptClamped) return hasCache ? 'serve-cache' : 'unavailable'
-  return 'probe'
-}
 
 const MAX_CAPTURED_OUTPUT = 80_000
 const MAX_QUOTA_GROUPS = 4
@@ -81,9 +50,16 @@ export interface AgyUsageProbeDependencies {
   ) => AgyPtyLike
   /** A throwaway directory, never a user workspace. */
   cwd?: string
+  /**
+   * Permit Enter on agy's exact trust prompt only when `cwd` was freshly
+   * created by TaskWraith for this probe. Never enable this for a workspace or
+   * a broad temporary root.
+   */
+  confirmAppOwnedCwdTrust?: boolean
   inheritedEnv?: Readonly<Record<string, string | undefined>>
   timeoutMs?: number
   readyDelayMs?: number
+  trustReadyDelayMs?: number
   settleDelayMs?: number
   now?: () => string
   setTimer?: (callback: () => void, delayMs: number) => unknown
@@ -317,6 +293,7 @@ function captureAgyUsagePanel(
 ): Promise<{ output: string; timedOut: boolean; spawnError?: string }> {
   const timeoutMs = deps.timeoutMs ?? 12_000
   const readyDelayMs = deps.readyDelayMs ?? 1_500
+  const trustReadyDelayMs = deps.trustReadyDelayMs ?? 4_000
   const settleDelayMs = deps.settleDelayMs ?? 300
   const setTimer = deps.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
   const clearTimer =
@@ -326,6 +303,7 @@ function captureAgyUsagePanel(
     let settled = false
     let output = ''
     let child: AgyPtyLike | null = null
+    let trustPromptConfirmed = false
     const timers: unknown[] = []
     const finish = (result: { output: string; timedOut: boolean; spawnError?: string }): void => {
       if (settled) return
@@ -365,12 +343,31 @@ function captureAgyUsagePanel(
     child.onData((chunk) => {
       output = `${output}${chunk}`
       if (output.length > MAX_CAPTURED_OUTPUT) output = output.slice(-MAX_CAPTURED_OUTPUT)
+      const cleanedOutput = stripAgyUsageTerminalControls(output)
+      if (
+        deps.confirmAppOwnedCwdTrust === true &&
+        !trustPromptConfirmed &&
+        cleanedOutput.includes('Do you trust the contents of this project?') &&
+        /^\s*>\s*Yes, I trust this folder\s*$/m.test(cleanedOutput)
+      ) {
+        trustPromptConfirmed = true
+        child?.write('\r')
+        timers.push(
+          setTimer(() => {
+            if (!settled) child?.write(AGY_USAGE_COMMAND)
+          }, trustReadyDelayMs)
+        )
+      }
       if (parseAgyUsagePanel(output).windows.length > 0) {
         timers.push(setTimer(() => finish({ output, timedOut: false }), settleDelayMs))
       }
     })
     child.onExit(() => finish({ output, timedOut: false }))
-    timers.push(setTimer(() => child?.write(AGY_USAGE_COMMAND), readyDelayMs))
+    timers.push(
+      setTimer(() => {
+        if (!settled && !trustPromptConfirmed) child?.write(AGY_USAGE_COMMAND)
+      }, readyDelayMs)
+    )
     timers.push(setTimer(() => finish({ output, timedOut: true }), timeoutMs))
   })
 }

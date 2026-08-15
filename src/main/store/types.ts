@@ -37,6 +37,7 @@ export type {
 export { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import type { ComposerAttachmentKind } from '../../shared/composerAttachment'
+import type { ApiUsageBillingSettings } from '../../shared/apiUsageBilling'
 export type {
   HarnessPassthroughMode,
   ProviderHarnessPosture,
@@ -2428,6 +2429,12 @@ export interface AppSettings {
    * ceiling is below Pi's bundled 40,960-token model maximum.
    */
   piCerebrasMaxCompletionTokens?: number | null
+  /**
+   * Non-secret billing readings used to turn DeepSeek, Cerebras and Meta API
+   * balances into in-house quota meters. Provider keys are deliberately not
+   * part of this shape; they remain in the encrypted Pi key store.
+   */
+  apiUsageBilling?: ApiUsageBillingSettings | null
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
   /**

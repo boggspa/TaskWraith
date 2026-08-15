@@ -7,6 +7,14 @@ import {
   type QuotaSnapshotHookWindow
 } from '../../shared/quotaSnapshotHook'
 import { resolveMuseMonthlySpendCapUsd } from '../../shared/museSpendBudget'
+import {
+  hasApiUsageBillingProvider,
+  type ApiUsageBillingCurrency,
+  type ApiUsageBillingSettings,
+  type CerebrasApiUsageBilling,
+  type DeepSeekApiUsageBilling,
+  type MetaApiUsageBilling
+} from '../../shared/apiUsageBilling'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const DEEPSEEK_RESPONSE_LIMIT_BYTES = 1024 * 1024
@@ -22,6 +30,8 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   loadPiKeys: () => PiKeyLoadResult | null | undefined
   getUsageRecords: () => readonly UsageRecord[]
   getProviderRates: () => unknown
+  getFxRates: () => unknown
+  getApiUsageBilling: () => ApiUsageBillingSettings | null | undefined
   getMuseConfigured: () => boolean | Promise<boolean>
   getMuseMonthlySpendCapUsd: () => number | null | undefined
   fetchImpl?: FetchLike
@@ -97,6 +107,10 @@ function formatMoney(amount: number, currency = 'USD'): string {
   const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : ''
   const value = amount.toFixed(2)
   return symbol ? `${symbol}${value}` : `${value} ${currency}`
+}
+
+function roundMoney(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 1_000_000) / 1_000_000
 }
 
 function fetchedAt(now: number): string {
@@ -238,14 +252,7 @@ function summarizeSpend(
   let last30DaysUsd = 0
   let runs = 0
   for (const usage of records) {
-    if (!usage || usage.usageKind === 'reset_hint') continue
-    const model = String(usage.model || '')
-      .trim()
-      .toLowerCase()
-    const matches = isMeta
-      ? usage.provider === 'muse'
-      : usage.provider === 'pi' && model.startsWith(`${lane}/`)
-    if (!matches) continue
+    if (!usageMatchesSpendLane(usage, lane)) continue
     const timestamp = Number(usage.timestamp)
     if (
       !Number.isFinite(timestamp) ||
@@ -262,6 +269,75 @@ function summarizeSpend(
   return { currentMonthUsd, last30DaysUsd, runs, nextMonth: month.next }
 }
 
+function usageMatchesSpendLane(
+  usage: UsageRecord | null | undefined,
+  lane: 'deepseek' | 'cerebras' | 'meta'
+): usage is UsageRecord {
+  if (!usage || usage.usageKind === 'reset_hint') return false
+  if (lane === 'meta') return usage.provider === 'muse'
+  const model = String(usage.model || '')
+    .trim()
+    .toLowerCase()
+  return usage.provider === 'pi' && model.startsWith(`${lane}/`)
+}
+
+function summarizeSpendSince(
+  records: readonly UsageRecord[],
+  providerRates: unknown,
+  lane: 'deepseek' | 'cerebras' | 'meta',
+  since: number | null,
+  now: number
+): number {
+  if (since === null || !Number.isFinite(since) || since > now) return 0
+  const rates = providerRateModels(providerRates, lane === 'meta' ? 'muse' : 'pi')
+  let totalUsd = 0
+  for (const usage of records) {
+    if (!usageMatchesSpendLane(usage, lane)) continue
+    const timestamp = Number(usage.timestamp)
+    if (!Number.isFinite(timestamp) || timestamp <= since || timestamp > now) continue
+    totalUsd += recordCostUsd(usage, rates)
+  }
+  return totalUsd
+}
+
+function fxRatePerUsd(raw: unknown, currency: ApiUsageBillingCurrency): number {
+  if (currency === 'USD') return 1
+  const envelope = record(raw)
+  const rates = record(envelope?.rates) ?? envelope
+  const parsed = Number(rates?.[currency])
+  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  return currency === 'GBP' ? 0.79 : 0.92
+}
+
+function financialWindow(input: {
+  id: string
+  label: string
+  amount: number
+  currency: string
+  subtitle: string
+  total?: number | null
+  resetAt?: string
+  estimated?: boolean
+  windowKind?: string
+}): QuotaSnapshotHookWindow {
+  const total = input.total && input.total > 0 ? input.total : null
+  const usedPercent = total ? Math.max(0, Math.min(100, (input.amount / total) * 100)) : 0
+  const valueText = `${input.estimated ? '~' : ''}${formatMoney(input.amount, input.currency)}`
+  return {
+    id: input.id,
+    label: input.label,
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    limitLabel: total
+      ? `${valueText} of ${formatMoney(total, input.currency)} · ${input.subtitle}`
+      : `${valueText} · ${input.subtitle}`,
+    valueText,
+    unit: input.currency,
+    windowKind: input.windowKind ?? (input.estimated ? 'local-estimate' : 'billing-anchor'),
+    ...(input.resetAt ? { resetAt: input.resetAt } : {})
+  }
+}
+
 function estimateWindow(input: {
   id: string
   label: string
@@ -270,49 +346,57 @@ function estimateWindow(input: {
   totalUsd?: number | null
   resetAt?: string
 }): QuotaSnapshotHookWindow {
-  const total = input.totalUsd && input.totalUsd > 0 ? input.totalUsd : null
-  const usedPercent = total ? Math.max(0, Math.min(100, (input.amountUsd / total) * 100)) : 0
-  const valueText = `~${formatMoney(input.amountUsd)}`
-  return {
+  return financialWindow({
     id: input.id,
     label: input.label,
-    usedPercent,
-    remainingPercent: Math.max(0, 100 - usedPercent),
-    limitLabel: total
-      ? `${valueText} of ${formatMoney(total)} · ${input.subtitle}`
-      : `${valueText} · ${input.subtitle}`,
-    valueText,
-    unit: 'USD',
-    windowKind: 'local-estimate',
-    ...(input.resetAt ? { resetAt: input.resetAt } : {})
-  }
+    amount: input.amountUsd,
+    currency: 'USD',
+    subtitle: input.subtitle,
+    total: input.totalUsd,
+    resetAt: input.resetAt,
+    estimated: true
+  })
 }
 
 function deepSeekSnapshot(
   observation: DeepSeekBalanceObservation,
   observationFetchedAt: number,
   spend: SpendSummary & { nextMonth: string },
+  billing: DeepSeekApiUsageBilling | undefined,
   now: number
 ): QuotaSnapshotHookSnapshot {
-  const valueText = formatMoney(observation.totalBalance, observation.currency)
-  const windows: QuotaSnapshotHookWindow[] = [
-    {
-      id: 'deepseek-available-balance',
-      label: 'Available balance',
-      usedPercent: 0,
-      remainingPercent: 100,
-      limitLabel: `${valueText} available · official DeepSeek balance API`,
-      valueText,
-      unit: observation.currency,
-      windowKind: 'balance'
-    }
-  ]
+  const totalTopUp = billing?.totalTopUp
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (totalTopUp) {
+    windows.push(
+      financialWindow({
+        id: 'deepseek-credit-used',
+        label: 'Credit used',
+        amount: Math.max(0, Math.min(totalTopUp, totalTopUp - observation.totalBalance)),
+        total: totalTopUp,
+        currency: observation.currency,
+        subtitle: 'Configured top-ups minus official remaining balance'
+      })
+    )
+  } else {
+    windows.push(
+      financialWindow({
+        id: 'deepseek-available-balance',
+        label: 'Available balance',
+        amount: observation.totalBalance,
+        currency: observation.currency,
+        subtitle: 'official DeepSeek balance API',
+        windowKind: 'balance'
+      })
+    )
+  }
   if (spend.runs > 0) {
     windows.push(
       estimateWindow({
         id: 'deepseek-month-estimate',
         label: 'Estimated this month',
         amountUsd: spend.currentMonthUsd,
+        totalUsd: billing?.monthlyBudgetUsd,
         subtitle: 'TaskWraith estimate · not vendor billing',
         resetAt: spend.nextMonth
       })
@@ -347,63 +431,172 @@ function deepSeekSnapshot(
         amount: observation.grantedBalance,
         unit: observation.currency,
         subtitle: 'Official DeepSeek API'
-      }
+      },
+      ...(totalTopUp
+        ? [
+            {
+              id: 'deepseek-total-topped-up',
+              label: 'Total topped up',
+              amount: totalTopUp,
+              unit: observation.currency,
+              subtitle: 'Manual billing anchor'
+            }
+          ]
+        : [])
     ]
   }
 }
 
 function cerebrasSnapshot(
   spend: SpendSummary & { nextMonth: string },
+  billing: CerebrasApiUsageBilling | undefined,
   now: number
 ): QuotaSnapshotHookSnapshot {
-  return {
-    provider: 'cerebras',
-    source: 'taskwraith-native',
-    configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
-    planType: 'TaskWraith estimate',
-    windows: [
+  const currency = billing?.currency ?? 'USD'
+  const purchased = billing?.purchasedCredits
+  const current = billing?.currentBalance
+  const hasCreditAnchor = purchased !== undefined && current !== undefined
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (hasCreditAnchor) {
+    windows.push(
+      financialWindow({
+        id: 'cerebras-credit-used',
+        label: 'Credit used',
+        amount: Math.max(0, Math.min(purchased, purchased - current)),
+        total: purchased,
+        currency,
+        subtitle: 'Manual Cerebras billing anchor'
+      })
+    )
+  }
+  if (!hasCreditAnchor || spend.runs > 0) {
+    windows.push(
       estimateWindow({
         id: 'cerebras-month-estimate',
         label: 'Estimated this month',
         amountUsd: spend.currentMonthUsd,
+        totalUsd: billing?.monthlyBudgetUsd,
         subtitle: 'TaskWraith-recorded Cerebras runs · not vendor billing',
         resetAt: spend.nextMonth
-      }),
+      })
+    )
+  }
+  if (!hasCreditAnchor) {
+    windows.push(
       estimateWindow({
         id: 'cerebras-30d-estimate',
         label: 'Estimated last 30 days',
         amountUsd: spend.last30DaysUsd,
         subtitle: 'TaskWraith-recorded Cerebras runs · not vendor billing'
       })
-    ],
-    balances: []
+    )
+  }
+  return {
+    provider: 'cerebras',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: fetchedAt(now),
+    stale: false,
+    planType: hasCreditAnchor ? 'Cloud billing anchor' : 'TaskWraith estimate',
+    windows,
+    balances: [
+      ...(current !== undefined
+        ? [
+            {
+              id: 'cerebras-current-balance',
+              label: 'Current balance',
+              amount: current,
+              unit: currency,
+              subtitle: 'Manual billing anchor'
+            }
+          ]
+        : []),
+      ...(purchased !== undefined
+        ? [
+            {
+              id: 'cerebras-purchased-credits',
+              label: 'Purchased credits',
+              amount: purchased,
+              unit: currency,
+              subtitle: 'Manual billing anchor'
+            }
+          ]
+        : [])
+    ]
   }
 }
 
 function metaSnapshot(
   spend: SpendSummary & { nextMonth: string },
   monthlyCapUsd: number | null,
+  billing: MetaApiUsageBilling | undefined,
+  localSpendSinceAnchorUsd: number,
+  fxRates: unknown,
   now: number
 ): QuotaSnapshotHookSnapshot {
-  return {
-    provider: 'meta',
-    source: 'taskwraith-native',
-    configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
-    planType: 'Muse local estimate',
-    windows: [
+  const currency = billing?.currency ?? 'USD'
+  const perUsd = fxRatePerUsd(fxRates, currency)
+  const resetAt = billing?.resetAt ?? spend.nextMonth
+  const preload = billing?.preloadCredits
+  const threshold = billing?.paymentThreshold
+  const remaining = billing?.remainingBalance
+  const impliedSpend =
+    threshold !== undefined && remaining !== undefined ? Math.max(0, threshold - remaining) : null
+  const anchoredSpend = billing?.spent ?? impliedSpend ?? (threshold !== undefined ? 0 : null)
+  const localIncrement = billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
+  const effectiveRemaining =
+    remaining === undefined ? undefined : roundMoney(Math.max(0, remaining - localIncrement))
+  const budgetUsd = billing?.monthlyBudgetUsd ?? monthlyCapUsd ?? 0
+  const convertedBudget = budgetUsd * perUsd
+  const windows: QuotaSnapshotHookWindow[] = []
+
+  if (anchoredSpend !== null && anchoredSpend !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'meta-billing-period-spend',
+        label: 'Spend this billing period',
+        amount: roundMoney(anchoredSpend + localIncrement),
+        total: threshold ?? (convertedBudget > 0 ? convertedBudget : preload),
+        currency,
+        subtitle:
+          localIncrement > 0
+            ? 'Meta console reading plus tracked Muse spend'
+            : billing?.spent !== undefined
+              ? 'Meta console reading'
+              : 'Payment threshold minus remaining balance',
+        resetAt
+      })
+    )
+  }
+
+  if (preload !== undefined && effectiveRemaining !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'meta-credit-used',
+        label: 'Credit used',
+        amount: Math.max(0, Math.min(preload, preload - effectiveRemaining)),
+        total: preload,
+        currency,
+        subtitle:
+          localIncrement > 0
+            ? 'Preload minus remaining, advanced by tracked Muse spend'
+            : 'Configured preload minus remaining Meta balance'
+      })
+    )
+  }
+
+  if (!billing || windows.length === 0) {
+    windows.push(
       estimateWindow({
         id: 'meta-month-estimate',
         label: 'Estimated this month',
         amountUsd: spend.currentMonthUsd,
-        totalUsd: monthlyCapUsd,
-        subtitle: monthlyCapUsd
-          ? 'TaskWraith soft budget · not vendor billing'
-          : 'TaskWraith estimate · no soft budget configured',
-        resetAt: spend.nextMonth
+        totalUsd: billing?.monthlyBudgetUsd ?? monthlyCapUsd,
+        subtitle:
+          (billing?.monthlyBudgetUsd ?? monthlyCapUsd)
+            ? 'TaskWraith soft budget · not vendor billing'
+            : 'TaskWraith estimate · no soft budget configured',
+        resetAt
       }),
       estimateWindow({
         id: 'meta-30d-estimate',
@@ -411,8 +604,66 @@ function metaSnapshot(
         amountUsd: spend.last30DaysUsd,
         subtitle: 'Muse session tokens × catalog rates · not vendor billing'
       })
-    ],
-    balances: []
+    )
+  } else if (windows.length < 2 && spend.runs > 0) {
+    windows.push(
+      estimateWindow({
+        id: 'meta-month-estimate',
+        label: 'Muse estimate this month',
+        amountUsd: spend.currentMonthUsd,
+        totalUsd: billing.monthlyBudgetUsd ?? monthlyCapUsd,
+        subtitle: 'Session tokens × catalog rates · not vendor billing',
+        resetAt
+      })
+    )
+  }
+
+  return {
+    provider: 'meta',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: fetchedAt(now),
+    stale: false,
+    planType: billing?.planName ?? (billing ? 'API Credits' : 'Muse local estimate'),
+    windows,
+    balances: [
+      ...(preload !== undefined
+        ? [
+            {
+              id: 'meta-preload-credit',
+              label: 'Preload credit',
+              amount: preload,
+              unit: currency,
+              subtitle: 'Manual billing anchor'
+            }
+          ]
+        : []),
+      ...(effectiveRemaining !== undefined
+        ? [
+            {
+              id: 'meta-remaining-balance',
+              label: 'Remaining balance',
+              amount: effectiveRemaining,
+              unit: currency,
+              subtitle:
+                localIncrement > 0
+                  ? 'Manual remaining minus tracked Muse spend since anchor'
+                  : 'Manual billing anchor'
+            }
+          ]
+        : []),
+      ...(threshold !== undefined
+        ? [
+            {
+              id: 'meta-payment-threshold',
+              label: 'Payment threshold',
+              amount: threshold,
+              unit: currency,
+              subtitle: 'Manual billing anchor'
+            }
+          ]
+        : [])
+    ]
   }
 }
 
@@ -451,10 +702,10 @@ async function fetchDeepSeekBalance(
 }
 
 /**
- * Main-owned supplemental quota reader. It never reads another application's
- * container: DeepSeek uses the official balance API with TaskWraith's encrypted
- * Pi key, while Cerebras and Meta are transparently labelled projections from
- * TaskWraith's own usage journal and rate table.
+ * Main-owned supplemental quota reader. DeepSeek uses the official balance API
+ * with TaskWraith's encrypted Pi key. Cerebras and Meta combine TaskWraith's
+ * own usage journal with optional non-secret billing readings entered in
+ * Settings; no provider credential or raw response crosses IPC.
  */
 export function createTaskWraithQuotaSnapshotHook(
   dependencies: TaskWraithQuotaSnapshotHookDependencies
@@ -478,6 +729,7 @@ export function createTaskWraithQuotaSnapshotHook(
   const readDeepSeek = async (
     apiKey: string,
     spend: SpendSummary & { nextMonth: string },
+    billing: DeepSeekApiUsageBilling | undefined,
     readAt: number
   ): Promise<QuotaSnapshotHookSnapshot> => {
     if (deepSeekCache?.apiKey !== apiKey) deepSeekCache = null
@@ -517,7 +769,13 @@ export function createTaskWraithQuotaSnapshotHook(
     }
     const cached = deepSeekCache
     if (cached?.observation && cached.observationFetchedAt !== null) {
-      return deepSeekSnapshot(cached.observation, cached.observationFetchedAt, spend, now())
+      return deepSeekSnapshot(
+        cached.observation,
+        cached.observationFetchedAt,
+        spend,
+        billing,
+        now()
+      )
     }
     return emptySnapshot(
       'deepseek',
@@ -538,6 +796,8 @@ export function createTaskWraithQuotaSnapshotHook(
     }
     let usageRecords: readonly UsageRecord[] = []
     let providerRates: unknown = {}
+    let fxRates: unknown = {}
+    let apiUsageBilling: ApiUsageBillingSettings = {}
     try {
       usageRecords = dependencies.getUsageRecords()
     } catch {
@@ -548,10 +808,30 @@ export function createTaskWraithQuotaSnapshotHook(
     } catch {
       providerRates = {}
     }
+    try {
+      fxRates = dependencies.getFxRates()
+    } catch {
+      fxRates = {}
+    }
+    try {
+      apiUsageBilling = dependencies.getApiUsageBilling() ?? {}
+    } catch {
+      apiUsageBilling = {}
+    }
 
     const deepSeekSpend = summarizeSpend(usageRecords, providerRates, 'deepseek', readAt)
     const cerebrasSpend = summarizeSpend(usageRecords, providerRates, 'cerebras', readAt)
     const metaSpend = summarizeSpend(usageRecords, providerRates, 'meta', readAt)
+    const metaAnchorMs = apiUsageBilling.meta?.anchorUpdatedAt
+      ? Date.parse(apiUsageBilling.meta.anchorUpdatedAt)
+      : null
+    const metaSpendSinceAnchorUsd = summarizeSpendSince(
+      usageRecords,
+      providerRates,
+      'meta',
+      metaAnchorMs !== null && Number.isFinite(metaAnchorMs) ? metaAnchorMs : null,
+      readAt
+    )
     const deepSeekKey = typeof keys.deepseek === 'string' ? keys.deepseek.trim() : ''
     const cerebrasKey = typeof keys.cerebras === 'string' ? keys.cerebras.trim() : ''
     activeDeepSeekKey = deepSeekKey || null
@@ -559,8 +839,17 @@ export function createTaskWraithQuotaSnapshotHook(
 
     const [deepSeek, museConfigured] = await Promise.all([
       deepSeekKey
-        ? readDeepSeek(deepSeekKey, deepSeekSpend, readAt)
-        : Promise.resolve(emptySnapshot('deepseek', readAt, false)),
+        ? readDeepSeek(deepSeekKey, deepSeekSpend, apiUsageBilling.deepseek, readAt)
+        : Promise.resolve(
+            emptySnapshot(
+              'deepseek',
+              readAt,
+              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek'),
+              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek')
+                ? 'Store a DeepSeek key in the Pi provider card to read the official balance.'
+                : undefined
+            )
+          ),
       Promise.resolve()
         .then(() => dependencies.getMuseConfigured())
         .then(Boolean)
@@ -569,13 +858,18 @@ export function createTaskWraithQuotaSnapshotHook(
 
     return [
       deepSeek,
-      cerebrasKey
-        ? cerebrasSnapshot(cerebrasSpend, readAt)
+      cerebrasKey ||
+      cerebrasSpend.runs > 0 ||
+      hasApiUsageBillingProvider(apiUsageBilling, 'cerebras')
+        ? cerebrasSnapshot(cerebrasSpend, apiUsageBilling.cerebras, readAt)
         : emptySnapshot('cerebras', readAt, false),
-      museConfigured
+      museConfigured || metaSpend.runs > 0 || hasApiUsageBillingProvider(apiUsageBilling, 'meta')
         ? metaSnapshot(
             metaSpend,
             resolveMuseMonthlySpendCapUsd(dependencies.getMuseMonthlySpendCapUsd()),
+            apiUsageBilling.meta,
+            metaSpendSinceAnchorUsd,
+            fxRates,
             readAt
           )
         : emptySnapshot('meta', readAt, false)

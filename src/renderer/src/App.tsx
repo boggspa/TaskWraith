@@ -8996,9 +8996,9 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('cursor', cursorWindows, cursorSnap))
     }
 
-    // AntiGravity is TaskWraith-native. Automatic refreshes are cache-only;
-    // the documented interactive `agy /usage` panel is opened only by the
-    // explicit refresh button and remains clamped by main-process policy.
+    // AntiGravity quota collection stays behind agy's credential boundary.
+    // Electron main caches the documented `/usage` panel on the same rotating
+    // cadence as the former Limit Counter collector; no OAuth token is read.
     const antigravityFresh = (
       Array.isArray(antigravitySnap?.windows) ? antigravitySnap.windows : []
     )
