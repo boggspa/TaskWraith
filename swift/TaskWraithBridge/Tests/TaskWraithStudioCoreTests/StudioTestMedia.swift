@@ -377,8 +377,9 @@ enum StudioTestMedia {
             to: url,
             width: width,
             height: height,
-            frameRate: frameRate,
-            forceKeyFrames: forceKeyFrames
+            forceKeyFrames: forceKeyFrames,
+            compressionProperties: nil,
+            presentationTime: { CMTime(value: Int64($0), timescale: frameRate) }
         ) { index in
             try flatPixelBuffer(luma: lumaLevels[index], width: width, height: height)
         }
@@ -400,8 +401,47 @@ enum StudioTestMedia {
             to: url,
             width: width,
             height: height,
-            frameRate: frameRate,
-            forceKeyFrames: forceKeyFrames
+            forceKeyFrames: false,
+            compressionProperties: nil,
+            presentationTime: { CMTime(value: Int64($0), timescale: frameRate) }
+        ) { index in
+            try movingPixelBuffer(frameIndex: index, width: width, height: height)
+        }
+    }
+
+    /// Writes a REAL VARIABLE-FRAME-RATE moving .mov: sections at different
+    /// rates, so packet durations and PTS deltas vary exactly the way the
+    /// endurance fixture's do. IDRs arrive every `maxKeyFrameInterval` frames,
+    /// which keeps restart chains short enough for a test while exercising the
+    /// exact transition under suspicion: a backward seek feeding an IDR into an
+    /// EXISTING decompression session, hundreds of times.
+    static func writeMovingVFRMovie(
+        sections: [(frameRate: Int32, frameCount: Int)],
+        to url: URL,
+        width: Int = defaultWidth,
+        height: Int = defaultHeight,
+        maxKeyFrameInterval: Int = 16
+    ) async throws {
+        // Accumulate exact rational PTS per section, so section boundaries stay
+        // clean and every frame's instant is integer-exact.
+        var times: [CMTime] = []
+        var cursor = CMTime.zero
+        for section in sections {
+            for _ in 0..<section.frameCount {
+                times.append(cursor)
+                cursor = cursor + CMTime(value: 1, timescale: section.frameRate)
+            }
+        }
+        try await writeMovie(
+            frameCount: times.count,
+            to: url,
+            width: width,
+            height: height,
+            forceKeyFrames: false,
+            compressionProperties: [
+                AVVideoMaxKeyFrameIntervalKey: maxKeyFrameInterval,
+            ],
+            presentationTime: { times[$0] }
         ) { index in
             try movingPixelBuffer(frameIndex: index, width: width, height: height)
         }
@@ -412,8 +452,9 @@ enum StudioTestMedia {
         to url: URL,
         width: Int,
         height: Int,
-        frameRate: Int32,
         forceKeyFrames: Bool,
+        compressionProperties: [String: Any]?,
+        presentationTime: (Int) -> CMTime,
         makeFrame: (Int) throws -> CVPixelBuffer
     ) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -427,6 +468,8 @@ enum StudioTestMedia {
                 AVVideoMaxKeyFrameIntervalKey: 1,
                 AVVideoAllowFrameReorderingKey: false,
             ]
+        } else if let compressionProperties {
+            outputSettings[AVVideoCompressionPropertiesKey] = compressionProperties
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
         input.expectsMediaDataInRealTime = false
@@ -459,7 +502,7 @@ enum StudioTestMedia {
             }
             let appended = adaptor.append(
                 buffer,
-                withPresentationTime: CMTime(value: Int64(index), timescale: frameRate)
+                withPresentationTime: presentationTime(index)
             )
             XCTAssertTrue(
                 appended,
