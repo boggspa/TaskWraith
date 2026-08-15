@@ -371,6 +371,27 @@ describe('RemoteBridgeRuntime.beginPairingOnDemand (unauthenticated /v1/beginpai
     const qr = h.runtime.beginPairing('My iPad')
     expect(qr.bootstrap.pairingSessionID).not.toBe(onDemand?.bootstrap.pairingSessionID)
   })
+
+  // Field bug (2026-08-15, found pairing a simulator against a dev host whose
+  // tailscale-serve front door was refusing): the console QR probes its doors
+  // and advertises only the live ones, but this path took no override at all,
+  // so `resolveAdvertiseRelayUrls` fell back to the STATIC list and handed the
+  // phone a door the Mac had already logged as ECONNREFUSED. Worse, the v1
+  // `relayUrl` field prefers wss, so the dead door became the PRIMARY and the
+  // phone reported "Couldn't connect to your Mac's Tailscale address".
+  it('advertises the live-probed candidate set, never the static fallback', () => {
+    const h = harness()
+    const result = h.runtime.beginPairingOnDemand(['ws://192.168.0.147:8787'])
+    expect(result?.bootstrap.bootstrapPayload.relayUrls).toEqual(['ws://192.168.0.147:8787'])
+    expect(result?.bootstrap.bootstrapPayload.relayUrl).toBe('ws://192.168.0.147:8787')
+  })
+
+  it('re-issues an in-window session even when a fresh probe is supplied', () => {
+    const h = harness()
+    const first = h.runtime.beginPairingOnDemand(['ws://192.168.0.147:8787'])
+    const again = h.runtime.beginPairingOnDemand(['ws://192.168.0.147:8787'])
+    expect(again?.bootstrap.pairingSessionID).toBe(first?.bootstrap.pairingSessionID)
+  })
 })
 
 describe('RemoteBridgeRuntime established channel', () => {

@@ -48648,11 +48648,33 @@ if (isGeminiMcpBridgeProcess) {
     }
     const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
       if (!iosRemoteRuntime) return null
+      // Same fresh, uncached probe the console QR runs (see the
+      // "Never hand the QR a dead door" block in bridge-begin-pairing). This
+      // path used to pass NO override, so beginPairingOnDemand fell back to the
+      // STATIC candidate list and advertised doors the Mac had already logged as
+      // ECONNREFUSED — and since the v1 `relayUrl` field prefers wss, a dead
+      // front door became the phone's PRIMARY. Discovery (/v1/hostinfo) filters
+      // via advertisableRelayCache; pairing needs the authoritative answer, so
+      // it probes rather than reading that cache.
+      const info = iosRemoteRuntime.describeHost()
+      const relayCandidates = mergeRelayUrls(
+        info.relayUrls,
+        embeddedRelayHandle ? automaticEmbeddedRelayUrls(embeddedRelayHandle.port) : []
+      )
+      const selection = await selectAdvertisableRelayUrls(relayCandidates)
+      // Nothing answers → 503 (retry) rather than pairing a phone to a door set
+      // that cannot work; mirrors the console path's refusal.
+      if (selection.advertisable.length === 0) {
+        console.error(
+          `[remote-bridge] refusing on-demand pairing — no relay door answers: ${selection.warnings.join('; ')}`
+        )
+        return null
+      }
       // beginPairingOnDemand (not beginPairing): an anonymous tailnet POST may
       // only open a window in a FREE slot — it must not evict a console QR
       // pairing or churn sockets. null → relay 503 (busy, retry). The phone
       // walks the returned candidates LAN-first on connect.
-      const result = iosRemoteRuntime.beginPairingOnDemand()
+      const result = iosRemoteRuntime.beginPairingOnDemand(selection.advertisable)
       return result
         ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
         : null

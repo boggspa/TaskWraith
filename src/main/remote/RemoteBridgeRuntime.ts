@@ -440,7 +440,15 @@ export class RemoteBridgeRuntime {
    * path can still evict an on-demand session (its `beginPairing` tears down any
    * pending) — the asymmetry is deliberate: a human at the desktop outranks an
    * anonymous POST. */
-  beginPairingOnDemand(): BeginPairingResult | null {
+  /**
+   * @param advertiseRelayUrls the caller's LIVE-PROBED door set. Pass it or the
+   * phone gets the static list: `resolveAdvertiseRelayUrls` falls back to
+   * `opts.advertiseRelayUrls`, which is never re-probed, so a door the Mac has
+   * already seen refuse connections still reaches the phone — and because the
+   * v1 `relayUrl` field prefers wss, a dead front door becomes the PRIMARY.
+   * The console QR path has always probed; this one silently did not.
+   */
+  beginPairingOnDemand(advertiseRelayUrls?: string[]): BeginPairingResult | null {
     const p = this.pending
     if (p) {
       const live = p.client.trustedPeerIdentityRaw() != null || p.client.isConnected
@@ -453,7 +461,10 @@ export class RemoteBridgeRuntime {
       // QR, or a handshake in progress) — refuse rather than tear it down.
       if (live || fresh) return null
     }
-    return this.beginPairing(ON_DEMAND_PAIRING_LABEL, { force: true })
+    return this.beginPairing(ON_DEMAND_PAIRING_LABEL, {
+      force: true,
+      ...(advertiseRelayUrls && advertiseRelayUrls.length > 0 ? { advertiseRelayUrls } : {})
+    })
   }
 
   /** The candidate list a fresh bootstrap advertises: per-call override
