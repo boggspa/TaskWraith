@@ -32,6 +32,8 @@ struct DriverAction: Codable {
 struct DriverRequest: Codable {
     let schemaVersion: Int
     let kind: String
+    let inputDelivery: String
+    let allowForegroundInput: Bool
     let expectedPid: Int32
     let expectedPgid: Int32
     let expectedExecutablePath: String
@@ -77,6 +79,7 @@ struct ActionReceipt: Codable {
 struct DriverReceipt: Codable {
     let schemaVersion: Int
     let kind: String
+    let inputDelivery: String
     let recordedAt: String
     let pid: Int32
     let pgid: Int32
@@ -167,7 +170,7 @@ func validateWindow(_ request: DriverRequest) throws {
     }
 }
 
-func focusExactWindow(_ request: DriverRequest) throws {
+func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
     guard AXIsProcessTrusted() else {
         throw DriverFailure.refused("macOS Accessibility access is unavailable")
     }
@@ -196,19 +199,38 @@ func focusExactWindow(_ request: DriverRequest) throws {
     guard matches.count == 1, let window = matches.first else {
         throw DriverFailure.refused("exact Companion accessibility window identity is unavailable")
     }
-    guard AXUIElementSetAttributeValue(
-        applicationElement,
-        kAXFrontmostAttribute as CFString,
-        kCFBooleanTrue
-    ) == .success,
-        AXUIElementSetAttributeValue(
-            applicationElement,
+    return window
+}
+
+func activateExactWindowForExplicitForeground(
+    _ request: DriverRequest,
+    application: NSRunningApplication,
+    window: AXUIElement
+) throws {
+    guard application.activate(options: [.activateAllWindows]),
+          AXUIElementSetAttributeValue(
+            AXUIElementCreateApplication(pid_t(request.expectedPid)),
+            kAXFrontmostAttribute as CFString,
+            kCFBooleanTrue
+          ) == .success,
+          AXUIElementSetAttributeValue(
+            AXUIElementCreateApplication(pid_t(request.expectedPid)),
             kAXFocusedWindowAttribute as CFString,
             window
-        ) == .success,
-        AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
-    else {
-        throw DriverFailure.refused("could not focus the exact Companion accessibility window")
+          ) == .success,
+          AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
+        throw DriverFailure.refused("explicit foreground input could not activate the exact window")
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline &&
+        (!application.isActive ||
+            NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
+    {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard application.isActive,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
+        throw DriverFailure.refused("explicit foreground input did not reach the exact window")
     }
 }
 
@@ -552,8 +574,19 @@ do {
     let requestURL = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
     let requestData = try Data(contentsOf: requestURL)
     let request = try JSONDecoder().decode(DriverRequest.self, from: requestData)
+    let hasInteractiveActions = request.actions.contains {
+        $0.type == "key" || $0.type == "click"
+    }
     guard request.schemaVersion == 1,
           request.kind == "taskwraith-studio-ui-driver-request",
+          (request.inputDelivery == "background-observation-only" ||
+              request.inputDelivery == "foreground-global-explicit"),
+          ((request.inputDelivery == "background-observation-only" &&
+              !request.allowForegroundInput &&
+              !hasInteractiveActions) ||
+              (request.inputDelivery == "foreground-global-explicit" &&
+                  request.allowForegroundInput &&
+                  hasInteractiveActions)),
           request.expectedPid > 0,
           request.expectedPgid > 0,
           request.windowId > 0,
@@ -586,20 +619,13 @@ do {
     {
         throw DriverFailure.refused("macOS post-event access is unavailable")
     }
-    guard application.activate(options: [.activateAllWindows]) else {
-        throw DriverFailure.refused("could not activate the exact isolated Companion")
-    }
-    try focusExactWindow(request)
-    let activationDeadline = Date().addingTimeInterval(3)
-    while Date() < activationDeadline &&
-        (!application.isActive ||
-            NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
-    {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-    }
-    guard application.isActive,
-          NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
-        throw DriverFailure.refused("exact isolated Companion did not become frontmost")
+    let accessibilityWindow = try exactAccessibilityWindow(request)
+    if request.inputDelivery == "foreground-global-explicit" {
+        try activateExactWindowForExplicitForeground(
+            request,
+            application: application,
+            window: accessibilityWindow
+        )
     }
     try validateWindow(request)
 
@@ -609,9 +635,12 @@ do {
         guard currentPgid == request.expectedPgid else {
             throw DriverFailure.refused("process group changed during the bounded action list")
         }
-        guard application.isActive,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
-            throw DriverFailure.refused("exact isolated Companion lost frontmost status")
+        if request.inputDelivery == "foreground-global-explicit" {
+            guard application.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    request.expectedPid else {
+                throw DriverFailure.refused("explicit foreground target lost active status")
+            }
         }
         try validateWindow(request)
 
@@ -639,6 +668,7 @@ do {
                 )
             )
         } else if action.type == "click",
+                  request.inputDelivery == "foreground-global-explicit",
                   let xFraction = action.xFraction,
                   let yFraction = action.yFraction,
                   xFraction.isFinite,
@@ -737,6 +767,7 @@ do {
     let receipt = DriverReceipt(
         schemaVersion: 1,
         kind: "taskwraith-studio-ui-driver-receipt",
+        inputDelivery: request.inputDelivery,
         recordedAt: formatter.string(from: Date()),
         pid: request.expectedPid,
         pgid: request.expectedPgid,

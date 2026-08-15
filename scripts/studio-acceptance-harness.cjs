@@ -1071,9 +1071,32 @@ function buildStudioUiDriverRequest(options) {
     }
     throw new Error(`unsupported UI action: ${JSON.stringify(action).slice(0, 200)}`)
   })
+  const inputDelivery = options.inputDelivery || 'background-observation-only'
+  const hasInteractiveActions = normalizedActions.some(
+    (action) => action.type === 'key' || action.type === 'click'
+  )
+  if (
+    inputDelivery !== 'background-observation-only' &&
+    inputDelivery !== 'foreground-global-explicit'
+  ) {
+    throw new Error('Studio UI driver refused an unknown input-delivery mode')
+  }
+  if (hasInteractiveActions && inputDelivery !== 'foreground-global-explicit') {
+    throw new Error('Studio UI driver background observation refuses keyboard and pointer actions')
+  }
+  if (
+    inputDelivery === 'foreground-global-explicit' &&
+    (options.allowForegroundInput !== true || !hasInteractiveActions)
+  ) {
+    throw new Error(
+      'Studio UI driver foreground delivery requires an explicit per-call interactive opt-in'
+    )
+  }
   return {
     schemaVersion: 1,
     kind: 'taskwraith-studio-ui-driver-request',
+    inputDelivery,
+    allowForegroundInput: inputDelivery === 'foreground-global-explicit',
     expectedPid: companion.pid,
     expectedPgid: companion.pgid,
     expectedExecutablePath,
@@ -1178,7 +1201,9 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
   const request = buildStudioUiDriverRequest({
     ...target,
     artifactRoot: plan.artifactRoot,
-    actions
+    actions,
+    inputDelivery: adapters.inputDelivery,
+    allowForegroundInput: adapters.allowForegroundInput
   })
   await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
   const requestDirectory = path.join(plan.artifactRoot, 'ui-driver-requests')
@@ -1210,6 +1235,7 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
     !isRecord(receipt) ||
     receipt.schemaVersion !== 1 ||
     receipt.kind !== 'taskwraith-studio-ui-driver-receipt' ||
+    receipt.inputDelivery !== request.inputDelivery ||
     receipt.pid !== request.expectedPid ||
     receipt.pgid !== request.expectedPgid ||
     receipt.windowId !== request.windowId ||
@@ -1225,6 +1251,12 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
     }
     if (action.type === 'key' && observed.key !== action.key) {
       throw new Error('Studio UI driver key receipt does not match the bounded request')
+    }
+    if (
+      action.type === 'click' &&
+      (observed.xFraction !== action.xFraction || observed.yFraction !== action.yFraction)
+    ) {
+      throw new Error('Studio UI driver click receipt does not match the bounded request')
     }
     if (
       action.type === 'screenshot' &&

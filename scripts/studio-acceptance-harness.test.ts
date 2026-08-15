@@ -1211,9 +1211,14 @@ describe('Studio acceptance harness', () => {
       },
       artifactRoot: '/virtual/acceptance/studioDriver01'
     }
+    const foregroundInput = {
+      inputDelivery: 'foreground-global-explicit',
+      allowForegroundInput: true
+    }
     expect(
       buildStudioUiDriverRequest({
         ...target,
+        ...foregroundInput,
         actions: [
           { type: 'key', key: 'tab' },
           { type: 'key', key: 'return' }
@@ -1221,6 +1226,8 @@ describe('Studio acceptance harness', () => {
       })
     ).toMatchObject({
       schemaVersion: 1,
+      inputDelivery: 'foreground-global-explicit',
+      allowForegroundInput: true,
       expectedPid: 7002,
       expectedPgid: 7001,
       windowId: 42,
@@ -1234,6 +1241,7 @@ describe('Studio acceptance harness', () => {
     expect(
       buildStudioUiDriverRequest({
         ...target,
+        ...foregroundInput,
         actions: [...timecodeActions, { type: 'key', key: 'return' }]
       })
     ).toMatchObject({
@@ -1242,22 +1250,59 @@ describe('Studio acceptance harness', () => {
     expect(
       buildStudioUiDriverRequest({
         ...target,
+        ...foregroundInput,
         actions: [{ type: 'key', key: 'shift-left' }]
       })
     ).toMatchObject({
       actions: [{ type: 'key', key: 'shift-left' }]
     })
-    expect(
+    expect(() =>
       buildStudioUiDriverRequest({
         ...target,
         actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
       })
+    ).toThrow(/background observation refuses keyboard and pointer/)
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        inputDelivery: 'foreground-global-explicit',
+        allowForegroundInput: true,
+        actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
+      })
     ).toMatchObject({
+      inputDelivery: 'foreground-global-explicit',
       actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
     })
     expect(() =>
       buildStudioUiDriverRequest({
         ...target,
+        inputDelivery: 'foreground-global-explicit',
+        actions: [{ type: 'click', xFraction: 0.884, yFraction: 0.895 }]
+      })
+    ).toThrow(/explicit per-call interactive opt-in/)
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        inputDelivery: 'foreground-global-explicit',
+        allowForegroundInput: true,
+        actions: [{ type: 'key', key: 'tab' }]
+      })
+    ).toMatchObject({
+      inputDelivery: 'foreground-global-explicit',
+      actions: [{ type: 'key', key: 'tab' }]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        inputDelivery: 'unbounded',
+        actions: [{ type: 'key', key: 'tab' }]
+      })
+    ).toThrow(/unknown input-delivery mode/)
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        inputDelivery: 'foreground-global-explicit',
+        allowForegroundInput: true,
         actions: [{ type: 'click', xFraction: 1.1, yFraction: 0.5 }]
       })
     ).toThrow(/unsupported UI action/)
@@ -1267,6 +1312,8 @@ describe('Studio acceptance harness', () => {
         actions: [{ type: 'audio-probe', durationSeconds: 2 }]
       })
     ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
       actions: [{ type: 'audio-probe', durationSeconds: 2 }]
     })
     expect(() =>
@@ -1299,6 +1346,7 @@ describe('Studio acceptance harness', () => {
     expect(
       buildStudioUiDriverRequest({
         ...dualWindowTarget,
+        ...foregroundInput,
         expectedWindowTitle: 'TaskWraith Studio — Review',
         actions: [{ type: 'key', key: 'a' }]
       })
@@ -1330,6 +1378,28 @@ describe('Studio acceptance harness', () => {
     expect(() =>
       buildStudioUiDriverRequest({ ...target, actions: [{ type: 'key', key: 'delete-all' }] })
     ).toThrow(/unsupported UI action/)
+  })
+
+  it('makes background mode observation-only and gates every interactive path explicitly', async () => {
+    const driverSource = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
+      'utf8'
+    )
+
+    expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toHaveLength(2)
+    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(2)
+    expect(driverSource).toContain('(request.inputDelivery == "background-observation-only" ||')
+    expect(driverSource).toContain('((request.inputDelivery == "background-observation-only" &&')
+    expect(driverSource).toContain('request.allowForegroundInput &&')
+    expect(driverSource).toContain(
+      'if request.inputDelivery == "foreground-global-explicit" {\n' +
+        '        try activateExactWindowForExplicitForeground('
+    )
+    expect(driverSource).toContain(
+      'action.type == "click",\n' +
+        '                  request.inputDelivery == "foreground-global-explicit"'
+    )
+    expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
 
   it('waits for a real nonempty transcript journal operation', async () => {
@@ -1397,6 +1467,7 @@ describe('Studio acceptance harness', () => {
         stdout: `${JSON.stringify({
           schemaVersion: 1,
           kind: 'taskwraith-studio-ui-driver-receipt',
+          inputDelivery: request.inputDelivery,
           pid: request.expectedPid,
           pgid: request.expectedPgid,
           windowId: request.windowId,
@@ -1406,6 +1477,8 @@ describe('Studio acceptance harness', () => {
             key: action.key ?? null,
             screenshotPath: action.path ?? null,
             byteLength: action.path ? 4096 : null,
+            xFraction: action.xFraction ?? null,
+            yFraction: action.yFraction ?? null,
             audioProbe:
               action.type === 'audio-probe'
                 ? {
@@ -1441,10 +1514,15 @@ describe('Studio acceptance harness', () => {
         { type: 'screenshot', name: 'transcript-band' },
         { type: 'audio-probe', durationSeconds: 75 }
       ],
-      { execFile }
+      {
+        execFile,
+        inputDelivery: 'foreground-global-explicit',
+        allowForegroundInput: true
+      }
     )
     expect(receipt).toMatchObject({
       kind: 'taskwraith-studio-ui-driver-receipt',
+      inputDelivery: 'foreground-global-explicit',
       pid: 7002,
       pgid: 7001,
       windowId: 42,
@@ -1464,7 +1542,31 @@ describe('Studio acceptance harness', () => {
         }
       ]
     })
-    expect(execFile).toHaveBeenCalledOnce()
+    const explicitReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'click', xFraction: 0.405, yFraction: 0.86 }],
+      {
+        execFile,
+        inputDelivery: 'foreground-global-explicit',
+        allowForegroundInput: true
+      }
+    )
+    expect(explicitReceipt).toMatchObject({
+      inputDelivery: 'foreground-global-explicit',
+      actions: [{ type: 'click', xFraction: 0.405, yFraction: 0.86 }]
+    })
+    const observationReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'screenshot', name: 'background-observation' }],
+      { execFile }
+    )
+    expect(observationReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [{ type: 'screenshot' }]
+    })
+    expect(execFile).toHaveBeenCalledTimes(3)
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })
@@ -1473,6 +1575,7 @@ describe('Studio acceptance harness', () => {
       fsPromises.readFile(receipt.receiptPath as string, 'utf8').then((raw) => JSON.parse(raw))
     ).resolves.toMatchObject({
       kind: 'taskwraith-studio-ui-driver-receipt',
+      inputDelivery: 'foreground-global-explicit',
       pid: 7002,
       pgid: 7001,
       windowId: 42
