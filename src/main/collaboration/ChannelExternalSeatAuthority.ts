@@ -73,7 +73,7 @@ function blocked(): never {
 }
 
 function sourceKey(sourceShareId: string, sourceCollaboratorId: string): string {
-  return sourceShareId + '\u0000' + sourceCollaboratorId
+  return JSON.stringify([sourceShareId, sourceCollaboratorId])
 }
 
 function isActiveExternalHuman(
@@ -228,8 +228,13 @@ export class ChannelExternalSeatAuthority {
           )
         )
 
-        for (const key of channelSeatSources) {
-          if (key.startsWith(legacyShare.shareId + '\u0000') && !activeParticipantKeys.has(key)) {
+        for (const policy of policyBySource.values()) {
+          const key = sourceKey(policy.sourceShareId, policy.sourceCollaboratorId)
+          if (
+            channelSeatSources.has(key) &&
+            policy.sourceShareId === legacyShare.shareId &&
+            !activeParticipantKeys.has(key)
+          ) {
             blocked()
           }
         }

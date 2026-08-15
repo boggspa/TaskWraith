@@ -405,6 +405,53 @@ describe('ChannelExternalSeatAuthority', () => {
     expect(result).toEqual({ state: 'recovery_blocked' })
   })
 
+  it('keeps NUL-containing legacy source identities structurally distinct', () => {
+    const channel = makeChannel()
+    const member = makeHumanMember({ memberId: 'mapped-member' })
+    const result = harness({
+      channels: [channel],
+      members: [makeHumanMember({ memberId: channel.ownerMemberId }), member],
+      policies: [
+        makePolicy({
+          memberId: member.memberId,
+          sourceShareId: 'a\u0000b',
+          sourceCollaboratorId: 'c'
+        })
+      ],
+      share: makeShare({
+        shareId: 'a',
+        participants: [
+          participant({
+            collaboratorId: 'b\u0000c',
+            displayName: 'Distinct People identity',
+            publicKeyId: 'identity-2'
+          })
+        ]
+      }),
+      channelPresence: () => 'live',
+      legacyPresence: () => 'live'
+    }).resolve(channel.chatId)
+
+    expect(result).toEqual({
+      state: 'ready',
+      isShared: true,
+      seats: [
+        {
+          seatId: 'b\u0000c',
+          displayName: 'Distinct People identity',
+          enabled: true,
+          present: true
+        },
+        {
+          seatId: 'c',
+          displayName: 'Alex',
+          enabled: true,
+          present: true
+        }
+      ]
+    })
+  })
+
   it('blocks duplicate source bindings and seat-id collisions', () => {
     const channel = makeChannel()
     const left = makeHumanMember({ memberId: 'member-left' })
