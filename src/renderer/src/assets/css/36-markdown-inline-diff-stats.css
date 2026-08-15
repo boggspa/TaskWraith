@@ -1,0 +1,14 @@
+/* Semantic diff counts written in Markdown use the same live Appearance
+ * colours as measured tool and workspace summaries. The sign or noun remains
+ * in the text, so colour is never the only addition/deletion distinction. */
+.message-markdown-pro .markdown-inline-diff-stat {
+  font-variant-numeric: tabular-nums;
+}
+
+.message-markdown-pro .markdown-inline-diff-stat.is-addition {
+  color: var(--diff-stat-add-color, #2db777);
+}
+
+.message-markdown-pro .markdown-inline-diff-stat.is-deletion {
+  color: var(--diff-stat-del-color, #ec3d35);
+}

@@ -193,6 +193,16 @@ describe('RevealingMarkdownMessage (smoke)', () => {
     expect(html).toContain('Second para.')
   })
 
+  it('shares semantic inline diff rendering with settled Markdown', () => {
+    const html = renderToStaticMarkup(
+      <RevealingMarkdownMessage content={'Committed **+14 / -5**.'} isLive={false} />
+    )
+    expect(html).toContain('markdown-inline-diff-stat is-addition')
+    expect(html).toContain('markdown-inline-diff-stat is-deletion')
+    expect(html).toContain('+14')
+    expect(html).toContain('-5')
+  })
+
   it('renders the stable prefix immediately even while live', () => {
     // The settled first block is solid regardless of the tail reveal cursor.
     const html = renderToStaticMarkup(

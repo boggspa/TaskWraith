@@ -36,6 +36,7 @@ import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
+import { rehypeInlineMarkdownDiffStats } from '../lib/inlineMarkdownDiffStats'
 import {
   recordStreamMarkdownRenderMetric,
   recordStreamReactCommitMetric
@@ -627,6 +628,7 @@ const MARKDOWN_COMPONENTS: Components = {
 }
 
 const REMARK_PLUGINS = [remarkGfm]
+const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [rehypeInlineMarkdownDiffStats]
 // Raw HTML is opt-in for bounded, non-streaming surfaces such as the
 // Blackboard. Parse it, then immediately apply the conservative GitHub-style
 // sanitiser before React ever sees an element. Transcript messages retain the
@@ -647,7 +649,8 @@ const SAFE_HTML_SCHEMA = {
 }
 const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   rehypeRaw,
-  [rehypeSanitize, SAFE_HTML_SCHEMA]
+  [rehypeSanitize, SAFE_HTML_SCHEMA],
+  rehypeInlineMarkdownDiffStats
 ]
 
 // react-markdown's default urlTransform only allows http(s)/irc(s)/mailto/xmpp
@@ -737,7 +740,7 @@ function StableMarkdownBlockImpl({
     <MarkdownRevealContext.Provider value={revealContext}>
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={allowSafeHtml ? SAFE_HTML_REHYPE_PLUGINS : undefined}
+        rehypePlugins={allowSafeHtml ? SAFE_HTML_REHYPE_PLUGINS : REHYPE_PLUGINS}
         components={MARKDOWN_COMPONENTS}
         urlTransform={markdownUrlTransform}
       >

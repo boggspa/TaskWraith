@@ -246,6 +246,45 @@ describe('MarkdownMessage', () => {
     expect(html).toMatch(/<li>[\s\S]*<ul>[\s\S]*nested/)
   })
 
+  it('annotates semantic diff stats in prose and Markdown emphasis but never code or links', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          '@user reports **+32 / −0**.',
+          '',
+          '> Exactly *32 insertions, 0 deletions*.',
+          '',
+          'Keep `+8 / -3` and [linked +9 / -4](https://example.com) literal.',
+          '',
+          '```diff',
+          '+12 / -6',
+          '```'
+        ].join('\n')}
+      />
+    )
+
+    expect((html.match(/markdown-inline-diff-stat is-addition/g) || []).length).toBe(2)
+    expect((html.match(/markdown-inline-diff-stat is-deletion/g) || []).length).toBe(2)
+    expect(html).toContain('participant-mention--user')
+    expect(html).toContain('<strong><span class="markdown-inline-diff-stat is-addition">+32</span>')
+    expect(html).toContain('<code>+8 / -3</code>')
+    expect(html).toContain('linked +9 / -4')
+    expect(html).toContain('message-code-shell')
+  })
+
+  it('adds semantic classes only after safe HTML has been sanitised', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'<span class="markdown-inline-diff-stat is-addition">plain</span> +7 / -2'}
+        allowSafeHtml
+      />
+    )
+
+    expect(html).not.toContain('class="markdown-inline-diff-stat is-addition">plain</span>')
+    expect((html.match(/markdown-inline-diff-stat is-addition/g) || []).length).toBe(1)
+    expect((html.match(/markdown-inline-diff-stat is-deletion/g) || []).length).toBe(1)
+  })
+
   it('PR3: replaces a resolvable markdown image with its safe data: thumbnail', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage
