@@ -350,6 +350,100 @@ final class StudioAvSyncMeterTests: XCTestCase {
         XCTAssertNil(subject.peakSample, "a sample from before a seek explains nothing after it")
     }
 
+    // MARK: - Exporting the explanation
+
+    /// THE TRI-STATE EXISTS BECAUSE A BOOL LIES HERE. `errorIsExplainedBy-
+    /// MeasurementWindow` returns false both when the window PROVES the error
+    /// is real and when there is no window at all. Those are opposite claims,
+    /// and collapsing them into `false` is how "we never measured" gets read
+    /// downstream as "we measured and it was genuine desync".
+    func testExplanationIsUnknownRatherThanNegativeWithoutAWindow() {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 30_000)
+        XCTAssertEqual(subject.peakSample?.explanation, .unknown)
+
+        var measured = meter()
+        measured.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 200_000
+        )
+        XCTAssertEqual(measured.peakSample?.explanation, .notExplained)
+
+        var stalled = meter()
+        stalled.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+        XCTAssertEqual(stalled.peakSample?.explanation, .explained)
+    }
+
+    /// The export is read by a machine out of an accessibility value, so the
+    /// SIGN has to survive the round trip. An unsigned export would make an
+    /// audio-advanced stall indistinguishable from picture running ahead —
+    /// which is the one distinction the whole sample exists to preserve.
+    func testExportCarriesBothOperandsAndASignedError() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 60_000,
+            audiblePositionTicks: 90_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+
+        let export = try XCTUnwrap(subject.peakSample).diagnosticsExportText
+        XCTAssertTrue(export.contains("pf=60000"), export)
+        XCTAssertTrue(export.contains("ap=90000"), export)
+        XCTAssertTrue(export.contains("err=-30000"), export)
+        XCTAssertTrue(export.contains("errms=-1000.000"), export)
+        XCTAssertTrue(export.contains("win=1000000000"), export)
+        XCTAssertTrue(export.contains("drawn=1"), export)
+        XCTAssertTrue(export.contains("expl=explained"), export)
+    }
+
+    func testExportKeepsAPositiveErrorPositive() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 90_000, audiblePositionTicks: 60_000)
+
+        let export = try XCTUnwrap(subject.peakSample).diagnosticsExportText
+        XCTAssertTrue(export.contains("err=30000"), export)
+        XCTAssertFalse(export.contains("err=-"), export)
+    }
+
+    /// A missing window must serialise as an explicit absence. Emitting `0`
+    /// would parse as "both clocks were read together", which is the strongest
+    /// possible claim and exactly the opposite of what nil means.
+    func testExportMarksAnAbsentWindowAbsentRatherThanZero() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 30_000)
+
+        let export = try XCTUnwrap(subject.peakSample).diagnosticsExportText
+        XCTAssertTrue(export.contains("win=-"), export)
+        XCTAssertFalse(export.contains("win=0"), export)
+        XCTAssertTrue(export.contains("expl=unknown"), export)
+    }
+
+    func testExportDistinguishesADroppedTickFromADrawnOne() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 0)
+        subject.recordDroppedFrame(
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 900_000_000
+        )
+
+        let export = try XCTUnwrap(subject.peakSample).diagnosticsExportText
+        XCTAssertTrue(export.contains("drawn=0"), export)
+    }
+
+    /// A parser that cannot tell which schema it is reading will silently
+    /// mis-key a future format. The version prefix is the fail-closed hook.
+    func testExportIsVersioned() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 30_000)
+        XCTAssertTrue(
+            try XCTUnwrap(subject.peakSample).diagnosticsExportText.hasPrefix("av1 "))
+    }
+
     /// DIRECTION IS PART OF THE CLAIM, NOT DECORATION. The audio clock is the
     /// operand read last, so a slow tick can only ever make sound appear AHEAD
     /// of picture. Picture running ahead of sound is a different fault, and

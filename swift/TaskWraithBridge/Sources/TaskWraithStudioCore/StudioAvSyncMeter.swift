@@ -38,6 +38,23 @@ import Foundation
 /// storage — see the member audit in StudioAvSyncMeterTests — so a ring buffer
 /// of recent samples is not available here, and a leak in a diagnostic would be
 /// a worse defect than the one it is diagnosing.
+/// Whether a retained reading's error is accounted for by the gap between the
+/// two clock reads.
+///
+/// THREE STATES, NOT A BOOL, AND THE THIRD IS THE POINT. A Bool answers false
+/// both when the window PROVES the error is genuine and when no window was
+/// measured at all. Those are opposite claims. Collapsing them is how "we
+/// never measured this" gets read downstream as "we measured, and the desync
+/// was real" — a fabricated finding rather than a missing one.
+public enum StudioAvSyncExplanation: String, Equatable, Sendable {
+    /// The read window is wide enough to account for the error on its own.
+    case explained
+    /// A window was measured and it cannot account for the error.
+    case notExplained = "not_explained"
+    /// No window was measured. Says nothing in either direction.
+    case unknown
+}
+
 public struct StudioAvSyncSample: Equatable, Sendable {
     public let timebase: StudioTimebase
     /// PTS of the frame this reading compared, exactly as recorded.
@@ -83,6 +100,37 @@ public struct StudioAvSyncSample: Equatable, Sendable {
         let quantisation =
             Double(timebase.frameDurationTicks) / Double(timebase.timescale) * 1000.0
         return -errorMilliseconds <= window + quantisation
+    }
+
+    /// Tri-state form of the above. Prefer this wherever the answer is recorded
+    /// or exported, because it distinguishes "measured and genuine" from
+    /// "never measured".
+    public var explanation: StudioAvSyncExplanation {
+        guard measurementWindowNanoseconds != nil else { return .unknown }
+        return errorIsExplainedByMeasurementWindow ? .explained : .notExplained
+    }
+
+    /// One machine-parseable line, for carrying this reading OUT of the process.
+    ///
+    /// WHY A STRING, AND WHY THIS SHAPE. Reading the retained sample from a
+    /// packaged run previously meant attaching a debugger and resolving an
+    /// internal Swift type by name, which failed twice on type lookup before
+    /// reaching the data. Accessibility values already cross the process
+    /// boundary and are already read by the acceptance driver, so the sample
+    /// travels as text on a surface that works.
+    ///
+    /// `av1` is a schema version so a parser can fail closed rather than
+    /// mis-key a later format. An absent window serialises as `-`, never `0`:
+    /// zero would parse as "both clocks were read together", the strongest
+    /// possible claim and the exact opposite of what absence means.
+    public var diagnosticsExportText: String {
+        let window = measurementWindowNanoseconds.map(String.init) ?? "-"
+        let windowMilliseconds =
+            measurementWindowMilliseconds.map { String(format: "%.3f", $0) } ?? "-"
+        return "av1 pf=\(presentedFrameTicks) ap=\(audiblePositionTicks)"
+            + " err=\(errorTicks) errms=\(String(format: "%.3f", errorMilliseconds))"
+            + " win=\(window) winms=\(windowMilliseconds)"
+            + " drawn=\(wasDrawn ? 1 : 0) expl=\(explanation.rawValue)"
     }
 }
 
