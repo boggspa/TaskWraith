@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-14'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-16'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.',
+    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.',
     dismissible: true,
     groups: [
       {
@@ -221,79 +221,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Rnj-1',
             blurb: "Essential AI's 8B agentic coding model with native tools.",
             accentProvider: 'essential'
-          }
-        ]
-      },
-      {
-        // Mistral's OWN seat — the Vibe coding agent, run on your Mistral plan
-        // — NOT the `mistral/*` BYOK rows Pi serves below. Both appear on this
-        // card at once, and that overlap is a deliberate, documented exception
-        // (see the note above `ProviderId` in main/store/types.ts); do not
-        // "fix" it by dropping either one. No per-row `accentProvider` here:
-        // unlike the Pi/Ollama rows, every model below genuinely IS this
-        // provider, so the group's own Mistral hue is the correct accent.
-        provider: 'mistral',
-        label: 'Mistral',
-        models: [
-          {
-            name: 'Devstral Small',
-            blurb: 'A fast, frugal 262K coding model — the better default for lane work.'
-          },
-          {
-            // NO image claim here, deliberately. The model supports images, but
-            // the capability contract is PER-PROVIDER and the seat declares
-            // `imageAttachments: false` (index.ts) because its default model,
-            // devstral-small, cannot — so the UI never offers attachment on a
-            // Mistral seat. Advertising it would promise an affordance that
-            // does not exist. Restore only if the contract becomes per-model.
-            name: 'Mistral Medium 3.5',
-            blurb: 'The 262K flagship, with its full thinking ladder, on your Mistral plan.'
-          }
-        ]
-      },
-      {
-        // One row per Pi UPSTREAM, not per model: a Pi run is always
-        // `provider: 'pi'`, but each wire id names the BYOK upstream serving
-        // it, so every row carries its own `accentProvider` hue class from
-        // PI_UPSTREAM_BRANDS (shared/piBrandTable) — the same spoof the Ollama
-        // rows use. Keep these hue classes in lockstep with that table.
-        provider: 'pi',
-        label: 'Pi',
-        models: [
-          {
-            name: 'DeepSeek V4 Pro + Flash',
-            blurb: '1M-context reasoning coders, billed on your own DeepSeek key.',
-            accentProvider: 'deepseek'
-          },
-          {
-            name: 'Z.ai GLM-5.2',
-            blurb: 'The GLM coding-plan flagship — 1M context with thinking, plus 5.1 and 4.7.',
-            accentProvider: 'zai'
-          },
-          {
-            name: 'Qwen3.7 Max',
-            blurb: "Alibaba's 1M-context flagship, alongside 3.7 Plus and the 3.8 Max preview.",
-            accentProvider: 'qwen'
-          },
-          {
-            name: 'MiniMax M3',
-            blurb: '1M context with image input for long multimodal runs; M2.7 also available.',
-            accentProvider: 'minimax'
-          },
-          {
-            name: 'Devstral 2512',
-            blurb: "Mistral's 262K coding model, alongside Mistral Medium 3.5.",
-            accentProvider: 'mistral'
-          },
-          {
-            name: 'GPT-OSS 120B (Groq)',
-            blurb: 'Open weights on Groq silicon for very fast passes; Qwen3 32B too.',
-            accentProvider: 'groq'
-          },
-          {
-            name: 'GLM-4.7 (Cerebras)',
-            blurb: 'Open weights at Cerebras speed, with GPT-OSS 120B on the same key.',
-            accentProvider: 'cerebras'
           }
         ]
       }

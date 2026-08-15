@@ -416,9 +416,7 @@ describe('buildRemoteFirstLaunchState', () => {
       'grok',
       'cursor',
       'muse',
-      'ollama',
-      'mistral',
-      'pi'
+      'ollama'
     ])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
@@ -449,23 +447,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'essential'
     ])
     expect(newAdditions?.groups?.find((group) => group.provider === 'meta')).toBeUndefined()
-    const mistralGroup = newAdditions?.groups?.find((group) => group.provider === 'mistral')
-    expect(mistralGroup?.models.map((model) => model.name)).toEqual([
-      'Devstral Small',
-      'Mistral Medium 3.5'
-    ])
-    // Pi's per-upstream spoof accents must survive the bridge projection —
-    // without them every Pi row renders in one seat colour on the phone.
-    const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
-    expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
-      'deepseek',
-      'zai',
-      'qwen',
-      'minimax',
-      'mistral',
-      'groq',
-      'cerebras'
-    ])
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'mistral')
+    ).toBeUndefined()
+    expect(newAdditions?.groups?.find((group) => group.provider === 'pi')).toBeUndefined()
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

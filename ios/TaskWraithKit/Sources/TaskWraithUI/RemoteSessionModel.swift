@@ -2225,7 +2225,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-14","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, Mistral Vibe (Devstral Small + Medium 3.5), and the Pi BYOK bench.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-16","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
@@ -2245,19 +2245,6 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"North Mini Code 1.0","blurb":"Cohere's 500K agentic coder with tools and thinking — local, no cloud account.","accentProvider":"cohere"},
               {"name":"GLM-4.7-Flash","blurb":"Z.ai 30B-A3B local reasoner with tools and thinking (~203K).","accentProvider":"zai"},
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
-            ]},
-            {"provider":"mistral","label":"Mistral","models":[
-              {"name":"Devstral Small","blurb":"A fast, frugal 262K coding model — the better default for lane work."},
-              {"name":"Mistral Medium 3.5","blurb":"The 262K flagship, with its full thinking ladder, on your Mistral plan."}
-            ]},
-            {"provider":"pi","label":"Pi","models":[
-              {"name":"DeepSeek V4 Pro + Flash","blurb":"1M-context reasoning coders, billed on your own DeepSeek key.","accentProvider":"deepseek"},
-              {"name":"Z.ai GLM-5.2","blurb":"The GLM coding-plan flagship — 1M context with thinking, plus 5.1 and 4.7.","accentProvider":"zai"},
-              {"name":"Qwen3.7 Max","blurb":"Alibaba's 1M-context flagship, alongside 3.7 Plus and the 3.8 Max preview.","accentProvider":"qwen"},
-              {"name":"MiniMax M3","blurb":"1M context with image input for long multimodal runs; M2.7 also available.","accentProvider":"minimax"},
-              {"name":"Devstral 2512","blurb":"Mistral's 262K coding model, alongside Mistral Medium 3.5.","accentProvider":"mistral"},
-              {"name":"GPT-OSS 120B (Groq)","blurb":"Open weights on Groq silicon for very fast passes; Qwen3 32B too.","accentProvider":"groq"},
-              {"name":"GLM-4.7 (Cerebras)","blurb":"Open weights at Cerebras speed, with GPT-OSS 120B on the same key.","accentProvider":"cerebras"}
             ]}
           ]}
          ],

@@ -153,22 +153,14 @@ describe('notification registry', () => {
       'grok',
       'cursor',
       'muse',
-      'ollama',
-      'mistral',
-      'pi'
+      'ollama'
     ])
-    expect(groups.map((g) => g.label)).toEqual([
-      'AntiGravity',
-      'Grok',
-      'Cursor',
-      'Muse',
-      'Ollama',
-      'Mistral',
-      'Pi'
-    ])
+    expect(groups.map((g) => g.label)).toEqual(['AntiGravity', 'Grok', 'Cursor', 'Muse', 'Ollama'])
     // Dropped from the card once they stopped being the newest story.
     expect(groups.map((g) => g.provider)).not.toContain('claude')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
+    expect(groups.map((g) => g.provider)).not.toContain('mistral')
+    expect(groups.map((g) => g.provider)).not.toContain('pi')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
     expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])
@@ -211,43 +203,6 @@ describe('notification registry', () => {
     // provider surface; do not split either new local model into a new group.
     expect(groups.find((g) => g.provider === 'meta')).toBeUndefined()
 
-    const mistral = groups.find((g) => g.provider === 'mistral')
-    // Mistral's own Vibe seat, distinct from the `mistral/*` BYOK rows Pi
-    // serves. Unlike the Pi/Ollama rows these carry NO accentProvider — every
-    // model here really is this provider, so the group's own hue is correct.
-    expect(mistral?.models.map((m) => m.name)).toEqual(['Devstral Small', 'Mistral Medium 3.5'])
-    for (const model of mistral?.models ?? []) {
-      expect(model.accentProvider).toBeUndefined()
-      // `devstral-2` is the RETIRED ALIAS for mistral-medium-3.5, so a row
-      // named "Devstral 2" would advertise the wrong model entirely.
-      expect(model.name).not.toMatch(/devstral\s*-?\s*2\b/i)
-      // The seat declares `imageAttachments: false` — the contract is
-      // per-PROVIDER and its default model (devstral-small) has no vision — so
-      // the UI never offers attachment here. Promising it on the card would
-      // advertise an affordance that does not exist.
-      expect(model.blurb).not.toMatch(/image/i)
-      // Mistral publishes no numeric budget and has no usage endpoint; our
-      // meter is a local estimate. A card implying a known ceiling would be
-      // false, so no quota/allowance language.
-      expect(model.blurb).not.toMatch(/quota|allowance|unlimited|\bfree\b/i)
-    }
-
-    const pi = groups.find((g) => g.provider === 'pi')
-    // One row per BYOK upstream, each spoofing its own brand hue — the classes
-    // must stay in lockstep with PI_UPSTREAM_BRANDS.
-    expect(pi?.models.map((m) => m.accentProvider)).toEqual([
-      'deepseek',
-      'zai',
-      'qwen',
-      'minimax',
-      'mistral',
-      'groq',
-      'cerebras'
-    ])
-    for (const model of pi?.models ?? []) {
-      expect(model.accentProvider).toBeTruthy()
-    }
-
     for (const group of groups) {
       for (const model of group.models) {
         expect(model.name.length).toBeGreaterThan(0)
@@ -272,6 +227,8 @@ describe('notification registry', () => {
     )
     expect(iosDemoSource).toContain(`"id":"${NEW_ADDITIONS_NOTIFICATION_ID}"`)
     expect(iosDemoSource).toContain(`"body":${JSON.stringify(newAdditions?.body)}`)
+    expect(iosDemoSource).not.toContain('"provider":"mistral","label":"Mistral","models"')
+    expect(iosDemoSource).not.toContain('"provider":"pi","label":"Pi","models"')
     for (const group of newAdditions?.groups ?? []) {
       expect(iosDemoSource).toContain(
         `"provider":${JSON.stringify(group.provider)},"label":${JSON.stringify(group.label)}`
