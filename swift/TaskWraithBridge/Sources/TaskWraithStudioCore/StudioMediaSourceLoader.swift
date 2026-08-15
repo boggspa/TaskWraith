@@ -475,20 +475,6 @@ public enum StudioMediaSourceLoader {
     }
 
     private static func isSyncSample(_ sampleBuffer: CMSampleBuffer) -> Bool {
-        guard
-            let attachments = CMSampleBufferGetSampleAttachmentsArray(
-                sampleBuffer,
-                createIfNecessary: false
-            ) as? [[CFString: Any]],
-            let first = attachments.first
-        else {
-            // No attachments at all conventionally means "not a dependent
-            // sample", i.e. a sync sample.
-            return true
-        }
-        if let dependsOnOthers = first[kCMSampleAttachmentKey_DependsOnOthers] as? Bool {
-            return !dependsOnOthers
-        }
-        return true
+        StudioSyncSample.isSync(sampleBuffer)
     }
 }

@@ -7,24 +7,27 @@ import XCTest
 
 @testable import TaskWraithStudioCore
 
-/// LIVE concurrent pre-bind discriminator.
+/// LIVE concurrent pre-bind + seek-storm discriminator.
 ///
-/// The synchronous offscreen storm in `StudioPixelIntegrityTests` is GREEN:
-/// decoded planes match after far-jump/backward restarts when nothing else is
-/// using the decoder pool. Packaged playback of the 22,800-frame fixture is
-/// already trailed at 00:00:03.137 with `held 0`, so the remaining fork is
-/// concurrent display-link decode/pool reuse versus Metal/presentation.
+/// Forks already closed:
+/// - Synchronous offscreen storm (`StudioPixelIntegrityTests`) is GREEN.
+/// - Isolated 3s display-link PLAY pre-bind on the 22,800-frame fixture is
+///   GREEN. Packaged PLAY at 3.833s is also clean (`held 3`).
+/// - Dual-fence lease `3691a5c55` is visually insufficient: Work1's exact
+///   523-step packaged storm is still catastrophically trailed.
 ///
-/// This drives the REAL presenting path — `CAMetalLayer.nextDrawable()` plus
-/// `StudioViewerRenderer.render(..., presenting: drawable)` on a CADisplayLink
-/// — for just over three seconds. Immediately before each Metal bind it copies
-/// Y/CbCr planes and drops the `CVPixelBuffer`. Those copies are compared to
-/// a fresh sequential decode of the same PTS. In-process WindowServer capture
-/// SIGSEGV'd, so the Metal/presentation arm stays on the packaged screenshot.
+/// Remaining fork, both arms required:
+/// 1. Warm pre-bind delta — full suite is 593/1 after other Studio tests;
+///    isolated PLAY passes. FirstDiff was 108 vs 109 / 77 vs 72 with no
+///    byte-count. Quantify it; do not call a 1-luma-code warm delta the same
+///    thing as packaged trails.
+/// 2. Live backward-seek storm — packaged trails appear AFTER seeks, not
+///    during PLAY. Copy planes before bind AND read back the live render
+///    target against a fresh decode+render of the same PTS.
 ///
-/// RED pre-bind vs fresh decode  => decoder/pool reuse under concurrency.
-/// GREEN pre-bind => Metal sampling / render target / presentation beyond
-///   wrapper lifetime (packaged WindowServer SHA fce8915e…).
+/// RED pre-bind after storm  => decoder/pool/cache under live seek.
+/// GREEN pre-bind + RED presented => Metal sampling / stale texture.
+/// Both GREEN => defect is beyond in-process Metal (WindowServer/layer).
 ///
 /// Does not activate the process. Uses `orderFrontRegardless` so the owner
 /// keeps foreground. Does not retain live pixel buffers.
@@ -166,14 +169,12 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
                 // That SIGSEGV predates the dual-fence lease (same stack at
                 // 03:07, commit a78358d2b). Interpolation keeps a real
                 // mismatch as XCTFail instead of stopping the suite.
-                let live = liveSample.planeBytes
-                let first = zip(live.indices, zip(live, fresh)).first {
-                    $0.1.0 != $0.1.1
-                }
+                let diff = StudioPreBindProbe.diffPlanes(
+                    live: liveSample.planeBytes, fresh: fresh)
                 let pts = CMTimeGetSeconds(liveSample.presentationTime)
                 let surface = liveSample.ioSurfaceID.map(String.init) ?? "nil"
                 mismatches.append(
-                    "PTS \(String(format: "%.3f", pts))s (idx \(targetIndex), iosurface \(surface)): live/fresh plane mismatch (\(live.count) vs \(fresh.count) bytes, firstDiff=\(first?.0 ?? -1) live=\(first?.1.0 ?? 0) fresh=\(first?.1.1 ?? 0))"
+                    "PTS \(String(format: "%.3f", pts))s (idx \(targetIndex), iosurface \(surface)): \(diff.summary) trailClass=\(diff.isTrailClass)"
                 )
             }
         }
@@ -193,6 +194,251 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
                 usedAcceptanceFixture || captured.count > 30,
                 "live pre-bind matches fresh sequential decode on \(usedAcceptanceFixture ? "the 22,800-frame fixture" : "generated VFR")"
             )
+        }
+    }
+
+    /// Second presenting session on the same Metal device. This is the in-file
+    /// analogue of the warm 593/1 (PLAY after other Studio suites). Isolated
+    /// PLAY is GREEN; a trail-class second-pass delta would mean the warm
+    /// failure is the same defect as the packaged trails. A handful of ±1
+    /// codes is recorded, not promoted.
+    func testWarmSecondPassPreBindDeltaIsQuantified() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let (asset, usedAcceptance) = try await makeLiveAsset()
+        let first = try await captureLivePreBind(
+            asset: asset, device: device, playbackSeconds: 1.2)
+        XCTAssertGreaterThan(first.samples.count, 10, "cold pass produced no binds")
+
+        let second = try await captureLivePreBind(
+            asset: asset, device: device, playbackSeconds: 1.2)
+        XCTAssertGreaterThan(second.samples.count, 10, "warm pass produced no binds")
+
+        let referenceMedia = try await StudioMediaSourceLoader.loadBounded(asset: asset)
+        let referenceDecoder = try StudioVideoDecoder(
+            formatDescription: referenceMedia.formatDescription)
+        defer { referenceDecoder.invalidate() }
+
+        var lastDecodedIndex = -1
+        var lastFrame: StudioDecodedFrame?
+        var reports: [String] = []
+        var trailClass = 0
+        for targetSeconds in [0.4, 0.8, 1.1] {
+            let liveSample = try XCTUnwrap(
+                closestSample(in: second.samples, toSeconds: targetSeconds),
+                "no warm sample near \(targetSeconds)s"
+            )
+            let targetIndex = try XCTUnwrap(
+                decodeIndex(in: referenceMedia, matching: liveSample.presentationTime),
+                "no decode index for warm PTS \(liveSample.presentationTime.value)"
+            )
+            for index in (lastDecodedIndex + 1)...targetIndex {
+                lastFrame = try referenceDecoder.decode(
+                    referenceMedia.sampleProvider.sampleBuffer(atDecodeIndex: index)
+                )
+                lastDecodedIndex = index
+            }
+            let fresh = try StudioPreBindProbe.copyTightPlanes(
+                try XCTUnwrap(lastFrame).pixelBuffer
+            )
+            let diff = StudioPreBindProbe.diffPlanes(
+                live: liveSample.planeBytes, fresh: fresh)
+            let pts = CMTimeGetSeconds(liveSample.presentationTime)
+            reports.append(
+                "warm PTS \(String(format: "%.3f", pts))s idx=\(targetIndex) \(diff.summary) trailClass=\(diff.isTrailClass)"
+            )
+            if diff.isTrailClass { trailClass += 1 }
+        }
+        XCTAssertEqual(
+            trailClass, 0,
+            "WARM PRE-BIND is trail-class — decoder/pool reuse under a second session. "
+                + reports.joined(separator: "; ")
+                + ". fixtureAcceptance=\(usedAcceptance)"
+        )
+    }
+
+    /// Packaged trails appear after backward seeks, not after PLAY. Drive the
+    /// real display-link presenting path, step backward one transport second
+    /// at a time, then split pre-bind planes from the live render target.
+    func testLiveBackwardSeekStormSplitsPreBindFromPresented() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let (asset, usedAcceptance) = try await makeLiveAsset()
+        let live = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset, device: device)
+        XCTAssertTrue(
+            live.media.sampleProvider is BoundedStudioSampleProvider,
+            "storm path must use the bounded provider"
+        )
+        let syncCount = (0..<live.media.sampleProvider.sampleCount).reduce(0) {
+            $0 + (live.media.sampleProvider.metadata(atDecodeIndex: $1).isSyncSample ? 1 : 0)
+        }
+        XCTAssertLessThan(
+            syncCount,
+            live.media.sampleProvider.sampleCount,
+            "silent DependsOnOthers must not mark every sample sync; sync=\(syncCount)/\(live.media.sampleProvider.sampleCount)"
+        )
+        if usedAcceptance {
+            XCTAssertGreaterThan(syncCount, 10, "acceptance fixture lost its IDRs")
+            XCTAssertLessThan(
+                syncCount,
+                live.media.sampleProvider.sampleCount / 4,
+                "acceptance fixture still looks all-intra; sync=\(syncCount)/\(live.media.sampleProvider.sampleCount)"
+            )
+        }
+        let renderer = try StudioViewerRenderer(device: device)
+        renderer.attach(
+            source: live.source,
+            assetId: asset.assetId,
+            timebase: live.media.timebase
+        )
+        let clock = StudioPlaybackClock(
+            timebase: live.media.timebase,
+            durationTicks: live.media.durationTicks
+        )
+        let authority = StudioPlaybackAuthority(clock: clock)
+        let width = max(128, Int(live.media.naturalSize.width.rounded()))
+        let height = max(128, Int(live.media.naturalSize.height.rounded()))
+        let host = LivePresentingHost(
+            renderer: renderer,
+            authority: authority,
+            width: width,
+            height: height
+        )
+
+        var samples: [StudioPreBindProbe.Sample] = []
+        StudioPreBindProbe.sink = { buffer, pts in
+            if let sample = try? StudioPreBindProbe.makeSample(
+                from: buffer, presentationTime: pts)
+            {
+                samples.append(sample)
+            }
+        }
+        defer {
+            StudioPreBindProbe.sink = nil
+            host.stop()
+            live.source.invalidate()
+        }
+
+        host.start()
+        host.renderOnce()
+        pumpMainRunLoop(for: 0.35)
+        host.pause()
+
+        let timescale = live.media.timebase.timescale
+        let durationTicks = live.media.durationTicks
+        // Stay inside the asset and leave headroom for the 1s steps. Packaged
+        // storm started near 20s/241s; 20s is enough to miss the first GOP.
+        let startSeconds: Int64 = usedAcceptance ? 20 : 8
+        let stepCount = usedAcceptance ? 36 : 16
+        var ticks = min(durationTicks, startSeconds * timescale)
+        XCTAssertGreaterThan(
+            ticks, Int64(stepCount) * timescale / 2,
+            "fixture too short for a \(stepCount)-step storm"
+        )
+        var seekSteps = 0
+        for _ in 0..<stepCount {
+            host.seek(toTicks: ticks)
+            host.renderOnce()
+            pumpMainRunLoop(for: 0.04)
+            seekSteps += 1
+            ticks -= timescale
+            if ticks < timescale { break }
+        }
+        host.renderOnce()
+        pumpMainRunLoop(for: 0.05)
+
+        let captured = samples
+        XCTAssertGreaterThan(seekSteps, 8, "storm did not apply seeks")
+        XCTAssertGreaterThan(
+            captured.count, 8,
+            "seek storm produced no pre-bind samples; fixtureAcceptance=\(usedAcceptance)"
+        )
+
+        let lastSample = try XCTUnwrap(captured.last, "no post-storm pre-bind sample")
+        let snapshot = authority.transport.clock.snapshot(atHost: CACurrentMediaTime())
+
+        StudioPreBindProbe.sink = nil
+        host.stop()
+
+        let liveTarget = try makeReadbackTexture(device: device, width: width, height: height)
+        let liveOutcome = renderer.render(
+            snapshot: snapshot, to: liveTarget, presenting: nil, overlay: nil)
+        XCTAssertTrue(
+            liveOutcome.didDraw,
+            "live post-storm render did not draw frame \(snapshot.frameIndex)"
+        )
+        let liveBGRA = readBGRA(liveTarget)
+
+        live.source.invalidate()
+
+        let referenceMedia = try await StudioMediaSourceLoader.loadBounded(asset: asset)
+        let referenceDecoder = try StudioVideoDecoder(
+            formatDescription: referenceMedia.formatDescription)
+        defer { referenceDecoder.invalidate() }
+        let targetIndex = try XCTUnwrap(
+            decodeIndex(in: referenceMedia, matching: lastSample.presentationTime),
+            "no decode index for post-storm PTS \(lastSample.presentationTime.value)"
+        )
+        var lastFrame: StudioDecodedFrame?
+        for index in 0...targetIndex {
+            lastFrame = try referenceDecoder.decode(
+                referenceMedia.sampleProvider.sampleBuffer(atDecodeIndex: index)
+            )
+        }
+        let freshPlanes = try StudioPreBindProbe.copyTightPlanes(
+            try XCTUnwrap(lastFrame).pixelBuffer
+        )
+        let preBindDiff = StudioPreBindProbe.diffPlanes(
+            live: lastSample.planeBytes, fresh: freshPlanes)
+
+        let freshSource = try StudioVideoFrameSource(
+            formatDescription: referenceMedia.formatDescription,
+            provider: referenceMedia.sampleProvider,
+            device: device
+        )
+        defer { freshSource.invalidate() }
+        let freshRenderer = try StudioViewerRenderer(device: device)
+        freshRenderer.attach(
+            source: freshSource,
+            assetId: asset.assetId,
+            timebase: referenceMedia.timebase
+        )
+        let freshTarget = try makeReadbackTexture(device: device, width: width, height: height)
+        let freshOutcome = freshRenderer.render(
+            snapshot: snapshot, to: freshTarget, presenting: nil, overlay: nil)
+        XCTAssertTrue(
+            freshOutcome.didDraw,
+            "fresh post-storm render did not draw frame \(snapshot.frameIndex)"
+        )
+        let freshBGRA = readBGRA(freshTarget)
+        let presentedDiff = StudioPreBindProbe.diffPlanes(
+            live: liveBGRA, fresh: freshBGRA)
+
+        let pts = CMTimeGetSeconds(lastSample.presentationTime)
+        let diagnosis =
+            "post-storm PTS \(String(format: "%.3f", pts))s seeks=\(seekSteps) "
+            + "fixtureAcceptance=\(usedAcceptance) sync=\(syncCount)/\(live.media.sampleProvider.sampleCount) "
+            + "held=\(renderer.retainedFrameCount) "
+            + "preBind{\(preBindDiff.summary) trail=\(preBindDiff.isTrailClass)} "
+            + "presented{\(presentedDiff.summary) trail=\(presentedDiff.isTrailClass)}"
+
+        if preBindDiff.isTrailClass {
+            XCTFail(
+                "LIVE SEEK-STORM PRE-BIND is trail-class — decoder/pool/cache under live seek. "
+                    + diagnosis
+            )
+        } else if presentedDiff.isTrailClass {
+            XCTFail(
+                "LIVE SEEK-STORM PRESENTED is trail-class while pre-bind is not — Metal sampling/stale texture. "
+                    + diagnosis
+            )
+        } else {
+            // Both in-process arms clean. Packaged WindowServer trails then live
+            // past the bind and the offscreen present, not in decode.
+            XCTAssertGreaterThan(seekSteps, 8, diagnosis)
         }
     }
 
@@ -286,6 +532,85 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         }) {}
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
+
+    private struct LiveCapture {
+        let samples: [StudioPreBindProbe.Sample]
+    }
+
+    private func captureLivePreBind(
+        asset: StudioMediaAsset,
+        device: MTLDevice,
+        playbackSeconds: TimeInterval
+    ) async throws -> LiveCapture {
+        let live = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset, device: device)
+        let renderer = try StudioViewerRenderer(device: device)
+        renderer.attach(
+            source: live.source,
+            assetId: asset.assetId,
+            timebase: live.media.timebase
+        )
+        let clock = StudioPlaybackClock(
+            timebase: live.media.timebase,
+            durationTicks: live.media.durationTicks
+        )
+        let authority = StudioPlaybackAuthority(clock: clock)
+        let width = max(128, Int(live.media.naturalSize.width.rounded()))
+        let height = max(128, Int(live.media.naturalSize.height.rounded()))
+        let host = LivePresentingHost(
+            renderer: renderer,
+            authority: authority,
+            width: width,
+            height: height
+        )
+        var samples: [StudioPreBindProbe.Sample] = []
+        StudioPreBindProbe.sink = { buffer, pts in
+            if let sample = try? StudioPreBindProbe.makeSample(
+                from: buffer, presentationTime: pts)
+            {
+                samples.append(sample)
+            }
+        }
+        defer {
+            StudioPreBindProbe.sink = nil
+            host.stop()
+            live.source.invalidate()
+        }
+        host.start()
+        host.renderOnce()
+        pumpMainRunLoop(for: playbackSeconds)
+        host.renderOnce()
+        return LiveCapture(samples: samples)
+    }
+
+    private func makeReadbackTexture(
+        device: MTLDevice, width: Int, height: Int
+    ) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: StudioVideoFrameRenderer.pixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw StudioRendererError.encodingFailed
+        }
+        return texture
+    }
+
+    private func readBGRA(_ texture: MTLTexture) -> [UInt8] {
+        let bytesPerRow = texture.width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * texture.height)
+        texture.getBytes(
+            &bytes,
+            bytesPerRow: bytesPerRow,
+            from: MTLRegionMake2D(0, 0, texture.width, texture.height),
+            mipmapLevel: 0
+        )
+        return bytes
+    }
 }
 
 /// Non-activating CAMetalLayer window that ticks the real presenting path.
@@ -326,6 +651,14 @@ private final class LivePresentingHost: NSObject {
         view.frame = window.contentView!.bounds
         self.window = window
         super.init()
+    }
+
+    func pause() {
+        authority.transport.pause(atHost: CACurrentMediaTime())
+    }
+
+    func seek(toTicks ticks: Int64) {
+        authority.transport.seek(toTicks: ticks, atHost: CACurrentMediaTime())
     }
 
     func start() {

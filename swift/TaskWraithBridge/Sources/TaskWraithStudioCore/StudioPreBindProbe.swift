@@ -95,4 +95,63 @@ public enum StudioPreBindProbe {
             height: CVPixelBufferGetHeight(pixelBuffer)
         )
     }
+
+    /// Quantified plane disagreement. The warm pre-bind 593/1 was a firstDiff
+    /// of 108 vs 109 / 77 vs 72 with no byte-count; packaged trails are
+    /// thousands of pixels. Those are different classes and must not share a
+    /// boolean.
+    public struct PlaneDiff: Sendable, Equatable {
+        public let mismatchCount: Int
+        public let maxAbsDelta: Int
+        public let firstIndex: Int
+        public let firstLive: UInt8
+        public let firstFresh: UInt8
+        public let liveCount: Int
+        public let freshCount: Int
+
+        public var isIdentical: Bool {
+            mismatchCount == 0 && liveCount == freshCount
+        }
+
+        /// Accumulated stripe/checker residue, not a handful of ±1 luma codes
+        /// after a warm VideoToolbox session.
+        public var isTrailClass: Bool {
+            liveCount != freshCount || mismatchCount > 64 || maxAbsDelta > 8
+        }
+
+        public var summary: String {
+            "mismatchCount=\(mismatchCount) maxAbs=\(maxAbsDelta) firstDiff=\(firstIndex) live=\(firstLive) fresh=\(firstFresh) (\(liveCount) vs \(freshCount) bytes)"
+        }
+    }
+
+    public static func diffPlanes(live: [UInt8], fresh: [UInt8]) -> PlaneDiff {
+        let n = min(live.count, fresh.count)
+        var mismatchCount = abs(live.count - fresh.count)
+        var maxAbsDelta = live.count == fresh.count ? 0 : 255
+        var firstIndex = -1
+        var firstLive: UInt8 = 0
+        var firstFresh: UInt8 = 0
+        if n > 0 {
+            for i in 0..<n {
+                let delta = abs(Int(live[i]) - Int(fresh[i]))
+                if delta == 0 { continue }
+                mismatchCount += 1
+                if delta > maxAbsDelta { maxAbsDelta = delta }
+                if firstIndex < 0 {
+                    firstIndex = i
+                    firstLive = live[i]
+                    firstFresh = fresh[i]
+                }
+            }
+        }
+        return PlaneDiff(
+            mismatchCount: mismatchCount,
+            maxAbsDelta: maxAbsDelta,
+            firstIndex: firstIndex,
+            firstLive: firstLive,
+            firstFresh: firstFresh,
+            liveCount: live.count,
+            freshCount: fresh.count
+        )
+    }
 }
