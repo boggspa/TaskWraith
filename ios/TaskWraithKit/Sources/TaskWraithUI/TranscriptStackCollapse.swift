@@ -126,6 +126,11 @@ public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     // alone used to be enough to fold a seat's message into "System · N system
     // notices". Anything the Mac classified as assistant is somebody's words.
     guard row.kind != "assistant" else { return false }
+    // Rows the Mac marked as distinguished notices (fleet waves, Boss polls,
+    // hop-limit changes) carry no card field of their own, so nothing else here
+    // can tell them apart from round-close chrome. Presence is the contract:
+    // whatever the Mac decides to stamp keeps its full row on this build.
+    guard (row.noticeKind ?? "").isEmpty else { return false }
     guard let preview = row.preview, !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return false }
     guard !twCarriesUnfoldableCard(row) else { return false }

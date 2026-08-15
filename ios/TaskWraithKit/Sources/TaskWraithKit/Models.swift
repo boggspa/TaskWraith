@@ -1513,6 +1513,13 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let ensembleParticipantId: String?
         public let role: String?
         public let kind: String?
+        /// Stamped by the Mac on a system-carrier row the desktop transcript
+        /// refuses to fold into a "System · N notices" one-liner (fleet waves,
+        /// Boss polls, hop-limit changes). Key on PRESENCE, never on the
+        /// specific string: the Mac decides what qualifies, so a kind it learns
+        /// to stamp later keeps its standing on builds shipped before it.
+        /// Absent from older Macs, whose rows fold exactly as they used to.
+        public let noticeKind: String?
         /// Ensemble participant identity, mirroring the desktop transcript
         /// tag minus the #pN handle: "Provider / Role (Model)". Absent for
         /// solo chats and user rows.

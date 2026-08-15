@@ -309,6 +309,29 @@ struct CollapsedStackFailureAccentTests {
         #expect(twIsPlainSystemNoticeRow(notice))
     }
 
+    /// Fleet waves, Boss polls and hop-limit changes carry no structured card,
+    /// so on the wire they were indistinguishable from round-close chrome and
+    /// folded here while the desktop excluded each by name. The Mac now stamps
+    /// `noticeKind`; the phone keys on PRESENCE, so a kind the Mac learns to
+    /// stamp later keeps its standing on this build too.
+    @Test func distinguishedSystemNoticesNeverFold() throws {
+        for kind in ["fleetWave", "ensembleBossmanPoll", "continuationHopsChange", "somethingNewer"]
+        {
+            let notice = try row(
+                """
+                {"id":"n-\(kind)","role":"system","kind":"system",
+                 "noticeKind":"\(kind)","preview":"Fleet wave 2 dispatched to 4 seats."}
+                """)
+            #expect(!twIsPlainSystemNoticeRow(notice))
+            #expect(!twCanCollapseIntoStack(notice))
+        }
+
+        // An unstamped system row is still ordinary chrome.
+        let chrome = try row(
+            #"{"id":"n0","role":"system","kind":"system","preview":"Round closed."}"#)
+        #expect(twIsPlainSystemNoticeRow(chrome))
+    }
+
     /// An older Mac that populates the guest payload without promoting `kind`
     /// must still keep the reply whole — the card guard is the second line.
     @Test func guestRepliesSurviveAnUnpromotedCarrier() throws {

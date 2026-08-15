@@ -71,6 +71,7 @@ import {
 } from '../shared/ollamaBrandTable'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleSideMessage } from '../shared/ensembleSideMessage'
+import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
 import {
   usageCacheCreationInputTokens,
   usageCacheReadInputTokens,
@@ -1008,6 +1009,13 @@ export interface RemoteThreadRow {
    * duplicate panels. Absent for solo chats and user rows, so remote
    * clients render "Agent"/"You" exactly like a solo desktop chat. */
   speaker?: string
+  /** Set on a SYSTEM-carrier row that the desktop transcript refuses to fold
+   * into a "System · N system notices" one-liner (`plainSystemNoticeMessage`
+   * excludes each of these by name). The value is the desktop metadata kind,
+   * but remote clients should key on PRESENCE, not on the specific string:
+   * that way a kind added here later inherits the standing on phones already
+   * shipped. Absent for ordinary chrome, which folds as before. */
+  noticeKind?: string
   /** Frozen model-aware presentation hue for a row whose runtime provider hides
    * the selected upstream (Pi/Ollama). Optional so older clients keep decoding;
    * ordinary providers receive their own id. */
@@ -1404,6 +1412,10 @@ function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
     ...(row.ensembleRoundId ? { ensembleRoundId: row.ensembleRoundId } : {}),
     role: row.role,
     kind: row.kind,
+    // A few bytes that decide whether the row keeps its standing at all. Drop
+    // it under pressure and the degraded row folds into anonymous chrome —
+    // the same reason `peopleContribution` is preserved here.
+    ...(row.noticeKind ? { noticeKind: row.noticeKind } : {}),
     ...(row.speaker ? { speaker: row.speaker } : {}),
     ...(row.threadMessage ? { threadMessage: row.threadMessage } : {}),
     ...(row.peopleContribution ? { peopleContribution: row.peopleContribution } : {}),
@@ -1659,6 +1671,30 @@ export function classifyRemoteKind(message: ChatMessage): RemoteThreadRowKind {
   if (message.role === 'error') return 'error'
   if (message.role === 'assistant') return 'assistant'
   return 'system'
+}
+
+/**
+ * The system-carrier rows the desktop transcript keeps whole. Each of these is
+ * excluded from `plainSystemNoticeMessage` by name, but none of them carries a
+ * structured card field, so on the wire they were indistinguishable from
+ * round-close chrome and the phone folded them into an anonymous
+ * "System · N system notices".
+ *
+ * Deliberately a stamp rather than a per-kind field: presence is the whole
+ * contract, so a kind added here reaches phones that shipped before it existed.
+ */
+function distinguishedNoticeKind(
+  metadata: Record<string, unknown> | undefined
+): string | undefined {
+  if (!metadata) return undefined
+  if (metadata.kind === 'fleetWave') return 'fleetWave'
+  if (metadata.kind === 'ensembleBossmanPoll') return 'ensembleBossmanPoll'
+  // Structure-checked, exactly like the desktop: a malformed payload keeps the
+  // carrier sentence's plain standing instead of being promoted on a bad field.
+  if (isContinuationHopsChangePayload(metadata.continuationHopsChange)) {
+    return 'continuationHopsChange'
+  }
+  return undefined
 }
 
 /** Auto-detected attention from a message's own metadata. */
@@ -2887,6 +2923,8 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
+  const noticeKind = distinguishedNoticeKind(metadata)
+  if (noticeKind) row.noticeKind = noticeKind
   const ensembleParticipantId = ensembleParticipantIdForMessage(message)
   if (ensembleParticipantId) row.ensembleParticipantId = ensembleParticipantId
   const providerHueClass =

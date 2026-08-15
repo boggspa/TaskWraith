@@ -17,6 +17,7 @@ import {
   buildBridgeRunFailureMetadata,
   buildStaleRunSettlementNotice
 } from './RunFailureNotice'
+import type { ContinuationHopsChangePayload } from '../shared/continuationHopsChange'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -1263,6 +1264,76 @@ describe('RemoteThreadProjection', () => {
         sourceTrust: 'external_untrusted',
         outOfPosition: true
       })
+    })
+  })
+
+  describe('distinguished system notices', () => {
+    it('stamps noticeKind on the system rows the desktop refuses to fold', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'wave',
+          role: 'system',
+          content: 'Fleet wave 2 dispatched to 4 seats.',
+          metadata: { kind: 'fleetWave' }
+        }),
+        msg(2, {
+          id: 'poll',
+          role: 'system',
+          content: 'Boss poll: ship or hold?',
+          metadata: { kind: 'ensembleBossmanPoll' }
+        }),
+        msg(3, {
+          id: 'hops',
+          role: 'system',
+          content: 'Continuation hop limit raised.',
+          metadata: {
+            continuationHopsChange: {
+              before: 6,
+              after: 12,
+              actor: 'boss',
+              changedAt: '2026-08-15T12:00:00.000Z'
+            }
+          }
+        }),
+        msg(4, {
+          id: 'ordinary',
+          role: 'system',
+          content: 'Round closed.',
+          metadata: {}
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBe('fleetWave')
+      expect(snap.rows[1].noticeKind).toBe('ensembleBossmanPoll')
+      expect(snap.rows[2].noticeKind).toBe('continuationHopsChange')
+      // Ordinary chrome keeps folding — the stamp marks the exceptions only.
+      expect(snap.rows[3].noticeKind).toBeUndefined()
+    })
+
+    it('rejects a malformed hop-change payload rather than stamping it', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bad-hops',
+          role: 'system',
+          content: 'Continuation hop limit changed.',
+          // Desktop `isContinuationHopsChangePayload` demands two integers ≥ 1,
+          // a known actor and a parseable timestamp. A carrier sentence with a
+          // junk payload keeps its plain fallback rather than being promoted.
+          // Cast because that is the whole point: what lands on disk is data,
+          // not trusted TypeScript, and the validator exists for records tsc
+          // would never have allowed to be written.
+          metadata: {
+            continuationHopsChange: {
+              before: 0,
+              after: 'lots',
+              actor: 'nobody',
+              changedAt: 'soon'
+            } as unknown as ContinuationHopsChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBeUndefined()
     })
   })
 
