@@ -211,6 +211,11 @@ export function DailyActivityHeatmap({
         <div
           className="daily-heatmap-grid"
           style={{
+            // Same three properties the 90-day grid sets inline, for the same
+            // reason: the real column count varies (52–54 weeks depending on
+            // where the window starts), and the declared ratio is what stops
+            // the `1fr` rows collapsing.
+            aspectRatio: `${grid.columns} / ${DAILY_HEATMAP_ROWS}`,
             gridTemplateColumns: `repeat(${grid.columns}, 1fr)`,
             gridTemplateRows: `repeat(${DAILY_HEATMAP_ROWS}, 1fr)`
           }}

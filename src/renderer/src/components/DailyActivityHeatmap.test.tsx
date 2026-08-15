@@ -81,9 +81,29 @@ describe('daily heatmap CSS contract', () => {
     return css.slice(index, css.indexOf('}', index))
   }
 
-  it('scales the gutter instead of using the 30-column flat 2px gap', () => {
-    // A flat 2px gap at 53 columns swallows the cell.
-    expect(block('.daily-heatmap-grid')).toMatch(/gap:\s*clamp\(/)
+  it('uses ONE gutter value for the tiles and the month axis', () => {
+    // Two grids over the same tracks. A mismatch walks the labels off their
+    // columns by `column * gap / columns` — invisible on the left, a whole
+    // tile wide by December.
+    expect(block('.daily-heatmap')).toMatch(/--daily-heatmap-gap:/)
+    expect(block('.daily-heatmap-grid')).toMatch(/gap:\s*var\(--daily-heatmap-gap\)/)
+    expect(block('.daily-heatmap-month-axis')).toMatch(/gap:\s*var\(--daily-heatmap-gap\)/)
+  })
+
+  it('keeps the gutter a WHOLE number of pixels', () => {
+    // The gutter was `clamp(1px, 0.18cqw, 3px)`, which resolved to ~2.5px, and
+    // a fractional gap rounds to 2px on some columns and 3px on others — the
+    // grid reads as unevenly paced. Integers keep the rhythm regular.
+    const declared = /--daily-heatmap-gap:\s*([^;]+);/.exec(block('.daily-heatmap'))?.[1]?.trim()
+    expect(declared).toMatch(/^\d+px$/)
+  })
+
+  it('follows the 90-day grid: auto rows anchored by a declared ratio', () => {
+    // Both are load-bearing on the sibling and for the same reasons — square
+    // cells within the row height, and `1fr` rows that do not collapse.
+    const grid = block('.daily-heatmap-grid')
+    expect(grid).toMatch(/grid-auto-rows:\s*1fr/)
+    expect(grid).toMatch(/aspect-ratio:/)
   })
 
   it('scrolls wide content inside the wrapper, not the page', () => {

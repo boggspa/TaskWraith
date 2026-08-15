@@ -8560,6 +8560,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * this cell size a fixed gap swallows the cell. `clamp()` keeps the gutter
  * proportional and never lets it close up entirely. */
 .daily-heatmap {
+  /* One gutter value for the tile grid AND the month axis beneath it. They are
+   * two separate grids over the same tracks, so a mismatch walks the labels off
+   * their columns by `column * gap / columns` — invisible at the left edge and
+   * a whole tile wide by December. */
+  --daily-heatmap-gap: 4px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -8632,13 +8637,25 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .daily-heatmap-grid {
   display: grid;
-  gap: clamp(1px, 0.18cqw, 3px);
+  /* Flat integer gap, exactly as `.usage-heatmap-grid` does it. This was a
+   * `clamp(1px, 0.18cqw, 3px)`, which was wrong twice over: no ancestor is a
+   * query container, so `cqw` silently resolved against the VIEWPORT rather
+   * than the heatmap; and it landed on a fractional ~2.5px, so the browser
+   * rounded some gutters to 2px and others to 3px and the rhythm read as
+   * unevenly paced.
+   *
+   * 4px rather than the 90-day grid's 2px because the tiles here are roughly
+   * twice the size (one per DAY, not per 2-hour bucket) — it is the same
+   * gap-to-tile proportion, not a different look. */
+  gap: var(--daily-heatmap-gap);
+  /* Auto-rows so cells stay square within the row's height, and the declared
+   * aspect-ratio anchors the row math so `1fr` rows don't collapse — both
+   * lifted from the 90-day grid. The component overrides the ratio inline with
+   * the real column count; this is the fallback. */
+  grid-auto-rows: 1fr;
+  aspect-ratio: 53 / 7;
   width: 100%;
   min-width: 320px;
-  /* Square-ish cells: 7 rows against `columns` columns. Cells place themselves
-   * explicitly by gridRow/gridColumn, so flow direction cannot scramble the
-   * calendar the way DOM order alone would. */
-  aspect-ratio: 53 / 7;
 }
 .daily-heatmap-cell {
   border-radius: 2px;
@@ -8656,6 +8673,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .daily-heatmap-month-axis {
   display: grid;
+  /* Same gutter as the tiles: these tracks must line up with theirs. */
+  gap: var(--daily-heatmap-gap);
   width: 100%;
   min-width: 320px;
   font-size: 9px;
