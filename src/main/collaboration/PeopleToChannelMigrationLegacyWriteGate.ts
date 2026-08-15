@@ -1,7 +1,7 @@
 /**
- * In-process write latch used by terminal P4 migration. The coordinator closes
- * it before it captures a final People generation; startup must close a fresh
- * instance again whenever durable recovery is `finalizing` or `committed`.
+ * In-process write latch used by terminal migration. New P5 captures close it
+ * with an empty scope. A nonempty scope is accepted only when the coordinator
+ * recovers exact compatibility ids from a sealed P4 finalization execution.
  */
 export class PeopleToChannelMigrationLegacyWriteGateError extends Error {
   readonly code = 'recovery_blocked'
@@ -20,8 +20,13 @@ export interface PeopleToChannelMigrationLegacyWriteGateLike {
 
 export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelMigrationLegacyWriteGateLike {
   private quiesced = false
-  private retainedWorkspaceBootstrapShareIds = new Set<string>()
+  private sealedWorkspaceBootstrapCompatibilityShareIds = new Set<string>()
 
+  /**
+   * The legacy property name is persisted in P4 schema v1. It does not grant
+   * authority to create a producer; callers may supply nonempty ids only while
+   * replaying the sealed compatibility scope.
+   */
   quiesce(input: { retainedWorkspaceBootstrapShareIds?: readonly string[] } = {}): void {
     const retained = [...(input.retainedWorkspaceBootstrapShareIds ?? [])]
     if (
@@ -34,19 +39,21 @@ export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelM
       ) ||
       new Set(retained).size !== retained.length
     ) {
-      throw new Error('Retained workspace-bootstrap share ids are invalid.')
+      throw new Error('Sealed workspace-bootstrap compatibility share ids are invalid.')
     }
     const next = new Set(retained)
     if (
       this.quiesced &&
-      (next.size !== this.retainedWorkspaceBootstrapShareIds.size ||
-        [...next].some((shareId) => !this.retainedWorkspaceBootstrapShareIds.has(shareId)))
+      (next.size !== this.sealedWorkspaceBootstrapCompatibilityShareIds.size ||
+        [...next].some(
+          (shareId) => !this.sealedWorkspaceBootstrapCompatibilityShareIds.has(shareId)
+        ))
     ) {
       throw new PeopleToChannelMigrationLegacyWriteGateError(
         'People migration write scope cannot change after quiescence.'
       )
     }
-    this.retainedWorkspaceBootstrapShareIds = next
+    this.sealedWorkspaceBootstrapCompatibilityShareIds = next
     this.quiesced = true
   }
 
@@ -55,7 +62,10 @@ export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelM
   }
 
   assertOrdinaryWriteAllowed(shareId?: string): void {
-    if (!this.quiesced || (shareId && this.retainedWorkspaceBootstrapShareIds.has(shareId))) {
+    if (
+      !this.quiesced ||
+      (shareId && this.sealedWorkspaceBootstrapCompatibilityShareIds.has(shareId))
+    ) {
       return
     }
     throw new PeopleToChannelMigrationLegacyWriteGateError()
@@ -67,9 +77,9 @@ export class PeopleToChannelMigrationLegacyWriteGate implements PeopleToChannelM
         'Migration retirement requires a quiesced legacy write gate.'
       )
     }
-    if (this.retainedWorkspaceBootstrapShareIds.has(shareId)) {
+    if (this.sealedWorkspaceBootstrapCompatibilityShareIds.has(shareId)) {
       throw new PeopleToChannelMigrationLegacyWriteGateError(
-        'The retained workspace-bootstrap People share cannot be retired by P4.'
+        'The sealed P4 workspace-bootstrap compatibility share cannot be retired.'
       )
     }
   }

@@ -1,13 +1,25 @@
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
 
 export const PEOPLE_TO_CHANNEL_FINALIZATION_SCOPE_VERSION = 1
+export const CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT_VERSION = 1
+
+/**
+ * P5 product contract. Workspace bootstrap creates no collaboration object:
+ * Channels arise only through an explicit Channel action or migration.
+ */
+export const CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT = Object.freeze({
+  schemaVersion: CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT_VERSION,
+  authority: 'channels',
+  channelCreation: 'explicit-action-or-migration',
+  automaticPeopleShare: 'none',
+  legacyRetention: 'sealed-p4-compatibility-only'
+} as const)
 
 /**
  * The terminal scope is captured from the one quiesced People generation and
- * encrypted with the finalization execution. `retainedWorkspaceBootstrapShareIds`
- * is deliberately an explicit, P5-owned exception: every other legacy share
- * is retired, including disabled records whose old invite/session material
- * must no longer survive the cutover.
+ * encrypted with the finalization execution. New P5 captures always retain
+ * nothing. The retained-id field remains in schema v1 solely so an exact
+ * nonempty list already sealed by P4 can be recovered as compatibility state.
  */
 export interface PeopleToChannelMigrationFinalizationScope {
   schemaVersion: typeof PEOPLE_TO_CHANNEL_FINALIZATION_SCOPE_VERSION
@@ -87,41 +99,58 @@ export function validatePeopleToChannelMigrationFinalizationScope(
   }
 }
 
+export type PeopleToChannelWorkspaceBootstrapCompatibility =
+  | { kind: 'none'; shareIds: [] }
+  | { kind: 'sealed-p4-compatibility'; shareIds: string[] }
+
 /**
- * Partitions the frozen source records once. A caller may name only shares
- * whose P5 workspace-bootstrap authority it owns; the result makes both the
- * exception and the retirement targets immutable before recovery is fenced.
+ * Classifies only a validated encrypted checkpoint. A nonempty list is exact
+ * compatibility state from P4; this projection cannot establish a producer.
+ */
+export function classifyPeopleToChannelWorkspaceBootstrapCompatibility(
+  value: unknown
+): PeopleToChannelWorkspaceBootstrapCompatibility {
+  const scope = validatePeopleToChannelMigrationFinalizationScope(value)
+  return scope.retainedWorkspaceBootstrapShareIds.length === 0
+    ? { kind: 'none', shareIds: [] }
+    : {
+        kind: 'sealed-p4-compatibility',
+        shareIds: [...scope.retainedWorkspaceBootstrapShareIds]
+      }
+}
+
+/**
+ * Partitions a new frozen source generation under the P5 product contract.
+ * Every People share is retired; only validation of an already-sealed schema
+ * may produce nonempty compatibility state.
  */
 export function derivePeopleToChannelMigrationFinalizationScope(input: {
   shares: readonly Pick<HumanCollaborationShare, 'shareId'>[]
-  retainedWorkspaceBootstrapShareIds?: readonly string[]
 }): PeopleToChannelMigrationFinalizationScope {
-  if (!input || !Array.isArray(input.shares)) {
+  const raw = objectRecord(input)
+  if (!raw || !Object.prototype.hasOwnProperty.call(raw, 'shares') || !Array.isArray(raw.shares)) {
     blocked('People migration finalization scope is invalid')
   }
-  const sourceShareIds = input.shares.map((share) => share?.shareId)
-  if (sourceShareIds.some((id) => !shareId(id))) {
-    blocked('People migration finalization source share id is invalid')
+  if (Object.keys(raw).length !== 1) {
+    blocked(
+      'People migration finalization capture cannot declare a workspace-bootstrap People producer'
+    )
   }
-  const knownShareIds = new Set(sourceShareIds)
-  if (knownShareIds.size !== sourceShareIds.length) {
+  const sourceShareIds: string[] = []
+  for (const share of raw.shares) {
+    const id = (share as Pick<HumanCollaborationShare, 'shareId'> | undefined)?.shareId
+    if (!shareId(id)) {
+      blocked('People migration finalization source share id is invalid')
+    }
+    sourceShareIds.push(id)
+  }
+  if (new Set(sourceShareIds).size !== sourceShareIds.length) {
     blocked('People migration finalization source share ids are duplicated')
-  }
-  const retained = [...(input.retainedWorkspaceBootstrapShareIds ?? [])]
-  if (retained.some((id) => !shareId(id))) {
-    blocked('People migration finalization retained share id is invalid')
-  }
-  const retainedIds = new Set(retained)
-  if (retainedIds.size !== retained.length) {
-    blocked('People migration finalization retained share ids are duplicated')
-  }
-  if ([...retainedIds].some((id) => !knownShareIds.has(id))) {
-    blocked('People migration finalization retained share is absent from the frozen source')
   }
   return validatePeopleToChannelMigrationFinalizationScope({
     schemaVersion: PEOPLE_TO_CHANNEL_FINALIZATION_SCOPE_VERSION,
-    retireShareIds: sourceShareIds.filter((id) => !retainedIds.has(id)).sort(compareText),
-    retainedWorkspaceBootstrapShareIds: retained.sort(compareText)
+    retireShareIds: sourceShareIds.sort(compareText),
+    retainedWorkspaceBootstrapShareIds: []
   })
 }
 

@@ -27,7 +27,7 @@ describe('PeopleToChannelMigrationLegacyWriteGate', () => {
     }
   })
 
-  it('keeps the exact P5 workspace-bootstrap exception writable without reopening ordinary People', () => {
+  it('keeps exact sealed P4 compatibility writable without reopening ordinary People', () => {
     const gate = new PeopleToChannelMigrationLegacyWriteGate()
     gate.quiesce({ retainedWorkspaceBootstrapShareIds: ['p5_workspace'] })
 
@@ -39,7 +39,9 @@ describe('PeopleToChannelMigrationLegacyWriteGate', () => {
       PeopleToChannelMigrationLegacyWriteGateError
     )
     expect(() => gate.assertRetirementAllowed('ordinary_share')).not.toThrow()
-    expect(() => gate.assertRetirementAllowed('p5_workspace')).toThrow(/cannot be retired/)
+    expect(() => gate.assertRetirementAllowed('p5_workspace')).toThrow(
+      /sealed P4 workspace-bootstrap compatibility share cannot be retired/
+    )
     expect(() => gate.quiesce({ retainedWorkspaceBootstrapShareIds: [] })).toThrow(
       /scope cannot change/
     )

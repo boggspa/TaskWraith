@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,7 +23,11 @@ import {
   type PeopleToChannelMigrationFinalizationProductionRunnerOptions,
   type PeopleToChannelMigrationFinalizationProductionRunnerStage
 } from './PeopleToChannelMigrationFinalizationProductionRunner'
-import { peopleToChannelMigrationFinalizationExecutionPath } from './PeopleToChannelMigrationFinalizationExecutionStore'
+import {
+  PeopleToChannelMigrationFinalizationExecutionStore,
+  createPeopleToChannelMigrationFinalizationExecution,
+  peopleToChannelMigrationFinalizationExecutionPath
+} from './PeopleToChannelMigrationFinalizationExecutionStore'
 import {
   PeopleToChannelMigrationRecoveryStore,
   peopleToChannelMigrationRecoveryPaths
@@ -217,7 +221,12 @@ function runner(
     listWorkflowChatIds: () => [],
     now: () => ++built.now,
     ...(options.retainedWorkspaceBootstrapShareIds
-      ? { retainedWorkspaceBootstrapShareIds: options.retainedWorkspaceBootstrapShareIds }
+      ? {
+          // Bypass the empty-tuple type deliberately to exercise the runtime
+          // rejection and the rule that sealed recovery ignores this shim.
+          retainedWorkspaceBootstrapShareIds:
+            options.retainedWorkspaceBootstrapShareIds as () => readonly []
+        }
       : {}),
     ...(options.crashAt
       ? {
@@ -362,26 +371,70 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
     15_000
   )
 
-  it('preserves only the explicit P5 workspace-bootstrap exception across terminal recovery', () => {
+  it('rejects a fresh workspace-bootstrap People producer before migration writes', () => {
     const built = fixture({ includeP5: true })
-    const completed = runner(built, {
-      retainedWorkspaceBootstrapShareIds: () => ['p5_workspace_bootstrap']
-    }).runToCompletion()
+    expect(() =>
+      runner(built, {
+        retainedWorkspaceBootstrapShareIds: () => ['p5_workspace_bootstrap']
+      }).runToCompletion()
+    ).toThrow(/Channel-native workspace-bootstrap contract forbids a People producer/)
     const durable = durableState(built)
 
+    expect(durable.people.listShares().map((share) => share.shareId)).toEqual([
+      'share_one',
+      'p5_workspace_bootstrap'
+    ])
+    expect(durable.channels.listChannels()).toEqual([])
+    expect(durable.recovery.load()).toBeNull()
+    expect(existsSync(peopleToChannelMigrationFinalizationExecutionPath(built.userDataPath))).toBe(
+      false
+    )
+  })
+
+  it('resumes exact nonempty compatibility only after an older P4 checkpoint is sealed', () => {
+    const built = fixture({ includeP5: true })
+    expect(() =>
+      runner(built, { crashAt: 'finalization_execution_durable' }).runToCompletion()
+    ).toThrow('injected crash at finalization_execution_durable')
+
+    const storage = safeStorage()
+    const executionStore = new PeopleToChannelMigrationFinalizationExecutionStore({
+      userDataPath: built.userDataPath,
+      safeStorage: storage
+    })
+    const captured = executionStore.load()!
+    const { finalizationDigest: _discardedDigest, ...withoutDigest } = captured
+    const compatible = createPeopleToChannelMigrationFinalizationExecution({
+      ...withoutDigest,
+      scope: {
+        schemaVersion: 1,
+        retireShareIds: captured.scope.retireShareIds.filter(
+          (shareId) => shareId !== 'p5_workspace_bootstrap'
+        ),
+        retainedWorkspaceBootstrapShareIds: ['p5_workspace_bootstrap']
+      }
+    })
+    executionStore.prepareBeforeRecoveryFence(compatible)
+    new PeopleToChannelMigrationRecoveryStore({
+      userDataPath: built.userDataPath,
+      now: () => ++built.now
+    }).beginFinalization({
+      planId: compatible.initialPlanId,
+      finalizationDigest: compatible.finalizationDigest
+    })
+
+    const completed = runner(built, {
+      retainedWorkspaceBootstrapShareIds: () => ['must_not_override_sealed_scope']
+    }).runToCompletion()
     expect(completed.finalization).toMatchObject({
       retireShareIds: ['share_one'],
       retainedWorkspaceBootstrapShareIds: ['p5_workspace_bootstrap']
     })
-    expect(durable.people.listShares().map((share) => share.shareId)).toEqual([
-      'p5_workspace_bootstrap'
-    ])
-    expect(() =>
-      completed.legacyWriteGate.assertOrdinaryWriteAllowed('p5_workspace_bootstrap')
-    ).not.toThrow()
-    expect(() => completed.legacyWriteGate.assertOrdinaryWriteAllowed('share_one')).toThrow(
-      /quiesced/
-    )
+    expect(
+      durableState(built)
+        .people.listShares()
+        .map((share) => share.shareId)
+    ).toEqual(['p5_workspace_bootstrap'])
   })
 
   it('fails before any People retirement when terminal encryption is unavailable', () => {

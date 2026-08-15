@@ -73,10 +73,11 @@ export interface PeopleToChannelMigrationFinalizationProductionRunnerOptions {
   listChats: () => readonly PeopleToChannelInventoryChat[]
   listWorkflowChatIds?: () => readonly string[]
   /**
-   * P5 owns this explicit exception. Returning no ids asserts that this profile
-   * has no workspace-bootstrap People edge to retain.
+   * Temporary P5-C composition shim. A new capture may declare only the exact
+   * empty tuple; nonempty compatibility ids come exclusively from a sealed P4
+   * execution and this callback is never consulted during sealed recovery.
    */
-  retainedWorkspaceBootstrapShareIds?: () => readonly string[]
+  retainedWorkspaceBootstrapShareIds?: () => readonly []
   now?: () => number
   /** Test/observability seam invoked only after the named durable transition. */
   afterStage?: (stage: PeopleToChannelMigrationFinalizationProductionRunnerStage) => void
@@ -228,6 +229,14 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
     const committed = this.recoverCommitted()
     if (committed) return committed
 
+    const recoveryAtEntry = new PeopleToChannelMigrationRecoveryStore({
+      userDataPath: this.options.userDataPath,
+      now: this.now
+    }).load()
+    if (recoveryAtEntry?.phase !== 'finalizing') {
+      this.assertNoWorkspaceBootstrapPeopleProducer()
+    }
+
     const additive = this.additiveRunner.runToSoak()
     const runtime = this.runtime()
     const initial = runtime.initialExecution.load()
@@ -245,8 +254,7 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
     const finalization = coordinator.run(
       recovery.phase === 'cutover_applied'
         ? {
-            retainedWorkspaceBootstrapShareIds:
-              this.options.retainedWorkspaceBootstrapShareIds?.() ?? [],
+            retainedWorkspaceBootstrapShareIds: [],
             capture: () => this.capture({ runtime, initial })
           }
         : {}
@@ -279,6 +287,18 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       terminalPlanId: sealed.delta.base.planId,
       finalization: clone(finalization),
       legacyWriteGate: this.legacyWriteGate
+    }
+  }
+
+  private assertNoWorkspaceBootstrapPeopleProducer(): void {
+    let declared: readonly unknown[]
+    try {
+      declared = this.options.retainedWorkspaceBootstrapShareIds?.() ?? []
+    } catch {
+      blocked('Channel-native workspace-bootstrap declaration could not be read')
+    }
+    if (!Array.isArray(declared) || declared.length !== 0) {
+      blocked('Channel-native workspace-bootstrap contract forbids a People producer')
     }
   }
 
@@ -459,9 +479,7 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       channelStateDigest: recovery.channelStateDigest,
       cutoverStateDigest: recovery.cutoverStateDigest,
       scope: derivePeopleToChannelMigrationFinalizationScope({
-        shares: sourceRead.snapshot.shares,
-        retainedWorkspaceBootstrapShareIds:
-          this.options.retainedWorkspaceBootstrapShareIds?.() ?? []
+        shares: sourceRead.snapshot.shares
       }),
       delta: delta.execution
     })

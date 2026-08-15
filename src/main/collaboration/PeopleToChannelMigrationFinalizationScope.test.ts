@@ -1,51 +1,61 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT,
   PeopleToChannelMigrationFinalizationScopeError,
+  classifyPeopleToChannelWorkspaceBootstrapCompatibility,
   derivePeopleToChannelMigrationFinalizationScope,
   validatePeopleToChannelMigrationFinalizationScope
 } from './PeopleToChannelMigrationFinalizationScope'
 
 describe('derivePeopleToChannelMigrationFinalizationScope', () => {
-  it('freezes every ordinary People share for retirement while retaining only the P5 exception', () => {
-    expect(
-      derivePeopleToChannelMigrationFinalizationScope({
-        shares: [{ shareId: 'disabled_legacy' }, { shareId: 'p5_bootstrap' }, { shareId: 'live' }],
-        retainedWorkspaceBootstrapShareIds: ['p5_bootstrap']
-      })
-    ).toEqual({
+  it('records the Channel-native workspace-bootstrap product contract', () => {
+    expect(CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT).toEqual({
       schemaVersion: 1,
-      retireShareIds: ['disabled_legacy', 'live'],
-      retainedWorkspaceBootstrapShareIds: ['p5_bootstrap']
+      authority: 'channels',
+      channelCreation: 'explicit-action-or-migration',
+      automaticPeopleShare: 'none',
+      legacyRetention: 'sealed-p4-compatibility-only'
     })
+    expect(Object.isFrozen(CHANNELS_WORKSPACE_BOOTSTRAP_CONTRACT)).toBe(true)
   })
 
-  it('allows an empty P5 exception without leaving a source share unclassified', () => {
+  it('freezes every People share for retirement without creating a new retention exception', () => {
     expect(
       derivePeopleToChannelMigrationFinalizationScope({
-        shares: [{ shareId: 'one' }, { shareId: 'two' }]
+        shares: [
+          { shareId: 'disabled_legacy' },
+          { shareId: 'legacy_bootstrap' },
+          { shareId: 'live' }
+        ]
       })
     ).toEqual({
       schemaVersion: 1,
-      retireShareIds: ['one', 'two'],
+      retireShareIds: ['disabled_legacy', 'legacy_bootstrap', 'live'],
       retainedWorkspaceBootstrapShareIds: []
     })
   })
 
-  it('rejects duplicate, unknown, and malformed retention declarations', () => {
+  it('does not leave an empty source generation unclassified', () => {
+    expect(
+      derivePeopleToChannelMigrationFinalizationScope({
+        shares: []
+      })
+    ).toEqual({
+      schemaVersion: 1,
+      retireShareIds: [],
+      retainedWorkspaceBootstrapShareIds: []
+    })
+  })
+
+  it('rejects fresh retention declarations and malformed source ids', () => {
     const shares = [{ shareId: 'known' }]
     expect(() =>
       derivePeopleToChannelMigrationFinalizationScope({
         shares,
-        retainedWorkspaceBootstrapShareIds: ['known', 'known']
-      })
-    ).toThrow(PeopleToChannelMigrationFinalizationScopeError)
-    expect(() =>
-      derivePeopleToChannelMigrationFinalizationScope({
-        shares,
-        retainedWorkspaceBootstrapShareIds: ['absent']
-      })
-    ).toThrow(/absent from the frozen source/)
+        retainedWorkspaceBootstrapShareIds: ['known']
+      } as unknown as Parameters<typeof derivePeopleToChannelMigrationFinalizationScope>[0])
+    ).toThrow(/cannot declare a workspace-bootstrap People producer/)
     expect(() =>
       derivePeopleToChannelMigrationFinalizationScope({
         shares: [{ shareId: ' bad' }]
@@ -79,5 +89,32 @@ describe('derivePeopleToChannelMigrationFinalizationScope', () => {
         retainedWorkspaceBootstrapShareIds: ['same']
       })
     ).toThrow(/overlaps/)
+  })
+
+  it('classifies nonempty ids only as exact sealed P4 compatibility state', () => {
+    expect(
+      classifyPeopleToChannelWorkspaceBootstrapCompatibility({
+        schemaVersion: 1,
+        retireShareIds: ['ordinary'],
+        retainedWorkspaceBootstrapShareIds: ['legacy_bootstrap']
+      })
+    ).toEqual({
+      kind: 'sealed-p4-compatibility',
+      shareIds: ['legacy_bootstrap']
+    })
+    expect(
+      classifyPeopleToChannelWorkspaceBootstrapCompatibility({
+        schemaVersion: 1,
+        retireShareIds: ['ordinary'],
+        retainedWorkspaceBootstrapShareIds: []
+      })
+    ).toEqual({ kind: 'none', shareIds: [] })
+    expect(() =>
+      classifyPeopleToChannelWorkspaceBootstrapCompatibility({
+        schemaVersion: 1,
+        retireShareIds: [],
+        retainedWorkspaceBootstrapShareIds: ['duplicate', 'duplicate']
+      })
+    ).toThrow(PeopleToChannelMigrationFinalizationScopeError)
   })
 })
