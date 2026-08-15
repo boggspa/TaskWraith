@@ -2,20 +2,26 @@ import XCTest
 
 @testable import TaskWraithStudioCore
 
-/// Load-bearing proof for completion-backed texture leases.
+/// Load-bearing proof for the dual-fence texture lease.
 ///
-/// An offscreen Metal render STRUCTURALLY CANNOT see this defect: that path
-/// commits and `waitUntilCompleted`s, so the command buffer is done before
-/// `render` returns and the ring never matters. Do not treat a green offscreen
-/// pixel test as evidence. The packaged present-path storm is the visual proof;
-/// this file proves the lease *mechanism* with a fake buffer that does not
-/// complete until the test fires it.
+/// An offscreen Metal render STRUCTURALLY CANNOT see the present-path visual
+/// defect: that path commits and `waitUntilCompleted`s, so the command buffer
+/// is done before `render` returns. Do not treat a green offscreen pixel test
+/// as evidence. Packaged present-path capture is the visual proof; this file
+/// proves the *mechanism* with a fake buffer that does not complete until the
+/// test fires it.
+///
+/// Two retired algorithms stay as red controls:
+/// - fixed-depth eviction drops an incomplete wrapper (the original storm
+///   hypothesis — still true, not sufficient by itself).
+/// - completion-only release drops a floor-resident wrapper (the `be63cb16e`
+///   regression — packaged A/B proved it trails during ordinary playback).
 final class StudioInFlightTextureLeaseTests: XCTestCase {
     private func makeLease() -> StudioInFlightTextureLease<Int> {
         StudioInFlightTextureLease(maxInFlight: 3)
     }
 
-    func testWrapperSurvivesUntilItsOwnCommandBufferCompletes() {
+    func testCompletionDoesNotDropAWrapperStillInsideTheRollingFloor() {
         let lease = makeLease()
         let buffer = StudioFakeCommandBuffer()
 
@@ -26,11 +32,44 @@ final class StudioInFlightTextureLeaseTests: XCTestCase {
 
         buffer.complete()
         XCTAssertTrue(buffer.completed)
-        XCTAssertEqual(lease.count, 0)
-        XCTAssertTrue(lease.frames.isEmpty)
+        XCTAssertEqual(
+            lease.frames,
+            [11],
+            "completion must not shorten the rolling floor"
+        )
+        XCTAssertEqual(
+            StudioInFlightTextureLease<Int>.completionOnlyRetainControlResult(
+                submitting: [(11, true)],
+                depth: 3
+            ),
+            [],
+            "completion-only (be63cb16e) drops a wrapper still inside the floor"
+        )
     }
 
-    func testCompletionNotDepthReleasesASpecificLease() {
+    func testRollingFloorSurvivesWhenEveryBufferHasCompleted() {
+        let lease = makeLease()
+        let buffers = (0..<3).map { _ in StudioFakeCommandBuffer() }
+        for (index, buffer) in buffers.enumerated() {
+            lease.retain(index + 1, until: buffer)
+            buffer.complete()
+        }
+        XCTAssertEqual(
+            lease.frames,
+            [1, 2, 3],
+            "ordinary playback completes every buffer and must still hold the floor"
+        )
+        XCTAssertEqual(
+            StudioInFlightTextureLease<Int>.completionOnlyRetainControlResult(
+                submitting: [(1, true), (2, true), (3, true)],
+                depth: 3
+            ),
+            [],
+            "completion-only drains to held 0 — the packaged regression"
+        )
+    }
+
+    func testMiddleCompletionDoesNotDropAFloorResident() {
         let lease = makeLease()
         let first = StudioFakeCommandBuffer()
         let second = StudioFakeCommandBuffer()
@@ -42,13 +81,28 @@ final class StudioInFlightTextureLeaseTests: XCTestCase {
         XCTAssertEqual(lease.frames, [1, 2, 3])
 
         second.complete()
-        XCTAssertEqual(lease.frames, [1, 3], "only the completed buffer may drop its wrapper")
+        XCTAssertEqual(
+            lease.frames,
+            [1, 2, 3],
+            "a completed middle lease is still inside the rolling floor"
+        )
         XCTAssertFalse(first.completed)
         XCTAssertFalse(third.completed)
+    }
 
-        first.complete()
-        third.complete()
-        XCTAssertEqual(lease.count, 0)
+    func testFourthSubmitEvictsCompletedOldestWithoutWaiting() {
+        let lease = makeLease()
+        let buffers = (0..<4).map { _ in StudioFakeCommandBuffer() }
+        for index in 0..<3 {
+            lease.retain(index + 1, until: buffers[index])
+            buffers[index].complete()
+        }
+        XCTAssertEqual(lease.frames, [1, 2, 3])
+
+        lease.retain(4, until: buffers[3])
+        XCTAssertEqual(buffers[0].waitCount, 0, "already-completed oldest must not stall")
+        XCTAssertEqual(lease.frames, [2, 3, 4])
+        XCTAssertEqual(lease.count, 3)
     }
 
     func testFixedDepthEvictionDropsAnInFlightWrapperWithoutCompletion() {
@@ -67,7 +121,7 @@ final class StudioInFlightTextureLeaseTests: XCTestCase {
         )
     }
 
-    func testCompletionBackedPathDoesNotEvictAnIncompleteOldest() {
+    func testIncompleteOldestIsNotEvictedUntilItsBufferCompletes() {
         let lease = makeLease()
         let buffers = (0..<3).map { _ in StudioFakeCommandBuffer() }
         for (index, buffer) in buffers.enumerated() {
@@ -88,7 +142,7 @@ final class StudioInFlightTextureLeaseTests: XCTestCase {
         )
     }
 
-    func testAtCapacityWaitsOnOldestRatherThanEvictingIt() {
+    func testAtCapacityWaitsOnIncompleteOldestRatherThanEvictingIt() {
         let lease = makeLease()
         let oldest = StudioFakeCommandBuffer()
         let second = StudioFakeCommandBuffer()

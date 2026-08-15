@@ -5,7 +5,7 @@ import Metal
 ///
 /// Extracted so tests can inject a buffer that does **not** complete until
 /// asked. `MTLCommandBuffer` already has these methods; the protocol exists so
-/// a fake can prove the lease is driven by completion rather than by depth.
+/// a fake can prove each fence independently.
 protocol StudioCommandBufferLifetime: AnyObject {
     func addCompletedHandler(_ handler: @escaping @Sendable () -> Void)
     func waitUntilCompleted()
@@ -30,19 +30,24 @@ final class StudioMetalCommandBufferLifetime: StudioCommandBufferLifetime {
     }
 }
 
-/// Holds frames (and therefore their `CVMetalTexture` wrappers) until the
-/// command buffer that samples them completes.
+/// Holds frames (and therefore their `CVMetalTexture` wrappers) until **both**
+/// fences have cleared:
 ///
-/// THIS REPLACES THE FIXED-DEPTH RING. A three-frame FIFO is a heuristic
-/// proxy for GPU completion: under a present-path storm the ring stays
-/// saturated and the oldest wrapper is evicted whether or not its command
-/// buffer has finished. CoreVideo requires each wrapper to stay strong until
-/// that completion. The handler captures only a `Sendable` lease id; the
-/// non-Sendable wrappers stay inside this lock-protected box.
+/// 1. Rolling floor — the last `maxInFlight` submitted frames stay strong,
+///    whether or not their command buffers have completed. CAMetalLayer still
+///    displays recently presented IOSurfaces after GPU completion; the old
+///    three-frame ring was load-bearing for that display lifetime.
+/// 2. Command completion — a frame may not leave the box until *its* command
+///    buffer's `addCompletedHandler` has fired. At capacity the next retain
+///    waits on the oldest incomplete buffer instead of evicting it.
 ///
-/// BOUNDED: if `maxInFlight` leases are already live, the next retain waits
-/// on the oldest buffer instead of evicting it. That is backpressure, not
-/// unbounded retention, and it matches CAMetalLayer's three-drawable stall.
+/// Packaged A/B on 2026-08-15 proved completion-only (`be63cb16e`) is a visual
+/// regression: ordinary 3s playback trailed with `held 0`, while restoring
+/// only the renderer hunk to the pre-lease ring (`held 3`) was clean. Do not
+/// drop a floor-resident wrapper just because its buffer completed.
+///
+/// BOUNDED: live count cannot exceed `maxInFlight`. The completion fence can
+/// only *delay* an eviction, never grow the box.
 final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
     let maxInFlight: Int
 
@@ -55,6 +60,7 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         let id: UInt64
         let frame: Frame
         let buffer: any StudioCommandBufferLifetime
+        var completed: Bool
     }
 
     init(maxInFlight: Int) {
@@ -74,23 +80,26 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         return leases.map(\.frame) + seeded
     }
 
-    /// Present / chaining path: hold `frame` until `buffer` completes.
+    /// Present / chaining path: hold `frame` until both fences clear.
     func retain(_ frame: Frame, until buffer: any StudioCommandBufferLifetime) {
         lock.lock()
-        if leases.count >= maxInFlight {
+        while leases.count >= maxInFlight {
+            if leases[0].completed {
+                leases.removeFirst()
+                continue
+            }
             let oldest = leases[0]
             lock.unlock()
             oldest.buffer.waitUntilCompleted()
-            release(id: oldest.id)
             lock.lock()
         }
         let id = nextID
         nextID += 1
-        leases.append(Lease(id: id, frame: frame, buffer: buffer))
+        leases.append(Lease(id: id, frame: frame, buffer: buffer, completed: false))
         lock.unlock()
 
         buffer.addCompletedHandler { [weak self] in
-            self?.release(id: id)
+            self?.markCompleted(id: id)
         }
     }
 
@@ -113,18 +122,41 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func release(id: UInt64) {
+    private func markCompleted(id: UInt64) {
         lock.lock()
-        leases.removeAll { $0.id == id }
+        if let index = leases.firstIndex(where: { $0.id == id }) {
+            leases[index].completed = true
+        }
+        // Completion alone must not drop a wrapper still inside the floor.
+        // Eviction happens on the next retain that pushes it past maxInFlight.
         lock.unlock()
     }
 
-    /// The retired fixed-depth algorithm, kept only so a test can prove that
+    /// The retired fixed-depth algorithm, kept so a test can prove that
     /// reverting to it drops a wrapper before its buffer completes.
     static func evictingRetainForControl(_ frame: Frame, into ring: inout [Frame], depth: Int) {
         ring.append(frame)
         if ring.count > depth {
             ring.removeFirst(ring.count - depth)
         }
+    }
+
+    /// The retired completion-only algorithm (`be63cb16e`): drop a wrapper the
+    /// moment its buffer completes, even when it is still inside the last
+    /// `depth` submitted frames. Packaged A/B proved this shortens a load-bearing
+    /// display lifetime.
+    static func completionOnlyRetainControlResult(
+        submitting frames: [(frame: Frame, completed: Bool)],
+        depth: Int
+    ) -> [Frame] {
+        var live: [(frame: Frame, completed: Bool)] = []
+        for item in frames {
+            live.append(item)
+            live.removeAll { $0.completed }
+            if live.count > depth {
+                live.removeFirst(live.count - depth)
+            }
+        }
+        return live.map(\.frame)
     }
 }

@@ -573,13 +573,10 @@ final class StudioStressTests: XCTestCase {
             )
         )
         // Overlay waits on the same queue as the chained content pass, so each
-        // render() returns only after that content buffer has completed. A
-        // completion-backed lease is therefore already released here — the old
-        // fixed-depth ring stayed full AFTER completion, which is why a
-        // post-loop peak used to be 3. Sampling after wait cannot see in-flight
-        // leases; that mechanism is proven by StudioInFlightTextureLeaseTests
-        // with a fake buffer that does not complete. Offscreen cannot reproduce
-        // the present-path eviction defect.
+        // render() returns only after that content buffer has completed. The
+        // dual-fence lease must STILL hold the last inFlightRetentionDepth
+        // wrappers — that rolling floor is the display lifetime packaged A/B
+        // proved load-bearing. Completion-only drained to 0 here and trailed.
         for frame in 0..<40 {
             renderer.render(
                 snapshot: snapshot(frame: Int64(frame)),
@@ -592,6 +589,11 @@ final class StudioStressTests: XCTestCase {
                 "the in-flight lease box exceeded its bound"
             )
         }
+        XCTAssertEqual(
+            renderer.retainedFrameCount,
+            StudioVideoFrameRenderer.inFlightRetentionDepth,
+            "dual-fence must keep the rolling floor after GPU completion"
+        )
 
         renderer.detachSource()
         XCTAssertEqual(renderer.retainedFrameCount, 0, "teardown stranded surfaces")

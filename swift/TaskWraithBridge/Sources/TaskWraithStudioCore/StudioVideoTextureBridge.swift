@@ -18,7 +18,9 @@ import Metal
 /// frames — and, because the texture cache then recycles surfaces it should not
 /// have, exactly the kind of unbounded growth outcome 11 tests for. So
 /// `StudioVideoFrameTextures` retains both wrappers, and callers must keep it
-/// alive until the command buffer that samples it has completed.
+/// alive until the command buffer that samples it has completed *and* the
+/// wrapper has rolled out of the present-path floor (CAMetalLayer still
+/// displays recently presented IOSurfaces after GPU completion).
 ///
 /// THE OTHER TRAP: a `CVPixelBuffer` created without IOSurface backing cannot be
 /// bound at all. `CVMetalTextureCacheCreateTextureFromImage` fails with

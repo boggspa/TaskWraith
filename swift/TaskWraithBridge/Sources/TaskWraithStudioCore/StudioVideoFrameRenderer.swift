@@ -21,12 +21,12 @@ public final class StudioVideoFrameRenderer {
 
     /// Maximum number of frames whose plane textures may be in flight.
     ///
-    /// CAMetalLayer vends at most 3 drawables. This is the same bound, but it
-    /// is now enforced by waiting on the oldest command buffer — not by evicting
-    /// a `CVMetalTexture` wrapper whose GPU work may still be running. Each
-    /// wrapper is held until *its* command buffer's `addCompletedHandler` fires.
-    /// The handler captures only a Sendable lease id; the non-Sendable wrappers
-    /// stay inside the lock-protected lease box.
+    /// CAMetalLayer vends at most 3 drawables. The present-path lease keeps the
+    /// last `inFlightRetentionDepth` wrappers (the rolling floor CAMetalLayer
+    /// still displays) AND will not evict a wrapper whose command buffer has
+    /// not completed. Completion-only (`be63cb16e`) shortened that floor and
+    /// trailed during ordinary playback. The handler captures only a Sendable
+    /// lease id; the non-Sendable wrappers stay inside the lock-protected box.
     public static let inFlightRetentionDepth = 3
 
     /// Must mirror `StudioVideoUniforms` in the shader.
@@ -81,7 +81,8 @@ public final class StudioVideoFrameRenderer {
     private let sampler: MTLSamplerState
 
     /// Frames whose plane textures may still be sampled by an in-flight command
-    /// buffer. Completion-backed and bounded to `inFlightRetentionDepth`.
+    /// buffer or by a recently presented drawable. Dual-fence and bounded to
+    /// `inFlightRetentionDepth`.
     private let inFlightLeases = StudioInFlightTextureLease<StudioVideoFrameTextures>(
         maxInFlight: StudioVideoFrameRenderer.inFlightRetentionDepth
     )
@@ -305,8 +306,8 @@ public final class StudioVideoFrameRenderer {
             // Lease is REQUIRED here for the same reason the drawable path
             // needs it: the buffer is committed without waiting, so the GPU is
             // still sampling these plane textures after this returns. The
-            // wrapper is held until THIS buffer completes, not until a later
-            // frame evicts it from a fixed-depth ring.
+            // wrapper stays until THIS buffer completes AND it rolls out of
+            // the last `inFlightRetentionDepth` submits.
             inFlightLeases.retain(frame, until: StudioMetalCommandBufferLifetime(commandBuffer))
             commandBuffer.commit()
             return
@@ -334,7 +335,7 @@ public final class StudioVideoFrameRenderer {
     /// diagnostics for outcome 9; a value above the retention depth is a bug.
     public var retainedFrameCount: Int { inFlightLeases.count }
 
-    /// Exact IOSurface identities retained until presented command buffers finish.
+    /// Exact IOSurface identities still inside the dual-fence lease box.
     public var liveIOSurfaceIDs: Set<UInt32> {
         Set(inFlightLeases.frames.compactMap { $0.luma.iosurface.map(IOSurfaceGetID) })
     }
@@ -347,8 +348,8 @@ public final class StudioVideoFrameRenderer {
         inFlightLeases.releaseAll()
     }
 
-    /// Test / attach-detach seed. The present path uses the completion-backed
-    /// lease, not this hook.
+    /// Test / attach-detach seed. The present path uses the dual-fence lease,
+    /// not this hook.
     func retain(_ frame: StudioVideoFrameTextures) {
         inFlightLeases.retainSeeding(frame)
     }
