@@ -287,7 +287,7 @@ final class StudioVideoTextureBridgeTests: XCTestCase {
         XCTAssertEqual(
             renderer.retainedFrameCount,
             StudioVideoFrameRenderer.inFlightRetentionDepth,
-            "the present-path ring must not grow without bound"
+            "the seed/retain hook must not grow without bound"
         )
 
         renderer.releaseRetainedFrames()

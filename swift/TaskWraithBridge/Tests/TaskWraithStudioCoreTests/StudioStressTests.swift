@@ -572,27 +572,26 @@ final class StudioStressTests: XCTestCase {
                 durationTicks: 1_000
             )
         )
+        // Overlay waits on the same queue as the chained content pass, so each
+        // render() returns only after that content buffer has completed. A
+        // completion-backed lease is therefore already released here — the old
+        // fixed-depth ring stayed full AFTER completion, which is why a
+        // post-loop peak used to be 3. Sampling after wait cannot see in-flight
+        // leases; that mechanism is proven by StudioInFlightTextureLeaseTests
+        // with a fake buffer that does not complete. Offscreen cannot reproduce
+        // the present-path eviction defect.
         for frame in 0..<40 {
             renderer.render(
                 snapshot: snapshot(frame: Int64(frame)),
                 to: output,
                 overlay: overlay
             )
+            XCTAssertLessThanOrEqual(
+                renderer.retainedFrameCount,
+                StudioVideoFrameRenderer.inFlightRetentionDepth,
+                "the in-flight lease box exceeded its bound"
+            )
         }
-
-        // The instrument must be LIVE — a counter stuck at zero would pass a
-        // bound check while telling us nothing.
-        let peak = renderer.retainedFrameCount
-        XCTAssertGreaterThan(
-            peak,
-            0,
-            "retainedFrameCount never moved; the resource instrument is not live"
-        )
-        XCTAssertLessThanOrEqual(
-            peak,
-            StudioVideoFrameRenderer.inFlightRetentionDepth,
-            "the in-flight ring exceeded its bound"
-        )
 
         renderer.detachSource()
         XCTAssertEqual(renderer.retainedFrameCount, 0, "teardown stranded surfaces")

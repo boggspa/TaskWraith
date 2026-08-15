@@ -178,8 +178,8 @@ public final class StudioVideoTextureBridge {
     ///
     /// MUST NOT be called while any StudioVideoFrameTextures handed out by this
     /// bridge is still being sampled by an in-flight command buffer. Safe points
-    /// are after a `waitUntilCompleted`, or once the renderer's retention ring
-    /// has aged the frame out.
+    /// are after a `waitUntilCompleted`, or once that buffer's completion
+    /// handler has released the renderer's lease.
     public func flushUnusedTextures() {
         CVMetalTextureCacheFlush(textureCache, 0)
     }

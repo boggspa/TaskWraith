@@ -19,14 +19,14 @@ public final class StudioVideoFrameRenderer {
     /// drawable can be fed by either renderer.
     public static let pixelFormat: MTLPixelFormat = .bgra8Unorm
 
-    /// How many submitted frames' plane textures stay retained.
+    /// Maximum number of frames whose plane textures may be in flight.
     ///
-    /// CAMetalLayer vends at most 3 drawables and a single command queue
-    /// completes in submission order, so by the time a 4th frame is submitted
-    /// the 1st has necessarily finished sampling. Holding 3 is therefore
-    /// sufficient to keep CVMetalTexture wrappers alive across the present path
-    /// WITHOUT a completion handler — which matters because a Swift 6 @Sendable
-    /// completion closure cannot capture the non-Sendable texture wrappers.
+    /// CAMetalLayer vends at most 3 drawables. This is the same bound, but it
+    /// is now enforced by waiting on the oldest command buffer — not by evicting
+    /// a `CVMetalTexture` wrapper whose GPU work may still be running. Each
+    /// wrapper is held until *its* command buffer's `addCompletedHandler` fires.
+    /// The handler captures only a Sendable lease id; the non-Sendable wrappers
+    /// stay inside the lock-protected lease box.
     public static let inFlightRetentionDepth = 3
 
     /// Must mirror `StudioVideoUniforms` in the shader.
@@ -81,8 +81,10 @@ public final class StudioVideoFrameRenderer {
     private let sampler: MTLSamplerState
 
     /// Frames whose plane textures may still be sampled by an in-flight command
-    /// buffer. Bounded to `inFlightRetentionDepth`, so this cannot grow.
-    private var retainedFrames: [StudioVideoFrameTextures] = []
+    /// buffer. Completion-backed and bounded to `inFlightRetentionDepth`.
+    private let inFlightLeases = StudioInFlightTextureLease<StudioVideoFrameTextures>(
+        maxInFlight: StudioVideoFrameRenderer.inFlightRetentionDepth
+    )
 
     /// - Parameter commandQueue: inject the OWNING VIEWER'S queue so passes that
     ///   composite into one drawable are ordered. Metal serialises command
@@ -180,10 +182,10 @@ public final class StudioVideoFrameRenderer {
     /// Draws one decoded frame.
     ///
     /// - Parameter drawable: when supplied the buffer presents and returns
-    ///   without waiting (the on-screen path), and `frame` is retained in the
-    ///   in-flight ring. When nil the buffer is committed and waited on so the
-    ///   target is immediately readable, and no retention is needed because the
-    ///   caller's own reference outlives the wait.
+    ///   without waiting (the on-screen path), and `frame` is leased until that
+    ///   command buffer completes. When nil the buffer is committed and waited
+    ///   on so the target is immediately readable, and no lease is needed
+    ///   because the caller's own reference outlives the wait.
     /// Loads an externally supplied LUT as a 3D texture, or clears it.
     ///
     /// Uploaded ONCE per LUT rather than per frame: a .cube is static data and
@@ -300,17 +302,18 @@ public final class StudioVideoFrameRenderer {
         encoder.endEncoding()
 
         if chaining {
-            // Retention is REQUIRED here for the same reason the drawable path
+            // Lease is REQUIRED here for the same reason the drawable path
             // needs it: the buffer is committed without waiting, so the GPU is
-            // still sampling these plane textures after this returns. Omitting
-            // it would let the CVMetalTexture wrappers die mid-flight.
-            retain(frame)
+            // still sampling these plane textures after this returns. The
+            // wrapper is held until THIS buffer completes, not until a later
+            // frame evicts it from a fixed-depth ring.
+            inFlightLeases.retain(frame, until: StudioMetalCommandBufferLifetime(commandBuffer))
             commandBuffer.commit()
             return
         }
 
         if let drawable {
-            retain(frame)
+            inFlightLeases.retain(frame, until: StudioMetalCommandBufferLifetime(commandBuffer))
             commandBuffer.present(drawable)
             commandBuffer.commit()
             return
@@ -327,13 +330,13 @@ public final class StudioVideoFrameRenderer {
         commandBuffer.waitUntilCompleted()
     }
 
-    /// Number of frames currently held by the in-flight ring. Bounded
+    /// Number of frames currently held by the in-flight lease box. Bounded
     /// diagnostics for outcome 9; a value above the retention depth is a bug.
-    public var retainedFrameCount: Int { retainedFrames.count }
+    public var retainedFrameCount: Int { inFlightLeases.count }
 
     /// Exact IOSurface identities retained until presented command buffers finish.
     public var liveIOSurfaceIDs: Set<UInt32> {
-        Set(retainedFrames.compactMap { $0.luma.iosurface.map(IOSurfaceGetID) })
+        Set(inFlightLeases.frames.compactMap { $0.luma.iosurface.map(IOSurfaceGetID) })
     }
 
     public var liveIOSurfaceCapacity: Int { Self.inFlightRetentionDepth }
@@ -341,16 +344,13 @@ public final class StudioVideoFrameRenderer {
     /// Drops all retained frames. Only safe once no submitted command buffer is
     /// still sampling them — for example after the viewer stops presenting.
     public func releaseRetainedFrames() {
-        retainedFrames.removeAll(keepingCapacity: true)
+        inFlightLeases.releaseAll()
     }
 
-    /// Internal rather than private so the bound on the ring is directly
-    /// testable; the present path is the only production caller.
+    /// Test / attach-detach seed. The present path uses the completion-backed
+    /// lease, not this hook.
     func retain(_ frame: StudioVideoFrameTextures) {
-        retainedFrames.append(frame)
-        if retainedFrames.count > Self.inFlightRetentionDepth {
-            retainedFrames.removeFirst(retainedFrames.count - Self.inFlightRetentionDepth)
-        }
+        inFlightLeases.retainSeeding(frame)
     }
 
     // MARK: - Shader
