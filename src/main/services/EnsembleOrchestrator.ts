@@ -239,6 +239,11 @@ import {
 // recordUsage payload, so ensemble runs reach usage.json (wall-clock + heatmaps
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
+import {
+  mergeEnsembleTerminalStats,
+  reconcileEnsembleTerminalUsage,
+  statsFromEnsembleWorkingUsage
+} from '../EnsembleTerminalUsage'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from '../bridge/BridgeTextFold'
 import {
@@ -934,6 +939,8 @@ interface ActiveParticipantRun {
   terminalSideEffectsApplied?: boolean
   /** Participant token totals merge once, on the effective terminal flush. */
   terminalTokenTotalsApplied?: boolean
+  /** A provider result reached the run before or through terminal reconciliation. */
+  providerResultObserved?: boolean
   /**
    * Present only for an active Boss/Captain turn that was explicitly called
    * back by a peer or that owns a later Continuous pass. The checkpoint stays
@@ -3602,11 +3609,14 @@ export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
   /**
-   * Bounded receipts for provider calls that arrive just after terminal
-   * settlement. They acknowledge a duplicate/late ensemble_yield without
-   * reviving authority; unknown run ids still fail closed.
+   * Bounded receipts for calls and usage that arrive just after terminal
+   * settlement. They acknowledge duplicate/late ensemble_yield and reconcile
+   * exact terminal stats without reviving authority; unknown run ids fail closed.
    */
-  private terminalRunToolTombstones = new Map<string, number>()
+  private terminalRunToolTombstones = new Map<
+    string,
+    { expiresAt: number; run: ActiveParticipantRun }
+  >()
   private readonly cursorCompletionWatchdog = new EnsembleCursorCompletionWatchdog()
   /** Last sampled monotonic usage value and last emission time per active seat.
    * Keeps the renderer animation smooth without putting a timer or write loop
@@ -6287,11 +6297,14 @@ export class EnsembleOrchestrator {
     return run?.terminalFinalized ? undefined : run
   }
 
-  private rememberTerminalRun(runId: string): void {
+  private rememberTerminalRun(run: ActiveParticipantRun): void {
     const now = this.deps.now()
     this.pruneTerminalRunToolTombstones(now)
-    this.terminalRunToolTombstones.delete(runId)
-    this.terminalRunToolTombstones.set(runId, now + TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS)
+    this.terminalRunToolTombstones.delete(run.runId)
+    this.terminalRunToolTombstones.set(run.runId, {
+      expiresAt: now + TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS,
+      run
+    })
     while (this.terminalRunToolTombstones.size > TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT) {
       const oldest = this.terminalRunToolTombstones.keys().next().value
       if (typeof oldest !== 'string') break
@@ -6300,16 +6313,22 @@ export class EnsembleOrchestrator {
   }
 
   private isRecentlyTerminalRun(runId: string | undefined): boolean {
-    if (!runId) return false
-    if (this.runsByRunId.get(runId)?.terminalFinalized) return true
+    return Boolean(this.recentlyTerminalRun(runId))
+  }
+
+  private recentlyTerminalRun(runId: string | undefined): ActiveParticipantRun | undefined {
+    if (!runId) return undefined
+    const retained = this.runsByRunId.get(runId)
+    if (retained?.terminalFinalized) return retained
     const now = this.deps.now()
     this.pruneTerminalRunToolTombstones(now)
-    return (this.terminalRunToolTombstones.get(runId) || 0) > now
+    const receipt = this.terminalRunToolTombstones.get(runId)
+    return receipt && receipt.expiresAt > now ? receipt.run : undefined
   }
 
   private pruneTerminalRunToolTombstones(now: number): void {
-    for (const [runId, expiresAt] of this.terminalRunToolTombstones) {
-      if (expiresAt <= now) this.terminalRunToolTombstones.delete(runId)
+    for (const [runId, receipt] of this.terminalRunToolTombstones) {
+      if (receipt.expiresAt <= now) this.terminalRunToolTombstones.delete(runId)
     }
   }
 
@@ -14362,7 +14381,8 @@ export class EnsembleOrchestrator {
     const runId = routed.appRunId
     if (!runId) return false
     const run = this.actionableRunForTool(runId)
-    if (!run || run.participant.provider !== provider) return false
+    if (!run) return this.reconcileLateTerminalProviderUsage(provider, routed, payload)
+    if (run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
     this.touchCursorCompletionWatchdog(run)
 
@@ -14617,6 +14637,7 @@ export class EnsembleOrchestrator {
     }
     if (payload?.type === 'result') {
       run.stats = payload.stats
+      run.providerResultObserved = true
       const failed = payload.status === 'failed' || payload.subtype === 'error'
       // 1.0.7 — record this participant's usage into the shared store so
       // ensemble runs count toward the welcome wall-clock, activity heatmaps,
@@ -14673,6 +14694,61 @@ export class EnsembleOrchestrator {
             : 'Completed without producing output.'
       )
       return true
+    }
+    return true
+  }
+
+  /**
+   * An explicit yield can settle orchestration before the provider publishes
+   * its terminal result frame. Accept only that exact recent run's stats: late
+   * content/tools remain rejected, and no participant status or authority is
+   * reopened. The terminal frame upgrades the provisional Working snapshot
+   * already sealed by finalizeRun and corrects lifetime totals by delta.
+   */
+  private reconcileLateTerminalProviderUsage(
+    provider: ProviderId,
+    routed: AgentRunRoute,
+    payload: any
+  ): boolean {
+    if (payload?.type !== 'result') return false
+    const run = this.recentlyTerminalRun(routed.appRunId)
+    if (!run || run.participant.provider !== provider) return false
+    if (routed.appChatId && routed.appChatId !== run.chatId) return false
+
+    const chat = this.deps.getChat(run.chatId)
+    const persistedRun = chat?.runs.find((candidate) => candidate.runId === run.runId)
+    if (
+      !chat?.ensemble ||
+      !persistedRun ||
+      persistedRun.provider !== provider ||
+      persistedRun.ensembleParticipantId !== run.participant.id
+    ) {
+      return false
+    }
+
+    const terminalStats =
+      payload.stats && typeof payload.stats === 'object' && !Array.isArray(payload.stats)
+        ? (payload.stats as Record<string, unknown>)
+        : undefined
+    if (!terminalStats) return false
+    const mergedStats = mergeEnsembleTerminalStats(persistedRun.stats, terminalStats)
+    const reconciliation = reconcileEnsembleTerminalUsage({
+      chat,
+      runId: run.runId,
+      participantId: run.participant.id,
+      provider,
+      terminalStats,
+      previousTotalsApplied: run.terminalTokenTotalsApplied === true,
+      nowMs: this.deps.now()
+    })
+    run.stats = reconciliation?.stats || mergedStats
+    if (reconciliation) {
+      this.saveChatWithCheckpoint(reconciliation.chat, 'participant-updated')
+      run.terminalTokenTotalsApplied = true
+    }
+    if (!run.providerResultObserved) {
+      this.recordParticipantUsage(run)
+      run.providerResultObserved = true
     }
     return true
   }
@@ -19327,6 +19403,15 @@ export class EnsembleOrchestrator {
       }
       return
     }
+    // A tool-authored yield can close orchestration before the provider's
+    // terminal result frame. Move the last live snapshot into ChatRun.stats
+    // before clearing its ephemeral lane so the thread tally never loses this
+    // turn in between; the exact late result reconciles it above.
+    if (!run.stats) {
+      run.stats = statsFromEnsembleWorkingUsage(
+        this.participantWorkingTelemetryByRunId.get(run.runId)
+      )
+    }
     const promoteOverflowEvidence =
       status === 'failed' &&
       run.classifiedContextOverflow === true &&
@@ -19334,7 +19419,7 @@ export class EnsembleOrchestrator {
     run.status = status
     run.terminalFinalized = true
     run.terminalReason = reason
-    this.rememberTerminalRun(run.runId)
+    this.rememberTerminalRun(run)
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime?.roundId === run.roundId) {
       this.incrementBossmanBudgetUsage(

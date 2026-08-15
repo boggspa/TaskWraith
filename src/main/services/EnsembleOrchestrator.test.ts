@@ -2025,6 +2025,101 @@ describe('EnsembleOrchestrator', () => {
     })
   })
 
+  it('keeps yielded usage sealed until the exact late terminal result reconciles it', async () => {
+    const recorded: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+    const harness = makeHarness({ recordUsage: (entry) => recorded.push(entry) })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Yield before the provider result frame.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+    const route = { appRunId: runId, appChatId: 'ensemble-chat' }
+
+    harness.orchestrator.reportParticipantTokenUsage(
+      runId,
+      { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      { provider: 'claude', chatId: 'ensemble-chat' }
+    )
+    expectYielded(harness.orchestrator.markYielded(runId, 'Hand off now.'))
+
+    const provisionalRun = harness.chat.runs.find((run) => run.runId === runId)
+    const yieldedAt = provisionalRun?.endedAt
+    expect(provisionalRun).toMatchObject({
+      status: 'success',
+      stats: { input_tokens: 100, output_tokens: 20, total_tokens: 120 }
+    })
+    expect(harness.chat.ensemble?.participants[0].tokenTotals).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 20,
+      total_tokens: 120
+    })
+    expect(recorded).toHaveLength(0)
+
+    expect(
+      harness.orchestrator.handleProviderOutput('claude', route, {
+        type: 'result',
+        status: 'success',
+        stats: {
+          input_tokens: 130,
+          output_tokens: 25,
+          total_tokens: 155,
+          duration_ms: 2_000,
+          total_cost_usd: 0.42
+        }
+      })
+    ).toBe(true)
+
+    expect(harness.chat.runs.find((run) => run.runId === runId)).toMatchObject({
+      status: 'success',
+      endedAt: yieldedAt,
+      stats: {
+        input_tokens: 130,
+        output_tokens: 25,
+        total_tokens: 155,
+        duration_ms: 2_000,
+        total_cost_usd: 0.42
+      }
+    })
+    expect(harness.chat.ensemble?.participants[0].tokenTotals).toEqual({
+      input_tokens: 130,
+      output_tokens: 25,
+      total_tokens: 155,
+      duration_ms: 2_000
+    })
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'claude'
+      )?.status
+    ).toBe('yielded')
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]).toMatchObject({ runId, totalTokens: 155, durationMs: 2_000 })
+
+    const saveCount = harness.saveChat.mock.calls.length
+    expect(
+      harness.orchestrator.handleProviderOutput('claude', route, {
+        type: 'result',
+        status: 'success',
+        stats: {
+          input_tokens: 130,
+          output_tokens: 25,
+          total_tokens: 155,
+          duration_ms: 2_000,
+          total_cost_usd: 0.42
+        }
+      })
+    ).toBe(true)
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCount)
+    expect(recorded).toHaveLength(1)
+    expect(
+      harness.orchestrator.handleProviderOutput('claude', route, {
+        type: 'content',
+        text: 'This late prose must stay rejected.'
+      })
+    ).toBe(false)
+  })
+
   it('keeps the working odometer monotonic while atomic context can shrink', async () => {
     let now = 1_000
     const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []
