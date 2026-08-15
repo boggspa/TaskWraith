@@ -114,7 +114,9 @@ final class StudioPixelIntegrityTests: XCTestCase {
 /// into the same VTDecompressionSession — the transition the packaged storm
 /// performs hundreds of times. Sequential hops continue from the last decoded
 /// index when that is cheaper than a keyframe restart.
-private final class PreBindDecodeWalker {
+/// Shared with the live display-link discriminator. File-private would force
+/// that test to re-derive the GOP walk and silently drift.
+final class PreBindDecodeWalker {
     private let media: StudioLoadedMedia
     private let decoder: StudioVideoDecoder
     private let syncIndices: [Int]

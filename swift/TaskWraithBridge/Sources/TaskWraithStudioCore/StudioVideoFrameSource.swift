@@ -256,6 +256,10 @@ public final class StudioVideoFrameSource {
             )
         }
 
+        // Copy-before-bind probe. Production sink is nil. Tests must copy
+        // bytes here and drop the CVPixelBuffer so the decoder pool can reuse.
+        StudioPreBindProbe.record(
+            decoded.pixelBuffer, presentationTime: decoded.presentationTime)
         let textures = try bridge.makeTextures(from: decoded.pixelBuffer)
         insert(textures, forFrameIndex: targetFrame)
         return textures
