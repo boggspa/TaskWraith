@@ -23,6 +23,8 @@ const {
   validateClearedState,
   validateInvalidReplacement,
   validateReplayState,
+  validateTransportMutationBracket,
+  writeFailureArtifacts,
   validateTerminalReceipt
 } = require('./studio-lut-acceptance-runner.cjs') as {
   JOURNEY_PHASES: readonly string[]
@@ -58,10 +60,50 @@ const {
     dom: Record<string, any>,
     expectedEffectId: string
   ) => Record<string, any>
+  validateTransportMutationBracket: (
+    beforeReceipt: Record<string, any>,
+    afterReceipt: Record<string, any>,
+    name?: string
+  ) => Record<string, any>
+  writeFailureArtifacts: (
+    artifactRoot: string,
+    error: Error,
+    transportMutationBracket?: Record<string, any>
+  ) => Promise<void>
   validateTerminalReceipt: (terminal: Record<string, any>) => Record<string, any>
 }
 
 const temporaryDirectories: string[] = []
+
+const validTransportMutationText =
+  'tm1 kind=lifecycleAttach route=review preSrc=audio postSrc=audio ' +
+  'host=4.125000 prevHost=- preAnchorT=2000000 preAnchorH=4.000000 ' +
+  'prePos=2062500 preDur=300000000 prePlay=1 preRate=1.000 ' +
+  'postAnchorT=2062500 postAnchorH=4.125000 postPos=2062500 postDur=300000000 ' +
+  'postPlay=1 postRate=1.000 crossedDomain=0 clamped=0'
+
+function transportMutationReceipt(
+  directory: string,
+  suffix: string,
+  accessibilityValue = validTransportMutationText
+): Record<string, any> {
+  return {
+    inputDelivery: 'background-observation-only',
+    allowForegroundInput: false,
+    requestPath: path.join(directory, `request-${suffix}.json`),
+    receiptPath: path.join(directory, `receipt-${suffix}.json`),
+    actions: [
+      {
+        index: 0,
+        type: 'read-transport-mutation',
+        accessibilityLabel: 'Transport mutation detail',
+        accessibilityRole: 'AXStaticText',
+        accessibilityMatchCount: 1,
+        accessibilityValue
+      }
+    ]
+  }
+}
 
 async function temporaryDirectory(): Promise<string> {
   const directory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'studio-lut-runner-'))
@@ -133,6 +175,116 @@ describe('studio LUT acceptance runner contract', () => {
       allowForegroundInput: false,
       actions: [{ type: 'screenshot', name: 'neutral-stable-02' }]
     })
+  })
+
+  it('accepts only identical, strict tm1 receipts around a native screenshot', async () => {
+    const directory = await temporaryDirectory()
+    const before = transportMutationReceipt(directory, 'before')
+    const after = transportMutationReceipt(directory, 'after')
+    const bracket = validateTransportMutationBracket(before, after, 'neutral-stable-02')
+
+    expect(bracket).toMatchObject({
+      ok: true,
+      name: 'neutral-stable-02',
+      before: {
+        requestPath: before.requestPath,
+        receiptPath: before.receiptPath,
+        rawValue: validTransportMutationText,
+        parsedValue: { kind: 'lifecycleAttach', route: 'review' }
+      },
+      after: {
+        requestPath: after.requestPath,
+        receiptPath: after.receiptPath,
+        rawValue: validTransportMutationText,
+        parsedValue: { kind: 'lifecycleAttach', route: 'review' }
+      }
+    })
+
+    expect(() =>
+      validateTransportMutationBracket(
+        before,
+        transportMutationReceipt(
+          directory,
+          'changed',
+          validTransportMutationText.replace('route=review', 'route=source')
+        ),
+        'changed'
+      )
+    ).toThrow(/changed during native screenshot/)
+    expect(() =>
+      validateTransportMutationBracket(
+        before,
+        transportMutationReceipt(
+          directory,
+          'malformed',
+          validTransportMutationText.replace('clamped=0', 'clamped=1')
+        ),
+        'malformed'
+      )
+    ).toThrow(/tm1/)
+    expect(() =>
+      validateTransportMutationBracket(before, { ...after, actions: [] }, 'missing')
+    ).toThrow(/transport-mutation receipt/)
+  })
+
+  it('seals the latest raw and parsed tm1 bracket into terminal failure evidence', async () => {
+    const directory = await temporaryDirectory()
+    const bracket = validateTransportMutationBracket(
+      transportMutationReceipt(directory, 'before'),
+      transportMutationReceipt(directory, 'after'),
+      'failure-sample'
+    )
+    await writeFailureArtifacts(directory, new Error('capture failed'), bracket)
+
+    const evidence = JSON.parse(
+      await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+    )
+    expect(evidence).toMatchObject({
+      ok: false,
+      error: 'capture failed',
+      latestTransportMutationBracket: {
+        ok: true,
+        name: 'failure-sample',
+        before: {
+          requestPath: path.join(directory, 'request-before.json'),
+          receiptPath: path.join(directory, 'receipt-before.json'),
+          rawValue: validTransportMutationText,
+          parsedValue: { kind: 'lifecycleAttach', route: 'review' }
+        },
+        after: {
+          requestPath: path.join(directory, 'request-after.json'),
+          receiptPath: path.join(directory, 'receipt-after.json'),
+          rawValue: validTransportMutationText,
+          parsedValue: { kind: 'lifecycleAttach', route: 'review' }
+        }
+      }
+    })
+  })
+
+  it('brackets the one native screenshot choke point in exact order', async () => {
+    const source = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-lut-acceptance-runner.cjs'),
+      'utf8'
+    )
+    const start = source.indexOf('async function captureNative(')
+    const end = source.indexOf('async function captureGuarded(', start)
+    const captureSource = source.slice(start, end)
+    const before = captureSource.indexOf(
+      'const beforeMutationReceipt = await readTransportMutation'
+    )
+    const screenshot = captureSource.indexOf(
+      'const receipt = await harness.runStudioUiDriver(plan, target, request.actions)'
+    )
+    const after = captureSource.indexOf('const afterMutationReceipt = await readTransportMutation')
+    const validation = captureSource.indexOf('validateTransportMutationBracket(')
+
+    expect(start).toBeGreaterThan(0)
+    expect(before).toBeGreaterThan(0)
+    expect(screenshot).toBeGreaterThan(before)
+    expect(after).toBeGreaterThan(screenshot)
+    expect(validation).toBeGreaterThan(after)
+    expect(captureSource).toContain('latestTransportMutationBracket = {')
+    expect(captureSource).toContain('transportMutationBracket')
   })
 
   it.each([

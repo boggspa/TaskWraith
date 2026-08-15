@@ -211,6 +211,58 @@ function assertObservationOnlyRequest(request) {
   return request
 }
 
+let latestTransportMutationBracket = null
+
+function normalizeTransportMutationReceipt(receipt) {
+  const action = Array.isArray(receipt?.actions) ? receipt.actions[0] : null
+  const valid =
+    receipt?.inputDelivery === 'background-observation-only' &&
+    receipt?.allowForegroundInput !== true &&
+    Array.isArray(receipt?.actions) &&
+    receipt.actions.length === 1 &&
+    action?.index === 0 &&
+    action?.type === 'read-transport-mutation' &&
+    action?.accessibilityLabel === 'Transport mutation detail' &&
+    action?.accessibilityRole === 'AXStaticText' &&
+    action?.accessibilityMatchCount === 1 &&
+    typeof action?.accessibilityValue === 'string' &&
+    typeof receipt?.requestPath === 'string' &&
+    path.isAbsolute(receipt.requestPath) &&
+    typeof receipt?.receiptPath === 'string' &&
+    path.isAbsolute(receipt.receiptPath)
+  invariant(valid, 'native transport-mutation receipt is missing or mismatched')
+  const parsedValue = harness.parseStudioTransportMutationText(action.accessibilityValue)
+  return {
+    requestPath: receipt.requestPath,
+    receiptPath: receipt.receiptPath,
+    rawValue: action.accessibilityValue,
+    parsedValue,
+    rawReceipt: receipt
+  }
+}
+
+function validateTransportMutationBracket(beforeReceipt, afterReceipt, name = 'native-sample') {
+  invariant(typeof name === 'string' && name.length > 0, 'tm1 bracket name is invalid')
+  const before = normalizeTransportMutationReceipt(beforeReceipt)
+  const after = normalizeTransportMutationReceipt(afterReceipt)
+  invariant(
+    before.rawValue === after.rawValue &&
+      JSON.stringify(before.parsedValue) === JSON.stringify(after.parsedValue),
+    `${name} tm1 changed during native screenshot`
+  )
+  return {
+    ok: true,
+    name,
+    rawValueSha256: sha256Bytes(before.rawValue),
+    before,
+    after
+  }
+}
+
+async function readTransportMutation(plan, target) {
+  return harness.runStudioUiDriver(plan, target, [{ type: 'read-transport-mutation' }])
+}
+
 function collectRegularFiles(directory) {
   const pending = [directory]
   const files = []
@@ -806,6 +858,14 @@ function assertFocusIsolation(before, after, targetPid, label) {
 }
 
 async function captureNative(plan, target, name) {
+  const beforeMutationReceipt = await readTransportMutation(plan, target)
+  const beforeMutation = normalizeTransportMutationReceipt(beforeMutationReceipt)
+  latestTransportMutationBracket = {
+    ok: false,
+    name,
+    before: beforeMutation,
+    after: null
+  }
   const request = assertObservationOnlyRequest(buildObservationRequest(name))
   const receipt = await harness.runStudioUiDriver(plan, target, request.actions)
   invariant(
@@ -818,12 +878,27 @@ async function captureNative(plan, target, name) {
     action?.screenshotPath && action.byteLength > 0 && receipt.actions.length === 1,
     `native screenshot receipt is invalid: ${JSON.stringify(receipt)}`
   )
+  const afterMutationReceipt = await readTransportMutation(plan, target)
+  const afterMutation = normalizeTransportMutationReceipt(afterMutationReceipt)
+  latestTransportMutationBracket = {
+    ok: false,
+    name,
+    before: beforeMutation,
+    after: afterMutation
+  }
+  const transportMutationBracket = validateTransportMutationBracket(
+    beforeMutationReceipt,
+    afterMutationReceipt,
+    name
+  )
+  latestTransportMutationBracket = transportMutationBracket
   return {
     request,
     receipt,
     path: action.screenshotPath,
     byteLength: action.byteLength,
-    sha256: sha256File(action.screenshotPath)
+    sha256: sha256File(action.screenshotPath),
+    transportMutationBracket
   }
 }
 
@@ -1555,6 +1630,7 @@ function buildArtifactManifest(artifactRoot) {
 }
 
 async function runAcceptance(artifactRoot) {
+  latestTransportMutationBracket = null
   const startedAt = new Date().toISOString()
   const custody = assertCustody()
   const launchConsole = assertUnlocked('launch-preflight')
@@ -1635,7 +1711,7 @@ async function runAcceptance(artifactRoot) {
     },
     safety: {
       nativeDriverMode: 'background-observation-only',
-      nativeDriverActionTypes: ['screenshot'],
+      nativeDriverActionTypes: ['read-transport-mutation', 'screenshot'],
       foregroundInputUsed: false,
       keyboardInputUsed: false,
       mouseInputUsed: false,
@@ -1682,7 +1758,11 @@ async function runAcceptance(artifactRoot) {
   }
 }
 
-async function writeFailureArtifacts(artifactRoot, error) {
+async function writeFailureArtifacts(
+  artifactRoot,
+  error,
+  transportMutationBracket = latestTransportMutationBracket
+) {
   if (!artifactRoot || !fs.existsSync(artifactRoot)) return
   const evidencePath = path.join(artifactRoot, 'evidence.json')
   const failure = {
@@ -1692,6 +1772,7 @@ async function writeFailureArtifacts(artifactRoot, error) {
     recordedAt: new Date().toISOString(),
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : null,
+    latestTransportMutationBracket: transportMutationBracket,
     outcomePromotionAuthorized: false,
     retryPerformed: false
   }
@@ -1736,7 +1817,7 @@ async function main(argv = process.argv.slice(2)) {
     phasePorts: PHASE_PORTS,
     inputPolicy: {
       nativeDriverMode: 'background-observation-only',
-      nativeDriverActions: ['screenshot'],
+      nativeDriverActions: ['read-transport-mutation', 'screenshot'],
       rendererCdpToolbarClicks: true,
       mainInspectorDialogSelection: true,
       foregroundInputAllowed: false
@@ -1774,6 +1855,8 @@ module.exports = {
   validateClearedState,
   validateInvalidReplacement,
   validateReplayState,
+  validateTransportMutationBracket,
+  writeFailureArtifacts,
   validateTerminalReceipt
 }
 
