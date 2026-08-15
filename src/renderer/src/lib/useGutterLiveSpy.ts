@@ -1,7 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import {
   shouldAcceptGutterLiveSpy,
-  structuralGutterSpyPropsChanged,
   type StructuralGutterSpyProps
 } from './TranscriptUserMessageGutter'
 import type { TranscriptScrollSpy } from './TranscriptVirtualWindow'
@@ -49,10 +48,7 @@ export function useGutterLiveSpy(
       const structuralPropsAtCapture = structuralPropsRef.current
       setLatch((previous) => {
         const previousSnapshot =
-          previous &&
-          !structuralGutterSpyPropsChanged(previous.structuralProps, structuralPropsAtCapture)
-            ? previous.snapshot
-            : null
+          previous?.structuralProps === structuralPropsAtCapture ? previous.snapshot : null
         if (!shouldAcceptGutterLiveSpy(previousSnapshot, snapshot)) return previous
         return { snapshot, structuralProps: structuralPropsAtCapture }
       })
@@ -62,7 +58,7 @@ export function useGutterLiveSpy(
     }
   }, [spySinkRef])
 
-  if (!latch || structuralGutterSpyPropsChanged(latch.structuralProps, currentStructuralProps)) {
+  if (!latch || latch.structuralProps !== currentStructuralProps) {
     return null
   }
   return latch.snapshot

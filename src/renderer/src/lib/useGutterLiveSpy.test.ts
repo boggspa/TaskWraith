@@ -64,7 +64,7 @@ function installMinimalRendererDom(): Element {
 }
 
 describe('useGutterLiveSpy', () => {
-  it('invalidates structural changes without a passive follow-up commit and re-latches', () => {
+  it('invalidates structural generations without a passive follow-up commit and re-latches', () => {
     const container = installMinimalRendererDom()
     const spySinkRef: MutableRefObject<((snapshot: TranscriptScrollSpy) => void) | null> = {
       current: null
@@ -115,9 +115,23 @@ describe('useGutterLiveSpy', () => {
     expect(renderedSpy).toBeNull()
     expect(commits).toBe(1)
 
+    // Cycling A → B → A without a sink tick must not resurrect the old A
+    // snapshot merely because its structural values happen to match again.
+    act(() =>
+      render({
+        scrollProgress: 0.4,
+        scrollViewportFraction: 0.2,
+        activeScrollRowKey: 'u#0'
+      })
+    )
+    expect(renderedSpy).toBeNull()
+    expect(commits).toBe(2)
+
+    // An otherwise identical snapshot is still a new tick for this generation.
     act(() => spySinkRef.current?.(snapshot))
     expect(renderedSpy).toEqual(snapshot)
 
+    commits = 0
     for (let index = 0; index < 75; index += 1) {
       act(() =>
         render({
@@ -134,6 +148,6 @@ describe('useGutterLiveSpy', () => {
         })
       )
     }
-    expect(commits).toBeLessThanOrEqual(152)
+    expect(commits).toBeLessThanOrEqual(150)
   })
 })
