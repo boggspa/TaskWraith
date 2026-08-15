@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,8 @@ import {
   museSessionIndexDbPath,
   parseMuseSessionLogLine,
   resolveMuseSessionLogOnce,
-  resolveMuseSessionLogPath
+  resolveMuseSessionLogPath,
+  type MuseSessionLogTailOptions
 } from './MuseSessionLog'
 
 const temps: string[] = []
@@ -191,6 +192,51 @@ describe('createMuseSessionLogTailer', () => {
     await tailer.flushFinal()
     expect(tailer.parseErrorCount).toBe(1)
     expect(seen).toEqual([3])
+    await tailer.close()
+  })
+
+  it('joins overlapping polls and queues a final read after the active cursor update', async () => {
+    const line = `${envelopeLine(7, 'single delivery')}\n`
+    const data = Buffer.from(line)
+    let releaseFirstStat = (): void => {}
+    const firstStatGate = new Promise<void>((resolve) => {
+      releaseFirstStat = resolve
+    })
+    const stat = vi.fn(async () => {
+      if (stat.mock.calls.length === 1) await firstStatGate
+      return { size: data.length }
+    })
+    const read = vi.fn(async (buffer: Buffer, offset: number, length: number, position: number) => {
+      const bytesRead = data.copy(buffer, offset, position, position + length)
+      return { bytesRead, buffer }
+    })
+    const close = vi.fn(async () => undefined)
+    const open = vi.fn(async () => ({ read, close }))
+    const fileSystem = { stat, open } as unknown as NonNullable<
+      MuseSessionLogTailOptions['fileSystem']
+    >
+    const seen: number[] = []
+    const tailer = createMuseSessionLogTailer({
+      sessionLogPath: '/virtual/session.jsonl',
+      fileSystem,
+      onEnvelope: (env) => seen.push(env.sequence)
+    })
+
+    const pollPromise = tailer.poll()
+    const joinedPollPromise = tailer.poll()
+    const flushPromise = tailer.flushFinal()
+    expect(stat).toHaveBeenCalledOnce()
+    expect(joinedPollPromise).toBe(pollPromise)
+    releaseFirstStat()
+
+    expect(await pollPromise).toBe(1)
+    expect(await flushPromise).toBe(0)
+    expect(stat).toHaveBeenCalledTimes(2)
+    expect(open).toHaveBeenCalledOnce()
+    expect(read).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(seen).toEqual([7])
+    expect(tailer.byteOffset).toBe(data.length)
     await tailer.close()
   })
 })

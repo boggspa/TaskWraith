@@ -52,6 +52,8 @@ export interface MuseSessionLogResolveResult {
 
 export interface MuseSessionLogTailOptions {
   sessionLogPath: string
+  /** Narrow filesystem seam for deterministic overlap tests. */
+  fileSystem?: Pick<typeof fs, 'stat' | 'open'>
   /** Called for each complete parsed envelope. */
   onEnvelope?: (envelope: MuseEnvelope) => void
   /** Called for each complete raw line (after newline split). */
@@ -293,6 +295,9 @@ export function createMuseSessionLogTailer(
   let pending = ''
   let parseErrorCount = 0
   let closed = false
+  let activeRead: Promise<number> | null = null
+  let finalRead: Promise<number> | null = null
+  const fileSystem = options.fileSystem ?? fs
 
   const emitLine = (line: string): void => {
     if (!line.trim()) return
@@ -307,11 +312,11 @@ export function createMuseSessionLogTailer(
     }
   }
 
-  const readAvailable = async (): Promise<number> => {
+  const readAvailableOnce = async (): Promise<number> => {
     if (closed) return 0
     let stat
     try {
-      stat = await fs.stat(options.sessionLogPath)
+      stat = await fileSystem.stat(options.sessionLogPath)
     } catch {
       return 0
     }
@@ -323,12 +328,18 @@ export function createMuseSessionLogTailer(
     }
     if (stat.size === byteOffset) return 0
 
-    const handle = await fs.open(options.sessionLogPath, 'r')
+    // Capture the mutable cursor before another I/O boundary. The single-flight
+    // wrapper below owns that cursor, while this non-positive belt prevents a
+    // future caller from ever reaching Buffer.alloc with a stale subtraction.
+    const readOffset = byteOffset
+    const toRead = stat.size - readOffset
+    if (toRead <= 0) return 0
+
+    const handle = await fileSystem.open(options.sessionLogPath, 'r')
     try {
-      const toRead = stat.size - byteOffset
       const buf = Buffer.alloc(toRead)
-      const { bytesRead } = await handle.read(buf, 0, toRead, byteOffset)
-      byteOffset += bytesRead
+      const { bytesRead } = await handle.read(buf, 0, toRead, readOffset)
+      byteOffset = readOffset + bytesRead
       const chunk = buf.subarray(0, bytesRead).toString('utf8')
       const split = splitCompleteLines(pending + chunk)
       pending = split.pending
@@ -337,6 +348,35 @@ export function createMuseSessionLogTailer(
     } finally {
       await handle.close()
     }
+  }
+
+  const poll = (): Promise<number> => {
+    if (closed) return Promise.resolve(0)
+    if (activeRead) return activeRead
+    const trackedRead = readAvailableOnce().finally(() => {
+      activeRead = null
+    })
+    activeRead = trackedRead
+    return trackedRead
+  }
+
+  const flushFinal = (): Promise<number> => {
+    if (closed) return Promise.resolve(0)
+    if (finalRead) return finalRead
+    const readToFollow = activeRead
+    const settledRead = readToFollow
+      ? readToFollow.then(
+          () => undefined,
+          () => undefined
+        )
+      : Promise.resolve()
+    const trackedFinalRead = settledRead
+      .then(() => poll())
+      .finally(() => {
+        finalRead = null
+      })
+    finalRead = trackedFinalRead
+    return trackedFinalRead
   }
 
   return {
@@ -349,10 +389,11 @@ export function createMuseSessionLogTailer(
     get parseErrorCount() {
       return parseErrorCount
     },
-    poll: readAvailable,
-    flushFinal: readAvailable,
+    poll,
+    flushFinal,
     async close() {
       closed = true
+      await Promise.allSettled([activeRead, finalRead].filter(Boolean))
     }
   }
 }
