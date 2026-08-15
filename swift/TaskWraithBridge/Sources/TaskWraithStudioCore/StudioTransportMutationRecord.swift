@@ -12,6 +12,8 @@ public enum StudioTransportMutationKind: String, Equatable, Sendable {
     case playbackToggleAccessibility
     case playheadAccessibilitySet
     case playheadAccessibilityStep
+    case frameStepKey
+    case transcriptCueSeek
     case scrubBegin
     case scrubMove
     case scrubEnd

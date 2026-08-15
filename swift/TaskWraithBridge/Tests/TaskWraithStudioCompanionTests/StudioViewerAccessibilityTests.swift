@@ -130,6 +130,57 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         XCTAssertEqual(try playbackValue(), opposite, "Space and AXPress have drifted apart")
     }
 
+    /// The retained tm1 descriptor must identify both AX mutation paths and
+    /// remain the same AppKit element across render-only ticks and value-only
+    /// record updates. Otherwise the next packaged teleport is either
+    /// unattributed or paid for with per-frame AX allocation.
+    func testTransportMutationDetailTracksAXPathsWithoutRenderChurn() throws {
+        let (view, _) = try makeViewer()
+
+        let playback = try XCTUnwrap(
+            try child(labeledChildren(of: view), labeled: "Playback")
+                as? StudioActionAccessibilityElement)
+        XCTAssertTrue(playback.accessibilityPerformPress())
+        XCTAssertEqual(view.lastTransportMutation?.kind, .playbackToggleAccessibility)
+        view.renderCurrentFrame()
+
+        let detail = try child(
+            labeledChildren(of: view), labeled: "Transport mutation detail")
+        let detailIdentity = ObjectIdentifier(detail)
+        let playbackValue = try XCTUnwrap(detail.accessibilityValue() as? String)
+        XCTAssertTrue(playbackValue.contains("kind=playbackToggleAccessibility"))
+
+        let retained = try XCTUnwrap(view.lastTransportMutation)
+        view.renderCurrentFrame()
+        let idleDetail = try child(
+            labeledChildren(of: view), labeled: "Transport mutation detail")
+        XCTAssertEqual(ObjectIdentifier(idleDetail), detailIdentity)
+        XCTAssertEqual(idleDetail.accessibilityValue() as? String, playbackValue)
+        XCTAssertEqual(view.lastTransportMutation, retained)
+
+        let playhead = try XCTUnwrap(
+            try labeledChildren(of: view)
+                .first { $0 is StudioPlayheadAccessibilityElement }
+                as? StudioPlayheadAccessibilityElement)
+        XCTAssertTrue(playhead.apply(NSNumber(value: 3000)))
+        XCTAssertEqual(view.lastTransportMutation?.kind, .playheadAccessibilitySet)
+        view.renderCurrentFrame()
+        let setDetail = try child(
+            labeledChildren(of: view), labeled: "Transport mutation detail")
+        XCTAssertEqual(ObjectIdentifier(setDetail), detailIdentity)
+        XCTAssertTrue(
+            try XCTUnwrap(setDetail.accessibilityValue() as? String)
+                .contains("kind=playheadAccessibilitySet"))
+
+        playhead.accessibilityPerformAction(.increment)
+        XCTAssertEqual(view.lastTransportMutation?.kind, .playheadAccessibilityStep)
+
+        let lastAccepted = try XCTUnwrap(view.lastTransportMutation)
+        view.playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding(isBound: false)
+        XCTAssertFalse(playhead.apply(NSNumber(value: 4000)))
+        XCTAssertEqual(view.lastTransportMutation, lastAccepted)
+    }
+
     /// Only a descriptor that NAMES an action may become pressable. Everything
     /// else stays an announcement: advertising a press that reaches nothing is
     /// worse than advertising none.

@@ -302,7 +302,9 @@ final class StudioViewerView: NSView {
         }
 
         updateDrawableSize()
-        transport.play(atHost: transportMutationHostSeconds)
+        mutateTransport(.lifecycleAttach) { controller, host in
+            controller.play(atHost: host)
+        }
 
         let link = displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         link.add(to: .main, forMode: .common)
@@ -329,12 +331,7 @@ final class StudioViewerView: NSView {
     /// uptime on a long-running host), which clamps to end-of-media and looks
     /// like a 600 s jump in ~2 s. The anchor is written in the SAME domain this
     /// property returns, so never switch domains while the anchor is live.
-    private var transportHostSeconds: Double {
-        if usingAudioTime {
-            return audioPlayer.audioHostSeconds() ?? lastAudioHostSeconds
-        }
-        return CACurrentMediaTime()
-    }
+    private var transportHostSeconds: Double { transportMutationHostReading.seconds }
 
     /// THE HOST CLOCK EVERY TRANSPORT MUTATION MUST USE.
     ///
@@ -348,7 +345,181 @@ final class StudioViewerView: NSView {
     /// It reads the same source the renderer reads, so a mutation can never
     /// disagree with the picture about what time it is. Every mutation in this
     /// view routes through here; none may call `CACurrentMediaTime()` directly.
-    var transportMutationHostSeconds: Double { transportHostSeconds }
+    private struct TransportMutationSignature: Equatable {
+        let clock: StudioPlaybackClock
+        let inPointTicks: Int64?
+        let outPointTicks: Int64?
+        let isLoopingRange: Bool
+        let isScrubbing: Bool
+
+        init(_ controller: StudioTransportController) {
+            clock = controller.clock
+            inPointTicks = controller.inPointTicks
+            outPointTicks = controller.outPointTicks
+            isLoopingRange = controller.isLoopingRange
+            isScrubbing = controller.isScrubbing
+        }
+    }
+
+    private struct TransportHostReading {
+        let source: StudioTransportHostSource
+        let seconds: Double
+    }
+
+    /// One bounded retained record. Display-link reads never assign it.
+    private(set) var lastTransportMutation: StudioTransportMutationRecord?
+
+    private var transportMutationHostReading: TransportHostReading {
+        if usingAudioTime {
+            return TransportHostReading(
+                source: .audio,
+                seconds: audioPlayer.audioHostSeconds() ?? lastAudioHostSeconds
+            )
+        }
+        return TransportHostReading(source: .machine, seconds: CACurrentMediaTime())
+    }
+    var transportMutationHostSeconds: Double { transportMutationHostReading.seconds }
+
+    private func transportMutationRecord(
+        kind: StudioTransportMutationKind,
+        before: StudioTransportController,
+        beforeSource: StudioTransportHostSource,
+        beforeHost: Double,
+        after: StudioTransportController,
+        afterSource: StudioTransportHostSource,
+        afterHost: Double,
+        previousHost: Double?
+    ) -> StudioTransportMutationRecord {
+        let beforeClock = before.clock
+        let afterClock = after.clock
+        return StudioTransportMutationRecord(
+            kind: kind,
+            beforeSource: beforeSource,
+            afterSource: afterSource,
+            suppliedHostSeconds: afterHost,
+            previousHostSeconds: previousHost,
+            beforeAnchorTicks: beforeClock.diagnosticAnchorTicks,
+            beforeAnchorHostSeconds: beforeClock.diagnosticAnchorHostSeconds,
+            beforePositionTicks: beforeClock.positionTicks(atHost: beforeHost),
+            beforeDurationTicks: beforeClock.durationTicks,
+            beforeIsPlaying: beforeClock.snapshot(atHost: beforeHost).isPlaying,
+            beforeRate: beforeClock.rate,
+            afterAnchorTicks: afterClock.diagnosticAnchorTicks,
+            afterAnchorHostSeconds: afterClock.diagnosticAnchorHostSeconds,
+            afterPositionTicks: afterClock.positionTicks(atHost: afterHost),
+            afterDurationTicks: afterClock.durationTicks,
+            afterIsPlaying: afterClock.snapshot(atHost: afterHost).isPlaying,
+            afterRate: afterClock.rate
+        )
+    }
+
+    private func retainTransportMutation(
+        _ kind: StudioTransportMutationKind,
+        before: StudioTransportController,
+        beforeReading: TransportHostReading,
+        after: StudioTransportController,
+        afterReading: TransportHostReading,
+        previousHost: Double?,
+        recordsDeclaredTransition: Bool = false
+    ) {
+        let controllerChanged =
+            TransportMutationSignature(before) != TransportMutationSignature(after)
+        guard controllerChanged || recordsDeclaredTransition else {
+            return
+        }
+        transport = after
+        lastTransportMutation = transportMutationRecord(
+            kind: kind,
+            before: before,
+            beforeSource: beforeReading.source,
+            beforeHost: beforeReading.seconds,
+            after: after,
+            afterSource: afterReading.source,
+            afterHost: afterReading.seconds,
+            previousHost: previousHost
+        )
+    }
+
+    private func mutateTransport(
+        _ kind: StudioTransportMutationKind,
+        _ body: (inout StudioTransportController, Double) -> Void
+    ) {
+        let reading = transportMutationHostReading
+        let before = transport
+        var after = before
+        body(&after, reading.seconds)
+        retainTransportMutation(
+            kind,
+            before: before,
+            beforeReading: reading,
+            after: after,
+            afterReading: reading,
+            previousHost: nil
+        )
+    }
+
+    @discardableResult
+    private func mutateTransportIfAccepted(
+        _ kind: StudioTransportMutationKind,
+        _ body: (inout StudioTransportController, Double) -> Bool
+    ) -> Bool {
+        let reading = transportMutationHostReading
+        let before = transport
+        var after = before
+        let accepted = body(&after, reading.seconds)
+        guard accepted else { return false }
+        retainTransportMutation(
+            kind,
+            before: before,
+            beforeReading: reading,
+            after: after,
+            afterReading: reading,
+            previousHost: nil
+        )
+        return true
+    }
+
+    private func mutateTransportThrowing(
+        _ kind: StudioTransportMutationKind,
+        _ body: (inout StudioTransportController, Double) throws -> Void
+    ) throws {
+        let reading = transportMutationHostReading
+        let before = transport
+        var after = before
+        try body(&after, reading.seconds)
+        retainTransportMutation(
+            kind,
+            before: before,
+            beforeReading: reading,
+            after: after,
+            afterReading: reading,
+            previousHost: nil
+        )
+    }
+
+    /// Explicit source transitions cannot use the ordinary same-domain wrapper:
+    /// their old and new hosts intentionally come from different oscillators.
+    func mutateTransportForSourceTransition(
+        _ kind: StudioTransportMutationKind,
+        beforeSource: StudioTransportHostSource,
+        beforeHost: Double,
+        afterSource: StudioTransportHostSource,
+        afterHost: Double,
+        _ body: (inout StudioTransportController) -> Void
+    ) {
+        let before = transport
+        var after = before
+        body(&after)
+        retainTransportMutation(
+            kind,
+            before: before,
+            beforeReading: TransportHostReading(source: beforeSource, seconds: beforeHost),
+            after: after,
+            afterReading: TransportHostReading(source: afterSource, seconds: afterHost),
+            previousHost: beforeHost,
+            recordsDeclaredTransition: true
+        )
+    }
 
     /// Re-anchors the clock when the oscillator changes.
     ///
@@ -365,14 +536,24 @@ final class StudioViewerView: NSView {
         if audioActive { lastAudioHostSeconds = audioSeconds ?? 0 }
         guard audioActive != usingAudioTime else { return }
 
+        let beforeSource: StudioTransportHostSource = usingAudioTime ? .audio : .machine
         let previousHost = usingAudioTime ? lastAudioHostSeconds : CACurrentMediaTime()
         let position = transport.clock.positionTicks(atHost: previousHost)
         let wasPlaying = transport.clock.snapshot(atHost: previousHost).isPlaying
-
-        usingAudioTime = audioActive
+        let afterSource: StudioTransportHostSource = audioActive ? .audio : .machine
         let nextHost = audioActive ? (audioSeconds ?? 0) : CACurrentMediaTime()
-        transport.seek(toTicks: position, atHost: nextHost)
-        if wasPlaying { transport.play(atHost: nextHost) }
+
+        mutateTransportForSourceTransition(
+            .oscillatorReconciliation,
+            beforeSource: beforeSource,
+            beforeHost: previousHost,
+            afterSource: afterSource,
+            afterHost: nextHost
+        ) { controller in
+            controller.seek(toTicks: position, atHost: nextHost)
+            if wasPlaying { controller.play(atHost: nextHost) }
+        }
+        usingAudioTime = audioActive
         // Statistics from before an oscillator change describe a different
         // pipeline, so they are discarded rather than carried forward.
         syncMeter?.reset()
@@ -467,6 +648,7 @@ final class StudioViewerView: NSView {
         transportAt timelineTicks: Int64,
         expectedAssetId: String?
     ) {
+        let beforeReading = transportMutationHostReading
         do {
             guard try audioPlayer.play(
                 fromTicks: contentTicks,
@@ -481,8 +663,16 @@ final class StudioViewerView: NSView {
         // The player reads CONTENT; the authority remains the timeline. They
         // may have different origins at a cut, so never seek the authority to
         // sourceTicks by accident.
-        transport.seek(toTicks: timelineTicks, atHost: nextHost)
-        transport.play(atHost: nextHost)
+        mutateTransportForSourceTransition(
+            .audioReschedule,
+            beforeSource: beforeReading.source,
+            beforeHost: beforeReading.seconds,
+            afterSource: .audio,
+            afterHost: nextHost
+        ) { controller in
+            controller.seek(toTicks: timelineTicks, atHost: nextHost)
+            controller.play(atHost: nextHost)
+        }
         audioContentAnchorTicks = contentTicks
         audioTimelineAnchorTicks = timelineTicks
         usingAudioTime = true
@@ -596,7 +786,7 @@ final class StudioViewerView: NSView {
             reviewVersion = .current
             // A resolved ghost must not leave the transport looping a range
             // that no longer refers to anything.
-            if parkedMarks != nil { toggleReviewLoop(atHost: transportMutationHostSeconds) }
+            if parkedMarks != nil { toggleReviewLoop() }
         }
         needsDisplay = true
     }
@@ -651,6 +841,7 @@ final class StudioViewerView: NSView {
                 // Accessibility-only. Nil until a reading exists, so no
                 // descriptor is published before there is something to read.
                 syncDetail: syncMeter?.peakSample?.diagnosticsExportText,
+                transportMutationDetail: lastTransportMutation?.diagnosticsExportText,
                 memoryLabel: memoryLabel,
                 cacheHitCount: renderer.cacheHitCount,
                 boundTextureCount: renderer.boundTextureCount,
@@ -756,15 +947,17 @@ final class StudioViewerView: NSView {
     }
 
     func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
-        transport = StudioTransportController(
-            clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
-        )
+        mutateTransport(.lifecycleOpen) { controller, host in
+            controller = StudioTransportController(
+                clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
+            )
+            controller.play(atHost: host)
+        }
         // A half-typed timecode belongs to the PREVIOUS asset's timebase, so
         // carrying it across an open would resolve it against the wrong rate.
         timecodeField.cancel()
         sourceLabel = label
         message = nil
-        transport.play(atHost: transportMutationHostSeconds)
     }
 
     func report(message text: String?) {
@@ -822,16 +1015,15 @@ final class StudioViewerView: NSView {
             super.mouseDown(with: event)
             return
         }
-        let host = transportMutationHostSeconds
-        transport.beginScrub(atHost: host)
-        transport.updateScrub(
-            toTicks: StudioOverlayLayout.ticks(
-                atX: point.x,
-                in: model,
-                durationTicks: transport.clock.durationTicks
-            ),
-            atHost: host
+        let ticks = StudioOverlayLayout.ticks(
+            atX: point.x,
+            in: model,
+            durationTicks: transport.clock.durationTicks
         )
+        mutateTransport(.scrubBegin) { controller, host in
+            controller.beginScrub(atHost: host)
+            controller.updateScrub(toTicks: ticks, atHost: host)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -845,14 +1037,14 @@ final class StudioViewerView: NSView {
         }
         // Deliberately NOT re-checking the grab area: dragging off the bar and
         // back is normal, and the hit test already clamps to both ends.
-        transport.updateScrub(
-            toTicks: StudioOverlayLayout.ticks(
-                atX: overlayPoint(from: event).x,
-                in: model,
-                durationTicks: transport.clock.durationTicks
-            ),
-            atHost: transportMutationHostSeconds
+        let ticks = StudioOverlayLayout.ticks(
+            atX: overlayPoint(from: event).x,
+            in: model,
+            durationTicks: transport.clock.durationTicks
         )
+        mutateTransport(.scrubMove) { controller, host in
+            controller.updateScrub(toTicks: ticks, atHost: host)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -865,7 +1057,9 @@ final class StudioViewerView: NSView {
             return
         }
         // Restores whatever the transport was doing before the gesture.
-        transport.endScrub(atHost: transportMutationHostSeconds)
+        mutateTransport(.scrubEnd) { controller, host in
+            controller.endScrub(atHost: host)
+        }
     }
 
     /// Loops the AFFECTED RANGE of the open proposal with pre/post-roll.
@@ -876,11 +1070,13 @@ final class StudioViewerView: NSView {
     /// and says nothing about whether it joins. Implemented by BORROWING the
     /// one loop authority rather than adding a second one — and the operator's
     /// marks are parked and restored, not overwritten.
-    func toggleReviewLoop(atHost host: CFTimeInterval) {
+    func toggleReviewLoop() {
         if let parked = parkedMarks {
-            transport.setLoopingRange(false, atHost: host)
-            transport.setInPoint(ticks: parked.inTicks, atHost: host)
-            transport.setOutPoint(ticks: parked.outTicks, atHost: host)
+            mutateTransport(.markOrLoop) { controller, host in
+                controller.setLoopingRange(false, atHost: host)
+                controller.setInPoint(ticks: parked.inTicks, atHost: host)
+                controller.setOutPoint(ticks: parked.outTicks, atHost: host)
+            }
             parkedMarks = nil
             report(message: "Review loop off — your In/Out restored")
             return
@@ -901,11 +1097,14 @@ final class StudioViewerView: NSView {
             report(message: "Review range is not representable")
             return
         }
-        parkedMarks = (transport.inPointTicks, transport.outPointTicks)
-        transport.setInPoint(ticks: range.startTicks, atHost: host)
-        transport.setOutPoint(ticks: range.endTicks, atHost: host)
-        transport.setLoopingRange(true, atHost: host)
-        transport.seek(toTicks: range.startTicks, atHost: host)
+        let operatorMarks = (transport.inPointTicks, transport.outPointTicks)
+        mutateTransport(.markOrLoop) { controller, host in
+            controller.setInPoint(ticks: range.startTicks, atHost: host)
+            controller.setOutPoint(ticks: range.endTicks, atHost: host)
+            controller.setLoopingRange(true, atHost: host)
+            controller.seek(toTicks: range.startTicks, atHost: host)
+        }
+        parkedMarks = operatorMarks
         let rollFrames = roll / max(1, timebase.frameDurationTicks)
         report(message: "Review loop on — affected range +/- \(rollFrames)f roll")
     }
@@ -953,7 +1152,7 @@ final class StudioViewerView: NSView {
     /// Moves the selection and CUES THE PLAYHEAD to the segment's start.
     /// Selection that did not move the picture would leave an operator reading
     /// a highlight with no idea what was said there.
-    private func selectSegment(forward: Bool, atHost host: CFTimeInterval) {
+    private func selectSegment(forward: Bool) {
         guard
             let next = StudioTimelineLayout.segmentId(
                 steppingFrom: selectedSegmentId, forward: forward, in: transcript)
@@ -963,7 +1162,9 @@ final class StudioViewerView: NSView {
         if let segment = transcript?.segments.first(where: { $0.segmentId == next }),
             let range = segment.range(in: transport.clock.timebase)
         {
-            transport.seek(toTicks: range.startTicks, atHost: host)
+            mutateTransport(.transcriptCueSeek) { controller, host in
+                controller.seek(toTicks: range.startTicks, atHost: host)
+            }
             report(message: segment.text.isEmpty ? next : segment.text)
         }
         needsDisplay = true
@@ -1103,24 +1304,25 @@ final class StudioViewerView: NSView {
     /// Audio follows the transport through the existing per-tick
     /// `reconcileAudio()`; nothing here schedules or re-anchors it.
     @discardableResult
-    func performPlaybackToggle(atHost host: Double) -> Bool {
-        transport.togglePlayback(atHost: host)
+    func performPlaybackToggle(_ kind: StudioTransportMutationKind) -> Bool {
+        mutateTransport(kind) { controller, host in
+            controller.togglePlayback(atHost: host)
+        }
         return true
     }
 
     override func keyDown(with event: NSEvent) {
         if handleTimecodeEntry(event) { return }
 
-        let host = transportMutationHostSeconds
         switch event.keyCode {
         case Key.space:
-            performPlaybackToggle(atHost: host)
+            performPlaybackToggle(.playbackToggleKey)
             return
         case Key.tab:
             // Tab walks the transcript band. Without this the accessibility
             // descriptors the band publishes are focusable by nothing, which
             // makes them a claim rather than a control.
-            selectSegment(forward: !event.modifierFlags.contains(.shift), atHost: host)
+            selectSegment(forward: !event.modifierFlags.contains(.shift))
             return
         case Key.escape:
             if trim != nil || selectedSegmentId != nil {
@@ -1137,16 +1339,20 @@ final class StudioViewerView: NSView {
         case Key.leftArrow:
             // Shift steps a second at a time, matching the shuttle habit every
             // NLE trains.
-            transport.stepFrames(
-                event.modifierFlags.contains(.shift) ? -shuttleFrames : -1,
-                atHost: host
-            )
+            mutateTransport(.frameStepKey) { controller, host in
+                controller.stepFrames(
+                    event.modifierFlags.contains(.shift) ? -shuttleFrames : -1,
+                    atHost: host
+                )
+            }
             return
         case Key.rightArrow:
-            transport.stepFrames(
-                event.modifierFlags.contains(.shift) ? shuttleFrames : 1,
-                atHost: host
-            )
+            mutateTransport(.frameStepKey) { controller, host in
+                controller.stepFrames(
+                    event.modifierFlags.contains(.shift) ? shuttleFrames : 1,
+                    atHost: host
+                )
+            }
             return
         default:
             break
@@ -1154,15 +1360,17 @@ final class StudioViewerView: NSView {
 
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "i":
-            transport.markIn(atHost: host)
+            mutateTransport(.markOrLoop) { $0.markIn(atHost: $1) }
         case "o":
-            transport.markOut(atHost: host)
+            mutateTransport(.markOrLoop) { $0.markOut(atHost: $1) }
         case "l":
-            transport.setLoopingRange(!transport.isLoopingRange, atHost: host)
+            mutateTransportIfAccepted(.markOrLoop) { controller, host in
+                controller.setLoopingRange(!controller.isLoopingRange, atHost: host)
+            }
         case "p":
-            transport.playRange(atHost: host)
+            mutateTransportIfAccepted(.markOrLoop) { $0.playRange(atHost: $1) }
         case "x":
-            transport.clearMarks(atHost: host)
+            mutateTransport(.markOrLoop) { $0.clearMarks(atHost: $1) }
         case "w":
             // The route toggle had no input path at all: toggleRoute existed and
             // nothing called it, which is this round's reachable-but-inert shape
@@ -1170,7 +1378,7 @@ final class StudioViewerView: NSView {
             StudioViewerAppState.shared?.toggleRoute(
                 route == .source ? .review : .source)
         case "c":
-            toggleReviewLoop(atHost: host)
+            toggleReviewLoop()
         case "d":
             // The display transform was implemented, pixel-tested against a CPU
             // oracle, and reachable by nobody: gradeSettings stayed at its
@@ -1270,7 +1478,9 @@ final class StudioViewerView: NSView {
             return
         }
         do {
-            try transport.seek(toTimecodeText: text, atHost: transportMutationHostSeconds)
+            try mutateTransportThrowing(.timecodeSeek) { controller, host in
+                try controller.seek(toTimecodeText: text, atHost: host)
+            }
             message = nil
         } catch {
             // Reported, never approximated: seeking somewhere near a typo is a
@@ -1346,19 +1556,25 @@ final class StudioViewerView: NSView {
                 )
                 playhead.applyValue = { [weak self] value in
                     guard let self else { return false }
-                    return self.playheadAccessibilityBinding.apply(
-                        value,
-                        to: &self.transport,
-                        atHost: self.transportHostSeconds
-                    )
+                    return self.mutateTransportIfAccepted(.playheadAccessibilitySet) {
+                        controller, host in
+                        self.playheadAccessibilityBinding.apply(
+                            value,
+                            to: &controller,
+                            atHost: host
+                        )
+                    }
                 }
                 playhead.applyStep = { [weak self] delta in
                     guard let self else { return false }
-                    return self.playheadAccessibilityBinding.step(
-                        frames: delta,
-                        to: &self.transport,
-                        atHost: self.transportHostSeconds
-                    )
+                    return self.mutateTransportIfAccepted(.playheadAccessibilityStep) {
+                        controller, host in
+                        self.playheadAccessibilityBinding.step(
+                            frames: delta,
+                            to: &controller,
+                            atHost: host
+                        )
+                    }
                 }
                 playhead.setAccessibilityParent(self)
                 applyAccessibilityFrame(descriptor.frame, scale: scale, to: playhead)
@@ -1374,7 +1590,7 @@ final class StudioViewerView: NSView {
                     guard let self else { return false }
                     switch action {
                     case .togglePlayback:
-                        return self.performPlaybackToggle(atHost: transportMutationHostSeconds)
+                        return self.performPlaybackToggle(.playbackToggleAccessibility)
                     }
                 }
                 control.setAccessibilityParent(self)

@@ -224,6 +224,128 @@ final class StudioViewerEventTests: XCTestCase {
             remaining - inComments, 4,
             "the only non-comment machine-clock reads are the domain fallback, "
                 + "the two oscillator-swap operands, and the memory throttle")
+        XCTAssertFalse(
+            source.contains("atHost: self.transportHostSeconds"),
+            "the AX playhead bypassed the retained mutation producer")
+        let directMutators = [
+            "transport.play(", "transport.pause(", "transport.togglePlayback(",
+            "transport.stepFrames(", "transport.seek(", "transport.markIn(",
+            "transport.markOut(", "transport.setInPoint(", "transport.setOutPoint(",
+            "transport.setLoopingRange(", "transport.playRange(",
+            "transport.clearMarks(", "transport.beginScrub(",
+            "transport.updateScrub(", "transport.endScrub(",
+        ]
+        for bypass in directMutators {
+            XCTAssertFalse(
+                source.contains(bypass),
+                "transport mutation bypassed the retained producer: \(bypass)")
+        }
+    }
+
+    /// One producer owns attribution for lifecycle, keyboard, transcript and
+    /// editorial mutations. Its no-op rule compares the whole controller: an In
+    /// mark is a real mutation even though it leaves the playback clock alone.
+    func testTheMutationProducerClassifiesEntrypointsAndRetainsOnRefusal() throws {
+        let (view, window) = try makeViewer()
+        XCTAssertEqual(view.lastTransportMutation?.kind, .lifecycleAttach)
+
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        view.adopt(timebase: timebase, durationTicks: 6000, label: "fixture")
+        XCTAssertEqual(view.lastTransportMutation?.kind, .lifecycleOpen)
+
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: " ", keyCode: 49))
+        XCTAssertEqual(view.lastTransportMutation?.kind, .playbackToggleKey)
+
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "i"))
+        XCTAssertEqual(view.lastTransportMutation?.kind, .markOrLoop)
+        XCTAssertNotNil(view.transport.inPointTicks)
+        let mark = try XCTUnwrap(view.lastTransportMutation)
+
+        // Loop-on without Out is refused. It must not overwrite the last real
+        // mutation with an operation that changed nothing.
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "l"))
+        XCTAssertEqual(view.lastTransportMutation, mark)
+
+        // 00:00:00:99 is invalid at this asset's nominal 30 fps. A thrown
+        // timecode parse is not a transport mutation either.
+        for _ in 0..<2 {
+            view.keyDown(with: makeEvent(
+                .keyDown, at: .zero, in: window, characters: "9", keyCode: 18))
+        }
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "\r", keyCode: 36))
+        XCTAssertEqual(view.lastTransportMutation, mark)
+
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "", keyCode: 124))
+        XCTAssertEqual(view.lastTransportMutation?.kind, .frameStepKey)
+
+        view.adopt(transcript: Self.transcript)
+        view.keyDown(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "\t", keyCode: 48))
+        XCTAssertEqual(view.lastTransportMutation?.kind, .transcriptCueSeek)
+    }
+
+    /// Oscillator reconciliation and audio rescheduling are not ordinary
+    /// mutations: their old and new operands live in different clock domains.
+    /// The shared producer must retain both hosts rather than inferring a cause
+    /// from a large number.
+    func testSourceTransitionsRetainBothDomainsAndDistinctKinds() throws {
+        let (view, _) = try makeViewer()
+
+        view.mutateTransportForSourceTransition(
+            .oscillatorReconciliation,
+            beforeSource: .machine,
+            beforeHost: 100,
+            afterSource: .audio,
+            afterHost: 4
+        ) { controller in
+            controller.seek(toTicks: 2400, atHost: 4)
+            controller.play(atHost: 4)
+        }
+        let oscillator = try XCTUnwrap(view.lastTransportMutation)
+        XCTAssertEqual(oscillator.kind, .oscillatorReconciliation)
+        XCTAssertEqual(oscillator.beforeSource, .machine)
+        XCTAssertEqual(oscillator.afterSource, .audio)
+        XCTAssertEqual(oscillator.previousHostSeconds, 100)
+        XCTAssertEqual(oscillator.suppliedHostSeconds, 4)
+
+        view.mutateTransportForSourceTransition(
+            .audioReschedule,
+            beforeSource: .audio,
+            beforeHost: 4,
+            afterSource: .audio,
+            afterHost: 0
+        ) { controller in
+            controller.seek(toTicks: 3000, atHost: 0)
+            controller.play(atHost: 0)
+        }
+        let reschedule = try XCTUnwrap(view.lastTransportMutation)
+        XCTAssertEqual(reschedule.kind, .audioReschedule)
+        XCTAssertEqual(reschedule.beforeSource, .audio)
+        XCTAssertEqual(reschedule.afterSource, .audio)
+        XCTAssertEqual(reschedule.previousHostSeconds, 4)
+        XCTAssertEqual(reschedule.suppliedHostSeconds, 0)
+
+        // A successful device-timeline reset is itself the event being
+        // diagnosed. It must remain visible even when it happens to
+        // re-establish byte-identical controller operands.
+        view.mutateTransportForSourceTransition(
+            .audioReschedule,
+            beforeSource: .audio,
+            beforeHost: 0,
+            afterSource: .audio,
+            afterHost: 0
+        ) { _ in }
+        let identityReset = try XCTUnwrap(view.lastTransportMutation)
+        XCTAssertEqual(identityReset.kind, .audioReschedule)
+        XCTAssertEqual(identityReset.beforeAnchorTicks, identityReset.afterAnchorTicks)
+        XCTAssertEqual(
+            identityReset.beforeAnchorHostSeconds, identityReset.afterAnchorHostSeconds)
     }
 
     // MARK: - Who owns the grade mode
@@ -534,12 +656,12 @@ final class StudioReviewLoopTests: XCTestCase {
                         proposalId: "p1", createdRevision: 1, op: op),
                     timebase: timebase)))
 
-        view.toggleReviewLoop(atHost: host)
+        view.toggleReviewLoop()
         XCTAssertEqual(view.transport.inPointTicks, 2400, "loop starts one second before")
         XCTAssertEqual(view.transport.outPointTicks, 4200)
         XCTAssertTrue(view.transport.isLoopingRange)
 
-        view.toggleReviewLoop(atHost: host)
+        view.toggleReviewLoop()
         XCTAssertEqual(
             view.transport.inPointTicks, 1000,
             "the operator's In was destroyed by a feature that only borrowed it")
@@ -567,7 +689,7 @@ final class StudioReviewLoopTests: XCTestCase {
                     proposal: StudioEditProposal(
                         proposalId: "p1", createdRevision: 1, op: op),
                     timebase: timebase)))
-        view.toggleReviewLoop(atHost: CACurrentMediaTime())
+        view.toggleReviewLoop()
         XCTAssertTrue(view.transport.isLoopingRange)
 
         view.adopt(reviewTimeline: nil)
