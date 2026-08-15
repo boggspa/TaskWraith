@@ -159,15 +159,21 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
                 try XCTUnwrap(lastFrame).pixelBuffer
             )
             if fresh != liveSample.planeBytes {
+                // Do not use String(format:) + "%s" here. Passing a Swift
+                // String as %s is a C-varargs type error: DiagnosticReports
+                // xctest-2026-08-15-033958 / 034034 are EXC_BAD_ACCESS in
+                // _platform_strlen via CFStringAppendFormatCore at this site.
+                // That SIGSEGV predates the dual-fence lease (same stack at
+                // 03:07, commit a78358d2b). Interpolation keeps a real
+                // mismatch as XCTFail instead of stopping the suite.
+                let live = liveSample.planeBytes
+                let first = zip(live.indices, zip(live, fresh)).first {
+                    $0.1.0 != $0.1.1
+                }
+                let pts = CMTimeGetSeconds(liveSample.presentationTime)
+                let surface = liveSample.ioSurfaceID.map(String.init) ?? "nil"
                 mismatches.append(
-                    String(
-                        format: "PTS %.3fs (idx %d, iosurface %s): live/fresh plane mismatch (%d vs %d bytes)",
-                        CMTimeGetSeconds(liveSample.presentationTime),
-                        targetIndex,
-                        liveSample.ioSurfaceID.map(String.init) ?? "nil",
-                        liveSample.planeBytes.count,
-                        fresh.count
-                    )
+                    "PTS \(String(format: "%.3f", pts))s (idx \(targetIndex), iosurface \(surface)): live/fresh plane mismatch (\(live.count) vs \(fresh.count) bytes, firstDiff=\(first?.0 ?? -1) live=\(first?.1.0 ?? 0) fresh=\(first?.1.1 ?? 0))"
                 )
             }
         }
