@@ -957,6 +957,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         currentProviderModelOptions: sideRawModelOptions,
         currentProviderCapabilityWarning: null,
         composerSlashCommands: [],
+        // No slash registry here, so nothing can publish a surface request —
+        // and the main composer's requests must not reach this one.
+        composerSurfaceRequest: null,
         currentWorkspace: sideWorkspace,
         currentWorkspacePath: sideWorkspace?.path || sideChat.workspacePath,
         isCurrentGlobalChat: isGlobalChat(sideChat),

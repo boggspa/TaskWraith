@@ -106,7 +106,14 @@ import {
   recordRunItemMetric,
   type RunStreamMetrics
 } from '../../shared/runStreamMetrics'
+import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
+import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/composerSurfaceRequest'
+import type {
+  ComposerSurfaceId,
+  ComposerSurfaceRequest
+} from './lib/composerSurfaceRequest'
+import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
@@ -18615,13 +18622,12 @@ function App(): React.JSX.Element {
       } else if (item.command === '/review') {
         void handleReviewCurrentDiff()
       } else if (item.command === '/fast') {
-        // Codex-specific toggle — stays chat-level since fast mode
-        // is a chat composer pick, not a per-participant setting.
-        if (codexSupportsFast) {
-          const nextTier = codexServiceTier === 'fast' ? '' : 'fast'
-          setCodexServiceTier(nextTier)
-          rememberCurrentChatComposerSelection({ codexServiceTier: nextTier })
-        }
+        // Was chat-level only, on the reasoning that fast mode is a chat
+        // composer pick rather than a per-participant setting. It is both now —
+        // the picker patches `fastModeEnabled` on a bound seat — so this routes
+        // through the same helper as every other provider and lands wherever
+        // the picker's own switch would.
+        applyFastModeToggleFromSlash(slashTargetProvider)
       } else if (item.command === '/fork') {
         const threadId =
           isCurrentEnsembleChat && selectedParticipant?.provider === currentProvider
@@ -18657,6 +18663,13 @@ function App(): React.JSX.Element {
             ? selectedParticipant.linkedProviderSessionId
             : currentChat?.linkedProviderSessionId
         void handleForkAgentThread(slashTargetProvider, threadId || undefined)
+      } else if (item.command === '/fast') {
+        // Fast is a chat-level composer pick here, matching the Codex branch
+        // above: it moves live state + the remembered selection rather than a
+        // bound participant. `nextFastModeToggle` owns the per-provider
+        // mechanics so this never drifts from the picker's own switch. Kimi's
+        // service tier rides along inside the descriptor.
+        applyFastModeToggleFromSlash(slashTargetProvider)
       }
       return
     }
@@ -24239,7 +24252,98 @@ function App(): React.JSX.Element {
         { reasoningEffort: 'high' },
         { reasoningEffort: 'xhigh' }
       ]
-  const codexSupportsFast = Boolean(currentCodexModelOption?.additionalSpeedTiers?.includes('fast'))
+  // `codexSupportsFast` retired: `currentFastModeAvailable` below answers the
+  // same question for every provider, from the catalogue entry of whichever
+  // model `/fast` would actually move.
+  /**
+   * Fast-mode snapshot for whatever `/fast` will actually act on.
+   *
+   * It follows the SELECTED SEAT in an ensemble, matching `slashCommandProvider`
+   * (which decides the palette) and `slashTargetProvider` (which routes the
+   * dispatch). Reading chat-level state here instead put the two out of step:
+   * with a Claude seat selected on a Codex chat, the picker offered a Fast
+   * switch while `/fast` was hidden — and had it been listed, it would have
+   * flipped a chat-level flag the seat never reads.
+   *
+   * A seat's fast state is one `fastModeEnabled` flag (plus `serviceTier` for
+   * Codex/Kimi), so it feeds every provider-specific field of the snapshot; only
+   * the one matching that seat's provider is ever read back.
+   */
+  const fastModeSeat = isCurrentEnsembleChat ? selectedParticipant : null
+  const currentFastModeSelection = fastModeSeat
+    ? {
+        provider: fastModeSeat.provider,
+        selectedModel: fastModeSeat.model || '',
+        codexServiceTier: fastModeSeat.serviceTier ?? (fastModeSeat.fastModeEnabled ? 'fast' : ''),
+        claudeFastMode: fastModeSeat.fastModeEnabled,
+        kimiFastMode: fastModeSeat.fastModeEnabled,
+        cursorFastMode: fastModeSeat.fastModeEnabled
+      }
+    : {
+        provider: currentProvider,
+        selectedModel: selectedComposerModelType,
+        codexServiceTier,
+        claudeFastMode,
+        kimiFastMode,
+        cursorFastMode
+      }
+  const currentFastModeAvailable = fastModeToggleAvailable(
+    currentFastModeSelection,
+    getProviderModelOptions(currentFastModeSelection.provider)
+  )
+  /**
+   * Apply `/fast`. Mirrors the picker's own Fast switch: a bound seat is
+   * patched, otherwise the thread's composer selection moves. The per-provider
+   * mechanics come from the shared descriptor, so the command and the switch
+   * cannot disagree about what "on" means.
+   */
+  const applyFastModeToggleFromSlash = (targetProvider: ProviderId): void => {
+    if (targetProvider !== currentFastModeSelection.provider || !currentFastModeAvailable) return
+    const descriptor = nextFastModeToggle(currentFastModeSelection)
+    if (!descriptor) return
+    if (descriptor.kind === 'model') {
+      // Cursor's composer-2.5 pair carries fastness in the model id itself, so
+      // this leg moves the model rather than a flag.
+      if (fastModeSeat) {
+        updateSelectedParticipant({ model: descriptor.model })
+        return
+      }
+      setSelectedModelType(descriptor.model)
+      rememberCurrentChatComposerSelection({ selectedModelType: descriptor.model })
+      return
+    }
+    if (descriptor.kind === 'codex-tier') {
+      if (fastModeSeat) {
+        updateSelectedParticipant({
+          serviceTier: descriptor.serviceTier,
+          fastModeEnabled: descriptor.fastModeEnabled
+        })
+        return
+      }
+      setCodexServiceTier(descriptor.serviceTier)
+      rememberCurrentChatComposerSelection({ codexServiceTier: descriptor.serviceTier })
+      return
+    }
+    if (fastModeSeat) {
+      updateSelectedParticipant({
+        fastModeEnabled: descriptor.fastModeEnabled,
+        ...(descriptor.serviceTier === undefined ? {} : { serviceTier: descriptor.serviceTier })
+      })
+      return
+    }
+    if (descriptor.provider === 'claude') {
+      setClaudeFastMode(descriptor.fastModeEnabled)
+      rememberCurrentChatComposerSelection({ claudeFastMode: descriptor.fastModeEnabled })
+      return
+    }
+    if (descriptor.provider === 'kimi') {
+      setKimiFastMode(descriptor.fastModeEnabled)
+      rememberCurrentChatComposerSelection({ kimiFastMode: descriptor.fastModeEnabled })
+      return
+    }
+    setCursorFastMode(descriptor.fastModeEnabled)
+    rememberCurrentChatComposerSelection({ cursorFastMode: descriptor.fastModeEnabled })
+  }
   const currentClaudeModelOption =
     currentProvider === 'claude'
       ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
@@ -26064,6 +26168,18 @@ function App(): React.JSX.Element {
         </select>
       </label>
     ) : null
+  /*
+   * Open-requests for the composer's own icon-row surfaces. Held here because
+   * the schedule button is built at this level, but handed ONLY to the main
+   * `composerCtx`: multiview panes and the linked chat pass `null` and redirect
+   * to the focused pane instead, so a request can never open a popover in a
+   * composer the user did not type into.
+   */
+  const [composerSurfaceRequest, setComposerSurfaceRequest] =
+    useState<ComposerSurfaceRequest | null>(null)
+  const requestComposerSurface = (surface: ComposerSurfaceId): void => {
+    setComposerSurfaceRequest((previous) => nextComposerSurfaceRequest(previous, surface))
+  }
   // Launch-seal maturity is additive assurance, not provider admission.
   // Main records an explicit unsealed/skipped outcome for providers whose
   // exact scheduled evidence is not wired yet, then continues the user-created
@@ -26088,6 +26204,9 @@ function App(): React.JSX.Element {
       }
       disabled={!hasWorkspaceContext || !(chromeWorkspace || currentWorkspace) || !currentChat}
       disabledReason={scheduleDisabledReason}
+      // `/schedule` opens this popover. The button is built here rather than
+      // inside <Composer>, so it reads the request directly.
+      openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'schedule')}
     />
   ) : null
 
@@ -26546,6 +26665,9 @@ function App(): React.JSX.Element {
     openWorkspacePopoutCommand,
     openSideChatCommand,
     handleGoalCommand,
+    handleToggleEnsembleCommand,
+    handleComposerSurfaceCommand,
+    handleSelectMultiviewLayoutCommand,
     focusPaneForFocusedFlow
   }: {
     chat: ChatRecord | null
@@ -26563,6 +26685,20 @@ function App(): React.JSX.Element {
     openWorkspacePopoutCommand: (kind: 'file-editor' | 'diff-studio' | 'workbench') => void
     openSideChatCommand: (sideCommand: SideSlashCommand) => boolean | void
     handleGoalCommand: (ctx: SlashCommandRunContext) => void
+    /** `/ensemble` — turn panel mode on or off for this chat. */
+    handleToggleEnsembleCommand: (ctx: SlashCommandRunContext, enabled: boolean) => void
+    /**
+     * Open one of the composer's own icon-row surfaces (`/terminal`, `/plan`,
+     * `/blackboard`, `/canvas`, `/schedule`, bare `/multiview`). Those surfaces
+     * own private popover state, so the command publishes a request rather than
+     * calling into them — see `lib/composerSurfaceRequest`.
+     */
+    handleComposerSurfaceCommand: (ctx: SlashCommandRunContext, surface: ComposerSurfaceId) => void
+    /** `/multiview <layout>` — set the layout directly, skipping the picker. */
+    handleSelectMultiviewLayoutCommand: (
+      ctx: SlashCommandRunContext,
+      layout: MultiviewLayout
+    ) => void
     focusPaneForFocusedFlow?: () => void
   }): ComposerSlashCommand[] => [
   /**
@@ -26721,26 +26857,137 @@ function App(): React.JSX.Element {
         void handleAttachWindowCommand(ctx)
       }
     },
+    /*
+     * Icon-row parity. Every control in `.composer-telemetry-cluster` — the
+     * row under the composer — is reachable by keyboard from here, so the
+     * picker is a complete index of the composer's own surfaces rather than a
+     * subset that happens to have grown a command.
+     *
+     * The popover-backed ones publish a ComposerSurfaceRequest instead of
+     * calling in: their open state is private to the button, and only the
+     * INVOKING composer should respond. Multiview panes pass redirecting
+     * handlers, matching how /goal and /screen already behave there.
+     */
     {
-      kind: 'insert',
-      id: 'taskwraith-discuss',
-      command: '/discuss',
-      label: 'Discuss ensemble-side',
-      description: 'Insert the provider-recognized /discuss prefix.',
+      kind: 'action',
+      id: 'taskwraith-ensemble',
+      command: '/ensemble',
+      label: isEnsembleChat ? 'Turn Ensemble off' : 'Turn Ensemble on',
+      description: isEnsembleChat
+        ? 'Return this chat to a single-provider thread.'
+        : 'Convert this chat into an Ensemble panel.',
       group: 'Custom',
-      insertText: '/discuss '
+      run: (ctx) => {
+        handleToggleEnsembleCommand(ctx, !isEnsembleChat)
+      }
     },
     {
-      kind: 'insert',
-      id: 'taskwraith-meta',
-      command: '/meta',
-      label: 'Meta instruction',
-      description: 'Insert the provider-recognized /meta prefix.',
+      kind: 'action',
+      id: 'taskwraith-terminal',
+      command: '/terminal',
+      label: 'Toggle workspace terminal',
+      description: 'Open or close the inline workspace shell under this composer.',
       group: 'Custom',
-      insertText: '/meta '
+      run: (ctx) => {
+        handleComposerSurfaceCommand(ctx, 'terminal')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-plan',
+      command: '/plan',
+      label: 'Show plan',
+      description: 'Open this chat’s live todo lanes. To import a pasted plan, use /import-plan.',
+      group: 'Custom',
+      run: (ctx) => {
+        handleComposerSurfaceCommand(ctx, 'plan')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-schedule',
+      command: '/schedule',
+      label: 'Schedule this message',
+      description: 'Open the scheduler to run the current draft later.',
+      group: 'Custom',
+      run: (ctx) => {
+        handleComposerSurfaceCommand(ctx, 'schedule')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-canvas',
+      command: '/canvas',
+      label: 'Open Canvas',
+      description: 'Open the Canvas picker — live web preview, sketch board, or mesh.',
+      group: 'Custom',
+      run: (ctx) => {
+        handleComposerSurfaceCommand(ctx, 'canvas')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-multiview',
+      command: '/multiview',
+      label: 'Multiview layout',
+      description: `Open the layout picker, or name one: ${MULTIVIEW_LAYOUT_IDS.join(', ')}.`,
+      group: 'Custom',
+      run: (ctx) => {
+        // A bare `/multiview` opens the picker; a named layout skips it. An
+        // unrecognised argument also falls through to the picker rather than
+        // failing silently, so a typo still lands somewhere useful.
+        const arg = slashActionRemainder(ctx, /^\/multiview\b/i).trim().toLowerCase()
+        const layout = (MULTIVIEW_LAYOUT_IDS as readonly string[]).includes(arg)
+          ? (arg as MultiviewLayout)
+          : null
+        if (layout) {
+          handleSelectMultiviewLayoutCommand(ctx, layout)
+          return
+        }
+        handleComposerSurfaceCommand(ctx, 'multiview')
+      }
     },
     ...(isEnsembleChat
       ? [
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-blackboard',
+            command: '/blackboard',
+            label: 'Open blackboard',
+            description: 'Post to or review the ensemble blackboard.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              handleComposerSurfaceCommand(ctx, 'blackboard')
+            }
+          }
+        ]
+      : []),
+    ...(isEnsembleChat
+      ? [
+          {
+            /*
+             * `/discuss` flips the round into self-reflective mode: the panel
+             * talks about TaskWraith itself rather than the bound workspace
+             * (EnsemblePrompt's deictic stanza, driven by the prefix
+             * EnsembleOrchestrator strips at startRound). That only means
+             * anything inside an ensemble round, so the entry is gated with the
+             * rest of the panel commands — offered in a solo chat, the prefix
+             * would simply be sent to the provider as literal text.
+             *
+             * Its `/meta` alias is no longer offered. Steering a panel onto the
+             * harness it is running in is a TaskWraith-development gesture, not
+             * something a general user wants a top-level command for; one entry
+             * for the mode is enough. The orchestrator still recognises a
+             * hand-typed `/meta`, so existing habits keep working.
+             */
+            kind: 'insert' as const,
+            id: 'taskwraith-discuss',
+            command: '/discuss',
+            label: 'Discuss ensemble-side',
+            description: 'Prefix the round so the panel discusses TaskWraith itself.',
+            group: 'Custom' as const,
+            insertText: '/discuss '
+          },
           {
             kind: 'action' as const,
             id: 'taskwraith-ensemble-turn',
@@ -27424,6 +27671,24 @@ function App(): React.JSX.Element {
         ctx.setDraft(ctx.rawPrompt)
         ctx.focusComposer(ctx.rawPrompt.length)
       }
+    },
+    handleToggleEnsembleCommand: (ctx, enabled) => {
+      // Mode changes mid-turn would race the running round, so refuse while
+      // busy — the icon is disabled for the same reason.
+      if (currentChat && runningChatIds.has(currentChat.appChatId)) {
+        rejectSlashCommandWithDraft(ctx, 'Finish the current turn before changing chat mode.')
+        return
+      }
+      ctx.consumeSlashToken()
+      void handleToggleWelcomeEnsemble(enabled)
+    },
+    handleComposerSurfaceCommand: (ctx, surface) => {
+      ctx.consumeSlashToken()
+      requestComposerSurface(surface)
+    },
+    handleSelectMultiviewLayoutCommand: (ctx, layout) => {
+      ctx.consumeSlashToken()
+      handleSelectMultiviewLayout(layout)
     }
   })
 
@@ -27435,7 +27700,10 @@ function App(): React.JSX.Element {
     provider: slashCommandProvider,
     paletteItems: slashPaletteItems,
     extraCommands: [...composerSlashExtraCommands, ...skillSlashPromptTemplates],
-    capabilities: slashCommandProviderCapabilities
+    capabilities: slashCommandProviderCapabilities,
+    // Hides `/fast` on providers/models with no wired Fast switch, so the entry
+    // never appears where clicking it would do nothing.
+    fastModeAvailable: currentFastModeAvailable
   })
 
   // tryHandleActionSlashSubmit moved INTO <Composer> (Slice C). It matches a
@@ -28249,6 +28517,12 @@ function App(): React.JSX.Element {
         capabilities:
           providerCapabilitiesByProvider[slashProvider] ||
           (slashProvider === currentProvider ? currentProviderCapabilities : undefined),
+        // A pane's Fast switch belongs to the focused composer's selection, so
+        // the gate is only meaningful when this pane IS that provider. On any
+        // other pane the entry stays listed and its dispatch is a no-op, which
+        // is how the pane's other focused-state commands already read.
+        fastModeAvailable:
+          slashProvider === currentProvider ? currentFastModeAvailable : undefined,
         extraCommands: [
           ...paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands({
             chat,
@@ -28285,6 +28559,24 @@ function App(): React.JSX.Element {
               preserveForFocusedFlow(
                 ctx,
                 'Goal commands edit the focused pane. This pane is now focused; run /goal again.'
+              ),
+            handleToggleEnsembleCommand: (ctx) =>
+              preserveForFocusedFlow(
+                ctx,
+                'Chat mode changes from the focused pane. This pane is now focused; run /ensemble again.'
+              ),
+            // The composer surfaces belong to whichever <Composer> is focused;
+            // a pane redirects rather than opening a popover the user is not
+            // looking at.
+            handleComposerSurfaceCommand: (ctx, surface) =>
+              preserveForFocusedFlow(
+                ctx,
+                `Composer surfaces open in the focused pane. This pane is now focused; run /${surface} again.`
+              ),
+            handleSelectMultiviewLayoutCommand: (ctx) =>
+              preserveForFocusedFlow(
+                ctx,
+                'Layout changes apply from the focused pane. This pane is now focused; run /multiview again.'
               ),
             focusPaneForFocusedFlow: focusPane
           }),
@@ -29621,6 +29913,10 @@ function App(): React.JSX.Element {
         // leak. Empty/null keeps the base stable.
         runtimeProfileControl: null,
         scheduleControls: null,
+        // Same reasoning for icon-row surface requests: a pane must not open a
+        // popover because a command ran in the focused composer. Pane slash
+        // handlers redirect to the focused pane instead of publishing one.
+        composerSurfaceRequest: null,
         // The base's compact-now handler targets the FOCUSED chat; a pane's
         // popover must never compact a different chat. Hidden in panes for now.
         onCompactContext: undefined,
@@ -30222,6 +30518,7 @@ function App(): React.JSX.Element {
     onCancelExecutionStackStep: handleCancelExecutionStackStep,
     runtimeProfileControl,
     scheduleControls,
+    composerSurfaceRequest,
     selectedComposerModelType,
     selectedModelType,
     selectedRuntimeProfileId,
