@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -182,7 +182,7 @@ function syntheticBilinearChannel(image: PNG, x: number, y: number, channel: num
   return (1 - yWeight) * topValue + yWeight * bottomValue
 }
 
-function createVisualFixture(corrupt: boolean) {
+function createVisualFixture(corrupt: boolean, backingScale = 1) {
   const directory = mkdtempSync(join(tmpdir(), 'studio-pixel-verifier-'))
   const referencePath = join(directory, 'reference.png')
   const capturePath = join(directory, 'capture.png')
@@ -212,11 +212,11 @@ function createVisualFixture(corrupt: boolean) {
   }
 
   const windowBounds = { width: 96, height: 86 }
-  const videoWidth = 96
-  const videoHeight = 54
-  const captureX = 34
-  const captureY = 58
-  const capture = new PNG({ width: 164, height: 154 })
+  const videoWidth = 96 * backingScale
+  const videoHeight = 54 * backingScale
+  const captureX = 34 * backingScale
+  const captureY = 58 * backingScale
+  const capture = new PNG({ width: 164 * backingScale, height: 154 * backingScale })
   for (let pixel = 0; pixel < capture.width * capture.height; pixel += 1) {
     capture.data[pixel * 4 + 3] = 255
   }
@@ -238,7 +238,13 @@ function createVisualFixture(corrupt: boolean) {
         let value = Math.round(
           transforms[channel].scale * referenceValue + transforms[channel].offset
         )
-        if (corrupt && x >= 20 && x < 80 && y >= 10 && y < 35) {
+        if (
+          corrupt &&
+          x >= 20 * backingScale &&
+          x < 80 * backingScale &&
+          y >= 10 * backingScale &&
+          y < 35 * backingScale
+        ) {
           value = 255 - value
         }
         capture.data[pixel + channel] = Math.max(0, Math.min(255, value))
@@ -343,6 +349,104 @@ describe('Studio pixel evidence verifier', () => {
           comparisonHeight: 45,
           videoHeight: 54,
           videoWidth: 96
+        },
+        metrics: { materialPixelCount: 4_320 }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('accepts a clean 2x Retina capture using logical signed window bounds', () => {
+    const fixture = createVisualFixture(false, 2)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9 }
+      )
+
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          backingScale: 2,
+          captureX: 68,
+          captureY: 116,
+          comparisonHeight: 90,
+          hudOverlayHeight: 18,
+          videoHeight: 108,
+          videoWidth: 192
+        },
+        metrics: { materialPixelCount: 17_280 }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('accepts a 1x window inside a transparent Retina-sized PNG canvas', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const original = PNG.sync.read(readFileSync(fixture.capturePath))
+      const padded = new PNG({ width: original.width * 2, height: original.height * 2 })
+      for (let y = 0; y < original.height; y += 1) {
+        for (let x = 0; x < original.width; x += 1) {
+          const sourcePixel = (y * original.width + x) * 4
+          const targetPixel = (y * padded.width + x) * 4
+          original.data.copy(padded.data, targetPixel, sourcePixel, sourcePixel + 4)
+        }
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(padded))
+
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9 }
+      )
+
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          backingScale: 1,
+          captureExtent: { x: 0, y: 0, width: 164, height: 154 },
+          captureX: 34,
+          captureY: 58,
+          comparisonHeight: 45,
+          videoHeight: 54,
+          videoWidth: 96
+        },
+        metrics: { materialPixelCount: 4_320 }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('keeps a one-pixel transparent WindowServer fringe inside the capture extent', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const capture = PNG.sync.read(readFileSync(fixture.capturePath))
+      for (let y = 0; y < capture.height; y += 1) {
+        capture.data[(y * capture.width + capture.width - 1) * 4 + 3] = 0
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(capture))
+
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9 }
+      )
+
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          backingScale: 1,
+          captureExtent: { x: 0, y: 0, width: 164, height: 154 },
+          captureX: 34,
+          captureY: 58
         },
         metrics: { materialPixelCount: 4_320 }
       })

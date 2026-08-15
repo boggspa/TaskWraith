@@ -89,9 +89,38 @@ function quantile(sortedValues, fraction) {
   return sortedValues[Math.min(sortedValues.length - 1, Math.floor(sortedValues.length * fraction))]
 }
 
+function boundedCaptureExtent(capture) {
+  let minimumX = capture.width
+  let minimumY = capture.height
+  let maximumX = -1
+  let maximumY = -1
+  for (let y = 0; y < capture.height; y += 1) {
+    for (let x = 0; x < capture.width; x += 1) {
+      if (capture.data[(y * capture.width + x) * 4 + 3] === 0) continue
+      minimumX = Math.min(minimumX, x)
+      minimumY = Math.min(minimumY, y)
+      maximumX = Math.max(maximumX, x)
+      maximumY = Math.max(maximumY, y)
+    }
+  }
+  invariant(maximumX >= 0 && maximumY >= 0, 'WindowServer capture has no visible pixels')
+  const trailingTransparentColumns = capture.width - maximumX - 1
+  const trailingTransparentRows = capture.height - maximumY - 1
+  const hasTrailingTransparentCanvas = trailingTransparentColumns > 1 || trailingTransparentRows > 1
+  if (!hasTrailingTransparentCanvas) {
+    return { x: 0, y: 0, width: capture.width, height: capture.height }
+  }
+  invariant(
+    minimumX <= 1 && minimumY <= 1,
+    'WindowServer capture transparent canvas is not top-left bounded'
+  )
+  return { x: 0, y: 0, width: maximumX + 1, height: maximumY + 1 }
+}
+
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
   const capture = PNG.sync.read(fs.readFileSync(capturePath))
   const reference = PNG.sync.read(fs.readFileSync(referencePath))
+  const captureExtent = boundedCaptureExtent(capture)
   const windowWidth = Number(windowBounds?.width)
   const windowHeight = Number(windowBounds?.height)
   invariant(
@@ -108,32 +137,67 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'visual reference is not a 16:9 frame'
   )
 
-  const videoWidth = windowWidth
-  const videoHeight = Math.round((videoWidth * reference.height) / reference.width)
-  const titleBarHeight = windowHeight - videoHeight
-  const horizontalShadowPixels = capture.width - windowWidth
-  const verticalShadowPixels = capture.height - windowHeight
+  const logicalVideoWidth = windowWidth
+  const logicalVideoHeight = Math.round((logicalVideoWidth * reference.height) / reference.width)
+  const logicalTitleBarHeight = windowHeight - logicalVideoHeight
   invariant(
-    titleBarHeight >= 20 &&
-      titleBarHeight <= 40 &&
-      horizontalShadowPixels >= 0 &&
-      horizontalShadowPixels % 2 === 0 &&
-      verticalShadowPixels >= 16 &&
-      (verticalShadowPixels - 16) % 2 === 0,
+    logicalTitleBarHeight >= 20 && logicalTitleBarHeight <= 40,
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
-  const captureX = horizontalShadowPixels / 2
-  const topShadowPixels = (verticalShadowPixels - 16) / 2
-  const captureY = topShadowPixels + titleBarHeight
-  const hudOverlayHeight = options.hudOverlayHeight ?? 92
+  const scaleCandidates = [1, 2, 3, 4]
+    .map((backingScale) => {
+      const scaledWindowWidth = windowWidth * backingScale
+      const scaledWindowHeight = windowHeight * backingScale
+      const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
+      const verticalShadowPixels = captureExtent.height - scaledWindowHeight
+      const shadowless = verticalShadowPixels === 0
+      const boundedWindowShadow =
+        verticalShadowPixels >= 16 * backingScale &&
+        (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
+      const valid =
+        horizontalShadowPixels >= 0 &&
+        horizontalShadowPixels % (2 * backingScale) === 0 &&
+        verticalShadowPixels >= 0 &&
+        (shadowless || boundedWindowShadow)
+      return {
+        backingScale,
+        horizontalShadowPixels,
+        verticalShadowPixels,
+        valid,
+        shadowScore: horizontalShadowPixels + verticalShadowPixels
+      }
+    })
+    .filter((candidate) => candidate.valid)
+    .sort(
+      (left, right) =>
+        left.shadowScore - right.shadowScore || right.backingScale - left.backingScale
+    )
+  invariant(
+    scaleCandidates.length > 0,
+    'WindowServer capture geometry is outside the bounded Companion shape'
+  )
+
+  const geometry = scaleCandidates[0]
+  const backingScale = geometry.backingScale
+  const videoWidth = logicalVideoWidth * backingScale
+  const videoHeight = logicalVideoHeight * backingScale
+  const titleBarHeight = logicalTitleBarHeight * backingScale
+  const horizontalShadowPixels = geometry.horizontalShadowPixels
+  const verticalShadowPixels = geometry.verticalShadowPixels
+  const captureX = captureExtent.x + horizontalShadowPixels / 2
+  const topShadowPixels =
+    verticalShadowPixels === 0 ? 0 : (verticalShadowPixels - 16 * backingScale) / 2
+  const captureY = captureExtent.y + topShadowPixels + titleBarHeight
+  const logicalHudOverlayHeight = options.hudOverlayHeight ?? 92
+  const hudOverlayHeight = logicalHudOverlayHeight * backingScale
   const comparisonHeight = videoHeight - hudOverlayHeight
   invariant(
-    Number.isInteger(hudOverlayHeight) &&
-      hudOverlayHeight >= 0 &&
+    Number.isInteger(logicalHudOverlayHeight) &&
+      logicalHudOverlayHeight >= 0 &&
       comparisonHeight > 0 &&
-      captureX + videoWidth <= capture.width &&
-      captureY + videoHeight <= capture.height,
+      captureX + videoWidth <= captureExtent.x + captureExtent.width &&
+      captureY + videoHeight <= captureExtent.y + captureExtent.height,
     'bounded video comparison region is invalid'
   )
 
@@ -219,12 +283,20 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       sha256: sha256File(referencePath)
     },
     registration: {
+      backingScale,
+      captureExtent,
       captureX,
       captureY,
       videoWidth,
       videoHeight,
       titleBarHeight,
+      logicalVideoWidth,
+      logicalVideoHeight,
+      logicalTitleBarHeight,
+      logicalHudOverlayHeight,
       hudOverlayHeight,
+      horizontalShadowPixels,
+      verticalShadowPixels,
       comparisonHeight
     },
     colorFit: channelFits,
