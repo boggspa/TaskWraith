@@ -3196,6 +3196,100 @@ describe('inter-seat transcript rows', () => {
   })
 })
 
+describe('participant yield transcript rows', () => {
+  it('keeps a yield handoff at assistant hierarchy and out of system-notice folds', () => {
+    const participant = ensembleParticipant({
+      id: 'kimi-orchestrator',
+      provider: 'kimi',
+      role: 'Orchestrator',
+      model: 'kimi-k3'
+    })
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'yield-1',
+        role: 'system',
+        content:
+          'Orchestrator yielded. YIELD_MESSAGE_MARKER take over recovery and inspect `ChannelExternalSeatRuntimeAuthority`.',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: {
+          kind: 'ensembleParticipantStatus',
+          ensembleRoundId: 'round-1',
+          ensembleParticipantId: participant.id,
+          ensembleProvider: participant.provider,
+          ensembleRole: participant.role,
+          ensembleModel: participant.model,
+          ensembleStatus: 'yielded'
+        }
+      },
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'Round routing updated.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const currentChat = activeEnsembleChat(participant)
+    currentChat.messages = messages
+    if (currentChat.ensemble) currentChat.ensemble.activeRound = undefined
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, currentChat, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="yield-1"')
+    const next = html.indexOf('data-message-id="sys-1"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(yieldBlock).toContain('Kimi / Orchestrator')
+    expect(yieldBlock).toContain('message-bubble assistant ensemble-yield-message')
+    expect(yieldBlock).toContain('YIELD_MESSAGE_MARKER')
+    expect(yieldBlock).toContain('<code>ChannelExternalSeatRuntimeAuthority</code>')
+    expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('leaves non-yield participant status codas in system-notice folds', () => {
+    const messages: ChatMessage[] = [
+      {
+        id: 'skipped-1',
+        role: 'system',
+        content: 'Worker skipped. No matching work.',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: {
+          kind: 'ensembleParticipantStatus',
+          ensembleProvider: 'codex',
+          ensembleRole: 'Worker',
+          ensembleStatus: 'skipped'
+        }
+      },
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'Round routing updated.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html).toContain('2 system notices')
+    expect(html).not.toContain('ensemble-yield-message')
+  })
+})
+
 describe('delivered external contribution rows', () => {
   // The row `deliverExternalSeatTurns` writes when the host approves a
   // contribution and the panel reaches that person's seat. It is `role:'system'`

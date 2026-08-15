@@ -29,6 +29,10 @@ import {
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
 import {
+  isEnsembleParticipantAuthoredMessage,
+  isEnsembleYieldMessage
+} from '../../../shared/ensembleParticipantMessage'
+import {
   closeoutProviderFromMetadata,
   TASKWRAITH_CLOSEOUT_KIND
 } from '../../../shared/taskWraithCloseout'
@@ -945,10 +949,10 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isEnsembleRoundHeaderMessage(msg) &&
     !isEnsembleFanoutViewportHeaderMessage(msg) &&
     !isParallelResultViewportHeaderMessage(msg) &&
-    // `ensemble_send` notes are participant-authored conversation carried on a
-    // system row only to avoid changing completed-turn semantics. They keep a
+    // Inter-seat notes and yield handoffs are participant-authored conversation
+    // carried on system rows only to preserve lifecycle semantics. They keep a
     // full assistant-level transcript row and never enter notice compaction.
-    !isEnsembleSideMessage(msg) &&
+    !isEnsembleParticipantAuthoredMessage(msg) &&
     !isHumanCollaboratorComment(msg) &&
     // A DELIVERED contribution is a person's words, not app chrome. Left in,
     // it folds to an anonymous "System" one-liner and — next to any other
@@ -4333,8 +4337,12 @@ export const TranscriptPanel = memo(
             const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isInterSeatMessage = isEnsembleSideMessage(msg)
+            const isYieldMessage = isEnsembleYieldMessage(msg)
             const isAssistantLevelMessage =
-              msg.role === 'assistant' || isGuestReply || isInterSeatMessage
+              msg.role === 'assistant' ||
+              isGuestReply ||
+              isInterSeatMessage ||
+              isYieldMessage
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
             // Deliberately a SEPARATE const rather than widening the one above:
             // `isCollaboratorComment` also gates the "Insert as draft" promote
@@ -4463,7 +4471,9 @@ export const TranscriptPanel = memo(
                   ? 'guest participant message'
                   : isInterSeatMessage
                     ? 'inter-seat message'
-                  : isCollaboratorComment || isDeliveredExternal
+                    : isYieldMessage
+                      ? 'participant yield message'
+                    : isCollaboratorComment || isDeliveredExternal
                     ? 'collaborator message'
                     : msg.role === 'tool'
                       ? 'tool message'
@@ -5293,6 +5303,8 @@ export const TranscriptPanel = memo(
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
                     }${isInterSeatMessage ? ' ensemble-side-message' : ''}${
+                      isYieldMessage ? ' ensemble-yield-message' : ''
+                    }${
                       isCollaboratorComment || isDeliveredExternal
                         ? ' human-collaborator-comment-message'
                         : ''
@@ -5654,6 +5666,8 @@ export const TranscriptPanel = memo(
                                   ? 'assistant guest-participant-reply'
                                   : isInterSeatMessage
                                     ? 'assistant ensemble-side-message'
+                                    : isYieldMessage
+                                      ? 'assistant ensemble-yield-message'
                                   : msg.role
                             }${ensembleRoundStatusClass(msg)}`}
                             onContextMenu={
@@ -5669,6 +5683,8 @@ export const TranscriptPanel = memo(
                                           ? 'guest participant'
                                           : isInterSeatMessage
                                             ? 'inter-seat'
+                                            : isYieldMessage
+                                              ? 'participant yield'
                                           : isDeliveredExternal
                                             ? 'collaborator'
                                             : msg.role

@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatRecord, ProviderId, SideChatMode } from '../../../main/store/types'
-import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
+import { isEnsembleParticipantAuthoredMessage } from '../../../shared/ensembleParticipantMessage'
 import { getChatProvider } from './chatScope'
 import { getProviderLabel } from './providerLabels'
 
@@ -84,7 +84,7 @@ export function formatSideChatParentContextMessage(
   if (message.role === 'user') {
     return `User: ${truncateSideChatContextText(content, SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
   }
-  if (message.role === 'assistant' || isEnsembleSideMessage(message)) {
+  if (message.role === 'assistant' || isEnsembleParticipantAuthoredMessage(message)) {
     const speaker =
       ensembleSpeakerLabel(message) || `${getProviderLabel(parentProvider)} parent agent`
     return `${speaker}: ${truncateSideChatContextText(

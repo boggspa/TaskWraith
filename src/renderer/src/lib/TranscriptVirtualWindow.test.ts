@@ -162,6 +162,24 @@ describe('TranscriptVirtualWindow', () => {
           msg({ id: 'side', role: 'system', metadata: { kind: 'ensembleSideMessage' } })
         )
       ).toBe('assistant')
+      expect(
+        classifyRowType(
+          msg({
+            id: 'yield',
+            role: 'system',
+            metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'yielded' }
+          })
+        )
+      ).toBe('assistant')
+      expect(
+        classifyRowType(
+          msg({
+            id: 'skipped',
+            role: 'system',
+            metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'skipped' }
+          })
+        )
+      ).toBe('system')
     })
   })
 

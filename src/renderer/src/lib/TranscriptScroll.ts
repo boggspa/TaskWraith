@@ -1,3 +1,5 @@
+import { isEnsembleYieldMessage } from '../../../shared/ensembleParticipantMessage'
+
 /**
  * Pure helpers for the transcript auto-follow ("stick to bottom") scroll
  * behaviour in App.tsx. Extracted so the threshold logic can be unit
@@ -1071,6 +1073,7 @@ const JUMP_PILL_COUNTABLE_METADATA_KINDS = new Set([
  */
 export function isJumpToLatestCountableMessage(message: unknown): boolean {
   if (!message || typeof message !== 'object') return false
+  if (isEnsembleYieldMessage(message)) return true
   const source = message as {
     role?: unknown
     metadata?: { kind?: unknown } | null

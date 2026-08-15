@@ -3403,6 +3403,22 @@ describe('RemoteThreadProjection', () => {
       expect(
         classifyRemoteKind(msg(0, { role: 'system', metadata: { kind: 'ensembleSideMessage' } }))
       ).toBe('assistant')
+      expect(
+        classifyRemoteKind(
+          msg(0, {
+            role: 'system',
+            metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'yielded' }
+          })
+        )
+      ).toBe('assistant')
+      expect(
+        classifyRemoteKind(
+          msg(0, {
+            role: 'system',
+            metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'skipped' }
+          })
+        )
+      ).toBe('system')
     })
   })
 
@@ -3978,7 +3994,11 @@ describe('RemoteThreadProjection', () => {
       const snapshot = project({ kind: 'latestN', n: 10 }, messages, [], {
         speakerForMessage: (message) => (message.role === 'assistant' ? 'never' : undefined)
       })
-      expect(snapshot.rows[0].speaker).toBe('Codex / Adversary2')
+      expect(snapshot.rows[0]).toMatchObject({
+        kind: 'assistant',
+        speaker: 'Codex / Adversary2',
+        preview: 'Adversary2 yielded.'
+      })
       expect(snapshot.rows[1].speaker).toBe('Claude / WriteMain (Fable 5)')
       expect(snapshot.rows[2].speaker).toBeUndefined()
     })

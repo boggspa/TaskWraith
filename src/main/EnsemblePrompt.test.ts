@@ -812,6 +812,40 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('[System]\n↪ Reviewer to Worker')
   })
 
+  it('attributes a yield handoff to the yielding participant instead of System', () => {
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'yield-1',
+        role: 'system',
+        content: 'Reviewer yielded. YIELD_MESSAGE_MARKER take over the write-path review.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'ensembleParticipantStatus',
+          ensembleParticipantId: 'claude',
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer',
+          ensembleStatus: 'yielded'
+        }
+      }
+    ]
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Continue the round.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain(
+      '[Claude / Reviewer #p1]\nReviewer yielded. YIELD_MESSAGE_MARKER take over the write-path review.'
+    )
+    expect(prompt).not.toContain('[System]\nReviewer yielded. YIELD_MESSAGE_MARKER')
+  })
+
   // ── P2c security review, F2: the untrusted-frame choke point ──────────────
   //
   // These use a row that carries `sourceTrust: 'external_untrusted'` WITHOUT the

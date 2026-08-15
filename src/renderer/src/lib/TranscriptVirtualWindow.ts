@@ -26,7 +26,7 @@ import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResul
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
 import { isThreadMessageTranscriptMessage } from '../components/ThreadMessageTranscriptCardModel'
-import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
+import { isEnsembleParticipantAuthoredMessage } from '../../../shared/ensembleParticipantMessage'
 import {
   isDeliveredExternalContribution,
   isHumanCollaboratorComment
@@ -161,7 +161,7 @@ export function classifyRowType(message: ChatMessage): VirtualRowType {
   if (isThreadMessageTranscriptMessage(message)) return 'threadMessage'
   if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
   if (isGuestParticipantReplyMessage(message)) return 'guestReply'
-  if (isEnsembleSideMessage(message)) return 'assistant'
+  if (isEnsembleParticipantAuthoredMessage(message)) return 'assistant'
   if (isHumanCollaboratorComment(message)) return 'collaborator'
   // Same rendering as a comment now, so it must share the height bucket — as a
   // 'system' row it was estimated at half its real height.

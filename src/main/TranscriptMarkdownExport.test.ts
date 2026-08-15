@@ -108,6 +108,34 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.markdown).not.toContain('TaskWraith notice')
   })
 
+  it('exports yield handoffs as participant-authored assistant messages', () => {
+    const result = buildChatMarkdownTranscript(
+      chat(
+        [
+          message({
+            id: 'yield-1',
+            role: 'system',
+            content: 'Orchestrator yielded. YIELD_MESSAGE_MARKER take over recovery.',
+            metadata: {
+              kind: 'ensembleParticipantStatus',
+              ensembleStatus: 'yielded',
+              ensembleParticipantId: 'kimi-orchestrator',
+              ensembleProvider: 'kimi',
+              ensembleRole: 'Orchestrator',
+              ensembleModel: 'kimi-k3'
+            }
+          })
+        ],
+        { chatKind: 'ensemble' }
+      )
+    )
+
+    expect(result.markdown).toContain('## 0001 - Kimi / Orchestrator (kimi-k3)')
+    expect(result.markdown).toContain('Role: assistant')
+    expect(result.markdown).toContain('YIELD_MESSAGE_MARKER take over recovery.')
+    expect(result.markdown).not.toContain('TaskWraith notice')
+  })
+
   it('uses dynamic fences so nested code blocks remain valid markdown', () => {
     const nested = ['Intro', '```ts', 'console.log("hi")', '```', '````', 'four', '````'].join(
       '\n'
@@ -381,6 +409,25 @@ describe('buildChatMessageTranscript', () => {
 
     expect(result.text).toBe(
       'Coordinate.\n\n↪ Reviewer to Worker: Please check the write path.'
+    )
+    expect(result.messageCount).toBe(2)
+  })
+
+  it('keeps yield handoffs in message-only transcript copies', () => {
+    const result = buildChatMessageTranscript(
+      chat([
+        message({ id: 'u1', role: 'user', content: 'Coordinate.' }),
+        message({
+          id: 'yield-1',
+          role: 'system',
+          content: 'Orchestrator yielded. YIELD_MESSAGE_MARKER take over recovery.',
+          metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'yielded' }
+        })
+      ])
+    )
+
+    expect(result.text).toBe(
+      'Coordinate.\n\nOrchestrator yielded. YIELD_MESSAGE_MARKER take over recovery.'
     )
     expect(result.messageCount).toBe(2)
   })

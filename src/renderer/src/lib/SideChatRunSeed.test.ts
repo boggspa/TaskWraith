@@ -166,6 +166,24 @@ describe('side-chat context seed helpers', () => {
     expect(
       formatSideChatParentContextMessage(
         {
+          id: 'm2-yield-message',
+          role: 'system',
+          content: 'Reviewer yielded. YIELD_MESSAGE_MARKER take over the write path.',
+          timestamp: '2026-06-27T12:01:50.000Z',
+          metadata: {
+            kind: 'ensembleParticipantStatus',
+            ensembleStatus: 'yielded',
+            ensembleProvider: 'claude',
+            ensembleRole: 'Reviewer'
+          }
+        },
+        'grok'
+      )
+    ).toBe('Claude / Reviewer: Reviewer yielded. YIELD_MESSAGE_MARKER take over the write path.')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
           id: 'm3',
           role: 'system',
           content: 'Child result',

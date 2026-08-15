@@ -1774,6 +1774,18 @@ describe('TranscriptScroll', () => {
         })
       ).toBe(true)
       expect(
+        isJumpToLatestCountableMessage({
+          role: 'system',
+          metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'yielded' }
+        })
+      ).toBe(true)
+      expect(
+        isJumpToLatestCountableMessage({
+          role: 'system',
+          metadata: { kind: 'ensembleParticipantStatus', ensembleStatus: 'skipped' }
+        })
+      ).toBe(false)
+      expect(
         isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'agentQuestion' } })
       ).toBe(true)
       expect(

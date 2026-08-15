@@ -407,6 +407,39 @@ describe('buildHumanShareProjection v2 vocabulary', () => {
     ])
   })
 
+  it('projects yield handoffs as visible messages from the yielding model seat', () => {
+    const projection = buildHumanShareProjection(
+      chatWith([
+        {
+          id: 'yield-1',
+          role: 'system',
+          content: 'Builder yielded. YIELD_MESSAGE_MARKER please continue the migration.',
+          timestamp: '2026-06-25T00:00:00.000Z',
+          metadata: {
+            kind: 'ensembleParticipantStatus',
+            ensembleStatus: 'yielded',
+            ensembleParticipantId: 'seat-a',
+            ensembleProvider: 'codex',
+            ensembleRole: 'Builder'
+          }
+        }
+      ]),
+      share as never,
+      { roster }
+    )
+
+    expect(projection.rows).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        kind: 'message',
+        speaker: 'Builder',
+        authorSeatId: 'seat-a',
+        colorIndex: 2,
+        preview: 'Builder yielded. YIELD_MESSAGE_MARKER please continue the migration.'
+      })
+    ])
+  })
+
   it('carries the roster, but NEVER the host’s private mute state', () => {
     const projection = buildHumanShareProjection(chatWith([]), share as never, {
       roster: [{ ...roster[0]!, present: false }, ...roster.slice(1)]
