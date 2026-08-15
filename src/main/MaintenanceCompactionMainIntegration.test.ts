@@ -102,6 +102,27 @@ describe('main maintenance compaction history-deletion integration', () => {
     )
   })
 
+  it('isolates native AntiGravity summaries and rotates only after exact coverage', () => {
+    const lane = between(
+      'async function compactCliSeatContext(',
+      '/**\n * Unified entry for the `compact-provider-context` IPC.'
+    )
+    expect(lane).toContain('parseAgyProjectBoundSessionId(identity.linkedProviderSessionId)')
+    expect(lane).toContain('await resolveAgyCliBinary()')
+    const beginAt = lane.indexOf('maintenanceCompactionRegistry.beginNativeActivity(')
+    const summarizeAt = lane.indexOf('await runAntigravityAgySeatSummary({')
+    const endAt = lane.indexOf('maintenanceCompactionRegistry.endNativeActivity(')
+    expect(beginAt).toBeGreaterThanOrEqual(0)
+    expect(summarizeAt).toBeGreaterThan(beginAt)
+    expect(endAt).toBeGreaterThan(summarizeAt)
+    expect(lane).toContain('cancellationSignal: payload.reservation.signal')
+
+    const resetFenceAt = lane.indexOf('canResetHostSeatAfterCompaction({')
+    const clearSessionAt = lane.indexOf('clearProviderSession: true')
+    expect(resetFenceAt).toBeGreaterThan(endAt)
+    expect(clearSessionAt).toBeGreaterThan(resetFenceAt)
+  })
+
   it('discovers exact compactions plus a scope barrier and joins them before commit', () => {
     const deletion = between(
       'type BroadHistoryDeletionHolds = {',

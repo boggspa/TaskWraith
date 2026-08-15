@@ -1721,6 +1721,7 @@ import {
 import { antigravityShellApprovalService } from './antigravity/AntigravityShellApprovalPolicy'
 import {
   formatAgyProjectBoundSessionId,
+  parseAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './antigravity/AntigravityConversationReceipt'
 import {
@@ -1729,6 +1730,7 @@ import {
 } from './antigravity/AntigravityCombinedModeDispatch'
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
+import { runAntigravityAgySeatSummary } from './antigravity/AntigravityAgySeatCompactionLifecycle'
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
 import { AgyBrainTranscriptMonitor } from './antigravity/AntigravityBrainTranscriptLiveProjection'
@@ -1924,7 +1926,7 @@ import {
   type StoredSeatSessionObservation
 } from './ProviderSeatGeneration'
 import {
-  canDisposeGrokSeatAfterCompaction,
+  canResetHostSeatAfterCompaction,
   convergeHostSeatCompaction,
   hostSeatCompactionRequestSucceeded,
   validateHostSeatCheckpointFreshness,
@@ -28729,7 +28731,12 @@ function persistHostSeatCompactionCheckpoint(input: {
       // handed to AppStore, preserving the next chunk's exact-summary CAS even
       // if a downstream cache mutates its stored record in place.
       contextCompactionSummary: structuredClone(input.nextSummary),
-      ...(input.clearProviderSession ? { linkedProviderSessionId: null } : {})
+      ...(input.clearProviderSession
+        ? {
+            linkedProviderSessionId: null,
+            taskWraithMcpProfileReceipt: undefined
+          }
+        : {})
     }
     delete next.promptShellVersion
     delete next.promptDynamicStateVersion
@@ -28748,13 +28755,13 @@ function persistHostSeatCompactionCheckpoint(input: {
 async function compactCliSeatContext(payload: {
   chatId: string
   participantId: string
-  /** grok = plan-mode CLI summarize + live-seat dispose; antigravity =
-   * sender-free gemini-api SDK summarize (no binary, seat session kept — the
-   * seat's context is the re-injected tagged transcript, so the summary
-   * upgrades the lossy window exactly like kimi's). */
+  /** grok = plan-mode CLI summarize + live-seat dispose; antigravity selects
+   * either sender-free gemini-api summarization or an isolated official-agy
+   * plan turn, then rotates the native conversation after exact coverage. */
   provider: 'grok' | 'antigravity'
   providerSessionId?: string | null
   model?: string
+  reasoningEffort?: string | null
   cardMetadata?: Record<string, unknown>
   trigger?: 'auto' | 'manual'
   reservation: MaintenanceCompactionReservation
@@ -28794,6 +28801,12 @@ async function compactCliSeatContext(payload: {
       linkedProviderSessionId: seat.linkedProviderSessionId,
       workspace
     }
+    const nativeAgySeat =
+      payload.provider === 'antigravity' &&
+      (parseAgyProjectBoundSessionId(identity.linkedProviderSessionId) !== null ||
+        (typeof identity.model === 'string' &&
+          Boolean(identity.model.trim()) &&
+          !isAntigravityGeminiApiModelCandidate(identity.model)))
     const progressBase: Omit<ContextCompactionProgressEvent, 'status'> = {
       chatId: payload.chatId,
       participantId: payload.participantId,
@@ -28807,6 +28820,7 @@ async function compactCliSeatContext(payload: {
         : {})
     }
     let grokBinaryPath: string | null = null
+    let agyBinaryPath: string | null = null
     if (payload.provider === 'grok') {
       const resolved = await resolveCliProviderBinary(payload.provider, undefined)
       if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
@@ -28819,6 +28833,18 @@ async function compactCliSeatContext(payload: {
         }
       }
       grokBinaryPath = resolved.binaryPath
+    } else if (nativeAgySeat) {
+      const resolved = await resolveAgyCliBinary()
+      if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+      }
+      if (!resolved.binaryPath) {
+        return {
+          ok: false,
+          error: resolved.error || 'The official AntiGravity CLI (agy) was not found.'
+        }
+      }
+      agyBinaryPath = resolved.binaryPath
     } else {
       // Antigravity gemini-api seats need no binary — the BYO key and the
       // data-use disclosure gate the lane (same gates every turn re-checks).
@@ -28861,6 +28887,27 @@ async function compactCliSeatContext(payload: {
           }
         }
         if (payload.provider === 'antigravity') {
+          if (nativeAgySeat) {
+            if (!maintenanceCompactionRegistry.beginNativeActivity(payload.reservation)) {
+              return {
+                ok: false,
+                text: '',
+                error: 'Compaction was cancelled for history deletion.'
+              }
+            }
+            try {
+              return await runAntigravityAgySeatSummary({
+                binaryPath: agyBinaryPath!,
+                prompt,
+                model: identity.model,
+                reasoningEffort: payload.reasoningEffort,
+                timeoutMs,
+                cancellationSignal: payload.reservation.signal
+              })
+            } finally {
+              maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+            }
+          }
           return runAntigravityGeminiApiSeatSummary({
             prompt,
             model: identity.model,
@@ -28901,26 +28948,38 @@ async function compactCliSeatContext(payload: {
     succeeded = hostSeatCompactionRequestSucceeded(convergence)
     if (!succeeded) failureError = convergence.error || 'The seat summary made no durable progress.'
 
-    if (payload.provider === 'grok' && coverageComplete && finalSummary) {
+    if (coverageComplete && finalSummary && (payload.provider === 'grok' || nativeAgySeat)) {
       // Re-read after the controller returns. No await occurs between this
-      // exact-current-coverage fence and registry disposal, so a new eligible
-      // row, seat relink, or summary replacement blocks destructive reset.
-      // (Antigravity seats have nothing to dispose — the lane is stateless
-      // and the summary simply upgrades the injected-transcript window.)
+      // exact-current-coverage fence and reset, so a new eligible row, seat
+      // relink, or summary replacement blocks destructive rotation.
       const fresh = maintenanceCompactionRegistry.canWrite(payload.reservation)
         ? AppStore.getChat(payload.chatId)
         : null
-      if (
+      const canReset =
         fresh &&
-        canDisposeGrokSeatAfterCompaction({
+        canResetHostSeatAfterCompaction({
           chat: fresh,
           currentWorkspace: fresh.workspacePath || globalRunCwd(),
           identity,
           snapshotEligibleRows,
           finalSummary
         })
-      ) {
+      if (canReset && payload.provider === 'grok') {
         grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
+      } else if (canReset && nativeAgySeat) {
+        const reset = persistHostSeatCompactionCheckpoint({
+          chatId: payload.chatId,
+          identity,
+          snapshotEligibleRows,
+          expectedPreviousSummary: finalSummary,
+          nextSummary: finalSummary,
+          clearProviderSession: true,
+          reservation: payload.reservation
+        })
+        if (!reset.ok) {
+          succeeded = false
+          failureError = reset.error
+        }
       }
     }
 
@@ -29153,6 +29212,7 @@ async function compactProviderContextForReservedRequest(
       provider: payload.provider,
       providerSessionId,
       model,
+      reasoningEffort,
       cardMetadata,
       trigger: payload.trigger || 'manual',
       reservation
