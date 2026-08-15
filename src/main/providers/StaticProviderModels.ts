@@ -94,6 +94,18 @@ export function codexModelSupportsLightReasoning(modelId?: string | null): boole
   return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
 }
 
+// The CLI's discovery row for the Spark preview has appeared with only the
+// first two efforts even though the model accepts the full standard Codex
+// ladder. Repair that stale live metadata at the same normalization choke
+// point used for every desktop and paired-device picker.
+function codexModelRequiresFullStandardReasoning(modelId?: string | null): boolean {
+  return (
+    String(modelId || '')
+      .trim()
+      .toLowerCase() === 'gpt-5.3-codex-spark'
+  )
+}
+
 // Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
 // `max` tier ("Maximum reasoning depth for the hardest problems").
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
@@ -252,6 +264,13 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   if (codexModelSupportsLightReasoning(modelId) && !seen.has('low')) {
     normalized.unshift({ reasoningEffort: 'low' })
     seen.add('low')
+  }
+  if (codexModelRequiresFullStandardReasoning(modelId)) {
+    for (const reasoningEffort of ['medium', 'high', 'xhigh']) {
+      if (seen.has(reasoningEffort)) continue
+      normalized.push({ reasoningEffort })
+      seen.add(reasoningEffort)
+    }
   }
   if (codexModelSupportsMaxReasoning(modelId) && !seen.has('max')) {
     normalized.push({ reasoningEffort: 'max' })
@@ -421,7 +440,9 @@ export const CODEX_STATIC_MODELS = [
     description: 'Research preview where available',
     supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.3-codex-spark', [
       { reasoningEffort: 'low' },
-      { reasoningEffort: 'medium' }
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'low'
   }

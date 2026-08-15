@@ -323,6 +323,22 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
+  it('repairs stale live Spark metadata to its full reasoning ladder', () => {
+    expect(
+      codexReasoningEffortsForModel('gpt-5.3-codex-spark', [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'medium' }
+      ]).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    expect(
+      models
+        .find((model) => model.id === 'gpt-5.3-codex-spark')
+        ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
+
   it('carries official GA metadata on the GPT-5.6 trio rows', () => {
     // Verified 2026-07-09 against the upstream Codex catalog
     // (codex-rs/models-manager/models.json): hyphenated display names, Sol
