@@ -1116,6 +1116,53 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Actions for fan-out result')
   })
 
+  it('pairs one steered User Fan-Out cohort across intervening serial output', () => {
+    const userFanoutLane = (id: string, order: number, content: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: '2026-08-15T00:43:00.000Z',
+      runId: `run-${id}`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: 'round-steered-user-fanout',
+        ensembleParticipantId: id,
+        ensembleLaneId: `lane-${id}`,
+        ensembleLaneIntent: 'write',
+        ensembleProvider: 'codex',
+        ensembleRole: id,
+        ensembleOrder: order,
+        ensembleFanoutWaveId: 'user-wave-steered',
+        ensembleFanoutCategory: 'user'
+      }
+    })
+    const messages: ChatMessage[] = [
+      userFanoutLane('work-7', 7, 'WORK2_FANOUT_CARD'),
+      {
+        id: 'serial-speaker-between-tagged-lanes',
+        role: 'assistant',
+        content: 'SERIAL_SPEAKER_ROW',
+        timestamp: '2026-08-15T00:43:01.000Z'
+      },
+      userFanoutLane('orchestrator-1', 1, 'ORCHESTRATOR_FANOUT_CARD')
+    ]
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          messages
+        })}
+      />
+    )
+
+    expect(html.indexOf('ORCHESTRATOR_FANOUT_CARD')).toBeLessThan(html.indexOf('WORK2_FANOUT_CARD'))
+    expect(html.indexOf('WORK2_FANOUT_CARD')).toBeLessThan(html.indexOf('SERIAL_SPEAKER_ROW'))
+    expect(html.match(/data-fanout-slot="lead"/g)).toHaveLength(1)
+    expect(html.match(/data-fanout-slot="trail"/g)).toHaveLength(1)
+  })
+
   it('folds a settled fan-out wave to a stage-aware handle when the next turn begins', () => {
     const roundId = 'round-persisted-fanout'
     const roundMessages: ChatMessage[] = [

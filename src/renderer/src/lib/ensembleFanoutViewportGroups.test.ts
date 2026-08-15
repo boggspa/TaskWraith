@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRun } from '../../../main/store/types'
 import {
   buildEnsembleFanoutViewportRanges,
+  coLocateUserFanoutLaneMessages,
   collectEnsembleFanoutViewportGroups,
   ensembleFanoutViewportStageLabel,
   isEnsembleFanoutViewportHeaderMessage,
   readEnsembleFanoutViewportHeader
 } from './ensembleFanoutViewportGroups'
+import { classifyFanoutLaneSlots } from './fanoutLanePairing'
 
 function status(
   id: string,
@@ -197,6 +199,88 @@ describe('fan-out disclosure groups', () => {
       laneCount: 2
     })
     expect(ranges[1].message.id).toBe('ordinary-next-turn')
+  })
+
+  it('co-locates live User Fan-Out lanes split by serial output for paired layout', () => {
+    const roundId = 'round-live-user-fanout'
+    const messages = [
+      status(
+        'live-user-fanout-dispatch',
+        roundId,
+        'User Fan-Out · 2 participant(s) dispatched concurrently (0 read / 2 write-intent).',
+        {
+          ensembleFanoutWaveId: 'live-user-wave',
+          ensembleFanoutCategory: 'user',
+          ensembleFanoutLabel: 'User Fan-Out'
+        }
+      ),
+      serialTurn('speaker-before-first-lane', roundId),
+      lane('work-7', roundId, {
+        ensembleOrder: 7,
+        ensembleStatus: 'running',
+        ensembleFanoutWaveId: 'live-user-wave',
+        ensembleFanoutCategory: 'user'
+      }),
+      serialTurn('speaker-between-lanes', roundId),
+      lane('orchestrator-1', roundId, {
+        ensembleOrder: 1,
+        ensembleStatus: 'running',
+        ensembleFanoutWaveId: 'live-user-wave',
+        ensembleFanoutCategory: 'user'
+      }),
+      serialTurn('speaker-after-lanes', roundId)
+    ]
+
+    const displayMessages = coLocateUserFanoutLaneMessages(messages)
+
+    expect(displayMessages.map((message) => message.id)).toEqual([
+      'live-user-fanout-dispatch',
+      'speaker-before-first-lane',
+      'orchestrator-1',
+      'work-7',
+      'speaker-between-lanes',
+      'speaker-after-lanes'
+    ])
+    expect([...classifyFanoutLaneSlots(displayMessages, true).entries()]).toEqual([
+      ['orchestrator-1#2', 'lead'],
+      ['work-7#3', 'trail']
+    ])
+  })
+
+  it('keeps live orchestrated wave chronology unchanged', () => {
+    const roundId = 'round-live-orchestrated-fanout'
+    const messages = [
+      status(
+        'live-orchestrated-dispatch',
+        roundId,
+        'Writer fan-out · 2 participant(s) dispatched concurrently (0 read / 2 write-intent).',
+        {
+          ensembleFanoutWaveId: 'live-orchestrated-wave',
+          ensembleFanoutCategory: 'orchestrated'
+        }
+      ),
+      lane('worker-2', roundId, {
+        ensembleOrder: 2,
+        ensembleStatus: 'running',
+        ensembleFanoutWaveId: 'live-orchestrated-wave'
+      }),
+      serialTurn('serial-boundary', roundId),
+      lane('worker-1', roundId, {
+        ensembleOrder: 1,
+        ensembleStatus: 'running',
+        ensembleFanoutWaveId: 'live-orchestrated-wave'
+      })
+    ]
+
+    const displayMessages = coLocateUserFanoutLaneMessages(messages)
+
+    expect(displayMessages).toBe(messages)
+    expect(displayMessages.map((message) => message.id)).toEqual([
+      'live-orchestrated-dispatch',
+      'worker-2',
+      'serial-boundary',
+      'worker-1'
+    ])
   })
 
   it('uses durable wave ids when two dispatch receipts overlap before lane rows flush', () => {

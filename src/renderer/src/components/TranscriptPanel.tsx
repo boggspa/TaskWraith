@@ -151,7 +151,10 @@ import {
   setSessionRoundExpanded,
   subscribeSessionRoundExpansion
 } from '../lib/ensembleRoundCards'
-import { isEnsembleFanoutViewportHeaderMessage } from '../lib/ensembleFanoutViewportGroups'
+import {
+  coLocateUserFanoutLaneMessages,
+  isEnsembleFanoutViewportHeaderMessage
+} from '../lib/ensembleFanoutViewportGroups'
 import {
   buildParallelResultViewportRanges,
   isParallelResultViewportHeaderMessage
@@ -1160,7 +1163,7 @@ function useFanoutLaneMessageGrouping(messages: ChatMessage[]): ChatMessage[] {
   return useMemo(() => {
     const next = groupFanoutLaneMessagesStable(messages, cacheRef.current)
     cacheRef.current = next
-    return next.output
+    return coLocateUserFanoutLaneMessages(next.output)
   }, [messages])
 }
 

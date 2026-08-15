@@ -93,6 +93,70 @@ function fanoutLaneKey(message: ChatMessage): string {
   return `${message.runId || ''}\u0000${metadataString(message, 'ensembleLaneId') || message.id}`
 }
 
+function fanoutLaneOrder(message: ChatMessage): number {
+  const value = message.metadata?.ensembleOrder
+  return typeof value === 'number' && Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER
+}
+
+function compareFanoutLanesForPresentation(
+  left: IndexedLaneMessage,
+  right: IndexedLaneMessage
+): number {
+  const orderDelta = fanoutLaneOrder(left.message) - fanoutLaneOrder(right.message)
+  if (orderDelta !== 0) return orderDelta
+  const participantDelta = (
+    metadataString(left.message, 'ensembleParticipantId') || ''
+  ).localeCompare(metadataString(right.message, 'ensembleParticipantId') || '')
+  if (participantDelta !== 0) return participantDelta
+  const laneDelta = (metadataString(left.message, 'ensembleLaneId') || '').localeCompare(
+    metadataString(right.message, 'ensembleLaneId') || ''
+  )
+  return laneDelta || left.index - right.index
+}
+
+/**
+ * Keep the visible cards from one additive user-directed wave together even
+ * when the serial speaker flushed rows between those cards. This receives the
+ * renderer's already lane-folded list, so there is one result card per lane.
+ * Persisted transcript chronology remains untouched.
+ */
+export function coLocateUserFanoutLaneMessages(messages: ChatMessage[]): ChatMessage[] {
+  const cardsByWave = new Map<string, IndexedLaneMessage[]>()
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    if (
+      !isEnsembleFanoutResultMessage(message) ||
+      metadataString(message, 'ensembleFanoutCategory') !== 'user'
+    ) {
+      continue
+    }
+    const waveId = metadataString(message, 'ensembleFanoutWaveId')
+    if (!waveId) continue
+    const waveKey = JSON.stringify([metadataString(message, 'ensembleRoundId') || '', waveId])
+    const cards = cardsByWave.get(waveKey)
+    if (cards) cards.push({ message, index })
+    else cardsByWave.set(waveKey, [{ message, index }])
+  }
+
+  const cardsByAnchorIndex = new Map<number, IndexedLaneMessage[]>()
+  const relocatedIndexes = new Set<number>()
+  for (const cards of cardsByWave.values()) {
+    if (cards.length < 2) continue
+    const anchorIndex = Math.min(...cards.map((lane) => lane.index))
+    cardsByAnchorIndex.set(anchorIndex, cards.sort(compareFanoutLanesForPresentation))
+    for (const lane of cards) relocatedIndexes.add(lane.index)
+  }
+  if (cardsByAnchorIndex.size === 0) return messages
+
+  const output: ChatMessage[] = []
+  for (let index = 0; index < messages.length; index += 1) {
+    const cards = cardsByAnchorIndex.get(index)
+    if (cards) output.push(...cards.map((lane) => lane.message))
+    else if (!relocatedIndexes.has(index)) output.push(messages[index])
+  }
+  return output
+}
+
 function stageFromDispatchLabel(label: string): EnsembleFanoutViewportStage {
   const normalized = label.trim().toLowerCase()
   if (normalized.includes('scout') || normalized === 'automatic read stage') return 'scout'
