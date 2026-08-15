@@ -28,6 +28,7 @@ struct DriverAction: Codable {
     let yFraction: Double?
     let durationSeconds: Int?
     let playheadTicks: Int64?
+    let playheadToleranceTicks: Int64?
     let playheadStepFrames: Int?
 }
 
@@ -77,6 +78,7 @@ struct ActionReceipt: Codable {
     let yFraction: Double?
     let audioProbe: AudioProbeReceipt?
     let playheadTicks: Int64?
+    let playheadToleranceTicks: Int64?
     let playheadStepFrames: Int?
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
@@ -91,6 +93,7 @@ struct ActionReceipt: Codable {
         yFraction: Double?,
         audioProbe: AudioProbeReceipt?,
         playheadTicks: Int64? = nil,
+        playheadToleranceTicks: Int64? = nil,
         playheadStepFrames: Int? = nil,
         playheadTicksBefore: Int64? = nil,
         observedPlayheadTicks: Int64? = nil
@@ -104,6 +107,7 @@ struct ActionReceipt: Codable {
         self.yFraction = yFraction
         self.audioProbe = audioProbe
         self.playheadTicks = playheadTicks
+        self.playheadToleranceTicks = playheadToleranceTicks
         self.playheadStepFrames = playheadStepFrames
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
@@ -301,10 +305,13 @@ func setAccessibilityPlayhead(
     _ playhead: AXUIElement,
     in window: AXUIElement,
     to ticks: Int64,
+    toleranceTicks: Int64,
     request: DriverRequest,
     application: NSRunningApplication
 ) throws -> Int64 {
     guard ticks >= 0,
+          toleranceTicks >= 0,
+          toleranceTicks <= 50_000,
           let minimum = numberAttribute(kAXMinValueAttribute, of: playhead)?.int64Value,
           let maximum = numberAttribute(kAXMaxValueAttribute, of: playhead)?.int64Value,
           minimum == 0,
@@ -324,6 +331,12 @@ func setAccessibilityPlayhead(
         throw DriverFailure.refused("exact Playhead accessibility value-set failed")
     }
     let deadline = Date().addingTimeInterval(1)
+    func settled(_ candidate: Int64?) -> Bool {
+        guard let candidate else { return false }
+        return candidate >= ticks
+            ? candidate - ticks <= toleranceTicks
+            : ticks - candidate <= toleranceTicks
+    }
     var observed: Int64?
     while Date() < deadline {
         // The viewer rebuilds its public AX children when the overlay refreshes.
@@ -331,11 +344,11 @@ func setAccessibilityPlayhead(
         // have become a stale cross-process proxy after this value-set.
         observed = (try? exactAccessibilityPlayhead(in: window))
             .flatMap { numberAttribute(kAXValueAttribute, of: $0)?.int64Value }
-        if observed == ticks { break }
+        if settled(observed) { break }
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
     let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    guard observed == ticks,
+    guard settled(observed),
           foregroundAfter == foregroundBefore,
           !application.isActive else {
         throw DriverFailure.refused(
@@ -346,7 +359,7 @@ func setAccessibilityPlayhead(
                 "companionActive=\(application.isActive)"
         )
     }
-    return ticks
+    return observed!
 }
 
 func stepAccessibilityPlayhead(
@@ -836,13 +849,15 @@ do {
 
         if action.type == "set-playhead-ticks",
            request.inputDelivery == "background-observation-only",
-           let playheadTicks = action.playheadTicks
+           let playheadTicks = action.playheadTicks,
+           let playheadToleranceTicks = action.playheadToleranceTicks
         {
             let accessibilityPlayhead = try exactAccessibilityPlayhead(in: accessibilityWindow)
             let observed = try setAccessibilityPlayhead(
                 accessibilityPlayhead,
                 in: accessibilityWindow,
                 to: playheadTicks,
+                toleranceTicks: playheadToleranceTicks,
                 request: request,
                 application: application
             )
@@ -858,6 +873,7 @@ do {
                     yFraction: nil,
                     audioProbe: nil,
                     playheadTicks: playheadTicks,
+                    playheadToleranceTicks: playheadToleranceTicks,
                     observedPlayheadTicks: observed
                 )
             )

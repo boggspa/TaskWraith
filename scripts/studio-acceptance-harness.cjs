@@ -1057,11 +1057,16 @@ function buildStudioUiDriverRequest(options) {
     if (
       action.type === 'set-playhead-ticks' &&
       Number.isSafeInteger(action.playheadTicks) &&
-      action.playheadTicks >= 0
+      action.playheadTicks >= 0 &&
+      (action.playheadToleranceTicks === undefined ||
+        (Number.isSafeInteger(action.playheadToleranceTicks) &&
+          action.playheadToleranceTicks >= 0 &&
+          action.playheadToleranceTicks <= 50_000))
     ) {
       return {
         type: 'set-playhead-ticks',
-        playheadTicks: action.playheadTicks
+        playheadTicks: action.playheadTicks,
+        playheadToleranceTicks: action.playheadToleranceTicks ?? 0
       }
     }
     if (
@@ -1280,7 +1285,10 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
     if (
       action.type === 'set-playhead-ticks' &&
       (observed.playheadTicks !== action.playheadTicks ||
-        observed.observedPlayheadTicks !== action.playheadTicks)
+        observed.playheadToleranceTicks !== action.playheadToleranceTicks ||
+        !Number.isSafeInteger(observed.observedPlayheadTicks) ||
+        Math.abs(observed.observedPlayheadTicks - action.playheadTicks) >
+          action.playheadToleranceTicks)
     ) {
       throw new Error('Studio UI driver playhead receipt does not match the bounded request')
     }

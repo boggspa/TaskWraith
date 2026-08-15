@@ -1319,13 +1319,37 @@ describe('Studio acceptance harness', () => {
     expect(
       buildStudioUiDriverRequest({
         ...target,
-        actions: [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }]
+        actions: [
+          {
+            type: 'set-playhead-ticks',
+            playheadTicks: 241_000,
+            playheadToleranceTicks: 50_000
+          }
+        ]
       })
     ).toMatchObject({
       inputDelivery: 'background-observation-only',
       allowForegroundInput: false,
-      actions: [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }]
+      actions: [
+        {
+          type: 'set-playhead-ticks',
+          playheadTicks: 241_000,
+          playheadToleranceTicks: 50_000
+        }
+      ]
     })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          {
+            type: 'set-playhead-ticks',
+            playheadTicks: 241_000,
+            playheadToleranceTicks: 50_001
+          }
+        ]
+      })
+    ).toThrow(/unsupported UI action/)
     expect(() =>
       buildStudioUiDriverRequest({
         ...target,
@@ -1517,10 +1541,15 @@ describe('Studio acceptance harness', () => {
             xFraction: action.xFraction ?? null,
             yFraction: action.yFraction ?? null,
             playheadTicks: action.playheadTicks ?? null,
+            playheadToleranceTicks: action.playheadToleranceTicks ?? null,
             playheadStepFrames: action.playheadStepFrames ?? null,
             playheadTicksBefore: action.type === 'step-playhead-frame' ? 1_000 : null,
             observedPlayheadTicks:
-              action.type === 'step-playhead-frame' ? 980 : (action.playheadTicks ?? null),
+              action.type === 'step-playhead-frame'
+                ? 980
+                : action.playheadTicks === undefined
+                  ? null
+                  : Number(action.playheadTicks) - 1_307,
             audioProbe:
               action.type === 'audio-probe'
                 ? {
@@ -1611,7 +1640,13 @@ describe('Studio acceptance harness', () => {
     const playheadReceipt = await runStudioUiDriver(
       { artifactRoot: root },
       target,
-      [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }],
+      [
+        {
+          type: 'set-playhead-ticks',
+          playheadTicks: 241_000,
+          playheadToleranceTicks: 50_000
+        }
+      ],
       { execFile }
     )
     expect(playheadReceipt).toMatchObject({
@@ -1620,7 +1655,8 @@ describe('Studio acceptance harness', () => {
         {
           type: 'set-playhead-ticks',
           playheadTicks: 241_000,
-          observedPlayheadTicks: 241_000
+          playheadToleranceTicks: 50_000,
+          observedPlayheadTicks: 239_693
         }
       ]
     })
