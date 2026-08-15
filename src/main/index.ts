@@ -47564,6 +47564,11 @@ if (isGeminiMcpBridgeProcess) {
     // fails closed to the empty set while the channel authority is not
     // running (including the degraded no-channels launch path).
     let resolveActiveChannelChatIds: () => ReadonlySet<string> = () => new Set()
+    // Separate "the Channel authority says nothing is shared" from "the
+    // Channel authority cannot be read". `resolveActiveChannelChatIds` returns
+    // an empty set for BOTH: harmless for a display projection, dangerous for
+    // a delete guard. Fails closed until the bootstrap actually wires it.
+    let channelAuthorityIsReadable: () => boolean = () => false
 
     const buildRemoteTaskCardForChat = (
       chat: ChatRecord,
@@ -49241,6 +49246,14 @@ if (isGeminiMcpBridgeProcess) {
         if (channel.status === 'active') activeChatIds.add(channel.chatId)
       }
       return activeChatIds
+    }
+
+    // The reaper DELETES. An unreadable authority and a genuinely empty
+    // channel set are indistinguishable above, so ask readability directly
+    // rather than inferring it from an empty result.
+    channelAuthorityIsReadable = () => {
+      const service = channelProductionBootstrap?.service
+      return Boolean(service && service.status().state === 'running')
     }
 
     let channelMemberProductionBootstrap: ReturnType<
@@ -53168,6 +53181,16 @@ if (isGeminiMcpBridgeProcess) {
           if (share.enabled) chatIds.add(share.chatId)
         }
         for (const chatId of externalContributionQueue.chatIdsWithQueued()) chatIds.add(chatId)
+        // Channel-native shares. P4's terminal cutover DELETES ordinary legacy
+        // People shares, so without this a Channel-shared chat appears in
+        // neither source above, and invisible here means reapable.
+        for (const chatId of resolveActiveChannelChatIds()) chatIds.add(chatId)
+        // Fail closed: with the Channel authority unreadable we cannot prove
+        // any chat is unshared, so protect every chat rather than delete a
+        // shared one. Create-time cleanup resumes once channels are live.
+        if (!channelAuthorityIsReadable()) {
+          for (const chat of AppStore.getChats()) chatIds.add(chat.appChatId)
+        }
         return chatIds
       },
       getOpenChatPopoutIds: () => {

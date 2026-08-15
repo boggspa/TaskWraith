@@ -234,5 +234,14 @@ describe('Channels production main integration', () => {
     expect(sharedChatIds).toContain('humanCollaborationStore.listShares()')
     expect(sharedChatIds).toContain('externalContributionQueue.chatIdsWithQueued()')
     expect(sharedChatIds).toContain('resolveActiveChannelChatIds()')
+
+    // `resolveActiveChannelChatIds` returns the SAME empty set for "no active
+    // channels" and "the channel authority is unreadable" (degraded launch,
+    // service not running). Unioning it alone would therefore be silently
+    // inert exactly when channels are down — and for a delete guard, inert
+    // means the chat is unprotected. The unreadable case must fail closed.
+    expect(sharedChatIds).toContain('if (!channelAuthorityIsReadable()) {')
+    expect(sharedChatIds).toContain('for (const chat of AppStore.getChats()) chatIds.add(')
+    expect(source).toContain('let channelAuthorityIsReadable: () => boolean = () => false')
   })
 })
