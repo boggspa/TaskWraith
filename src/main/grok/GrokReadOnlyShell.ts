@@ -237,12 +237,7 @@ function isBareSystemRead(args: string[]): boolean {
   return args.length === 0
 }
 
-const GREP_GLOB_FILTER_PREFIXES = [
-  '--include=',
-  '--exclude=',
-  '--include-dir=',
-  '--exclude-dir='
-]
+const GREP_GLOB_FILTER_PREFIXES = ['--include=', '--exclude=', '--include-dir=', '--exclude-dir=']
 
 /**
  * Split shell pipelines/sequences without treating operators inside quoted
@@ -452,10 +447,7 @@ function isReadOnlySegment(segment: string): boolean {
     expandedArguments.some((word) => {
       const prefixCouldSynthesizeOption =
         word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
-      return (
-        prefixCouldSynthesizeOption &&
-        (!grepCommand || !grepPathnameExpansionIsReadOnly(word))
-      )
+      return prefixCouldSynthesizeOption && (!grepCommand || !grepPathnameExpansionIsReadOnly(word))
     }) ||
     (command === 'uniq' && expandedArguments.length > 0)
   ) {

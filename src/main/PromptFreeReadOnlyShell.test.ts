@@ -28,9 +28,9 @@ describe('promptFreeReadOnlyShellReason', () => {
       )
     ).toBe('inspection_shell')
     expect(promptFreeReadOnlyShellReason('ls -la && git status --short')).toBe('inspection_shell')
-    expect(
-      promptFreeReadOnlyShellReason('git branch --show-current && git rev-parse HEAD')
-    ).toBe('inspection_shell')
+    expect(promptFreeReadOnlyShellReason('git branch --show-current && git rev-parse HEAD')).toBe(
+      'inspection_shell'
+    )
     expect(
       promptFreeReadOnlyShellReason(
         "sed -n '1020,1040p; 1075,1095p' src/main/services/ChatService.ts"
