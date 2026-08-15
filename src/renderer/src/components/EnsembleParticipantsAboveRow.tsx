@@ -144,6 +144,8 @@ const ENSEMBLE_CHIP_ROW_MAX = 5
 // grid — the drag-reorder hit-testing (`resolveReorderDropTarget`) and
 // the per-chip `@container ensemble-chip` queries carry over untouched.
 export const ENSEMBLE_CHIP_GRID_TRACKS = 60
+export const BOSS_AUTO_APPROVAL_CONSENT_MESSAGE =
+  'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. If an eligible shell/file request still opens a modal and the authority is idle, TaskWraith opens a read-only Boss/Captain review turn; the first human, authority, or timeout decision wins. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
 
 export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
 export type EnsembleParticipantStageChoice =
@@ -1001,9 +1003,7 @@ export function EnsembleParticipantsAboveRow({
       return
     }
     if (enabled) {
-      const confirmed = window.confirm(
-        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
-      )
+      const confirmed = window.confirm(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE)
       if (!confirmed) return
     }
     if (isRoundRunning) {
@@ -1851,9 +1851,7 @@ function EnsembleAddParticipantButton({
         patchDetails({ autoApprovalsEnabled: true })
         return
       }
-      const confirmed = window.confirm(
-        'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
-      )
+      const confirmed = window.confirm(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE)
       if (!confirmed) return
       patchDetails({
         autoApprovalsEnabled: true,

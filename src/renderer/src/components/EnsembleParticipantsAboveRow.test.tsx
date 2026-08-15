@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  BOSS_AUTO_APPROVAL_CONSENT_MESSAGE,
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleAddParticipantFields,
   EnsembleParticipantDuplicateRow,
@@ -64,6 +65,21 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
 }
 
 describe('EnsembleParticipantsAboveRow', () => {
+  it('discloses the read-only Boss review race in Auto Approvals consent', () => {
+    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
+      'eligible shell/file request still opens a modal'
+    )
+    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
+      'read-only Boss/Captain review turn'
+    )
+    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
+      'the first human, authority, or timeout decision wins'
+    )
+    expect(BOSS_AUTO_APPROVAL_CONSENT_MESSAGE).toContain(
+      'This will not grant session/workspace approval'
+    )
+  })
+
   describe('participant authority controls', () => {
     const autoApprovals = {
       enabled: true,
