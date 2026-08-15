@@ -394,7 +394,11 @@ func stepAccessibilityPlayhead(
           foregroundAfter == foregroundBefore,
           !application.isActive else {
         throw DriverFailure.refused(
-            "Playhead step did not settle without changing foreground ownership"
+            "Playhead step did not settle: delta=\(delta) before=\(before) " +
+                "observed=\(observed) " +
+                "foregroundBefore=\(String(describing: foregroundBefore)) " +
+                "foregroundAfter=\(String(describing: foregroundAfter)) " +
+                "companionActive=\(application.isActive)"
         )
     }
     return (before, observed)
