@@ -421,6 +421,164 @@ final class StudioPumpAdoptionTests: XCTestCase {
         XCTAssertEqual(try pixel(reviewRenderer, grade: .effect), reviewOriginal)
     }
 
+    /// LOADING A LUT MUST ACTUALLY PREVIEW IT.
+    ///
+    /// The sibling test above proves the bytes reach both renderers, but it
+    /// reads every pixel through a helper that ASSIGNS `renderer.grade` first.
+    /// That helper supplies the one thing production never did: the viewer
+    /// stayed in `.original`, so the shader bypassed the LUT and the operator
+    /// saw an unchanged picture after a successful Load. An assertion that sets
+    /// the mode it is trying to verify cannot see that.
+    ///
+    /// Nothing here touches `grade`. The picture is read exactly as the product
+    /// left it.
+    func testAdoptingAPreviewGradesBothRoutesWithoutAManualKeystroke() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie(lumaLevels: [128])
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: {}
+        )
+        // A 2x2x2 cube whose every vertex is pure red. Interpolation over a
+        // constant lattice maps EVERY input colour to red, so a delivered LUT
+        // cannot produce a subtle change — it either grades or it does not.
+        let cubeText = """
+        LUT_3D_SIZE 2
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        """
+        let preview = try StudioEffectPreview(
+            schemaVersion: 1,
+            effectId: StudioEffectPreview.effectId(forCubeText: cubeText),
+            cubeByteLength: cubeText.lengthOfBytes(using: .utf8),
+            cubeText: cubeText
+        )
+        let asset = StudioMediaAsset(assetId: "preview-asset", path: movie.path)
+
+        // Attach media WITHOUT a preview, so the neutral picture is the real
+        // product state rather than a mode this test chose.
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [], exitCode: nil, protocolErrors: []
+                ),
+                latestRevision: 3,
+                hydration: StudioCompanionSession.Hydration(
+                    assets: [asset],
+                    proposals: [],
+                    transcripts: [],
+                    effectPreview: .unchanged,
+                    sequence: StudioTimelineSequence(items: [])
+                )
+            )
+        )
+
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 0, atHost: 0)
+        let snapshot = clock.snapshot(atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128
+        )
+        /// Reads what the product would put on screen. Deliberately does NOT
+        /// assign `grade`.
+        func productionPixel(_ renderer: StudioViewerRenderer) throws -> StudioPixel {
+            XCTAssertTrue(renderer.render(snapshot: snapshot, to: target).didDraw)
+            return try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64)
+        }
+
+        XCTAssertEqual(sourceRenderer.grade.mode, .original, "baseline is the untouched product")
+        XCTAssertEqual(reviewRenderer.grade.mode, .original)
+        let sourceNeutral = try productionPixel(sourceRenderer)
+        let reviewNeutral = try productionPixel(reviewRenderer)
+
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .set(preview)
+                ),
+                latestRevision: 4,
+                hydration: nil
+            )
+        )
+
+        XCTAssertEqual(
+            sourceRenderer.grade.mode, .effect,
+            "Load left the Source route bypassing the LUT it just installed"
+        )
+        XCTAssertEqual(
+            reviewRenderer.grade.mode, .effect,
+            "Load left the Review route bypassing the LUT it just installed"
+        )
+        let sourceGraded = try productionPixel(sourceRenderer)
+        let reviewGraded = try productionPixel(reviewRenderer)
+        XCTAssertNotEqual(sourceGraded, sourceNeutral, "Source picture never changed on Load")
+        XCTAssertNotEqual(reviewGraded, reviewNeutral, "Review picture never changed on Load")
+
+        // A rejected replacement holds the resident preview — and must not
+        // disturb the mode either.
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .rejected("effectIdMismatch")
+                ),
+                latestRevision: 5,
+                hydration: nil
+            )
+        )
+        XCTAssertEqual(try productionPixel(sourceRenderer), sourceGraded)
+        XCTAssertEqual(try productionPixel(reviewRenderer), reviewGraded)
+
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .clear
+                ),
+                latestRevision: 6,
+                hydration: nil
+            )
+        )
+        XCTAssertEqual(
+            sourceRenderer.grade.mode, .original,
+            "Clear must hand the Source route back to the ungraded picture"
+        )
+        XCTAssertEqual(reviewRenderer.grade.mode, .original)
+        XCTAssertEqual(try productionPixel(sourceRenderer), sourceNeutral)
+        XCTAssertEqual(try productionPixel(reviewRenderer), reviewNeutral)
+    }
+
     /// Exercises the product handoff between two distinct controllers. The
     /// Review context comes from the Review controller itself; rendering it
     /// verifies that its independent renderer has real material, rather than

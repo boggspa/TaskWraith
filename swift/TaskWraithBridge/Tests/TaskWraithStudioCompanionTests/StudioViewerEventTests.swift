@@ -157,6 +157,63 @@ final class StudioViewerEventTests: XCTestCase {
         XCTAssertEqual(view.selectedSegmentId, "s2")
     }
 
+    // MARK: - Who owns the grade mode
+
+    /// A LUT arriving previews itself; the operator can always take it back.
+    ///
+    /// The automatic mode exists because a Load that changes no pixel is
+    /// indistinguishable from a Load that failed. It must not become a viewer
+    /// that keeps overruling the person using it.
+    func testALoadedPreviewGradesItselfThenYieldsToTheOperator() throws {
+        let (view, window) = try makeViewer()
+        XCTAssertEqual(view.gradeSettings.mode, .original)
+
+        view.applyEffectPreviewGradeMode(active: true, isFirstActivation: true)
+        XCTAssertEqual(view.gradeSettings.mode, .effect, "Load must preview without a keystroke")
+        XCTAssertEqual(view.renderer.grade.mode, .effect, "the renderer must see the same mode")
+        XCTAssertTrue(view.gradeModeAutoEnabledByEffectPreview)
+
+        // The operator presses g and returns to Original. That is now THEIR mode.
+        view.keyDown(with: makeEvent(.keyDown, at: .zero, in: window, characters: "g"))
+        XCTAssertEqual(view.gradeSettings.mode, .original)
+        XCTAssertFalse(view.gradeModeAutoEnabledByEffectPreview, "the operator took the grade")
+
+        // Replacing the resident LUT must not drag them back into Effect.
+        view.applyEffectPreviewGradeMode(active: true, isFirstActivation: false)
+        XCTAssertEqual(
+            view.gradeSettings.mode, .original,
+            "a replacement overruled an operator who had chosen Original")
+
+        // Nor may clearing move a mode the operator owns.
+        view.applyEffectPreviewGradeMode(active: false, isFirstActivation: false)
+        XCTAssertEqual(view.gradeSettings.mode, .original)
+    }
+
+    func testClearingAnAutomaticPreviewReturnsThePicture() throws {
+        let (view, _) = try makeViewer()
+        view.applyEffectPreviewGradeMode(active: true, isFirstActivation: true)
+        XCTAssertEqual(view.gradeSettings.mode, .effect)
+
+        view.applyEffectPreviewGradeMode(active: false, isFirstActivation: false)
+        XCTAssertEqual(view.gradeSettings.mode, .original, "Clear must undo what Load did")
+        XCTAssertEqual(view.renderer.grade.mode, .original)
+        XCTAssertFalse(view.gradeModeAutoEnabledByEffectPreview)
+    }
+
+    /// The mirror case, and the one that would be easy to get wrong: an Effect
+    /// the operator switched on themselves is not the LUT path's to undo.
+    func testAnOperatorChosenEffectSurvivesAClear() throws {
+        let (view, window) = try makeViewer()
+        view.keyDown(with: makeEvent(.keyDown, at: .zero, in: window, characters: "g"))
+        XCTAssertEqual(view.gradeSettings.mode, .effect)
+        XCTAssertFalse(view.gradeModeAutoEnabledByEffectPreview)
+
+        view.applyEffectPreviewGradeMode(active: false, isFirstActivation: false)
+        XCTAssertEqual(
+            view.gradeSettings.mode, .effect,
+            "clearing a LUT must not steal a mode the operator chose")
+    }
+
     /// Return belongs to timecode entry while entry is open. Argued in code
     /// before this target existed; now fired.
     func testReturnDuringTimecodeEntryDoesNotPropose() throws {

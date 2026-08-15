@@ -118,6 +118,40 @@ final class StudioViewerView: NSView {
     /// Grading is Core-complete and was unreachable: no Companion code built a
     /// non-default settings value, so the product was pinned to Original.
     var gradeSettings = StudioGradeSettings()
+
+    /// True only while Effect is on BECAUSE a LUT arrived, rather than because
+    /// the operator asked for it. The distinction is the whole point: an
+    /// automatic mode may be handed back automatically when the LUT goes away,
+    /// but a mode the operator chose is theirs and must survive.
+    private(set) var gradeModeAutoEnabledByEffectPreview = false
+
+    /// Previews a newly resident LUT, or returns the picture when it is cleared.
+    ///
+    /// WHY THIS EXISTS. The host validated the cube, the supervisor delivered
+    /// it, and both renderers uploaded it — and the operator saw nothing,
+    /// because the viewer stayed in `.original` and the shader bypassed the LUT
+    /// entirely. Loading a LUT has to preview it; a Load that changes no pixel
+    /// is indistinguishable from a Load that failed.
+    ///
+    /// Called only after BOTH routes accept the upload, so a partial failure
+    /// can never leave one window graded and the other not.
+    func applyEffectPreviewGradeMode(active: Bool, isFirstActivation: Bool) {
+        if active {
+            // Only an inactive -> active transition may take the mode.
+            // Replacing an already-resident LUT must not overrule an operator
+            // who has since pressed g and gone back to Original.
+            guard isFirstActivation, gradeSettings.mode == .original else { return }
+            gradeSettings.mode = .effect
+            gradeModeAutoEnabledByEffectPreview = true
+            renderer.grade = gradeSettings
+            return
+        }
+        // Clearing hands back only what was taken automatically.
+        guard gradeModeAutoEnabledByEffectPreview else { return }
+        gradeSettings.mode = .original
+        gradeModeAutoEnabledByEffectPreview = false
+        renderer.grade = gradeSettings
+    }
     /// Monotonic within this process, and started above hello/getDocument so a
     /// proposal id can never collide with them.
     private var nextProposalRequestId = StudioProposalRequest.firstProposalRequestId
@@ -1106,16 +1140,21 @@ final class StudioViewerView: NSView {
             // the picture.
             gradeSettings.displayTransform =
                 gradeSettings.displayTransform == .none ? .rec709ToSRGB : .none
+            // The operator has taken the grade. From here a cleared LUT must
+            // leave their choice alone.
+            gradeModeAutoEnabledByEffectPreview = false
             renderer.grade = gradeSettings
             report(message: gradeLabel)
         case "g":
             // Original <-> Effect. The mission's guard still binds: a toggle and
             // one supplied LUT, not a grading suite.
             gradeSettings.mode = gradeSettings.mode == .original ? .effect : .original
+            gradeModeAutoEnabledByEffectPreview = false
             renderer.grade = gradeSettings
             report(message: gradeLabel)
         case "s":
             gradeSettings.mode = gradeSettings.mode == .split ? .effect : .split
+            gradeModeAutoEnabledByEffectPreview = false
             renderer.grade = gradeSettings
             report(message: gradeLabel)
         case "v":
@@ -1429,6 +1468,20 @@ final class StudioViewerWindowController {
         view.adopt(revision: revision)
     }
 
+    /// Forwards a LUT arriving or leaving to this route's view. The grade lives
+    /// on the view alongside the keyboard that also moves it, so the app state
+    /// cannot reach it directly — which is precisely why the delivered LUT was
+    /// never previewed.
+    func applyEffectPreviewGradeMode(active: Bool, isFirstActivation: Bool) {
+        view.applyEffectPreviewGradeMode(active: active, isFirstActivation: isFirstActivation)
+    }
+
+    /// Internal for tests: whether this route's Effect mode is currently owned
+    /// by the LUT path rather than the operator.
+    var gradeModeAutoEnabledByEffectPreview: Bool {
+        view.gradeModeAutoEnabledByEffectPreview
+    }
+
     /// The base revision the next proposal/resolve will cite. Internal for tests.
     var nextProposalBaseRevision: Int { view.nextProposalBaseRevision }
 
@@ -1657,6 +1710,10 @@ final class StudioViewerAppState {
                 do {
                     try setLutOnBothRoutes(nil)
                     installedEffectPreview = nil
+                    // Only after the uploads succeed, so a rollback never
+                    // leaves the two windows grading different pictures.
+                    applyEffectPreviewGradeModeOnBothRoutes(
+                        active: false, isFirstActivation: false)
                     Self.report("effect preview cleared")
                 } catch {
                     try? setLutOnBothRoutes(previous)
@@ -1669,9 +1726,15 @@ final class StudioViewerAppState {
             do {
                 let lut = try preview.parsedLut()
                 let previous = try installedEffectPreview?.parsedLut()
+                // Captured BEFORE the swap: only an inactive -> active
+                // transition may claim the grade mode. A replacement must not
+                // overrule an operator who has since chosen Original.
+                let isFirstActivation = installedEffectPreview == nil
                 do {
                     try setLutOnBothRoutes(lut)
                     installedEffectPreview = preview
+                    applyEffectPreviewGradeModeOnBothRoutes(
+                        active: true, isFirstActivation: isFirstActivation)
                     Self.report("effect preview " + preview.effectId + " adopted")
                 } catch {
                     // A route-local upload failure must not leave the Source and
@@ -1688,6 +1751,18 @@ final class StudioViewerAppState {
     private func setLutOnBothRoutes(_ lut: StudioColorLut?) throws {
         try controller.renderer.setLut(lut)
         try reviewController?.renderer.setLut(lut)
+    }
+
+    /// Source and Review stay in step for the host preview: a LUT the operator
+    /// loaded once should not grade one window and bypass the other.
+    private func applyEffectPreviewGradeModeOnBothRoutes(
+        active: Bool,
+        isFirstActivation: Bool
+    ) {
+        controller.applyEffectPreviewGradeMode(
+            active: active, isFirstActivation: isFirstActivation)
+        reviewController?.applyEffectPreviewGradeMode(
+            active: active, isFirstActivation: isFirstActivation)
     }
 
     /// Adopts the host's transcripts. Only the one matching the open asset is
