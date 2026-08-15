@@ -2482,22 +2482,28 @@ export const TranscriptPanel = memo(
     // (occupancy ≥ warn) and presume "whilst" (token-growth stall at pressure)
     // without any new prop plumbing through the multiview panes.
     const workingContextPressure = useMemo(() => {
-      const runs = currentChat?.runs || []
+      const runs = resolvedRuns
       const latestRun = [...runs].reverse().find((run) => run?.stats)
       const soloWindow = resolveContextWindow(
         isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
         latestRun?.actualModel || latestRun?.requestedModel || ''
       )
-      const soloUsed = currentContextTokens(runs, { liveOutputTokens: 0, isRunning: true })
+      const soloUsed = currentContextTokens(runs, {
+        liveOutputTokens: 0,
+        isRunning: true,
+        messages: resolvedMessages
+      })
       const byParticipant = new Map<string, number>()
       const participants = currentChat?.ensemble?.participants || []
       if (participants.length > 0) {
-        for (const row of buildParticipantContextRows(runs, participants)) {
+        for (const row of buildParticipantContextRows(runs, participants, {
+          messages: resolvedMessages
+        })) {
           byParticipant.set(row.id, row.percent)
         }
       }
       return { solo: contextPercent(soloUsed, soloWindow), byParticipant }
-    }, [currentChat?.runs, currentChat?.ensemble?.participants, currentProvider])
+    }, [currentChat?.ensemble?.participants, currentProvider, resolvedMessages, resolvedRuns])
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const {

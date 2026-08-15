@@ -449,18 +449,29 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
   })
 
   it('renders the active Ensemble participant role in the working indicator', () => {
+    const chat = activeEnsembleChat(
+      ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
+    )
+    chat.runs = [
+      {
+        runId: 'builder-previous',
+        provider: 'codex',
+        actualModel: 'gpt-5.5',
+        ensembleParticipantId: 'codex-builder',
+        status: 'completed',
+        startedAt: '2026-06-30T23:00:00.000Z',
+        endedAt: '2026-06-30T23:01:00.000Z',
+        stats: { total_tokens: 28_500 }
+      }
+    ]
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
           virtualize: false,
           isThinking: true,
-          // A durable accumulator from this seat's completed turns. Without one
-          // the telemetry has no usage to show and renders its "— tokens"
-          // branch instead of the odometer — that is the honest-usage
-          // behaviour, not this test's subject.
-          currentChat: activeEnsembleChat(
-            ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
-          ),
+          // The odometer requires current-seat context evidence. Lifetime
+          // tokenTotals alone deliberately render the unavailable branch.
+          currentChat: chat,
           currentProviderLabel: 'Ensemble',
           currentProvider: 'codex',
           thinkingProviderLabel: 'Ensemble',
@@ -2883,6 +2894,39 @@ describe('working-indicator context-pressure hint', () => {
         })}
       />
     )
+    expect(html).not.toContain('working-context-pressure-hint')
+  })
+
+  it('drops a stale high-pressure hint after durable compaction evidence', () => {
+    const chat = highPressureChat()
+    chat.messages = [
+      ...chat.messages,
+      {
+        id: 'compacted-pressure',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-01-01T00:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 18_000 }
+          }
+        }
+      } as ChatMessage
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          messages: chat.messages,
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProvider: 'claude'
+        })}
+      />
+    )
+
     expect(html).not.toContain('working-context-pressure-hint')
   })
 })
