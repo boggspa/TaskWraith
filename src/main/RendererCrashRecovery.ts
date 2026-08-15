@@ -1,4 +1,4 @@
-import type { BrowserWindow, Event, RenderProcessGoneDetails } from 'electron'
+import type { BrowserWindow, Event, RenderProcessGoneDetails, WebContents } from 'electron'
 
 const RECOVERY_DATA_URL_PREFIX = 'data:text/html;charset=utf-8,'
 const RECOVERY_ACTION_PROTOCOL = 'taskwraith-recovery:'
@@ -132,6 +132,7 @@ export class RendererCrashRecovery {
   private applicationUrl = ''
   private showingRecovery = false
   private disposed = false
+  private readonly webContents: WebContents
 
   private readonly handleDidNavigate = (_event: Event, url: string): void => {
     if (isApplicationUrl(url)) {
@@ -167,13 +168,14 @@ export class RendererCrashRecovery {
     private readonly window: BrowserWindow,
     private readonly options: RendererCrashRecoveryOptions = {}
   ) {
+    this.webContents = window.webContents
     this.rememberCurrentApplicationUrl()
-    window.webContents.on('did-navigate', this.handleDidNavigate)
-    window.webContents.on('will-navigate', this.handleWillNavigate)
+    this.webContents.on('did-navigate', this.handleDidNavigate)
+    this.webContents.on('will-navigate', this.handleWillNavigate)
   }
 
   show(details: RendererCrashRecoveryDetails): boolean {
-    if (this.disposed || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
+    if (this.disposed || this.window.isDestroyed() || this.webContents.isDestroyed()) {
       return false
     }
     this.rememberCurrentApplicationUrl()
@@ -191,14 +193,14 @@ export class RendererCrashRecovery {
     if (this.disposed) return
     this.disposed = true
     this.showingRecovery = false
-    if (this.window.webContents.isDestroyed()) return
-    this.window.webContents.removeListener('did-navigate', this.handleDidNavigate)
-    this.window.webContents.removeListener('will-navigate', this.handleWillNavigate)
+    if (this.webContents.isDestroyed()) return
+    this.webContents.removeListener('did-navigate', this.handleDidNavigate)
+    this.webContents.removeListener('will-navigate', this.handleWillNavigate)
   }
 
   private rememberCurrentApplicationUrl(): void {
-    if (this.window.webContents.isDestroyed()) return
-    const url = this.window.webContents.getURL()
+    if (this.webContents.isDestroyed()) return
+    const url = this.webContents.getURL()
     if (isApplicationUrl(url)) this.applicationUrl = url
   }
 }

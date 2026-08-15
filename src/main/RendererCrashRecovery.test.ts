@@ -24,15 +24,27 @@ function createWindow() {
   const webContents = new FakeWebContents()
   const loadedUrls: string[] = []
   const close = vi.fn()
+  let windowDestroyed = false
   const window = {
-    webContents,
-    isDestroyed: () => false,
+    get webContents() {
+      if (windowDestroyed) throw new Error('Object has been destroyed')
+      return webContents
+    },
+    isDestroyed: () => windowDestroyed,
     close,
     loadURL: vi.fn(async (url: string) => {
       loadedUrls.push(url)
     })
   } as unknown as BrowserWindow
-  return { window, webContents, loadedUrls, close }
+  return {
+    window,
+    webContents,
+    loadedUrls,
+    close,
+    destroyWindow: () => {
+      windowDestroyed = true
+    }
+  }
 }
 
 const details = {
@@ -113,6 +125,16 @@ describe('RendererCrashRecovery', () => {
     expect(webContents.listenerCount('will-navigate')).toBe(1)
 
     recovery.dispose()
+    expect(webContents.listenerCount('did-navigate')).toBe(0)
+    expect(webContents.listenerCount('will-navigate')).toBe(0)
+  })
+
+  it('disposes without accessing BrowserWindow after it has been destroyed', () => {
+    const { window, webContents, destroyWindow } = createWindow()
+    const recovery = new RendererCrashRecovery(window)
+    destroyWindow()
+
+    expect(() => recovery.dispose()).not.toThrow()
     expect(webContents.listenerCount('did-navigate')).toBe(0)
     expect(webContents.listenerCount('will-navigate')).toBe(0)
   })
