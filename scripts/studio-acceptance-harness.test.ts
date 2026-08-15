@@ -1321,6 +1321,66 @@ describe('Studio acceptance harness', () => {
         ...target,
         actions: [
           {
+            type: 'press-playback',
+            playbackValueBefore: 'paused',
+            playbackValueAfter: 'playing'
+          }
+        ]
+      })
+    ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [
+        {
+          type: 'press-playback',
+          accessibilityLabel: 'Playback',
+          accessibilityAction: 'AXPress',
+          playbackValueBefore: 'paused',
+          playbackValueAfter: 'playing'
+        }
+      ]
+    })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          {
+            type: 'press-playback',
+            playbackValueBefore: 'playing',
+            playbackValueAfter: 'paused'
+          }
+        ]
+      })
+    ).toMatchObject({
+      actions: [
+        {
+          playbackValueBefore: 'playing',
+          playbackValueAfter: 'paused'
+        }
+      ]
+    })
+    for (const action of [
+      { type: 'press-playback', playbackValueBefore: 'paused' },
+      {
+        type: 'press-playback',
+        playbackValueBefore: 'paused',
+        playbackValueAfter: 'paused'
+      },
+      {
+        type: 'press-playback',
+        playbackValueBefore: 'stopped',
+        playbackValueAfter: 'playing'
+      }
+    ]) {
+      expect(() => buildStudioUiDriverRequest({ ...target, actions: [action] })).toThrow(
+        /unsupported UI action/
+      )
+    }
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          {
             type: 'set-playhead-ticks',
             playheadTicks: 241_000,
             playheadToleranceTicks: 50_000
@@ -1540,8 +1600,21 @@ describe('Studio acceptance harness', () => {
     )
     expect(driverSource).toContain(
       'action.type == "set-playhead-ticks",\n' +
+        '                  request.inputDelivery == "background-observation-only"'
+    )
+    expect(driverSource).toContain(
+      'action.type == "press-playback",\n' +
         '           request.inputDelivery == "background-observation-only"'
     )
+    expect(driverSource).toContain('func exactAccessibilityPlaybackControl(')
+    expect(driverSource).toContain('kAXButtonRole')
+    expect(driverSource).toContain('kAXPressAction')
+    expect(driverSource).toContain(
+      'AXUIElementPerformAction(playback, kAXPressAction as CFString) == .success'
+    )
+    expect(driverSource).toContain('accessibilityLabel == "Playback"')
+    expect(driverSource).toContain('playbackValueBefore == observedBefore')
+    expect(driverSource).toContain('playbackValueAfter == observedAfter')
     expect(driverSource).toContain(
       'let playheadMaximumForwardAdvanceTicks =\n' +
         '                action.playheadMaximumForwardAdvanceTicks ?? 0'
@@ -1643,6 +1716,10 @@ describe('Studio acceptance harness', () => {
                 : action.playheadTicks === undefined
                   ? null
                   : Number(action.playheadTicks) - 1_307,
+            accessibilityLabel: action.accessibilityLabel ?? null,
+            accessibilityAction: action.accessibilityAction ?? null,
+            playbackValueBefore: action.playbackValueBefore ?? null,
+            playbackValueAfter: action.playbackValueAfter ?? null,
             audioProbe:
               action.type === 'audio-probe'
                 ? {
@@ -1730,6 +1807,30 @@ describe('Studio acceptance harness', () => {
       inputDelivery: 'background-observation-only',
       actions: [{ type: 'screenshot' }]
     })
+    const playbackReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [
+        {
+          type: 'press-playback',
+          playbackValueBefore: 'paused',
+          playbackValueAfter: 'playing'
+        }
+      ],
+      { execFile }
+    )
+    expect(playbackReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [
+        {
+          type: 'press-playback',
+          accessibilityLabel: 'Playback',
+          accessibilityAction: 'AXPress',
+          playbackValueBefore: 'paused',
+          playbackValueAfter: 'playing'
+        }
+      ]
+    })
     const playheadReceipt = await runStudioUiDriver(
       { artifactRoot: root },
       target,
@@ -1772,7 +1873,7 @@ describe('Studio acceptance harness', () => {
         }
       ]
     })
-    expect(execFile).toHaveBeenCalledTimes(5)
+    expect(execFile).toHaveBeenCalledTimes(6)
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })
@@ -1786,6 +1887,74 @@ describe('Studio acceptance harness', () => {
       pgid: 7001,
       windowId: 42
     })
+  })
+
+  it('rejects a Playback AXPress receipt that does not prove the exact transition', async () => {
+    const root = await temporaryRoot('studio-acceptance-playback-press-receipt-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 1, y: 2, width: 640, height: 360 }
+          }
+        ]
+      }
+    }
+    const run = (overrides: Record<string, unknown>) =>
+      runStudioUiDriver(
+        { artifactRoot: root },
+        target,
+        [
+          {
+            type: 'press-playback',
+            playbackValueBefore: 'paused',
+            playbackValueAfter: 'playing'
+          }
+        ],
+        {
+          execFile: vi.fn(async (_file: string, args: string[]) => {
+            const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+            const action = request.actions[0]
+            return {
+              stdout: `${JSON.stringify({
+                schemaVersion: 1,
+                kind: 'taskwraith-studio-ui-driver-receipt',
+                inputDelivery: request.inputDelivery,
+                pid: request.expectedPid,
+                pgid: request.expectedPgid,
+                windowId: request.windowId,
+                actions: [
+                  {
+                    index: 0,
+                    type: action.type,
+                    accessibilityLabel: action.accessibilityLabel,
+                    accessibilityAction: action.accessibilityAction,
+                    playbackValueBefore: action.playbackValueBefore,
+                    playbackValueAfter: action.playbackValueAfter,
+                    ...overrides
+                  }
+                ]
+              })}\n`,
+              stderr: ''
+            }
+          })
+        }
+      )
+
+    await expect(run({ playbackValueAfter: 'paused' })).rejects.toThrow(/Playback receipt/)
+    await expect(run({ accessibilityLabel: 'Loop' })).rejects.toThrow(/Playback receipt/)
+    await expect(run({ accessibilityAction: 'AXShowMenu' })).rejects.toThrow(/Playback receipt/)
   })
 
   it('bounds live Playhead settlement with an explicit forward-only envelope', async () => {

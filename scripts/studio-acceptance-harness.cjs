@@ -1056,6 +1056,19 @@ function buildStudioUiDriverRequest(options) {
       }
     }
     if (
+      action.type === 'press-playback' &&
+      ((action.playbackValueBefore === 'paused' && action.playbackValueAfter === 'playing') ||
+        (action.playbackValueBefore === 'playing' && action.playbackValueAfter === 'paused'))
+    ) {
+      return {
+        type: 'press-playback',
+        accessibilityLabel: 'Playback',
+        accessibilityAction: 'AXPress',
+        playbackValueBefore: action.playbackValueBefore,
+        playbackValueAfter: action.playbackValueAfter
+      }
+    }
+    if (
       action.type === 'set-playhead-ticks' &&
       Number.isSafeInteger(action.playheadTicks) &&
       action.playheadTicks >= 0 &&
@@ -1288,6 +1301,15 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       (observed.xFraction !== action.xFraction || observed.yFraction !== action.yFraction)
     ) {
       throw new Error('Studio UI driver click receipt does not match the bounded request')
+    }
+    if (
+      action.type === 'press-playback' &&
+      (observed.accessibilityLabel !== action.accessibilityLabel ||
+        observed.accessibilityAction !== action.accessibilityAction ||
+        observed.playbackValueBefore !== action.playbackValueBefore ||
+        observed.playbackValueAfter !== action.playbackValueAfter)
+    ) {
+      throw new Error('Studio UI driver Playback receipt does not match the bounded request')
     }
     if (
       action.type === 'set-playhead-ticks' &&

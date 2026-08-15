@@ -31,6 +31,10 @@ struct DriverAction: Codable {
     let playheadToleranceTicks: Int64?
     let playheadMaximumForwardAdvanceTicks: Int64?
     let playheadStepFrames: Int?
+    let accessibilityLabel: String?
+    let accessibilityAction: String?
+    let playbackValueBefore: String?
+    let playbackValueAfter: String?
 }
 
 struct DriverRequest: Codable {
@@ -84,6 +88,10 @@ struct ActionReceipt: Codable {
     let playheadStepFrames: Int?
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
+    let accessibilityLabel: String?
+    let accessibilityAction: String?
+    let playbackValueBefore: String?
+    let playbackValueAfter: String?
 
     init(
         index: Int,
@@ -99,7 +107,11 @@ struct ActionReceipt: Codable {
         playheadMaximumForwardAdvanceTicks: Int64? = nil,
         playheadStepFrames: Int? = nil,
         playheadTicksBefore: Int64? = nil,
-        observedPlayheadTicks: Int64? = nil
+        observedPlayheadTicks: Int64? = nil,
+        accessibilityLabel: String? = nil,
+        accessibilityAction: String? = nil,
+        playbackValueBefore: String? = nil,
+        playbackValueAfter: String? = nil
     ) {
         self.index = index
         self.type = type
@@ -115,6 +127,10 @@ struct ActionReceipt: Codable {
         self.playheadStepFrames = playheadStepFrames
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityAction = accessibilityAction
+        self.playbackValueBefore = playbackValueBefore
+        self.playbackValueAfter = playbackValueAfter
     }
 }
 
@@ -305,6 +321,56 @@ func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
     return playhead
 }
 
+/// Finds the one pressable Playback control through the exact Companion
+/// window's public AX tree.
+///
+/// Unlike the older Playhead element, the product publishes both an identifier
+/// and a label for this control. Require the stable product name, the AXButton
+/// role, and the AXPress action together so another button cannot be mistaken
+/// for transport merely because it happens to share one attribute.
+func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIElement {
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let accessibilityLabel =
+            stringAttribute(kAXIdentifierAttribute, of: element) ??
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        var rawActions: CFArray?
+        let actionResult = AXUIElementCopyActionNames(element, &rawActions)
+        let actionNames = rawActions as? [String] ?? []
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole,
+           accessibilityLabel == "Playback",
+           actionResult == .success,
+           actionNames.contains(kAXPressAction)
+        {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512, matches.count == 1, let playback = matches.first,
+          let value = stringAttribute(kAXValueAttribute, of: playback),
+          value == "playing" || value == "paused" else {
+        throw DriverFailure.refused(
+            "exact pressable Playback accessibility identity is unavailable"
+        )
+    }
+    return playback
+}
+
 /// The forward-advance envelope may never exceed this fraction of the live
 /// slider span.
 ///
@@ -425,6 +491,65 @@ func stepAccessibilityPlayhead(
         )
     }
     return (before, observed)
+}
+
+func pressAccessibilityPlayback(
+    _ playback: AXUIElement,
+    in window: AXUIElement,
+    accessibilityLabel: String,
+    accessibilityAction: String,
+    playbackValueBefore: String,
+    playbackValueAfter: String,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> (before: String, after: String) {
+    let requestedTransitionIsExact =
+        (playbackValueBefore == "paused" && playbackValueAfter == "playing") ||
+        (playbackValueBefore == "playing" && playbackValueAfter == "paused")
+    let observedBefore = stringAttribute(kAXValueAttribute, of: playback)
+    guard accessibilityLabel == "Playback",
+          accessibilityAction == "AXPress",
+          requestedTransitionIsExact,
+          playbackValueBefore == observedBefore else {
+        throw DriverFailure.refused(
+            "exact Playback AXPress request does not match the observed transport"
+        )
+    }
+
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard foregroundBefore != request.expectedPid, !application.isActive else {
+        throw DriverFailure.refused("background Playback control refuses an active Companion")
+    }
+    guard AXUIElementPerformAction(playback, kAXPressAction as CFString) == .success else {
+        throw DriverFailure.refused("exact Playback AXPress failed")
+    }
+
+    // Play/pause currently rebuilds part of the public tree because the status
+    // line changes width. Reacquire the exact control rather than accepting a
+    // stale proxy's old value as proof that the action settled.
+    let deadline = Date().addingTimeInterval(1)
+    var observedAfter: String?
+    while Date() < deadline {
+        observedAfter = (try? exactAccessibilityPlaybackControl(in: window))
+            .flatMap { stringAttribute(kAXValueAttribute, of: $0) }
+        if playbackValueAfter == observedAfter { break }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard playbackValueAfter == observedAfter,
+          foregroundAfter == foregroundBefore,
+          !application.isActive else {
+        throw DriverFailure.refused(
+            "Playback AXPress did not settle: requestedBefore=\(playbackValueBefore) " +
+                "observedBefore=\(String(describing: observedBefore)) " +
+                "requestedAfter=\(playbackValueAfter) " +
+                "observedAfter=\(String(describing: observedAfter)) " +
+                "foregroundBefore=\(String(describing: foregroundBefore)) " +
+                "foregroundAfter=\(String(describing: foregroundAfter)) " +
+                "companionActive=\(application.isActive)"
+        )
+    }
+    return (playbackValueBefore, playbackValueAfter)
 }
 
 func activateExactWindowForExplicitForeground(
@@ -850,6 +975,9 @@ do {
     }) {
         _ = try exactAccessibilityPlayhead(in: accessibilityWindow)
     }
+    if request.actions.contains(where: { $0.type == "press-playback" }) {
+        _ = try exactAccessibilityPlaybackControl(in: accessibilityWindow)
+    }
     if request.inputDelivery == "foreground-global-explicit" {
         try activateExactWindowForExplicitForeground(
             request,
@@ -874,10 +1002,45 @@ do {
         }
         try validateWindow(request)
 
-        if action.type == "set-playhead-ticks",
+        if action.type == "press-playback",
            request.inputDelivery == "background-observation-only",
-           let playheadTicks = action.playheadTicks,
-           let playheadToleranceTicks = action.playheadToleranceTicks
+           let accessibilityLabel = action.accessibilityLabel,
+           let accessibilityAction = action.accessibilityAction,
+           let playbackValueBefore = action.playbackValueBefore,
+           let playbackValueAfter = action.playbackValueAfter
+        {
+            let playback = try exactAccessibilityPlaybackControl(in: accessibilityWindow)
+            let observed = try pressAccessibilityPlayback(
+                playback,
+                in: accessibilityWindow,
+                accessibilityLabel: accessibilityLabel,
+                accessibilityAction: accessibilityAction,
+                playbackValueBefore: playbackValueBefore,
+                playbackValueAfter: playbackValueAfter,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "press-playback",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    accessibilityLabel: accessibilityLabel,
+                    accessibilityAction: accessibilityAction,
+                    playbackValueBefore: observed.before,
+                    playbackValueAfter: observed.after
+                )
+            )
+        } else if action.type == "set-playhead-ticks",
+                  request.inputDelivery == "background-observation-only",
+                  let playheadTicks = action.playheadTicks,
+                  let playheadToleranceTicks = action.playheadToleranceTicks
         {
             let playheadMaximumForwardAdvanceTicks =
                 action.playheadMaximumForwardAdvanceTicks ?? 0
