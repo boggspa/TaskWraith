@@ -108,7 +108,15 @@ describe('main maintenance compaction history-deletion integration', () => {
       '/**\n * Unified entry for the `compact-provider-context` IPC.'
     )
     expect(lane).toContain('parseAgyProjectBoundSessionId(identity.linkedProviderSessionId)')
-    expect(lane).toContain('await resolveAgyCliBinary()')
+    const nativeLaneStart = lane.indexOf('} else if (nativeAgySeat) {')
+    const nativeLaneEnd = lane.indexOf('\n    } else {', nativeLaneStart)
+    expect(nativeLaneStart).toBeGreaterThanOrEqual(0)
+    expect(nativeLaneEnd).toBeGreaterThan(nativeLaneStart)
+    const nativeLane = lane.slice(nativeLaneStart, nativeLaneEnd)
+    expect(nativeLane).toContain('isAntigravityOptInEnabled(AppStore.getSettings())')
+    expect(nativeLane.indexOf('isAntigravityOptInEnabled(')).toBeLessThan(
+      nativeLane.indexOf('await resolveAgyCliBinary()')
+    )
     const beginAt = lane.indexOf('maintenanceCompactionRegistry.beginNativeActivity(')
     const summarizeAt = lane.indexOf('await runAntigravityAgySeatSummary({')
     const endAt = lane.indexOf('maintenanceCompactionRegistry.endNativeActivity(')

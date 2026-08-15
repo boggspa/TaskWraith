@@ -176,4 +176,32 @@ describe('AgyBrainTranscriptMonitor', () => {
     expect(emitted).toHaveLength(2)
     expect(emitted[1]).toMatchObject({ output: 'Fresh project reasoning' })
   })
+
+  it('forces one final transcript read while stopping even when stat evidence is unchanged', async () => {
+    const oldLine = step(8, 'PLANNER_RESPONSE', { thinking: 'Already projected turn' })
+    const finalLine = step(9, 'PLANNER_RESPONSE', { thinking: 'Final planner trace' })
+    let raw = oldLine
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'terminal-drain-run',
+      workspace: '/repo',
+      providerSessionId: 'agy-project-v1:44444444-4444-4444-8444-444444444444',
+      emit: (event) => emitted.push(event),
+      deps: {
+        readFile: async () => raw,
+        // Model a coarse/unchanged filesystem timestamp. The terminal drain
+        // must not depend on another stat transition to observe the final row.
+        stat: async () => ({ size: 100, mtimeMs: 1 })
+      }
+    })
+
+    await monitor.prime()
+    raw = `${oldLine}\n${finalLine}`
+    await monitor.pollNow()
+    expect(emitted).toEqual([])
+
+    await monitor.stopAndDrain()
+    expect(emitted).toHaveLength(2)
+    expect(emitted[1]).toMatchObject({ output: 'Final planner trace' })
+  })
 })

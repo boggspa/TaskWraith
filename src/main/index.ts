@@ -19921,6 +19921,13 @@ async function runCliProviderProcess(
             // Best-effort: an unresolved receipt only means the next turn is fresh.
           }
         }
+        if (options.beforeTerminalProjection) {
+          try {
+            await options.beforeTerminalProjection()
+          } catch {
+            // Display-only side channels never alter provider settlement.
+          }
+        }
         const trailing = stdoutBuffer.trim()
         if (trailing) {
           try {
@@ -19948,13 +19955,6 @@ async function runCliProviderProcess(
             (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0),
             model
           )
-        }
-        if (options.beforeTerminalProjection) {
-          try {
-            await options.beforeTerminalProjection()
-          } catch {
-            // Display-only side channels never alter provider settlement.
-          }
         }
         const grokStopped =
           provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
@@ -28834,6 +28834,13 @@ async function compactCliSeatContext(payload: {
       }
       grokBinaryPath = resolved.binaryPath
     } else if (nativeAgySeat) {
+      if (!isAntigravityOptInEnabled(AppStore.getSettings())) {
+        return {
+          ok: false,
+          error:
+            'AntiGravity is disabled until the user enables it and records informed risk acceptance in Settings → Providers.'
+        }
+      }
       const resolved = await resolveAgyCliBinary()
       if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
         return { ok: false, error: 'Compaction was cancelled for history deletion.' }

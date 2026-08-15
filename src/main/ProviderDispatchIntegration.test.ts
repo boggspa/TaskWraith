@@ -25,6 +25,17 @@ describe('provider dispatch integration', () => {
   // this scan green and the app un-launchable. Its spread list was also a frozen
   // four names, so it never grew with the roster it claimed to cover.
 
+  it('drains display-only side channels before flushing terminal assistant text', () => {
+    const runner = sourceBetween(
+      'async function runCliProviderProcess(',
+      'async function loadOptionalClaudeSdk()'
+    )
+    const drainAt = runner.indexOf('if (options.beforeTerminalProjection) {')
+    const trailingContentAt = runner.indexOf('const trailing = stdoutBuffer.trim()')
+    expect(drainAt).toBeGreaterThanOrEqual(0)
+    expect(trailingContentAt).toBeGreaterThan(drainAt)
+  })
+
   it('strict-validates raw Gemini API function names before canonical dispatch', () => {
     const geminiDeps = sourceBetween(
       'function geminiApiProviderDeps()',
