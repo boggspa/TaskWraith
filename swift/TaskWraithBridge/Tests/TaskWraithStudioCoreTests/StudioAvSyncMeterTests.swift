@@ -230,4 +230,159 @@ final class StudioAvSyncMeterTests: XCTestCase {
         XCTAssertTrue(subject.summaryText.contains("!"), "a bad reading must be visibly flagged")
         XCTAssertTrue(subject.summaryText.contains("a/v"))
     }
+
+    // MARK: - Why a peak advanced
+
+    /// WHAT THE PEAK ALONE CANNOT SAY, AND WHY IT MATTERS HERE.
+    ///
+    /// The caller reads the two operands at two different moments: the frame is
+    /// chosen from a transport snapshot taken BEFORE the render, and the audio
+    /// playhead is read AFTER it. Anything that blocks in between — a drawable
+    /// wait, a decode, a keyframe restart — is time the audio device keeps
+    /// counting, and it lands in the error as if picture and sound had drifted.
+    ///
+    /// So a one-second peak has two completely different explanations, and
+    /// `peakAbsoluteErrorTicks` is identical under both. These record enough to
+    /// tell them apart. They do NOT suppress, exclude, or soften any reading:
+    /// the peak still rises exactly as before.
+
+    func testPeakSampleDistinguishesAStalledMeasurementFromRealDivergence() throws {
+        // One second of audio-advanced error, produced two different ways.
+        let oneSecond = 1_000 * ticksPerMillisecond
+
+        // The audio clock was read a full second after the frame was chosen.
+        var stalled = meter()
+        stalled.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: oneSecond,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+
+        // Both clocks were read together, so a second of error is a second of
+        // genuine divergence between what you see and what you hear.
+        var divergent = meter()
+        divergent.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: oneSecond,
+            measurementWindowNanoseconds: 200_000
+        )
+
+        // The number on the HUD is the same for both. That is the problem.
+        XCTAssertEqual(stalled.peakAbsoluteErrorTicks, divergent.peakAbsoluteErrorTicks)
+
+        XCTAssertTrue(
+            try XCTUnwrap(stalled.peakSample).errorIsExplainedByMeasurementWindow,
+            "a second of error inside a second-long read window is when the clocks "
+                + "were sampled, not a second of desync"
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(divergent.peakSample).errorIsExplainedByMeasurementWindow,
+            "a second of error inside a 0.2ms read window is a real divergence"
+        )
+    }
+
+    func testPeakSampleKeepsBothOperandsFromTheTickThatSetIt() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 90_000,
+            audiblePositionTicks: 120_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+        // A later, healthier tick must not overwrite the evidence, or the one
+        // sample worth explaining is the one sample that gets discarded.
+        subject.record(
+            presentedFrameTicks: 150_000,
+            audiblePositionTicks: 150_030,
+            measurementWindowNanoseconds: 400_000
+        )
+
+        let peak = try XCTUnwrap(subject.peakSample)
+        XCTAssertEqual(peak.presentedFrameTicks, 90_000)
+        XCTAssertEqual(peak.audiblePositionTicks, 120_000)
+        XCTAssertEqual(peak.errorTicks, -30_000)
+        XCTAssertEqual(peak.measurementWindowNanoseconds, 1_000_000_000)
+    }
+
+    /// `peakAbsoluteErrorTicks` is an absolute value, so the direction of the
+    /// worst reading is thrown away — and direction is diagnostic here. A read
+    /// window can only ever push the error audio-ADVANCED, because the audio
+    /// clock is the operand sampled last.
+    func testPeakSampleRetainsTheDirectionTheAbsolutePeakDiscards() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+
+        XCTAssertGreaterThan(subject.peakAbsoluteErrorTicks, 0)
+        XCTAssertLessThan(
+            try XCTUnwrap(subject.peakSample).errorTicks, 0,
+            "a late audio read makes sound appear ahead of picture"
+        )
+    }
+
+    /// The dropped-frame path is the exclusion this meter was rebuilt to
+    /// remove. It must not quietly become a blind spot in the new capture.
+    func testDroppedFrameSamplesCarryTheirMeasurementWindowToo() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 0)
+        subject.recordDroppedFrame(
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 900_000_000
+        )
+
+        let peak = try XCTUnwrap(subject.peakSample)
+        XCTAssertFalse(peak.wasDrawn)
+        XCTAssertEqual(peak.measurementWindowNanoseconds, 900_000_000)
+    }
+
+    func testResetDiscardsThePeakSampleWithThePeak() {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+        XCTAssertNotNil(subject.peakSample)
+
+        subject.reset()
+        XCTAssertNil(subject.peakSample, "a sample from before a seek explains nothing after it")
+    }
+
+    /// DIRECTION IS PART OF THE CLAIM, NOT DECORATION. The audio clock is the
+    /// operand read last, so a slow tick can only ever make sound appear AHEAD
+    /// of picture. Picture running ahead of sound is a different fault, and
+    /// explaining it away with a read window would launder it.
+    ///
+    /// Written after a mutation audit: removing the sign check from
+    /// `errorIsExplainedByMeasurementWindow` failed nothing, because every
+    /// other case here is audio-advanced. The guard existed and was untested.
+    func testAPositiveErrorIsNeverExplainedByTheMeasurementWindow() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 1_000 * ticksPerMillisecond,  // picture AHEAD
+            audiblePositionTicks: 0,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+
+        let peak = try XCTUnwrap(subject.peakSample)
+        XCTAssertGreaterThan(peak.errorTicks, 0)
+        XCTAssertFalse(
+            peak.errorIsExplainedByMeasurementWindow,
+            "a late audio read cannot make picture run ahead of sound"
+        )
+    }
+
+    /// THE GUARD ON THE GUARD. Without a window there is no evidence either
+    /// way, and "no evidence" must never read as "explained" — that is exactly
+    /// how an instrument gets quieter without anyone deciding to quieten it.
+    func testAnAbsentMeasurementWindowNeverClaimsToExplainTheError() throws {
+        var subject = meter()
+        subject.record(presentedFrameTicks: 0, audiblePositionTicks: 30_000)
+
+        let peak = try XCTUnwrap(subject.peakSample)
+        XCTAssertNil(peak.measurementWindowNanoseconds)
+        XCTAssertFalse(peak.errorIsExplainedByMeasurementWindow)
+    }
 }

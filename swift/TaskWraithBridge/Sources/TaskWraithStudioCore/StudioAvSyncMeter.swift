@@ -25,6 +25,67 @@ import Foundation
 /// it should sit inside half a frame plus output latency and STAY there. Its
 /// value is as a regression detector — an unbounded or growing error means
 /// something in the chain is broken — not as evidence of independent timebases.
+/// The worst reading the meter has seen, kept whole rather than reduced to a
+/// magnitude, so a peak can be EXPLAINED and not merely reported.
+///
+/// WHY THE OPERANDS ARE KEPT SEPARATELY. `peakAbsoluteErrorTicks` answers "how
+/// bad" and discards everything needed to answer "why": which of the two clocks
+/// moved, in which direction, and how far apart in wall time the two reads
+/// were. A one-second peak has at least two unrelated causes that produce a
+/// byte-identical number, so the magnitude alone cannot choose between them.
+///
+/// This is ONE value, not a history. The meter deliberately keeps no per-frame
+/// storage — see the member audit in StudioAvSyncMeterTests — so a ring buffer
+/// of recent samples is not available here, and a leak in a diagnostic would be
+/// a worse defect than the one it is diagnosing.
+public struct StudioAvSyncSample: Equatable, Sendable {
+    public let timebase: StudioTimebase
+    /// PTS of the frame this reading compared, exactly as recorded.
+    public let presentedFrameTicks: Int64
+    /// Audio playhead this reading compared it against, exactly as recorded.
+    public let audiblePositionTicks: Int64
+    public let errorTicks: Int64
+    /// Wall-clock nanoseconds between the transport snapshot that SELECTED this
+    /// frame and the audio-clock read it was compared AGAINST.
+    ///
+    /// Nil when the caller did not measure it. Nil means "unknown", never
+    /// "zero" — the difference decides whether a peak can be explained at all.
+    public let measurementWindowNanoseconds: UInt64?
+    /// False when this reading came from a tick that drew nothing and left the
+    /// previous picture ageing on screen.
+    public let wasDrawn: Bool
+
+    public var errorMilliseconds: Double {
+        Double(errorTicks) / Double(timebase.timescale) * 1000.0
+    }
+
+    public var measurementWindowMilliseconds: Double? {
+        guard let measurementWindowNanoseconds else { return nil }
+        return Double(measurementWindowNanoseconds) / 1_000_000.0
+    }
+
+    /// True when the gap between the two clock reads is large enough to account
+    /// for the error on its own.
+    ///
+    /// The audio playhead is the operand read LAST, so any time spent between
+    /// the two reads — a drawable wait, an inline decode, a keyframe restart —
+    /// is time the audio device kept counting while the frame number stayed
+    /// fixed. That inflates the error in the audio-advanced direction only,
+    /// which is why a positive error can never be explained this way.
+    ///
+    /// THIS DOES NOT SUPPRESS ANYTHING. The peak still rises, the tolerance
+    /// still fails, the "!" still shows. It records what the number means so a
+    /// repair can be aimed at the right thing: sampling both clocks together,
+    /// or the pipeline stall itself.
+    public var errorIsExplainedByMeasurementWindow: Bool {
+        guard let window = measurementWindowMilliseconds else { return false }
+        guard errorMilliseconds < 0 else { return false }
+        let quantisation =
+            Double(timebase.frameDurationTicks) / Double(timebase.timescale) * 1000.0
+        return -errorMilliseconds <= window + quantisation
+    }
+}
+
 public struct StudioAvSyncMeter: Equatable, Sendable {
     /// Detectability thresholds from ITU-R BT.1359, which are ASYMMETRIC and
     /// widely mis-implemented as a symmetric window.
@@ -61,14 +122,32 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
     /// drawn, because an empty viewer has no picture to be out of sync with.
     public private(set) var onScreenFrameTicks: Int64?
 
+    /// The single reading that set the current peak, kept whole. One optional
+    /// value, never a history — see StudioAvSyncSample.
+    public private(set) var peakSample: StudioAvSyncSample?
+
     /// Records one presented frame against the audio playhead at that instant.
     ///
     /// - Parameter presentedFrameTicks: PTS of the frame actually drawn.
     /// - Parameter audiblePositionTicks: audio position genuinely in the room,
     ///   i.e. the device's sample counter already corrected for output latency.
-    public mutating func record(presentedFrameTicks: Int64, audiblePositionTicks: Int64) {
+    /// - Parameter measurementWindowNanoseconds: wall-clock nanoseconds between
+    ///   the transport snapshot that selected this frame and the audio read
+    ///   above. Optional because only the live viewer can measure it; omitting
+    ///   it changes no statistic, it only leaves the peak unexplainable.
+    public mutating func record(
+        presentedFrameTicks: Int64,
+        audiblePositionTicks: Int64,
+        measurementWindowNanoseconds: UInt64? = nil
+    ) {
         onScreenFrameTicks = presentedFrameTicks
-        accumulate(errorTicks: presentedFrameTicks &- audiblePositionTicks)
+        accumulate(
+            errorTicks: presentedFrameTicks &- audiblePositionTicks,
+            presentedFrameTicks: presentedFrameTicks,
+            audiblePositionTicks: audiblePositionTicks,
+            measurementWindowNanoseconds: measurementWindowNanoseconds,
+            wasDrawn: true
+        )
     }
 
     /// Records a display tick on which NOTHING NEW WAS DRAWN.
@@ -89,14 +168,42 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
     ///
     /// Records nothing when the viewer has never drawn, since "no picture" and
     /// "picture at position zero" are different claims.
-    public mutating func recordDroppedFrame(audiblePositionTicks: Int64) {
+    public mutating func recordDroppedFrame(
+        audiblePositionTicks: Int64,
+        measurementWindowNanoseconds: UInt64? = nil
+    ) {
         guard let onScreenFrameTicks else { return }
-        accumulate(errorTicks: onScreenFrameTicks &- audiblePositionTicks)
+        accumulate(
+            errorTicks: onScreenFrameTicks &- audiblePositionTicks,
+            presentedFrameTicks: onScreenFrameTicks,
+            audiblePositionTicks: audiblePositionTicks,
+            measurementWindowNanoseconds: measurementWindowNanoseconds,
+            wasDrawn: false
+        )
     }
 
-    private mutating func accumulate(errorTicks error: Int64) {
+    private mutating func accumulate(
+        errorTicks error: Int64,
+        presentedFrameTicks: Int64,
+        audiblePositionTicks: Int64,
+        measurementWindowNanoseconds: UInt64?,
+        wasDrawn: Bool
+    ) {
         currentErrorTicks = error
-        peakAbsoluteErrorTicks = max(peakAbsoluteErrorTicks, abs(error))
+        let magnitude = abs(error)
+        // Compared BEFORE the peak moves, so the retained sample is the tick
+        // that actually set it rather than the one that merely tied it.
+        if peakSample == nil || magnitude > peakAbsoluteErrorTicks {
+            peakSample = StudioAvSyncSample(
+                timebase: timebase,
+                presentedFrameTicks: presentedFrameTicks,
+                audiblePositionTicks: audiblePositionTicks,
+                errorTicks: error,
+                measurementWindowNanoseconds: measurementWindowNanoseconds,
+                wasDrawn: wasDrawn
+            )
+        }
+        peakAbsoluteErrorTicks = max(peakAbsoluteErrorTicks, magnitude)
         errorSumTicks = errorSumTicks &+ error
         sampleCount += 1
         if !Self.isWithinTolerance(errorTicks: error, timebase: timebase) {
@@ -116,6 +223,8 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
         // so carrying it forward would measure against a frame nobody is
         // looking at any more.
         onScreenFrameTicks = nil
+        // The explanation goes with the peak it explained.
+        peakSample = nil
     }
 
     public var currentErrorMilliseconds: Double {

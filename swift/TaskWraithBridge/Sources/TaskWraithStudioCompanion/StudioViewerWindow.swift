@@ -451,6 +451,14 @@ final class StudioViewerView: NSView {
         reconcileAudio()
         reconcileTimeSource()
         let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
+        // Wall clock at the instant the frame was CHOSEN. The audio playhead is
+        // not read until after nextDrawable(), the overlay build and the inline
+        // decode below, so the two operands of the sync measurement are
+        // separated by an interval nothing was previously measuring. Two
+        // monotonic reads per tick, no allocation, and nothing downstream
+        // depends on the value — playback is unchanged whether it is taken or
+        // not.
+        let snapshotUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         guard let drawable = metalLayer.nextDrawable() else {
             missedDrawableCount += 1
             return
@@ -479,10 +487,16 @@ final class StudioViewerView: NSView {
         // and the distinction is the whole instrument. Left uncorrected it
         // would read as a justification for restoring the exclusion.
         if let audible = audibleTimelinePositionTicks() {
+            // Closed at the audio read, so the window spans exactly the interval
+            // that can inflate this error: drawable wait, overlay build, and the
+            // synchronous decode. It explains the number; it never softens it.
+            let measurementWindowNanoseconds =
+                DispatchTime.now().uptimeNanoseconds &- snapshotUptimeNanoseconds
             if outcome.didDraw {
                 syncMeter?.record(
                     presentedFrameTicks: transport.clock.ticks(ofFrame: snapshot.frameIndex),
-                    audiblePositionTicks: audible
+                    audiblePositionTicks: audible,
+                    measurementWindowNanoseconds: measurementWindowNanoseconds
                 )
             } else {
                 // A dropped frame leaves the PREVIOUS picture on screen while
@@ -490,7 +504,10 @@ final class StudioViewerView: NSView {
                 // `if outcome.didDraw` gate excluded exactly it — so the meter
                 // sampled only healthy ticks and its reading was bounded by
                 // frame quantisation whatever the pipeline was doing.
-                syncMeter?.recordDroppedFrame(audiblePositionTicks: audible)
+                syncMeter?.recordDroppedFrame(
+                    audiblePositionTicks: audible,
+                    measurementWindowNanoseconds: measurementWindowNanoseconds
+                )
             }
             // Both branches are deliberate. If you are here to make the meter
             // quieter, the number is telling you something.
