@@ -69,6 +69,160 @@ function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+const STUDIO_TRANSPORT_MUTATION_KINDS = new Set([
+  'lifecycleAttach',
+  'lifecycleOpen',
+  'playbackToggleKey',
+  'playbackToggleAccessibility',
+  'playheadAccessibilitySet',
+  'playheadAccessibilityStep',
+  'frameStepKey',
+  'transcriptCueSeek',
+  'scrubBegin',
+  'scrubMove',
+  'scrubEnd',
+  'timecodeSeek',
+  'markOrLoop',
+  'oscillatorReconciliation',
+  'audioReschedule'
+])
+const STUDIO_TRANSPORT_MUTATION_TRANSITIONS = new Set([
+  'oscillatorReconciliation',
+  'audioReschedule'
+])
+const STUDIO_TRANSPORT_MUTATION_KEYS = [
+  'kind',
+  'route',
+  'preSrc',
+  'postSrc',
+  'host',
+  'prevHost',
+  'preAnchorT',
+  'preAnchorH',
+  'prePos',
+  'preDur',
+  'prePlay',
+  'preRate',
+  'postAnchorT',
+  'postAnchorH',
+  'postPos',
+  'postDur',
+  'postPlay',
+  'postRate',
+  'crossedDomain',
+  'clamped'
+]
+const CANONICAL_INT64 = /^(?:0|-?[1-9]\d*)$/
+const CANONICAL_HOST_SECONDS = /^-?(?:0|[1-9]\d*)\.\d{6}$/
+const CANONICAL_RATE = /^-?(?:0|[1-9]\d*)\.\d{3}$/
+const INT64_MIN = -(1n << 63n)
+const INT64_MAX = (1n << 63n) - 1n
+
+function parseStudioTransportMutationText(text) {
+  const fail = (detail) => {
+    throw new Error(`Studio tm1 receipt is malformed: ${detail}`)
+  }
+  if (typeof text !== 'string' || !text.startsWith('tm1 ')) fail('schema prefix is missing')
+  const tokens = text.split(' ')
+  if (tokens.length !== STUDIO_TRANSPORT_MUTATION_KEYS.length + 1 || tokens[0] !== 'tm1') {
+    fail('field count is not exact')
+  }
+  const raw = {}
+  for (const [index, key] of STUDIO_TRANSPORT_MUTATION_KEYS.entries()) {
+    const prefix = `${key}=`
+    const token = tokens[index + 1]
+    if (!token.startsWith(prefix) || token.length === prefix.length) {
+      fail(`ordered field ${key} is missing`)
+    }
+    raw[key] = token.slice(prefix.length)
+  }
+
+  if (!STUDIO_TRANSPORT_MUTATION_KINDS.has(raw.kind)) fail('kind is not recognized')
+  if (raw.route !== 'source' && raw.route !== 'review') fail('route is not recognized')
+  if (!['audio', 'machine'].includes(raw.preSrc) || !['audio', 'machine'].includes(raw.postSrc)) {
+    fail('host source is not recognized')
+  }
+
+  const parseFinite = (field, pattern) => {
+    if (!pattern.test(raw[field])) fail(`${field} is not canonical`)
+    const value = Number(raw[field])
+    if (!Number.isFinite(value)) fail(`${field} is not finite`)
+    return value
+  }
+  const parseInt64 = (field) => {
+    if (!CANONICAL_INT64.test(raw[field])) fail(`${field} is not a canonical Int64`)
+    const value = BigInt(raw[field])
+    if (value < INT64_MIN || value > INT64_MAX) fail(`${field} is outside Int64`)
+    return value
+  }
+  const parseBit = (field) => {
+    if (raw[field] !== '0' && raw[field] !== '1') fail(`${field} is not a bit`)
+    return raw[field] === '1'
+  }
+
+  const suppliedHostSeconds = parseFinite('host', CANONICAL_HOST_SECONDS)
+  const previousHostSeconds =
+    raw.prevHost === '-' ? null : parseFinite('prevHost', CANONICAL_HOST_SECONDS)
+  const beforeAnchorTicks = parseInt64('preAnchorT')
+  const beforeAnchorHostSeconds = parseFinite('preAnchorH', CANONICAL_HOST_SECONDS)
+  const beforePositionTicks = parseInt64('prePos')
+  const beforeDurationTicks = parseInt64('preDur')
+  const beforeIsPlaying = parseBit('prePlay')
+  const beforeRate = parseFinite('preRate', CANONICAL_RATE)
+  const afterAnchorTicks = parseInt64('postAnchorT')
+  const afterAnchorHostSeconds = parseFinite('postAnchorH', CANONICAL_HOST_SECONDS)
+  const afterPositionTicks = parseInt64('postPos')
+  const afterDurationTicks = parseInt64('postDur')
+  const afterIsPlaying = parseBit('postPlay')
+  const afterRate = parseFinite('postRate', CANONICAL_RATE)
+  const recordedCrossedDomain = parseBit('crossedDomain')
+  const recordedClamped = parseBit('clamped')
+
+  const crossedDomain = raw.preSrc !== raw.postSrc
+  const clamped =
+    afterDurationTicks > 0n &&
+    beforeAnchorTicks < afterDurationTicks &&
+    afterAnchorTicks >= afterDurationTicks
+  if (recordedCrossedDomain !== crossedDomain) fail('crossedDomain does not match source identity')
+  if (recordedClamped !== clamped) fail('clamped does not match the anchor transition')
+
+  if (!STUDIO_TRANSPORT_MUTATION_TRANSITIONS.has(raw.kind)) {
+    if (crossedDomain || previousHostSeconds !== null) {
+      fail('ordinary kind carries source-transition operands')
+    }
+  } else if (raw.kind === 'oscillatorReconciliation') {
+    if (!crossedDomain || previousHostSeconds === null) {
+      fail('oscillator reconciliation lacks a bounded source transition')
+    }
+  } else if (raw.preSrc !== 'audio' || raw.postSrc !== 'audio' || previousHostSeconds === null) {
+    fail('audio reschedule lacks its bounded audio reset operands')
+  }
+
+  return {
+    schema: 'tm1',
+    kind: raw.kind,
+    route: raw.route,
+    beforeSource: raw.preSrc,
+    afterSource: raw.postSrc,
+    suppliedHostSeconds,
+    previousHostSeconds,
+    beforeAnchorTicks: beforeAnchorTicks.toString(),
+    beforeAnchorHostSeconds,
+    beforePositionTicks: beforePositionTicks.toString(),
+    beforeDurationTicks: beforeDurationTicks.toString(),
+    beforeIsPlaying,
+    beforeRate,
+    afterAnchorTicks: afterAnchorTicks.toString(),
+    afterAnchorHostSeconds,
+    afterPositionTicks: afterPositionTicks.toString(),
+    afterDurationTicks: afterDurationTicks.toString(),
+    afterIsPlaying,
+    afterRate,
+    crossedDomain,
+    clamped
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -1098,6 +1252,12 @@ function buildStudioUiDriverRequest(options) {
         playheadStepFrames: action.playheadStepFrames
       }
     }
+    if (action.type === 'read-transport-mutation') {
+      return {
+        type: 'read-transport-mutation',
+        accessibilityLabel: 'Transport mutation detail'
+      }
+    }
     if (action.type === 'screenshot' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(action.name)) {
       const screenshotPath = path.resolve(artifactRoot, 'screenshots', `${String(action.name)}.png`)
       if (!screenshotPath.startsWith(`${artifactRoot}${path.sep}`)) {
@@ -1333,6 +1493,23 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
           action.playheadStepFrames)
     ) {
       throw new Error('Studio UI driver playhead-step receipt does not match the bounded request')
+    }
+    if (action.type === 'read-transport-mutation') {
+      if (
+        observed.accessibilityLabel !== action.accessibilityLabel ||
+        observed.accessibilityRole !== 'AXStaticText' ||
+        observed.accessibilityMatchCount !== 1 ||
+        typeof observed.accessibilityValue !== 'string'
+      ) {
+        throw new Error(
+          'Studio UI driver transport-mutation receipt does not match the bounded request'
+        )
+      }
+      try {
+        parseStudioTransportMutationText(observed.accessibilityValue)
+      } catch (error) {
+        throw new Error(`Studio UI driver transport-mutation receipt is invalid: ${error.message}`)
+      }
     }
     if (
       action.type === 'screenshot' &&
@@ -1910,6 +2087,7 @@ module.exports = {
   DEFAULT_TIMEOUT_MS,
   ACCEPTANCE_SCHEMA_VERSION,
   parseArgs,
+  parseStudioTransportMutationText,
   buildStudioAcceptancePlan,
   assertLaunchAuthorized,
   materializeOwnedMedia,

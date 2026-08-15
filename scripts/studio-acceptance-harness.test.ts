@@ -23,6 +23,7 @@ const {
   materializeOwnedMedia,
   parseArgs,
   parseProcessTable,
+  parseStudioTransportMutationText,
   runStudioUiDriver,
   waitForStudioJournalOperation,
   runStudioAcceptance
@@ -105,6 +106,7 @@ const {
   parseProcessTable: (
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
+  parseStudioTransportMutationText: (text: string) => Record<string, unknown>
   runStudioUiDriver: (
     plan: Record<string, any>,
     target: Record<string, any>,
@@ -142,6 +144,13 @@ const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const roots: string[] = []
+
+const validTransportMutationText =
+  'tm1 kind=lifecycleAttach route=review preSrc=audio postSrc=audio ' +
+  'host=4.125000 prevHost=- preAnchorT=2000000 preAnchorH=4.000000 ' +
+  'prePos=2062500 preDur=300000000 prePlay=1 preRate=1.000 ' +
+  'postAnchorT=2062500 postAnchorH=4.125000 postPos=2062500 postDur=300000000 ' +
+  'postPlay=1 postRate=1.000 crossedDomain=0 clamped=0'
 
 afterEach(async () => {
   await Promise.all(
@@ -1526,9 +1535,86 @@ describe('Studio acceptance harness', () => {
         actions: [{ type: 'key', key: 'tab' }]
       })
     ).toThrow(/installed TaskWraith/)
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          {
+            type: 'read-transport-mutation',
+            accessibilityLabel: 'caller-must-not-control-this',
+            accessibilityValue: 'caller-must-not-control-this'
+          }
+        ]
+      })
+    ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [
+        {
+          type: 'read-transport-mutation',
+          accessibilityLabel: 'Transport mutation detail'
+        }
+      ]
+    })
     expect(() =>
       buildStudioUiDriverRequest({ ...target, actions: [{ type: 'key', key: 'delete-all' }] })
     ).toThrow(/unsupported UI action/)
+  })
+
+  it('parses only the exact ordered tm1 schema and recomputes its derived bits', () => {
+    expect(parseStudioTransportMutationText(validTransportMutationText)).toMatchObject({
+      schema: 'tm1',
+      kind: 'lifecycleAttach',
+      route: 'review',
+      beforeSource: 'audio',
+      afterSource: 'audio',
+      suppliedHostSeconds: 4.125,
+      previousHostSeconds: null,
+      beforeAnchorTicks: '2000000',
+      afterAnchorTicks: '2062500',
+      crossedDomain: false,
+      clamped: false
+    })
+
+    const oscillator = validTransportMutationText
+      .replace('kind=lifecycleAttach', 'kind=oscillatorReconciliation')
+      .replace('postSrc=audio', 'postSrc=machine')
+      .replace('prevHost=-', 'prevHost=4.000000')
+      .replace('crossedDomain=0', 'crossedDomain=1')
+    expect(parseStudioTransportMutationText(oscillator)).toMatchObject({
+      kind: 'oscillatorReconciliation',
+      beforeSource: 'audio',
+      afterSource: 'machine',
+      previousHostSeconds: 4,
+      crossedDomain: true
+    })
+
+    const clamped = validTransportMutationText
+      .replace('postAnchorT=2062500', 'postAnchorT=300000000')
+      .replace('clamped=0', 'clamped=1')
+    expect(parseStudioTransportMutationText(clamped)).toMatchObject({ clamped: true })
+
+    for (const malformed of [
+      '',
+      validTransportMutationText.replace('kind=lifecycleAttach', 'kind=unknown'),
+      validTransportMutationText.replace(
+        'kind=lifecycleAttach route=review',
+        'route=review kind=lifecycleAttach'
+      ),
+      validTransportMutationText.replace('host=4.125000', 'host=NaN'),
+      validTransportMutationText.replace('preRate=1.000', 'preRate=Infinity'),
+      validTransportMutationText.replace('preAnchorT=2000000', 'preAnchorT=01'),
+      validTransportMutationText.replace('preAnchorT=2000000', 'preAnchorT=9223372036854775808'),
+      validTransportMutationText.replace('prePlay=1', 'prePlay=true'),
+      validTransportMutationText.replace('crossedDomain=0', 'crossedDomain=1'),
+      validTransportMutationText.replace('clamped=0', 'clamped=1'),
+      validTransportMutationText.replace('route=review', 'route=other'),
+      validTransportMutationText.replace('postSrc=audio', 'postSrc=machine'),
+      validTransportMutationText.replace('prevHost=-', 'prevHost=4.000000'),
+      oscillator.replace('prevHost=4.000000', 'prevHost=-')
+    ]) {
+      expect(() => parseStudioTransportMutationText(malformed)).toThrow(/tm1/)
+    }
   })
 
   /// THE ABSOLUTE CAP IS NOT A BOUND ON A SMALL ASSET.
@@ -1625,6 +1711,23 @@ describe('Studio acceptance harness', () => {
     )
     expect(driverSource).toContain(': ticks - candidate <= toleranceTicks')
     expect(driverSource).toContain('foregroundAfter == foregroundBefore')
+    const transportReadStart = driverSource.indexOf('func exactAccessibilityTransportMutation(')
+    const transportReadEnd = driverSource.indexOf(
+      '/// The forward-advance envelope',
+      transportReadStart
+    )
+    const transportReadSource = driverSource.slice(transportReadStart, transportReadEnd)
+    expect(transportReadStart).toBeGreaterThan(0)
+    expect(transportReadSource).toContain('kAXStaticTextRole')
+    expect(driverSource).toContain(
+      'let transportMutationAccessibilityLabel = "Transport mutation detail"'
+    )
+    expect(transportReadSource).toContain('matches.count == 1')
+    expect(transportReadSource).toContain('stringAttribute(kAXValueAttribute, of: element)')
+    expect(transportReadSource).toContain('foregroundAfter == foregroundBefore')
+    expect(transportReadSource).toContain('pgidAfter == pgidBefore')
+    expect(transportReadSource).toContain('executableAfter == executableBefore')
+    expect(transportReadSource).not.toContain('AXUIElementPerformAction')
     expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
 
@@ -1717,6 +1820,10 @@ describe('Studio acceptance harness', () => {
                   ? null
                   : Number(action.playheadTicks) - 1_307,
             accessibilityLabel: action.accessibilityLabel ?? null,
+            accessibilityRole: action.type === 'read-transport-mutation' ? 'AXStaticText' : null,
+            accessibilityMatchCount: action.type === 'read-transport-mutation' ? 1 : null,
+            accessibilityValue:
+              action.type === 'read-transport-mutation' ? validTransportMutationText : null,
             accessibilityAction: action.accessibilityAction ?? null,
             playbackValueBefore: action.playbackValueBefore ?? null,
             playbackValueAfter: action.playbackValueAfter ?? null,
@@ -1807,6 +1914,24 @@ describe('Studio acceptance harness', () => {
       inputDelivery: 'background-observation-only',
       actions: [{ type: 'screenshot' }]
     })
+    const transportMutationReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'read-transport-mutation' }],
+      { execFile }
+    )
+    expect(transportMutationReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [
+        {
+          type: 'read-transport-mutation',
+          accessibilityLabel: 'Transport mutation detail',
+          accessibilityRole: 'AXStaticText',
+          accessibilityMatchCount: 1,
+          accessibilityValue: validTransportMutationText
+        }
+      ]
+    })
     const playbackReceipt = await runStudioUiDriver(
       { artifactRoot: root },
       target,
@@ -1873,7 +1998,7 @@ describe('Studio acceptance harness', () => {
         }
       ]
     })
-    expect(execFile).toHaveBeenCalledTimes(6)
+    expect(execFile).toHaveBeenCalledTimes(7)
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })
@@ -1887,6 +2012,76 @@ describe('Studio acceptance harness', () => {
       pgid: 7001,
       windowId: 42
     })
+  })
+
+  it('rejects missing, duplicate, mismatched, and malformed tm1 action receipts', async () => {
+    const root = await temporaryRoot('studio-acceptance-tm1-receipt-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 1, y: 2, width: 640, height: 360 }
+          }
+        ]
+      }
+    }
+    const run = (actions: Array<Record<string, unknown>>) =>
+      runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
+        execFile: vi.fn(async (_file: string, args: string[]) => {
+          const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+          return {
+            stdout: `${JSON.stringify({
+              schemaVersion: 1,
+              kind: 'taskwraith-studio-ui-driver-receipt',
+              inputDelivery: request.inputDelivery,
+              pid: request.expectedPid,
+              pgid: request.expectedPgid,
+              windowId: request.windowId,
+              actions
+            })}\n`,
+            stderr: ''
+          }
+        })
+      })
+    const exactAction = {
+      index: 0,
+      type: 'read-transport-mutation',
+      accessibilityLabel: 'Transport mutation detail',
+      accessibilityRole: 'AXStaticText',
+      accessibilityMatchCount: 1,
+      accessibilityValue: validTransportMutationText
+    }
+
+    await expect(run([])).rejects.toThrow(/invalid receipt/)
+    await expect(run([exactAction, exactAction])).rejects.toThrow(/invalid receipt/)
+    await expect(run([{ ...exactAction, accessibilityLabel: 'Sync detail' }])).rejects.toThrow(
+      /transport-mutation receipt/
+    )
+    await expect(run([{ ...exactAction, accessibilityRole: 'AXButton' }])).rejects.toThrow(
+      /transport-mutation receipt/
+    )
+    await expect(run([{ ...exactAction, accessibilityMatchCount: 2 }])).rejects.toThrow(
+      /transport-mutation receipt/
+    )
+    await expect(
+      run([
+        {
+          ...exactAction,
+          accessibilityValue: validTransportMutationText.replace('clamped=0', 'clamped=1')
+        }
+      ])
+    ).rejects.toThrow(/transport-mutation receipt is invalid/)
   })
 
   it('rejects a Playback AXPress receipt that does not prove the exact transition', async () => {

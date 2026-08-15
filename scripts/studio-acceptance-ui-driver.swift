@@ -89,6 +89,9 @@ struct ActionReceipt: Codable {
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
     let accessibilityLabel: String?
+    let accessibilityRole: String?
+    let accessibilityMatchCount: Int?
+    let accessibilityValue: String?
     let accessibilityAction: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
@@ -109,6 +112,9 @@ struct ActionReceipt: Codable {
         playheadTicksBefore: Int64? = nil,
         observedPlayheadTicks: Int64? = nil,
         accessibilityLabel: String? = nil,
+        accessibilityRole: String? = nil,
+        accessibilityMatchCount: Int? = nil,
+        accessibilityValue: String? = nil,
         accessibilityAction: String? = nil,
         playbackValueBefore: String? = nil,
         playbackValueAfter: String? = nil
@@ -128,6 +134,9 @@ struct ActionReceipt: Codable {
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityRole = accessibilityRole
+        self.accessibilityMatchCount = accessibilityMatchCount
+        self.accessibilityValue = accessibilityValue
         self.accessibilityAction = accessibilityAction
         self.playbackValueBefore = playbackValueBefore
         self.playbackValueAfter = playbackValueAfter
@@ -369,6 +378,109 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
         )
     }
     return playback
+}
+
+let transportMutationAccessibilityLabel = "Transport mutation detail"
+
+struct TransportMutationAccessibilityRead {
+    let role: String
+    let label: String
+    let matchCount: Int
+    let value: String
+}
+
+/// Reads the single retained tm1 descriptor from the exact Studio window.
+///
+/// This is deliberately an observation, not an accessibility action. The walk
+/// is bounded and independently joins role + fixed product label + exact count
+/// before AXValue is accepted.
+func exactAccessibilityTransportMutation(
+    in window: AXUIElement,
+    expectedLabel: String
+) throws -> TransportMutationAccessibilityRead {
+    guard expectedLabel == transportMutationAccessibilityLabel else {
+        throw DriverFailure.refused("transport mutation label is not the fixed product label")
+    }
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let label =
+            stringAttribute(kAXIdentifierAttribute, of: element) ??
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole,
+           label == transportMutationAccessibilityLabel
+        {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512, matches.count == 1, let element = matches.first,
+          let value = stringAttribute(kAXValueAttribute, of: element),
+          value.hasPrefix("tm1 ") else {
+        throw DriverFailure.refused(
+            "exact Transport mutation detail AXStaticText identity is unavailable"
+        )
+    }
+    return TransportMutationAccessibilityRead(
+        role: kAXStaticTextRole,
+        label: transportMutationAccessibilityLabel,
+        matchCount: matches.count,
+        value: value
+    )
+}
+
+func readAccessibilityTransportMutation(
+    in window: AXUIElement,
+    expectedLabel: String,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> TransportMutationAccessibilityRead {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background transport mutation read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    let observed = try exactAccessibilityTransportMutation(
+        in: window,
+        expectedLabel: expectedLabel
+    )
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "transport mutation observation changed foreground, process, or executable identity"
+        )
+    }
+    return observed
 }
 
 /// The forward-advance envelope may never exceed this fraction of the live
@@ -978,6 +1090,17 @@ do {
     if request.actions.contains(where: { $0.type == "press-playback" }) {
         _ = try exactAccessibilityPlaybackControl(in: accessibilityWindow)
     }
+    if let transportMutationAction = request.actions.first(where: {
+        $0.type == "read-transport-mutation"
+    }) {
+        guard let label = transportMutationAction.accessibilityLabel else {
+            throw DriverFailure.refused("transport mutation observation has no fixed label")
+        }
+        _ = try exactAccessibilityTransportMutation(
+            in: accessibilityWindow,
+            expectedLabel: label
+        )
+    }
     if request.inputDelivery == "foreground-global-explicit" {
         try activateExactWindowForExplicitForeground(
             request,
@@ -1002,7 +1125,34 @@ do {
         }
         try validateWindow(request)
 
-        if action.type == "press-playback",
+        if action.type == "read-transport-mutation",
+           request.inputDelivery == "background-observation-only",
+           let accessibilityLabel = action.accessibilityLabel
+        {
+            let observed = try readAccessibilityTransportMutation(
+                in: accessibilityWindow,
+                expectedLabel: accessibilityLabel,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-transport-mutation",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    accessibilityLabel: observed.label,
+                    accessibilityRole: observed.role,
+                    accessibilityMatchCount: observed.matchCount,
+                    accessibilityValue: observed.value
+                )
+            )
+        } else if action.type == "press-playback",
            request.inputDelivery == "background-observation-only",
            let accessibilityLabel = action.accessibilityLabel,
            let accessibilityAction = action.accessibilityAction,
