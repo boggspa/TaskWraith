@@ -57,13 +57,18 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
 /// excludes delivered contributions by name) — folded, it reads "System · …"
 /// and its trust framing vanishes; the transport skeleton preserves the field
 /// under byte pressure for exactly that framing, so the fold must not undo it.
-/// A peer thread message keeps its card for the same reason.
+/// A peer thread message keeps its card for the same reason. A guest reply is
+/// another agent's entire answer wearing a system carrier — folded, it reads as
+/// app chrome. `kind` normally rescues it (see `twIsPlainSystemNoticeRow`), but
+/// this is the leg that also holds for a Mac old enough to send the payload
+/// without the promotion.
 private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
         || row.subThreadReturn != nil || row.subThreadDelegation != nil
         || row.fanoutResult != nil || row.runFailure != nil || row.seatChange != nil
         || row.seatRoster != nil
         || row.peopleContribution != nil || row.threadMessage != nil
+        || row.guestReply != nil
 }
 
 /// True when the transcript window carries a row that explains why `runId`
@@ -112,6 +117,15 @@ public func twCanCollapseIntoStack(_ row: RemoteThreadSnapshot.Row) -> Bool {
 /// keep their full rendering.
 public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard row.role == "system" || row.kind == "system" else { return false }
+    // `role` is the PERSISTED CARRIER; `kind` is the presentational class. The
+    // Mac writes participant-authored conversation (inter-seat `ensemble_send`
+    // notes, guest replies) onto a system record so it never becomes a
+    // completed assistant turn in provider history, then promotes the row to
+    // "assistant" for display — `classifyRemoteKind` says in as many words that
+    // remote clients group by `kind`. The guard above ORs the two, so `role`
+    // alone used to be enough to fold a seat's message into "System · N system
+    // notices". Anything the Mac classified as assistant is somebody's words.
+    guard row.kind != "assistant" else { return false }
     guard let preview = row.preview, !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return false }
     guard !twCarriesUnfoldableCard(row) else { return false }

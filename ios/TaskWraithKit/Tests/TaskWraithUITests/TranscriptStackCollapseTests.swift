@@ -280,6 +280,47 @@ struct CollapsedStackFailureAccentTests {
         #expect(summary.label == summary.parts.map(\.text).joined(separator: " · "))
     }
 
+    /// The Mac carries participant-authored conversation on a SYSTEM record so
+    /// it never becomes a completed assistant turn in provider history, then
+    /// promotes the row to `kind: "assistant"` for presentation
+    /// (`classifyRemoteKind`, whose own comment says remote clients group by
+    /// `kind`). Reading `role` here instead folded a seat's message to another
+    /// seat — and a guest's entire reply — into "System · N system notices",
+    /// while the desktop gives both a full assistant-level row.
+    @Test func kindPromotedParticipantRowsNeverFold() throws {
+        let interSeatNote = try row(
+            """
+            {"id":"s1","role":"system","kind":"assistant",
+             "preview":"↪ Claude to Codex: can you take the parser?",
+             "ensembleParticipantId":"p1","speaker":"Claude / Writer"}
+            """)
+        let guestReply = try row(
+            """
+            {"id":"s2","role":"system","kind":"assistant","preview":"Needs tests.",
+             "guestReply":{"guestChatId":"guest-1","provider":"claude"}}
+            """)
+
+        #expect(!twIsPlainSystemNoticeRow(interSeatNote))
+        #expect(!twIsPlainSystemNoticeRow(guestReply))
+        // The promotion must not swallow ordinary chrome: an unpromoted system
+        // row still folds exactly as before.
+        let notice = try row(
+            #"{"id":"s3","role":"system","kind":"system","preview":"Round closed."}"#)
+        #expect(twIsPlainSystemNoticeRow(notice))
+    }
+
+    /// An older Mac that populates the guest payload without promoting `kind`
+    /// must still keep the reply whole — the card guard is the second line.
+    @Test func guestRepliesSurviveAnUnpromotedCarrier() throws {
+        let legacyGuestReply = try row(
+            """
+            {"id":"s4","role":"system","kind":"system","preview":"Needs tests.",
+             "guestReply":{"guestChatId":"guest-1","provider":"claude"}}
+            """)
+        #expect(!twIsPlainSystemNoticeRow(legacyGuestReply))
+        #expect(!twCanCollapseIntoStack(legacyGuestReply))
+    }
+
     @Test func cleanStacksCarryNoFailedParts() throws {
         let rows = [
             try row(
