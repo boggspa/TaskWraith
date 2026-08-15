@@ -43,6 +43,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_WAIT_MS = 45_000
 const ACCEPTANCE_SCHEMA_VERSION = 1
 const ACCEPTANCE_RECEIPT_MAX_BYTES = 256 * 1024
+const STUDIO_UI_DRIVER_RAW_RECEIPT_MAX_BYTES = 256 * 1024
 const STUDIO_UI_MAX_PLAYHEAD_FORWARD_ADVANCE_TICKS = 1_000_000
 const WATCHDOG_RECEIPT_KIND = 'taskwraith-studio-acceptance-watchdog'
 const KNOWN_RECEIPT_SCHEMA_VERSIONS = new Set([1, 2])
@@ -194,7 +195,7 @@ function parseStudioTransportMutationText(text) {
     if (!crossedDomain || previousHostSeconds === null) {
       fail('oscillator reconciliation lacks a bounded source transition')
     }
-  } else if (raw.preSrc !== 'audio' || raw.postSrc !== 'audio' || previousHostSeconds === null) {
+  } else if (raw.postSrc !== 'audio' || previousHostSeconds === null) {
     fail('audio reschedule lacks its bounded audio reset operands')
   }
 
@@ -770,13 +771,14 @@ function defaultExecFile(file, args, options = {}) {
       },
       (error, stdout, stderr) => {
         if (error) {
-          reject(
-            new Error(
-              `${path.basename(file)} failed: ${String(
-                (stderr && String(stderr).trim()) || error.message || error
-              ).slice(0, 1000)}`
-            )
+          const failure = new Error(
+            `${path.basename(file)} failed: ${String(
+              (stderr && String(stderr).trim()) || error.message || error
+            ).slice(0, 1000)}`
           )
+          failure.stdout = String(stdout || '')
+          failure.stderr = String(stderr || '')
+          reject(failure)
         } else {
           resolve({ stdout: String(stdout || ''), stderr: String(stderr || '') })
         }
@@ -1401,6 +1403,55 @@ async function waitForStudioJournalOperation(plan, expectation, options = {}) {
   })
 }
 
+async function persistStudioUiDriverRawReceipt(plan, requestPath, stdout) {
+  const rawStdout = typeof stdout === 'string' ? stdout : String(stdout || '')
+  const rawStdoutByteLength = Buffer.byteLength(rawStdout)
+  const rawStdoutSha256 = crypto.createHash('sha256').update(rawStdout).digest('hex')
+  if (rawStdoutByteLength > STUDIO_UI_DRIVER_RAW_RECEIPT_MAX_BYTES) {
+    const failure = new Error(
+      `Studio UI driver raw receipt exceeds ${STUDIO_UI_DRIVER_RAW_RECEIPT_MAX_BYTES} bytes`
+    )
+    failure.rawReceiptEvidence = {
+      rawReceiptPath: null,
+      rawStdoutSha256,
+      rawStdoutByteLength
+    }
+    throw failure
+  }
+  const rawReceiptEvidence = {
+    rawReceiptPath: null,
+    rawStdoutSha256,
+    rawStdoutByteLength
+  }
+  try {
+    const rawReceiptDirectory = path.join(plan.artifactRoot, 'ui-driver-raw-receipts')
+    await fsPromises.mkdir(rawReceiptDirectory, { recursive: true, mode: 0o700 })
+    const rawReceiptPath = path.join(rawReceiptDirectory, `${path.basename(requestPath)}.stdout`)
+    const rawReceiptTemp = `${rawReceiptPath}.tmp-${process.pid}`
+    await fsPromises.writeFile(rawReceiptTemp, rawStdout, { encoding: 'utf8', mode: 0o600 })
+    await fsPromises.rename(rawReceiptTemp, rawReceiptPath)
+    return { ...rawReceiptEvidence, rawReceiptPath }
+  } catch (error) {
+    if (error && typeof error === 'object') {
+      error.rawReceiptEvidence = rawReceiptEvidence
+    }
+    throw error
+  }
+}
+
+function attachStudioUiDriverFailureEvidence(error, evidence) {
+  const failure = error instanceof Error ? error : new Error(String(error))
+  failure.studioUiDriverEvidence = {
+    requestPath: evidence.requestPath,
+    rawReceiptPath: evidence.rawReceiptPath,
+    rawStdoutSha256: evidence.rawStdoutSha256,
+    rawStdoutByteLength: evidence.rawStdoutByteLength,
+    validatedReceiptPath: evidence.validatedReceiptPath,
+    failureStage: evidence.failureStage
+  }
+  return failure
+}
+
 async function runStudioUiDriver(plan, target, actions, adapters = {}) {
   const request = buildStudioUiDriverRequest({
     ...target,
@@ -1426,155 +1477,208 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       action.type === 'audio-probe' ? Math.max(longest, action.durationSeconds) : longest,
     0
   )
-  const result = await runExec('/usr/bin/swift', [UI_DRIVER_PATH, requestPath], {
-    timeoutMs: Math.max(60_000, longestAudioProbeSeconds * 1000 + 30_000)
-  })
-  let receipt
+  const failureEvidence = {
+    requestPath,
+    rawReceiptPath: null,
+    rawStdoutSha256: null,
+    rawStdoutByteLength: null,
+    validatedReceiptPath: null,
+    failureStage: 'native-exec'
+  }
   try {
-    receipt = JSON.parse(result.stdout)
-  } catch {
-    throw new Error('Studio UI driver did not return a JSON receipt')
-  }
-  if (
-    !isRecord(receipt) ||
-    receipt.schemaVersion !== 1 ||
-    receipt.kind !== 'taskwraith-studio-ui-driver-receipt' ||
-    receipt.inputDelivery !== request.inputDelivery ||
-    receipt.pid !== request.expectedPid ||
-    receipt.pgid !== request.expectedPgid ||
-    receipt.windowId !== request.windowId ||
-    !Array.isArray(receipt.actions) ||
-    receipt.actions.length !== request.actions.length
-  ) {
-    throw new Error(`Studio UI driver returned an invalid receipt: ${result.stdout.slice(0, 1000)}`)
-  }
-  for (const [index, action] of request.actions.entries()) {
-    const observed = receipt.actions[index]
-    if (!isRecord(observed) || observed.index !== index || observed.type !== action.type) {
-      throw new Error('Studio UI driver action receipt does not match the bounded request')
-    }
-    if (action.type === 'key' && observed.key !== action.key) {
-      throw new Error('Studio UI driver key receipt does not match the bounded request')
-    }
-    if (
-      action.type === 'click' &&
-      (observed.xFraction !== action.xFraction || observed.yFraction !== action.yFraction)
-    ) {
-      throw new Error('Studio UI driver click receipt does not match the bounded request')
-    }
-    if (
-      action.type === 'press-playback' &&
-      (observed.accessibilityLabel !== action.accessibilityLabel ||
-        observed.accessibilityAction !== action.accessibilityAction ||
-        observed.playbackValueBefore !== action.playbackValueBefore ||
-        observed.playbackValueAfter !== action.playbackValueAfter)
-    ) {
-      throw new Error('Studio UI driver Playback receipt does not match the bounded request')
-    }
-    if (
-      action.type === 'set-playhead-ticks' &&
-      (observed.playheadTicks !== action.playheadTicks ||
-        observed.playheadToleranceTicks !== action.playheadToleranceTicks ||
-        observed.playheadMaximumForwardAdvanceTicks !== action.playheadMaximumForwardAdvanceTicks ||
-        !Number.isSafeInteger(observed.observedPlayheadTicks) ||
-        (observed.observedPlayheadTicks < action.playheadTicks
-          ? action.playheadTicks - observed.observedPlayheadTicks > action.playheadToleranceTicks
-          : observed.observedPlayheadTicks - action.playheadTicks >
-            action.playheadToleranceTicks + action.playheadMaximumForwardAdvanceTicks))
-    ) {
-      throw new Error('Studio UI driver playhead receipt does not match the bounded request')
-    }
-    if (
-      action.type === 'step-playhead-frame' &&
-      (observed.playheadStepFrames !== action.playheadStepFrames ||
-        !Number.isSafeInteger(observed.playheadTicksBefore) ||
-        !Number.isSafeInteger(observed.observedPlayheadTicks) ||
-        Math.sign(observed.observedPlayheadTicks - observed.playheadTicksBefore) !==
-          action.playheadStepFrames)
-    ) {
-      throw new Error('Studio UI driver playhead-step receipt does not match the bounded request')
-    }
-    if (action.type === 'read-transport-mutation') {
-      if (
-        observed.accessibilityLabel !== action.accessibilityLabel ||
-        observed.accessibilityRole !== 'AXStaticText' ||
-        observed.accessibilityMatchCount !== 1 ||
-        typeof observed.accessibilityValue !== 'string'
-      ) {
-        throw new Error(
-          'Studio UI driver transport-mutation receipt does not match the bounded request'
+    let result
+    try {
+      result = await runExec('/usr/bin/swift', [UI_DRIVER_PATH, requestPath], {
+        timeoutMs: Math.max(60_000, longestAudioProbeSeconds * 1000 + 30_000)
+      })
+    } catch (error) {
+      if (error && typeof error.stdout === 'string') {
+        failureEvidence.failureStage = 'raw-receipt-write'
+        Object.assign(
+          failureEvidence,
+          await persistStudioUiDriverRawReceipt(plan, requestPath, error.stdout)
         )
       }
-      try {
-        parseStudioTransportMutationText(observed.accessibilityValue)
-      } catch (error) {
-        throw new Error(`Studio UI driver transport-mutation receipt is invalid: ${error.message}`)
-      }
+      failureEvidence.failureStage = 'native-exec'
+      throw error
     }
+
+    failureEvidence.failureStage = 'raw-receipt-write'
+    Object.assign(
+      failureEvidence,
+      await persistStudioUiDriverRawReceipt(plan, requestPath, result.stdout)
+    )
+
+    failureEvidence.failureStage = 'json-parse'
+    let receipt
+    try {
+      receipt = JSON.parse(result.stdout)
+    } catch {
+      throw new Error('Studio UI driver did not return a JSON receipt')
+    }
+    failureEvidence.failureStage = 'receipt-schema'
     if (
-      action.type === 'screenshot' &&
-      (observed.screenshotPath !== action.path ||
-        !Number.isSafeInteger(observed.byteLength) ||
-        observed.byteLength < 1)
+      !isRecord(receipt) ||
+      receipt.schemaVersion !== 1 ||
+      receipt.kind !== 'taskwraith-studio-ui-driver-receipt' ||
+      receipt.inputDelivery !== request.inputDelivery ||
+      receipt.pid !== request.expectedPid ||
+      receipt.pgid !== request.expectedPgid ||
+      receipt.windowId !== request.windowId ||
+      !Array.isArray(receipt.actions) ||
+      receipt.actions.length !== request.actions.length
     ) {
-      throw new Error('Studio UI driver screenshot receipt does not match the bounded request')
+      throw new Error(
+        `Studio UI driver returned an invalid receipt: ${result.stdout.slice(0, 1000)}`
+      )
     }
-    if (action.type === 'audio-probe') {
-      const probe = observed.audioProbe
-      const output = probe && probe.defaultOutputDevice
+    for (const [index, action] of request.actions.entries()) {
+      failureEvidence.failureStage = 'action-receipt'
+      const observed = receipt.actions[index]
+      if (!isRecord(observed) || observed.index !== index || observed.type !== action.type) {
+        throw new Error('Studio UI driver action receipt does not match the bounded request')
+      }
+      if (action.type === 'key' && observed.key !== action.key) {
+        throw new Error('Studio UI driver key receipt does not match the bounded request')
+      }
       if (
-        !isRecord(probe) ||
-        probe.durationSeconds !== action.durationSeconds ||
-        typeof probe.elapsedSeconds !== 'number' ||
-        !Number.isFinite(probe.elapsedSeconds) ||
-        probe.elapsedSeconds < action.durationSeconds ||
-        probe.elapsedSeconds > action.durationSeconds + 10 ||
-        !Number.isSafeInteger(probe.sampleBufferCount) ||
-        probe.sampleBufferCount < 0 ||
-        !Number.isSafeInteger(probe.frameCount) ||
-        probe.frameCount < 0 ||
-        !Number.isSafeInteger(probe.sampleValueCount) ||
-        probe.sampleValueCount < 0 ||
-        typeof probe.sampleRate !== 'number' ||
-        !Number.isFinite(probe.sampleRate) ||
-        probe.sampleRate <= 0 ||
-        !Number.isSafeInteger(probe.channelCount) ||
-        probe.channelCount < 1 ||
-        typeof probe.rms !== 'number' ||
-        !Number.isFinite(probe.rms) ||
-        probe.rms < 0 ||
-        typeof probe.peak !== 'number' ||
-        !Number.isFinite(probe.peak) ||
-        probe.peak < 0 ||
-        typeof probe.nonSilentFraction !== 'number' ||
-        !Number.isFinite(probe.nonSilentFraction) ||
-        probe.nonSilentFraction < 0 ||
-        probe.nonSilentFraction > 1 ||
-        !isRecord(output) ||
-        !Number.isSafeInteger(output.id) ||
-        output.id <= 0 ||
-        typeof output.name !== 'string' ||
-        !output.name.trim() ||
-        typeof output.uid !== 'string' ||
-        !output.uid.trim() ||
-        typeof output.nominalSampleRate !== 'number' ||
-        !Number.isFinite(output.nominalSampleRate) ||
-        output.nominalSampleRate <= 0
+        action.type === 'click' &&
+        (observed.xFraction !== action.xFraction || observed.yFraction !== action.yFraction)
       ) {
-        throw new Error('Studio UI driver audio receipt does not match the bounded request')
+        throw new Error('Studio UI driver click receipt does not match the bounded request')
+      }
+      if (
+        action.type === 'press-playback' &&
+        (observed.accessibilityLabel !== action.accessibilityLabel ||
+          observed.accessibilityAction !== action.accessibilityAction ||
+          observed.playbackValueBefore !== action.playbackValueBefore ||
+          observed.playbackValueAfter !== action.playbackValueAfter)
+      ) {
+        throw new Error('Studio UI driver Playback receipt does not match the bounded request')
+      }
+      if (
+        action.type === 'set-playhead-ticks' &&
+        (observed.playheadTicks !== action.playheadTicks ||
+          observed.playheadToleranceTicks !== action.playheadToleranceTicks ||
+          observed.playheadMaximumForwardAdvanceTicks !==
+            action.playheadMaximumForwardAdvanceTicks ||
+          !Number.isSafeInteger(observed.observedPlayheadTicks) ||
+          (observed.observedPlayheadTicks < action.playheadTicks
+            ? action.playheadTicks - observed.observedPlayheadTicks > action.playheadToleranceTicks
+            : observed.observedPlayheadTicks - action.playheadTicks >
+              action.playheadToleranceTicks + action.playheadMaximumForwardAdvanceTicks))
+      ) {
+        throw new Error('Studio UI driver playhead receipt does not match the bounded request')
+      }
+      if (
+        action.type === 'step-playhead-frame' &&
+        (observed.playheadStepFrames !== action.playheadStepFrames ||
+          !Number.isSafeInteger(observed.playheadTicksBefore) ||
+          !Number.isSafeInteger(observed.observedPlayheadTicks) ||
+          Math.sign(observed.observedPlayheadTicks - observed.playheadTicksBefore) !==
+            action.playheadStepFrames)
+      ) {
+        throw new Error('Studio UI driver playhead-step receipt does not match the bounded request')
+      }
+      if (action.type === 'read-transport-mutation') {
+        if (
+          observed.accessibilityLabel !== action.accessibilityLabel ||
+          observed.accessibilityRole !== 'AXStaticText' ||
+          observed.accessibilityMatchCount !== 1 ||
+          typeof observed.accessibilityValue !== 'string'
+        ) {
+          throw new Error(
+            'Studio UI driver transport-mutation receipt does not match the bounded request'
+          )
+        }
+        failureEvidence.failureStage = 'tm1-validation'
+        try {
+          parseStudioTransportMutationText(observed.accessibilityValue)
+        } catch (error) {
+          throw new Error(
+            `Studio UI driver transport-mutation receipt is invalid: ${error.message}`
+          )
+        }
+      }
+      if (
+        action.type === 'screenshot' &&
+        (observed.screenshotPath !== action.path ||
+          !Number.isSafeInteger(observed.byteLength) ||
+          observed.byteLength < 1)
+      ) {
+        throw new Error('Studio UI driver screenshot receipt does not match the bounded request')
+      }
+      if (action.type === 'audio-probe') {
+        const probe = observed.audioProbe
+        const output = probe && probe.defaultOutputDevice
+        if (
+          !isRecord(probe) ||
+          probe.durationSeconds !== action.durationSeconds ||
+          typeof probe.elapsedSeconds !== 'number' ||
+          !Number.isFinite(probe.elapsedSeconds) ||
+          probe.elapsedSeconds < action.durationSeconds ||
+          probe.elapsedSeconds > action.durationSeconds + 10 ||
+          !Number.isSafeInteger(probe.sampleBufferCount) ||
+          probe.sampleBufferCount < 0 ||
+          !Number.isSafeInteger(probe.frameCount) ||
+          probe.frameCount < 0 ||
+          !Number.isSafeInteger(probe.sampleValueCount) ||
+          probe.sampleValueCount < 0 ||
+          typeof probe.sampleRate !== 'number' ||
+          !Number.isFinite(probe.sampleRate) ||
+          probe.sampleRate <= 0 ||
+          !Number.isSafeInteger(probe.channelCount) ||
+          probe.channelCount < 1 ||
+          typeof probe.rms !== 'number' ||
+          !Number.isFinite(probe.rms) ||
+          probe.rms < 0 ||
+          typeof probe.peak !== 'number' ||
+          !Number.isFinite(probe.peak) ||
+          probe.peak < 0 ||
+          typeof probe.nonSilentFraction !== 'number' ||
+          !Number.isFinite(probe.nonSilentFraction) ||
+          probe.nonSilentFraction < 0 ||
+          probe.nonSilentFraction > 1 ||
+          !isRecord(output) ||
+          !Number.isSafeInteger(output.id) ||
+          output.id <= 0 ||
+          typeof output.name !== 'string' ||
+          !output.name.trim() ||
+          typeof output.uid !== 'string' ||
+          !output.uid.trim() ||
+          typeof output.nominalSampleRate !== 'number' ||
+          !Number.isFinite(output.nominalSampleRate) ||
+          output.nominalSampleRate <= 0
+        ) {
+          throw new Error('Studio UI driver audio receipt does not match the bounded request')
+        }
       }
     }
+    failureEvidence.failureStage = 'validated-receipt-write'
+    const receiptDirectory = path.join(plan.artifactRoot, 'ui-driver-receipts')
+    await fsPromises.mkdir(receiptDirectory, { recursive: true, mode: 0o700 })
+    const receiptPath = path.join(receiptDirectory, path.basename(requestPath))
+    const receiptTemp = `${receiptPath}.tmp-${process.pid}`
+    await fsPromises.writeFile(receiptTemp, `${JSON.stringify(receipt, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    await fsPromises.rename(receiptTemp, receiptPath)
+    failureEvidence.validatedReceiptPath = receiptPath
+    return {
+      ...receipt,
+      requestPath,
+      rawReceiptPath: failureEvidence.rawReceiptPath,
+      rawStdoutSha256: failureEvidence.rawStdoutSha256,
+      rawStdoutByteLength: failureEvidence.rawStdoutByteLength,
+      receiptPath
+    }
+  } catch (error) {
+    if (error && isRecord(error.rawReceiptEvidence)) {
+      Object.assign(failureEvidence, error.rawReceiptEvidence)
+    }
+    throw attachStudioUiDriverFailureEvidence(error, failureEvidence)
   }
-  const receiptDirectory = path.join(plan.artifactRoot, 'ui-driver-receipts')
-  await fsPromises.mkdir(receiptDirectory, { recursive: true, mode: 0o700 })
-  const receiptPath = path.join(receiptDirectory, path.basename(requestPath))
-  const receiptTemp = `${receiptPath}.tmp-${process.pid}`
-  await fsPromises.writeFile(receiptTemp, `${JSON.stringify(receipt, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600
-  })
-  await fsPromises.rename(receiptTemp, receiptPath)
-  return { ...receipt, requestPath, receiptPath }
 }
 
 function buildStudioAcceptanceJourney() {

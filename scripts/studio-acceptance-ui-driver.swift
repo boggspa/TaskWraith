@@ -425,6 +425,11 @@ func exactAccessibilityTransportMutation(
         ) == .success,
             let children = rawChildren as? [AXUIElement]
         {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused(
+                    "Transport mutation accessibility tree exceeds 512 elements"
+                )
+            }
             queue.append(contentsOf: children.map { ($0, depth + 1) })
         }
     }

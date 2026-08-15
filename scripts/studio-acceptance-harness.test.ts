@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
@@ -1589,6 +1590,30 @@ describe('Studio acceptance harness', () => {
       crossedDomain: true
     })
 
+    const audioRescheduleMachineToAudio = validTransportMutationText
+      .replace('kind=lifecycleAttach', 'kind=audioReschedule')
+      .replace('preSrc=audio', 'preSrc=machine')
+      .replace('prevHost=-', 'prevHost=88234.125000')
+      .replace('crossedDomain=0', 'crossedDomain=1')
+    expect(parseStudioTransportMutationText(audioRescheduleMachineToAudio)).toMatchObject({
+      kind: 'audioReschedule',
+      beforeSource: 'machine',
+      afterSource: 'audio',
+      previousHostSeconds: 88_234.125,
+      crossedDomain: true
+    })
+
+    const audioRescheduleAudioToAudio = validTransportMutationText
+      .replace('kind=lifecycleAttach', 'kind=audioReschedule')
+      .replace('prevHost=-', 'prevHost=4.000000')
+    expect(parseStudioTransportMutationText(audioRescheduleAudioToAudio)).toMatchObject({
+      kind: 'audioReschedule',
+      beforeSource: 'audio',
+      afterSource: 'audio',
+      previousHostSeconds: 4,
+      crossedDomain: false
+    })
+
     const clamped = validTransportMutationText
       .replace('postAnchorT=2062500', 'postAnchorT=300000000')
       .replace('clamped=0', 'clamped=1')
@@ -1611,7 +1636,11 @@ describe('Studio acceptance harness', () => {
       validTransportMutationText.replace('route=review', 'route=other'),
       validTransportMutationText.replace('postSrc=audio', 'postSrc=machine'),
       validTransportMutationText.replace('prevHost=-', 'prevHost=4.000000'),
-      oscillator.replace('prevHost=4.000000', 'prevHost=-')
+      oscillator.replace('prevHost=4.000000', 'prevHost=-'),
+      audioRescheduleAudioToAudio.replace('prevHost=4.000000', 'prevHost=-'),
+      audioRescheduleAudioToAudio
+        .replace('postSrc=audio', 'postSrc=machine')
+        .replace('crossedDomain=0', 'crossedDomain=1')
     ]) {
       expect(() => parseStudioTransportMutationText(malformed)).toThrow(/tm1/)
     }
@@ -1724,6 +1753,10 @@ describe('Studio acceptance harness', () => {
     )
     expect(transportReadSource).toContain('matches.count == 1')
     expect(transportReadSource).toContain('stringAttribute(kAXValueAttribute, of: element)')
+    expect(transportReadSource).toContain(
+      'guard visited + queue.count + children.count <= 512 else'
+    )
+    expect(transportReadSource).toContain('Transport mutation accessibility tree exceeds 512')
     expect(transportReadSource).toContain('foregroundAfter == foregroundBefore')
     expect(transportReadSource).toContain('pgidAfter == pgidBefore')
     expect(transportReadSource).toContain('executableAfter == executableBefore')
@@ -2003,6 +2036,12 @@ describe('Studio acceptance harness', () => {
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })
     expect(receipt.receiptPath).toMatch(/ui-driver-receipts\/.*\.json$/)
+    expect(receipt.rawReceiptPath).toMatch(/ui-driver-raw-receipts\/.*\.json\.stdout$/)
+    expect(receipt.rawStdoutSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(receipt.rawStdoutByteLength).toBeGreaterThan(0)
+    await expect(fsPromises.readFile(receipt.rawReceiptPath as string, 'utf8')).resolves.toContain(
+      'taskwraith-studio-ui-driver-receipt'
+    )
     await expect(
       fsPromises.readFile(receipt.receiptPath as string, 'utf8').then((raw) => JSON.parse(raw))
     ).resolves.toMatchObject({
@@ -2063,7 +2102,54 @@ describe('Studio acceptance harness', () => {
       accessibilityValue: validTransportMutationText
     }
 
-    await expect(run([])).rejects.toThrow(/invalid receipt/)
+    const captureFailure = async (operation: Promise<Record<string, unknown>>) => {
+      try {
+        await operation
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        return error as Error & {
+          studioUiDriverEvidence: {
+            requestPath: string
+            rawReceiptPath: string | null
+            rawStdoutSha256: string | null
+            rawStdoutByteLength: number | null
+            validatedReceiptPath: string | null
+            failureStage: string
+          }
+        }
+      }
+      throw new Error('expected Studio UI driver failure')
+    }
+    const expectRawEvidence = async (
+      failure: Awaited<ReturnType<typeof captureFailure>>,
+      expectedStage: string,
+      expectedStdout: string
+    ) => {
+      const evidence = failure.studioUiDriverEvidence
+      expect(evidence).toMatchObject({
+        failureStage: expectedStage,
+        rawStdoutByteLength: Buffer.byteLength(expectedStdout),
+        rawStdoutSha256: crypto.createHash('sha256').update(expectedStdout).digest('hex'),
+        validatedReceiptPath: null
+      })
+      expect(evidence.requestPath).toMatch(/ui-driver-requests\/.*\.json$/)
+      expect(evidence.rawReceiptPath).toMatch(/ui-driver-raw-receipts\/.*\.json\.stdout$/)
+      await expect(fsPromises.readFile(evidence.requestPath, 'utf8')).resolves.toContain(
+        'read-transport-mutation'
+      )
+      await expect(fsPromises.readFile(evidence.rawReceiptPath as string, 'utf8')).resolves.toBe(
+        expectedStdout
+      )
+    }
+
+    const missingFailure = await captureFailure(run([]))
+    expect(missingFailure.message).toMatch(/invalid receipt/)
+    const missingRaw = await fsPromises.readFile(
+      missingFailure.studioUiDriverEvidence.rawReceiptPath as string,
+      'utf8'
+    )
+    await expectRawEvidence(missingFailure, 'receipt-schema', missingRaw)
+
     await expect(run([exactAction, exactAction])).rejects.toThrow(/invalid receipt/)
     await expect(run([{ ...exactAction, accessibilityLabel: 'Sync detail' }])).rejects.toThrow(
       /transport-mutation receipt/
@@ -2074,14 +2160,55 @@ describe('Studio acceptance harness', () => {
     await expect(run([{ ...exactAction, accessibilityMatchCount: 2 }])).rejects.toThrow(
       /transport-mutation receipt/
     )
-    await expect(
+
+    const malformedFailure = await captureFailure(
       run([
         {
           ...exactAction,
           accessibilityValue: validTransportMutationText.replace('clamped=0', 'clamped=1')
         }
       ])
-    ).rejects.toThrow(/transport-mutation receipt is invalid/)
+    )
+    expect(malformedFailure.message).toMatch(/transport-mutation receipt is invalid/)
+    const malformedRaw = await fsPromises.readFile(
+      malformedFailure.studioUiDriverEvidence.rawReceiptPath as string,
+      'utf8'
+    )
+    await expectRawEvidence(malformedFailure, 'tm1-validation', malformedRaw)
+
+    const invalidJson = 'not-json\n'
+    const invalidJsonFailure = await captureFailure(
+      runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
+        execFile: vi.fn(async () => ({ stdout: invalidJson, stderr: '' }))
+      })
+    )
+    expect(invalidJsonFailure.message).toMatch(/did not return a JSON receipt/)
+    await expectRawEvidence(invalidJsonFailure, 'json-parse', invalidJson)
+
+    const nativeStdout = 'partial native stdout\n'
+    const nativeFailure = await captureFailure(
+      runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
+        execFile: vi.fn(async () => {
+          throw Object.assign(new Error('native driver failed'), { stdout: nativeStdout })
+        })
+      })
+    )
+    expect(nativeFailure.message).toMatch(/native driver failed/)
+    await expectRawEvidence(nativeFailure, 'native-exec', nativeStdout)
+    const oversizedStdout = 'x'.repeat(256 * 1024 + 1)
+    const oversizedFailure = await captureFailure(
+      runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
+        execFile: vi.fn(async () => ({ stdout: oversizedStdout, stderr: '' }))
+      })
+    )
+    expect(oversizedFailure.message).toMatch(/raw receipt exceeds/)
+    expect(oversizedFailure.studioUiDriverEvidence).toMatchObject({
+      rawReceiptPath: null,
+      rawStdoutByteLength: Buffer.byteLength(oversizedStdout),
+      rawStdoutSha256: crypto.createHash('sha256').update(oversizedStdout).digest('hex'),
+      validatedReceiptPath: null,
+      failureStage: 'raw-receipt-write'
+    })
   })
 
   it('rejects a Playback AXPress receipt that does not prove the exact transition', async () => {
