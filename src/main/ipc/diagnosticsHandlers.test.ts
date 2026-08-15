@@ -52,6 +52,7 @@ function createDeps() {
       occurredAt: new Date().toISOString()
     })),
     recordRendererDiagnosticSample: vi.fn(() => true),
+    recordRendererErrorBoundary: vi.fn(() => true),
     exportProductDiagnostics: vi.fn(async (requestedPath?: string) => ({
       path: requestedPath || '/tmp/diagnostics.json',
       kind: 'diagnostics-exported'
@@ -115,6 +116,7 @@ describe('registerDiagnosticsHandlers', () => {
     expect(handlerFor('get-product-crashes')).toBeTypeOf('function')
     expect(handlerFor('record-product-crash')).toBeTypeOf('function')
     expect(handlerFor('record-renderer-diagnostic-sample')).toBeTypeOf('function')
+    expect(handlerFor('record-renderer-error-boundary')).toBeTypeOf('function')
     expect(handlerFor('export-product-diagnostics')).toBeTypeOf('function')
     expect(handlerFor('export-product-audit-bundle')).toBeTypeOf('function')
     expect(handlerFor('verify-product-audit-bundle')).toBeTypeOf('function')
@@ -214,6 +216,25 @@ describe('registerDiagnosticsHandlers', () => {
     deps.isMainRendererSender.mockReturnValue(false)
     expect(handlerFor('record-renderer-diagnostic-sample')(event, input)).toBe(false)
     expect(deps.recordRendererDiagnosticSample).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts error-boundary diagnostics only from the main renderer', () => {
+    const deps = createDeps()
+    registerDiagnosticsHandlers(deps)
+    const event = { sender: { id: 10 } }
+    const input = {
+      name: 'Error',
+      message: 'Maximum update depth exceeded',
+      stack: 'render stack',
+      componentStack: 'component stack'
+    }
+
+    expect(handlerFor('record-renderer-error-boundary')(event, input)).toBe(true)
+    expect(deps.recordRendererErrorBoundary).toHaveBeenCalledWith(event, input)
+
+    deps.isMainRendererSender.mockReturnValue(false)
+    expect(handlerFor('record-renderer-error-boundary')(event, input)).toBe(false)
+    expect(deps.recordRendererErrorBoundary).toHaveBeenCalledTimes(1)
   })
 
   it('derives secondary crash identity and bounds cyclic metadata before persistence', () => {

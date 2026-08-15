@@ -118,7 +118,10 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
-import type { RendererDiagnosticClientSample } from '../shared/rendererDiagnostics'
+import type {
+  RendererDiagnosticClientSample,
+  RendererErrorBoundaryReport
+} from '../shared/rendererDiagnostics'
 import {
   workLockProjectionUpdateIsStale,
   type WorkLockProjectionChangedEvent,
@@ -2617,6 +2620,8 @@ const api = {
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),
   recordRendererDiagnosticSample: (input: RendererDiagnosticClientSample) =>
     ipcRenderer.invoke('record-renderer-diagnostic-sample', input) as Promise<boolean>,
+  recordRendererErrorBoundary: (input: RendererErrorBoundaryReport) =>
+    ipcRenderer.invoke('record-renderer-error-boundary', input) as Promise<boolean>,
   exportProductDiagnostics: (path?: string) =>
     ipcRenderer.invoke('export-product-diagnostics', path),
   exportProductAuditBundle: (request?: any) =>

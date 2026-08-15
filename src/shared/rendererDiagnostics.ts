@@ -5,6 +5,10 @@ export const RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS = 15_000
 const MAX_COUNTER = 1_000_000_000
 const MAX_BYTE_VALUE = 16 * 1024 * 1024 * 1024 * 1024
 const MAX_CHAT_ID_CHARS = 200
+const MAX_ERROR_NAME_CHARS = 160
+const MAX_ERROR_MESSAGE_CHARS = 2_048
+const MAX_ERROR_STACK_CHARS = 4_096
+const MAX_COMPONENT_STACK_CHARS = 4_096
 
 export interface RendererChatUpdateClientCounters {
   received: number
@@ -43,7 +47,15 @@ export type RendererDiagnosticCause =
   | 'interval'
   | 'unresponsive'
   | 'responsive'
+  | 'error-boundary'
   | 'render-process-gone'
+
+export interface RendererErrorBoundaryReport {
+  name?: string
+  message: string
+  stack?: string
+  componentStack?: string
+}
 
 export interface RendererDiagnosticSample {
   schemaVersion: typeof RENDERER_DIAGNOSTIC_SCHEMA_VERSION
@@ -62,6 +74,7 @@ export interface RendererDiagnosticSample {
   activeChatMessageCount: number
   activeChatPersistedBytes?: number
   chatUpdates: RendererDiagnosticChatUpdateCounters
+  errorBoundary?: RendererErrorBoundaryReport
   crashReason?: string
   crashExitCode?: number
 }
@@ -83,6 +96,31 @@ function boundedCounter(value: unknown): number {
 
 function boundedBytes(value: unknown): number | undefined {
   return boundedInteger(value, MAX_BYTE_VALUE)
+}
+
+function boundedText(value: unknown, maximum: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, maximum) : undefined
+}
+
+/** Bounds error-boundary context before it crosses into the persisted ring. */
+export function sanitizeRendererErrorBoundaryReport(input: unknown): RendererErrorBoundaryReport {
+  const source =
+    input && typeof input === 'object' && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
+      : {}
+  const name = boundedText(source.name, MAX_ERROR_NAME_CHARS)
+  const stack = boundedText(source.stack, MAX_ERROR_STACK_CHARS)
+  const componentStack = boundedText(source.componentStack, MAX_COMPONENT_STACK_CHARS)
+  return {
+    ...(name ? { name } : {}),
+    message:
+      boundedText(source.message, MAX_ERROR_MESSAGE_CHARS) ||
+      'The renderer error boundary caught an unknown error.',
+    ...(stack ? { stack } : {}),
+    ...(componentStack ? { componentStack } : {})
+  }
 }
 
 /** Bounds the untrusted renderer payload before it reaches persistence. */
@@ -131,6 +169,7 @@ export function isRendererDiagnosticCause(value: unknown): value is RendererDiag
     value === 'interval' ||
     value === 'unresponsive' ||
     value === 'responsive' ||
+    value === 'error-boundary' ||
     value === 'render-process-gone'
   )
 }

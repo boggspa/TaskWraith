@@ -11,15 +11,21 @@ import {
   RENDERER_DIAGNOSTIC_RING_CAPACITY,
   RENDERER_DIAGNOSTIC_SCHEMA_VERSION,
   sanitizeRendererDiagnosticClientSample,
+  sanitizeRendererErrorBoundaryReport,
   type RendererDiagnosticCause,
   type RendererDiagnosticClientSample,
   type RendererDiagnosticRingFile,
-  type RendererDiagnosticSample
+  type RendererDiagnosticSample,
+  type RendererErrorBoundaryReport
 } from '../shared/rendererDiagnostics'
 
 const MAX_RING_FILE_BYTES = 2 * 1024 * 1024
 const MIN_RING_CAPACITY = 8
 const MAX_RING_CAPACITY = 1_000
+type RendererLifecycleDiagnosticCause = Exclude<
+  RendererDiagnosticCause,
+  'interval' | 'error-boundary'
+>
 
 export interface RendererDiagnosticTarget {
   windowId: number
@@ -176,7 +182,7 @@ export class RendererDiagnosticRecorder {
 
   recordLifecycleSample(
     target: RendererDiagnosticTarget,
-    cause: Exclude<RendererDiagnosticCause, 'interval'>,
+    cause: RendererLifecycleDiagnosticCause,
     crash?: { reason?: string; exitCode?: number }
   ): RendererDiagnosticSample {
     const client =
@@ -185,9 +191,22 @@ export class RendererDiagnosticRecorder {
     return this.record(target, cause, client, crash)
   }
 
+  recordErrorBoundary(target: RendererDiagnosticTarget, input: unknown): RendererDiagnosticSample {
+    const client =
+      this.latestClientByTarget.get(target.webContentsId) ??
+      sanitizeRendererDiagnosticClientSample(undefined)
+    return this.record(
+      target,
+      'error-boundary',
+      client,
+      undefined,
+      sanitizeRendererErrorBoundaryReport(input)
+    )
+  }
+
   recordWindowLifecycleSample(
     window: BrowserWindow,
-    cause: Exclude<RendererDiagnosticCause, 'interval'>,
+    cause: RendererLifecycleDiagnosticCause,
     crash?: { reason?: string; exitCode?: number }
   ): RendererDiagnosticSample | null {
     if (this.options.shouldRecordWindow && !this.options.shouldRecordWindow(window)) return null
@@ -203,7 +222,8 @@ export class RendererDiagnosticRecorder {
     target: RendererDiagnosticTarget,
     cause: RendererDiagnosticCause,
     client: RendererDiagnosticClientSample,
-    crash?: { reason?: string; exitCode?: number }
+    crash?: { reason?: string; exitCode?: number },
+    errorBoundary?: RendererErrorBoundaryReport
   ): RendererDiagnosticSample {
     const previous = this.latestSampleByTarget.get(target.webContentsId)
     const rendererPid = target.rendererPid || previous?.rendererPid || 0
@@ -282,6 +302,7 @@ export class RendererDiagnosticRecorder {
         mainRetainedMessages: boundedNonNegativeInteger(targetStats?.retainedMessages),
         mainRetainedBytes: boundedNonNegativeInteger(targetStats?.retainedBaselineBytes)
       },
+      ...(errorBoundary ? { errorBoundary } : {}),
       ...(typeof crash?.reason === 'string' && crash.reason
         ? { crashReason: crash.reason.slice(0, 80) }
         : {}),

@@ -30,8 +30,24 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Surface to console so it shows up in DevTools / log capture.
-
     console.error('[ErrorBoundary] caught render-time error', error, info)
+    // Persist a bounded incident beside the last-known renderer/chat sample.
+    // This path must stay best-effort: telemetry failure cannot take down the
+    // dependency-free recovery surface that is protecting the user's run.
+    try {
+      const report = window.api?.recordRendererErrorBoundary
+      if (typeof report !== 'function') return
+      void Promise.resolve(
+        report({
+          name: error.name,
+          message: error.message || String(error),
+          stack: error.stack,
+          componentStack: info.componentStack || undefined
+        })
+      ).catch(() => {})
+    } catch {
+      // The fallback must remain renderable even when preload/IPC is unavailable.
+    }
   }
 
   handleReload = (): void => {

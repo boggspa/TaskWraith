@@ -53691,6 +53691,16 @@ if (isGeminiMcpBridgeProcess) {
           input
         )
       },
+      recordRendererErrorBoundary: (event, input) => {
+        const owner = BrowserWindow.fromWebContents(event.sender)
+        if (!owner || owner.isDestroyed()) {
+          throw new Error('Renderer diagnostic window is unavailable.')
+        }
+        return rendererDiagnosticRecorder.recordErrorBoundary(
+          rendererDiagnosticTargetFromWindow(owner),
+          input
+        )
+      },
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
       verifyProductAuditBundle: (request) => verifyProductAuditBundle(request),

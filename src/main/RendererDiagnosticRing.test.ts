@@ -186,4 +186,38 @@ describe('RendererDiagnosticRing', () => {
       crashExitCode: 9
     })
   })
+
+  it('persists a bounded boundary incident with the last-known renderer measurements', () => {
+    const filePath = testPath()
+    const recorder = new RendererDiagnosticRecorder({ filePath })
+    const target = { windowId: 1, webContentsId: 2, rendererPid: 44 }
+    recorder.recordClientSample(target, {
+      v8HeapUsedBytes: 777,
+      activeChatMessageCount: 99,
+      chatUpdates: { received: 5, patches: 4 }
+    })
+
+    const incident = recorder.recordErrorBoundary(target, {
+      name: 'Error',
+      message: 'Maximum update depth exceeded',
+      stack: 'render stack',
+      componentStack: 'component stack'
+    })
+
+    expect(incident).toMatchObject({
+      cause: 'error-boundary',
+      rendererPid: 44,
+      v8HeapUsedBytes: 777,
+      activeChatMessageCount: 99,
+      chatUpdates: { rendererReceived: 5, rendererPatches: 4 },
+      errorBoundary: {
+        name: 'Error',
+        message: 'Maximum update depth exceeded',
+        stack: 'render stack',
+        componentStack: 'component stack'
+      }
+    })
+    const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    expect(persisted.samples.at(-1).cause).toBe('error-boundary')
+  })
 })

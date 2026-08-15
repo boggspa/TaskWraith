@@ -115,7 +115,10 @@ import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPre
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
-import type { RendererDiagnosticClientSample } from '../shared/rendererDiagnostics'
+import type {
+  RendererDiagnosticClientSample,
+  RendererErrorBoundaryReport
+} from '../shared/rendererDiagnostics'
 import type { ChannelAgentIpcApi } from '../shared/collaboration/ChannelAgentIpc'
 import type { ChannelIpcApi } from '../shared/collaboration/ChannelIpc'
 import type { ChannelMemberIpcApi } from '../shared/collaboration/ChannelMemberIpc'
@@ -2706,6 +2709,7 @@ declare global {
       getProductCrashes: (filter?: ProductCrashFilter) => Promise<ProductCrashRecord[]>
       recordProductCrash: (input: ProductCrashInput) => Promise<ProductCrashRecord>
       recordRendererDiagnosticSample: (input: RendererDiagnosticClientSample) => Promise<boolean>
+      recordRendererErrorBoundary: (input: RendererErrorBoundaryReport) => Promise<boolean>
       exportProductDiagnostics: (path?: string) => Promise<ProductDiagnosticsExportResult>
       exportProductAuditBundle: (
         request?: ProductAuditBundleExportRequest

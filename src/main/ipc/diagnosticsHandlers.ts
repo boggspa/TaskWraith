@@ -8,7 +8,10 @@ import type {
   ProductOperationsStatus
 } from '../store/types'
 import type { BugReportSubmission as BugReportSubmissionInput } from '../services/BugReportService'
-import type { RendererDiagnosticClientSample } from '../../shared/rendererDiagnostics'
+import type {
+  RendererDiagnosticClientSample,
+  RendererErrorBoundaryReport
+} from '../../shared/rendererDiagnostics'
 
 export const PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES = 64 * 1024 * 1024
 export const SECONDARY_RENDERER_CRASH_REPORT_LIMIT = 12
@@ -127,6 +130,10 @@ export interface DiagnosticsHandlersDeps {
     event: IpcMainInvokeEvent,
     input: RendererDiagnosticClientSample
   ) => unknown
+  recordRendererErrorBoundary: (
+    event: IpcMainInvokeEvent,
+    input: RendererErrorBoundaryReport
+  ) => unknown
   exportProductDiagnostics: (requestedPath?: string) => Promise<unknown>
   exportProductAuditBundle: (request?: ProductAuditBundleExportRequest) => Promise<unknown>
   verifyProductAuditBundle: (request?: ProductAuditBundleVerificationRequest) => Promise<unknown>
@@ -205,6 +212,15 @@ export function registerDiagnosticsHandlers(deps: DiagnosticsHandlersDeps): void
     (event, input: RendererDiagnosticClientSample) => {
       if (!deps.isMainRendererSender(event)) return false
       deps.recordRendererDiagnosticSample(event, input)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'record-renderer-error-boundary',
+    (event, input: RendererErrorBoundaryReport) => {
+      if (!deps.isMainRendererSender(event)) return false
+      deps.recordRendererErrorBoundary(event, input)
       return true
     }
   )

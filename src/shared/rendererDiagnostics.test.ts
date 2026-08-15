@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS,
-  sanitizeRendererDiagnosticClientSample
+  sanitizeRendererDiagnosticClientSample,
+  sanitizeRendererErrorBoundaryReport
 } from './rendererDiagnostics'
 
 describe('renderer diagnostics wire shape', () => {
@@ -47,5 +48,20 @@ describe('renderer diagnostics wire shape', () => {
       }
     })
     expect(RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS).toBe(15_000)
+  })
+
+  it('bounds renderer error-boundary text before persistence', () => {
+    const report = sanitizeRendererErrorBoundaryReport({
+      name: ` ${'N'.repeat(300)} `,
+      message: 'M'.repeat(4_000),
+      stack: 'S'.repeat(8_000),
+      componentStack: 'C'.repeat(8_000)
+    })
+
+    expect(report.name).toHaveLength(160)
+    expect(report.message).toHaveLength(2_048)
+    expect(report.stack).toHaveLength(4_096)
+    expect(report.componentStack).toHaveLength(4_096)
+    expect(sanitizeRendererErrorBoundaryReport(null).message).toContain('unknown error')
   })
 })

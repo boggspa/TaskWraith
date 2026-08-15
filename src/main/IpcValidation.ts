@@ -327,6 +327,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-product-crashes': ['optionalObject'],
   'record-product-crash': ['object'],
   'record-renderer-diagnostic-sample': ['object'],
+  'record-renderer-error-boundary': ['object'],
   'export-product-diagnostics': ['optionalString'],
   'export-product-audit-bundle': ['optionalObject'],
   'verify-product-audit-bundle': ['optionalObject'],
