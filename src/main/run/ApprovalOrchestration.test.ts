@@ -1668,6 +1668,16 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
         'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/ || echo "NO_MATCHES"',
       reason: 'inspection_shell'
     },
+    {
+      command:
+        "nl -ba src/main/collaboration/ChannelExternalSeatAuthority.test.ts | sed -n '241,360p'",
+      reason: 'inspection_shell'
+    },
+    {
+      command:
+        'grep -rnE "(HumanCollaboration|humanCollaboration|human-collaboration|getHumanCollaborationRuntime|HumanCollaborationStore)" src/ --exclude-dir=node_modules | cut -d: -f1 | sort -u',
+      reason: 'inspection_shell'
+    },
     { command: 'npm run work-guard', reason: 'explicit_user_request' },
     {
       command: 'export PATH=$PATH:/opt/homebrew/bin; npm run work-guard',
@@ -1727,38 +1737,39 @@ describe('createApprovalOrchestration — AntiGravity shell approval parity', ()
     expect(order).not.toContain('audit:autoAllow:explicit_user_request')
   })
 
-  it('auto-allows an ordinary AntiGravity command when Accept Edits resolves shell to allow', async () => {
-    const order: string[] = []
-    const deps = makeDeps(order)
-    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
-    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
-      runId
-        ? {
-            runId,
-            appChatId: 'chat-1',
-            status: 'running',
-            state: {
-              effectivePermissions: { presetId: 'default', readOnly: false }
+  it('auto-allows ordinary AntiGravity commands when Accept Edits resolves shell to allow', async () => {
+    for (const command of [
+      'npx vitest run src/main/collaboration/ChannelExternalSeatAuthority.test.ts',
+      'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:$PATH" && which node && which npm',
+      'export PATH="/opt/homebrew/bin:$PATH" && npx vitest run src/main/collaboration/ChannelExternalSeatAuthority.test.ts'
+    ]) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+      vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+        runId
+          ? {
+              runId,
+              appChatId: 'chat-1',
+              status: 'running',
+              state: {
+                effectivePermissions: { presetId: 'default', readOnly: false }
+              }
             }
-          }
-        : undefined) as never)
+          : undefined) as never)
 
-    await expect(
-      createApprovalOrchestration(deps)(
-        sender,
-        'antigravity',
-        'shellCommands',
-        '/repo',
-        request({
-          preview: {
-            command: 'npx vitest run src/main/studio',
-            params: { command: 'npx vitest run src/main/studio' }
-          }
-        })
-      )
-    ).resolves.toBe(true)
-    expect(order).toContain('audit:autoAllow:policy')
-    expect(order).not.toContain('registerGeminiTool')
+      await expect(
+        createApprovalOrchestration(deps)(
+          sender,
+          'antigravity',
+          'shellCommands',
+          '/repo',
+          request({ preview: { command, params: { command } } })
+        )
+      ).resolves.toBe(true)
+      expect(order).toContain('audit:autoAllow:policy')
+      expect(order).not.toContain('registerGeminiTool')
+    }
   })
 
   it('keeps external publication attended at Accept Edits', async () => {
