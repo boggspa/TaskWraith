@@ -3714,17 +3714,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   justify-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  /* Individual pills, not segments in one capsule. The capsule read as a single
+   * control whose parts happened to be labelled, which made the ACTIVE tab the
+   * only thing with an edge and left the other ten looking like text. Each tab
+   * now carries its own chip, so the row reads as a set of choices and the gap
+   * has to be wide enough to separate them. */
+  gap: 4px;
   max-width: 100%;
   /* Pairs with the `minmax(0, auto)` track: without it the flex box refuses to
    * go below max-content and the track minimum wins anyway. */
   min-width: 0;
-  padding: 1px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   /* Scroll, don't clip. A provider tab that scrolls off is still reachable; one
    * that is clipped is gone. The scrollbar is hidden because a real one inside a
-   * 17px pill is taller than the pill.
+   * 17px-tall row is taller than the tabs themselves.
    *
    * No edge-fade mask here on purpose: a mask applies whether or not the pill
    * actually overflows, so at the common widths where everything fits it would
@@ -3746,10 +3748,12 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   appearance: none;
   -webkit-appearance: none;
   height: 17px;
-  border: 0;
-  border-radius: 999px;
+  /* Transparent rather than absent, so the active state can colour the border
+   * without the tab changing size and shunting its neighbours along the row. */
+  border: 1px solid transparent;
+  border-radius: 5px;
   padding: 0 6px;
-  background: transparent;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: color-mix(in srgb, var(--text-tertiary) 88%, transparent);
   font: inherit;
   font-size: 9px;
@@ -3758,7 +3762,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   letter-spacing: 0.01em;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 120ms ease, background 120ms ease;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 
 .usage-heatmap-provider-filter-tab:hover,
@@ -3769,63 +3773,64 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .usage-heatmap-provider-filter-tab[data-active="true"] {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary) 22%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-codex[data-active="true"] {
   color: var(--provider-codex-color);
-  background: color-mix(in srgb, var(--provider-codex-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-codex-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-codex-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-claude[data-active="true"] {
   color: var(--provider-claude-color);
-  background: color-mix(in srgb, var(--provider-claude-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-claude-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-claude-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-gemini[data-active="true"] {
   color: var(--provider-gemini-color);
-  background: color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-gemini-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-kimi[data-active="true"] {
   color: var(--provider-kimi-color);
-  background: color-mix(in srgb, var(--provider-kimi-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-kimi-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-grok[data-active="true"] {
   color: var(--provider-grok-color);
-  background: color-mix(in srgb, var(--provider-grok-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-grok-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-grok-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-cursor[data-active="true"] {
   color: var(--provider-cursor-color);
-  background: color-mix(in srgb, var(--provider-cursor-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-cursor-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-cursor-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-ollama[data-active="true"] {
   color: var(--provider-ollama-color);
-  background: color-mix(in srgb, var(--provider-ollama-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-ollama-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-ollama-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-antigravity[data-active="true"] {
   color: var(--provider-antigravity-color);
-  background: color-mix(in srgb, var(--provider-antigravity-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-antigravity-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-antigravity-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-pi[data-active="true"] {
   color: var(--provider-pi-color);
-  background: color-mix(in srgb, var(--provider-pi-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-pi-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-pi-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-mistral[data-active="true"] {
   color: var(--provider-mistral-color);
-  background: color-mix(in srgb, var(--provider-mistral-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-mistral-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-mistral-color) 40%, transparent);
 }
 
 .usage-heatmap-provider-filter-tab.provider-muse[data-active="true"] {
   color: var(--provider-muse-color);
-  background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);
+  background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-muse-color) 40%, transparent);
 }
 
 .usage-heatmap-chips {
@@ -8599,32 +8604,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--text-primary);
   font-weight: 600;
 }
-.daily-heatmap-provider-filter {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.daily-heatmap-provider-filter::-webkit-scrollbar {
-  display: none;
-}
-.daily-heatmap-provider-filter-tab {
-  font-size: 10px;
-  line-height: 1;
-  padding: 3px 6px;
-  border-radius: 5px;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.daily-heatmap-provider-filter-tab[data-active='true'] {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
-}
+/* The daily heatmap's provider filter has NO rules of its own on purpose. It
+ * carries the shared `usage-heatmap-provider-filter*` classes, so it inherits
+ * one definition of the pill treatment and — more importantly — the per-provider
+ * active tints, which would otherwise have to be maintained twice and would
+ * drift the first time a provider shipped. */
 .daily-heatmap-grid-wrapper {
   display: flex;
   flex-direction: column;

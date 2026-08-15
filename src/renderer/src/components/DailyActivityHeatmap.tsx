@@ -181,14 +181,22 @@ export function DailyActivityHeatmap({
       {showHeader && (
         <div className="daily-heatmap-header">
           <span className="daily-heatmap-title">{title}</span>
+          {/* The filter carries the shared `usage-heatmap-provider-filter*`
+              classes as well as its own, so the per-provider active tints
+              defined once for every heatmap apply here too. A separate class
+              family would mean a new provider's colour landing on some filters
+              and not others — the drift that keeps biting this codebase. */}
           {showProviderFilter && (
-            <div className="daily-heatmap-provider-filter" aria-label={`${title} provider filter`}>
+            <div
+              className="usage-heatmap-provider-filter daily-heatmap-provider-filter"
+              aria-label={`${title} provider filter`}
+            >
               {HEATMAP_PROVIDER_FILTERS.map((filter) => (
                 <button
                   key={filter.id}
                   type="button"
                   aria-pressed={providerFilter === filter.id}
-                  className={`daily-heatmap-provider-filter-tab provider-${filter.id}`}
+                  className={`usage-heatmap-provider-filter-tab daily-heatmap-provider-filter-tab provider-${filter.id}`}
                   data-active={providerFilter === filter.id ? 'true' : undefined}
                   onClick={() => setProviderFilter(filter.id)}
                 >
