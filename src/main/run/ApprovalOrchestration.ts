@@ -795,6 +795,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       const registered = approvalService.registerGeminiTool(approvalId, {
         provider,
         service,
+        method: request.method,
         workspacePath,
         runId: request.runId,
         // Carried so an "allow for session" can be bound to the surface the user
@@ -805,6 +806,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         // deciding on the same facts rather than a generic placeholder.
         title,
         body,
+        preview: request.preview,
         ...(remoteSummary.text ? { remoteBody: remoteSummary.text } : {}),
         ...(remoteSummary.complete ? {} : { remoteIncomplete: true }),
         externalPathDetection,

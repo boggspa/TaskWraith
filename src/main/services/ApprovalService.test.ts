@@ -291,6 +291,146 @@ describe('ApprovalService — registries', () => {
     })
   })
 
+  it('lets an Ensemble Boss decision resolve a registered one-shot prompt through the normal gate', async () => {
+    const decisionMetadata = {
+      bossApprovalReview: {
+        pollId: 'poll-1',
+        authorityParticipantId: 'boss',
+        authorityRole: 'boss' as const,
+        requesterParticipantId: 'worker',
+        rationale: 'Read-only inspection in the workspace.',
+        decision: 'approve' as const,
+        requestScoped: true as const
+      }
+    }
+    const requestBossApprovalReview = vi.fn(async () => ({
+      action: 'accept' as const,
+      metadata: decisionMetadata
+    }))
+    const { deps, spies } = makeDeps({ requestBossApprovalReview })
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+    const resolveAction = vi.fn()
+
+    svc.registerGeminiTool('boss-review-1', {
+      provider: 'antigravity',
+      service: 'shellCommands',
+      method: 'antigravity/native-shell',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      title: 'AntiGravity shell command',
+      body: 'Run the exact command shown in the preview.',
+      preview: { command: "sed -n '1,20p' src/main/index.ts" },
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolveAction,
+      resolve
+    })
+
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalledWith(true))
+    expect(requestBossApprovalReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalId: 'boss-review-1',
+        source: 'gemini_tool',
+        provider: 'antigravity',
+        service: 'shellCommands',
+        runId: 'r-1',
+        method: 'antigravity/native-shell',
+        preview: { command: "sed -n '1,20p' src/main/index.ts" },
+        allowedActions: ['accept', 'decline', 'cancel'],
+        hasExternalPathDetection: false
+      })
+    )
+    expect(resolveAction).toHaveBeenCalledWith('accept', 'system')
+    expect(spies.resolveApprovalLedger).toHaveBeenCalledWith(
+      'boss-review-1',
+      'accept',
+      'system',
+      decisionMetadata
+    )
+    expect(svc.has('boss-review-1')).toBe(false)
+  })
+
+  it('offers native Codex and Kimi shell/file prompts to the same review seam', async () => {
+    const requestBossApprovalReview = vi.fn(async () => null)
+    const { deps } = makeDeps({ requestBossApprovalReview })
+    const svc = new ApprovalService(deps)
+
+    svc.registerCodex('codex-boss-review', {
+      rpcId: 1,
+      method: 'item/permissions/requestApproval',
+      params: { command: 'npm test' },
+      service: 'shellCommands',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+    svc.registerKimi('kimi-boss-review', {
+      child: { kill: vi.fn() } as never,
+      rpcId: 2,
+      params: { path: 'src/main/example.ts' },
+      service: 'fileChanges',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    await vi.waitFor(() => expect(requestBossApprovalReview).toHaveBeenCalledTimes(2))
+    expect(requestBossApprovalReview).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        approvalId: 'codex-boss-review',
+        source: 'codex',
+        provider: 'codex',
+        service: 'shellCommands',
+        preview: { command: 'npm test' }
+      })
+    )
+    expect(requestBossApprovalReview).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        approvalId: 'kimi-boss-review',
+        source: 'kimi',
+        provider: 'kimi',
+        service: 'fileChanges',
+        preview: { path: 'src/main/example.ts' }
+      })
+    )
+  })
+
+  it('never forwards high-risk, external-path, or grant-only cards to a Boss model', async () => {
+    const requestBossApprovalReview = vi.fn(async () => null)
+    const { deps } = makeDeps({ requestBossApprovalReview })
+    const svc = new ApprovalService(deps)
+
+    svc.registerGeminiTool('canvas-review', {
+      provider: 'claude',
+      service: 'canvasEval',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: vi.fn()
+    })
+    svc.registerGeminiTool('external-review', {
+      provider: 'claude',
+      service: 'fileChanges',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      externalPathDetection: {
+        provider: 'claude',
+        path: '/tmp/out.txt',
+        access: 'write'
+      },
+      resolve: vi.fn()
+    })
+    svc.registerGeminiTool('grant-review', {
+      provider: 'claude',
+      service: 'shellCommands',
+      runId: 'r-1',
+      allowedActions: ['acceptForWorkspace', 'decline'],
+      resolve: vi.fn()
+    })
+
+    await Promise.resolve()
+    expect(requestBossApprovalReview).not.toHaveBeenCalled()
+  })
+
   it('listProjectionCards exposes pending approvals for remote task snapshots', () => {
     const { deps } = makeDeps()
     const svc = new ApprovalService(deps)

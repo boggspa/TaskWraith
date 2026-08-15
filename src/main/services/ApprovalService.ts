@@ -15,6 +15,11 @@ import type { BridgeApnsTokenStore } from '../BridgeApnsTokenStore'
 import { buildMobileApprovalCard, type MobileApprovalCard } from '../RemoteTaskProjection'
 import { AGENTIC_SERVICE_LABELS } from '../AgenticServiceMessages'
 import { RemoteAttentionApnsFanout } from '../RemoteAttentionApnsFanout'
+import {
+  isBossApprovalReviewCandidate,
+  type BossApprovalReviewCandidate,
+  type BossApprovalReviewDecision
+} from '../BossApprovalReview'
 
 /**
  * ApprovalService — Phase B3 extraction.
@@ -91,6 +96,7 @@ export interface PendingMainApproval {
 export interface PendingGeminiToolApproval {
   provider: ProviderId
   service: AgenticServiceId
+  method?: string
   workspacePath?: string
   runId?: string
   /**
@@ -102,6 +108,8 @@ export interface PendingGeminiToolApproval {
    */
   title?: string
   body?: string
+  /** Exact in-memory desktop preview supplied to the Boss review lane. */
+  preview?: unknown
   /**
    * Purpose-built body for a PAIRED DEVICE, and whether that device can see
    * the whole request. The desktop body leads with the agent's `intent` and
@@ -331,6 +339,14 @@ export interface ApprovalServiceDeps {
     outcome: 'ok' | 'deny'
     runId?: string
   }) => void
+  /**
+   * Optional Ensemble hand-off for one-shot shell/file prompts. The ordinary
+   * human card stays registered; this callback only supplies a concurrent Boss
+   * decision that races the human and timeout through the same resolver.
+   */
+  requestBossApprovalReview?: (
+    candidate: BossApprovalReviewCandidate
+  ) => Promise<BossApprovalReviewDecision | null>
   /** Logger sink. */
   log: (line: string) => void
 }
@@ -387,6 +403,20 @@ export class ApprovalService {
       appRunId: info.runId,
       workspacePath: info.workspacePath
     })
+    this.scheduleBossApprovalReview({
+      approvalId,
+      source: 'gemini_tool',
+      provider: info.provider,
+      service: info.service,
+      runId: info.runId || '',
+      workspacePath: info.workspacePath,
+      method: info.method,
+      title: info.title,
+      body: info.body,
+      preview: info.preview,
+      allowedActions: info.allowedActions || [],
+      hasExternalPathDetection: Boolean(info.externalPathDetection)
+    })
     return true
   }
 
@@ -396,6 +426,19 @@ export class ApprovalService {
     this.emitApprovalRunEvent('approval_pending', approvalId, 'codex', {
       appRunId: info.runId,
       workspacePath: info.workspacePath
+    })
+    this.scheduleBossApprovalReview({
+      approvalId,
+      source: 'codex',
+      provider: 'codex',
+      service: info.service || 'mcpTools',
+      runId: info.runId || '',
+      workspacePath: info.workspacePath,
+      method: info.method,
+      title: info.method,
+      preview: info.params,
+      allowedActions: info.allowedActions || [],
+      hasExternalPathDetection: Boolean(info.externalPathDetection)
     })
     return true
   }
@@ -423,7 +466,47 @@ export class ApprovalService {
       appRunId: info.runId,
       workspacePath: info.workspacePath
     })
+    this.scheduleBossApprovalReview({
+      approvalId,
+      source: 'kimi',
+      provider: 'kimi',
+      service: info.service || 'mcpTools',
+      runId: info.runId || '',
+      workspacePath: info.workspacePath,
+      title: 'Kimi approval requested',
+      preview: info.params,
+      allowedActions: info.allowedActions || [],
+      hasExternalPathDetection: Boolean(info.externalPathDetection)
+    })
     return true
+  }
+
+  /**
+   * Queue after the registration call stack so its caller can publish the
+   * ordinary desktop modal first. A very fast Boss decision therefore clears
+   * an existing card instead of racing ahead and leaving a stale one behind.
+   */
+  private scheduleBossApprovalReview(candidate: BossApprovalReviewCandidate): void {
+    const requestReview = this.deps.requestBossApprovalReview
+    if (!requestReview || !isBossApprovalReviewCandidate(candidate)) return
+    queueMicrotask(() => {
+      if (!this.has(candidate.approvalId)) return
+      void requestReview(candidate)
+        .then(async (decision) => {
+          if (!decision || !this.has(candidate.approvalId)) return
+          await this.resolve(candidate.approvalId, decision.action, {
+            decisionSource: 'system',
+            extraMetadata: decision.metadata
+          })
+        })
+        .catch((error) => {
+          this.deps.log(
+            `[ApprovalService] Boss approval review failed for ${candidate.approvalId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        })
+    })
   }
 
   registerHostCommand(approvalId: string, info: PendingHostCommandApproval): boolean {
