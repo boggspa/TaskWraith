@@ -4092,12 +4092,22 @@ struct ContextCompactionSummaryCard: View {
     }
 }
 
-/// Collapsed per-lane fan-out result viewport — matches Electron
-/// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` / LiveActivityViewport labels on
-/// `EnsembleFanoutResultCard`. Header + card chrome stay outside the scroll.
+/// Collapsed per-lane fan-out result viewport — LiveActivityViewport labels and
+/// behaviour from Electron's `EnsembleFanoutResultCard`. Header + card chrome
+/// stay outside the scroll.
+///
+/// The HEIGHTS deliberately do NOT match desktop
+/// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` (331): that band was sized for a
+/// desktop transcript column. A fan-out puts SEVERAL lanes on screen at once,
+/// and 331 is over half an iPhone transcript viewport, so a two-lane round left
+/// nothing else visible. 185 puts two lanes in the space one used to take.
+/// Tapping a clamped lane still expands it in place, so nothing is lost — only
+/// the resting size changed.
 enum TWFanoutResultViewport {
-    static let collapsedMaxHeight: CGFloat = 331
-    static let edgeFadeHeight: CGFloat = 60
+    static let collapsedMaxHeight: CGFloat = 185
+    /// Scaled with the band (desktop ran 60 against 331). Holding 60 here would
+    /// have masked both edges of a 185pt window and left ~65pt legible.
+    static let edgeFadeHeight: CGFloat = 34
     static let expandLabel = "Expand result"
     static let collapseLabel = "Collapse result"
 }

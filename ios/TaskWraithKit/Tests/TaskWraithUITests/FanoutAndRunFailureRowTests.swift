@@ -168,13 +168,20 @@ struct FanoutAndRunFailureRowTests {
         #expect(twIsPlainSystemNoticeRow(notice))
     }
 
-    /// Per-lane result viewport clamps match Electron
-    /// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` and LiveActivityViewport labels
-    /// on EnsembleFanoutResultCard. Wave-level FanoutViewportSummaryRow collapse
-    /// is a separate surface and is not covered here.
-    @Test func fanoutResultViewportMatchesElectronClamp() {
-        #expect(TWFanoutResultViewport.collapsedMaxHeight == 331)
-        #expect(TWFanoutResultViewport.edgeFadeHeight == 60)
+    /// Per-lane result viewport clamps. The LABELS are Electron parity
+    /// (LiveActivityViewport on EnsembleFanoutResultCard); the HEIGHTS are
+    /// deliberately the phone's own and are shorter than the desktop's
+    /// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` — a 331pt band eats most of an
+    /// iPhone transcript viewport, and a fan-out stacks several of them. Pinned
+    /// so a future "restore desktop parity" pass has to argue with a test.
+    /// Wave-level FanoutViewportSummaryRow collapse is a separate surface and is
+    /// not covered here.
+    @Test func fanoutResultViewportClampsToThePhoneBand() {
+        #expect(TWFanoutResultViewport.collapsedMaxHeight == 185)
+        // The fade is a FRACTION of the band, not a fixed strip: at the desktop
+        // 331/60 it masked ~36% of the window, and carrying 60 down to 185 would
+        // have left barely a third of the band at full opacity.
+        #expect(TWFanoutResultViewport.edgeFadeHeight == 34)
         #expect(TWFanoutResultViewport.expandLabel == "Expand result")
         #expect(TWFanoutResultViewport.collapseLabel == "Collapse result")
     }
