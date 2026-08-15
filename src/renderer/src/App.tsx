@@ -9,6 +9,7 @@ import {
 } from './lib/usageRecordsCache'
 import { resolveWithinDeadline } from './lib/backgroundHydration'
 import { LateBackgroundRefreshCoordinator } from './lib/lateBackgroundRefreshCoordinator'
+import { UsageSummaryStore, UsageSummaryStoreContext } from './lib/usageSummaryStore'
 import {
   scheduleProviderMetadataWarmup,
   type ProviderMetadataWarmupController
@@ -175,6 +176,7 @@ import type {
   ActiveGoalStatus,
   TranscriptMediaRef
 } from '../../main/store/types'
+import type { NormalizedProviderUsageSnapshot } from '../../main/ProviderQuotaSnapshots'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import {
   activeGoalModeLabel,
@@ -706,7 +708,7 @@ import {
   selectRunEvidenceMessages
 } from './lib/RunWorkspaceDiff'
 import {
-  fingerprintUsageSummary,
+  retainQuotaSnapshotOnDeadlineMiss,
   shouldLoadUsageRecords,
   shouldRunUsageRefresh
 } from './lib/usageRefresh'
@@ -2200,7 +2202,12 @@ function App(): React.JSX.Element {
     id: string
     message: string
   } | null>(null)
-  const [usageSummary, setUsageSummary] = useState<ModelUsageAggregate[]>([])
+  const usageSummaryStoreRef = useRef<UsageSummaryStore | null>(null)
+  if (!usageSummaryStoreRef.current) usageSummaryStoreRef.current = new UsageSummaryStore()
+  const usageSummaryStore = usageSummaryStoreRef.current
+  // Compatibility snapshot for existing prop plumbing. App intentionally does
+  // not subscribe: the leaf consumers read the same store through context.
+  const usageSummary = usageSummaryStore.getSnapshot()
   const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([])
   // Monotonic tick bumped whenever usage records change (a run completes →
   // `usage-changed` broadcast). Forwarded to the sidebar Model Usage card's
@@ -2239,7 +2246,7 @@ function App(): React.JSX.Element {
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
   // empty or deadline-missed network read must not blank those meters.
   const lastQuotaSnapshotHookRef = useRef<QuotaSnapshotHookSnapshot[]>([])
-  const usageSummarySignatureRef = useRef('')
+  const lastAntigravityQuotaSnapshotRef = useRef<NormalizedProviderUsageSnapshot | null>(null)
   const usageRecordsSignatureRef = useRef('')
   const usageRecordsInitializedRef = useRef(false)
   const usageRunAggregatesRef = useRef<ModelUsageAggregate[]>([])
@@ -9006,33 +9013,47 @@ function App(): React.JSX.Element {
     // AntiGravity quota collection stays behind agy's credential boundary.
     // Electron main caches the documented `/usage` panel on the same rotating
     // cadence as the former Limit Counter collector; no OAuth token is read.
+    const hasAntigravitySnapshot =
+      antigravitySnap !== null &&
+      antigravitySnap !== undefined &&
+      typeof antigravitySnap === 'object'
+    const effectiveAntigravitySnapshot = retainQuotaSnapshotOnDeadlineMiss(
+      lastAntigravityQuotaSnapshotRef.current,
+      hasAntigravitySnapshot
+        ? (antigravitySnap as NormalizedProviderUsageSnapshot)
+        : null
+    )
     const antigravityFresh = (
-      Array.isArray(antigravitySnap?.windows) ? antigravitySnap.windows : []
+      Array.isArray(effectiveAntigravitySnapshot?.windows)
+        ? effectiveAntigravitySnapshot.windows
+        : []
     )
       .map((w: any, i: number) =>
         normalizeQuotaWindow('antigravity', w, `antigravity-quota-${i}`)
       )
       .filter((w): w is UsageWindowAggregate => Boolean(w))
-    const hasAntigravitySnapshot =
-      antigravitySnap !== null &&
-      antigravitySnap !== undefined &&
-      typeof antigravitySnap === 'object'
-    const antigravityWindows = hasAntigravitySnapshot
+    const antigravityWindows = effectiveAntigravitySnapshot
       ? antigravityFresh
       : resolveWithCache('antigravity', antigravityFresh)
     if (hasAntigravitySnapshot) {
       // A structured native result is authoritative even when it has no
       // windows: that can be an unconfigured tombstone or an explicit error.
-      // Only a deadline miss (`null`) is allowed to retain the last reading.
+      // Only a deadline miss (`null`) retains the complete last snapshot.
+      lastAntigravityQuotaSnapshotRef.current = effectiveAntigravitySnapshot
       lastUsageWindowsByProviderRef.current.antigravity = antigravityFresh
     }
     if (
       antigravityWindows.length > 0 ||
-      hasUsageBalances(antigravitySnap?.balances) ||
-      (antigravitySnap?.configured === true && typeof antigravitySnap?.error === 'string')
+      hasUsageBalances(effectiveAntigravitySnapshot?.balances) ||
+      (effectiveAntigravitySnapshot?.configured === true &&
+        typeof effectiveAntigravitySnapshot.error === 'string')
     ) {
       ordered.push(
-        buildQuotaAggregate('antigravity', antigravityWindows, antigravitySnap)
+        buildQuotaAggregate(
+          'antigravity',
+          antigravityWindows,
+          effectiveAntigravitySnapshot
+        )
       )
     }
 
@@ -9175,11 +9196,7 @@ function App(): React.JSX.Element {
 
     ordered.push(...usageRunAggregatesRef.current)
 
-    const nextUsageSignature = fingerprintUsageSummary(ordered)
-    if (options.force || usageSummarySignatureRef.current !== nextUsageSignature) {
-      usageSummarySignatureRef.current = nextUsageSignature
-      setUsageSummary(ordered)
-    }
+    usageSummaryStore.publish(ordered, { force: options.force === true })
   }
 
   const requestUsageSummaryRefresh = (
@@ -9526,7 +9543,7 @@ function App(): React.JSX.Element {
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
       await refreshChatList()
-      setUsageSummary([])
+      usageSummaryStore.publish([], { force: true })
     }
   }
 
@@ -31174,7 +31191,7 @@ function App(): React.JSX.Element {
     workspaces,
   }
 
-  return (
+  const appView = (
     <div
       className={`app-root ${fxBurstClass} ${appAgentAuraClass} ${providerShellClass} ${
         !isBootReady ? 'app-root-booting' : ''
@@ -31595,6 +31612,11 @@ function App(): React.JSX.Element {
         />
       )}
     </div>
+  )
+  return (
+    <UsageSummaryStoreContext.Provider value={usageSummaryStore}>
+      {appView}
+    </UsageSummaryStoreContext.Provider>
   )
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   fingerprintUsageSummary,
   hasUsageSummaryChanged,
+  retainQuotaSnapshotOnDeadlineMiss,
   shouldLoadUsageRecords,
   shouldRunUsageRefresh
 } from './usageRefresh'
@@ -130,6 +131,37 @@ describe('fingerprintUsageSummary', () => {
 
     expect(hasUsageSummaryChanged(prev, timestampOnly)).toBe(false)
     expect(hasUsageSummaryChanged(prev, changedBalance)).toBe(true)
+  })
+})
+
+describe('retainQuotaSnapshotOnDeadlineMiss', () => {
+  it('retains the complete previous snapshot for a deadline fallback', () => {
+    const previous = {
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: true,
+      planType: 'Antigravity Pro',
+      stale: false,
+      windows: [{ id: 'agy-gemini-weekly', remainingPercent: 42 }]
+    }
+
+    expect(retainQuotaSnapshotOnDeadlineMiss(previous, null)).toBe(previous)
+  })
+
+  it('accepts structured tombstones and errors as authoritative replacements', () => {
+    const previous = {
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: true,
+      windows: [{ id: 'agy-gemini-weekly', remainingPercent: 42 }]
+    }
+    const tombstone = {
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: false
+    }
+
+    expect(retainQuotaSnapshotOnDeadlineMiss(previous, tombstone)).toBe(tombstone)
   })
 })
 

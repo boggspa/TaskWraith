@@ -117,6 +117,21 @@ export function hasUsageSummaryChanged(
   return fingerprintUsageSummary(prev) !== fingerprintUsageSummary(next)
 }
 
+/**
+ * A UI deadline miss is not a provider tombstone. Keep the complete last
+ * structured snapshot so transient timeout fallbacks cannot erase metadata
+ * while the underlying provider read continues in the background.
+ */
+export function retainQuotaSnapshotOnDeadlineMiss<T extends object>(
+  previous: T | null | undefined,
+  candidate: T | null | undefined
+): T | null {
+  if (candidate !== null && candidate !== undefined && typeof candidate === 'object') {
+    return candidate
+  }
+  return previous ?? null
+}
+
 export interface UsageRecordsRefreshInput {
   /** The caller only needs live provider quota/balance telemetry. */
   quotaOnly: boolean

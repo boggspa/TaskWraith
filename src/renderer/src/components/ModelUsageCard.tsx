@@ -59,6 +59,7 @@ import { formatResetShort } from '../lib/UsageFormat'
 import { formatTokenCount } from '../lib/UsageHeatmap'
 import { buildModelContextLengthGroups } from '../lib/modelContextLengths'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
+import { useUsageSummary } from '../lib/usageSummaryStore'
 import { getProviderName } from './Sidebar'
 import {
   GrokCreditsMeterView,
@@ -1189,7 +1190,12 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
   )
 }
 
-export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: ModelUsageCardProps) {
+export function ModelUsageCard({
+  usageSummary: usageSummaryFallback,
+  variant = 'card',
+  apiSpend
+}: ModelUsageCardProps) {
+  const usageSummary = useUsageSummary(usageSummaryFallback)
   const quotaContentId = useId()
   const summaryRef = useRef<HTMLDivElement | null>(null)
   // Active view. Seed from the persisted pref (`apiSpend.view`) and keep a

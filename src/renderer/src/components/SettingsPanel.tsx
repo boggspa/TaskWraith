@@ -76,6 +76,7 @@ import {
   rgbStringFromHexColor
 } from '../lib/ensembleAgentPool'
 import { setFxRatesPerUsd } from '../lib/formatCost'
+import { useUsageSummary } from '../lib/usageSummaryStore'
 import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
 import { formatResetShort } from '../lib/UsageFormat'
 import {
@@ -3981,11 +3982,12 @@ export function SettingsPanel({
   onSelectWorkspaceDialog,
   onRemoveWorkspace,
   onTogglePinWorkspace,
-  usageSummary = [],
+  usageSummary: usageSummaryFallback = [],
   usageRecords = [],
   pinnedMessageGroups = [],
   onOpenPinnedMessage
 }: SettingsPanelProps): React.JSX.Element {
+  const usageSummary = useUsageSummary(usageSummaryFallback)
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
   // Optional host CLI presence for the Providers tab's tools card. Probed

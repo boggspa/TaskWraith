@@ -26,6 +26,7 @@ import { ComposerShellPreview } from './ComposerShellPreview'
 // import from the shared usage aggregate type module.
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { formatResetShort } from '../lib/UsageFormat'
+import { useUsageSummary } from '../lib/usageSummaryStore'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
@@ -261,7 +262,7 @@ export function FirstLaunchSheet({
   mistralStatus,
   ollamaProviderAvailable = false,
   antigravityProviderOffered = false,
-  usageSummary,
+  usageSummary: usageSummaryFallback,
   themeAppearance = 'system',
   composerStyle = 'default',
   diffStatColors = DEFAULT_DIFF_STAT_COLORS,
@@ -270,6 +271,7 @@ export function FirstLaunchSheet({
   cliPathDirectories,
   onCliPathDirectoriesChange
 }: FirstLaunchSheetProps): React.JSX.Element | null {
+  const usageSummary = useUsageSummary(usageSummaryFallback)
   // Probed only while the sheet is open; the card needs a truthful
   // installed/not-installed answer, not a guess from an error string.
   const ghStatus = useHostCliToolStatus('gh', open)
