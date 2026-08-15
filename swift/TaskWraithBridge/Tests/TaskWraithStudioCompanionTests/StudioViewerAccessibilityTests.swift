@@ -115,7 +115,8 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         let playhead = try XCTUnwrap(
             children.first { $0.accessibilityLabel() == "Playhead" })
         let identityBefore = ObjectIdentifier(playhead)
-        let valueBefore = try XCTUnwrap(playhead.accessibilityValue() as? String)
+        let spokenBefore = try XCTUnwrap(playhead.accessibilityValueDescription())
+        let ticksBefore = try XCTUnwrap(playhead.accessibilityValue() as? NSNumber)
 
         let host = CACurrentMediaTime()
         view.transport.seek(toTicks: 3000, atHost: host)
@@ -127,11 +128,65 @@ final class StudioViewerAccessibilityTests: XCTestCase {
         XCTAssertEqual(
             ObjectIdentifier(playheadAfter), identityBefore,
             "the value must be updated IN PLACE, not by replacing the element")
-        let valueAfter = try XCTUnwrap(playheadAfter.accessibilityValue() as? String)
+        let spokenAfter = try XCTUnwrap(playheadAfter.accessibilityValueDescription())
+        let ticksAfter = try XCTUnwrap(playheadAfter.accessibilityValue() as? NSNumber)
         XCTAssertNotEqual(
-            valueAfter, valueBefore,
+            spokenAfter, spokenBefore,
             "the spoken value never changed after a 3000-tick seek — a stable "
                 + "tree that reports nothing is dead, not efficient")
+        XCTAssertNotEqual(ticksAfter, ticksBefore)
+        XCTAssertGreaterThan(ticksAfter.int64Value, 0)
+    }
+
+    /// VoiceOver must be able to scrub. Setting the Playhead value seeks the
+    /// existing transport; it must not grow a second clock.
+    func testSettingThePlayheadValueMovesTheOneTransport() throws {
+        let (view, _) = try makeViewer()
+        let host = CACurrentMediaTime()
+        view.transport.pause(atHost: host)
+        view.transport.seek(toTicks: 0, atHost: host)
+        view.renderCurrentFrame()
+
+        let children = try XCTUnwrap(view.accessibilityChildren() as? [NSAccessibilityElement])
+        let playhead = try XCTUnwrap(
+            children.first { $0 is StudioPlayheadAccessibilityElement }
+                as? StudioPlayheadAccessibilityElement)
+
+        XCTAssertTrue(playhead.apply(NSNumber(value: 3000)))
+        playhead.accessibilitySetValue(NSNumber(value: 3000), forAttribute: .value)
+
+        XCTAssertEqual(
+            view.transport.clock.snapshot(atHost: CACurrentMediaTime()).positionTicks,
+            3000,
+            "an AX value-set must seek the existing StudioTransportController")
+        playhead.accessibilityPerformAction(.decrement)
+        XCTAssertEqual(
+            view.transport.clock.snapshot(atHost: CACurrentMediaTime()).frameIndex,
+            149,
+            "VoiceOver decrement is a one-frame step on the same transport")
+    }
+
+    /// THE CONTROL. Reverting the binding must make the same AX value-set a
+    /// no-op. If this still seeks, the slider is a backdoor, not a binding.
+    func testRevertingThePlayheadBindingLeavesTheTransport() throws {
+        let (view, _) = try makeViewer()
+        let host = CACurrentMediaTime()
+        view.transport.pause(atHost: host)
+        view.transport.seek(toTicks: 1200, atHost: host)
+        view.playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding(isBound: false)
+        view.renderCurrentFrame()
+
+        let children = try XCTUnwrap(view.accessibilityChildren() as? [NSAccessibilityElement])
+        let playhead = try XCTUnwrap(
+            children.first { $0 is StudioPlayheadAccessibilityElement }
+                as? StudioPlayheadAccessibilityElement)
+        XCTAssertFalse(playhead.apply(NSNumber(value: 4000)))
+        playhead.accessibilitySetValue(NSNumber(value: 4000), forAttribute: .value)
+        playhead.accessibilityPerformAction(.increment)
+        XCTAssertEqual(
+            view.transport.clock.snapshot(atHost: CACurrentMediaTime()).positionTicks,
+            1200,
+            "reverting the binding must fail this control")
     }
 
     /// Selecting a transcript segment must reach the tree too: the band's

@@ -232,6 +232,71 @@ final class StudioViewerPresentationTests: XCTestCase {
             presentationCount, 1,
             "an explicit open_media request must present Studio, including its load error")
     }
+
+    /// Source open must not steal the operator's key window or promote the
+    /// accessory companion to a regular activating app. Capture already works
+    /// while this process stays inactive.
+    func testShowOrdersTheWindowFrontWithoutTakingKeyOrActivating() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
+        let wasActive = application.isActive
+
+        let controller = StudioViewerWindowController(
+            renderer: renderer,
+            authority: StudioPlaybackAuthority(
+                clock: StudioPlaybackClock(timebase: timebase, durationTicks: 0)))
+
+        controller.show()
+
+        XCTAssertTrue(controller.isPresentationAttached)
+        XCTAssertTrue(controller.window.isVisible)
+        XCTAssertFalse(
+            controller.window.isKeyWindow,
+            "show() must not steal key-window status from the operator")
+        XCTAssertEqual(
+            application.activationPolicy(),
+            .accessory,
+            "presentation must not promote the companion to a regular app")
+        XCTAssertEqual(
+            application.isActive, wasActive,
+            "presentation must not change process activation")
+    }
+
+    func testDefaultOpenMediaPresentationDoesNotActivate() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let renderer = try StudioViewerRenderer(device: device)
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
+        let wasActive = application.isActive
+        let controller = StudioViewerWindowController(
+            renderer: renderer,
+            authority: StudioPlaybackAuthority(
+                clock: StudioPlaybackClock(timebase: timebase, durationTicks: 0)))
+        let state = StudioViewerAppState(
+            controller: controller,
+            renderer: renderer)
+
+        await state.open(assets: [
+            StudioMediaAsset(
+                assetId: "requested",
+                path: "/path/that/does/not/exist.mov")
+        ])
+
+        XCTAssertTrue(controller.window.isVisible)
+        XCTAssertFalse(controller.window.isKeyWindow)
+        XCTAssertEqual(application.activationPolicy(), .accessory)
+        XCTAssertEqual(application.isActive, wasActive)
+    }
 }
 
 /// The conversion arithmetic, exercised at a scale that is NOT 1.

@@ -69,6 +69,10 @@ final class StudioViewerView: NSView {
         get { authority.transport }
         set { authority.transport = newValue }
     }
+    /// VoiceOver (and any other AX client) scrubs through this binding. Tests
+    /// revert it to prove a value-set does nothing when unbound. Production
+    /// leaves it bound so there is still exactly one transport authority.
+    var playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding()
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
@@ -1210,9 +1214,22 @@ final class StudioViewerView: NSView {
 
         if sameControls {
             // No allocation: update only the values that actually moved.
+            // The playhead slider publishes ticks in place. Calling
+            // setAccessibilityValue here would treat a refresh as a seek.
+            let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
             for (index, descriptor) in incoming.enumerated()
             where descriptor.value != publishedAccessibility[index].value {
-                accessibilityChildElements[index].setAccessibilityValue(descriptor.value)
+                if let playhead = accessibilityChildElements[index]
+                    as? StudioPlayheadAccessibilityElement
+                {
+                    playhead.publish(
+                        ticks: snapshot.positionTicks,
+                        durationTicks: transport.clock.durationTicks,
+                        spoken: descriptor.value
+                    )
+                } else {
+                    accessibilityChildElements[index].setAccessibilityValue(descriptor.value)
+                }
             }
             publishedAccessibility = incoming
             return
@@ -1220,27 +1237,63 @@ final class StudioViewerView: NSView {
 
         publishedAccessibility = incoming
         let scale = window?.backingScaleFactor ?? 2.0
+        let snapshot = transport.clock.snapshot(atHost: transportHostSeconds)
 
         accessibilityChildElements = incoming.map { descriptor in
+            if descriptor.role == .slider && descriptor.label == "Playhead" {
+                let playhead = StudioPlayheadAccessibilityElement()
+                playhead.publish(
+                    ticks: snapshot.positionTicks,
+                    durationTicks: transport.clock.durationTicks,
+                    spoken: descriptor.value
+                )
+                playhead.applyValue = { [weak self] value in
+                    guard let self else { return false }
+                    return self.playheadAccessibilityBinding.apply(
+                        value,
+                        to: &self.transport,
+                        atHost: self.transportHostSeconds
+                    )
+                }
+                playhead.applyStep = { [weak self] delta in
+                    guard let self else { return false }
+                    return self.playheadAccessibilityBinding.step(
+                        frames: delta,
+                        to: &self.transport,
+                        atHost: self.transportHostSeconds
+                    )
+                }
+                playhead.setAccessibilityParent(self)
+                applyAccessibilityFrame(descriptor.frame, scale: scale, to: playhead)
+                return playhead
+            }
             let element = NSAccessibilityElement()
             element.setAccessibilityRole(Self.accessibilityRole(for: descriptor.role))
             element.setAccessibilityLabel(descriptor.label)
             element.setAccessibilityValue(descriptor.value)
             element.setAccessibilityParent(self)
-            // Descriptor frames are drawable pixels, top-left origin; AppKit
-            // wants points in SCREEN space, bottom-left origin.
-            let localRect = NSRect(
-                x: descriptor.frame.x / scale,
-                y: bounds.height - descriptor.frame.maxY / scale,
-                width: descriptor.frame.width / scale,
-                height: descriptor.frame.height / scale
-            )
-            if let window {
-                element.setAccessibilityFrame(
-                    window.convertToScreen(convert(localRect, to: nil))
-                )
-            }
+            applyAccessibilityFrame(descriptor.frame, scale: scale, to: element)
             return element
+        }
+    }
+
+    /// Descriptor frames are drawable pixels, top-left origin; AppKit wants
+    /// points in SCREEN space, bottom-left origin.
+    private func applyAccessibilityFrame(
+        _ frame: StudioOverlayFrame,
+        scale: CGFloat,
+        to element: NSAccessibilityElement
+    ) {
+        let localRect = NSRect(
+            x: frame.x / scale,
+            y: bounds.height - frame.maxY / scale,
+            width: frame.width / scale,
+            height: frame.height / scale
+        )
+        if let window {
+            element.setAccessibilityFrame(
+                window.convertToScreen(convert(localRect, to: nil))
+            )
         }
     }
 
@@ -1328,8 +1381,12 @@ final class StudioViewerWindowController {
         // Attaching the Metal view starts its display link. Keep it detached
         // until an explicit presentation so hidden startup does no rendering.
         if !isPresentationAttached { window.contentView = view }
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
+        // Visible and capturable, but not the operator's key/frontmost app.
+        // makeKeyAndOrderFront + activate() stole focus from the owner on
+        // every Source open; Work1 already proved WindowServer capture works
+        // on an inactive companion. VoiceOver operates the settable playhead
+        // without this process becoming key.
+        window.orderFrontRegardless()
     }
 
     func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
@@ -1470,9 +1527,11 @@ final class StudioViewerAppState {
             StudioMediaAttachment(renderer: $0.renderer, sourcePool: sourcePool)
         }
         self.presentSource = presentSource ?? {
-            NSApplication.shared.setActivationPolicy(.regular)
+            // Stay .accessory. Promoting to .regular and calling activate()
+            // made open_media steal the operator's foreground app before any
+            // driver ran. Observation-only capture already works while this
+            // process stays inactive.
             controller.show()
-            NSApplication.shared.activate()
         }
         reviewController?.configureSequenceAudio { [weak self] assetId in
             guard let self else { return nil }
