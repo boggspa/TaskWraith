@@ -1266,6 +1266,14 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     /// on who is still going rather than each computing it; absent (not empty)
     /// when no round is live, and absent entirely on older Mac builds.
     public let workingParticipantIds: [String]?
+    /// What is happening in the gap between two foreground seats — "Handing off
+    /// to Reviewer", "Preparing next turn", "Finalizing turn". Wire key
+    /// `turnTransitionLabel`. Present ONLY during that interval, which is
+    /// exactly when `workingParticipantIds` is empty while the round still
+    /// reads as running. The wording is the Mac's (shared with the desktop
+    /// indicator) so the two surfaces cannot describe the same instant
+    /// differently — never compose a second phrasing here. Absent on older Macs.
+    public let turnTransitionLabel: String?
     public let bossmanParticipantId: String?
     /// User-designated Captains in deterministic roster order. A present empty
     /// array is authoritative; older Mac builds omit this field.

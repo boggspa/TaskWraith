@@ -1920,7 +1920,8 @@ struct ThreadDetailView: View {
                         provider: thinkingProvider,
                         model: thinkingModel,
                         role: thinkingRole,
-                        agentIdentity: threadAgentIdentity)
+                        agentIdentity: threadAgentIdentity,
+                        statusLabel: twBetweenTurnStatusLabel(ensembleState))
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -6405,6 +6406,9 @@ struct WorkingGhostIndicator: View {
     /// The tail anchor stretches full-width so the mark left-aligns under the
     /// last streamed row; the inline (pre-stream) use hugs its content.
     var expands: Bool = false
+    /// Normally "Working". Between two seats the round says what it is actually
+    /// doing instead ("Handing off to Reviewer"), because no seat is working.
+    var label: String = "Working"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
 
@@ -6417,13 +6421,13 @@ struct WorkingGhostIndicator: View {
                         ? nil
                         : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
                     value: pulsing)
-            ShimmerWorkingLabel(accent: accent)
+            ShimmerWorkingLabel(accent: accent, label: label)
             StreamingDots(color: accent)
             if expands { Spacer(minLength: 0) }
         }
         .onAppear { pulsing = true }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Working")
+        .accessibilityLabel(label)
         .accessibilityAddTraits(.updatesFrequently)
     }
 }
@@ -6435,15 +6439,16 @@ struct WorkingGhostIndicator: View {
 /// the parent `WorkingGhostIndicator`, so this stays a11y-silent.
 private struct ShimmerWorkingLabel: View {
     var accent: Color
+    var label: String = "Working"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase: CGFloat = -1.2
 
     var body: some View {
         Group {
             if reduceMotion {
-                Text("Working").foregroundStyle(accent)
+                Text(label).foregroundStyle(accent)
             } else {
-                Text("Working")
+                Text(label)
                     .foregroundStyle(
                         LinearGradient(
                             stops: [
@@ -6582,14 +6587,36 @@ private struct QueuedMessageBubbleRow: View {
     }
 }
 
+/// The between-turn interval, if that is what the round is currently in.
+///
+/// Returns the Mac's own words or nothing — deliberately NOT a place to compose
+/// a phrase. The desktop and the phone must not describe the same instant
+/// differently, so the wording is projected (`ensembleTurnTransitionLabel`,
+/// shared) and this only decides WHETHER to show it.
+///
+/// A working seat wins if the Mac ever sends both: naming the seat is more
+/// specific than naming the gap, and the interval by definition has no owner.
+func twBetweenTurnStatusLabel(_ state: RemoteEnsembleState?) -> String? {
+    guard let state, state.status == "running" else { return nil }
+    guard (state.workingParticipantIds ?? []).isEmpty else { return nil }
+    let label = (state.turnTransitionLabel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return label.isEmpty ? nil : label
+}
+
 struct ThinkingRow: View {
     let provider: String?
     var model: String? = nil
     var role: String? = nil
     var agentIdentity: ThreadAgentIdentity? = nil
+    /// Set only between two seats. The row then speaks for the ROUND rather
+    /// than for a participant — no seat owns this moment, and painting the
+    /// next one as Working before it is seeded is the lie this replaces.
+    var statusLabel: String? = nil
 
     private var accent: Color {
-        agentIdentity?.accent ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
+        if statusLabel != nil { return TWTheme.providerAccent("ensemble") }
+        return agentIdentity?.accent
+            ?? TWTheme.providerAccent(provider, modelId: model, modelLabel: model)
     }
 
     var body: some View {
@@ -6600,11 +6627,11 @@ struct ThinkingRow: View {
                 hidden: false)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(agentIdentity?.name ?? headerLabel)
+                    Text(statusLabel != nil ? "Ensemble" : (agentIdentity?.name ?? headerLabel))
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
                     .foregroundStyle(accent)
-                    if agentIdentity != nil {
+                    if statusLabel == nil, agentIdentity != nil {
                         Text(providerModelLabel)
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
@@ -6614,7 +6641,7 @@ struct ThinkingRow: View {
                             .background(TWTheme.surface3, in: Capsule())
                     }
                 }
-                WorkingGhostIndicator(accent: accent)
+                WorkingGhostIndicator(accent: accent, label: statusLabel ?? "Working")
                     .padding(.vertical, 2)
             }            .frame(maxWidth: .infinity, alignment: .leading)
         }
