@@ -315,3 +315,81 @@ describe('shared chats are never abandoned', () => {
     ).toEqual([])
   })
 })
+
+describe('P5-X0 — a Channel-shared chat is reachable by the create-time reaper', () => {
+  /**
+   * P4's terminal cutover DELETES ordinary People shares (see
+   * PeopleToChannelMigrationFinalizationProductionRunner.test.ts:284, which
+   * asserts `listShares()` is `[]`), and production's `getSharedChatIds` has
+   * only two sources: enabled People shares and the external-contribution
+   * queue. On a post-cutover profile a Channel-shared chat therefore
+   * contributes NOTHING to the protection set unless it happens to have a
+   * queued contribution.
+   *
+   * Injected-dependency caveat, stated plainly: `getSharedChatIds` is a dep
+   * here, so handing back an empty set is near-tautological for the MECHANISM.
+   * What these tests actually establish is REACHABILITY — that a realistic
+   * Channel-shared chat shape clears every other guard (title, kind,
+   * relations, survivor quota) and still reaches deletion. The production gap
+   * itself is pinned in ChannelProductionMainIntegration.test.ts.
+   */
+  const reap = (
+    chats: ChatRecord[],
+    sharedChatIds: Set<string> = new Set(),
+    keepChatId?: string
+  ): string[] => {
+    const deleted: string[] = []
+    reapAbandonedChats(
+      {
+        getChats: () => chats,
+        getWorkflowChatIds: () => new Set(),
+        getScheduledChatIds: () => new Set(),
+        getSharedChatIds: () => sharedChatIds,
+        deleteChat: (chatId) => deleted.push(chatId)
+      },
+      keepChatId ? { keepChatId } : {}
+    )
+    return deleted
+  }
+
+  /** A chat shared to a Channel before anyone joined: single, untitled, no local messages. */
+  const sweep = (first: Partial<ChatRecord>): string[] =>
+    reap(
+      [
+        chat({ appChatId: 'channel-shared', createdAt: 1000, ...first }),
+        chat({ appChatId: 'newer-draft', createdAt: 3000 }),
+        chat({ appChatId: 'just-created', createdAt: 4000 })
+      ],
+      new Set(),
+      'just-created'
+    )
+
+  it('DELETES a Channel-shared chat that the protection set does not know about', () => {
+    expect(sweep({})).toContain('channel-shared')
+  })
+
+  it('protects that same chat once the Channel authority is a source of the protection set', () => {
+    const deleted = reap(
+      [
+        chat({ appChatId: 'channel-shared', createdAt: 1000 }),
+        chat({ appChatId: 'newer-draft', createdAt: 3000 }),
+        chat({ appChatId: 'just-created', createdAt: 4000 })
+      ],
+      new Set(['channel-shared']),
+      'just-created'
+    )
+    expect(deleted).not.toContain('channel-shared')
+  })
+
+  it('bounds the exposure: a Channel chat converted to a panel on join is never reaped', () => {
+    // ChatService converts a shared chat to an ensemble panel when an external
+    // human joins, and reapAbandonedChats supplies no `isDefaultEnsemble`, so
+    // ensembles are excluded outright. The exposure is limited to a chat that
+    // is shared but NOT yet joined.
+    expect(sweep({ chatKind: 'ensemble' })).not.toContain('channel-shared')
+  })
+
+  it('bounds the exposure: a renamed Channel chat is never reaped', () => {
+    expect(sweep({ title: 'Design review with Ana' })).not.toContain('channel-shared')
+  })
+})

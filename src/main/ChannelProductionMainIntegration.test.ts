@@ -221,4 +221,18 @@ describe('Channels production main integration', () => {
     expect(wiring).toContain("if (!service || service.status().state !== 'running')")
     expect(wiring).toContain("channel.status === 'active'")
   })
+
+  it('keeps a Channel-shared chat out of reach of the abandoned-chat reaper', () => {
+    // `getSharedChatIds` is the AbandonedChatReaper's protection list, and the
+    // reaper DELETES. The People→Channel migration DELETES ordinary legacy
+    // share records at finalization, so after cutover a Channel-shared chat
+    // contributes nothing here unless the Channel authority is also a source:
+    // an empty, unjoined, still-untitled Channel chat then looks exactly like
+    // an abandoned draft to every other guard. Union, never replacement — the
+    // legacy and queue sources stay for the pre-migration boot window.
+    const sharedChatIds = between('getSharedChatIds: () => {', 'getOpenChatPopoutIds: () => {')
+    expect(sharedChatIds).toContain('humanCollaborationStore.listShares()')
+    expect(sharedChatIds).toContain('externalContributionQueue.chatIdsWithQueued()')
+    expect(sharedChatIds).toContain('resolveActiveChannelChatIds()')
+  })
 })
