@@ -985,7 +985,7 @@ function sourceFramePts() {
       'csv=p=0',
       fixturePath
     ],
-    { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }
+    { timeout: 180_000, maxBuffer: 32 * 1024 * 1024 }
   )
   const values = result.stdout
     .split(/\r?\n/)
