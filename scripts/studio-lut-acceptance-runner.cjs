@@ -857,7 +857,27 @@ function ocrScreenshot(screenshotPath) {
   invariant(Array.isArray(observations), 'HUD OCR helper did not return an array')
   const texts = observations.map((entry) => entry.text)
   const joined = texts.join(' | ')
-  const contentPts = joined.match(/\b(\d{2}):(\d{2}):(\d{2})(?!:)(?:(?:\.\s*|\s*\|\s*)(\d{3}))?\b/)
+  // Prefer the frame-based HUD timecode HH:MM:SS:FF; the decimal form
+  // HH:MM:SS.mmm is a legacy fallback. The naive HH:MM:SS-only pattern
+  // misreads "00:00:19:20" as 00:19:20 (1160 s), so require the fourth
+  // component explicitly when it is present.
+  const frameTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2}):(\d{2})\b/)
+  const decimalTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2})\.(\d{3})\b/)
+  let contentPtsSeconds = null
+  if (frameTimecode) {
+    const frameDuration = sourceFramePts().values[1] - sourceFramePts().values[0]
+    contentPtsSeconds =
+      Number(frameTimecode[1]) * 3_600 +
+      Number(frameTimecode[2]) * 60 +
+      Number(frameTimecode[3]) +
+      Number(frameTimecode[4]) * frameDuration
+  } else if (decimalTimecode) {
+    contentPtsSeconds =
+      Number(decimalTimecode[1]) * 3_600 +
+      Number(decimalTimecode[2]) * 60 +
+      Number(decimalTimecode[3]) +
+      Number(decimalTimecode[4]) / 1_000
+  }
   const state = joined.match(/\b(PLAY|PAUSE)\b/i)
   return {
     command: result.command,
@@ -865,12 +885,7 @@ function ocrScreenshot(screenshotPath) {
     observations,
     texts,
     parsed: {
-      contentPtsSeconds: contentPts
-        ? Number(contentPts[1]) * 3_600 +
-          Number(contentPts[2]) * 60 +
-          Number(contentPts[3]) +
-          Number(contentPts[4] || 0) / 1_000
-        : null,
+      contentPtsSeconds,
       state: state?.[1]?.toUpperCase() || null
     }
   }
