@@ -30,6 +30,7 @@ import { normalizeThreadTitle } from '../shared/threadTitles'
 import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../shared/themeAccentColor'
 import {
   LIVE_ENSEMBLE_LANE_STATUSES,
+  ensembleTurnTransitionLabel,
   isEnsembleRoundPresentationLive
 } from '../shared/ensembleRoundLifecycle'
 import type {
@@ -610,6 +611,16 @@ export interface RemoteEnsembleState {
    * that ignores the field behaves exactly as before.
    */
   workingParticipantIds?: string[]
+  /**
+   * What is happening in the gap between two foreground seats — "Handing off to
+   * Reviewer", "Preparing next turn", "Finalizing turn". Present ONLY during
+   * that interval, which is exactly when `workingParticipantIds` is empty while
+   * the round still reads as running, so a client that ignores this field shows
+   * what it always did. Wording comes from `ensembleTurnTransitionLabel`, shared
+   * with the desktop indicator so the two surfaces cannot describe the same
+   * instant differently.
+   */
+  turnTransitionLabel?: string
   bossmanParticipantId?: string
   captainParticipantIds?: string[]
   secondInCommandParticipantId?: string
@@ -1623,6 +1634,23 @@ export function buildRemoteEnsembleState(
     ...(() => {
       const working = workingParticipantIdsForRound(activeRound, projectedRoundStatus)
       return working.length > 0 ? { workingParticipantIds: working } : {}
+    })(),
+    ...(() => {
+      // Between two foreground seats nobody is working, so `workingParticipantIds`
+      // is legitimately empty and the phone would otherwise show a running round
+      // with no account of itself. Resolve the target's role the same two ways
+      // the desktop does — roster `id` first, then the round's own participant
+      // list — so a seat the round knows about is still named.
+      if (projectedRoundStatus !== 'running') return {}
+      const transition = activeRound?.turnTransition
+      if (!transition) return {}
+      const targetId = transition.targetParticipantId
+      const target = targetId
+        ? ensemble.participants?.find((participant) => participant.id === targetId) ||
+          participants.find((participant) => participant.participantId === targetId)
+        : undefined
+      const label = ensembleTurnTransitionLabel(transition, target?.role)
+      return label ? { turnTransitionLabel: label } : {}
     })(),
     bossmanParticipantId: authority.bossmanParticipantId,
     captainParticipantIds: authority.captainParticipantIds,

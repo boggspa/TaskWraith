@@ -1,7 +1,8 @@
 import type {
   ConcurrentLaneStatus,
   EnsembleParticipantStatus,
-  EnsembleRoundState
+  EnsembleRoundState,
+  EnsembleRoundTurnTransition
 } from '../main/store/types'
 
 const LIVE_ENSEMBLE_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
@@ -63,4 +64,26 @@ export function isEnsembleRoundPresentationLive(
   if (round?.status !== 'running') return false
   if (round.turnTransition) return true
   return isEnsembleRoundDispatchLive(round)
+}
+
+/**
+ * What to SAY during the interval between two foreground seats, when no
+ * participant owns the moment and painting one as "Working" would be a lie.
+ *
+ * Shared rather than renderer-local because the phone shows this too, and the
+ * wording is the whole point: two copies of the same three strings drift, and a
+ * transcript that says something different on each surface about the same
+ * instant is worse than one that says nothing. `targetRoleLabel` is resolved by
+ * the caller (each side already holds its own participant list); an
+ * unrecognised or blank role degrades to the generic phrasing rather than
+ * naming an empty seat.
+ */
+export function ensembleTurnTransitionLabel(
+  transition: EnsembleRoundTurnTransition | null | undefined,
+  targetRoleLabel?: string | null
+): string | undefined {
+  if (!transition) return undefined
+  if (transition.phase !== 'handoff') return 'Finalizing turn'
+  const target = (targetRoleLabel || '').trim()
+  return target ? `Handing off to ${target}` : 'Preparing next turn'
 }

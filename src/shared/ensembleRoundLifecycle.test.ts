@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleRoundState } from '../main/store/types'
 import {
+  ensembleTurnTransitionLabel,
   isEnsembleRoundDispatchLive,
   isEnsembleRoundPresentationLive
 } from './ensembleRoundLifecycle'
@@ -108,5 +109,40 @@ describe('isEnsembleRoundDispatchLive', () => {
     })
 
     expect(isEnsembleRoundPresentationLive(round)).toBe(false)
+  })
+})
+
+describe('ensembleTurnTransitionLabel', () => {
+  const base = {
+    runtimeInstanceId: 'runtime-1',
+    sourceParticipantId: 'p1',
+    sourceRunId: 'run-1',
+    startedAt: '2026-07-01T00:01:00.000Z'
+  } as const
+
+  it('names the seat being handed to when one is known', () => {
+    expect(
+      ensembleTurnTransitionLabel({ ...base, phase: 'handoff', targetParticipantId: 'p2' }, 'Reviewer')
+    ).toBe('Handing off to Reviewer')
+  })
+
+  it('falls back to a generic handoff when the target has no usable role', () => {
+    expect(ensembleTurnTransitionLabel({ ...base, phase: 'handoff' }, undefined)).toBe(
+      'Preparing next turn'
+    )
+    // A whitespace-only role is not a name — the desktop trims before deciding.
+    expect(ensembleTurnTransitionLabel({ ...base, phase: 'handoff' }, '   ')).toBe(
+      'Preparing next turn'
+    )
+  })
+
+  it('reports the provider settling interval as finalizing', () => {
+    expect(
+      ensembleTurnTransitionLabel({ ...base, phase: 'settling-provider' }, 'Reviewer')
+    ).toBe('Finalizing turn')
+  })
+
+  it('says nothing when there is no transition', () => {
+    expect(ensembleTurnTransitionLabel(undefined, 'Reviewer')).toBeUndefined()
   })
 })

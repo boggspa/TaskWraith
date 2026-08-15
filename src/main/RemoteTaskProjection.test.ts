@@ -1926,3 +1926,66 @@ describe('buildRemoteEnsembleState — working participant ids', () => {
     expect(state?.workingParticipantIds).toEqual(['reader-1'])
   })
 })
+
+describe('buildRemoteEnsembleState — between-turn status', () => {
+  function transitionChat(
+    transition: Record<string, unknown> | undefined,
+    status = 'running'
+  ): ChatRecord {
+    return chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          { id: 'reader-1', provider: 'codex', role: 'Reader', enabled: true, order: 0 },
+          { id: 'writer-2', provider: 'claude', role: 'Reviewer', enabled: true, order: 1 }
+        ],
+        activeRound: {
+          roundId: 'round-1',
+          status,
+          prompt: 'Go.',
+          startedAt: ISO,
+          participants: [],
+          ...(transition ? { turnTransition: transition } : {})
+        }
+      }
+    } as unknown as Partial<ChatRecord>)
+  }
+
+  const base = {
+    runtimeInstanceId: 'runtime-1',
+    sourceParticipantId: 'reader-1',
+    sourceRunId: 'run-1',
+    startedAt: ISO
+  }
+
+  it('names the seat being handed to, resolved from the roster', () => {
+    const state = buildRemoteEnsembleState(
+      transitionChat({ ...base, phase: 'handoff', targetParticipantId: 'writer-2' })
+    )
+    expect(state?.turnTransitionLabel).toBe('Handing off to Reviewer')
+    // The interval is still the round running — nobody owns it, so no seat may
+    // be projected as working.
+    expect(state?.status).toBe('running')
+    expect(state?.workingParticipantIds).toBeUndefined()
+  })
+
+  it('degrades to generic copy when the target is not in the roster', () => {
+    const state = buildRemoteEnsembleState(
+      transitionChat({ ...base, phase: 'handoff', targetParticipantId: 'ghost-9' })
+    )
+    expect(state?.turnTransitionLabel).toBe('Preparing next turn')
+  })
+
+  it('reports the provider settling interval as finalizing', () => {
+    const state = buildRemoteEnsembleState(transitionChat({ ...base, phase: 'settling-provider' }))
+    expect(state?.turnTransitionLabel).toBe('Finalizing turn')
+  })
+
+  it('says nothing outside a transition, or once the round is not running', () => {
+    expect(buildRemoteEnsembleState(transitionChat(undefined))?.turnTransitionLabel).toBeUndefined()
+    const terminal = buildRemoteEnsembleState(
+      transitionChat({ ...base, phase: 'handoff', targetParticipantId: 'writer-2' }, 'completed')
+    )
+    expect(terminal?.turnTransitionLabel).toBeUndefined()
+  })
+})

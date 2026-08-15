@@ -8,7 +8,10 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
-import { LIVE_ENSEMBLE_LANE_STATUSES } from '../../../shared/ensembleRoundLifecycle'
+import {
+  ensembleTurnTransitionLabel,
+  LIVE_ENSEMBLE_LANE_STATUSES
+} from '../../../shared/ensembleRoundLifecycle'
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
 import {
@@ -148,13 +151,9 @@ function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentat
         (participant) => participant.participantId === transition.targetParticipantId
       )
     : undefined
-  const targetLabel = target?.role?.trim()
-  const statusLabel =
-    transition.phase === 'handoff' && targetLabel
-      ? `Handing off to ${targetLabel}`
-      : transition.phase === 'handoff'
-        ? 'Preparing next turn'
-        : 'Finalizing turn'
+  // The wording lives in shared: the phone renders this same interval from the
+  // projected label, and two copies of these three strings would drift.
+  const statusLabel = ensembleTurnTransitionLabel(transition, target?.role)
   return {
     participantId: null,
     runId: transition.sourceRunId,
