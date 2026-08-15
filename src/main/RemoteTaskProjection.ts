@@ -1658,7 +1658,16 @@ export function buildRemoteEnsembleState(
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
     continuationPass: activeRound?.continuationPass,
-    fanoutPolicy: activeRound?.fanoutPolicy ?? ensemble.fanoutPolicy,
+    // A LIVE round is immutable evidence of what main admitted, and can differ
+    // from the setting the next round would use — so while it runs the phone
+    // shows the round's policy rather than implying a capability it does not
+    // have (desktop `displayedFanoutPolicy`). Once it terminates the setting
+    // wins again: the Mac never clears `activeRound`, so without this gate a
+    // finished round's policy stuck forever, and the phone's picker misreported
+    // both the next round AND the user's own most recent change.
+    fanoutPolicy:
+      (projectedRoundStatus === 'running' ? activeRound?.fanoutPolicy : undefined) ??
+      ensemble.fanoutPolicy,
     ensembleContextChars: ensemble.ensembleContextChars,
     ...(ensemble.bossmanAutoApprovals?.enabled === true
       ? { bossmanAutoApprovalsEnabled: true }

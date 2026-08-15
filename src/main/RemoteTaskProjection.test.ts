@@ -1989,3 +1989,61 @@ describe('buildRemoteEnsembleState — between-turn status', () => {
     expect(terminal?.turnTransitionLabel).toBeUndefined()
   })
 })
+
+describe('buildRemoteEnsembleState — fan-out policy follows the round only while it runs', () => {
+  function policyChat(roundStatus: string | undefined, roundPolicy?: string): ChatRecord {
+    return chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          { id: 'reader-1', provider: 'codex', role: 'Reader', enabled: true, order: 0 }
+        ],
+        // What the NEXT round would use.
+        fanoutPolicy: 'locked_writers_with_boss',
+        ...(roundStatus
+          ? {
+              activeRound: {
+                roundId: 'round-1',
+                status: roundStatus,
+                prompt: 'Go.',
+                startedAt: ISO,
+                participants: [
+                  { participantId: 'reader-1', provider: 'codex', role: 'Reader', order: 0, status: roundStatus === 'running' ? 'running' : 'completed' }
+                ],
+                ...(roundPolicy ? { fanoutPolicy: roundPolicy } : {})
+              }
+            }
+          : {})
+      }
+    } as unknown as Partial<ChatRecord>)
+  }
+
+  it('shows what main actually admitted while the round is live', () => {
+    // Desktop parity: a running round is immutable evidence of what it may do,
+    // and must not advertise a capability the setting has since been widened to.
+    expect(buildRemoteEnsembleState(policyChat('running', 'read_only'))?.fanoutPolicy).toBe(
+      'read_only'
+    )
+  })
+
+  it('reverts to the chat setting once the round terminates', () => {
+    // `activeRound` is never cleared on the Mac, so without a liveness gate the
+    // phone kept showing a finished round's policy — and the picker misreported
+    // what the next round (and the user's own last change) would use.
+    expect(buildRemoteEnsembleState(policyChat('completed', 'read_only'))?.fanoutPolicy).toBe(
+      'locked_writers_with_boss'
+    )
+    expect(buildRemoteEnsembleState(policyChat('cancelled', 'read_only'))?.fanoutPolicy).toBe(
+      'locked_writers_with_boss'
+    )
+  })
+
+  it('falls back to the setting when a live round carries no policy of its own', () => {
+    expect(buildRemoteEnsembleState(policyChat('running'))?.fanoutPolicy).toBe(
+      'locked_writers_with_boss'
+    )
+    expect(buildRemoteEnsembleState(policyChat(undefined))?.fanoutPolicy).toBe(
+      'locked_writers_with_boss'
+    )
+  })
+})
