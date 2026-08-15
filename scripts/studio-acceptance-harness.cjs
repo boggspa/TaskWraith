@@ -43,6 +43,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_WAIT_MS = 45_000
 const ACCEPTANCE_SCHEMA_VERSION = 1
 const ACCEPTANCE_RECEIPT_MAX_BYTES = 256 * 1024
+const STUDIO_UI_MAX_PLAYHEAD_FORWARD_ADVANCE_TICKS = 1_000_000
 const WATCHDOG_RECEIPT_KIND = 'taskwraith-studio-acceptance-watchdog'
 const KNOWN_RECEIPT_SCHEMA_VERSIONS = new Set([1, 2])
 const KNOWN_RECEIPT_STATUSES = new Set([
@@ -1061,12 +1062,18 @@ function buildStudioUiDriverRequest(options) {
       (action.playheadToleranceTicks === undefined ||
         (Number.isSafeInteger(action.playheadToleranceTicks) &&
           action.playheadToleranceTicks >= 0 &&
-          action.playheadToleranceTicks <= 50_000))
+          action.playheadToleranceTicks <= 50_000)) &&
+      (action.playheadMaximumForwardAdvanceTicks === undefined ||
+        (Number.isSafeInteger(action.playheadMaximumForwardAdvanceTicks) &&
+          action.playheadMaximumForwardAdvanceTicks >= 0 &&
+          action.playheadMaximumForwardAdvanceTicks <=
+            STUDIO_UI_MAX_PLAYHEAD_FORWARD_ADVANCE_TICKS))
     ) {
       return {
         type: 'set-playhead-ticks',
         playheadTicks: action.playheadTicks,
-        playheadToleranceTicks: action.playheadToleranceTicks ?? 0
+        playheadToleranceTicks: action.playheadToleranceTicks ?? 0,
+        playheadMaximumForwardAdvanceTicks: action.playheadMaximumForwardAdvanceTicks ?? 0
       }
     }
     if (
@@ -1286,9 +1293,12 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       action.type === 'set-playhead-ticks' &&
       (observed.playheadTicks !== action.playheadTicks ||
         observed.playheadToleranceTicks !== action.playheadToleranceTicks ||
+        observed.playheadMaximumForwardAdvanceTicks !== action.playheadMaximumForwardAdvanceTicks ||
         !Number.isSafeInteger(observed.observedPlayheadTicks) ||
-        Math.abs(observed.observedPlayheadTicks - action.playheadTicks) >
-          action.playheadToleranceTicks)
+        (observed.observedPlayheadTicks < action.playheadTicks
+          ? action.playheadTicks - observed.observedPlayheadTicks > action.playheadToleranceTicks
+          : observed.observedPlayheadTicks - action.playheadTicks >
+            action.playheadToleranceTicks + action.playheadMaximumForwardAdvanceTicks))
     ) {
       throw new Error('Studio UI driver playhead receipt does not match the bounded request')
     }

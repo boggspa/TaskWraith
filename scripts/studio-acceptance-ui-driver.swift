@@ -29,6 +29,7 @@ struct DriverAction: Codable {
     let durationSeconds: Int?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
+    let playheadMaximumForwardAdvanceTicks: Int64?
     let playheadStepFrames: Int?
 }
 
@@ -79,6 +80,7 @@ struct ActionReceipt: Codable {
     let audioProbe: AudioProbeReceipt?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
+    let playheadMaximumForwardAdvanceTicks: Int64?
     let playheadStepFrames: Int?
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
@@ -94,6 +96,7 @@ struct ActionReceipt: Codable {
         audioProbe: AudioProbeReceipt?,
         playheadTicks: Int64? = nil,
         playheadToleranceTicks: Int64? = nil,
+        playheadMaximumForwardAdvanceTicks: Int64? = nil,
         playheadStepFrames: Int? = nil,
         playheadTicksBefore: Int64? = nil,
         observedPlayheadTicks: Int64? = nil
@@ -108,6 +111,7 @@ struct ActionReceipt: Codable {
         self.audioProbe = audioProbe
         self.playheadTicks = playheadTicks
         self.playheadToleranceTicks = playheadToleranceTicks
+        self.playheadMaximumForwardAdvanceTicks = playheadMaximumForwardAdvanceTicks
         self.playheadStepFrames = playheadStepFrames
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
@@ -306,12 +310,15 @@ func setAccessibilityPlayhead(
     in window: AXUIElement,
     to ticks: Int64,
     toleranceTicks: Int64,
+    maximumForwardAdvanceTicks: Int64,
     request: DriverRequest,
     application: NSRunningApplication
 ) throws -> Int64 {
     guard ticks >= 0,
           toleranceTicks >= 0,
           toleranceTicks <= 50_000,
+          maximumForwardAdvanceTicks >= 0,
+          maximumForwardAdvanceTicks <= 1_000_000,
           let minimum = numberAttribute(kAXMinValueAttribute, of: playhead)?.int64Value,
           let maximum = numberAttribute(kAXMaxValueAttribute, of: playhead)?.int64Value,
           minimum == 0,
@@ -334,7 +341,7 @@ func setAccessibilityPlayhead(
     func settled(_ candidate: Int64?) -> Bool {
         guard let candidate else { return false }
         return candidate >= ticks
-            ? candidate - ticks <= toleranceTicks
+            ? candidate - ticks <= toleranceTicks + maximumForwardAdvanceTicks
             : ticks - candidate <= toleranceTicks
     }
     var observed: Int64?
@@ -856,12 +863,15 @@ do {
            let playheadTicks = action.playheadTicks,
            let playheadToleranceTicks = action.playheadToleranceTicks
         {
+            let playheadMaximumForwardAdvanceTicks =
+                action.playheadMaximumForwardAdvanceTicks ?? 0
             let accessibilityPlayhead = try exactAccessibilityPlayhead(in: accessibilityWindow)
             let observed = try setAccessibilityPlayhead(
                 accessibilityPlayhead,
                 in: accessibilityWindow,
                 to: playheadTicks,
                 toleranceTicks: playheadToleranceTicks,
+                maximumForwardAdvanceTicks: playheadMaximumForwardAdvanceTicks,
                 request: request,
                 application: application
             )
@@ -878,6 +888,8 @@ do {
                     audioProbe: nil,
                     playheadTicks: playheadTicks,
                     playheadToleranceTicks: playheadToleranceTicks,
+                    playheadMaximumForwardAdvanceTicks:
+                        playheadMaximumForwardAdvanceTicks,
                     observedPlayheadTicks: observed
                 )
             )

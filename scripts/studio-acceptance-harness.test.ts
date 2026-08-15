@@ -1334,10 +1334,45 @@ describe('Studio acceptance harness', () => {
         {
           type: 'set-playhead-ticks',
           playheadTicks: 241_000,
-          playheadToleranceTicks: 50_000
+          playheadToleranceTicks: 50_000,
+          playheadMaximumForwardAdvanceTicks: 0
         }
       ]
     })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
+          {
+            type: 'set-playhead-ticks',
+            playheadTicks: 241_000,
+            playheadToleranceTicks: 50_000,
+            playheadMaximumForwardAdvanceTicks: 1_000_000
+          }
+        ]
+      })
+    ).toMatchObject({
+      actions: [
+        {
+          type: 'set-playhead-ticks',
+          playheadMaximumForwardAdvanceTicks: 1_000_000
+        }
+      ]
+    })
+    for (const playheadMaximumForwardAdvanceTicks of [-1, 1_000_001, 1.5]) {
+      expect(() =>
+        buildStudioUiDriverRequest({
+          ...target,
+          actions: [
+            {
+              type: 'set-playhead-ticks',
+              playheadTicks: 241_000,
+              playheadMaximumForwardAdvanceTicks
+            }
+          ]
+        })
+      ).toThrow(/unsupported UI action/)
+    }
     expect(() =>
       buildStudioUiDriverRequest({
         ...target,
@@ -1459,6 +1494,15 @@ describe('Studio acceptance harness', () => {
       'action.type == "set-playhead-ticks",\n' +
         '           request.inputDelivery == "background-observation-only"'
     )
+    expect(driverSource).toContain(
+      'let playheadMaximumForwardAdvanceTicks =\n' +
+        '                action.playheadMaximumForwardAdvanceTicks ?? 0'
+    )
+    expect(driverSource).toContain('maximumForwardAdvanceTicks <= 1_000_000')
+    expect(driverSource).toContain(
+      'candidate - ticks <= toleranceTicks + maximumForwardAdvanceTicks'
+    )
+    expect(driverSource).toContain(': ticks - candidate <= toleranceTicks')
     expect(driverSource).toContain('foregroundAfter == foregroundBefore')
     expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
@@ -1542,6 +1586,7 @@ describe('Studio acceptance harness', () => {
             yFraction: action.yFraction ?? null,
             playheadTicks: action.playheadTicks ?? null,
             playheadToleranceTicks: action.playheadToleranceTicks ?? null,
+            playheadMaximumForwardAdvanceTicks: action.playheadMaximumForwardAdvanceTicks ?? null,
             playheadStepFrames: action.playheadStepFrames ?? null,
             playheadTicksBefore: action.type === 'step-playhead-frame' ? 1_000 : null,
             observedPlayheadTicks:
@@ -1644,7 +1689,8 @@ describe('Studio acceptance harness', () => {
         {
           type: 'set-playhead-ticks',
           playheadTicks: 241_000,
-          playheadToleranceTicks: 50_000
+          playheadToleranceTicks: 50_000,
+          playheadMaximumForwardAdvanceTicks: 500_000
         }
       ],
       { execFile }
@@ -1656,6 +1702,7 @@ describe('Studio acceptance harness', () => {
           type: 'set-playhead-ticks',
           playheadTicks: 241_000,
           playheadToleranceTicks: 50_000,
+          playheadMaximumForwardAdvanceTicks: 500_000,
           observedPlayheadTicks: 239_693
         }
       ]
@@ -1691,6 +1738,82 @@ describe('Studio acceptance harness', () => {
       pgid: 7001,
       windowId: 42
     })
+  })
+
+  it('bounds live Playhead settlement with an explicit forward-only envelope', async () => {
+    const root = await temporaryRoot('studio-acceptance-playhead-envelope-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 1, y: 2, width: 640, height: 360 }
+          }
+        ]
+      }
+    }
+    const run = (observedPlayheadTicks: number, receiptMaximumForwardAdvanceTicks = 1_000_000) =>
+      runStudioUiDriver(
+        { artifactRoot: root },
+        target,
+        [
+          {
+            type: 'set-playhead-ticks',
+            playheadTicks: 241_000,
+            playheadToleranceTicks: 50_000,
+            playheadMaximumForwardAdvanceTicks: 1_000_000
+          }
+        ],
+        {
+          execFile: vi.fn(async (_file: string, args: string[]) => {
+            const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+            const action = request.actions[0]
+            return {
+              stdout: `${JSON.stringify({
+                schemaVersion: 1,
+                kind: 'taskwraith-studio-ui-driver-receipt',
+                inputDelivery: request.inputDelivery,
+                pid: request.expectedPid,
+                pgid: request.expectedPgid,
+                windowId: request.windowId,
+                actions: [
+                  {
+                    index: 0,
+                    type: action.type,
+                    playheadTicks: action.playheadTicks,
+                    playheadToleranceTicks: action.playheadToleranceTicks,
+                    playheadMaximumForwardAdvanceTicks: receiptMaximumForwardAdvanceTicks,
+                    observedPlayheadTicks
+                  }
+                ]
+              })}\n`,
+              stderr: ''
+            }
+          })
+        }
+      )
+
+    await expect(run(1_291_000)).resolves.toMatchObject({
+      actions: [
+        {
+          playheadMaximumForwardAdvanceTicks: 1_000_000,
+          observedPlayheadTicks: 1_291_000
+        }
+      ]
+    })
+    await expect(run(1_291_001)).rejects.toThrow(/playhead receipt/)
+    await expect(run(190_999)).rejects.toThrow(/playhead receipt/)
+    await expect(run(241_000, 999_999)).rejects.toThrow(/playhead receipt/)
   })
 
   it('defines and drives the host-authorized accept/reject journey in exact order', async () => {
