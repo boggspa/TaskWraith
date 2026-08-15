@@ -27,6 +27,8 @@ struct DriverAction: Codable {
     let xFraction: Double?
     let yFraction: Double?
     let durationSeconds: Int?
+    let playheadTicks: Int64?
+    let playheadStepFrames: Int?
 }
 
 struct DriverRequest: Codable {
@@ -74,6 +76,38 @@ struct ActionReceipt: Codable {
     let xFraction: Double?
     let yFraction: Double?
     let audioProbe: AudioProbeReceipt?
+    let playheadTicks: Int64?
+    let playheadStepFrames: Int?
+    let playheadTicksBefore: Int64?
+    let observedPlayheadTicks: Int64?
+
+    init(
+        index: Int,
+        type: String,
+        key: String?,
+        screenshotPath: String?,
+        byteLength: Int?,
+        xFraction: Double?,
+        yFraction: Double?,
+        audioProbe: AudioProbeReceipt?,
+        playheadTicks: Int64? = nil,
+        playheadStepFrames: Int? = nil,
+        playheadTicksBefore: Int64? = nil,
+        observedPlayheadTicks: Int64? = nil
+    ) {
+        self.index = index
+        self.type = type
+        self.key = key
+        self.screenshotPath = screenshotPath
+        self.byteLength = byteLength
+        self.xFraction = xFraction
+        self.yFraction = yFraction
+        self.audioProbe = audioProbe
+        self.playheadTicks = playheadTicks
+        self.playheadStepFrames = playheadStepFrames
+        self.playheadTicksBefore = playheadTicksBefore
+        self.observedPlayheadTicks = observedPlayheadTicks
+    }
 }
 
 struct DriverReceipt: Codable {
@@ -200,6 +234,145 @@ func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
         throw DriverFailure.refused("exact Companion accessibility window identity is unavailable")
     }
     return window
+}
+
+func stringAttribute(_ attribute: String, of element: AXUIElement) -> String? {
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
+        return nil
+    }
+    return raw as? String
+}
+
+func numberAttribute(_ attribute: String, of element: AXUIElement) -> NSNumber? {
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
+        return nil
+    }
+    return raw as? NSNumber
+}
+
+/// Finds the one product Playhead through the same public AX tree VoiceOver uses.
+///
+/// The traversal is depth- and count-bounded so a malformed external tree cannot
+/// turn an acceptance request into an unbounded walk.
+func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXSliderRole,
+           stringAttribute(kAXTitleAttribute, of: element) == "Playhead",
+           stringAttribute(kAXIdentifierAttribute, of: element) == "Playhead"
+        {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512, matches.count == 1, let playhead = matches.first else {
+        throw DriverFailure.refused("exact operable Playhead accessibility identity is unavailable")
+    }
+    var settable = DarwinBoolean(false)
+    guard AXUIElementIsAttributeSettable(
+        playhead,
+        kAXValueAttribute as CFString,
+        &settable
+    ) == .success,
+        settable.boolValue else {
+        throw DriverFailure.refused("exact Playhead accessibility value is not settable")
+    }
+    return playhead
+}
+
+func setAccessibilityPlayhead(
+    _ playhead: AXUIElement,
+    to ticks: Int64,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> Int64 {
+    guard ticks >= 0,
+          let minimum = numberAttribute(kAXMinValueAttribute, of: playhead)?.int64Value,
+          let maximum = numberAttribute(kAXMaxValueAttribute, of: playhead)?.int64Value,
+          minimum == 0,
+          maximum >= minimum,
+          ticks <= maximum else {
+        throw DriverFailure.refused("requested Playhead value is outside its exact bounded range")
+    }
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard foregroundBefore != request.expectedPid, !application.isActive else {
+        throw DriverFailure.refused("background Playhead control refuses an active Companion")
+    }
+    guard AXUIElementSetAttributeValue(
+        playhead,
+        kAXValueAttribute as CFString,
+        NSNumber(value: ticks)
+    ) == .success else {
+        throw DriverFailure.refused("exact Playhead accessibility value-set failed")
+    }
+    let deadline = Date().addingTimeInterval(1)
+    var observed: Int64?
+    while Date() < deadline {
+        observed = numberAttribute(kAXValueAttribute, of: playhead)?.int64Value
+        if observed == ticks { break }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard observed == ticks,
+          foregroundAfter == foregroundBefore,
+          !application.isActive else {
+        throw DriverFailure.refused(
+            "Playhead value-set did not settle without changing foreground ownership"
+        )
+    }
+    return ticks
+}
+
+func stepAccessibilityPlayhead(
+    _ playhead: AXUIElement,
+    frames delta: Int,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> (before: Int64, after: Int64) {
+    guard delta == -1 || delta == 1,
+          let before = numberAttribute(kAXValueAttribute, of: playhead)?.int64Value else {
+        throw DriverFailure.refused("requested Playhead step is not exactly one frame")
+    }
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard foregroundBefore != request.expectedPid, !application.isActive else {
+        throw DriverFailure.refused("background Playhead control refuses an active Companion")
+    }
+    let action = delta < 0 ? kAXDecrementAction : kAXIncrementAction
+    guard AXUIElementPerformAction(playhead, action as CFString) == .success else {
+        throw DriverFailure.refused("exact Playhead accessibility step failed")
+    }
+    let deadline = Date().addingTimeInterval(1)
+    var observed = before
+    while Date() < deadline {
+        observed = numberAttribute(kAXValueAttribute, of: playhead)?.int64Value ?? before
+        if (delta < 0 && observed < before) || (delta > 0 && observed > before) { break }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard ((delta < 0 && observed < before) || (delta > 0 && observed > before)),
+          foregroundAfter == foregroundBefore,
+          !application.isActive else {
+        throw DriverFailure.refused(
+            "Playhead step did not settle without changing foreground ownership"
+        )
+    }
+    return (before, observed)
 }
 
 func activateExactWindowForExplicitForeground(
@@ -620,6 +793,9 @@ do {
         throw DriverFailure.refused("macOS post-event access is unavailable")
     }
     let accessibilityWindow = try exactAccessibilityWindow(request)
+    let accessibilityPlayhead = request.actions.contains {
+        $0.type == "set-playhead-ticks" || $0.type == "step-playhead-frame"
+    } ? try exactAccessibilityPlayhead(in: accessibilityWindow) : nil
     if request.inputDelivery == "foreground-global-explicit" {
         try activateExactWindowForExplicitForeground(
             request,
@@ -644,7 +820,60 @@ do {
         }
         try validateWindow(request)
 
-        if action.type == "key", let key = action.key, let code = keyCodes[key] {
+        if action.type == "set-playhead-ticks",
+           request.inputDelivery == "background-observation-only",
+           let playheadTicks = action.playheadTicks,
+           let accessibilityPlayhead
+        {
+            let observed = try setAccessibilityPlayhead(
+                accessibilityPlayhead,
+                to: playheadTicks,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "set-playhead-ticks",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    playheadTicks: playheadTicks,
+                    observedPlayheadTicks: observed
+                )
+            )
+        } else if action.type == "step-playhead-frame",
+                  request.inputDelivery == "background-observation-only",
+                  let playheadStepFrames = action.playheadStepFrames,
+                  let accessibilityPlayhead
+        {
+            let observed = try stepAccessibilityPlayhead(
+                accessibilityPlayhead,
+                frames: playheadStepFrames,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "step-playhead-frame",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    playheadStepFrames: playheadStepFrames,
+                    playheadTicksBefore: observed.before,
+                    observedPlayheadTicks: observed.after
+                )
+            )
+        } else if action.type == "key", let key = action.key, let code = keyCodes[key] {
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
                 throw DriverFailure.refused("could not construct bounded keyboard event")

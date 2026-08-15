@@ -1316,6 +1316,38 @@ describe('Studio acceptance harness', () => {
       allowForegroundInput: false,
       actions: [{ type: 'audio-probe', durationSeconds: 2 }]
     })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }]
+      })
+    ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'set-playhead-ticks', playheadTicks: -1 }]
+      })
+    ).toThrow(/unsupported UI action/)
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'step-playhead-frame', playheadStepFrames: -1 }]
+      })
+    ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [{ type: 'step-playhead-frame', playheadStepFrames: -1 }]
+    })
+    expect(() =>
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [{ type: 'step-playhead-frame', playheadStepFrames: -2 }]
+      })
+    ).toThrow(/unsupported UI action/)
     expect(() =>
       buildStudioUiDriverRequest({
         ...target,
@@ -1399,6 +1431,11 @@ describe('Studio acceptance harness', () => {
       'action.type == "click",\n' +
         '                  request.inputDelivery == "foreground-global-explicit"'
     )
+    expect(driverSource).toContain(
+      'action.type == "set-playhead-ticks",\n' +
+        '           request.inputDelivery == "background-observation-only"'
+    )
+    expect(driverSource).toContain('foregroundAfter == foregroundBefore')
     expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
 
@@ -1479,6 +1516,11 @@ describe('Studio acceptance harness', () => {
             byteLength: action.path ? 4096 : null,
             xFraction: action.xFraction ?? null,
             yFraction: action.yFraction ?? null,
+            playheadTicks: action.playheadTicks ?? null,
+            playheadStepFrames: action.playheadStepFrames ?? null,
+            playheadTicksBefore: action.type === 'step-playhead-frame' ? 1_000 : null,
+            observedPlayheadTicks:
+              action.type === 'step-playhead-frame' ? 980 : (action.playheadTicks ?? null),
             audioProbe:
               action.type === 'audio-probe'
                 ? {
@@ -1566,7 +1608,40 @@ describe('Studio acceptance harness', () => {
       inputDelivery: 'background-observation-only',
       actions: [{ type: 'screenshot' }]
     })
-    expect(execFile).toHaveBeenCalledTimes(3)
+    const playheadReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'set-playhead-ticks', playheadTicks: 241_000 }],
+      { execFile }
+    )
+    expect(playheadReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [
+        {
+          type: 'set-playhead-ticks',
+          playheadTicks: 241_000,
+          observedPlayheadTicks: 241_000
+        }
+      ]
+    })
+    const playheadStepReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
+      { execFile }
+    )
+    expect(playheadStepReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [
+        {
+          type: 'step-playhead-frame',
+          playheadStepFrames: -1,
+          playheadTicksBefore: 1_000,
+          observedPlayheadTicks: 980
+        }
+      ]
+    })
+    expect(execFile).toHaveBeenCalledTimes(5)
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })

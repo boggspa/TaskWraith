@@ -1054,6 +1054,25 @@ function buildStudioUiDriverRequest(options) {
         yFraction: action.yFraction
       }
     }
+    if (
+      action.type === 'set-playhead-ticks' &&
+      Number.isSafeInteger(action.playheadTicks) &&
+      action.playheadTicks >= 0
+    ) {
+      return {
+        type: 'set-playhead-ticks',
+        playheadTicks: action.playheadTicks
+      }
+    }
+    if (
+      action.type === 'step-playhead-frame' &&
+      (action.playheadStepFrames === -1 || action.playheadStepFrames === 1)
+    ) {
+      return {
+        type: 'step-playhead-frame',
+        playheadStepFrames: action.playheadStepFrames
+      }
+    }
     if (action.type === 'screenshot' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(action.name)) {
       const screenshotPath = path.resolve(artifactRoot, 'screenshots', `${String(action.name)}.png`)
       if (!screenshotPath.startsWith(`${artifactRoot}${path.sep}`)) {
@@ -1257,6 +1276,23 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       (observed.xFraction !== action.xFraction || observed.yFraction !== action.yFraction)
     ) {
       throw new Error('Studio UI driver click receipt does not match the bounded request')
+    }
+    if (
+      action.type === 'set-playhead-ticks' &&
+      (observed.playheadTicks !== action.playheadTicks ||
+        observed.observedPlayheadTicks !== action.playheadTicks)
+    ) {
+      throw new Error('Studio UI driver playhead receipt does not match the bounded request')
+    }
+    if (
+      action.type === 'step-playhead-frame' &&
+      (observed.playheadStepFrames !== action.playheadStepFrames ||
+        !Number.isSafeInteger(observed.playheadTicksBefore) ||
+        !Number.isSafeInteger(observed.observedPlayheadTicks) ||
+        Math.sign(observed.observedPlayheadTicks - observed.playheadTicksBefore) !==
+          action.playheadStepFrames)
+    ) {
+      throw new Error('Studio UI driver playhead-step receipt does not match the bounded request')
     }
     if (
       action.type === 'screenshot' &&
