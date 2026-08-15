@@ -23,6 +23,7 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       'git grep -n -C 5 "isCanvasDockPanelOpen" src/renderer/src/App.tsx',
       'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/',
       "sed -n '401,600p' src/renderer/src/components/CanvasDockPanel.tsx",
+      "sed -n '1020,1040p; 1075,1095p' src/main/services/ChatService.ts",
       'rg -n neverAutoAllow src/main',
       'diff a.txt b.txt',
       'stat -f %z package.json',
@@ -80,6 +81,8 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
       "sed -i '' 's/a/b/' file", // in-place write
       "sed -n -e '1,3p;w out.txt' file", // arbitrary sed program / write command
       "sed -n '1,3p; e touch-pwned' file", // arbitrary sed program / execute command
+      "sed -n '1,3p;;4,6p' file", // empty clauses are outside the exact print grammar
+      "sed -n '1,3p;4,6d' file", // every clause must remain print-only
       "sed -n '1,3p' -i file" // GNU sed accepts options after the program
     ]) {
       expect(isInspectionShellCommand(cmd), cmd).toBe(false)

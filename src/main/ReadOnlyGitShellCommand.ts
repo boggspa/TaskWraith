@@ -24,7 +24,7 @@
  *    `--work-tree`, `-p`/`--paginate` (pager exec — POSITION-SENSITIVE:
  *    `git -p log` is the pager, `git log -p` is the patch read), `--output`;
  *  - the subcommand must be one of `status` / `diff` / `log` / `rev-list` /
- *    `rev-parse`,
+ *    `rev-parse`, or the exact `branch --show-current` identity read,
  *    followed only by that subcommand's allow-listed read flags and metacharacter-free
  *    pathspecs/refs. NOT allow-listed (and therefore rejected) on diff/log:
  *    `--no-index` (diffs ARBITRARY files outside the repo — a read of any path
@@ -220,6 +220,13 @@ const GIT_READ_SUBCOMMANDS: Record<string, GitReadSubcommandSpec> = {
   'rev-parse': {
     exact: new Set(),
     prefixes: []
+  },
+  // Unlike other `branch` forms this only prints the current branch name.
+  // Keep it exact: branch operands and every other flag remain mutating or
+  // outside the proof surface.
+  branch: {
+    exact: new Set(['--show-current']),
+    prefixes: []
   }
 }
 
@@ -253,6 +260,9 @@ export function isReadOnlyGitShellCommand(command: unknown): boolean {
 
   if (subcommand === 'rev-parse') {
     return tokens.length === index + 1 && tokens[index] === 'HEAD'
+  }
+  if (subcommand === 'branch') {
+    return tokens.length === index + 1 && tokens[index] === '--show-current'
   }
 
   for (; index < tokens.length; index += 1) {

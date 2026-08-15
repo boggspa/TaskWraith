@@ -237,6 +237,13 @@ function isBareSystemRead(args: string[]): boolean {
   return args.length === 0
 }
 
+const GREP_GLOB_FILTER_PREFIXES = [
+  '--include=',
+  '--exclude=',
+  '--include-dir=',
+  '--exclude-dir='
+]
+
 /**
  * Split shell pipelines/sequences without treating operators inside quoted
  * arguments as syntax. The previous regex split broke commands such as
@@ -324,6 +331,18 @@ interface ShellWord {
   pathnameExpansionPrefix?: string
 }
 
+/**
+ * grep's attached include/exclude filters are patterns, not executable or
+ * output-file arguments. An unquoted shell glob can only expand to more argv
+ * entries retaining the same fixed option prefix, so it cannot synthesize a
+ * different flag. Keep this exception command-specific; `-*` elsewhere still
+ * fails closed.
+ */
+function grepPathnameExpansionIsReadOnly(word: ShellWord): boolean {
+  const prefix = word.pathnameExpansionPrefix
+  return Boolean(prefix && GREP_GLOB_FILTER_PREFIXES.some((flag) => prefix.startsWith(flag)))
+}
+
 function tokenizeShellWords(segment: string): ShellWord[] | null {
   const tokens: ShellWord[] = []
   let token = ''
@@ -409,6 +428,16 @@ function tokenizeShellWords(segment: string): ShellWord[] | null {
 function isReadOnlySegment(segment: string): boolean {
   const words = tokenizeShellWords(segment)
   if (!words || words.length === 0) return false
+  // Reuse the shared classifier only for its two explicitly bridged forms.
+  // The generic parser deliberately carries a narrower command surface, so
+  // routing every shared inspection head through here would erase its extra
+  // rg/file safeguards.
+  if (
+    SHARED_INSPECTION_EXCEPTION.test(segment.trim()) &&
+    isInspectionShellCommand(segment.trim())
+  ) {
+    return true
+  }
   // Expanding the command name is arbitrary execution. For arguments, a
   // non-empty fixed prefix that does not begin with '-' proves pathname
   // expansion cannot synthesize a new option. `uniq` is stricter because one
@@ -418,10 +447,16 @@ function isReadOnlySegment(segment: string): boolean {
   const expandedArguments = words
     .slice(1)
     .filter((word) => word.pathnameExpansionPrefix !== undefined)
+  const grepCommand = command === 'grep' || command === 'egrep' || command === 'fgrep'
   if (
-    expandedArguments.some(
-      (word) => word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
-    ) ||
+    expandedArguments.some((word) => {
+      const prefixCouldSynthesizeOption =
+        word.pathnameExpansionPrefix === '' || word.pathnameExpansionPrefix?.startsWith('-')
+      return (
+        prefixCouldSynthesizeOption &&
+        (!grepCommand || !grepPathnameExpansionIsReadOnly(word))
+      )
+    }) ||
     (command === 'uniq' && expandedArguments.length > 0)
   ) {
     return false
@@ -440,6 +475,7 @@ function isReadOnlySegment(segment: string): boolean {
   if (command === 'rg') return isReadOnlyRg(rest)
   if (command === 'uniq') return isReadOnlyUniq(rest)
   if (command === 'date' || command === 'hostname') return isBareSystemRead(rest)
+  if ((command === 'true' || command === 'false') && rest.length === 0) return true
   return READ_ONLY_COMMANDS.has(command)
 }
 

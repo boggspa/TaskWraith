@@ -300,9 +300,10 @@ function dateArgsAreReadOnly(args: readonly string[]): boolean {
 }
 
 /**
- * `sed` is inspection-safe only for the deliberately narrow source-view form
- * used by agents: `sed -n '401,600p' path`. `-i`, arbitrary `-e` programs,
- * `-f` scripts, and write/execute commands stay outside this allowlist.
+ * `sed` is inspection-safe only for the deliberately narrow source-view forms
+ * used by agents: `sed -n '401,600p' path` and a semicolon-separated list of
+ * those print-only ranges. `-i`, arbitrary `-e` programs, `-f` scripts, and
+ * write/execute commands stay outside this allowlist.
  */
 function sedArgsAreReadOnly(args: readonly string[]): boolean {
   let index = 0
@@ -319,7 +320,10 @@ function sedArgsAreReadOnly(args: readonly string[]): boolean {
   if (!quiet) return false
 
   const program = args[index]
-  if (!program || !/^(?:[1-9]\d*|\$)(?:,(?:[1-9]\d*|\$))?p$/.test(program)) return false
+  const printRange = /^(?:[1-9]\d*|\$)(?:,(?:[1-9]\d*|\$))?p$/
+  if (!program || !program.split(';').every((clause) => printRange.test(clause.trim()))) {
+    return false
+  }
   index += 1
 
   let literalPaths = false

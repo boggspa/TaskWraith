@@ -146,6 +146,26 @@ describe('isReadOnlyGitShellCommand — git rev-parse', () => {
   })
 })
 
+describe('isReadOnlyGitShellCommand — current branch identity', () => {
+  it('accepts only the exact non-mutating branch-name form', () => {
+    expect(isReadOnlyGitShellCommand('git branch --show-current')).toBe(true)
+    expect(isReadOnlyGitShellCommand('git --no-pager branch --show-current')).toBe(true)
+  })
+
+  it('rejects branch listings, mutations, and operands', () => {
+    for (const command of [
+      'git branch',
+      'git branch -a',
+      'git branch new-name',
+      'git branch --show-current extra',
+      'git branch --show-current --merged',
+      'git branch -D old-name'
+    ]) {
+      expect(isReadOnlyGitShellCommand(command), command).toBe(false)
+    }
+  })
+})
+
 describe('isReadOnlyGitShellCommand — git log', () => {
   it('accepts the read-only log forms agents actually run', () => {
     for (const command of [

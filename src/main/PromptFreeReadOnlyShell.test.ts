@@ -28,6 +28,17 @@ describe('promptFreeReadOnlyShellReason', () => {
       )
     ).toBe('inspection_shell')
     expect(promptFreeReadOnlyShellReason('ls -la && git status --short')).toBe('inspection_shell')
+    expect(
+      promptFreeReadOnlyShellReason('git branch --show-current && git rev-parse HEAD')
+    ).toBe('inspection_shell')
+    expect(
+      promptFreeReadOnlyShellReason(
+        "sed -n '1020,1040p; 1075,1095p' src/main/services/ChatService.ts"
+      )
+    ).toBe('inspection_shell')
+    expect(
+      promptFreeReadOnlyShellReason("grep -rn 'externalSeatsForShare' src/ --include=*.ts | head")
+    ).toBe('inspection_shell')
   })
 
   it('accepts the read-only scout commands observed in the approval ledger', () => {
@@ -38,6 +49,16 @@ describe('promptFreeReadOnlyShellReason', () => {
       'find .local-only/spikes/studio-companion-bakeoff -maxdepth 4 -print 2>/dev/null',
       'du -sh /Users/example/.cargo /Users/example/.rustup 2>/dev/null',
       "ls -l /opt/homebrew/bin/rustup 2>/dev/null\nfind /opt/homebrew/Cellar -maxdepth 2 -iname 'rust*' -print 2>/dev/null"
+    ]) {
+      expect(promptFreeReadOnlyShellReason(command), command).toBe('inspection_shell')
+    }
+  })
+
+  it('accepts the compound inspection commands captured in approval modals', () => {
+    for (const command of [
+      "git status --porcelain; git log -n 5 --oneline; ls -la | grep -E '^(SHIP-HOLD|\\.WORK-IN-PROGRESS|SESSION-IN-PROGRESS)' || true",
+      'echo "=== resolveExternalCollaboratorSeatIds ==="; sed -n \'50238,50262p\' src/main/index.ts; echo; echo "=== resolveExternalSeats ==="; sed -n \'56105,56125p\' src/main/index.ts',
+      "echo '=== externalSeatsForShare def ==='; grep -rn 'externalSeatsForShare' src/ --include=*.ts | head; echo; echo '=== resolveExternalSeats consumers ==='; grep -rn 'resolveExternalSeats' src/ --include=*.ts | grep -v '\\.test\\.' | head -20"
     ]) {
       expect(promptFreeReadOnlyShellReason(command), command).toBe('inspection_shell')
     }

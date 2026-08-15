@@ -14,11 +14,13 @@ describe('isReadOnlyShellCommand — allows genuine read-only recon', () => {
     'head -100 file.txt',
     'tail -n 20 log.txt',
     'grep -rn "foo" src',
+    "grep -rn 'needle' src/ --include=*.ts",
     'grep -o bar file',
     'git grep -n "foo" src',
     'git grep -n "toolbar" swift/ || git grep -n "StudioOverlay" swift/',
     'git -c core.fsmonitor=false grep -i "effectpreview" src/main/ipc/ src/preload/ src/renderer/ || echo "NO_MATCHES"',
     "sed -n '1,10p' file",
+    "sed -n '1020,1040p; 1075,1095p' src/main/services/ChatService.ts",
     'rg --files',
     'find . -maxdepth 3 -type f',
     "find . -maxdepth 3 -type f ! -path './.git/*'",
@@ -30,6 +32,8 @@ describe('isReadOnlyShellCommand — allows genuine read-only recon', () => {
     'rg -n pattern src',
     "rg 'foo$|bar[0-9]{2}?' .",
     'cat x | uniq -c',
+    'git branch --show-current && git rev-parse HEAD',
+    'git status --porcelain || true',
     'uniq input.txt',
     // Pipes of read commands + benign stderr discard:
     'cat package.json | jq .name',
@@ -144,6 +148,7 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     'tee file',
     'uniq -- input.txt --output',
     "uniq -- input.txt '-output'",
+    'grep needle --*=*.ts',
     // Empty / nonsense
     '',
     '   ',
@@ -269,6 +274,19 @@ describe('isReadOnlyShellCommand — denies mutations & bypasses (fail closed)',
     expect(isReadOnlyShellCommand('ls -la && rm -rf .')).toBe(false)
     expect(isReadOnlyShellCommand('git log; git push')).toBe(false)
     expect(isReadOnlyShellCommand('cat a | grep b | tee out')).toBe(false)
+  })
+
+  it('composes the exact safe approval-modal inspection forms', () => {
+    expect(
+      isReadOnlyShellCommand(
+        'echo "=== definition ==="; grep -rn \'externalSeatsForShare\' src/ --include=*.ts | head; echo; git branch --show-current && git rev-parse HEAD'
+      )
+    ).toBe(true)
+    expect(
+      isReadOnlyShellCommand(
+        "echo ranges; sed -n '1020,1040p; 1075,1095p' src/main/services/ChatService.ts"
+      )
+    ).toBe(true)
   })
 
   it('allows descriptor-only duplication at a real shell boundary', () => {
