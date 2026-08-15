@@ -6042,7 +6042,7 @@ export const TranscriptPanel = memo(
             pending question with no matching message in
             visibleMessages, render the card here at the tail of
             the transcript so they can still answer. Without this
-            the agent times out after 12 minutes with no
+            the agent times out after 24 minutes with no
             user-recoverable surface.
           */}
           {pendingAgentQuestions

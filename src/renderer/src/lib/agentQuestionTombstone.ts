@@ -113,7 +113,7 @@ export function buildAgentQuestionTombstone(
     // A typed answer that happens to equal an option is still treated as
     // custom only if the writer said so — the flag is authoritative.
     isCustomAnswer: reply?.metadata?.isCustomAnswer === true,
-    // Skipped covers BOTH dismissal and the 12-minute timeout. Neither appends
+    // Skipped covers BOTH dismissal and the 24-minute timeout. Neither appends
     // a message, so they are indistinguishable here, and both mean the same
     // thing to the reader: no answer reached the agent.
     outcome: answer ? 'answered' : 'skipped',

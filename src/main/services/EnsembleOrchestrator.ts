@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
+import { BOSS_APPROVAL_REVIEW_TIMEOUT_MS } from '../../shared/interactionTimeouts'
 import {
   clearEnsembleRoundFailureForSeatChange,
   ensembleSeatExecutionConfigChanged
@@ -450,7 +451,6 @@ const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 1200
 const MAX_BOSSMAN_CONTROL_ITEMS = 40
 const MAX_BOSSMAN_POLL_OPTIONS = 6
-const BOSS_APPROVAL_REVIEW_TIMEOUT_MS = 90 * 1000
 // 1.0.4-AN — binding goal-complete poll. Options are FIXED so resolution is
 // deterministic; a FAILED/vetoed poll sets a cooldown before another may open.
 const BINDING_GOAL_COMPLETE_OPTIONS = ['complete', 'keep-working'] as const

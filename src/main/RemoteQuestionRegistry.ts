@@ -1,5 +1,6 @@
 import { buildMobileQuestionCard, type MobileQuestionCard } from './RemoteTaskProjection'
 import type { ProviderId } from './store/types'
+import { AGENT_QUESTION_TIMEOUT_MS } from '../shared/interactionTimeouts'
 
 export interface RemoteQuestionResolution {
   answer: string
@@ -92,7 +93,6 @@ interface PendingRemoteQuestion {
   timerHandle?: unknown
 }
 
-const DEFAULT_TTL_MS = 12 * 60 * 1000
 export const REMOTE_QUESTION_MAX_QUESTION_CHARS = 600
 export const REMOTE_QUESTION_MAX_CONTEXT_CHARS = 240
 export const REMOTE_QUESTION_MAX_OPTION_CHARS = 96
@@ -122,7 +122,7 @@ export class RemoteQuestionRegistry {
 
   constructor(options: RemoteQuestionRegistryOptions = {}) {
     this.now = options.now ?? Date.now
-    this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS
+    this.defaultTtlMs = options.defaultTtlMs ?? AGENT_QUESTION_TIMEOUT_MS
     this.setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
     this.clearTimer =
       options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))

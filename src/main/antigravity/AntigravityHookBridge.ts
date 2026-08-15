@@ -30,10 +30,11 @@
 
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { APPROVAL_TRANSPORT_TIMEOUT_MS } from '../../shared/interactionTimeouts'
 
 const HOOK_NAME = 'taskwraith-approval-bridge'
-/** agy default hook timeout is 30s; an attended approval card needs longer. */
-const HOOK_TIMEOUT_SECONDS = 600
+/** agy default is 30s; honor TaskWraith's full configurable approval ceiling. */
+const HOOK_TIMEOUT_SECONDS = Math.ceil(APPROVAL_TRANSPORT_TIMEOUT_MS / 1000)
 /** curl gives up before agy's own hook timeout so the fallback denial wins. */
 const CURL_MAX_TIME_SECONDS = HOOK_TIMEOUT_SECONDS - 10
 const MAX_REQUEST_BYTES = 512 * 1024

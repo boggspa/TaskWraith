@@ -914,12 +914,12 @@ outside the workspace, MCP elicitations):
 
 1. The runtime pauses the turn and emits an approval request to the
    desktop UI.
-2. An auto-deny timer arms in parallel. Current defaults are Codex 30s,
-   Kimi 60s, Claude/Grok/Ollama 120s, and main-authority actions 60s, with
-   special action-kind overrides such as 90s/180s. Cursor retains a 120s
-   decode/settings compatibility value: brokered Cursor calls use TaskWraith
-   policy, approval cards, and grants, while Cursor-native actions remain
-   provider-owned and OS-sandbox-bounded. Retired Gemini keeps historical
+2. An auto-deny timer arms in parallel. Current defaults are Codex 60s,
+   Kimi/Mistral 120s, other provider identities 240s, and main-authority
+   actions 120s, with special action-kind overrides such as 180s/360s.
+   Cursor retains a 240s decode/settings compatibility value. Brokered Cursor
+   calls use TaskWraith policy, approval cards, and grants, while Cursor-native
+   actions remain provider-owned and OS-sandbox-bounded. Retired Gemini keeps historical
    decode values only. User-visible policy remains tunable in Settings.
 3. The first responder wins — desktop modal or timer.
 4. A decision is written to the durable Approval Ledger (Settings →

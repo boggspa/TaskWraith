@@ -1,31 +1,36 @@
+import {
+  AGENT_QUESTION_TRANSPORT_TIMEOUT_MS,
+  APPROVAL_TRANSPORT_TIMEOUT_MS
+} from '../../shared/interactionTimeouts'
+
 /**
  * Request budgets for the MCP broker clients (the socket hop between a
  * provider-side bridge stub and the TaskWraith main process).
  *
  * The default budget exists so a dead main process can never hang a provider
- * forever, and it must comfortably exceed the approval window (providers'
- * approval prompts hold tool calls open ~120s before the timeout policy
- * resolves them) — hence 130s.
+ * forever, and it must exceed the full user-configurable approval ceiling.
+ * Otherwise a valid Settings value can be cut off by the transport before the
+ * approval timer resolves it.
  *
  * LONG-POLL tools deliberately hold their call open while main does bounded
  * waiting on their behalf:
  * - `ensemble_await` may wait up to 10 minutes per call for fan-out lanes to
  *   settle (ENSEMBLE_AWAIT_MAX_*), so its broker budget is that ceiling plus
  *   grace.
- * - `ask_user_question` parks until the user answers or the 12-minute
+ * - `ask_user_question` parks until the user answers or the 24-minute
  *   registry TTL fires, so its broker budget is that ceiling plus grace.
  *
  * The broker kill stays a last-resort liveness backstop, never the effective
  * cap. Keep long-poll names in lockstep with the awaited-tool clamps.
  */
 
-export const MCP_BROKER_REQUEST_TIMEOUT_MS = 130_000
+export const MCP_BROKER_REQUEST_TIMEOUT_MS = APPROVAL_TRANSPORT_TIMEOUT_MS
 
 /** ensemble_await clamp ceiling (600s) + 30s grace. */
 export const MCP_BROKER_LONG_POLL_TIMEOUT_MS = 630_000
 
-/** ask_user_question registry TTL (720s) + 30s grace. */
-export const MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS = 750_000
+/** ask_user_question registry TTL plus transport settlement grace. */
+export const MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS = AGENT_QUESTION_TRANSPORT_TIMEOUT_MS
 
 const LONG_POLL_TIMEOUT_BY_TOOL: ReadonlyMap<string, number> = new Map([
   ['ensemble_await', MCP_BROKER_LONG_POLL_TIMEOUT_MS],

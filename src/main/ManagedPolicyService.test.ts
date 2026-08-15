@@ -155,7 +155,14 @@ describe('ManagedPolicyService', () => {
             },
             approvalTimeouts: {
               enabled: true,
-              perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
+              perProviderMs: {
+                codex: 45_000,
+                grok: 75_000,
+                cursor: 80_000,
+                ollama: 85_000,
+                antigravity: 95_000,
+                muse: 105_000
+              },
               mainAuthorityMs: 90_000
             },
             auditRetention: {
@@ -203,7 +210,14 @@ describe('ManagedPolicyService', () => {
     })
     expect(patch.approvalTimeouts).toMatchObject({
       enabled: true,
-      perProviderMs: { codex: 45_000, grok: 75_000, cursor: 80_000, ollama: 85_000 },
+      perProviderMs: {
+        codex: 45_000,
+        grok: 75_000,
+        cursor: 80_000,
+        ollama: 85_000,
+        antigravity: 95_000,
+        muse: 105_000
+      },
       mainAuthorityMs: 90_000
     })
     expect(patch.auditRetention).toEqual({

@@ -4,6 +4,12 @@ import * as path from 'path'
 import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import {
+  APPROVAL_TIMEOUT_DEFAULTS_VERSION,
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS,
+  migrateApprovalTimeoutDefaults
+} from '../../shared/interactionTimeouts'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
@@ -2332,23 +2338,9 @@ const defaultSettings: AppSettings = {
   updateChannel: 'stable',
   approvalTimeouts: {
     enabled: true,
-    // Defaults mirror DEFAULT_APPROVAL_TIMEOUT_POLICY in
-    // ApprovalTimeoutScheduler.ts. Keep them in sync — these are the
-    // numbers from the original plan-file decisions.
-    perProviderMs: {
-      gemini: 120_000,
-      codex: 30_000,
-      claude: 120_000,
-      kimi: 60_000,
-      grok: 120_000,
-      cursor: 120_000,
-      ollama: 120_000,
-      antigravity: 120_000,
-      pi: 120_000,
-      mistral: 60_000,
-      muse: 120_000
-    },
-    mainAuthorityMs: 60_000
+    defaultsVersion: APPROVAL_TIMEOUT_DEFAULTS_VERSION,
+    perProviderMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+    mainAuthorityMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
   }
 }
 
@@ -4746,7 +4738,17 @@ export class AppStore {
     const storedApprovalModeElevationAcks = objectOrUndefined(
       stored.approvalModeElevationAcknowledgements
     )
-    const storedApprovalTimeouts = objectOrUndefined(stored.approvalTimeouts)
+    let storedApprovalTimeouts = objectOrUndefined(stored.approvalTimeouts)
+    const approvalTimeoutMigration = migrateApprovalTimeoutDefaults(storedApprovalTimeouts)
+    if (approvalTimeoutMigration.changed && approvalTimeoutMigration.value) {
+      storedApprovalTimeouts =
+        approvalTimeoutMigration.value as unknown as AppSettings['approvalTimeouts']
+      stored = {
+        ...stored,
+        approvalTimeouts: storedApprovalTimeouts
+      }
+      writeJson(settingsPath, stored)
+    }
     const storedApprovalTimeoutProviderMs = objectOrUndefined(storedApprovalTimeouts?.perProviderMs)
     const pendingUpdateChangelog = normalizeUpdateChangelog(stored.pendingUpdateChangelog)
     const themeAppearance = resolveSystemThemeAppearance(
@@ -4871,8 +4873,8 @@ export class AppStore {
         }
       }
     }
-    // Keyed to the pre-read stat: if the mid-body userMcpServers migration
-    // rewrote the file, that write already invalidated the cache and this
+    // Keyed to the pre-read stat: if a mid-body settings migration rewrote the
+    // file, that write already invalidated the cache and this
     // repopulation carries a stale stat, forcing one extra re-parse on the
     // next call — cheap and always in the safe direction.
     if (statBefore) {

@@ -1,4 +1,9 @@
 import type { ProviderId } from './store/types'
+import {
+  DEFAULT_APPROVAL_KIND_TIMEOUTS_MS,
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+} from '../shared/interactionTimeouts'
 
 /**
  * ApprovalTimeoutScheduler — Phase E1.
@@ -53,45 +58,12 @@ export interface ApprovalTimeoutPolicy {
 }
 
 export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
-  // These match the decisions from the original plan file: Codex is
-  // a tight CLI (default 30s), Claude/Gemini tolerate a couple of
-  // minutes, Kimi sits in the middle. Numbers in ms.
-  defaultTimeoutsMs: {
-    codex: 30_000,
-    claude: 120_000,
-    gemini: 120_000,
-    kimi: 60_000,
-    // Grok is read-only/plan-mode (G3) so approvals shouldn't fire, but the
-    // Record<ProviderId> requires a value — mirror the Claude/Gemini window.
-    grok: 120_000,
-    // Cursor keeps this settings/decode-compatible default. Brokered TaskWraith
-    // calls use host policy; native Cursor actions remain provider-owned.
-    cursor: 120_000,
-    // Ollama Phase 1 is read-only/no-approval, but keep the record complete.
-    ollama: 120_000,
-    // Opt-in antigravity has no approval flow yet; keep the record complete.
-    antigravity: 120_000,
-    // Pi has no approval prompts (tool-allowlist posture); record completeness.
-    pi: 120_000,
-    // Mistral's Vibe CLI ships write-capable in its 'default' approval mode
-    // (unlike Grok's still-read-only G3 posture), so approvals genuinely fire.
-    // Mirror Kimi's real mid-tier window rather than the Claude/Gemini
-    // "record completeness" placeholder used by providers with no live flow yet.
-    mistral: 60_000,
-    // Muse native tools are provider-owned (no host approval cards in v1);
-    // keep the Record complete with the Claude/Gemini completeness window.
-    muse: 120_000
-  },
-  mainTimeoutMs: 60_000,
-  perKindOverridesMs: {
-    'hostCommand/rerun': 90_000,
-    'workspace/session-trust': 180_000,
-    // Kimi Code starts its fixed MCP client deadline when streamed tool args
-    // begin, before the complete request reaches TaskWraith. A 60s approval
-    // therefore loses the race and returns an ambiguous client timeout. Settle
-    // this user-visible roster mutation clearly (accept or auto-deny) first.
-    'kimi-mcp/ensemble_roster_edit': 40_000
-  }
+  // Shared with persistence and renderer defaults. Codex remains the shortest
+  // host-owned window; Kimi/Mistral sit in the middle; the other identities use
+  // the long window whether their current tool path is host- or provider-owned.
+  defaultTimeoutsMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+  mainTimeoutMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS,
+  perKindOverridesMs: { ...DEFAULT_APPROVAL_KIND_TIMEOUTS_MS }
 }
 
 export interface ApprovalTimeoutSchedulerOptions {

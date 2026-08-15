@@ -54,6 +54,11 @@ import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasC
 import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
 import { normalizeApiUsageBillingSettings } from '../../shared/apiUsageBilling'
 import {
+  APPROVAL_TIMEOUT_DEFAULTS_VERSION,
+  APPROVAL_TIMEOUT_MAX_MS,
+  APPROVAL_TIMEOUT_MIN_MS
+} from '../../shared/interactionTimeouts'
+import {
   coerceLiveProvider,
   isLiveSelectableProvider,
   LIVE_SELECTABLE_PROVIDER_IDS,
@@ -835,7 +840,7 @@ export function sanitizeAuditOrchestration(value: unknown): AuditOrchestrationSe
 function sanitizeApprovalTimeoutMs(value: unknown, fallback: number): number {
   const parsed = Math.round(Number(value))
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return Math.max(5_000, Math.min(3_600_000, parsed))
+  return Math.max(APPROVAL_TIMEOUT_MIN_MS, Math.min(APPROVAL_TIMEOUT_MAX_MS, parsed))
 }
 
 function sanitizeUpdateChangelog(value: unknown): ProductUpdateChangelog | undefined {
@@ -2029,6 +2034,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       }
       sanitized.approvalTimeouts = {
         enabled: typeof prefs.enabled === 'boolean' ? prefs.enabled : current.enabled,
+        defaultsVersion: current.defaultsVersion ?? APPROVAL_TIMEOUT_DEFAULTS_VERSION,
         perProviderMs,
         mainAuthorityMs: sanitizeApprovalTimeoutMs(prefs.mainAuthorityMs, current.mainAuthorityMs)
       }

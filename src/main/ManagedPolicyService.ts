@@ -4,6 +4,7 @@ import type {
   AppSettings,
   ProviderId
 } from './store/types'
+import { APPROVAL_TIMEOUT_PROVIDER_IDS } from '../shared/interactionTimeouts'
 import {
   evaluateUserMcpLaunchPolicy,
   type BuildUserMcpLaunchServersOptions,
@@ -118,17 +119,7 @@ const settingKeySet = new Set<string>(MANAGED_POLICY_SETTING_KEYS)
 const servicePolicies = new Set(['ask', 'workspace', 'allow', 'deny'])
 const networkPolicies = new Set(['allow', 'deny'])
 const managedPolicySignatureAlgorithms = new Set(['ed25519'])
-const approvalTimeoutProviderIds: readonly ProviderId[] = [
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama',
-  'pi',
-  'mistral'
-]
+const approvalTimeoutProviderIds: readonly ProviderId[] = APPROVAL_TIMEOUT_PROVIDER_IDS
 const auditRetentionSurfaces = [
   'approvalLedger',
   'runEvents',

@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteQuestionRegistry, type RemoteQuestionResolution } from './RemoteQuestionRegistry'
+import { AGENT_QUESTION_TIMEOUT_MS } from '../shared/interactionTimeouts'
 
 describe('RemoteQuestionRegistry', () => {
   it('registers question metadata and lists projection cards', () => {
     let resolved: RemoteQuestionResolution | null = null
+    const now = Date.UTC(2026, 4, 30, 12, 0, 0)
+    const setTimer = vi.fn(() => 'timer')
     const registry = new RemoteQuestionRegistry({
-      now: () => Date.UTC(2026, 4, 30, 12, 0, 0),
+      now: () => now,
       idFactory: () => 'q-generated',
-      setTimer: () => 'timer',
+      setTimer,
       clearTimer: vi.fn()
     })
 
@@ -34,8 +37,10 @@ describe('RemoteQuestionRegistry', () => {
       workspaceId: 'ws-1',
       threadId: 'chat-1',
       runId: 'run-1',
+      expiresAt: new Date(now + AGENT_QUESTION_TIMEOUT_MS).toISOString(),
       status: 'pending'
     })
+    expect(setTimer).toHaveBeenCalledWith(expect.any(Function), AGENT_QUESTION_TIMEOUT_MS)
     expect(registry.listProjectionCards()).toEqual([
       expect.objectContaining({
         promptId: 'q-generated',

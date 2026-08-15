@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CODEX_USER_INPUT_MAX_TIMEOUT_MS,
   CODEX_USER_INPUT_METHOD,
   buildCodexUserInputResponse,
   isCodexUserInputRequestMethod,
@@ -48,6 +49,19 @@ describe('CodexUserInput', () => {
         timeoutMs: 45_000
       }
     })
+  })
+
+  it('clamps provider-requested question timeouts to the shared 24-minute ceiling', () => {
+    expect(
+      normalizeCodexUserInputRequest({
+        questions: [{ id: 'continue', question: 'Continue?' }],
+        timeoutMs: 60 * 60 * 1000
+      })
+    ).toMatchObject({
+      ok: true,
+      request: { timeoutMs: CODEX_USER_INPUT_MAX_TIMEOUT_MS }
+    })
+    expect(CODEX_USER_INPUT_MAX_TIMEOUT_MS).toBe(24 * 60 * 1000)
   })
 
   it('rejects missing, duplicate, over-count, and over-capacity requests', () => {

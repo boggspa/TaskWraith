@@ -75,6 +75,10 @@ import {
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../../shared/retiredProviders'
+import {
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+} from '../../shared/interactionTimeouts'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import {
   clearEnsembleRoundFailureForSeatChange,
@@ -1924,20 +1928,8 @@ function App(): React.JSX.Element {
   const [updateChannel, setUpdateChannel] = useState<ProductUpdateChannel>('stable')
   const [approvalTimeouts, setApprovalTimeouts] = useState<AppSettings['approvalTimeouts']>({
     enabled: true,
-    perProviderMs: {
-      gemini: 120_000,
-      codex: 30_000,
-      claude: 120_000,
-      kimi: 60_000,
-      grok: 120_000,
-      cursor: 120_000,
-      ollama: 120_000,
-      antigravity: 120_000,
-      pi: 120_000,
-      mistral: 60_000,
-      muse: 120_000
-    },
-    mainAuthorityMs: 60_000
+    perProviderMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+    mainAuthorityMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
   })
   const [productOperationsStatus, setProductOperationsStatus] =
     useState<ProductOperationsStatus | null>(null)

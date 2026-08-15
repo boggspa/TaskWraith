@@ -23,6 +23,10 @@ import {
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
+import {
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+} from '../../../shared/interactionTimeouts'
 
 type SettingsPanelProps = ComponentProps<typeof SettingsPanel>
 
@@ -84,20 +88,8 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     updateChannel: 'stable',
     approvalTimeouts: {
       enabled: true,
-      perProviderMs: {
-        gemini: 120_000,
-        codex: 30_000,
-        claude: 120_000,
-        kimi: 60_000,
-        grok: 120_000,
-        cursor: 120_000,
-        ollama: 120_000,
-        antigravity: 120_000,
-        pi: 120_000,
-        mistral: 120_000,
-        muse: 120_000
-      },
-      mainAuthorityMs: 60_000
+      perProviderMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+      mainAuthorityMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
     },
     productOperationsStatus: null,
     auditRetention: {
@@ -949,6 +941,50 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('--checkpointing')
   })
 
+  it('renders timeout controls for every currently offered provider, not retired Gemini', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
+    )
+
+    for (const provider of [
+      'Codex',
+      'Claude',
+      'Kimi',
+      'Cursor',
+      'Grok',
+      'Ollama',
+      'Pi',
+      'Mistral',
+      'Muse'
+    ]) {
+      expect(html).toContain(
+        `<span class="approval-timeout-field-label">${provider}</span>`
+      )
+    }
+    expect(html).not.toContain(
+      '<span class="approval-timeout-field-label">Gemini</span>'
+    )
+    expect(html).toContain('value="60"')
+    expect(html).toContain('value="240"')
+    expect(html).toContain('Kimi, Mistral, and Main authority 120s')
+  })
+
+  it('adds the conditional AntiGravity timeout control only after admission', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'behavior',
+          antigravityEnabled: true,
+          antigravityOptInAcceptedAt: 1_700_000_000_000
+        })}
+      />
+    )
+
+    expect(html).toContain(
+      '<span class="approval-timeout-field-label">Antigravity</span>'
+    )
+  })
+
   it('renders managed-policy status when organization controls are active', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
@@ -1148,7 +1184,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Approval timeout settings are managed by organization policy.')
     expect(html).toMatch(/Auto-deny approvals after a timeout/)
     expect(html).toMatch(/<input type="checkbox" disabled="" checked=""/)
-    expect(html).toMatch(/class="approval-timeout-field-input" disabled="" value="120"/)
+    expect(html).toMatch(/class="approval-timeout-field-input" disabled="" value="60"/)
   })
 
   it('locks agentic service controls when organization policy owns them', () => {

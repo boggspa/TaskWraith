@@ -5,6 +5,10 @@ import {
   MCP_BROKER_REQUEST_TIMEOUT_MS,
   mcpBrokerRequestTimeoutMsFor
 } from './McpBrokerTimeouts'
+import {
+  AGENT_QUESTION_TIMEOUT_MS,
+  APPROVAL_TIMEOUT_MAX_MS
+} from '../../shared/interactionTimeouts'
 
 describe('mcpBrokerRequestTimeoutMsFor', () => {
   it('grants the long-poll budget to ensemble_await tool calls', () => {
@@ -49,6 +53,11 @@ describe('mcpBrokerRequestTimeoutMsFor', () => {
     expect(mcpBrokerRequestTimeoutMsFor(null)).toBe(MCP_BROKER_REQUEST_TIMEOUT_MS)
   })
 
+  it('keeps the standard broker budget beyond every configurable approval window', () => {
+    expect(MCP_BROKER_REQUEST_TIMEOUT_MS).toBe(3_630_000)
+    expect(MCP_BROKER_REQUEST_TIMEOUT_MS).toBeGreaterThan(APPROVAL_TIMEOUT_MAX_MS)
+  })
+
   it('long-poll grace stays ahead of the await clamp ceiling', () => {
     // 600s ensemble_await ceiling + 30s grace — the broker kill must remain a
     // liveness backstop, never the effective cap.
@@ -56,8 +65,8 @@ describe('mcpBrokerRequestTimeoutMsFor', () => {
     expect(MCP_BROKER_LONG_POLL_TIMEOUT_MS).toBeGreaterThan(600_000)
   })
 
-  it('ask-user broker grace stays ahead of the 12-minute card TTL', () => {
-    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBe(750_000)
-    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBeGreaterThan(12 * 60 * 1000)
+  it('ask-user broker grace stays ahead of the 24-minute card TTL', () => {
+    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBe(1_470_000)
+    expect(MCP_BROKER_ASK_USER_QUESTION_TIMEOUT_MS).toBeGreaterThan(AGENT_QUESTION_TIMEOUT_MS)
   })
 })

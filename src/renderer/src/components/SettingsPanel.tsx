@@ -50,6 +50,10 @@ import {
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
 import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../../../shared/retiredProviders'
+import {
+  APPROVAL_TIMEOUT_MAX_MS,
+  APPROVAL_TIMEOUT_MIN_MS
+} from '../../../shared/interactionTimeouts'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
@@ -6979,84 +6983,22 @@ export function SettingsPanel({
               <div className="settings-group">
                 <label className="settings-label">Timeout windows (seconds)</label>
                 <div className="approval-timeout-grid">
-                  <ApprovalTimeoutField
-                    label="Gemini"
-                    valueMs={approvalTimeouts.perProviderMs.gemini}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, gemini: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
-                    label="Codex"
-                    valueMs={approvalTimeouts.perProviderMs.codex}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, codex: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
-                    label="Claude"
-                    valueMs={approvalTimeouts.perProviderMs.claude}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, claude: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
-                    label="Kimi"
-                    valueMs={approvalTimeouts.perProviderMs.kimi}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, kimi: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
-                    label="Grok"
-                    valueMs={approvalTimeouts.perProviderMs.grok}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, grok: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
-                    label="Ollama"
-                    valueMs={approvalTimeouts.perProviderMs.ollama}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, ollama: ms }
-                        }
-                      })
-                    }
-                  />
+                  {providerSurfaceOrder.map((provider) => (
+                    <ApprovalTimeoutField
+                      key={provider}
+                      label={SETTINGS_PROVIDER_LABELS[provider]}
+                      valueMs={approvalTimeouts.perProviderMs[provider]}
+                      disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
+                      onChange={(ms) =>
+                        onChange({
+                          approvalTimeouts: {
+                            ...approvalTimeouts,
+                            perProviderMs: { ...approvalTimeouts.perProviderMs, [provider]: ms }
+                          }
+                        })
+                      }
+                    />
+                  ))}
                   <ApprovalTimeoutField
                     label="Main authority"
                     valueMs={approvalTimeouts.mainAuthorityMs}
@@ -7067,10 +7009,10 @@ export function SettingsPanel({
                   />
                 </div>
                 <p className="settings-hint">
-                  Per-provider deadline before an unanswered approval is auto-denied. Defaults
-                  (Codex 30s, Kimi 60s, Main 60s, other live providers 120s) reflect how tolerant
-                  each runtime is of paused tool calls. Historical provider values remain stored for
-                  decode but are not editable.
+                  Per-provider deadline before an unanswered approval is auto-denied. Defaults are
+                  Codex 60s; Kimi, Mistral, and Main authority 120s; and other currently offered
+                  providers 240s. Retired Gemini values remain stored for historical decode but are
+                  not editable.
                 </p>
               </div>
             </>
@@ -11562,7 +11504,10 @@ function ApprovalTimeoutField({
       return
     }
     // Floor + ceil bounds — keep timeouts in a sensible range.
-    const clamped = Math.max(5, Math.min(parsed, 3600))
+    const clamped = Math.max(
+      APPROVAL_TIMEOUT_MIN_MS / 1000,
+      Math.min(parsed, APPROVAL_TIMEOUT_MAX_MS / 1000)
+    )
     setDraftSec(String(clamped))
     onChange(clamped * 1000)
   }
@@ -11573,8 +11518,8 @@ function ApprovalTimeoutField({
       <span className="approval-timeout-field-input-wrap">
         <input
           type="number"
-          min={5}
-          max={3600}
+          min={APPROVAL_TIMEOUT_MIN_MS / 1000}
+          max={APPROVAL_TIMEOUT_MAX_MS / 1000}
           step={5}
           className="approval-timeout-field-input"
           value={draftSec}

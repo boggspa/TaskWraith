@@ -49,8 +49,9 @@ describe('buildAgyHookBridgeNamedHook', () => {
     const hooks = groups[0].hooks as Array<Record<string, unknown>>
     expect(hooks).toHaveLength(1)
     expect(hooks[0].type).toBe('command')
-    expect(hooks[0].timeout).toBe(600)
+    expect(hooks[0].timeout).toBe(3_630)
     const command = hooks[0].command as string
+    expect(command).toContain('--max-time 3620')
     expect(command).toContain(`http://127.0.0.1:43210/agy/pretooluse`)
     expect(command).toContain(token)
     // A bridge that cannot answer must DENY, never defer. agy's settings layer

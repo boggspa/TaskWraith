@@ -942,6 +942,7 @@ describe('MainSanitizers settings patches', () => {
     })
     expect(sanitized.approvalTimeouts).toMatchObject({
       enabled: false,
+      defaultsVersion: 2,
       perProviderMs: {
         gemini: 240_000,
         codex: 30_000,

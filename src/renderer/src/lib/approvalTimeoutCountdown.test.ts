@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { formatApprovalCountdown, resolveApprovalTimeoutMs } from './approvalTimeoutCountdown'
 import type { AgentApprovalRequest } from './agentApprovalTypes'
+import {
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+} from '../../../shared/interactionTimeouts'
 
 const baseApproval: AgentApprovalRequest = {
   id: 'a-1',
@@ -13,20 +17,8 @@ const baseApproval: AgentApprovalRequest = {
 
 const settings = {
   enabled: true,
-  perProviderMs: {
-    gemini: 120_000,
-    codex: 30_000,
-    claude: 120_000,
-    kimi: 60_000,
-    grok: 120_000,
-    cursor: 120_000,
-    ollama: 120_000,
-    antigravity: 120_000,
-    pi: 120_000,
-    mistral: 120_000,
-    muse: 120_000
-  },
-  mainAuthorityMs: 60_000
+  perProviderMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+  mainAuthorityMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
 }
 
 describe('resolveApprovalTimeoutMs', () => {
@@ -37,7 +29,7 @@ describe('resolveApprovalTimeoutMs', () => {
   })
 
   it('uses per-provider defaults', () => {
-    expect(resolveApprovalTimeoutMs(baseApproval, settings)).toBe(30_000)
+    expect(resolveApprovalTimeoutMs(baseApproval, settings)).toBe(60_000)
   })
 
   it('prefers per-kind overrides', () => {
@@ -46,7 +38,16 @@ describe('resolveApprovalTimeoutMs', () => {
         { ...baseApproval, method: 'hostCommand/rerun' },
         settings
       )
-    ).toBe(90_000)
+    ).toBe(180_000)
+  })
+
+  it('keeps the Kimi roster override below its external client deadline', () => {
+    expect(
+      resolveApprovalTimeoutMs(
+        { ...baseApproval, provider: 'kimi', method: 'kimi-mcp/ensemble_roster_edit' },
+        settings
+      )
+    ).toBe(40_000)
   })
 })
 

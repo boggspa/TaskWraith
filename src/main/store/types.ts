@@ -2844,6 +2844,9 @@ export interface AppSettings {
    * `TASKWRAITH_APPROVAL_TIMEOUT_OFF=1`). */
   approvalTimeouts: {
     enabled: boolean
+    /** Hidden migration stamp for default-value upgrades. User-set non-default
+     * values are preserved when this advances. */
+    defaultsVersion?: number
     perProviderMs: Record<ProviderId, number>
     mainAuthorityMs: number
   }

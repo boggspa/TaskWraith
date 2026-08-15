@@ -8966,7 +8966,7 @@ Next action:
         mode: 'permission_preset_once',
         confirmedAt: '2026-08-15T20:00:00.000Z'
       }
-      const harness = makeHarness({ initialChat })
+      const harness = makeHarness({ initialChat, now: () => 10_000 })
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Review, then let the worker implement.',
@@ -9027,6 +9027,7 @@ Next action:
         includeUser: false,
         status: 'open'
       })
+      expect(poll?.timeoutAt).toBe(new Date(10_000 + 180_000).toISOString())
       const vote = harness.orchestrator.pollResponseForRun(reviewRun.appRunId, {
         pollId: poll!.id,
         choice,

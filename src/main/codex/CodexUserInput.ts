@@ -4,11 +4,12 @@ import {
   REMOTE_QUESTION_MAX_OPTIONS,
   REMOTE_QUESTION_MAX_QUESTION_CHARS
 } from '../RemoteQuestionRegistry'
+import { AGENT_QUESTION_TIMEOUT_MS } from '../../shared/interactionTimeouts'
 
 /** Codex app-server's host UI request, not a TaskWraith MCP tool name. */
 export const CODEX_USER_INPUT_METHOD = 'tool/requestUserInput'
 export const CODEX_USER_INPUT_MAX_QUESTIONS = 3
-export const CODEX_USER_INPUT_MAX_TIMEOUT_MS = 12 * 60 * 1000
+export const CODEX_USER_INPUT_MAX_TIMEOUT_MS = AGENT_QUESTION_TIMEOUT_MS
 
 export interface CodexUserInputQuestion {
   id: string

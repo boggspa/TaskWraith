@@ -69,7 +69,7 @@ describe('ApprovalTimeoutScheduler', () => {
       clearTimeoutFn: clock.clearTimeoutFn
     })
     const result = scheduler.schedule({ approvalId: 'a1', provider: 'codex' })
-    expect(result.appliedMs).toBe(30_000)
+    expect(result.appliedMs).toBe(60_000)
     expect(result.source).toBe('providerDefault')
     expect(scheduler.pendingCount).toBe(1)
   })
@@ -82,13 +82,13 @@ describe('ApprovalTimeoutScheduler', () => {
       clearTimeoutFn: clock.clearTimeoutFn
     })
     scheduler.schedule({ approvalId: 'a1', provider: 'codex' })
-    await clock.advance(29_999)
+    await clock.advance(59_999)
     expect(onTimeout).not.toHaveBeenCalled()
     await clock.advance(1)
     expect(onTimeout).toHaveBeenCalledTimes(1)
     expect(onTimeout.mock.calls[0][0]).toMatchObject({
       approvalId: 'a1',
-      appliedMs: 30_000,
+      appliedMs: 60_000,
       source: 'providerDefault'
     })
     expect(scheduler.pendingCount).toBe(0)
@@ -121,13 +121,13 @@ describe('ApprovalTimeoutScheduler', () => {
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn
     })
-    scheduler.schedule({ approvalId: 'a1', provider: 'gemini' }) // 120s
-    scheduler.schedule({ approvalId: 'a1', provider: 'codex' }) // 30s
+    scheduler.schedule({ approvalId: 'a1', provider: 'gemini' }) // 240s
+    scheduler.schedule({ approvalId: 'a1', provider: 'codex' }) // 60s
     expect(scheduler.pendingCount).toBe(1)
-    await clock.advance(30_000)
+    await clock.advance(60_000)
     // Codex timer fired — gemini timer should have been replaced.
     expect(onTimeout).toHaveBeenCalledTimes(1)
-    expect(onTimeout.mock.calls[0][0].appliedMs).toBe(30_000)
+    expect(onTimeout.mock.calls[0][0].appliedMs).toBe(60_000)
   })
 
   it('main authority approvals use mainTimeoutMs over the provider default', () => {
@@ -158,7 +158,7 @@ describe('ApprovalTimeoutScheduler', () => {
         antigravity: 120_000,
         pi: 120_000,
         mistral: 120_000,
-        muse: 120_000,
+        muse: 120_000
       },
       mainTimeoutMs: 60_000,
       perKindOverridesMs: { 'hostCommand/rerun': 90_000 }
@@ -202,7 +202,7 @@ describe('ApprovalTimeoutScheduler', () => {
       { setTimeoutFn: clock.setTimeoutFn, clearTimeoutFn: clock.clearTimeoutFn, log }
     )
     scheduler.schedule({ approvalId: 'a1', provider: 'codex' })
-    await clock.advance(30_000)
+    await clock.advance(60_000)
     expect(scheduler.pendingCount).toBe(0)
     const logged = log.mock.calls.map((c) => c[0] as string).join('\n')
     expect(logged).toContain('onTimeout threw')
@@ -228,24 +228,24 @@ describe('ApprovalTimeoutScheduler', () => {
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn
     })
-    // Arm a Codex timer with the original 30s policy.
+    // Arm a Codex timer with the original 60s policy.
     scheduler.schedule({ approvalId: 'a1', provider: 'codex' })
-    // Now bump Codex to 90s — should only affect a2, not a1.
+    // Now bump Codex to 180s — should only affect a2, not a1.
     scheduler.updatePolicy({
       defaultTimeoutsMs: {
         ...DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs,
-        codex: 90_000
+        codex: 180_000
       }
     })
     scheduler.schedule({ approvalId: 'a2', provider: 'codex' })
-    await clock.advance(30_000)
+    await clock.advance(60_000)
     expect(onTimeout).toHaveBeenCalledTimes(1)
     expect(onTimeout.mock.calls[0][0].approvalId).toBe('a1')
-    expect(onTimeout.mock.calls[0][0].appliedMs).toBe(30_000)
-    await clock.advance(60_000)
+    expect(onTimeout.mock.calls[0][0].appliedMs).toBe(60_000)
+    await clock.advance(120_000)
     expect(onTimeout).toHaveBeenCalledTimes(2)
     expect(onTimeout.mock.calls[1][0].approvalId).toBe('a2')
-    expect(onTimeout.mock.calls[1][0].appliedMs).toBe(90_000)
+    expect(onTimeout.mock.calls[1][0].appliedMs).toBe(180_000)
   })
 
   it('updatePolicy preserves per-kind overrides when not specified', () => {
@@ -267,19 +267,27 @@ describe('ApprovalTimeoutScheduler', () => {
     expect(ms).toBe(90_000)
   })
 
-  it('default policy matches plan-file numbers', () => {
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.codex).toBe(30_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.claude).toBe(120_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.gemini).toBe(120_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.kimi).toBe(60_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.grok).toBe(120_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.cursor).toBe(120_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs.ollama).toBe(120_000)
-    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.mainTimeoutMs).toBe(60_000)
+  it('default policy carries the doubled provider and action windows', () => {
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.defaultTimeoutsMs).toEqual({
+      gemini: 240_000,
+      codex: 60_000,
+      claude: 240_000,
+      kimi: 120_000,
+      grok: 240_000,
+      cursor: 240_000,
+      ollama: 240_000,
+      antigravity: 240_000,
+      pi: 240_000,
+      mistral: 120_000,
+      muse: 240_000
+    })
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.mainTimeoutMs).toBe(120_000)
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.['hostCommand/rerun']).toBe(180_000)
+    expect(DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.['workspace/session-trust']).toBe(
+      360_000
+    )
     expect(
-      DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.[
-        'kimi-mcp/ensemble_roster_edit'
-      ]
+      DEFAULT_APPROVAL_TIMEOUT_POLICY.perKindOverridesMs?.['kimi-mcp/ensemble_roster_edit']
     ).toBe(40_000)
   })
 
@@ -304,13 +312,13 @@ describe('ApprovalTimeoutScheduler', () => {
     const before = Date.now()
     scheduler.schedule({ approvalId: 'a1', provider: 'codex' })
     const deadline = scheduler.deadlineFor('a1')
-    expect(deadline).toBeGreaterThanOrEqual(before + 30_000)
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 30_000)
+    expect(deadline).toBeGreaterThanOrEqual(before + 60_000)
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 60_000)
     scheduler.cancel('a1')
     expect(scheduler.deadlineFor('a1')).toBeUndefined()
 
     scheduler.schedule({ approvalId: 'a2', provider: 'codex' })
-    await clock.advance(30_000)
+    await clock.advance(60_000)
     expect(scheduler.deadlineFor('a2')).toBeUndefined()
 
     scheduler.schedule({ approvalId: 'a3', provider: 'codex' })
@@ -333,10 +341,10 @@ describe('ApprovalTimeoutScheduler', () => {
       provider: 'codex',
       kind: 'hostCommand/rerun'
     })
-    await clock.advance(90_000)
+    await clock.advance(180_000)
     expect(captured).toEqual({
       approvalId: 'a1',
-      appliedMs: 90_000,
+      appliedMs: 180_000,
       source: 'perKind'
     })
   })

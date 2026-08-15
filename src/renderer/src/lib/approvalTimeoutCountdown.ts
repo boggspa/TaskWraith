@@ -1,12 +1,13 @@
 import type { AppSettings } from '../../../main/store/types'
+import {
+  DEFAULT_APPROVAL_KIND_TIMEOUTS_MS,
+  DEFAULT_APPROVAL_TIMEOUTS_MS
+} from '../../../shared/interactionTimeouts'
 import type { AgentApprovalRequest } from './agentApprovalTypes'
 
-const PER_KIND_OVERRIDES_MS: Record<string, number> = {
-  'hostCommand/rerun': 90_000,
-  'workspace/session-trust': 180_000
-}
+const PER_KIND_OVERRIDES_MS: Readonly<Record<string, number>> = DEFAULT_APPROVAL_KIND_TIMEOUTS_MS
 
-const FALLBACK_PROVIDER_MS = 120_000
+const FALLBACK_PROVIDER_MS = DEFAULT_APPROVAL_TIMEOUTS_MS.claude
 
 export function resolveApprovalTimeoutMs(
   approval: AgentApprovalRequest,
