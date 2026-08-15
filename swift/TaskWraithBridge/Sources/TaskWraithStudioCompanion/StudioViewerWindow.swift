@@ -323,8 +323,17 @@ final class StudioViewerView: NSView {
     /// click. There is still ONE authority: StudioPlaybackClock remains the only
     /// thing that answers "what position are we at". All that changes is which
     /// physical oscillator supplies its time.
+    ///
+    /// DOMAIN SAFETY: the audio clock and CACurrentMediaTime() have different
+    /// origins. Mixing them teleports the playhead by the difference (machine
+    /// uptime on a long-running host), which clamps to end-of-media and looks
+    /// like a 600 s jump in ~2 s. The anchor is written in the SAME domain this
+    /// property returns, so never switch domains while the anchor is live.
     private var transportHostSeconds: Double {
-        audioPlayer.audioHostSeconds() ?? CACurrentMediaTime()
+        if usingAudioTime {
+            return audioPlayer.audioHostSeconds() ?? lastAudioHostSeconds
+        }
+        return CACurrentMediaTime()
     }
 
     /// Re-anchors the clock when the oscillator changes.
