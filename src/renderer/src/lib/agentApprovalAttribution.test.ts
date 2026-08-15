@@ -13,7 +13,8 @@ describe('agentApprovalEnsembleAttribution', () => {
           role: 'SolBoss',
           stageRole: 'writer',
           laneId: 'lane-9',
-          order: 2
+          order: 2,
+          effectivePermissionPresetId: 'read_only'
         }
       })
     ).toEqual({
@@ -21,7 +22,8 @@ describe('agentApprovalEnsembleAttribution', () => {
       role: 'SolBoss',
       stageRole: 'writer',
       laneId: 'lane-9',
-      order: 2
+      order: 2,
+      effectivePermissionPresetId: 'read_only'
     })
   })
 
@@ -38,7 +40,12 @@ describe('agentApprovalEnsembleAttribution', () => {
     ).toBeNull()
     expect(
       agentApprovalEnsembleAttribution({
-        ensembleParticipant: { participantId: 'p1', role: 'Scout', order: 1.5 }
+        ensembleParticipant: {
+          participantId: 'p1',
+          role: 'Scout',
+          order: 1.5,
+          effectivePermissionPresetId: 'root_access'
+        }
       })
     ).toEqual({ participantId: 'p1', role: 'Scout' })
   })

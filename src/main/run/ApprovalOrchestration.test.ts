@@ -395,6 +395,49 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void promise
   })
 
+  it('(g1) passes the signed effective preset into Ensemble approval attribution', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const ensembleRun = {
+      roundId: 'round-1',
+      participantId: 'participant-2',
+      laneId: 'lane-2',
+      provider: 'antigravity',
+      role: 'Scout2',
+      order: 5
+    }
+    vi.mocked(deps.runManager.get).mockImplementation(((runId?: string) =>
+      runId
+        ? {
+            runId,
+            appChatId: 'chat-1',
+            status: 'running',
+            state: {
+              appChatId: 'chat-1',
+              ensembleRun,
+              effectivePermissions: { presetId: 'read_only' }
+            }
+          }
+        : undefined) as never)
+
+    const promise = createApprovalOrchestration(deps)(
+      sender,
+      'antigravity',
+      'mcpTools',
+      '/repo',
+      request()
+    )
+    await Promise.resolve()
+
+    expect(deps.ensembleApprovalContext).toHaveBeenCalledWith(
+      ensembleRun,
+      'mcpTools',
+      '/repo',
+      'read_only'
+    )
+    void promise
+  })
+
   // (g2) REGISTER null-service — no registry means there is nowhere to receive
   // the renderer decision. Fail closed before emitting an orphan card/ledger row.
   it('(g2) a null approval service fails closed before emitting an orphan prompt', async () => {

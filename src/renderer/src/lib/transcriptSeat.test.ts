@@ -346,6 +346,23 @@ describe('seatFromApprovalAttribution', () => {
     expect(seat?.provider).toBe('antigravity')
   })
 
+  it('shows the signed effective lane posture instead of the wider roster preset', () => {
+    const seat = seatFromApprovalAttribution({
+      provider: 'antigravity',
+      attribution: attribution({ effectivePermissionPresetId: 'read_only' }),
+      roster: roster({
+        participants: [
+          {
+            id: 'p-3',
+            model: 'gemini-3.6-flash',
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      })
+    })
+    expect(seat?.permissionPresetId).toBe('read_only')
+  })
+
   it('takes the role and seat number from the attribution, not the roster', () => {
     // Same rule: the attribution is what the approval was FILED under, and it is
     // what `agentApprovalDisplayTitle` strips off the title. A roster rename must

@@ -12,6 +12,7 @@ import type {
   ChatRecord,
   EffectiveRunPermissions,
   EnsembleRunIdentity,
+  PermissionPresetId,
   ProviderId,
   RunEventInput
 } from '../store/types'
@@ -163,7 +164,8 @@ export interface RequestAgenticServiceApprovalDeps {
   ensembleApprovalContext: (
     identity: EnsembleRunIdentity | undefined,
     service: AgenticServiceId,
-    workspacePath: string | undefined
+    workspacePath: string | undefined,
+    effectivePermissionPresetId?: PermissionPresetId
   ) => { label: string; bodyPrefix: string; preview: Record<string, unknown> } | undefined
   planArtifactWriteApprovalMetadata: (input: {
     workflowMode: unknown
@@ -391,7 +393,12 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       | undefined
     const workflowMode = (session?.state as { workflowMode?: unknown } | undefined)?.workflowMode
     const ensembleRun = session?.state?.ensembleRun as EnsembleRunIdentity | undefined
-    const ensembleApproval = deps.ensembleApprovalContext(ensembleRun, service, workspacePath)
+    const ensembleApproval = deps.ensembleApprovalContext(
+      ensembleRun,
+      service,
+      workspacePath,
+      effectivePermissions?.presetId
+    )
     // 1.0.4-AR3 — carry `appChatId` into every auto-decision so the
     // ledger row is filterable by chat without re-deriving via
     // `approvalRouteContext`. Pre-AR3 the central path passed only

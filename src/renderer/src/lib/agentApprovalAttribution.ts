@@ -1,10 +1,22 @@
+import type { PermissionPresetId } from '../../../main/store/types'
+
 export interface AgentApprovalEnsembleAttribution {
   participantId: string
   role: string
   stageRole?: string
   laneId?: string
   order?: number
+  effectivePermissionPresetId?: PermissionPresetId
 }
+
+const PERMISSION_PRESET_IDS: ReadonlySet<string> = new Set([
+  'read_only',
+  'plan',
+  'default',
+  'workspace_write',
+  'full_access',
+  'custom'
+])
 
 function boundedString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -55,6 +67,7 @@ export function agentApprovalEnsembleAttribution(
   const role = boundedString(fields.role, 80)
   if (!participantId || !role) return null
   const order = fields.order
+  const effectivePermissionPresetId = boundedString(fields.effectivePermissionPresetId, 40)
   return {
     participantId,
     role,
@@ -64,6 +77,9 @@ export function agentApprovalEnsembleAttribution(
     ...(boundedString(fields.laneId, 120) ? { laneId: boundedString(fields.laneId, 120) } : {}),
     ...(typeof order === 'number' && Number.isInteger(order) && order > 0 && order <= 1000
       ? { order }
+      : {}),
+    ...(effectivePermissionPresetId && PERMISSION_PRESET_IDS.has(effectivePermissionPresetId)
+      ? { effectivePermissionPresetId: effectivePermissionPresetId as PermissionPresetId }
       : {})
   }
 }

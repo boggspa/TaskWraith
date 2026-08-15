@@ -17,6 +17,7 @@
 import type { ChatRun } from '../../../main/store/types'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { resolveSeatAuthority } from '../../../shared/seatChange'
+import type { AgentApprovalEnsembleAttribution } from './agentApprovalAttribution'
 
 function trimmed(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -208,9 +209,10 @@ export interface ApprovalSeatRoster {
  * lane that ran an hour ago must keep describing the seat it actually ran as.
  * An approval is the opposite case: it is a request being made right now, by a
  * seat that is mid-turn, and the roster IS what it is running as. There is also
- * no snapshot to read — `ensembleApprovalContext` (main/index.ts) bakes
- * participantId / provider / role / stageRole / order into the preview and
- * stops there, so model, reasoning and permission preset have no other source.
+ * The main authority also bakes the signed effective permission preset into the
+ * preview. That field outranks live roster configuration because an explicit
+ * read-only fan-out lane can be narrower than the seat's configured tier.
+ * Legacy approvals without it still fall back to the roster.
  *
  * Identity comes from the ATTRIBUTION, configuration from the roster. That
  * split is deliberate: the attribution is the validated, bounded identity the
@@ -226,12 +228,7 @@ export interface ApprovalSeatRoster {
  */
 export function seatFromApprovalAttribution(input: {
   provider: string
-  attribution: {
-    participantId: string
-    role: string
-    stageRole?: string
-    order?: number
-  } | null
+  attribution: AgentApprovalEnsembleAttribution | null
   roster: ApprovalSeatRoster | null | undefined
 }): SeatChangeSeatState | null {
   const { attribution } = input
@@ -252,7 +249,8 @@ export function seatFromApprovalAttribution(input: {
   const seatNumber = positiveInt(attribution.order)
   const stageRole = stageRoleOf(attribution.stageRole)
   const reasoningEffort = trimmed(participant?.reasoningEffort)
-  const permissionPresetId = trimmed(participant?.permissionPresetId)
+  const permissionPresetId =
+    trimmed(attribution.effectivePermissionPresetId) || trimmed(participant?.permissionPresetId)
   // Chat-level, so it cannot come off the participant — same resolver the
   // orchestrator stamps onto a fan-out row, so a Boss wears its crown in the
   // approval modal exactly as it does in the lane card.
