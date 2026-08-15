@@ -10978,9 +10978,6 @@
   z-index: 3;
   min-height: 20px;
   padding: 2px 4px 5px;
-  background: color-mix(in srgb, var(--tw-popover-glass-bg) 94%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .composer-blackboard-list > .blackboard-group:not(:has(.blackboard-card))::after {
