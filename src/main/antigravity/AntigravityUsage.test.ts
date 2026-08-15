@@ -154,6 +154,29 @@ describe('parseAgyUsagePanel', () => {
     ])
   })
 
+  it('finds the agy 1.1.13 panel after accumulated startup redraws', () => {
+    const parsed = parseAgyUsagePanel(
+      [
+        ...Array.from({ length: 24 }, (_, index) => `startup redraw ${index + 1}`),
+        '> /usage View model quota usage',
+        'Models & Quota',
+        'GEMINI MODELS',
+        'Models within this group: Gemini Flash, Gemini Pro',
+        'Weekly Limit Remaining',
+        '100% remaining · Refreshes in 166h 18m',
+        'Five Hour Limit Remaining',
+        '97% remaining · Refreshes in 52m',
+        'CLAUDE AND GPT MODELS',
+        'Quota available'
+      ].join('\n')
+    )
+
+    expect(parsed.windows).toMatchObject([
+      { label: 'Gemini Weekly', remainingPercent: 100 },
+      { label: 'Gemini 5H', remainingPercent: 97 }
+    ])
+  })
+
   it('reads the bar percentage when there is no explicit remaining text', () => {
     const parsed = parseAgyUsagePanel(
       ['Quota', 'GEMINI MODELS', 'Weekly Limit', '████ 73.5%'].join('\n')

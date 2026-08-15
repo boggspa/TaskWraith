@@ -4,7 +4,7 @@
 // `agy models` command only after recorded opt-in, forwards only the S2
 // credential-sanitized environment, and never reads OAuth/keyring material.
 
-import { spawn } from 'child_process'
+import * as pty from 'node-pty'
 import type { AppSettings } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import {
@@ -27,6 +27,22 @@ import {
 } from './AntigravityAgyDiscoveryProvenance'
 
 const MAX_CAPTURED_OUTPUT = 80_000
+
+export interface AgyModelDiscoveryPtyLike {
+  onData(listener: (data: string) => void): void
+  onExit(listener: (event: { exitCode: number }) => void): void
+  kill(): void
+}
+
+export interface AgyModelDiscoveryCaptureDependencies {
+  spawnPty?: (
+    command: string,
+    args: readonly string[],
+    options: { env: Record<string, string> }
+  ) => AgyModelDiscoveryPtyLike
+  setTimer?: (callback: () => void, delayMs: number) => unknown
+  clearTimer?: (timer: unknown) => void
+}
 
 export interface AuthenticatedAgyModelDiscoveryDependencies {
   resolveBinary?: AgyModelProbeDependencies['resolveBinary']
@@ -55,43 +71,85 @@ export interface AuthenticatedAgyModelDiscoveryDependencies {
 
 /**
  * Captures only a resolved official `agy` process with the environment already
- * constructed by `probeAgyModels`. Do not replace this with the generic CLI
- * capture helper: that helper creates its own provider environment and would
- * defeat the AntiGravity credential-selector stripping boundary.
+ * constructed by `probeAgyModels`. Current agy blocks before writing anything
+ * when stdout is a pipe, so this uses a bounded PTY even though `models` is a
+ * non-interactive command. Do not replace it with the generic CLI capture
+ * helper: that helper creates its own provider environment and would defeat
+ * the AntiGravity credential-selector stripping boundary.
  */
 export function captureAgyModelDiscoveryOutput(
   command: string,
   args: readonly string[],
-  options: { env: Record<string, string>; timeoutMs: number }
+  options: { env: Record<string, string>; timeoutMs: number },
+  deps: AgyModelDiscoveryCaptureDependencies = {}
 ): Promise<AgyProcessCaptureResult> {
   return new Promise((resolve) => {
-    let stdout = ''
-    let stderr = ''
+    let output = ''
     let settled = false
-    const child = spawn(command, [...args], { env: options.env, shell: false })
+    let child: AgyModelDiscoveryPtyLike | null = null
+    let timeout: unknown = null
+    const setTimer = deps.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
+    const clearTimer =
+      deps.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>))
     const finish = (result: AgyProcessCaptureResult): void => {
       if (settled) return
       settled = true
-      clearTimeout(timeout)
+      if (timeout !== null) clearTimer(timeout)
+      try {
+        child?.kill()
+      } catch {
+        // The terminal already exited.
+      }
       resolve(result)
     }
-    const timeout = setTimeout(() => {
-      child.kill()
-      finish({ stdout, stderr, code: null, timedOut: true, error: 'agy models timed out.' })
-    }, options.timeoutMs)
-    timeout.unref?.()
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-      if (stdout.length > MAX_CAPTURED_OUTPUT) stdout = stdout.slice(-MAX_CAPTURED_OUTPUT)
+
+    try {
+      const spawnPty =
+        deps.spawnPty ??
+        ((binary, binaryArgs, spawnOptions) => {
+          const terminal = pty.spawn(binary, [...binaryArgs], {
+            name: 'xterm-256color',
+            cols: 160,
+            rows: 30,
+            env: spawnOptions.env
+          })
+          return {
+            onData: (listener) => terminal.onData(listener),
+            onExit: (listener) =>
+              terminal.onExit((event) => listener({ exitCode: event.exitCode })),
+            kill: () => terminal.kill()
+          }
+        })
+      child = spawnPty(command, args, { env: options.env })
+    } catch (error) {
+      finish({
+        stdout: '',
+        stderr: '',
+        code: null,
+        timedOut: false,
+        error: error instanceof Error ? error.message : 'agy models could not start.'
+      })
+      return
+    }
+
+    child.onData((chunk) => {
+      output += chunk
+      if (output.length > MAX_CAPTURED_OUTPUT) output = output.slice(-MAX_CAPTURED_OUTPUT)
     })
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-      if (stderr.length > MAX_CAPTURED_OUTPUT) stderr = stderr.slice(-MAX_CAPTURED_OUTPUT)
-    })
-    child.on('error', (error) =>
-      finish({ stdout, stderr, code: null, timedOut: false, error: error.message })
+    child.onExit((event) =>
+      finish({ stdout: output, stderr: '', code: event.exitCode, timedOut: false })
     )
-    child.on('close', (code) => finish({ stdout, stderr, code, timedOut: false }))
+    timeout = setTimer(
+      () =>
+        finish({
+          stdout: output,
+          stderr: '',
+          code: null,
+          timedOut: true,
+          error: 'agy models timed out.'
+        }),
+      options.timeoutMs
+    )
   })
 }
 

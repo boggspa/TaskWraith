@@ -1,11 +1,56 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  captureAgyModelDiscoveryOutput,
   discoverAuthenticatedAgyModels,
   type AuthenticatedAgyModelDiscoveryDependencies
 } from './AntigravityModelDiscovery'
 import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
 
 const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1 }
+
+describe('captureAgyModelDiscoveryOutput', () => {
+  it('captures model discovery through a PTY because current agy blocks on piped stdout', async () => {
+    let emitData: (data: string) => void = () => {}
+    let emitExit: (event: { exitCode: number }) => void = () => {}
+    const kill = vi.fn()
+    const spawnPty = vi.fn(() => ({
+      onData: (listener: (data: string) => void) => {
+        emitData = listener
+      },
+      onExit: (listener: (event: { exitCode: number }) => void) => {
+        emitExit = listener
+      },
+      kill
+    }))
+    const clearTimer = vi.fn()
+    const capture = captureAgyModelDiscoveryOutput(
+      '/Users/test/.local/bin/agy',
+      ['models'],
+      { env: { PATH: '/Users/test/.local/bin' }, timeoutMs: 8_000 },
+      {
+        spawnPty,
+        setTimer: vi.fn(() => 42),
+        clearTimer
+      }
+    )
+
+    emitData('Fetching available models...\r\n')
+    emitData('gemini-3.7-flash-high\tGemini 3.7 Flash (High)\r\n')
+    emitExit({ exitCode: 0 })
+
+    await expect(capture).resolves.toEqual({
+      stdout: 'Fetching available models...\r\ngemini-3.7-flash-high\tGemini 3.7 Flash (High)\r\n',
+      stderr: '',
+      code: 0,
+      timedOut: false
+    })
+    expect(spawnPty).toHaveBeenCalledWith('/Users/test/.local/bin/agy', ['models'], {
+      env: { PATH: '/Users/test/.local/bin' }
+    })
+    expect(clearTimer).toHaveBeenCalledWith(42)
+    expect(kill).toHaveBeenCalledTimes(1)
+  })
+})
 
 function dependencies(
   result: {
@@ -62,6 +107,38 @@ describe('discoverAuthenticatedAgyModels', () => {
         })
       })
     )
+  })
+
+  it('persists clean model ids and records live provenance for current tab-separated output', async () => {
+    const writeCachedModels = vi.fn(async () => undefined)
+    const recordProvenance = vi.fn()
+    const output = [
+      'Fetching available models...',
+      'gemini-3.7-flash-high\tGemini 3.7 Flash (High)',
+      'gemini-3.1-pro-low\tGemini 3.1 Pro (Low)',
+      'claude-sonnet-4-5\tClaude Sonnet 4.5'
+    ].join('\n')
+
+    const models = await discoverAuthenticatedAgyModels(optedIn, {
+      ...dependencies({ stdout: output }),
+      readCachedModels: async () => [],
+      writeCachedModels,
+      recordProvenance
+    })
+
+    expect(models).toEqual([
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
+      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' }
+    ])
+    expect(writeCachedModels).toHaveBeenCalledWith(
+      [
+        { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
+        { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
+        { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }
+      ],
+      undefined
+    )
+    expect(recordProvenance).toHaveBeenCalledWith({ source: 'live', cachedAtMs: null })
   })
 
   // An unusable probe result used to return [], which tripped the

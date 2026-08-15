@@ -234,6 +234,34 @@ describe('parseAgyModels', () => {
       { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' }
     ])
   })
+
+  it('parses the tab-separated rows emitted by agy 1.1.13', () => {
+    const output = [
+      'Fetching available models...',
+      'gemini-3.7-flash-high\tGemini 3.7 Flash (High)',
+      'gemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)',
+      'gemini-3.1-pro-low\tGemini 3.1 Pro (Low)',
+      'claude-sonnet-4-5\tClaude Sonnet 4.5'
+    ].join('\n')
+
+    expect(parseAgyModels(output)).toEqual([
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
+      { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
+      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
+      { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }
+    ])
+  })
+
+  it('does not join PTY spinner frames onto the first model id', () => {
+    const output =
+      '\u001b[?25l⠋ Fetching available models...\r' +
+      '⠙ Fetching available models...\r' +
+      '\u001b[2Kgemini-3.7-flash-high\tGemini 3.7 Flash (High)\r\n'
+
+    expect(parseAgyModels(output)).toEqual([
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' }
+    ])
+  })
 })
 
 describe('probeAgyModels', () => {

@@ -229,9 +229,12 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
     .split('\n')
     .map(cleanPanelLine)
     .filter(Boolean)
-  const hasUsageHeading = lines
-    .slice(0, 20)
-    .some((line) => /\b(?:usage|quota)\b/i.test(line))
+  // PTY output is an accumulated redraw stream, not just the final screen.
+  // agy 1.1.13 can render more than twenty startup/trust lines before the
+  // quota panel, so the old prefix-only check discarded a complete panel.
+  // The buffer is already bounded, and the Gemini pool + sub-limit checks
+  // below remain the authoritative structure guard.
+  const hasUsageHeading = lines.some((line) => /\b(?:usage|quota)\b/i.test(line))
   if (!hasUsageHeading) return { windows: [] }
 
   const planType = parsePlanType(lines)

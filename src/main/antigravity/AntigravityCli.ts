@@ -337,10 +337,14 @@ function parseJsonModels(raw: string): AgyModel[] | null {
 }
 
 function parsePlainModelLine(line: string): AgyModel | null {
-  const cleaned = stripAnsiAndControls(line).replace(/^(?:[-*•]\s*)+/, '')
+  // agy 1.1.13 changed this table to a single tab between id and label. Tabs
+  // are control characters and the ordinary sanitizer removes them, which
+  // previously joined both columns into one malformed id. Preserve their
+  // structural meaning as the existing two-space column delimiter first.
+  const cleaned = stripAnsiAndControls(line.replace(/\t+/g, '  ')).replace(/^(?:[-*•]\s*)+/, '')
   if (!cleaned) return null
   if (
-    /^(?:available\s+models?|models?|no\s+models?|not\s+logged|not\s+authenticated|please\s+(?:log|sign)|authenticate|error|failed|usage:|warning:)/i.test(
+    /^(?:fetching\s+(?:available\s+)?models?|available\s+models?|models?|no\s+models?|not\s+logged|not\s+authenticated|please\s+(?:log|sign)|authenticate|error|failed|usage:|warning:)/i.test(
       cleaned
     )
   ) {
@@ -381,7 +385,10 @@ export function parseAgyModels(raw: string): AgyModel[] {
 
   const models: AgyModel[] = []
   const seen = new Set<string>()
-  for (const line of raw.split(/\r?\n/)) {
+  // A PTY renders agy's progress spinner with bare carriage returns. Treat
+  // those redraw boundaries as lines too, otherwise every spinner frame is
+  // concatenated onto the first real model id when controls are stripped.
+  for (const line of raw.split(/\r\n|\r|\n/)) {
     appendModel(models, seen, parsePlainModelLine(line))
   }
   return models
