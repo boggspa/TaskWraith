@@ -10,9 +10,9 @@ const { PNG } = require('pngjs')
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '8e94b83e0f3ad8e3a8cf2a3164717f84991a6c35'
-const expectedCompanionSha256 = 'b241c86dca3424755e5daf1c8f15468f40d519b2de3d54f7428e19eef5d11157'
-const expectedSourceDigest = '2f537760546e380c738d70e37d58ecb59525611b99c878961fe79c7bae6e43d1'
-const expectedSourceCount = 66
+const expectedCompanionSha256 = '8e7cf6f93deb6a9ca6fc7a140e025ca1f8bdae3593d50bdf1c4147c63556a55f'
+const expectedSourceDigest = '5d46e11ed3685eb4ff7a9a57841104e914a03f728481e17e457fe74c7b468f1b'
+const expectedSourceCount = 67
 const expectedOutDigest = '81ef1b822cc943ab7f1b5f50b42cca15c5d8dfb6d6e7d03935706596e83948b0'
 const expectedOutCount = 99
 const expectedFixtureSha256 = 'add40cd910994004545620b11e9cc127d4d012a6dd15f0e1087c6ce5434c6535'
@@ -21,9 +21,9 @@ const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'dffa2df35f44527f2e6a4c82032956b7cb5ce665f88dd968d9fc7db628548486',
+    '04b6903a93ddacfcbec94b648b4e43237becb0b0732864043072592391393d21',
   'scripts/studio-acceptance-ui-driver.swift':
-    '202b5d7d75bb59fa395322f8149000f1415fbfe3f0bd9021310ebf0733ee0aa2',
+    'ed7751da09a2468e2628b68f0273913ac7c287626a7c65662e1a7f8b9966902a',
   'scripts/studio-acceptance-watchdog.cjs':
     'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
   'scripts/studio-acceptance-window-probe.swift':
