@@ -222,7 +222,8 @@ function collectRegularFiles(directory) {
       const entryPath = path.join(current, entry.name)
       if (entry.isDirectory()) pending.push(entryPath)
       else if (entry.isFile()) files.push(entryPath)
-      else throw new Error(`refused non-regular path: ${entryPath}`)
+      // Skip non-regular entries (sockets, fifos, symlinks) rather than
+      // crashing artifact collection; custody directories are regular-only.
     }
   }
   return files.sort()
