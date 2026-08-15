@@ -211,6 +211,9 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     /// same value out of the live process otherwise required attaching a
     /// debugger and resolving an internal Swift type by name.
     public let syncDetail: String?
+    /// Machine-parseable record of the last thing that MOVED the transport, or
+    /// nil before any mutation. Accessibility-only, like syncDetail.
+    public let transportMutationDetail: String?
     /// Process memory. Paired with retainedFrameCount deliberately: measurement
     /// showed phys_footprint is effectively blind to IOSurface-backed video
     /// memory, so RSS alone would under-report the viewer's dominant allocation
@@ -233,6 +236,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         hardwareDecodeLabel: String,
         syncLabel: String = "a/v --",
         syncDetail: String? = nil,
+        transportMutationDetail: String? = nil,
         memoryLabel: String = "rss --",
         cacheHitCount: Int = 0,
         boundTextureCount: Int = 0,
@@ -244,6 +248,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         self.hardwareDecodeLabel = hardwareDecodeLabel
         self.syncLabel = syncLabel
         self.syncDetail = syncDetail
+        self.transportMutationDetail = transportMutationDetail
         self.cacheHitCount = cacheHitCount
         self.boundTextureCount = boundTextureCount
         self.playerCount = playerCount
@@ -746,6 +751,25 @@ public enum StudioOverlayLayout {
         // unchanged, and omitted entirely when no sample exists: a reader that
         // finds this descriptor is entitled to believe a measurement is behind
         // it, so an empty placeholder would be a lie with a label on.
+        // Same accessibility-only treatment as the A/V sample, and for the same
+        // reason: a packaged run that sees the playhead teleport can read WHY
+        // instead of reporting "4 seconds, then 600" with no operands.
+        if let transportMutationDetail = state.diagnostics?.transportMutationDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "Transport mutation detail",
+                    value: transportMutationDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
+
         if let syncDetail = state.diagnostics?.syncDetail {
             accessibility.append(
                 StudioAccessibilityDescriptor(

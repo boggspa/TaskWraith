@@ -94,6 +94,17 @@ public struct StudioPlaybackClock: Equatable, Sendable {
     private var anchorTicks: Int64
     private var anchorHostSeconds: Double
 
+    /// READ-ONLY DIAGNOSTIC VIEW OF THE ANCHOR.
+    ///
+    /// Position is recomputed as `anchorTicks + (host - anchorHostSeconds) * rate`,
+    /// so the anchor is the only thing that distinguishes "this mutation moved
+    /// the playhead" from "the playhead was already there when we read it". A
+    /// packaged teleport that reports only a before/after position cannot tell
+    /// those apart, which is exactly why the 4.133s -> 600s sample stayed
+    /// unattributed. Exposed for observation only; nothing may set them.
+    public var diagnosticAnchorTicks: Int64 { anchorTicks }
+    public var diagnosticAnchorHostSeconds: Double { anchorHostSeconds }
+
     public init(timebase: StudioTimebase, durationTicks: Int64) {
         self.timebase = timebase
         self.durationTicks = max(0, durationTicks)

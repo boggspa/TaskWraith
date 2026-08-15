@@ -511,6 +511,86 @@ final class StudioOverlayModelTests: XCTestCase {
             "the diagnostics row must remain inside the viewport")
     }
 
+    // MARK: - Why the transport moved
+
+    private func mutationRecord(
+        kind: StudioTransportMutationKind = .lifecycleOpen,
+        source: StudioTransportHostSource = .audio,
+        host: Double = 4,
+        beforeAnchorHost: Double = 0,
+        beforePosition: Int64 = 2400,
+        afterPosition: Int64 = 2400
+    ) -> StudioTransportMutationRecord {
+        StudioTransportMutationRecord(
+            kind: kind, source: source, suppliedHostSeconds: host,
+            beforeAnchorTicks: 0, beforeAnchorHostSeconds: beforeAnchorHost,
+            beforePositionTicks: beforePosition,
+            afterAnchorTicks: 0, afterAnchorHostSeconds: beforeAnchorHost,
+            afterPositionTicks: afterPosition,
+            durationTicks: 6000, isPlaying: true, rate: 1)
+    }
+
+    /// THE DISTINCTION THE PACKAGED RUN COULD NOT MAKE. A record carrying only
+    /// positions cannot separate a mutation that CAUSED a clamp from one that
+    /// merely observed a playhead already parked at duration.
+    func testAClampIsAttributedOnlyToTheMutationThatCausedIt() {
+        XCTAssertTrue(
+            mutationRecord(beforePosition: 2400, afterPosition: 6000).clampedToDuration,
+            "a mutation that moved the playhead onto the bound must be named")
+        XCTAssertFalse(
+            mutationRecord(beforePosition: 6000, afterPosition: 6000).clampedToDuration,
+            "a playhead already at duration is not this mutation's doing")
+    }
+
+    /// The signature of machine uptime handed to an audio-anchored clock.
+    func testAWrongDomainHostIsVisibleAsAnImplausibleAnchorDistance() {
+        XCTAssertFalse(mutationRecord(host: 4, beforeAnchorHost: 0).suppliedHostIsFarFromAnchor)
+        XCTAssertTrue(
+            mutationRecord(host: 100_000, beforeAnchorHost: 0).suppliedHostIsFarFromAnchor,
+            "a host ~1e5s from its anchor is the teleport signature")
+    }
+
+    func testTheMutationRecordSerialisesItsOperandsUnderAVersionedSchema() {
+        let export = mutationRecord(
+            kind: .playbackToggleAccessibility, source: .machine,
+            host: 100_000, afterPosition: 6000
+        ).diagnosticsExportText
+
+        XCTAssertTrue(export.hasPrefix("tm1 "), export)
+        XCTAssertTrue(export.contains("kind=playbackToggleAccessibility"), export)
+        XCTAssertTrue(export.contains("src=machine"), export)
+        XCTAssertTrue(export.contains("prePos=2400"), export)
+        XCTAssertTrue(export.contains("postPos=6000"), export)
+        XCTAssertTrue(export.contains("farAnchor=1"), export)
+        XCTAssertTrue(export.contains("clamped=1"), export)
+        // Absence is explicit: a missing previous host must never read as zero.
+        XCTAssertTrue(export.contains("prevHost=-"), export)
+    }
+
+    func testTheTransportMutationIsPublishedAsAnAccessibilityOnlyDescriptor() {
+        var subject = state()
+        subject.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 10, droppedFrameCount: 0, retainedFrameCount: 3,
+            hardwareDecodeLabel: "hardware",
+            transportMutationDetail: "tm1 kind=lifecycleOpen")
+        let model = StudioOverlayLayout.build(subject)
+
+        let descriptor = model.accessibilityElements
+            .first { $0.label == "Transport mutation detail" }
+        XCTAssertEqual(descriptor?.value, "tm1 kind=lifecycleOpen")
+        XCTAssertEqual(descriptor?.role, .staticText)
+
+        // Absent before any mutation, and drawing nothing either way.
+        var none = state()
+        none.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 10, droppedFrameCount: 0, retainedFrameCount: 3,
+            hardwareDecodeLabel: "hardware")
+        let bare = StudioOverlayLayout.build(none)
+        XCTAssertNil(bare.accessibilityElements.first { $0.label == "Transport mutation detail" })
+        XCTAssertEqual(model.texts, bare.texts, "the record must not draw anything")
+        XCTAssertEqual(model.rects, bare.rects)
+    }
+
     // MARK: - A playback control something can actually press
 
     /// Review hydrates PAUSED, and every safe way to start it was inert:
