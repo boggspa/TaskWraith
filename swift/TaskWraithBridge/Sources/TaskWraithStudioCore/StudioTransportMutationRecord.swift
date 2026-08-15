@@ -17,111 +17,134 @@ public enum StudioTransportMutationKind: String, Equatable, Sendable {
     case scrubEnd
     case timecodeSeek
     case markOrLoop
-    /// Not an operator action: the oscillator changed and the clock was
-    /// re-anchored from the old source into the new one.
+    /// The oscillator CHANGED and the clock was re-anchored from the old source
+    /// into the new one.
     case oscillatorReconciliation
+    /// The audio timeline was reset and the transport re-seeked to follow it.
+    /// Distinct from `oscillatorReconciliation` because no source PRESENCE
+    /// changed, and distinct from `lifecycleOpen` because no media changed —
+    /// conflating them would hide which of the three actually moved a playhead.
+    case audioReschedule
 }
 
 /// Which clock supplied the host seconds.
 public enum StudioTransportHostSource: String, Equatable, Sendable {
-    /// Audio-relative, starting near zero while sound drives playback.
+    /// Audio-relative, measured from the audio clock's own anchor.
     case audio
-    /// CACurrentMediaTime — machine uptime, order 1e5 seconds.
+    /// CACurrentMediaTime — machine uptime.
     case machine
 }
 
 /// The last thing that moved the transport, kept whole.
 ///
-/// WHY THE ANCHOR OPERANDS ARE HERE. A record carrying only a before/after
-/// position cannot distinguish a mutation that CAUSED a clamp from one that
-/// merely observed a playhead already sitting at duration. The anchor is what
-/// separates them: position is recomputed from `anchorTicks` at
-/// `anchorHostSeconds`, so a wrong-domain host shows up as an anchor whose host
-/// is ~1e5 seconds away from the one supplied.
+/// WHY THE ANCHOR OPERANDS ARE HERE, AND WHY POSITIONS ARE NOT ENOUGH. Position
+/// is recomputed as `anchorTicks + (host - anchorHostSeconds) * rate`, so a
+/// position READ at a wrong-domain host already resolves to duration before the
+/// mutation runs. A predicate comparing pre/post positions therefore reports
+/// "not caused here" for the exact case it exists to catch. The anchor is what
+/// the mutation PERSISTS, so the causal transition is an anchor transition.
 ///
 /// ONE record, overwritten on mutation only — never per display tick. A
 /// diagnostic that grows per frame is a worse defect than the one it explains.
 public struct StudioTransportMutationRecord: Equatable, Sendable {
     public let kind: StudioTransportMutationKind
-    public let source: StudioTransportHostSource
+    /// Source identity before and after. This — not a magnitude threshold — is
+    /// what identifies a domain change: a machine host is machine-domain on a
+    /// freshly booted machine too, where its value is small.
+    public let beforeSource: StudioTransportHostSource
+    public let afterSource: StudioTransportHostSource
     /// The host handed to the mutation.
     public let suppliedHostSeconds: Double
-    /// For an oscillator swap, the host read under the OLD source. Nil
-    /// elsewhere — absence means "not a source change", never "zero".
+    /// The host read under the OLD source when the source changed. Nil
+    /// otherwise — absence means "no source change", never "zero".
     public let previousHostSeconds: Double?
 
     public let beforeAnchorTicks: Int64
     public let beforeAnchorHostSeconds: Double
     public let beforePositionTicks: Int64
+    public let beforeDurationTicks: Int64
+    public let beforeIsPlaying: Bool
+    public let beforeRate: Double
 
     public let afterAnchorTicks: Int64
     public let afterAnchorHostSeconds: Double
     public let afterPositionTicks: Int64
-
-    public let durationTicks: Int64
-    public let isPlaying: Bool
-    public let rate: Double
+    public let afterDurationTicks: Int64
+    public let afterIsPlaying: Bool
+    public let afterRate: Double
 
     public init(
         kind: StudioTransportMutationKind,
-        source: StudioTransportHostSource,
+        beforeSource: StudioTransportHostSource,
+        afterSource: StudioTransportHostSource,
         suppliedHostSeconds: Double,
         previousHostSeconds: Double? = nil,
         beforeAnchorTicks: Int64,
         beforeAnchorHostSeconds: Double,
         beforePositionTicks: Int64,
+        beforeDurationTicks: Int64,
+        beforeIsPlaying: Bool,
+        beforeRate: Double,
         afterAnchorTicks: Int64,
         afterAnchorHostSeconds: Double,
         afterPositionTicks: Int64,
-        durationTicks: Int64,
-        isPlaying: Bool,
-        rate: Double
+        afterDurationTicks: Int64,
+        afterIsPlaying: Bool,
+        afterRate: Double
     ) {
         self.kind = kind
-        self.source = source
+        self.beforeSource = beforeSource
+        self.afterSource = afterSource
         self.suppliedHostSeconds = suppliedHostSeconds
         self.previousHostSeconds = previousHostSeconds
         self.beforeAnchorTicks = beforeAnchorTicks
         self.beforeAnchorHostSeconds = beforeAnchorHostSeconds
         self.beforePositionTicks = beforePositionTicks
+        self.beforeDurationTicks = beforeDurationTicks
+        self.beforeIsPlaying = beforeIsPlaying
+        self.beforeRate = beforeRate
         self.afterAnchorTicks = afterAnchorTicks
         self.afterAnchorHostSeconds = afterAnchorHostSeconds
         self.afterPositionTicks = afterPositionTicks
-        self.durationTicks = durationTicks
-        self.isPlaying = isPlaying
-        self.rate = rate
+        self.afterDurationTicks = afterDurationTicks
+        self.afterIsPlaying = afterIsPlaying
+        self.afterRate = afterRate
     }
 
-    /// True when the supplied host is implausibly far from the anchor it was
-    /// measured against — the signature of a machine-uptime host handed to an
-    /// audio-anchored clock.
-    public var suppliedHostIsFarFromAnchor: Bool {
-        abs(suppliedHostSeconds - beforeAnchorHostSeconds) > 3600
-    }
-
-    /// True when this mutation is what put the playhead on the duration bound.
-    /// A playhead already parked there is NOT attributed to this mutation.
+    /// True when THIS mutation persisted the playhead onto the duration bound.
+    ///
+    /// Reads the ANCHOR, not the resolved position. A wrong-domain host makes
+    /// the pre-mutation position read already equal duration, so a position
+    /// comparison would answer "no" precisely when the answer is "yes".
     public var clampedToDuration: Bool {
-        durationTicks > 0 && afterPositionTicks >= durationTicks
-            && beforePositionTicks < durationTicks
+        afterDurationTicks > 0
+            && beforeAnchorTicks < afterDurationTicks
+            && afterAnchorTicks >= afterDurationTicks
     }
+
+    /// True when the host domain changed across this mutation. Source identity,
+    /// not a magnitude heuristic.
+    public var crossedHostDomain: Bool { beforeSource != afterSource }
 
     /// One machine-parseable line. `tm1` is a schema version so a packaged
     /// parser fails closed rather than mis-keying a later format; absent values
     /// serialise as `-`, never `0`.
     public var diagnosticsExportText: String {
         let previous = previousHostSeconds.map { String(format: "%.6f", $0) } ?? "-"
-        return "tm1 kind=\(kind.rawValue) src=\(source.rawValue)"
+        return "tm1 kind=\(kind.rawValue)"
+            + " preSrc=\(beforeSource.rawValue) postSrc=\(afterSource.rawValue)"
             + " host=\(String(format: "%.6f", suppliedHostSeconds)) prevHost=\(previous)"
             + " preAnchorT=\(beforeAnchorTicks)"
             + " preAnchorH=\(String(format: "%.6f", beforeAnchorHostSeconds))"
-            + " prePos=\(beforePositionTicks)"
+            + " prePos=\(beforePositionTicks) preDur=\(beforeDurationTicks)"
+            + " prePlay=\(beforeIsPlaying ? 1 : 0)"
+            + " preRate=\(String(format: "%.3f", beforeRate))"
             + " postAnchorT=\(afterAnchorTicks)"
             + " postAnchorH=\(String(format: "%.6f", afterAnchorHostSeconds))"
-            + " postPos=\(afterPositionTicks)"
-            + " dur=\(durationTicks) play=\(isPlaying ? 1 : 0)"
-            + " rate=\(String(format: "%.3f", rate))"
-            + " farAnchor=\(suppliedHostIsFarFromAnchor ? 1 : 0)"
+            + " postPos=\(afterPositionTicks) postDur=\(afterDurationTicks)"
+            + " postPlay=\(afterIsPlaying ? 1 : 0)"
+            + " postRate=\(String(format: "%.3f", afterRate))"
+            + " crossedDomain=\(crossedHostDomain ? 1 : 0)"
             + " clamped=\(clampedToDuration ? 1 : 0)"
     }
 }

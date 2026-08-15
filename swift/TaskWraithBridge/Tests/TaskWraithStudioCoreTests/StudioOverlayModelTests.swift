@@ -515,55 +515,79 @@ final class StudioOverlayModelTests: XCTestCase {
 
     private func mutationRecord(
         kind: StudioTransportMutationKind = .lifecycleOpen,
-        source: StudioTransportHostSource = .audio,
+        beforeSource: StudioTransportHostSource = .audio,
+        afterSource: StudioTransportHostSource = .audio,
         host: Double = 4,
-        beforeAnchorHost: Double = 0,
+        beforeAnchorTicks: Int64 = 0,
+        afterAnchorTicks: Int64 = 0,
         beforePosition: Int64 = 2400,
         afterPosition: Int64 = 2400
     ) -> StudioTransportMutationRecord {
         StudioTransportMutationRecord(
-            kind: kind, source: source, suppliedHostSeconds: host,
-            beforeAnchorTicks: 0, beforeAnchorHostSeconds: beforeAnchorHost,
-            beforePositionTicks: beforePosition,
-            afterAnchorTicks: 0, afterAnchorHostSeconds: beforeAnchorHost,
-            afterPositionTicks: afterPosition,
-            durationTicks: 6000, isPlaying: true, rate: 1)
+            kind: kind, beforeSource: beforeSource, afterSource: afterSource,
+            suppliedHostSeconds: host,
+            beforeAnchorTicks: beforeAnchorTicks, beforeAnchorHostSeconds: 0,
+            beforePositionTicks: beforePosition, beforeDurationTicks: 6000,
+            beforeIsPlaying: true, beforeRate: 1,
+            afterAnchorTicks: afterAnchorTicks, afterAnchorHostSeconds: host,
+            afterPositionTicks: afterPosition, afterDurationTicks: 6000,
+            afterIsPlaying: true, afterRate: 1)
     }
 
-    /// THE DISTINCTION THE PACKAGED RUN COULD NOT MAKE. A record carrying only
-    /// positions cannot separate a mutation that CAUSED a clamp from one that
-    /// merely observed a playhead already parked at duration.
-    func testAClampIsAttributedOnlyToTheMutationThatCausedIt() {
+    /// THE FALSE NEGATIVE THIS PREDICATE HAD, AND WHY IT MATTERED MOST.
+    ///
+    /// A position read at a wrong-domain host ALREADY resolves to duration
+    /// before the mutation runs, so pre == post == duration and a position
+    /// comparison answers "not caused here" for exactly the case it exists to
+    /// catch. The causal transition is the ANCHOR the mutation persists.
+    func testAClampIsAttributedFromTheAnchorTransitionNotTheResolvedPosition() {
+        // The real wrong-domain shape: both position reads already read 600s.
         XCTAssertTrue(
-            mutationRecord(beforePosition: 2400, afterPosition: 6000).clampedToDuration,
-            "a mutation that moved the playhead onto the bound must be named")
+            mutationRecord(
+                beforeAnchorTicks: 0, afterAnchorTicks: 6000,
+                beforePosition: 6000, afterPosition: 6000
+            ).clampedToDuration,
+            "a mutation that persisted the anchor onto the bound must be named "
+                + "even though both position reads already showed duration")
+
+        // An anchor already parked at duration is not this mutation's doing.
         XCTAssertFalse(
-            mutationRecord(beforePosition: 6000, afterPosition: 6000).clampedToDuration,
-            "a playhead already at duration is not this mutation's doing")
+            mutationRecord(
+                beforeAnchorTicks: 6000, afterAnchorTicks: 6000,
+                beforePosition: 6000, afterPosition: 6000
+            ).clampedToDuration)
+
+        // Ordinary movement well inside the media.
+        XCTAssertFalse(
+            mutationRecord(beforeAnchorTicks: 0, afterAnchorTicks: 2400).clampedToDuration)
     }
 
-    /// The signature of machine uptime handed to an audio-anchored clock.
-    func testAWrongDomainHostIsVisibleAsAnImplausibleAnchorDistance() {
-        XCTAssertFalse(mutationRecord(host: 4, beforeAnchorHost: 0).suppliedHostIsFarFromAnchor)
+    /// Source IDENTITY, not a magnitude threshold: a machine host is
+    /// machine-domain on a freshly booted machine too, where its value is small.
+    func testADomainChangeIsIdentifiedBySourceIdentityNotMagnitude() {
         XCTAssertTrue(
-            mutationRecord(host: 100_000, beforeAnchorHost: 0).suppliedHostIsFarFromAnchor,
-            "a host ~1e5s from its anchor is the teleport signature")
+            mutationRecord(beforeSource: .audio, afterSource: .machine, host: 12)
+                .crossedHostDomain,
+            "a small machine host on a fresh boot is still a domain change")
+        XCTAssertFalse(
+            mutationRecord(beforeSource: .audio, afterSource: .audio, host: 100_000)
+                .crossedHostDomain)
     }
 
     func testTheMutationRecordSerialisesItsOperandsUnderAVersionedSchema() {
         let export = mutationRecord(
-            kind: .playbackToggleAccessibility, source: .machine,
-            host: 100_000, afterPosition: 6000
+            kind: .audioReschedule, beforeSource: .machine, afterSource: .audio,
+            host: 4, beforeAnchorTicks: 0, afterAnchorTicks: 6000,
+            beforePosition: 6000, afterPosition: 6000
         ).diagnosticsExportText
 
         XCTAssertTrue(export.hasPrefix("tm1 "), export)
-        XCTAssertTrue(export.contains("kind=playbackToggleAccessibility"), export)
-        XCTAssertTrue(export.contains("src=machine"), export)
-        XCTAssertTrue(export.contains("prePos=2400"), export)
-        XCTAssertTrue(export.contains("postPos=6000"), export)
-        XCTAssertTrue(export.contains("farAnchor=1"), export)
+        XCTAssertTrue(export.contains("kind=audioReschedule"), export)
+        XCTAssertTrue(export.contains("preSrc=machine postSrc=audio"), export)
+        XCTAssertTrue(export.contains("preAnchorT=0"), export)
+        XCTAssertTrue(export.contains("postAnchorT=6000"), export)
+        XCTAssertTrue(export.contains("crossedDomain=1"), export)
         XCTAssertTrue(export.contains("clamped=1"), export)
-        // Absence is explicit: a missing previous host must never read as zero.
         XCTAssertTrue(export.contains("prevHost=-"), export)
     }
 
