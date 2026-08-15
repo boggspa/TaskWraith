@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
-import { registerSidebarHandlers, type SidebarHandlersDeps } from './sidebarHandlers'
+import {
+  chatTranscriptFileName,
+  registerSidebarHandlers,
+  type SidebarHandlersDeps
+} from './sidebarHandlers'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -107,6 +111,7 @@ describe('registerSidebarHandlers', () => {
     expect(handlerFor('sidebar:copy-chat-working-directory')).toBeTypeOf('function')
     expect(handlerFor('sidebar:copy-chat-transcript-path')).toBeTypeOf('function')
     expect(handlerFor('copy-chat-markdown-transcript')).toBeTypeOf('function')
+    expect(handlerFor('download-chat-markdown-transcript')).toBeTypeOf('function')
     expect(handlerFor('copy-chat-messages')).toBeTypeOf('function')
   })
 
@@ -285,5 +290,129 @@ describe('registerSidebarHandlers', () => {
       charCount: 2_000_100,
       omissions: ['omitted attachment metadata']
     })
+  })
+
+  it('returns the markdown and a thread-titled file name for download without touching the clipboard', async () => {
+    const deps = createDeps()
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).resolves.toEqual({
+      ok: true,
+      markdown: '# Chat',
+      fileName: 'Chat 1.md',
+      messageCount: 1,
+      charCount: 100,
+      omissions: []
+    })
+    expect(deps.buildChatMarkdownTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'chat-1' }),
+      {
+        workspace: expect.objectContaining({ id: 'ws-1' }),
+        homeDir: '/Users/test'
+      }
+    )
+    // Downloading must not clobber whatever the user has on the clipboard.
+    expect(deps.writeClipboardText).not.toHaveBeenCalled()
+  })
+
+  it('applies the same scope, archive and size gates to download as to copy', async () => {
+    const deps = createDeps()
+    deps.estimateChatMarkdownTranscriptChars.mockReturnValue(2_000_001)
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'too-large',
+      messageCount: 1,
+      charCount: 2_000_001,
+      omissions: ['transcript too large to download']
+    })
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+
+    deps.assertSenderChatScope.mockImplementation(() => {
+      throw new Error('Renderer cannot act on another chat.')
+    })
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).rejects.toThrow('Renderer cannot act on another chat.')
+
+    const unauthorized = createDeps()
+    unauthorized.fromWebContents.mockReturnValue(null)
+    mockedHandle.mockReset()
+    registerSidebarHandlers(unauthorized)
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).resolves.toEqual({ ok: false, reason: 'unauthorized' })
+  })
+
+  it('refuses to download archived chats', async () => {
+    const deps = createDeps()
+    deps.getChat.mockReturnValue(makeChat({ archived: true }))
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1')
+    ).resolves.toEqual({ ok: false, reason: 'archived' })
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+  })
+})
+
+describe('chatTranscriptFileName', () => {
+  it('keeps a readable title and appends the markdown extension', () => {
+    expect(chatTranscriptFileName('Refactor the auth guard')).toBe('Refactor the auth guard.md')
+  })
+
+  it('replaces path separators and the Windows-reserved set with dashes', () => {
+    expect(chatTranscriptFileName('src/main: fix a "bug"?')).toBe('src-main- fix a -bug--.md')
+    // Interior dots are harmless; what has to go is every separator plus the
+    // leading dot that would otherwise make this a dotfile.
+    expect(chatTranscriptFileName('..\\..\\etc\\passwd')).toBe('-..-etc-passwd.md')
+  })
+
+  it('leaves no traversal sequence a save path could act on', () => {
+    for (const title of ['../../../etc/hosts', '..\\..\\Windows', '/absolute/path', '.']) {
+      const name = chatTranscriptFileName(title)
+
+      expect(name).not.toContain('/')
+      expect(name).not.toContain('\\')
+      expect(name.startsWith('.')).toBe(false)
+    }
+  })
+
+  it('collapses whitespace and trims the dots and spaces Explorer drops', () => {
+    expect(chatTranscriptFileName('  spaced   out  ')).toBe('spaced out.md')
+    expect(chatTranscriptFileName('...trailing dots...')).toBe('trailing dots.md')
+  })
+
+  it('falls back rather than producing a bare dotfile or an empty name', () => {
+    expect(chatTranscriptFileName('')).toBe('transcript.md')
+    expect(chatTranscriptFileName('   ')).toBe('transcript.md')
+    expect(chatTranscriptFileName('...')).toBe('transcript.md')
+    expect(chatTranscriptFileName(null)).toBe('transcript.md')
+    expect(chatTranscriptFileName(undefined)).toBe('transcript.md')
+  })
+
+  it('caps the length and never ends the stem on a space or dot after the cut', () => {
+    const cut = chatTranscriptFileName(`${'a'.repeat(200)} tail`)
+
+    expect(cut).toBe(`${'a'.repeat(80)}.md`)
+
+    // The cut landing on the separator must not leave a trailing space.
+    const onSpace = chatTranscriptFileName(`${'a'.repeat(79)} tail`)
+
+    expect(onSpace).toBe(`${'a'.repeat(79)}.md`)
+
+    // The cut landing on a dot must not leave a trailing dot either.
+    const onDot = chatTranscriptFileName(`${'a'.repeat(79)}.tail`)
+
+    expect(onDot).toBe(`${'a'.repeat(79)}.md`)
+  })
+
+  it('keeps non-ASCII titles instead of blanking them', () => {
+    expect(chatTranscriptFileName('日本語のスレッド')).toBe('日本語のスレッド.md')
   })
 })

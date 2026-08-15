@@ -33,6 +33,53 @@ type CopyChatMarkdownTranscriptResult =
 
 type CopyChatMessageTranscriptResult = CopyChatMarkdownTranscriptResult
 
+/**
+ * The download variant hands the built Markdown back to the requesting
+ * renderer (which blobs it out through the normal browser download path)
+ * instead of writing the clipboard, so it carries the text and the
+ * thread-titled file name the copy result has no use for.
+ */
+interface DownloadChatMarkdownTranscriptSuccess extends CopyChatMarkdownTranscriptSuccess {
+  markdown: string
+  fileName: string
+}
+
+type DownloadChatMarkdownTranscriptResult =
+  | SidebarPathActionResult
+  | { ok: false; reason: 'unauthorized' | 'empty' }
+  | CopyChatMarkdownTranscriptTooLarge
+  | DownloadChatMarkdownTranscriptSuccess
+
+const TRANSCRIPT_FILE_NAME_MAX = 80
+
+/**
+ * Code-point predicate rather than a control-character regex range on purpose:
+ * `scripts/control-byte-guard.cjs` bans raw C0 bytes in source, and an escape
+ * spelled in a character class has landed as the raw byte more than once.
+ */
+function isPrintableTitleChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0
+  return code >= 0x20 && code !== 0x7f
+}
+
+/**
+ * Thread title -> the `.md` name the user sees in their downloads. Path
+ * separators and the Windows-reserved set become dashes, and leading/trailing
+ * dots and spaces go because Explorer silently drops them; a title that
+ * sanitizes down to nothing (emoji-only, whitespace-only) falls back rather
+ * than producing a bare dotfile.
+ */
+export function chatTranscriptFileName(title: string | null | undefined): string {
+  const collapsed = (typeof title === 'string' ? title : '').replace(/\s+/g, ' ').trim()
+  const cleaned = Array.from(collapsed)
+    .filter(isPrintableTitleChar)
+    .join('')
+    .replace(/[/\\:*?"<>|]/g, '-')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+  const clipped = cleaned.slice(0, TRANSCRIPT_FILE_NAME_MAX).replace(/[.\s]+$/, '')
+  return `${clipped || 'transcript'}.md`
+}
+
 export interface SidebarHandlersDeps {
   fromWebContents: (webContents: WebContents) => { isDestroyed: () => boolean } | null
   getWorkspaces: () => WorkspaceRecord[]
@@ -131,6 +178,75 @@ function copySidebarPath(deps: SidebarHandlersDeps, pathValue: string): SidebarP
   return { ok: true, path: pathValue }
 }
 
+/**
+ * Failure-only so the shared preparation can hand its rejection straight back
+ * from either channel; the success shapes diverge (clipboard vs. file) and are
+ * built by the handlers themselves.
+ */
+type ChatMarkdownTranscriptFailure = Extract<CopyChatMarkdownTranscriptResult, { ok: false }>
+
+type MarkdownTranscriptPreparation =
+  | { ok: false; failure: ChatMarkdownTranscriptFailure }
+  | { ok: true; chat: ChatRecord; built: TranscriptMarkdownExportResult }
+
+/**
+ * Shared front half of the copy and download transcript channels: scope the
+ * sender, reject the chats that have nothing exportable, and build the safe
+ * handoff Markdown. Only the disposition of the built text differs between
+ * them, so `tooLargeNote` is the one caller-specific string.
+ */
+function prepareChatMarkdownTranscript(
+  deps: SidebarHandlersDeps,
+  event: IpcMainInvokeEvent,
+  chatId: string,
+  label: string,
+  tooLargeNote: string
+): MarkdownTranscriptPreparation {
+  if (!isAuthorizedSender(deps, event.sender)) {
+    return { ok: false, failure: { ok: false, reason: 'unauthorized' } }
+  }
+  deps.assertSafeChatId(chatId, `${label} chatId`)
+  deps.assertSenderChatScope(event, chatId)
+  const chat = deps.getChat(chatId)
+  if (!chat) return { ok: false, failure: { ok: false, reason: 'not-found' } }
+  if (chat.archived) return { ok: false, failure: { ok: false, reason: 'archived' } }
+  if (!chat.messages?.length) return { ok: false, failure: { ok: false, reason: 'empty' } }
+  const estimatedCharCount = deps.estimateChatMarkdownTranscriptChars(chat)
+  if (estimatedCharCount > 2_000_000) {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        reason: 'too-large',
+        messageCount: chat.messages.length,
+        charCount: estimatedCharCount,
+        omissions: [tooLargeNote]
+      }
+    }
+  }
+  const workspace = chat.workspaceId
+    ? deps.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) || null
+    : null
+  const built = deps.buildChatMarkdownTranscript(chat, {
+    workspace,
+    homeDir: deps.homedir()
+  })
+  if (!built.markdown.trim()) return { ok: false, failure: { ok: false, reason: 'empty' } }
+  if (built.charCount > 2_000_000) {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        reason: 'too-large',
+        messageCount: built.messageCount,
+        charCount: built.charCount,
+        omissions: built.omissions
+      }
+    }
+  }
+  return { ok: true, chat, built }
+}
+
 export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
   ipcMain.handle('sidebar:show-workspace-in-finder', (event, workspaceId: string) => {
     if (!isAuthorizedSender(deps, event.sender)) {
@@ -192,48 +308,47 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
   ipcMain.handle(
     'copy-chat-markdown-transcript',
     async (event, chatId: string): Promise<CopyChatMarkdownTranscriptResult> => {
-      if (!isAuthorizedSender(deps, event.sender)) {
-        return { ok: false, reason: 'unauthorized' }
-      }
-      deps.assertSafeChatId(chatId, 'copy-chat-markdown-transcript chatId')
-      deps.assertSenderChatScope(event, chatId)
-      const chat = deps.getChat(chatId)
-      if (!chat) return { ok: false, reason: 'not-found' }
-      if (chat.archived) return { ok: false, reason: 'archived' }
-      if (!chat.messages?.length) return { ok: false, reason: 'empty' }
-      const estimatedCharCount = deps.estimateChatMarkdownTranscriptChars(chat)
-      if (estimatedCharCount > 2_000_000) {
-        return {
-          ok: false,
-          reason: 'too-large',
-          messageCount: chat.messages.length,
-          charCount: estimatedCharCount,
-          omissions: ['transcript too large for clipboard copy']
-        }
-      }
-      const workspace = chat.workspaceId
-        ? deps.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) || null
-        : null
-      const result = deps.buildChatMarkdownTranscript(chat, {
-        workspace,
-        homeDir: deps.homedir()
-      })
-      if (!result.markdown.trim()) return { ok: false, reason: 'empty' }
-      if (result.charCount > 2_000_000) {
-        return {
-          ok: false,
-          reason: 'too-large',
-          messageCount: result.messageCount,
-          charCount: result.charCount,
-          omissions: result.omissions
-        }
-      }
-      deps.writeClipboardText(result.markdown, 'clipboard')
+      const prepared = prepareChatMarkdownTranscript(
+        deps,
+        event,
+        chatId,
+        'copy-chat-markdown-transcript',
+        'transcript too large for clipboard copy'
+      )
+      if (!prepared.ok) return prepared.failure
+      deps.writeClipboardText(prepared.built.markdown, 'clipboard')
       return {
         ok: true,
-        messageCount: result.messageCount,
-        charCount: result.charCount,
-        omissions: result.omissions
+        messageCount: prepared.built.messageCount,
+        charCount: prepared.built.charCount,
+        omissions: prepared.built.omissions
+      }
+    }
+  )
+
+  /**
+   * Same safe handoff Markdown as the copy channel, returned to the renderer
+   * so it can be saved as a file named for the thread. The clipboard is left
+   * untouched — downloading is not meant to clobber what the user has copied.
+   */
+  ipcMain.handle(
+    'download-chat-markdown-transcript',
+    async (event, chatId: string): Promise<DownloadChatMarkdownTranscriptResult> => {
+      const prepared = prepareChatMarkdownTranscript(
+        deps,
+        event,
+        chatId,
+        'download-chat-markdown-transcript',
+        'transcript too large to download'
+      )
+      if (!prepared.ok) return prepared.failure
+      return {
+        ok: true,
+        markdown: prepared.built.markdown,
+        fileName: chatTranscriptFileName(prepared.chat.title),
+        messageCount: prepared.built.messageCount,
+        charCount: prepared.built.charCount,
+        omissions: prepared.built.omissions
       }
     }
   )

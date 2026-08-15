@@ -582,6 +582,11 @@ const api = {
     ipcRenderer.invoke('sidebar:copy-chat-transcript-path', chatId),
   copyChatMarkdownTranscript: (chatId: string) =>
     ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
+  // Returns the same handoff Markdown as the copy channel plus a
+  // thread-titled file name; the renderer saves it rather than the main
+  // process, so the clipboard is left alone.
+  downloadChatMarkdownTranscript: (chatId: string) =>
+    ipcRenderer.invoke('download-chat-markdown-transcript', chatId),
   copyChatMessages: (chatId: string) => ipcRenderer.invoke('copy-chat-messages', chatId),
   // Phase J1 (composer unification): the picker is now cross-provider —
   // optional `provider` argument so the main process can stamp the

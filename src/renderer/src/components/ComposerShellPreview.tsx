@@ -577,6 +577,7 @@ export function ComposerShellPreview({
                   composerStyle={composerStyle}
                   onCopy={copyPreviewTranscript}
                   onCopyMessages={copyPreviewMessages}
+                  onDownload={copyPreviewMessages}
                 />
               </div>
               <div className="composer-telemetry-side composer-telemetry-side--left">

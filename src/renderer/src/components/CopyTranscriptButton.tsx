@@ -9,6 +9,8 @@ export type CopyTranscriptResult =
       messageCount: number
       charCount: number
       omissions: string[]
+      /** Set by the download action only — the name the file was saved under. */
+      fileName?: string
     }
   | {
       ok: false
@@ -18,6 +20,8 @@ export type CopyTranscriptResult =
       omissions?: string[]
     }
 
+type TranscriptAction = 'handoff' | 'messages' | 'download'
+
 interface CopyTranscriptButtonProps {
   disabled?: boolean
   defaultOpen?: boolean
@@ -26,14 +30,30 @@ interface CopyTranscriptButtonProps {
   composerStyle?: string
   onCopy: () => Promise<CopyTranscriptResult>
   onCopyMessages: () => Promise<CopyTranscriptResult>
+  onDownload: () => Promise<CopyTranscriptResult>
 }
 
-function failureMessage(result: Extract<CopyTranscriptResult, { ok: false }>): string {
+function failureMessage(
+  result: Extract<CopyTranscriptResult, { ok: false }>,
+  action: TranscriptAction
+): string {
+  const download = action === 'download'
   if (result.reason === 'not-found') return 'This chat could not be loaded.'
-  if (result.reason === 'archived') return 'Archived chats cannot be copied from here.'
-  if (result.reason === 'too-large') return 'This transcript is too large for clipboard copy.'
-  if (result.reason === 'unauthorized') return 'This window is not allowed to copy transcripts.'
-  return 'There is no transcript content to copy yet.'
+  if (result.reason === 'archived')
+    return download
+      ? 'Archived chats cannot be downloaded from here.'
+      : 'Archived chats cannot be copied from here.'
+  if (result.reason === 'too-large')
+    return download
+      ? 'This transcript is too large to download.'
+      : 'This transcript is too large for clipboard copy.'
+  if (result.reason === 'unauthorized')
+    return download
+      ? 'This window is not allowed to download transcripts.'
+      : 'This window is not allowed to copy transcripts.'
+  return download
+    ? 'There is no transcript content to download yet.'
+    : 'There is no transcript content to copy yet.'
 }
 
 export function CopyTranscriptButton({
@@ -43,15 +63,22 @@ export function CopyTranscriptButton({
   resetKey = null,
   composerStyle = 'default',
   onCopy,
-  onCopyMessages
+  onCopyMessages,
+  onDownload
 }: CopyTranscriptButtonProps) {
   const [open, setOpen] = useState(defaultOpen)
-  const [busy, setBusy] = useState(false)
-  const [copiedFormat, setCopiedFormat] = useState<'handoff' | 'messages' | null>(
+  const [busyAction, setBusyAction] = useState<TranscriptAction | null>(null)
+  const [completedAction, setCompletedAction] = useState<TranscriptAction | null>(
     initialCopied ? 'handoff' : null
   )
   const [error, setError] = useState<string | null>(null)
-  const [summary, setSummary] = useState<Extract<CopyTranscriptResult, { ok: true }> | null>(null)
+  // The action rides along with the result: `completedAction` clears itself on
+  // a timer (it drives the trigger's transient tick), but the summary line
+  // stays until the popover closes and still has to name what it did.
+  const [summary, setSummary] = useState<{
+    action: TranscriptAction
+    result: Extract<CopyTranscriptResult, { ok: true }>
+  } | null>(null)
   const [position, setPosition] = useState<{
     left: number
     top: number
@@ -104,8 +131,8 @@ export function CopyTranscriptButton({
 
   useEffect(() => {
     setOpen(false)
-    setBusy(false)
-    setCopiedFormat(null)
+    setBusyAction(null)
+    setCompletedAction(null)
     clearFeedback()
   }, [clearFeedback, resetKey])
 
@@ -142,29 +169,39 @@ export function CopyTranscriptButton({
   }, [closePopover, open, updatePosition])
 
   useEffect(() => {
-    if (!copiedFormat) return
-    const timer = window.setTimeout(() => setCopiedFormat(null), 1600)
+    if (!completedAction) return
+    const timer = window.setTimeout(() => setCompletedAction(null), 1600)
     return () => window.clearTimeout(timer)
-  }, [copiedFormat])
+  }, [completedAction])
 
-  const copy = async (format: 'handoff' | 'messages'): Promise<void> => {
-    if (disabled || busy) return
-    setBusy(true)
+  const run = async (action: TranscriptAction): Promise<void> => {
+    if (disabled || busyAction) return
+    setBusyAction(action)
     setError(null)
     try {
-      const result = await (format === 'messages' ? onCopyMessages() : onCopy())
+      const result = await (action === 'messages'
+        ? onCopyMessages()
+        : action === 'download'
+          ? onDownload()
+          : onCopy())
       if (result.ok) {
-        setSummary(result)
-        setCopiedFormat(format)
+        setSummary({ action, result })
+        setCompletedAction(action)
         return
       }
       setSummary(null)
-      setError(failureMessage(result))
+      setError(failureMessage(result, action))
     } catch (err) {
       setSummary(null)
-      setError(err instanceof Error ? err.message : 'Transcript copy failed.')
+      setError(
+        err instanceof Error
+          ? err.message
+          : action === 'download'
+            ? 'Transcript download failed.'
+            : 'Transcript copy failed.'
+      )
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -196,30 +233,48 @@ export function CopyTranscriptButton({
           Close
         </button>
       </div>
-      <p>Creates safe handoff Markdown, or copies raw conversation messages only.</p>
+      <p>
+        Creates safe handoff Markdown, copies raw conversation messages only, or downloads the
+        transcript as a .md file.
+      </p>
       <div className="composer-copy-transcript-actions">
         <button
           type="button"
           className="composer-copy-transcript-secondary"
-          onClick={() => void copy('messages')}
-          disabled={busy || disabled}
+          onClick={() => void run('download')}
+          disabled={Boolean(busyAction) || disabled}
         >
-          {busy ? 'Copying...' : 'Copy Messages'}
+          {busyAction === 'download' ? 'Saving...' : 'Download'}
+        </button>
+        <button
+          type="button"
+          className="composer-copy-transcript-secondary"
+          onClick={() => void run('messages')}
+          disabled={Boolean(busyAction) || disabled}
+        >
+          {busyAction === 'messages' ? 'Copying...' : 'Copy Messages'}
         </button>
         <button
           ref={primaryRef}
           type="button"
           className="composer-copy-transcript-primary"
-          onClick={() => void copy('handoff')}
-          disabled={busy || disabled}
+          onClick={() => void run('handoff')}
+          disabled={Boolean(busyAction) || disabled}
         >
-          {busy ? 'Copying...' : 'Copy handoff Markdown'}
+          {busyAction === 'handoff' ? 'Copying...' : 'Copy Markdown'}
         </button>
       </div>
       {summary && (
         <div className="composer-copy-transcript-status" role="status">
-          Copied {summary.messageCount} message{summary.messageCount === 1 ? '' : 's'}.
-          {summary.omissions.length > 0 && <span> {summary.omissions.join('; ')}.</span>}
+          {summary.action === 'download' ? 'Downloaded' : 'Copied'} {summary.result.messageCount}{' '}
+          message{summary.result.messageCount === 1 ? '' : 's'}
+          {summary.action === 'download' && summary.result.fileName
+            ? ` to ${summary.result.fileName}`
+            : ''}
+          .
+          {summary.result.omissions.length > 0 && (
+            <span> {summary.result.omissions.join('; ')}.</span>
+          )}
         </div>
       )}
       {error && (
@@ -235,7 +290,7 @@ export function CopyTranscriptButton({
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-copy-transcript-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}${copiedFormat ? ' is-copied' : ''}`}
+        className={`composer-copy-transcript-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}${completedAction ? ' is-copied' : ''}`}
         data-hint-label="Copy transcript"
         onClick={() => {
           if (disabled) return
@@ -243,18 +298,20 @@ export function CopyTranscriptButton({
           else openPopover()
         }}
         aria-label={
-          copiedFormat === 'messages'
+          completedAction === 'messages'
             ? 'Copied messages'
-            : copiedFormat === 'handoff'
-              ? 'Copied transcript as Markdown'
-              : 'Copy transcript as Markdown'
+            : completedAction === 'download'
+              ? 'Downloaded transcript as Markdown'
+              : completedAction === 'handoff'
+                ? 'Copied transcript as Markdown'
+                : 'Copy transcript as Markdown'
         }
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={disabled}
       >
         <CopyResponseIcon />
-        {copiedFormat && (
+        {completedAction && (
           <span className="composer-copy-transcript-check" aria-hidden="true">
             ✓
           </span>

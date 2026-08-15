@@ -51,6 +51,7 @@ import {
 import { ComposerThreadTimecodeBar } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton } from '../components/CopyTranscriptButton'
+import { downloadChatMarkdownTranscript } from '../lib/transcriptDownload'
 import { EnsembleOrchestrationRow } from '../components/EnsembleOrchestrationRow'
 import type {
   ContinuousHopsGoalStatus,
@@ -5241,6 +5242,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                      ? window.api.copyChatMessages(currentChat.appChatId)
 	                      : Promise.resolve({ ok: false as const, reason: 'empty' as const })
 	                  }
+	                  onDownload={() => downloadChatMarkdownTranscript(currentChat?.appChatId)}
 	                />
 	                <MultiviewLayoutPicker
 	                  layout={multiview.layout}

@@ -566,6 +566,17 @@ type CopyChatMarkdownTranscriptResult =
 
 type CopyChatMessagesResult = CopyChatMarkdownTranscriptResult
 
+type DownloadChatMarkdownTranscriptResult =
+  | {
+      ok: true
+      markdown: string
+      fileName: string
+      messageCount: number
+      charCount: number
+      omissions: string[]
+    }
+  | Extract<CopyChatMarkdownTranscriptResult, { ok: false }>
+
 type SidebarPathActionResult =
   | { ok: true; path: string }
   | { ok: false; reason: string; error?: string }
@@ -696,6 +707,9 @@ declare global {
       sidebarCopyChatWorkingDirectory: (chatId: string) => Promise<SidebarPathActionResult>
       sidebarCopyChatTranscriptPath: (chatId: string) => Promise<SidebarPathActionResult>
       copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
+      downloadChatMarkdownTranscript: (
+        chatId: string
+      ) => Promise<DownloadChatMarkdownTranscriptResult>
       copyChatMessages: (chatId: string) => Promise<CopyChatMessagesResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',

@@ -52,6 +52,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'copy-chat-messages',
   'compute-run-diff',
   'copy-chat-markdown-transcript',
+  'download-chat-markdown-transcript',
   'create-chat',
   'create-ensemble-chat',
   'create-github-pr',
