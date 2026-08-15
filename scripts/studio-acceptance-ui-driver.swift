@@ -299,6 +299,7 @@ func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
 
 func setAccessibilityPlayhead(
     _ playhead: AXUIElement,
+    in window: AXUIElement,
     to ticks: Int64,
     request: DriverRequest,
     application: NSRunningApplication
@@ -325,7 +326,11 @@ func setAccessibilityPlayhead(
     let deadline = Date().addingTimeInterval(1)
     var observed: Int64?
     while Date() < deadline {
-        observed = numberAttribute(kAXValueAttribute, of: playhead)?.int64Value
+        // The viewer rebuilds its public AX children when the overlay refreshes.
+        // Reacquire the one exact slider instead of polling an element that may
+        // have become a stale cross-process proxy after this value-set.
+        observed = (try? exactAccessibilityPlayhead(in: window))
+            .flatMap { numberAttribute(kAXValueAttribute, of: $0)?.int64Value }
         if observed == ticks { break }
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
@@ -342,6 +347,7 @@ func setAccessibilityPlayhead(
 
 func stepAccessibilityPlayhead(
     _ playhead: AXUIElement,
+    in window: AXUIElement,
     frames delta: Int,
     request: DriverRequest,
     application: NSRunningApplication
@@ -361,7 +367,8 @@ func stepAccessibilityPlayhead(
     let deadline = Date().addingTimeInterval(1)
     var observed = before
     while Date() < deadline {
-        observed = numberAttribute(kAXValueAttribute, of: playhead)?.int64Value ?? before
+        observed = (try? exactAccessibilityPlayhead(in: window))
+            .flatMap { numberAttribute(kAXValueAttribute, of: $0)?.int64Value } ?? before
         if (delta < 0 && observed < before) || (delta > 0 && observed > before) { break }
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
@@ -794,9 +801,11 @@ do {
         throw DriverFailure.refused("macOS post-event access is unavailable")
     }
     let accessibilityWindow = try exactAccessibilityWindow(request)
-    let accessibilityPlayhead = request.actions.contains {
+    if request.actions.contains(where: {
         $0.type == "set-playhead-ticks" || $0.type == "step-playhead-frame"
-    } ? try exactAccessibilityPlayhead(in: accessibilityWindow) : nil
+    }) {
+        _ = try exactAccessibilityPlayhead(in: accessibilityWindow)
+    }
     if request.inputDelivery == "foreground-global-explicit" {
         try activateExactWindowForExplicitForeground(
             request,
@@ -823,11 +832,12 @@ do {
 
         if action.type == "set-playhead-ticks",
            request.inputDelivery == "background-observation-only",
-           let playheadTicks = action.playheadTicks,
-           let accessibilityPlayhead
+           let playheadTicks = action.playheadTicks
         {
+            let accessibilityPlayhead = try exactAccessibilityPlayhead(in: accessibilityWindow)
             let observed = try setAccessibilityPlayhead(
                 accessibilityPlayhead,
+                in: accessibilityWindow,
                 to: playheadTicks,
                 request: request,
                 application: application
@@ -849,11 +859,12 @@ do {
             )
         } else if action.type == "step-playhead-frame",
                   request.inputDelivery == "background-observation-only",
-                  let playheadStepFrames = action.playheadStepFrames,
-                  let accessibilityPlayhead
+                  let playheadStepFrames = action.playheadStepFrames
         {
+            let accessibilityPlayhead = try exactAccessibilityPlayhead(in: accessibilityWindow)
             let observed = try stepAccessibilityPlayhead(
                 accessibilityPlayhead,
+                in: accessibilityWindow,
                 frames: playheadStepFrames,
                 request: request,
                 application: application
