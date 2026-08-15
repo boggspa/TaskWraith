@@ -27,6 +27,8 @@ describe('parseAgyTranscriptLine', () => {
       status: 'DONE',
       created_at: '2026-08-06T02:48:50+01:00',
       content: 'File Path: `/path/to/file.ts`\nTotal Lines: 100',
+      thinking: 'I should inspect the file before proposing a change.',
+      tool_calls: [{ name: 'view_file' }],
       truncated_fields: ['content']
     })
     const step = parseAgyTranscriptLine(line)
@@ -35,6 +37,8 @@ describe('parseAgyTranscriptLine', () => {
       source: 'MODEL',
       type: 'VIEW_FILE',
       status: 'DONE',
+      thinking: 'I should inspect the file before proposing a change.',
+      tool_calls: [{ name: 'view_file' }],
       truncated_fields: ['content']
     })
   })

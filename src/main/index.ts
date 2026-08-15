@@ -1731,7 +1731,7 @@ import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGe
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
-import { projectAgyBrainTranscriptAfterTurn } from './antigravity/AntigravityBrainTranscriptProjection'
+import { AgyBrainTranscriptMonitor } from './antigravity/AntigravityBrainTranscriptLiveProjection'
 import { createAntigravityQuotaClient } from './antigravity/AntigravityQuotaClient'
 import {
   fetchAuthenticatedAgyQuotaSnapshot,
@@ -19321,6 +19321,8 @@ async function runCliProviderProcess(
      * in the normalized display model. */
     costRateModel?: string
     onComplete?: () => Promise<void> | void
+    /** Flush display-only side channels while this run is still projectable. */
+    beforeTerminalProjection?: () => Promise<void> | void
     /**
      * RPC-style providers (pi) submit the prompt over stdin and terminate on
      * stdin EOF. Lines are written after spawn, stdin stays OPEN, and a closer
@@ -19944,6 +19946,13 @@ async function runCliProviderProcess(
             (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0),
             model
           )
+        }
+        if (options.beforeTerminalProjection) {
+          try {
+            await options.beforeTerminalProjection()
+          } catch {
+            // Display-only side channels never alter provider settlement.
+          }
         }
         const grokStopped =
           provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
@@ -34257,6 +34266,22 @@ async function runAntigravityAgyProvider(
     emitAntigravityColdStartInit(sendAgentCompatLine, event.sender, route)
   }
 
+  const brainTranscriptMonitor = new AgyBrainTranscriptMonitor({
+    appRunId: route.appRunId || 'agy-run',
+    workspace: payload.workspace,
+    providerSessionId: payload.providerSessionId,
+    receiptBeforeFreshProject,
+    emit: (transcriptEvent) =>
+      sendAgentCompatLine(
+        event.sender,
+        'antigravity',
+        { ...transcriptEvent, provider: 'antigravity' },
+        route
+      )
+  })
+  await brainTranscriptMonitor.prime()
+  brainTranscriptMonitor.start()
+
   try {
     await runCliProviderProcess(
       event,
@@ -34268,6 +34293,7 @@ async function runAntigravityAgyProvider(
         fallback: false,
         requireExistingRun: true,
         resolvedEnv: launch.env,
+        beforeTerminalProjection: () => brainTranscriptMonitor.stopAndDrain(),
         onComplete: releasePermissionLease,
         // Keyed by the run's own cwd, which is what agy records. The temporary
         // native permission overlay is separately serialized because official
@@ -34282,10 +34308,8 @@ async function runAntigravityAgyProvider(
         }
       }
     )
-    // Project read-side tool calls from agy's brain transcript.
-    // Shell/write tools are already projected by the PreToolUse bridge.
-    await projectAgyBrainTranscriptAfterTurn(sendAgentCompatLine, event.sender, route, payload.workspace)
   } finally {
+    await brainTranscriptMonitor.stopAndDrain()
     await releasePermissionLease()
   }
 }

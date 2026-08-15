@@ -19,47 +19,16 @@
  * Display-only: TaskWraith does not mediate agy-native tool execution.
  */
 
-import { promises as fs } from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { parseAgyProjectBoundSessionId, agyCliRootPath } from './AntigravityConversationReceipt'
+import { agyCliRootPath } from './AntigravityConversationReceipt'
 
-type SendAgentCompatLine<TRoute> = (
-  sender: Electron.WebContents,
-  provider: 'antigravity',
-  payload: Record<string, unknown>,
-  route?: TRoute
-) => void
-
-/**
- * Best-effort: project read-side tools from agy's brain transcript after a
- * turn completes. Failures are silent — tool projection is display-only.
- *
- * @param providerSessionId  Our tagged session id (`agy-project-v1:<uuid>`)
- * @param sendCompatLine     The same sendAgentCompatLine used in the provider run
- * @param sender             The IPC sender (event.sender)
- * @param route              The route object from the provider run
- * @param deps               Injectable dependencies for testing
- */
-export async function projectAgyBrainTranscriptTools<TRoute>(
-  providerSessionId: string | null | undefined,
-  sendCompatLine: SendAgentCompatLine<TRoute>,
-  sender: Electron.WebContents,
-  route: TRoute,
-  deps?: {
-    readFile?: (path: string) => Promise<string>
-    homeDir?: string
-    env?: Readonly<Record<string, string | undefined>>
-  }
-): Promise<void> {
-  const conversationId = parseAgyProjectBoundSessionId(providerSessionId)
-  if (!conversationId) return
-
-  const homeDir = deps?.homeDir ?? os.homedir()
-  const env = deps?.env ?? process.env
-  const readFile = deps?.readFile ?? ((path: string) => fs.readFile(path, 'utf8'))
-
-  const transcriptPath = join(
+export function agyBrainTranscriptPath(
+  conversationId: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  homeDir: string = os.homedir()
+): string {
+  return join(
     agyCliRootPath(env, homeDir),
     'antigravity-cli',
     'brain',
@@ -68,25 +37,6 @@ export async function projectAgyBrainTranscriptTools<TRoute>(
     'logs',
     'transcript.jsonl'
   )
-
-  let raw: string
-  try {
-    raw = await readFile(transcriptPath)
-  } catch {
-    return
-  }
-
-  const lines = raw.split(/\r?\n/)
-  const events = projectAgyTranscriptTools(lines)
-  if (events.length === 0) return
-
-  for (const evt of events) {
-    try {
-      sendCompatLine(sender, 'antigravity', { ...evt, provider: 'antigravity' }, route)
-    } catch {
-      // Display-only — never fail the run for projection
-    }
-  }
 }
 
 /** Types from the agy brain transcript that represent tool calls. */
@@ -108,6 +58,10 @@ export interface AgyTranscriptStep {
   status: string
   created_at: string
   content: string
+  /** Provider-authored planner trace, distinct from final assistant `content`. */
+  thinking?: string
+  /** Native tool-call descriptors carried by PLANNER_RESPONSE records. */
+  tool_calls?: unknown[]
   truncated_fields?: string[]
 }
 
@@ -145,6 +99,8 @@ export function parseAgyTranscriptLine(line: string): AgyTranscriptStep | null {
       status: typeof step.status === 'string' ? step.status : '',
       created_at: typeof step.created_at === 'string' ? step.created_at : '',
       content: typeof step.content === 'string' ? step.content : '',
+      thinking: typeof step.thinking === 'string' ? step.thinking : undefined,
+      tool_calls: Array.isArray(step.tool_calls) ? step.tool_calls : undefined,
       truncated_fields: Array.isArray(step.truncated_fields)
         ? step.truncated_fields.map(String)
         : undefined
