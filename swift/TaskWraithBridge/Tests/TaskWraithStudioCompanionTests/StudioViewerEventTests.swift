@@ -157,6 +157,75 @@ final class StudioViewerEventTests: XCTestCase {
         XCTAssertEqual(view.selectedSegmentId, "s2")
     }
 
+    // MARK: - One clock domain for every transport mutation
+
+    /// THE MECHANISM, IN ARITHMETIC.
+    ///
+    /// While audio drives playback the clock is anchored AUDIO-RELATIVE, near
+    /// zero. `CACurrentMediaTime()` is machine uptime, on the order of 1e5
+    /// seconds. A mutation carrying the second into a clock anchored in the
+    /// first computes an elapsed of roughly the machine's whole uptime, and the
+    /// duration clamp turns that into an instant jump to end-of-media — the
+    /// packaged 4.133s -> 600s teleport.
+    func testAMutationFromTheWrongClockDomainTeleportsToEndOfMedia() throws {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        // Ten seconds of media.
+        var audioAnchored = StudioPlaybackClock(timebase: timebase, durationTicks: 6000)
+        audioAnchored.play(atHost: 0)
+        XCTAssertEqual(
+            audioAnchored.positionTicks(atHost: 4), 2400,
+            "four audio-relative seconds is four seconds in")
+
+        var sameDomain = audioAnchored
+        sameDomain.play(atHost: 4)
+        XCTAssertEqual(
+            sameDomain.positionTicks(atHost: 4), 2400,
+            "a mutation in the clock's own domain must not move the playhead")
+
+        var crossDomain = audioAnchored
+        crossDomain.play(atHost: 100_000)
+        XCTAssertEqual(
+            crossDomain.positionTicks(atHost: 100_000), 6000,
+            "machine uptime against an audio anchor must clamp to end-of-media; "
+                + "if this stops clamping, the guard below proves nothing")
+    }
+
+    /// THE GUARD. Every transport mutation in the viewer must read the same
+    /// host source the renderer reads. A single site reverting to
+    /// `CACurrentMediaTime()` reintroduces the teleport, and it would only show
+    /// up in a packaged run.
+    ///
+    /// Source-pinned deliberately: reproducing an audio-anchored live session
+    /// offscreen would require attaching a real audio track, which this harness
+    /// cannot do — the same limit already recorded for the sync meter.
+    func testNoTransportMutationReadsTheMachineClockDirectly() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(
+                    "Sources/TaskWraithStudioCompanion/StudioViewerWindow.swift"),
+            encoding: .utf8)
+
+        XCTAssertFalse(
+            source.contains("atHost: CACurrentMediaTime()"),
+            "a transport mutation is using machine uptime directly")
+        XCTAssertFalse(
+            source.contains("let host = CACurrentMediaTime()"),
+            "an event handler is deriving its mutation host from machine uptime")
+        XCTAssertTrue(source.contains("var transportMutationHostSeconds: Double"))
+
+        // The three legitimate uses: the domain fallback itself, the oscillator
+        // swap that reads the OLD source before re-establishing under the new
+        // one, and the once-a-second memory sampling throttle.
+        let remaining = source.components(separatedBy: "CACurrentMediaTime()").count - 1
+        let inComments = source.components(separatedBy: "\n")
+            .filter { $0.contains("CACurrentMediaTime()") && $0.contains("///") }
+            .count
+        XCTAssertEqual(
+            remaining - inComments, 4,
+            "the only non-comment machine-clock reads are the domain fallback, "
+                + "the two oscillator-swap operands, and the memory throttle")
+    }
+
     // MARK: - Who owns the grade mode
 
     /// A LUT arriving previews itself; the operator can always take it back.

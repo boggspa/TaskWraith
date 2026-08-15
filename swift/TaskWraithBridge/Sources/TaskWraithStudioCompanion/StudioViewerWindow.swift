@@ -302,7 +302,7 @@ final class StudioViewerView: NSView {
         }
 
         updateDrawableSize()
-        transport.play(atHost: CACurrentMediaTime())
+        transport.play(atHost: transportMutationHostSeconds)
 
         let link = displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         link.add(to: .main, forMode: .common)
@@ -335,6 +335,20 @@ final class StudioViewerView: NSView {
         }
         return CACurrentMediaTime()
     }
+
+    /// THE HOST CLOCK EVERY TRANSPORT MUTATION MUST USE.
+    ///
+    /// While audio drives playback the live anchor is AUDIO-RELATIVE and starts
+    /// near zero, whereas `CACurrentMediaTime()` is machine uptime and is on the
+    /// order of 1e5 seconds. Handing the second to a clock anchored in the first
+    /// makes `elapsed = hostSeconds - anchorHostSeconds` about the machine's
+    /// entire uptime, which the duration clamp turns into an instant jump to
+    /// end-of-media — the packaged 4.133s -> 600s teleport.
+    ///
+    /// It reads the same source the renderer reads, so a mutation can never
+    /// disagree with the picture about what time it is. Every mutation in this
+    /// view routes through here; none may call `CACurrentMediaTime()` directly.
+    var transportMutationHostSeconds: Double { transportHostSeconds }
 
     /// Re-anchors the clock when the oscillator changes.
     ///
@@ -582,7 +596,7 @@ final class StudioViewerView: NSView {
             reviewVersion = .current
             // A resolved ghost must not leave the transport looping a range
             // that no longer refers to anything.
-            if parkedMarks != nil { toggleReviewLoop(atHost: CACurrentMediaTime()) }
+            if parkedMarks != nil { toggleReviewLoop(atHost: transportMutationHostSeconds) }
         }
         needsDisplay = true
     }
@@ -750,7 +764,7 @@ final class StudioViewerView: NSView {
         timecodeField.cancel()
         sourceLabel = label
         message = nil
-        transport.play(atHost: CACurrentMediaTime())
+        transport.play(atHost: transportMutationHostSeconds)
     }
 
     func report(message text: String?) {
@@ -808,7 +822,7 @@ final class StudioViewerView: NSView {
             super.mouseDown(with: event)
             return
         }
-        let host = CACurrentMediaTime()
+        let host = transportMutationHostSeconds
         transport.beginScrub(atHost: host)
         transport.updateScrub(
             toTicks: StudioOverlayLayout.ticks(
@@ -837,7 +851,7 @@ final class StudioViewerView: NSView {
                 in: model,
                 durationTicks: transport.clock.durationTicks
             ),
-            atHost: CACurrentMediaTime()
+            atHost: transportMutationHostSeconds
         )
     }
 
@@ -851,7 +865,7 @@ final class StudioViewerView: NSView {
             return
         }
         // Restores whatever the transport was doing before the gesture.
-        transport.endScrub(atHost: CACurrentMediaTime())
+        transport.endScrub(atHost: transportMutationHostSeconds)
     }
 
     /// Loops the AFFECTED RANGE of the open proposal with pre/post-roll.
@@ -1097,7 +1111,7 @@ final class StudioViewerView: NSView {
     override func keyDown(with event: NSEvent) {
         if handleTimecodeEntry(event) { return }
 
-        let host = CACurrentMediaTime()
+        let host = transportMutationHostSeconds
         switch event.keyCode {
         case Key.space:
             performPlaybackToggle(atHost: host)
@@ -1256,7 +1270,7 @@ final class StudioViewerView: NSView {
             return
         }
         do {
-            try transport.seek(toTimecodeText: text, atHost: CACurrentMediaTime())
+            try transport.seek(toTimecodeText: text, atHost: transportMutationHostSeconds)
             message = nil
         } catch {
             // Reported, never approximated: seeking somewhere near a typo is a
@@ -1360,7 +1374,7 @@ final class StudioViewerView: NSView {
                     guard let self else { return false }
                     switch action {
                     case .togglePlayback:
-                        return self.performPlaybackToggle(atHost: CACurrentMediaTime())
+                        return self.performPlaybackToggle(atHost: transportMutationHostSeconds)
                     }
                 }
                 control.setAccessibilityParent(self)
