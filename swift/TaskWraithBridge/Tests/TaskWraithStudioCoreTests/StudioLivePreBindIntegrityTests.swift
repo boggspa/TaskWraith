@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import CoreMedia
 import CryptoKit
 import Metal
@@ -42,6 +43,7 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device")
         }
+        try skipIfGraphicalSessionLocked()
 
         let (asset, usedAcceptanceFixture) = try await makeLiveAsset()
         let live = try await StudioMediaSourceLoader.makeBoundedFrameSource(
@@ -99,10 +101,14 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
 
         let captured = samples
 
-        XCTAssertGreaterThan(
-            captured.count, 30,
-            "display-link produced too few binds to exercise the pool; fixture=\(usedAcceptanceFixture)"
-        )
+        // Fail-and-return: XCTest continues after XCTAssert, and start...targetIndex
+        // traps when two inert binds share a PTS (locked console or a slow link).
+        if captured.count <= 30 {
+            XCTFail(
+                "display-link produced too few binds to exercise the pool: got \(captured.count), need >30; fixture=\(usedAcceptanceFixture)"
+            )
+            return
+        }
         let uniquePTS = Set(captured.map { $0.presentationTime.value })
         XCTAssertGreaterThan(uniquePTS.count, 10, "playback did not advance")
         let uniqueSurfaces = Set(captured.compactMap(\.ioSurfaceID))
@@ -145,6 +151,11 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
             // DependsOnOthers, so a GOP-restart walker would decode a P-frame
             // in isolation and throw kVTVideoDecoderBadDataErr (-12909).
             let start = lastDecodedIndex + 1
+            guard requireAscendingDecodeWindow(
+                start: start,
+                targetIndex: targetIndex,
+                bindCount: captured.count
+            ) else { return }
             do {
                 for index in start...targetIndex {
                     lastFrame = try referenceDecoder.decode(
@@ -206,14 +217,21 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device")
         }
+        try skipIfGraphicalSessionLocked()
         let (asset, usedAcceptance) = try await makeLiveAsset()
         let first = try await captureLivePreBind(
             asset: asset, device: device, playbackSeconds: 1.2)
-        XCTAssertGreaterThan(first.samples.count, 10, "cold pass produced no binds")
+        if first.samples.count <= 10 {
+            XCTFail("cold pass produced too few binds: got \(first.samples.count), need >10")
+            return
+        }
 
         let second = try await captureLivePreBind(
             asset: asset, device: device, playbackSeconds: 1.2)
-        XCTAssertGreaterThan(second.samples.count, 10, "warm pass produced no binds")
+        if second.samples.count <= 10 {
+            XCTFail("warm pass produced too few binds: got \(second.samples.count), need >10")
+            return
+        }
 
         let referenceMedia = try await StudioMediaSourceLoader.loadBounded(asset: asset)
         let referenceDecoder = try StudioVideoDecoder(
@@ -233,7 +251,13 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
                 decodeIndex(in: referenceMedia, matching: liveSample.presentationTime),
                 "no decode index for warm PTS \(liveSample.presentationTime.value)"
             )
-            for index in (lastDecodedIndex + 1)...targetIndex {
+            let start = lastDecodedIndex + 1
+            guard requireAscendingDecodeWindow(
+                start: start,
+                targetIndex: targetIndex,
+                bindCount: second.samples.count
+            ) else { return }
+            for index in start...targetIndex {
                 lastFrame = try referenceDecoder.decode(
                     referenceMedia.sampleProvider.sampleBuffer(atDecodeIndex: index)
                 )
@@ -442,6 +466,18 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         }
     }
 
+    /// Display-free red control: too-few / non-advancing binds must fail with
+    /// a count, not trap inside `start...targetIndex`.
+    func testInvertedDecodeWindowFailsWithCountInsteadOfTrapping() {
+        XCTAssertEqual(
+            Self.invalidDecodeWindowMessage(start: 1, targetIndex: 0, bindCount: 2),
+            "decode window invalid: start=1 targetIndex=0 binds=2 — refusing to construct start...targetIndex"
+        )
+        XCTAssertNil(
+            Self.invalidDecodeWindowMessage(start: 0, targetIndex: 10, bindCount: 31)
+        )
+    }
+
     // MARK: - Media
 
     private func makeLiveAsset() async throws -> (StudioMediaAsset, Bool) {
@@ -483,6 +519,52 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
             .appendingPathComponent(
                 ".local-only/taskwraith-studio/acceptance/w1acc10e/studio-vfr-10m.mp4"
             )
+    }
+
+    // MARK: - Session / range guards
+
+    private func skipIfGraphicalSessionLocked() throws {
+        guard Self.isGraphicalSessionLocked() else { return }
+        throw XCTSkip(
+            "locked console (CGSSessionScreenIsLocked=true); CADisplayLink is inert"
+        )
+    }
+
+    static func isGraphicalSessionLocked() -> Bool {
+        guard let info = CGSessionCopyCurrentDictionary() as NSDictionary? else {
+            return false
+        }
+        if let flag = info["CGSSessionScreenIsLocked"] as? Bool {
+            return flag
+        }
+        if let number = info["CGSSessionScreenIsLocked"] as? NSNumber {
+            return number.boolValue
+        }
+        return false
+    }
+
+    static func invalidDecodeWindowMessage(
+        start: Int,
+        targetIndex: Int,
+        bindCount: Int
+    ) -> String? {
+        guard start > targetIndex else { return nil }
+        return
+            "decode window invalid: start=\(start) targetIndex=\(targetIndex) binds=\(bindCount) — refusing to construct start...targetIndex"
+    }
+
+    private func requireAscendingDecodeWindow(
+        start: Int,
+        targetIndex: Int,
+        bindCount: Int
+    ) -> Bool {
+        if let message = Self.invalidDecodeWindowMessage(
+            start: start, targetIndex: targetIndex, bindCount: bindCount)
+        {
+            XCTFail(message)
+            return false
+        }
+        return true
     }
 
     // MARK: - Compare helpers
