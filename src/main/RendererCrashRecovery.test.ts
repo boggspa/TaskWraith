@@ -48,6 +48,8 @@ describe('RendererCrashRecovery', () => {
     expect(html).toContain('Your 2 active runs are still continuing in the background.')
     expect(html).toContain('Reloading rebuilds this window and does not cancel provider work.')
     expect(html).toContain('Renderer exit: oom (9)')
+    expect(html).toContain('href="taskwraith-recovery://reload"')
+    expect(html).toContain('href="taskwraith-recovery://close"')
 
     const dataUrl = buildRendererCrashRecoveryUrl(details)
     expect(dataUrl).toMatch(/^data:text\/html;charset=utf-8,/)
@@ -71,42 +73,27 @@ describe('RendererCrashRecovery', () => {
     expect(loadedUrls).toHaveLength(1)
     expect(loadedUrls[0]).toMatch(/^data:text\/html/)
 
-    webContents.emit(
-      'did-navigate-in-page',
-      {} as Event,
-      `${loadedUrls[0]}#reload-taskwraith`,
-      true,
-      1,
-      1
-    )
+    const navigationEvent = { preventDefault: vi.fn() } as unknown as Event
+    webContents.emit('will-navigate', navigationEvent, 'taskwraith-recovery://reload')
     await Promise.resolve()
 
+    expect(navigationEvent.preventDefault).toHaveBeenCalledOnce()
     expect(loadedUrls.at(-1)).toBe('file:///Applications/TaskWraith.app/renderer/index.html')
   })
 
-  it('lets the recovery document close its window and ignores subframe actions', () => {
-    const { window, webContents, loadedUrls, close } = createWindow()
+  it('lets the recovery document close its window and ignores unrelated navigation', () => {
+    const { window, webContents, close } = createWindow()
     const recovery = new RendererCrashRecovery(window)
     recovery.show(details)
 
-    webContents.emit(
-      'did-navigate-in-page',
-      {} as Event,
-      `${loadedUrls[0]}#close-taskwraith`,
-      false,
-      1,
-      2
-    )
+    const unrelatedEvent = { preventDefault: vi.fn() } as unknown as Event
+    webContents.emit('will-navigate', unrelatedEvent, 'https://example.com/')
+    expect(unrelatedEvent.preventDefault).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
 
-    webContents.emit(
-      'did-navigate-in-page',
-      {} as Event,
-      `${loadedUrls[0]}#close-taskwraith`,
-      true,
-      1,
-      1
-    )
+    const navigationEvent = { preventDefault: vi.fn() } as unknown as Event
+    webContents.emit('will-navigate', navigationEvent, 'taskwraith-recovery://close')
+    expect(navigationEvent.preventDefault).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalledOnce()
   })
 
@@ -123,10 +110,10 @@ describe('RendererCrashRecovery', () => {
     const { window, webContents } = createWindow()
     const recovery = new RendererCrashRecovery(window)
     expect(webContents.listenerCount('did-navigate')).toBe(1)
-    expect(webContents.listenerCount('did-navigate-in-page')).toBe(1)
+    expect(webContents.listenerCount('will-navigate')).toBe(1)
 
     recovery.dispose()
     expect(webContents.listenerCount('did-navigate')).toBe(0)
-    expect(webContents.listenerCount('did-navigate-in-page')).toBe(0)
+    expect(webContents.listenerCount('will-navigate')).toBe(0)
   })
 })

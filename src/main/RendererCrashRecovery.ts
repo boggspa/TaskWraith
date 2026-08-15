@@ -1,8 +1,9 @@
 import type { BrowserWindow, Event, RenderProcessGoneDetails } from 'electron'
 
 const RECOVERY_DATA_URL_PREFIX = 'data:text/html;charset=utf-8,'
-const RELOAD_HASH = '#reload-taskwraith'
-const CLOSE_HASH = '#close-taskwraith'
+const RECOVERY_ACTION_PROTOCOL = 'taskwraith-recovery:'
+const RELOAD_ACTION_URL = `${RECOVERY_ACTION_PROTOCOL}//reload`
+const CLOSE_ACTION_URL = `${RECOVERY_ACTION_PROTOCOL}//close`
 
 export interface RendererCrashRecoveryDetails {
   reason: RenderProcessGoneDetails['reason']
@@ -47,6 +48,29 @@ function isApplicationUrl(url: string): boolean {
   }
 }
 
+type RendererCrashRecoveryAction = 'reload' | 'close'
+
+function recoveryActionFromUrl(url: string): RendererCrashRecoveryAction | null {
+  try {
+    const target = new URL(url)
+    if (
+      target.protocol !== RECOVERY_ACTION_PROTOCOL ||
+      target.username ||
+      target.password ||
+      target.port ||
+      (target.pathname !== '' && target.pathname !== '/') ||
+      target.search ||
+      target.hash
+    ) {
+      return null
+    }
+    if (target.hostname === 'reload' || target.hostname === 'close') return target.hostname
+  } catch {
+    // Ignore malformed and unrelated navigation targets.
+  }
+  return null
+}
+
 export function buildRendererCrashRecoveryHtml(details: RendererCrashRecoveryDetails): string {
   const activeRunCount = normalizedRunCount(details.activeRunCount)
   const reason = escapeHtml(details.reason || 'unknown')
@@ -86,8 +110,8 @@ export function buildRendererCrashRecoveryHtml(details: RendererCrashRecoveryDet
       <p>The desktop runtime is still running. Reloading rebuilds this window and does not cancel provider work.</p>
       <p class="continuity">${runCopy}</p>
       <div class="actions">
-        <a class="primary" href="${RELOAD_HASH}">Reload TaskWraith</a>
-        <a class="secondary" href="${CLOSE_HASH}">Close window</a>
+        <a class="primary" href="${RELOAD_ACTION_URL}">Reload TaskWraith</a>
+        <a class="secondary" href="${CLOSE_ACTION_URL}">Close window</a>
       </div>
       <p class="detail">Renderer exit: ${reason} (${exitCode}). A local diagnostic entry was recorded.</p>
     </main>
@@ -116,27 +140,22 @@ export class RendererCrashRecovery {
     }
   }
 
-  private readonly handleDidNavigateInPage = (
-    _event: Event,
-    url: string,
-    isMainFrame: boolean
-  ): void => {
-    if (!this.showingRecovery || !isMainFrame || this.disposed) return
+  private readonly handleWillNavigate = (event: Event, url: string): void => {
+    if (!this.showingRecovery || this.disposed) return
+    const action = recoveryActionFromUrl(url)
+    if (!action) return
 
-    let hash = ''
-    try {
-      hash = new URL(url).hash
-    } catch {
-      return
-    }
-
-    if (hash === CLOSE_HASH) {
+    // Chromium refuses fragment navigation on a data: document, so hash links
+    // never reach did-navigate-in-page. A dedicated, non-fetchable scheme gives
+    // the buttons a real navigation attempt that main can intercept here.
+    event.preventDefault()
+    if (action === 'close') {
       this.showingRecovery = false
       if (!this.window.isDestroyed()) this.window.close()
       return
     }
 
-    if (hash !== RELOAD_HASH || !isApplicationUrl(this.applicationUrl)) return
+    if (!isApplicationUrl(this.applicationUrl)) return
     this.showingRecovery = false
     void this.window.loadURL(this.applicationUrl).catch((error) => {
       this.showingRecovery = true
@@ -150,7 +169,7 @@ export class RendererCrashRecovery {
   ) {
     this.rememberCurrentApplicationUrl()
     window.webContents.on('did-navigate', this.handleDidNavigate)
-    window.webContents.on('did-navigate-in-page', this.handleDidNavigateInPage)
+    window.webContents.on('will-navigate', this.handleWillNavigate)
   }
 
   show(details: RendererCrashRecoveryDetails): boolean {
@@ -174,7 +193,7 @@ export class RendererCrashRecovery {
     this.showingRecovery = false
     if (this.window.webContents.isDestroyed()) return
     this.window.webContents.removeListener('did-navigate', this.handleDidNavigate)
-    this.window.webContents.removeListener('did-navigate-in-page', this.handleDidNavigateInPage)
+    this.window.webContents.removeListener('will-navigate', this.handleWillNavigate)
   }
 
   private rememberCurrentApplicationUrl(): void {
