@@ -105,8 +105,7 @@ export const CODEX_PALETTE_CORE: CommandPaletteItem[] = [
     id: 'universal-fork',
     command: '/fork',
     label: 'Fork session',
-    description:
-      'Fork the linked provider session (native on Codex; emulated elsewhere — no Gemini).',
+    description: 'Fork the linked provider session (native on Codex; emulated elsewhere).',
     group: 'Discovery',
     source: 'core'
   },
@@ -158,6 +157,18 @@ export const CLI_PROVIDER_PALETTE_CORE: CommandPaletteItem[] = [
     command: '/permissions',
     label: 'Permissions',
     description: 'Show provider permission and approval mode controls.',
+    group: 'Core',
+    source: 'core'
+  },
+  {
+    // Fast mode is not a Codex exclusive: Claude and Kimi carry their own
+    // flags, and Cursor swaps between the composer-2.5 pair. The entry is
+    // filtered out for providers/models with no wired switch — see
+    // `fastModeAvailable` on ComposerSlashRegistryInput.
+    id: 'cli-provider-fast',
+    command: '/fast',
+    label: 'Fast mode',
+    description: 'Toggle Fast mode when the selected model supports it.',
     group: 'Core',
     source: 'core'
   },
@@ -354,6 +365,11 @@ export interface ComposerSlashRegistryInput {
    *   - `/mcp` is hidden when `capabilities.mcp.available === false`
    * Callers in tests can omit this and get the unfiltered registry. */
   capabilities?: ProviderCapabilityContract | null
+  /** Whether a Fast-mode switch exists for the CURRENT provider + model —
+   * `fastModeToggleAvailable()` in `lib/fastModeToggle`. `/fast` is dropped
+   * when this is explicitly `false`. Left undefined the entry survives, so a
+   * caller that has not wired the check yet loses nothing. */
+  fastModeAvailable?: boolean
 }
 
 /** Inspect a slash command's `command` string to decide whether to
@@ -361,13 +377,19 @@ export interface ComposerSlashRegistryInput {
  * testable. Returns true when the entry should be kept. */
 function passesCapabilityGate(
   command: ComposerSlashCommand,
-  capabilities: ProviderCapabilityContract | null | undefined
+  input: Pick<ComposerSlashRegistryInput, 'capabilities' | 'fastModeAvailable'>
 ): boolean {
-  if (!capabilities) return true
+  // `/fast` is offered by every CLI core, but only codex/claude/kimi/cursor
+  // wire a switch, and only on models that declare the fast tier. Gating here
+  // rather than per-core keeps one rule for a toggle with four mechanics.
+  if (command.command === '/fast' && input.fastModeAvailable === false) {
+    return false
+  }
+  if (!input.capabilities) return true
   // `/mcp` is meaningless when the provider's MCP surface is offline.
   // Codex's app-server returns a contract; if its mcp section reports
   // unavailable the entry just confuses the user.
-  if (command.command === '/mcp' && capabilities.mcp?.available === false) {
+  if (command.command === '/mcp' && input.capabilities.mcp?.available === false) {
     return false
   }
   return true
@@ -384,9 +406,7 @@ export function buildComposerSlashCommandRegistry(
   if (isRetiredProvider(input.provider) || !isEnsembleSeatProvider(input.provider)) return []
   const wrapped = input.paletteItems.map(wrapPaletteItemAsSlashCommand)
   const combined = [...wrapped, ...(input.extraCommands ?? [])]
-  return dedupeComposerSlashCommands(
-    combined.filter((command) => passesCapabilityGate(command, input.capabilities))
-  )
+  return dedupeComposerSlashCommands(combined.filter((command) => passesCapabilityGate(command, input)))
 }
 
 /**
@@ -554,10 +574,14 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
  * Core command dispatches TaskWraith-side (inspector tabs, Diff Studio,
  * emulated /fork) — nothing assumes an MCP bridge, so contained Path-B Cursor
  * qualifies. /review here is TaskWraith's own read-only diff review
- * (reviewDiffPrompt + a plan-mode run), provider-agnostic. Providers outside
- * retired Gemini returns an empty command set while its history remains
- * decodable. A dynamically admitted AntiGravity seat uses the same
- * TaskWraith-side command core as the other non-Codex transports. */
+ * (reviewDiffPrompt + a plan-mode run), provider-agnostic.
+ *
+ * Two cases return an EMPTY core. A retired provider (Gemini) keeps its history
+ * decodable but is never offered or run, so it has nothing to command. Anything
+ * outside the ensemble-seat set is likewise unknown to the dispatcher, and an
+ * entry it cannot route is worse than no entry. A dynamically admitted
+ * AntiGravity seat is a seat, so it takes the same TaskWraith-side command core
+ * as the other non-Codex transports. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
   if (isRetiredProvider(provider)) return RETIRED_PROVIDER_PALETTE_CORE
   if (provider === 'codex') return CODEX_PALETTE_CORE

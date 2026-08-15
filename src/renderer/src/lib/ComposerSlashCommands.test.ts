@@ -244,6 +244,58 @@ describe('ComposerSlashCommands', () => {
       expect(result).toHaveLength(CLI_PROVIDER_PALETTE_CORE.length)
       expect(result.map((command) => command.command)).toContain('/fork')
     })
+
+    it('hides /fast when the provider or selected model has no Fast switch', () => {
+      // Fast is a real toggle on codex/claude/kimi/cursor and dead everywhere
+      // else, so the entry is gated the same way /mcp is: present in the core,
+      // filtered out when the caller reports it unavailable.
+      const gated = buildComposerSlashCommandRegistry({
+        provider: 'ollama',
+        paletteItems: CLI_PROVIDER_PALETTE_CORE,
+        fastModeAvailable: false
+      })
+      expect(gated.map((command) => command.command)).not.toContain('/fast')
+    })
+
+    it('keeps /fast when the caller reports a live Fast switch', () => {
+      const kept = buildComposerSlashCommandRegistry({
+        provider: 'claude',
+        paletteItems: CLI_PROVIDER_PALETTE_CORE,
+        fastModeAvailable: true
+      })
+      expect(kept.map((command) => command.command)).toContain('/fast')
+    })
+
+    it('keeps /fast when availability is unknown, so an unwired caller loses nothing', () => {
+      const unknown = buildComposerSlashCommandRegistry({
+        provider: 'claude',
+        paletteItems: CLI_PROVIDER_PALETTE_CORE
+      })
+      expect(unknown.map((command) => command.command)).toContain('/fast')
+    })
+
+    it('gates codex /fast on the same flag as every other provider', () => {
+      const gated = buildComposerSlashCommandRegistry({
+        provider: 'codex',
+        paletteItems: CODEX_PALETTE_CORE,
+        fastModeAvailable: false
+      })
+      expect(gated.map((command) => command.command)).not.toContain('/fast')
+    })
+  })
+
+  describe('command copy', () => {
+    it('offers /fast to non-Codex CLI providers', () => {
+      expect(CLI_PROVIDER_PALETTE_CORE.map((item) => item.command)).toContain('/fast')
+    })
+
+    it('does not name a retired provider in /fork’s description', () => {
+      // Retired providers resolve to an EMPTY palette core, so a "no Gemini"
+      // caveat can never be read by the user it was written for.
+      for (const item of [...CODEX_PALETTE_CORE, ...CLI_PROVIDER_PALETTE_CORE]) {
+        expect(item.description.toLowerCase()).not.toContain('gemini')
+      }
+    })
   })
 
   describe('filterComposerSlashCommands', () => {
@@ -642,6 +694,7 @@ describe('ComposerSlashCommands', () => {
         'cli-provider-diff',
         'cli-provider-review',
         'cli-provider-permissions',
+        'cli-provider-fast',
         'cli-universal-fork'
       ])
     })
