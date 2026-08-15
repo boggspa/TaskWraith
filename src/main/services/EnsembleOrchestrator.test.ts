@@ -21512,6 +21512,78 @@ describe('staged fan-out (stageRole)', () => {
     expect(waveNote).toBeTruthy()
   })
 
+  it('preserves configured reviewer postures in the closing wave under Fan-out All', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'all'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'antigravity-reviewer',
+        provider: 'antigravity',
+        enabled: true,
+        role: 'Challenge',
+        instructions: 'Review the work.',
+        order: 1,
+        permissionPresetId: 'default',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'claude-reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Auditor',
+        instructions: 'Review the work.',
+        order: 2,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'codex-builder',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 3,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'worker'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build then review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    completeRun(harness, 0, 'Built.')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const antigravity = harness.dispatched.find(
+      (payload) => payload.provider === 'antigravity'
+    )
+    const claude = harness.dispatched.find((payload) => payload.provider === 'claude')
+    expect(antigravity).toMatchObject({
+      approvalMode: 'default',
+      effectivePermissions: {
+        presetId: 'default',
+        readOnly: false,
+        agenticServices: { shellCommands: 'allow' }
+      }
+    })
+    expect(claude).toMatchObject({
+      approvalMode: 'auto_edit',
+      effectivePermissions: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        agenticServices: { shellCommands: 'allow' }
+      }
+    })
+    const reviewRuns = harness.chat.runs.filter((run) =>
+      ['antigravity-reviewer', 'claude-reviewer'].includes(run.ensembleParticipantId || '')
+    )
+    expect(reviewRuns).toHaveLength(2)
+    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'write')).toBe(true)
+  })
+
   it('lets an explicit yield target run a reviewer immediately (routing outranks the stage gate)', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [

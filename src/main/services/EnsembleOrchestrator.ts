@@ -15535,8 +15535,9 @@ export class EnsembleOrchestrator {
       // BEFORE the pass so nothing double-dispatches (the pass itself does
       // not mark fannedOutParticipantIds — only the ensemble_fanout tool
       // path does). Stage roles are permission-agnostic (2026-08-04): a
-      // write-postured reviewer joins the wave like any other; every wave
-      // lane dispatches under the read_only lane clamp.
+      // write-postured reviewer joins the wave like any other. Fan-out Read
+      // signs the read_only clamp; Fan-out All preserves each reviewer's
+      // configured posture, matching the opening Scout wave.
       if (
         reviewerWaveEligible &&
         remaining.length >= 2 &&
@@ -15560,7 +15561,8 @@ export class EnsembleOrchestrator {
           remaining.splice(0, remaining.length, ...rest)
           await this.runParallelFanoutPass(runtime, chat, pendingReviewers, {
             mode: 'read_only',
-            forceReadOnlyDispatch: true,
+            forceReadOnlyDispatch: !openingScoutUsesOwnPermissions,
+            dispatchOwnPermissions: openingScoutUsesOwnPermissions,
             label: 'Review wave'
           })
           // Closing Review wave ends ordinary serial work for this pass.
