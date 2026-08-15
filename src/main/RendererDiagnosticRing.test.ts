@@ -69,6 +69,33 @@ describe('RendererDiagnosticRing', () => {
     ])
   })
 
+  it('evicts old UTF-8-heavy incidents until the persisted ring fits its byte budget', () => {
+    const filePath = testPath()
+    const maxFileBytes = 6_000
+    const ring = new RendererDiagnosticRing(filePath, { capacity: 8, maxFileBytes })
+    const wideText = '界'.repeat(200)
+    for (let index = 0; index < 8; index += 1) {
+      ring.append({
+        ...sample(index),
+        cause: 'error-boundary',
+        errorBoundary: {
+          message: `${index}:${wideText}`,
+          stack: wideText,
+          componentStack: wideText
+        }
+      })
+    }
+
+    expect(fs.statSync(filePath).size).toBeLessThanOrEqual(maxFileBytes)
+    const reloaded = new RendererDiagnosticRing(filePath, {
+      capacity: 8,
+      maxFileBytes
+    }).snapshot()
+    expect(reloaded.samples.length).toBeGreaterThan(0)
+    expect(reloaded.samples.length).toBeLessThan(8)
+    expect(reloaded.samples.at(-1)?.activeChatMessageCount).toBe(7)
+  })
+
   it('combines renderer heap with RSS, persisted chat bytes, and transport counters', () => {
     const filePath = testPath()
     const chatPath = join(filePath, '..', 'chat.json')

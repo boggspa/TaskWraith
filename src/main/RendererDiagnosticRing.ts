@@ -35,6 +35,7 @@ export interface RendererDiagnosticTarget {
 
 export interface RendererDiagnosticRingOptions {
   capacity?: number
+  maxFileBytes?: number
   onError?: (message: string, error: unknown) => void
 }
 
@@ -69,6 +70,11 @@ function normalizedCapacity(value: number | undefined): number {
   return Math.max(MIN_RING_CAPACITY, Math.min(MAX_RING_CAPACITY, Math.floor(value!)))
 }
 
+function normalizedMaxFileBytes(value: number | undefined): number {
+  if (!Number.isFinite(value)) return MAX_RING_FILE_BYTES
+  return Math.max(1_024, Math.min(MAX_RING_FILE_BYTES, Math.floor(value!)))
+}
+
 function isPersistedDiagnosticSample(value: unknown): value is RendererDiagnosticSample {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const sample = value as Partial<RendererDiagnosticSample>
@@ -84,6 +90,7 @@ function isPersistedDiagnosticSample(value: unknown): value is RendererDiagnosti
 /** Fixed-capacity, atomically replaced local evidence file. */
 export class RendererDiagnosticRing {
   private readonly capacity: number
+  private readonly maxFileBytes: number
   private readonly samples: RendererDiagnosticSample[]
 
   constructor(
@@ -91,6 +98,7 @@ export class RendererDiagnosticRing {
     private readonly options: RendererDiagnosticRingOptions = {}
   ) {
     this.capacity = normalizedCapacity(options.capacity)
+    this.maxFileBytes = normalizedMaxFileBytes(options.maxFileBytes)
     this.samples = this.load()
   }
 
@@ -121,7 +129,7 @@ export class RendererDiagnosticRing {
     try {
       if (!fs.existsSync(this.filePath)) return []
       const stat = fs.statSync(this.filePath)
-      if (!stat.isFile() || stat.size > MAX_RING_FILE_BYTES) return []
+      if (!stat.isFile() || stat.size > this.maxFileBytes) return []
       const parsed = JSON.parse(
         fs.readFileSync(this.filePath, 'utf8')
       ) as Partial<RendererDiagnosticRingFile>
@@ -140,8 +148,19 @@ export class RendererDiagnosticRing {
 
   private persist(): void {
     fs.mkdirSync(dirname(this.filePath), { recursive: true })
+    let serialized = `${JSON.stringify(this.snapshot(), null, 2)}\n`
+    // Capacity bounds entry count; this second bound is deliberately based on
+    // encoded bytes so non-ASCII stacks cannot produce a file that load() will
+    // reject on the next launch. Preserve the newest evidence as the tail.
+    while (Buffer.byteLength(serialized, 'utf8') > this.maxFileBytes && this.samples.length > 1) {
+      this.samples.shift()
+      serialized = `${JSON.stringify(this.snapshot(), null, 2)}\n`
+    }
+    if (Buffer.byteLength(serialized, 'utf8') > this.maxFileBytes) {
+      throw new Error('A renderer diagnostic sample exceeds the ring file budget.')
+    }
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(this.snapshot(), null, 2)}\n`, 'utf8')
+    fs.writeFileSync(temporaryPath, serialized, 'utf8')
     fs.renameSync(temporaryPath, this.filePath)
   }
 }
