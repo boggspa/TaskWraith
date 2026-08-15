@@ -263,10 +263,11 @@ func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
         visited += 1
-        if stringAttribute(kAXRoleAttribute, of: element) == kAXSliderRole,
-           stringAttribute(kAXTitleAttribute, of: element) == "Playhead",
-           stringAttribute(kAXIdentifierAttribute, of: element) == "Playhead"
-        {
+        // The exact Studio window publishes exactly one slider: Playhead.
+        // AppKit does not consistently bridge a custom element's Swift label /
+        // identifier through the cross-process AX API, so exactness comes from
+        // that one-slider invariant plus the settable numeric range below.
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXSliderRole {
             matches.append(element)
         }
         guard depth < 8 else { continue }
