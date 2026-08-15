@@ -77,6 +77,10 @@ export function visibleRunningChatIds(
     if (pending && pending.provider === 'kimi') continue
     if (chatsByAppChatId) {
       const chat = chatsByAppChatId[chatId]
+      if (chat && hasLiveTurnTransition(chat)) {
+        result.push(chatId)
+        continue
+      }
       if (chat && hasKnownInactiveEnsembleRound(chat)) continue
       if (chat && hasTerminalLastRun(chat)) continue
     }
@@ -108,9 +112,26 @@ export function isRunQueueJobVisibleForChat(
   chat: RunningChatRecordLike | null | undefined
 ): boolean {
   if (!job.chatId || !chat) return true
+  if (isLiveTurnTransitionSourceJob(job, chat)) return true
   if (isRunQueueJobSupersededByInactiveEnsembleRound(job, chat)) return false
   if (isRunQueueJobSupersededByTerminalRun(job, chat)) return false
   return true
+}
+
+function hasLiveTurnTransition(chat: RunningChatRecordLike): boolean {
+  const activeRound = chat.ensemble?.activeRound
+  return Boolean(activeRound?.turnTransition && isEnsembleRoundPresentationLive(activeRound))
+}
+
+function isLiveTurnTransitionSourceJob(
+  job: RunningRunQueueJobLike,
+  chat: RunningChatRecordLike
+): boolean {
+  const activeRound = chat.ensemble?.activeRound
+  return Boolean(
+    activeRound?.turnTransition?.sourceRunId === job.runId &&
+    isEnsembleRoundPresentationLive(activeRound)
+  )
 }
 
 function isRunQueueJobSupersededByInactiveEnsembleRound(

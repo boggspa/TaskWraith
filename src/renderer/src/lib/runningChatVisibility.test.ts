@@ -103,6 +103,53 @@ describe('visibleRunningChatIds', () => {
     ).toEqual(['chat-live'])
   })
 
+  it('keeps an ensemble chat visible while main owns the between-turn transition', () => {
+    expect(
+      visibleRunningChatIds(
+        ['ensemble-chat'],
+        {},
+        {
+          'ensemble-chat': {
+            appChatId: 'ensemble-chat',
+            runs: [
+              {
+                runId: 'source-run',
+                endedAt: '2026-07-01T20:01:00.000Z',
+                status: 'success'
+              }
+            ],
+            ensemble: {
+              activeRound: {
+                roundId: 'round-1',
+                status: 'running',
+                prompt: 'continue',
+                startedAt: '2026-07-01T20:00:00.000Z',
+                turnTransition: {
+                  phase: 'handoff',
+                  runtimeInstanceId: 'runtime-1',
+                  sourceParticipantId: 'p1',
+                  sourceRunId: 'source-run',
+                  targetParticipantId: 'p2',
+                  startedAt: '2026-07-01T20:01:00.000Z'
+                },
+                participants: [
+                  {
+                    participantId: 'p1',
+                    provider: 'codex',
+                    role: 'Worker',
+                    order: 0,
+                    status: 'answered',
+                    endedAt: '2026-07-01T20:01:00.000Z'
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+    ).toEqual(['ensemble-chat'])
+  })
+
   it('keeps a chat with no runs (newly-started, persisted snapshot not yet flushed)', () => {
     expect(
       visibleRunningChatIds(
@@ -309,6 +356,87 @@ describe('hasKnownInactiveEnsembleRound', () => {
 })
 
 describe('isRunQueueJobVisibleForChat', () => {
+  it('keeps the source queue row while a live handoff owns its terminal transcript run', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        {
+          chatId: 'ensemble-chat',
+          runId: 'source-run',
+          status: 'active',
+          updatedAt: '2026-07-01T20:01:00.000Z'
+        },
+        {
+          appChatId: 'ensemble-chat',
+          runs: [
+            {
+              runId: 'source-run',
+              endedAt: '2026-07-01T20:01:00.000Z',
+              status: 'success'
+            }
+          ],
+          ensemble: {
+            activeRound: {
+              roundId: 'round-1',
+              status: 'running',
+              prompt: 'continue',
+              startedAt: '2026-07-01T20:00:00.000Z',
+              turnTransition: {
+                phase: 'handoff',
+                runtimeInstanceId: 'runtime-1',
+                sourceParticipantId: 'p1',
+                sourceRunId: 'source-run',
+                targetParticipantId: 'p2',
+                startedAt: '2026-07-01T20:01:00.000Z'
+              },
+              participants: [
+                {
+                  participantId: 'p1',
+                  provider: 'codex',
+                  role: 'Worker',
+                  order: 0,
+                  status: 'answered',
+                  endedAt: '2026-07-01T20:01:00.000Z'
+                }
+              ]
+            }
+          }
+        }
+      )
+    ).toBe(true)
+  })
+
+  it('does not let a live handoff revive an unrelated stale queue row', () => {
+    expect(
+      isRunQueueJobVisibleForChat(
+        { chatId: 'ensemble-chat', runId: 'older-run', status: 'active' },
+        {
+          appChatId: 'ensemble-chat',
+          runs: [
+            { runId: 'older-run', endedAt: '2026-07-01T19:59:00.000Z', status: 'success' },
+            { runId: 'source-run', endedAt: '2026-07-01T20:01:00.000Z', status: 'success' }
+          ],
+          ensemble: {
+            activeRound: {
+              roundId: 'round-1',
+              status: 'running',
+              prompt: 'continue',
+              startedAt: '2026-07-01T20:00:00.000Z',
+              turnTransition: {
+                phase: 'handoff',
+                runtimeInstanceId: 'runtime-1',
+                sourceParticipantId: 'p1',
+                sourceRunId: 'source-run',
+                targetParticipantId: 'p2',
+                startedAt: '2026-07-01T20:01:00.000Z'
+              },
+              participants: []
+            }
+          }
+        }
+      )
+    ).toBe(false)
+  })
+
   it('hides a queue job superseded by a completed ensemble round', () => {
     expect(
       isRunQueueJobVisibleForChat(
