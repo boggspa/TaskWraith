@@ -1,25 +1,39 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PNG } from 'pngjs'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { EXPECTED, expectedValueSequence, verifyStudioPixelEvidence } =
-  require('./studio-pixel-evidence-verifier.cjs') as {
-    EXPECTED: {
-      cycleTwoScreenshotSha256: string
-      finalContentPtsSeconds: number
-      finalPositionTicks: number
-      finalScreenshotSha256: string
-      fixtureSha256: string
-      ticksPerSecond: number
-      toleranceTicks: number
-    }
-    expectedValueSequence: () => number[]
-    verifyStudioPixelEvidence: (
-      evidence: Record<string, any>,
-      driverSource: string,
-      documents: Record<string, any>
-    ) => Record<string, any>
+const {
+  EXPECTED,
+  compareWindowCaptureToReference,
+  expectedValueSequence,
+  verifyStudioPixelEvidence
+} = require('./studio-pixel-evidence-verifier.cjs') as {
+  EXPECTED: {
+    cycleTwoScreenshotSha256: string
+    finalContentPtsSeconds: number
+    finalPositionTicks: number
+    finalScreenshotSha256: string
+    fixtureSha256: string
+    ticksPerSecond: number
+    toleranceTicks: number
   }
+  compareWindowCaptureToReference: (
+    capturePath: string,
+    referencePath: string,
+    windowBounds: { width: number; height: number },
+    options?: { hudOverlayHeight?: number }
+  ) => Record<string, any>
+  expectedValueSequence: () => number[]
+  verifyStudioPixelEvidence: (
+    evidence: Record<string, any>,
+    driverSource: string,
+    documents: Record<string, any>
+  ) => Record<string, any>
+}
 
 const DRIVER_SOURCE = `
 var receipts: [ActionReceipt] = []
@@ -148,6 +162,101 @@ function createFixture() {
   return { documents, evidence }
 }
 
+function syntheticPixelChannel(image: PNG, x: number, y: number, channel: number): number {
+  const boundedX = Math.max(0, Math.min(image.width - 1, x))
+  const boundedY = Math.max(0, Math.min(image.height - 1, y))
+  return image.data[(boundedY * image.width + boundedX) * 4 + channel]
+}
+
+function syntheticBilinearChannel(image: PNG, x: number, y: number, channel: number): number {
+  const left = Math.floor(x)
+  const top = Math.floor(y)
+  const xWeight = x - left
+  const yWeight = y - top
+  const topValue =
+    (1 - xWeight) * syntheticPixelChannel(image, left, top, channel) +
+    xWeight * syntheticPixelChannel(image, left + 1, top, channel)
+  const bottomValue =
+    (1 - xWeight) * syntheticPixelChannel(image, left, top + 1, channel) +
+    xWeight * syntheticPixelChannel(image, left + 1, top + 1, channel)
+  return (1 - yWeight) * topValue + yWeight * bottomValue
+}
+
+function createVisualFixture(corrupt: boolean) {
+  const directory = mkdtempSync(join(tmpdir(), 'studio-pixel-verifier-'))
+  const referencePath = join(directory, 'reference.png')
+  const capturePath = join(directory, 'capture.png')
+  const reference = new PNG({ width: 64, height: 36 })
+  const bars = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [255, 255, 0],
+    [0, 0, 255],
+    [255, 0, 255],
+    [0, 255, 255]
+  ]
+  for (let y = 0; y < reference.height; y += 1) {
+    for (let x = 0; x < reference.width; x += 1) {
+      const pixel = (y * reference.width + x) * 4
+      const color = bars[Math.min(5, Math.floor((x * 6) / reference.width))]
+      for (let channel = 0; channel < 3; channel += 1) {
+        reference.data[pixel + channel] = color[channel]
+      }
+      if (Math.abs(y - (5 + x * 0.35)) < 1.5) {
+        reference.data[pixel] = (x * 7) % 256
+        reference.data[pixel + 1] = (255 - x * 5) % 256
+        reference.data[pixel + 2] = (x * 11) % 256
+      }
+      reference.data[pixel + 3] = 255
+    }
+  }
+
+  const windowBounds = { width: 96, height: 86 }
+  const videoWidth = 96
+  const videoHeight = 54
+  const captureX = 34
+  const captureY = 58
+  const capture = new PNG({ width: 164, height: 154 })
+  for (let pixel = 0; pixel < capture.width * capture.height; pixel += 1) {
+    capture.data[pixel * 4 + 3] = 255
+  }
+  const transforms = [
+    { scale: 0.97, offset: 7 },
+    { scale: 0.84, offset: 11 },
+    { scale: 0.824, offset: 39 }
+  ]
+  for (let y = 0; y < videoHeight; y += 1) {
+    for (let x = 0; x < videoWidth; x += 1) {
+      const pixel = ((captureY + y) * capture.width + captureX + x) * 4
+      for (let channel = 0; channel < 3; channel += 1) {
+        const referenceValue = syntheticBilinearChannel(
+          reference,
+          ((x + 0.5) * reference.width) / videoWidth - 0.5,
+          ((y + 0.5) * reference.height) / videoHeight - 0.5,
+          channel
+        )
+        let value = Math.round(
+          transforms[channel].scale * referenceValue + transforms[channel].offset
+        )
+        if (corrupt && x >= 20 && x < 80 && y >= 10 && y < 35) {
+          value = 255 - value
+        }
+        capture.data[pixel + channel] = Math.max(0, Math.min(255, value))
+      }
+      capture.data[pixel + 3] = 255
+    }
+  }
+
+  writeFileSync(referencePath, PNG.sync.write(reference))
+  writeFileSync(capturePath, PNG.sync.write(capture))
+  return {
+    capturePath,
+    cleanup: () => rmSync(directory, { force: true, recursive: true }),
+    referencePath,
+    windowBounds
+  }
+}
+
 describe('Studio pixel evidence verifier', () => {
   it('recomputes the exact packaged 527/523 sequence and PTS invariant', () => {
     const { documents, evidence } = createFixture()
@@ -214,5 +323,49 @@ describe('Studio pixel evidence verifier', () => {
         documents
       )
     ).toThrow('driver 120ms action sleep is missing')
+  })
+
+  it('accepts a clean registered video region despite bounded color conversion', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9 }
+      )
+
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureX: 34,
+          captureY: 58,
+          comparisonHeight: 45,
+          videoHeight: 54,
+          videoWidth: 96
+        },
+        metrics: { materialPixelCount: 4_320 }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('rejects structured trail residue inside the registered video region', () => {
+    const fixture = createVisualFixture(true)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9 }
+      )
+
+      expect(comparison.clean).toBe(false)
+      expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
+      expect(comparison.metrics.fractionAbove80).toBeGreaterThan(0.01)
+    } finally {
+      fixture.cleanup()
+    }
   })
 })

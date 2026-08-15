@@ -3,6 +3,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { PNG } = require('pngjs')
 
 const repoRoot = path.resolve(__dirname, '..')
 const DEFAULT_EVIDENCE_PATH = path.join(
@@ -10,6 +11,22 @@ const DEFAULT_EVIDENCE_PATH = path.join(
   '.local-only/taskwraith-studio/acceptance/w1acc10e/pixel-idr-fix-523-storm-full-evidence.json'
 )
 const DEFAULT_DRIVER_PATH = path.join(repoRoot, 'scripts/studio-acceptance-ui-driver.swift')
+const DEFAULT_VISUAL_REFERENCES = Object.freeze({
+  cycleTwo: path.join(
+    repoRoot,
+    '.local-only/taskwraith-studio/acceptance/w1acc10e/pixel-idr-verifier/reference-18_000.png'
+  ),
+  final: path.join(
+    repoRoot,
+    '.local-only/taskwraith-studio/acceptance/w1acc10e/pixel-idr-verifier/reference-17_083.png'
+  )
+})
+const VISUAL_THRESHOLDS = Object.freeze({
+  maximumMeanAbsoluteChannelResidual: 10,
+  maximumP99ChannelResidual: 50,
+  maximumFractionAbove40: 0.03,
+  maximumFractionAbove80: 0.01
+})
 
 const EXPECTED = Object.freeze({
   evidenceSha256: '331d60817d598c4838444c7918f9bc794e3855bb7513f567815f6d8c6b5678cc',
@@ -20,7 +37,9 @@ const EXPECTED = Object.freeze({
   finalPositionTicks: 8_550_000,
   finalContentPtsSeconds: 17.083,
   cycleTwoScreenshotSha256: 'eba053bb4e61cc6e4e19fbedd0e622972a9beddec257c4369cdef1e5ab1ce9f9',
-  finalScreenshotSha256: '05cf5bd1fcfdf6f0b8dfeab1df9cb400fcbfbf0ddf308e6c86e139b14e28350f'
+  cycleTwoReferenceSha256: '91d88fd342bf868a377026db49c0192ebddc40be2d1d02e05be933076f487937',
+  finalScreenshotSha256: '05cf5bd1fcfdf6f0b8dfeab1df9cb400fcbfbf0ddf308e6c86e139b14e28350f',
+  finalReferenceSha256: '6dde433f5aa54326143927cde81ac6350aeb4cc46884f3bb402b16baf3a25bcc'
 })
 
 const CYCLES = Object.freeze([
@@ -43,6 +62,175 @@ function sha256File(filePath) {
 
 function exactJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function pixelChannel(image, x, y, channel) {
+  const boundedX = Math.max(0, Math.min(image.width - 1, x))
+  const boundedY = Math.max(0, Math.min(image.height - 1, y))
+  return image.data[(boundedY * image.width + boundedX) * 4 + channel]
+}
+
+function bilinearChannel(image, x, y, channel) {
+  const left = Math.floor(x)
+  const top = Math.floor(y)
+  const xWeight = x - left
+  const yWeight = y - top
+  const topValue =
+    (1 - xWeight) * pixelChannel(image, left, top, channel) +
+    xWeight * pixelChannel(image, left + 1, top, channel)
+  const bottomValue =
+    (1 - xWeight) * pixelChannel(image, left, top + 1, channel) +
+    xWeight * pixelChannel(image, left + 1, top + 1, channel)
+  return (1 - yWeight) * topValue + yWeight * bottomValue
+}
+
+function quantile(sortedValues, fraction) {
+  invariant(sortedValues.length > 0, 'pixel comparison produced no residuals')
+  return sortedValues[Math.min(sortedValues.length - 1, Math.floor(sortedValues.length * fraction))]
+}
+
+function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
+  const capture = PNG.sync.read(fs.readFileSync(capturePath))
+  const reference = PNG.sync.read(fs.readFileSync(referencePath))
+  const windowWidth = Number(windowBounds?.width)
+  const windowHeight = Number(windowBounds?.height)
+  invariant(
+    Number.isInteger(windowWidth) &&
+      Number.isInteger(windowHeight) &&
+      windowWidth > 0 &&
+      windowHeight > 0,
+    'visual checkpoint window bounds are invalid'
+  )
+  invariant(
+    reference.width > 0 &&
+      reference.height > 0 &&
+      Math.abs(reference.width / reference.height - 16 / 9) < 0.001,
+    'visual reference is not a 16:9 frame'
+  )
+
+  const videoWidth = windowWidth
+  const videoHeight = Math.round((videoWidth * reference.height) / reference.width)
+  const titleBarHeight = windowHeight - videoHeight
+  const horizontalShadowPixels = capture.width - windowWidth
+  const verticalShadowPixels = capture.height - windowHeight
+  invariant(
+    titleBarHeight >= 20 &&
+      titleBarHeight <= 40 &&
+      horizontalShadowPixels >= 0 &&
+      horizontalShadowPixels % 2 === 0 &&
+      verticalShadowPixels >= 16 &&
+      (verticalShadowPixels - 16) % 2 === 0,
+    'WindowServer capture geometry is outside the bounded Companion shape'
+  )
+
+  const captureX = horizontalShadowPixels / 2
+  const topShadowPixels = (verticalShadowPixels - 16) / 2
+  const captureY = topShadowPixels + titleBarHeight
+  const hudOverlayHeight = options.hudOverlayHeight ?? 92
+  const comparisonHeight = videoHeight - hudOverlayHeight
+  invariant(
+    Number.isInteger(hudOverlayHeight) &&
+      hudOverlayHeight >= 0 &&
+      comparisonHeight > 0 &&
+      captureX + videoWidth <= capture.width &&
+      captureY + videoHeight <= capture.height,
+    'bounded video comparison region is invalid'
+  )
+
+  const materialPixelCount = videoWidth * comparisonHeight
+  const channelFits = []
+  for (let channel = 0; channel < 3; channel += 1) {
+    let referenceSum = 0
+    let captureSum = 0
+    let referenceSquaredSum = 0
+    let crossProductSum = 0
+    for (let y = 0; y < comparisonHeight; y += 1) {
+      const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
+      for (let x = 0; x < videoWidth; x += 1) {
+        const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
+        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const captureValue = pixelChannel(capture, captureX + x, captureY + y, channel)
+        referenceSum += referenceValue
+        captureSum += captureValue
+        referenceSquaredSum += referenceValue * referenceValue
+        crossProductSum += referenceValue * captureValue
+      }
+    }
+    const denominator = referenceSquaredSum - (referenceSum * referenceSum) / materialPixelCount
+    invariant(Math.abs(denominator) > 0.001, 'visual reference channel has no variance')
+    const scale = (crossProductSum - (referenceSum * captureSum) / materialPixelCount) / denominator
+    const offset = captureSum / materialPixelCount - (scale * referenceSum) / materialPixelCount
+    channelFits.push({ scale, offset })
+  }
+
+  const residuals = []
+  let residualSum = 0
+  let pixelsAbove40 = 0
+  let pixelsAbove80 = 0
+  for (let y = 0; y < comparisonHeight; y += 1) {
+    const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
+    for (let x = 0; x < videoWidth; x += 1) {
+      const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
+      let maximumPixelResidual = 0
+      for (let channel = 0; channel < 3; channel += 1) {
+        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const predictedCaptureValue =
+          channelFits[channel].scale * referenceValue + channelFits[channel].offset
+        const residual = Math.abs(
+          pixelChannel(capture, captureX + x, captureY + y, channel) - predictedCaptureValue
+        )
+        residuals.push(residual)
+        residualSum += residual
+        maximumPixelResidual = Math.max(maximumPixelResidual, residual)
+      }
+      if (maximumPixelResidual > 40) pixelsAbove40 += 1
+      if (maximumPixelResidual > 80) pixelsAbove80 += 1
+    }
+  }
+  residuals.sort((left, right) => left - right)
+  const metrics = {
+    materialPixelCount,
+    meanAbsoluteChannelResidual: residualSum / residuals.length,
+    p95ChannelResidual: quantile(residuals, 0.95),
+    p99ChannelResidual: quantile(residuals, 0.99),
+    maximumChannelResidual: residuals.at(-1),
+    fractionAbove40: pixelsAbove40 / materialPixelCount,
+    fractionAbove80: pixelsAbove80 / materialPixelCount
+  }
+  const thresholds = options.thresholds || VISUAL_THRESHOLDS
+  const clean =
+    metrics.meanAbsoluteChannelResidual <= thresholds.maximumMeanAbsoluteChannelResidual &&
+    metrics.p99ChannelResidual <= thresholds.maximumP99ChannelResidual &&
+    metrics.fractionAbove40 <= thresholds.maximumFractionAbove40 &&
+    metrics.fractionAbove80 <= thresholds.maximumFractionAbove80
+
+  return {
+    clean,
+    capture: {
+      path: capturePath,
+      width: capture.width,
+      height: capture.height,
+      sha256: sha256File(capturePath)
+    },
+    reference: {
+      path: referencePath,
+      width: reference.width,
+      height: reference.height,
+      sha256: sha256File(referencePath)
+    },
+    registration: {
+      captureX,
+      captureY,
+      videoWidth,
+      videoHeight,
+      titleBarHeight,
+      hudOverlayHeight,
+      comparisonHeight
+    },
+    colorFit: channelFits,
+    metrics,
+    thresholds
+  }
 }
 
 function expectedValueSequence() {
@@ -287,6 +475,7 @@ function loadReferencedDocuments(evidence) {
 function verifyStudioPixelEvidenceFiles(options = {}) {
   const evidencePath = options.evidencePath || DEFAULT_EVIDENCE_PATH
   const driverPath = options.driverPath || DEFAULT_DRIVER_PATH
+  const visualReferences = options.visualReferences || DEFAULT_VISUAL_REFERENCES
   const evidenceBytes = fs.readFileSync(evidencePath)
   const evidenceSha256 = sha256Bytes(evidenceBytes)
   invariant(
@@ -295,12 +484,79 @@ function verifyStudioPixelEvidenceFiles(options = {}) {
   )
   const evidence = JSON.parse(evidenceBytes.toString('utf8'))
   const driverSource = fs.readFileSync(driverPath, 'utf8')
+  const aggregate = verifyStudioPixelEvidence(
+    evidence,
+    driverSource,
+    loadReferencedDocuments(evidence)
+  )
+
+  const compareCheckpoint = (
+    label,
+    screenshot,
+    expectedScreenshotSha256,
+    referencePath,
+    expectedReferenceSha256
+  ) => {
+    invariant(screenshot?.path && screenshot?.receiptPath, label + ' capture paths are missing')
+    invariant(
+      sha256File(screenshot.path) === expectedScreenshotSha256,
+      label + ' capture bytes changed'
+    )
+    invariant(
+      sha256File(referencePath) === expectedReferenceSha256,
+      label + ' fresh reference bytes changed'
+    )
+    const receipt = JSON.parse(fs.readFileSync(screenshot.receiptPath, 'utf8'))
+    invariant(
+      receipt.ok === true &&
+        receipt.outputPath === screenshot.path &&
+        receipt.sha256 === expectedScreenshotSha256 &&
+        receipt.windowBounds,
+      label + ' WindowServer receipt is invalid'
+    )
+    const comparison = compareWindowCaptureToReference(
+      screenshot.path,
+      referencePath,
+      receipt.windowBounds
+    )
+    invariant(
+      comparison.clean,
+      label + ' material pixel comparison failed: ' + JSON.stringify(comparison.metrics)
+    )
+    return {
+      label,
+      captureReceiptPath: screenshot.receiptPath,
+      capturePath: path.relative(repoRoot, screenshot.path),
+      referencePath: path.relative(repoRoot, referencePath),
+      ...comparison
+    }
+  }
+
+  const visualComparisons = [
+    compareCheckpoint(
+      'post-storm-transport-18.000',
+      evidence.storm.cycles[2].backwardSeek.screenshot,
+      EXPECTED.cycleTwoScreenshotSha256,
+      visualReferences.cycleTwo,
+      EXPECTED.cycleTwoReferenceSha256
+    ),
+    compareCheckpoint(
+      'post-storm-decoded-17.083',
+      evidence.seventeenPoint.screenshot,
+      EXPECTED.finalScreenshotSha256,
+      visualReferences.final,
+      EXPECTED.finalReferenceSha256
+    )
+  ]
+
   return {
-    ...verifyStudioPixelEvidence(evidence, driverSource, loadReferencedDocuments(evidence)),
+    ...aggregate,
     evidencePath: path.relative(repoRoot, evidencePath),
     evidenceSha256,
     driverPath: path.relative(repoRoot, driverPath),
-    driverSha256: sha256File(driverPath)
+    driverSha256: sha256File(driverPath),
+    visualComparisonCount: visualComparisons.length,
+    visualComparisons
   }
 }
 
@@ -318,7 +574,10 @@ if (require.main === module) {
 
 module.exports = {
   CYCLES,
+  DEFAULT_VISUAL_REFERENCES,
   EXPECTED,
+  VISUAL_THRESHOLDS,
+  compareWindowCaptureToReference,
   expectedValueSequence,
   verifyDriverCadenceSource,
   verifyStudioPixelEvidence,
