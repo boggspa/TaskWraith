@@ -143,27 +143,30 @@ describe('scheduled headless dispatch integration', () => {
     )
     expect(
       ensembleDispatch.indexOf('scheduledOccurrenceOwners.bindEnsembleChildRun(')
-    ).toBeLessThan(
-      ensembleDispatch.indexOf('dispatchMainOwnedScheduledOccurrence(payload, event, observer)')
-    )
+    ).toBeLessThan(ensembleDispatch.indexOf('dispatchMainOwnedScheduledOccurrence('))
   })
 
-  it('receipts only exact prompt-supplied steering rows after accepted ensemble dispatch', () => {
+  it('receipts only exact prompt-supplied steering rows at adapter invocation', () => {
     const ensembleDispatch = sourceBetween(
       'ensembleOrchestratorRef = new EnsembleOrchestrator({',
       'shouldPersistProviderSessionForRun,'
     )
     const exactLookup = ensembleDispatch.indexOf('pendingEntryIdsForSuppliedMessageIds(')
-    const accepted = ensembleDispatch.indexOf('dispatchResult.dispatched &&')
-    const receipt = ensembleDispatch.indexOf(
-      'midRunSteeringRegistry.markEntriesDeliveredToParticipant('
+    const receiptObserver = ensembleDispatch.indexOf('createMidRunSteeringDispatchReceipt({')
+    const interactiveDispatch = ensembleDispatch.indexOf(
+      'dispatchRunWithProviderPause(payload, event, dispatchObserver)'
+    )
+    const acceptedFallback = ensembleDispatch.indexOf(
+      'steeringDeliveryReceipt?.markAcceptedFallback()'
     )
 
     expect(exactLookup).toBeGreaterThanOrEqual(0)
     expect(ensembleDispatch).toContain('promptEvidence?.suppliedMessageIds || []')
     expect(ensembleDispatch).not.toContain('.pendingForChat(steeringChatId)')
-    expect(accepted).toBeGreaterThan(exactLookup)
-    expect(receipt).toBeGreaterThan(accepted)
+    expect(receiptObserver).toBeGreaterThan(exactLookup)
+    expect(ensembleDispatch).toContain('upstreamObserver: observer')
+    expect(interactiveDispatch).toBeGreaterThan(receiptObserver)
+    expect(acceptedFallback).toBeGreaterThan(interactiveDispatch)
   })
 
   it('keeps only active root or child transports live during stall reconciliation', () => {

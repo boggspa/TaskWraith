@@ -693,6 +693,7 @@ import {
   scheduledSteeringMessageId,
   shouldAppendScheduledSteeringOnBusy
 } from './run/MidRunSteering'
+import { createMidRunSteeringDispatchReceipt } from './run/MidRunSteeringDispatchReceipt'
 import { LiveSteeringCoordinator } from './steering/LiveSteeringCoordinator'
 import { steerEnsembleSideMessageToActiveRuns } from './steering/EnsembleSideMessageSteering'
 import { drainPendingSteerTextFromSession } from './steering/BrokerSteerTransport'
@@ -56201,6 +56202,27 @@ if (isGeminiMcpBridgeProcess) {
                 promptEvidence?.suppliedMessageIds || []
               )
             : []
+        const steeringDelivery =
+          steeringChatId && steeringParticipantId && steeringEntryIds.length > 0
+            ? {
+                chatId: steeringChatId,
+                participantId: steeringParticipantId,
+                entryIds: steeringEntryIds
+              }
+            : undefined
+        const steeringDeliveryReceipt = steeringDelivery
+          ? createMidRunSteeringDispatchReceipt({
+              upstreamObserver: observer,
+              markDelivered: () => {
+                midRunSteeringRegistry.markEntriesDeliveredToParticipant(
+                  steeringDelivery.chatId,
+                  steeringDelivery.participantId,
+                  steeringDelivery.entryIds
+                )
+              }
+            })
+          : undefined
+        const dispatchObserver = steeringDeliveryReceipt?.observer || observer
         const scheduledRoundId = payload.ensembleRun?.roundId
         const scheduledRoundOwner = scheduledRoundId
           ? scheduledOccurrenceOwners.lookupEnsembleRound(scheduledRoundId)
@@ -56216,7 +56238,7 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             throw new Error('Scheduled ensemble ownership ended before participant dispatch.')
           }
-          dispatchResult = await dispatchRunWithProviderPause(payload, event, observer)
+          dispatchResult = await dispatchRunWithProviderPause(payload, event, dispatchObserver)
         } else {
           const childRunId = requireNonEmptyString(
             payload.appRunId,
@@ -56233,19 +56255,16 @@ if (isGeminiMcpBridgeProcess) {
             scheduledRoundId,
             payload.provider
           )
-          dispatchResult = await dispatchMainOwnedScheduledOccurrence(payload, event, observer)
-        }
-        if (
-          dispatchResult.dispatched &&
-          steeringChatId &&
-          steeringParticipantId &&
-          steeringEntryIds.length > 0
-        ) {
-          midRunSteeringRegistry.markEntriesDeliveredToParticipant(
-            steeringChatId,
-            steeringParticipantId,
-            steeringEntryIds
+          dispatchResult = await dispatchMainOwnedScheduledOccurrence(
+            payload,
+            event,
+            dispatchObserver
           )
+        }
+        if (dispatchResult.dispatched) {
+          // Compatibility for narrow dispatch facades that accept a run
+          // without invoking the production adapter observer.
+          steeringDeliveryReceipt?.markAcceptedFallback()
         }
         return dispatchResult
       },
