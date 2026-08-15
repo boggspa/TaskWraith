@@ -989,7 +989,9 @@ function sourceFramePts() {
   )
   const values = result.stdout
     .split(/\r?\n/)
-    .map((value) => Number(value.trim()))
+    .map((value) => value.trim())
+    .filter((value) => value !== '')
+    .map((value) => Number(value.replace(/,$/, '')))
     .filter(Number.isFinite)
   invariant(values.length === 18_000, `fixture PTS census changed: ${String(values.length)}`)
   cachedSourcePts = {
