@@ -55,3 +55,42 @@ export function unreportedWorkingTokenEstimate(current: number, atSnapshot: numb
   const snapshotTokens = Number.isFinite(atSnapshot) && atSnapshot > 0 ? Math.trunc(atSnapshot) : 0
   return Math.max(0, currentTokens - snapshotTokens)
 }
+
+/** A completed compaction outranks every earlier live snapshot. Once a token
+ * epoch has a compaction boundary, only an atomic context receipt observed
+ * strictly after that boundary can resume the Working counter. */
+export function workingSnapshotBelongsToTokenEpoch(
+  snapshot:
+    | {
+        provider: string
+        contextUsage?: { observedAt?: number }
+      }
+    | null
+    | undefined,
+  provider: string | null | undefined,
+  epochObservedAt: number | null
+): boolean {
+  if (!snapshot || (provider && snapshot.provider !== provider)) return false
+  if (epochObservedAt === null) return true
+  const snapshotObservedAt = snapshot.contextUsage?.observedAt
+  return snapshotObservedAt !== undefined && snapshotObservedAt > epochObservedAt
+}
+
+export interface WorkingTokenDisplayState {
+  tokenEpochKey: string
+  tokens: number
+}
+
+/** Preserve the odometer's monotonic display inside an epoch, but allow a new
+ * provider/model or successful-compaction epoch to reset it downward. */
+export function reconcileWorkingTokenDisplayEpoch(
+  current: WorkingTokenDisplayState,
+  tokenEpochKey: string,
+  targetTokens: number
+): WorkingTokenDisplayState {
+  if (current.tokenEpochKey === tokenEpochKey) return current
+  return {
+    tokenEpochKey,
+    tokens: Number.isFinite(targetTokens) && targetTokens > 0 ? Math.trunc(targetTokens) : 0
+  }
+}

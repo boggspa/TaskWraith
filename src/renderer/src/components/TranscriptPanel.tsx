@@ -6127,10 +6127,23 @@ export const TranscriptPanel = memo(
                             }
                             runId={presentation.runId}
                             startedAt={presentation.startedAt}
+                            provider={presentation.provider}
+                            tokenEpochKey={
+                              tokenTarget?.tokenEpochKey ||
+                              JSON.stringify([
+                                presentation.participantId || 'solo',
+                                presentation.provider || 'unknown-provider',
+                                presentation.modelId || 'unknown-model'
+                              ])
+                            }
+                            tokenEpochObservedAt={
+                              tokenTarget?.tokenEpochObservedAt ?? null
+                            }
                             contextBaselineTokens={tokenTarget?.contextBaselineTokens ?? 0}
                             contextBaselineAvailable={
                               tokenTarget?.contextBaselineAvailable ?? false
                             }
+                            contextState={tokenTarget?.contextState ?? 'unavailable'}
                             fallbackTargetTokens={
                               tokenTarget?.targetTokens ?? 0
                             }

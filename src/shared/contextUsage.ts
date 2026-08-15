@@ -303,6 +303,12 @@ export interface ContextCompactionUsageEvidence {
   /** Missing when a provider/host reported completion but no trustworthy
    * post-compaction occupancy. Zero is a valid, exact value. */
   postTokens?: number
+  /** Stable successful-compaction identity for display epochs. */
+  epochKey?: string
+  /** Durable transcript carrier used to split pre/post-compaction estimates. */
+  messageId?: string
+  /** Provider that emitted the compaction, when the carrier records it. */
+  provider?: string
 }
 
 export interface ContextCompactionUsageEvidenceIndex {
@@ -354,12 +360,24 @@ export function buildContextCompactionUsageEvidenceIndex(
     if (signal?.kind !== 'completed') continue
     const telemetry = record(signal.telemetry)
     const postTokens = optionalNonNegativeInteger(telemetry?.postTokens)
+    const messageId = typeof message?.id === 'string' && message.id ? message.id : undefined
+    const eventUuid =
+      typeof telemetry?.eventUuid === 'string' && telemetry.eventUuid
+        ? telemetry.eventUuid
+        : undefined
+    const provider =
+      typeof telemetry?.provider === 'string' && telemetry.provider ? telemetry.provider : undefined
     const timestamp =
       typeof message?.timestamp === 'string' ? Date.parse(message.timestamp) : Number.NaN
     const candidate: IndexedContextCompactionUsageEvidence = {
       observedAt: Number.isFinite(timestamp) ? timestamp : 0,
       index,
-      ...(postTokens !== undefined ? { postTokens } : {})
+      ...(postTokens !== undefined ? { postTokens } : {}),
+      ...(eventUuid || messageId
+        ? { epochKey: eventUuid ? `event:${eventUuid}` : `message:${messageId}` }
+        : {}),
+      ...(messageId ? { messageId } : {}),
+      ...(provider ? { provider } : {})
     }
 
     if (scopedParticipantId) {

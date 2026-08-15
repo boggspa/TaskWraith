@@ -149,12 +149,17 @@ describe('contextUsage', () => {
   it('extracts per-seat compaction evidence and represents missing post tokens honestly', () => {
     const messages = [
       {
+        id: 'p1-compaction-card',
         timestamp: '2026-05-30T12:01:00.000Z',
         metadata: {
           ensembleParticipantId: 'p1',
           contextCompaction: {
             kind: 'completed',
-            telemetry: { postTokens: 21_000 }
+            telemetry: {
+              provider: 'claude',
+              eventUuid: 'compact-p1',
+              postTokens: 21_000
+            }
           }
         }
       },
@@ -168,6 +173,11 @@ describe('contextUsage', () => {
     ]
 
     const exact = latestContextCompactionUsageEvidence(messages, 'p1')
+    expect(exact).toMatchObject({
+      epochKey: 'event:compact-p1',
+      messageId: 'p1-compaction-card',
+      provider: 'claude'
+    })
     expect(contextUsageAfterCompaction(undefined, exact!)).toMatchObject({
       contextTokens: 21_000,
       source: 'provider-compaction',

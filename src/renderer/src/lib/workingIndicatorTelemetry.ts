@@ -1,5 +1,10 @@
 import type { ChatMessage, ChatRun, ProviderId, ToolActivity } from '../../../main/store/types'
-import { contextUsageFromStats, type ContextUsageSnapshot } from '../../../shared/contextUsage'
+import {
+  buildContextCompactionUsageEvidenceIndex,
+  contextUsageFromStats,
+  type ContextCompactionUsageEvidence,
+  type ContextUsageSnapshot
+} from '../../../shared/contextUsage'
 import { estimateTokensFromChars, visiblePayloadChars } from '../../../shared/tokenEstimate'
 import { runMatchesParticipantSeat } from './contextMeter'
 import { isReasoningToolName } from './ToolParser'
@@ -13,9 +18,14 @@ export type WorkingIndicatorTokenInput = {
 
 export type WorkingIndicatorTokenTarget = {
   runId: string | null
+  /** Provider/model identity plus the latest successful compaction. */
+  tokenEpochKey: string
+  /** Successful compaction boundary used to reject older live snapshots. */
+  tokenEpochObservedAt: number | null
   /** Latest sealed context for this provider/model seat before the active run. */
   contextBaselineTokens: number
   contextBaselineAvailable: boolean
+  contextState: WorkingIndicatorContextState
   /** Best current-context snapshot or renderer-side live estimate. */
   targetTokens: number
   /** Visible assistant text plus tool inputs/results observed for this run. */
@@ -23,6 +33,12 @@ export type WorkingIndicatorTokenTarget = {
   /** Tool-result subset that may arrive after the latest provider snapshot. */
   estimatedToolResultTokens: number
 }
+
+export type WorkingIndicatorContextState =
+  | 'available'
+  | 'estimated'
+  | 'unavailable'
+  | 'post-compaction-unknown'
 
 function nonNegativeInteger(value: unknown): number {
   const numeric = Number(value)
@@ -42,18 +58,29 @@ function runBelongsToWorkingSeat(run: ChatRun, input: WorkingIndicatorTokenInput
   })
 }
 
+function runBelongsToWorkingScope(run: ChatRun, input: WorkingIndicatorTokenInput): boolean {
+  return input.participantId
+    ? run.ensembleParticipantId === input.participantId
+    : !run.ensembleParticipantId
+}
+
 function usageObservedAt(usage: ContextUsageSnapshot, run: ChatRun): number {
   if (usage.observedAt !== undefined) return usage.observedAt
   const startedAt = Date.parse(run.startedAt || '')
   return Number.isFinite(startedAt) ? startedAt : 0
 }
 
+type ObservedContextUsage = {
+  usage: ContextUsageSnapshot
+  observedAt: number
+}
+
 function latestContextUsage(
   runs: readonly ChatRun[],
   input: WorkingIndicatorTokenInput,
   excludeRunId?: string | null
-): ContextUsageSnapshot | null {
-  let latest: ContextUsageSnapshot | null = null
+): ObservedContextUsage | null {
+  let latest: ObservedContextUsage | null = null
   let latestObservedAt = Number.NEGATIVE_INFINITY
   for (const run of runs) {
     if (excludeRunId && run.runId === excludeRunId) continue
@@ -62,11 +89,60 @@ function latestContextUsage(
     if (!usage) continue
     const observedAt = usageObservedAt(usage, run)
     if (observedAt >= latestObservedAt) {
-      latest = usage
+      latest = { usage, observedAt }
       latestObservedAt = observedAt
     }
   }
   return latest
+}
+
+function compactionBelongsToWorkingSeat(
+  evidence: ContextCompactionUsageEvidence,
+  runs: readonly ChatRun[],
+  input: WorkingIndicatorTokenInput
+): boolean {
+  if (evidence.provider && input.provider && evidence.provider !== input.provider) return false
+
+  let latestScopedRun: ChatRun | null = null
+  let latestStartedAt = Number.NEGATIVE_INFINITY
+  for (const run of runs) {
+    if (!runBelongsToWorkingScope(run, input)) continue
+    const startedAt = Date.parse(run.startedAt || '')
+    const observedAt = Number.isFinite(startedAt) ? startedAt : 0
+    if (evidence.observedAt > 0 && observedAt > evidence.observedAt) continue
+    if (observedAt >= latestStartedAt) {
+      latestScopedRun = run
+      latestStartedAt = observedAt
+    }
+  }
+  return Boolean(latestScopedRun && runBelongsToWorkingSeat(latestScopedRun, input))
+}
+
+function workingSeatEpochKey(input: WorkingIndicatorTokenInput): string {
+  return JSON.stringify([
+    input.participantId || 'solo',
+    input.provider || 'unknown-provider',
+    input.modelId || 'unknown-model'
+  ])
+}
+
+function contextStateForUsage(usage: ContextUsageSnapshot): WorkingIndicatorContextState {
+  return usage.precision === 'estimated' ? 'estimated' : 'available'
+}
+
+function messageFallsInsideTokenEpoch(
+  message: ChatMessage,
+  messageIndex: number,
+  compaction: ContextCompactionUsageEvidence | null,
+  messageIndexById: ReadonlyMap<string, number>
+): boolean {
+  if (!compaction) return true
+  const compactionIndex = compaction.messageId
+    ? messageIndexById.get(compaction.messageId)
+    : undefined
+  if (compactionIndex !== undefined) return messageIndex > compactionIndex
+  const timestamp = Date.parse(message.timestamp || '')
+  return Number.isFinite(timestamp) && timestamp > compaction.observedAt
 }
 
 function toolActivityPayloadChars(activity: ToolActivity): {
@@ -93,9 +169,9 @@ function toolActivityPayloadChars(activity: ToolActivity): {
 }
 
 /**
- * Build all active working-row targets in one pass over streamed messages.
- * Fan-out lanes stay isolated by run id; a Claude text burst can never add
- * tokens to a simultaneously-running Cursor row.
+ * Build all active working-row targets through shared transcript scans. The
+ * compaction index is built once, and fan-out lanes stay isolated by run id;
+ * a Claude text burst can never add tokens to a simultaneously-running row.
  */
 export function buildWorkingIndicatorTokenTargets(
   runs: readonly ChatRun[],
@@ -107,10 +183,44 @@ export function buildWorkingIndicatorTokenTargets(
     if (input.runId) inputsByRunId.set(input.runId, input)
   }
 
+  const compactionIndex = buildContextCompactionUsageEvidenceIndex(messages)
+  const compactionByInput = new Map<
+    WorkingIndicatorTokenInput,
+    ContextCompactionUsageEvidence | null
+  >()
+  for (const input of inputs) {
+    const candidate = input.participantId
+      ? compactionIndex.byParticipantId.get(input.participantId) || null
+      : compactionIndex.unscoped
+    compactionByInput.set(
+      input,
+      candidate && compactionBelongsToWorkingSeat(candidate, runs, input) ? candidate : null
+    )
+  }
+
+  const messageIndexById = new Map<string, number>()
+  for (let index = 0; index < messages.length; index += 1) {
+    const messageId = messages[index]?.id
+    if (messageId) messageIndexById.set(messageId, index)
+  }
+
   const messageCharsByRunId = new Map<string, number>()
   const activityCharsByRunId = new Map<string, Map<string, { total: number; result: number }>>()
-  for (const message of messages) {
-    if (!message.runId || !inputsByRunId.has(message.runId)) continue
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    if (!message.runId) continue
+    const input = inputsByRunId.get(message.runId)
+    if (!input) continue
+    if (
+      !messageFallsInsideTokenEpoch(
+        message,
+        index,
+        compactionByInput.get(input) || null,
+        messageIndexById
+      )
+    ) {
+      continue
+    }
     if (message.role === 'assistant') {
       messageCharsByRunId.set(
         message.runId,
@@ -135,10 +245,36 @@ export function buildWorkingIndicatorTokenTargets(
   for (const input of inputs) {
     const run = input.runId ? runsById.get(input.runId) : undefined
     const baselineUsage = latestContextUsage(runs, input, input.runId)
-    const base = nonNegativeInteger(baselineUsage?.contextTokens)
-    const currentRunUsage =
-      run && runBelongsToWorkingSeat(run, input) ? contextUsageFromStats(run.stats) : null
-    const reportedCurrentContext = nonNegativeInteger(currentRunUsage?.contextTokens)
+    const currentRunContext =
+      run && runBelongsToWorkingSeat(run, input)
+        ? (() => {
+            const usage = contextUsageFromStats(run.stats)
+            return usage ? { usage, observedAt: usageObservedAt(usage, run) } : null
+          })()
+        : null
+    const compaction = compactionByInput.get(input) || null
+    const epochObservedAt = compaction?.observedAt ?? null
+    const baselineIsFresh =
+      Boolean(baselineUsage) &&
+      (epochObservedAt === null || baselineUsage!.observedAt > epochObservedAt)
+    const currentRunIsFresh =
+      Boolean(currentRunContext) &&
+      (epochObservedAt === null || currentRunContext!.observedAt > epochObservedAt)
+
+    let base = baselineIsFresh ? nonNegativeInteger(baselineUsage?.usage.contextTokens) : 0
+    let contextBaselineAvailable = baselineIsFresh
+    let contextState: WorkingIndicatorContextState = baselineIsFresh
+      ? contextStateForUsage(baselineUsage!.usage)
+      : 'unavailable'
+    if (compaction && !baselineIsFresh) {
+      if (compaction.postTokens !== undefined) {
+        base = nonNegativeInteger(compaction.postTokens)
+        contextBaselineAvailable = true
+        contextState = 'available'
+      } else {
+        contextState = 'post-compaction-unknown'
+      }
+    }
     const activities = input.runId ? activityCharsByRunId.get(input.runId) : undefined
     let activityChars = 0
     let toolResultChars = 0
@@ -150,11 +286,34 @@ export function buildWorkingIndicatorTokenTargets(
       ? estimateTokensFromChars((messageCharsByRunId.get(input.runId) || 0) + activityChars)
       : 0
     const estimatedToolResultTokens = estimateTokensFromChars(toolResultChars)
+    const reportedCurrentContext = currentRunIsFresh
+      ? nonNegativeInteger(currentRunContext?.usage.contextTokens)
+      : 0
+    let targetTokens = 0
+    if (currentRunIsFresh) {
+      contextState = contextStateForUsage(currentRunContext!.usage)
+      targetTokens = Math.max(reportedCurrentContext, base + estimatedCurrentTurnTokens)
+    } else if (contextState !== 'post-compaction-unknown') {
+      targetTokens = Math.max(reportedCurrentContext, base + estimatedCurrentTurnTokens)
+      if (contextState === 'unavailable' && estimatedCurrentTurnTokens > 0) {
+        contextState = 'estimated'
+        targetTokens = estimatedCurrentTurnTokens
+      }
+    }
+    const seatEpochKey = workingSeatEpochKey(input)
+    const compactionEpochKey = compaction
+      ? compaction.epochKey || `${compaction.observedAt}:${compaction.postTokens ?? 'unknown'}`
+      : null
     targets.set(input.runId, {
       runId: input.runId,
+      tokenEpochKey: compactionEpochKey
+        ? `${seatEpochKey}:compaction:${compactionEpochKey}`
+        : seatEpochKey,
+      tokenEpochObservedAt: epochObservedAt,
       contextBaselineTokens: base,
-      contextBaselineAvailable: Boolean(baselineUsage),
-      targetTokens: Math.max(reportedCurrentContext, base + estimatedCurrentTurnTokens),
+      contextBaselineAvailable,
+      contextState,
+      targetTokens,
       estimatedCurrentTurnTokens,
       estimatedToolResultTokens
     })
