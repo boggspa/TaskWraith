@@ -559,7 +559,12 @@ function isSearchActivity(activity: ToolActivity): boolean {
 
 function isShellActivity(activity: ToolActivity): boolean {
   const kind = getActivityKind(activity)
-  return activity.category === 'shell' || kind === 'run_shell_command' || kind === 'shell'
+  return (
+    activity.category === 'shell' ||
+    kind === 'run_shell_command' ||
+    kind === 'shell' ||
+    toolNameToFamily(activity.toolName) === 'shell'
+  )
 }
 
 function buildSanitizedDetail(

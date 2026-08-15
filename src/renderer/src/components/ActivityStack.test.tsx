@@ -1328,6 +1328,27 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).toContain('Used unknown')
   })
 
+  it('recovers the exact command from historical AntiGravity run_command cards', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        provider="antigravity"
+        activities={[
+          makeWriteActivity({
+            id: 'agy-run-command',
+            toolName: 'run_command',
+            displayName: 'Run Command',
+            category: 'unknown',
+            parameters: { command: 'git status --porcelain' },
+            resultSummary: 'TaskWraith allowed this command.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('Ran <code class="activity-inline-command">git status --porcelain</code>')
+    expect(html).not.toContain('>Run Command<')
+  })
+
   it('does not obscure command-shaped MCP wrapper calls', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
