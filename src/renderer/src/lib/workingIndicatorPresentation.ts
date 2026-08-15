@@ -27,8 +27,8 @@ export type WorkingIndicatorPresentation = {
   runId: string | null
   /** Per-turn anchor. Fan-out lanes deliberately do not use round.startedAt. */
   startedAt: string | null
-  /** Durable accumulator from completed participant turns. */
-  tokenAccumulatorBase: number
+  /** Raw model id for matching persisted context to the current seat. */
+  modelId: string | null
   providerLabel: string
   provider: ProviderId | null
   providerClass: string | null
@@ -159,7 +159,7 @@ function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentat
     participantId: null,
     runId: transition.sourceRunId,
     startedAt: transition.startedAt,
-    tokenAccumulatorBase: 0,
+    modelId: null,
     providerLabel: 'Ensemble',
     provider: null,
     providerClass: null,
@@ -246,11 +246,6 @@ function activeRunForParticipant(
   }, undefined)
 }
 
-function participantTokenAccumulatorBase(participant: EnsembleParticipant | undefined): number {
-  const value = Number(participant?.tokenTotals?.total_tokens)
-  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
-}
-
 function modelDisplayForParticipant(
   provider: ProviderId,
   roundParticipant: EnsembleRoundParticipantState | undefined,
@@ -316,7 +311,7 @@ function workingPresentationForParticipant(
       run?.startedAt ||
       chat.ensemble?.activeRound?.startedAt ||
       null,
-    tokenAccumulatorBase: participantTokenAccumulatorBase(participant),
+    modelId: model || null,
     providerLabel: providerPresentation.providerLabel,
     provider,
     // Pi wire ids include the actual upstream, just as Ollama model ids can.

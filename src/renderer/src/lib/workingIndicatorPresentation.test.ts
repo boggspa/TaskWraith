@@ -68,7 +68,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       participantId: 'codex-builder',
       runId: null,
       startedAt: '2026-07-01T00:00:00.000Z',
-      tokenAccumulatorBase: 0,
+      modelId: 'gpt-5.5',
       providerLabel: 'Codex',
       provider: 'codex',
       providerClass: 'codex',
@@ -94,7 +94,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       participantId: 'local-scout',
       runId: null,
       startedAt: '2026-07-01T00:00:00.000Z',
-      tokenAccumulatorBase: 0,
+      modelId: 'qwen3.5:9b',
       providerLabel: 'Alibaba',
       provider: 'ollama',
       providerClass: 'alibaba',
@@ -156,7 +156,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       participantId: 'codex-builder',
       runId: null,
       startedAt: '2026-07-01T00:00:00.000Z',
-      tokenAccumulatorBase: 0,
+      modelId: 'gpt-5.5',
       providerLabel: 'Codex',
       provider: 'codex',
       providerClass: 'codex',
@@ -215,7 +215,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       participantId: null,
       runId: 'codex-run-1',
       startedAt: '2026-07-01T00:00:01.000Z',
-      tokenAccumulatorBase: 0,
+      modelId: null,
       providerLabel: 'Ensemble',
       provider: null,
       providerClass: null,
@@ -300,7 +300,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     ])
   })
 
-  it('uses each live fan-out lane turn anchor and participant accumulator', () => {
+  it('uses each live fan-out lane turn anchor without exposing lifetime token totals', () => {
     const chat = ensembleChat([
       participant({
         id: 'claude-planner',
@@ -345,20 +345,20 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
         participantId: item.participantId,
         runId: item.runId,
         startedAt: item.startedAt,
-        tokenAccumulatorBase: item.tokenAccumulatorBase
+        modelId: item.modelId
       }))
     ).toEqual([
       {
         participantId: 'claude-planner',
         runId: 'claude-live',
         startedAt: '2026-07-01T00:04:00.000Z',
-        tokenAccumulatorBase: 28_500
+        modelId: 'gpt-5.5'
       },
       {
         participantId: 'codex-builder',
         runId: 'codex-live',
         startedAt: '2026-07-01T00:05:00.000Z',
-        tokenAccumulatorBase: 14_000
+        modelId: 'gpt-5.5'
       }
     ])
   })

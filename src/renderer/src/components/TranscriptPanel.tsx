@@ -2409,7 +2409,11 @@ export const TranscriptPanel = memo(
                 participantId: ensembleWorkingPresentation?.participantId ?? null,
                 runId: ensembleWorkingPresentation?.runId ?? currentRun?.runId ?? null,
                 startedAt: ensembleWorkingPresentation?.startedAt ?? currentRun?.startedAt ?? null,
-                tokenAccumulatorBase: ensembleWorkingPresentation?.tokenAccumulatorBase ?? 0,
+                modelId:
+                  ensembleWorkingPresentation?.modelId ??
+                  currentRun?.actualModel ??
+                  currentRun?.requestedModel ??
+                  null,
                 providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
                 provider: workingProvider ?? null,
                 providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
@@ -2448,7 +2452,9 @@ export const TranscriptPanel = memo(
           resolvedMessages,
           workingPresentations.map((presentation) => ({
             runId: presentation.runId,
-            tokenAccumulatorBase: presentation.tokenAccumulatorBase
+            participantId: presentation.participantId,
+            provider: presentation.provider,
+            modelId: presentation.modelId
           }))
         ),
       [resolvedMessages, resolvedRuns, workingPresentations]
@@ -6121,9 +6127,12 @@ export const TranscriptPanel = memo(
                             }
                             runId={presentation.runId}
                             startedAt={presentation.startedAt}
-                            tokenAccumulatorBase={presentation.tokenAccumulatorBase}
+                            contextBaselineTokens={tokenTarget?.contextBaselineTokens ?? 0}
+                            contextBaselineAvailable={
+                              tokenTarget?.contextBaselineAvailable ?? false
+                            }
                             fallbackTargetTokens={
-                              tokenTarget?.targetTokens ?? presentation.tokenAccumulatorBase
+                              tokenTarget?.targetTokens ?? 0
                             }
                             estimatedCurrentTurnTokens={
                               tokenTarget?.estimatedCurrentTurnTokens ?? 0

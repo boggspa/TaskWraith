@@ -42,7 +42,8 @@ describe('ParticipantWorkingTelemetry', () => {
       <MemoizedParticipantWorkingTelemetry
         runId="claude-run"
         startedAt="2026-07-11T18:00:00.000Z"
-        tokenAccumulatorBase={285_100}
+        contextBaselineTokens={285_100}
+        contextBaselineAvailable={true}
         fallbackTargetTokens={285_100}
         estimatedCurrentTurnTokens={0}
         estimatedToolResultTokens={0}
@@ -61,14 +62,15 @@ describe('ParticipantWorkingTelemetry', () => {
       <MemoizedParticipantWorkingTelemetry
         runId="ollama-run"
         startedAt="2026-08-03T02:05:07.000Z"
-        tokenAccumulatorBase={0}
+        contextBaselineTokens={0}
+        contextBaselineAvailable={false}
         fallbackTargetTokens={0}
         estimatedCurrentTurnTokens={0}
         estimatedToolResultTokens={0}
       />
     )
 
-    expect(html).toContain('current-run token usage unavailable')
+    expect(html).toContain('current-context token usage unavailable')
     expect(html).toContain('message-working-token-unavailable')
     expect(html).toContain('— tokens')
     expect(html).not.toContain('digit-odometer')

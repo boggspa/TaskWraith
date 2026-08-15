@@ -13,9 +13,10 @@ const TOKEN_TICK_MS = 500
 export type ParticipantWorkingTelemetryProps = {
   runId: string | null
   startedAt: string | null
-  /** Durable completed-turn total for this seat. */
-  tokenAccumulatorBase: number
-  /** Baseline plus a renderer-side visible-payload fallback. */
+  /** Latest sealed current-context snapshot for this provider/model seat. */
+  contextBaselineTokens: number
+  contextBaselineAvailable: boolean
+  /** Current-context baseline plus a renderer-side visible-payload fallback. */
   fallbackTargetTokens: number
   estimatedCurrentTurnTokens: number
   estimatedToolResultTokens: number
@@ -24,13 +25,14 @@ export type ParticipantWorkingTelemetryProps = {
 function ParticipantWorkingTelemetry({
   runId,
   startedAt,
-  tokenAccumulatorBase,
+  contextBaselineTokens,
+  contextBaselineAvailable,
   fallbackTargetTokens,
   estimatedCurrentTurnTokens,
   estimatedToolResultTokens
 }: ParticipantWorkingTelemetryProps): JSX.Element {
   const providerSnapshot = useParticipantWorkingTokenSnapshot(runId)
-  const baseTokens = Math.max(0, Math.trunc(tokenAccumulatorBase || 0))
+  const baseTokens = Math.max(0, Math.trunc(contextBaselineTokens || 0))
   const fallbackTokens = Math.max(baseTokens, Math.trunc(fallbackTargetTokens || 0))
   const currentToolResultTokens = Math.max(0, Math.trunc(estimatedToolResultTokens || 0))
   const [providerEstimateBaseline, setProviderEstimateBaseline] = useState({
@@ -55,8 +57,11 @@ function ParticipantWorkingTelemetry({
     providerSnapshot && !providerSnapshot.estimated
       ? unreportedWorkingTokenEstimate(currentToolResultTokens, toolResultTokensAtSnapshot)
       : 0
-  const providerTargetTokens =
-    baseTokens + Math.max(0, providerSnapshot?.totalTokens || 0) + unreportedToolResultTokens
+  const providerTargetTokens = providerSnapshot?.contextUsage
+    ? providerSnapshot.contextUsage.contextTokens + unreportedToolResultTokens
+    : providerSnapshot?.estimated
+      ? baseTokens + Math.max(0, providerSnapshot.totalTokens) + unreportedToolResultTokens
+      : Math.max(0, providerSnapshot?.totalTokens || 0) + unreportedToolResultTokens
   const targetTokens = Math.max(fallbackTokens, providerTargetTokens)
   const targetTokensRef = useRef(targetTokens)
   const [displayedTokens, setDisplayedTokens] = useState(targetTokens)
@@ -96,15 +101,20 @@ function ParticipantWorkingTelemetry({
   // telemetry lane (Grok/Cursor/Kimi-ACP) — it keeps the ≈ marker so the
   // figure never masquerades as provider-billed usage.
   const hasReportedUsage = Boolean(
-    providerSnapshot && providerSnapshot.totalTokens > 0 && !providerSnapshot.estimated
+    providerSnapshot &&
+    (providerSnapshot.contextUsage || providerSnapshot.totalTokens > 0) &&
+    !providerSnapshot.estimated
   )
   const isEstimated =
     unreportedToolResultTokens > 0 ||
+    providerSnapshot?.contextUsage?.precision === 'estimated' ||
     (!hasReportedUsage &&
       (Boolean(providerSnapshot?.estimated && providerSnapshot.totalTokens > 0) ||
         estimatedCurrentTurnTokens > 0))
   const isUnavailable =
-    !providerSnapshot &&
+    !contextBaselineAvailable &&
+    !providerSnapshot?.contextUsage &&
+    !(providerSnapshot && providerSnapshot.totalTokens > 0) &&
     displayedTokens <= 0 &&
     fallbackTokens <= 0 &&
     estimatedCurrentTurnTokens <= 0
@@ -112,13 +122,13 @@ function ParticipantWorkingTelemetry({
     unreportedToolResultTokens > 0
       ? 'provider usage plus live tool-result estimate'
       : hasReportedUsage
-        ? 'live provider usage snapshot'
+        ? 'live provider context snapshot'
         : isEstimated
           ? 'live output estimate'
-          : 'completed-turn accumulator'
+          : 'latest persisted context snapshot'
   const title = isUnavailable
-    ? `${elapsed} elapsed · current-run token usage unavailable`
-    : `${elapsed} elapsed · ${displayedTokens.toLocaleString()} accumulated tokens (${source})`
+    ? `${elapsed} elapsed · current-context token usage unavailable`
+    : `${elapsed} elapsed · ${displayedTokens.toLocaleString()} current-context tokens (${source})`
 
   return (
     <span className="message-working-telemetry" title={title} aria-hidden="true">
@@ -149,8 +159,9 @@ export const MemoizedParticipantWorkingTelemetry = memo(
   (previous, next) =>
     previous.runId === next.runId &&
     previous.startedAt === next.startedAt &&
-    workingIndicatorTokenSnapshotBucket(previous.tokenAccumulatorBase) ===
-      workingIndicatorTokenSnapshotBucket(next.tokenAccumulatorBase) &&
+    previous.contextBaselineAvailable === next.contextBaselineAvailable &&
+    workingIndicatorTokenSnapshotBucket(previous.contextBaselineTokens) ===
+      workingIndicatorTokenSnapshotBucket(next.contextBaselineTokens) &&
     workingIndicatorTokenSnapshotBucket(previous.fallbackTargetTokens) ===
       workingIndicatorTokenSnapshotBucket(next.fallbackTargetTokens) &&
     workingIndicatorTokenSnapshotBucket(previous.estimatedCurrentTurnTokens) ===

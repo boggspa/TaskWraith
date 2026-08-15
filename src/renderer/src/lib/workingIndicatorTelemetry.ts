@@ -1,16 +1,22 @@
-import type { ChatMessage, ChatRun, ToolActivity } from '../../../main/store/types'
+import type { ChatMessage, ChatRun, ProviderId, ToolActivity } from '../../../main/store/types'
+import { contextUsageFromStats, type ContextUsageSnapshot } from '../../../shared/contextUsage'
 import { estimateTokensFromChars, visiblePayloadChars } from '../../../shared/tokenEstimate'
-import { extractUsageCountsFromCandidate } from './usageStats'
+import { runMatchesParticipantSeat } from './contextMeter'
 import { isReasoningToolName } from './ToolParser'
 
 export type WorkingIndicatorTokenInput = {
   runId: string | null
-  tokenAccumulatorBase: number
+  participantId: string | null
+  provider: ProviderId | null
+  modelId: string | null
 }
 
 export type WorkingIndicatorTokenTarget = {
   runId: string | null
-  /** Completed participant turns plus the best live current-turn snapshot. */
+  /** Latest sealed context for this provider/model seat before the active run. */
+  contextBaselineTokens: number
+  contextBaselineAvailable: boolean
+  /** Best current-context snapshot or renderer-side live estimate. */
   targetTokens: number
   /** Visible assistant text plus tool inputs/results observed for this run. */
   estimatedCurrentTurnTokens: number
@@ -21,6 +27,46 @@ export type WorkingIndicatorTokenTarget = {
 function nonNegativeInteger(value: unknown): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : 0
+}
+
+function runBelongsToWorkingSeat(run: ChatRun, input: WorkingIndicatorTokenInput): boolean {
+  if (input.participantId) {
+    if (run.ensembleParticipantId !== input.participantId) return false
+  } else if (run.ensembleParticipantId) {
+    return false
+  }
+  if (!input.provider) return true
+  return runMatchesParticipantSeat(run, {
+    provider: input.provider,
+    model: input.modelId || undefined
+  })
+}
+
+function usageObservedAt(usage: ContextUsageSnapshot, run: ChatRun): number {
+  if (usage.observedAt !== undefined) return usage.observedAt
+  const startedAt = Date.parse(run.startedAt || '')
+  return Number.isFinite(startedAt) ? startedAt : 0
+}
+
+function latestContextUsage(
+  runs: readonly ChatRun[],
+  input: WorkingIndicatorTokenInput,
+  excludeRunId?: string | null
+): ContextUsageSnapshot | null {
+  let latest: ContextUsageSnapshot | null = null
+  let latestObservedAt = Number.NEGATIVE_INFINITY
+  for (const run of runs) {
+    if (excludeRunId && run.runId === excludeRunId) continue
+    if (!runBelongsToWorkingSeat(run, input)) continue
+    const usage = contextUsageFromStats(run.stats)
+    if (!usage) continue
+    const observedAt = usageObservedAt(usage, run)
+    if (observedAt >= latestObservedAt) {
+      latest = usage
+      latestObservedAt = observedAt
+    }
+  }
+  return latest
 }
 
 function toolActivityPayloadChars(activity: ToolActivity): {
@@ -87,11 +133,12 @@ export function buildWorkingIndicatorTokenTargets(
   const runsById = new Map(runs.map((run) => [run.runId, run]))
   const targets = new Map<string | null, WorkingIndicatorTokenTarget>()
   for (const input of inputs) {
-    const base = nonNegativeInteger(input.tokenAccumulatorBase)
     const run = input.runId ? runsById.get(input.runId) : undefined
-    const reportedCurrentTurn = run
-      ? nonNegativeInteger(extractUsageCountsFromCandidate(run.stats).totalTokens)
-      : 0
+    const baselineUsage = latestContextUsage(runs, input, input.runId)
+    const base = nonNegativeInteger(baselineUsage?.contextTokens)
+    const currentRunUsage =
+      run && runBelongsToWorkingSeat(run, input) ? contextUsageFromStats(run.stats) : null
+    const reportedCurrentContext = nonNegativeInteger(currentRunUsage?.contextTokens)
     const activities = input.runId ? activityCharsByRunId.get(input.runId) : undefined
     let activityChars = 0
     let toolResultChars = 0
@@ -105,7 +152,9 @@ export function buildWorkingIndicatorTokenTargets(
     const estimatedToolResultTokens = estimateTokensFromChars(toolResultChars)
     targets.set(input.runId, {
       runId: input.runId,
-      targetTokens: base + Math.max(reportedCurrentTurn, estimatedCurrentTurnTokens),
+      contextBaselineTokens: base,
+      contextBaselineAvailable: Boolean(baselineUsage),
+      targetTokens: Math.max(reportedCurrentContext, base + estimatedCurrentTurnTokens),
       estimatedCurrentTurnTokens,
       estimatedToolResultTokens
     })
