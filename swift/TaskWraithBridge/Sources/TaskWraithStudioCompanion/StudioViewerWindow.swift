@@ -591,6 +591,9 @@ final class StudioViewerView: NSView {
                 hardwareDecodeLabel: hardwareDecodeLabel,
                 // "a/v --" when there is no audio, never a measured zero.
                 syncLabel: syncMeter?.summaryText ?? "a/v --",
+                // Accessibility-only. Nil until a reading exists, so no
+                // descriptor is published before there is something to read.
+                syncDetail: syncMeter?.peakSample?.diagnosticsExportText,
                 memoryLabel: memoryLabel,
                 cacheHitCount: renderer.cacheHitCount,
                 boundTextureCount: renderer.boundTextureCount,

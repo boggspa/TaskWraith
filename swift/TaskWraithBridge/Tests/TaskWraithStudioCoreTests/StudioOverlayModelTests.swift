@@ -510,4 +510,76 @@ final class StudioOverlayModelTests: XCTestCase {
             diagnostics.x + diagnosticsWidth, viewport.width + 0.001,
             "the diagnostics row must remain inside the viewport")
     }
+
+    // MARK: - The retained A/V sample leaves the process
+
+    /// Carries the retained worst A/V reading OUT of the process without a
+    /// debugger. Reading it from a packaged run previously meant attaching
+    /// LLDB and resolving an internal Swift type by name; that failed twice on
+    /// type lookup before reaching any data. Accessibility already crosses the
+    /// process boundary and is already read by the acceptance driver, so the
+    /// sample rides a surface that works.
+
+    private func detailState(_ detail: String?) -> StudioOverlayState {
+        var subject = state()
+        subject.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 10,
+            droppedFrameCount: 0,
+            retainedFrameCount: 3,
+            hardwareDecodeLabel: "hardware",
+            syncLabel: "a/v -15.8ms pk 1088.5",
+            syncDetail: detail
+        )
+        return subject
+    }
+
+    func testTheRetainedSampleIsPublishedAsItsOwnAccessibilityDescriptor() {
+        let export =
+            "av1 pf=60000 ap=90000 err=-30000 errms=-1000.000 win=1000000000 "
+            + "winms=1000.000 drawn=1 expl=explained"
+        let model = StudioOverlayLayout.build(detailState(export))
+
+        let descriptor = model.accessibilityElements.first { $0.label == "A/V sync detail" }
+        XCTAssertEqual(descriptor?.value, export)
+        XCTAssertEqual(descriptor?.role, .staticText)
+    }
+
+    /// No sample means NO control. An empty or placeholder element would give a
+    /// reader something to parse that says nothing, and a driver that finds the
+    /// descriptor is entitled to believe a measurement exists behind it.
+    func testNoDescriptorIsPublishedBeforeAnySampleExists() {
+        let model = StudioOverlayLayout.build(detailState(nil))
+        XCTAssertNil(model.accessibilityElements.first { $0.label == "A/V sync detail" })
+    }
+
+    /// ADDED, NOT SUBSTITUTED. The existing spoken controls are what a human
+    /// using VoiceOver relies on; a machine-readable field must not displace
+    /// them or renumber the tree they sit in.
+    func testExportingTheSampleLeavesTheExistingControlsIntact() {
+        let withoutDetail = StudioOverlayLayout.build(detailState(nil))
+        let withDetail = StudioOverlayLayout.build(detailState("av1 pf=0 ap=0 err=0"))
+
+        for existing in withoutDetail.accessibilityElements {
+            XCTAssertTrue(
+                withDetail.accessibilityElements.contains(existing),
+                "\(existing.label) was altered or dropped by the export")
+        }
+        XCTAssertEqual(
+            withDetail.accessibilityElements.count,
+            withoutDetail.accessibilityElements.count + 1)
+    }
+
+    /// THE BEHAVIOUR-NEUTRALITY PROOF. The export must reach accessibility and
+    /// nothing else: no new glyph, no shifted row, no changed HUD string. A
+    /// drawn difference here would be a visible product change smuggled in as
+    /// diagnostics, so the entire drawn output is compared rather than sampled.
+    func testExportingTheSampleDrawsAbsolutelyNothing() {
+        let withoutDetail = StudioOverlayLayout.build(detailState(nil))
+        let withDetail = StudioOverlayLayout.build(detailState("av1 pf=0 ap=0 err=0"))
+
+        XCTAssertEqual(withDetail.texts, withoutDetail.texts)
+        XCTAssertEqual(withDetail.rects, withoutDetail.rects)
+        XCTAssertEqual(withDetail.trackFrame, withoutDetail.trackFrame)
+        XCTAssertEqual(withDetail.grabFrame, withoutDetail.grabFrame)
+    }
 }

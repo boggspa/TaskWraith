@@ -179,6 +179,15 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     public let hardwareDecodeLabel: String
     /// Measured A/V sync summary, or "a/v --" before any measurement exists.
     public let syncLabel: String
+    /// Machine-parseable export of the retained worst A/V reading, or nil
+    /// before any measurement exists.
+    ///
+    /// PUBLISHED TO ACCESSIBILITY ONLY, and deliberately absent from the drawn
+    /// diagnostics line below. `syncLabel` is what an operator reads; this is
+    /// what a packaged acceptance run parses, and it exists because reading the
+    /// same value out of the live process otherwise required attaching a
+    /// debugger and resolving an internal Swift type by name.
+    public let syncDetail: String?
     /// Process memory. Paired with retainedFrameCount deliberately: measurement
     /// showed phys_footprint is effectively blind to IOSurface-backed video
     /// memory, so RSS alone would under-report the viewer's dominant allocation
@@ -200,6 +209,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         retainedFrameCount: Int,
         hardwareDecodeLabel: String,
         syncLabel: String = "a/v --",
+        syncDetail: String? = nil,
         memoryLabel: String = "rss --",
         cacheHitCount: Int = 0,
         boundTextureCount: Int = 0,
@@ -210,6 +220,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         self.retainedFrameCount = retainedFrameCount
         self.hardwareDecodeLabel = hardwareDecodeLabel
         self.syncLabel = syncLabel
+        self.syncDetail = syncDetail
         self.cacheHitCount = cacheHitCount
         self.boundTextureCount = boundTextureCount
         self.playerCount = playerCount
@@ -668,6 +679,35 @@ public enum StudioOverlayLayout {
                 frame: grabFrame
             )
         )
+
+        // ACCESSIBILITY ONLY — nothing here is drawn.
+        //
+        // The retained worst A/V reading is published as its own descriptor so
+        // a packaged acceptance run can parse both operands and the
+        // measurement window from outside the process. Reading the same value
+        // otherwise meant attaching a debugger and resolving an internal Swift
+        // type by name, which failed twice on type lookup before reaching any
+        // data.
+        //
+        // Appended AFTER the playhead so the existing spoken document order is
+        // unchanged, and omitted entirely when no sample exists: a reader that
+        // finds this descriptor is entitled to believe a measurement is behind
+        // it, so an empty placeholder would be a lie with a label on.
+        if let syncDetail = state.diagnostics?.syncDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "A/V sync detail",
+                    value: syncDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
 
         let timeline: StudioTimelineModel =
             state.timeline.map(StudioTimelineLayout.build) ?? .empty
