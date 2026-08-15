@@ -26,7 +26,9 @@ const MAX_COMMAND_LENGTH = 400
 // separators, redirects, globs, braces, parens, control chars, backslashes.
 // The inside-workspace proof uses it directly. Inspection commands use this
 // grammar for unquoted text, plus strictly-literal quoted arguments so common
-// search patterns such as `grep "canvas panel"` do not spuriously prompt.
+// search patterns such as `grep "canvas panel"` do not spuriously prompt. A
+// bare pipe is handled separately and allowed only when every stage passes the
+// same inspection proof.
 const SAFE_CHARSET = /^[A-Za-z0-9 ._/=:,+@%~^-]+$/
 const SAFE_UNQUOTED_INSPECTION_CHARACTER = /^[A-Za-z0-9._/=:,+@%~^-]$/
 
@@ -104,6 +106,49 @@ function inspectionTokensOf(command: string): string[] | null {
   if (quote !== null) return null
   pushToken()
   return tokens
+}
+
+/**
+ * Split only ordinary stdout pipelines while preserving literal pipes inside
+ * quotes. Every other shell composition operator remains rejected later by
+ * `inspectionTokensOf`; empty stages make `||` and malformed pipelines fail
+ * closed before any per-command classification.
+ */
+function inspectionPipelineSegmentsOf(command: string): string[] | null {
+  const segments: string[] = []
+  let quote: 'single' | 'double' | null = null
+  let segmentStart = 0
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]
+    if (quote === 'single') {
+      if (character === "'") quote = null
+      continue
+    }
+    if (quote === 'double') {
+      if (character === '"') quote = null
+      continue
+    }
+    if (character === "'") {
+      quote = 'single'
+      continue
+    }
+    if (character === '"') {
+      quote = 'double'
+      continue
+    }
+    if (character !== '|') continue
+    const segment = command.slice(segmentStart, index).trim()
+    if (!segment) return null
+    segments.push(segment)
+    segmentStart = index + 1
+  }
+
+  if (quote !== null) return null
+  const finalSegment = command.slice(segmentStart).trim()
+  if (!finalSegment) return null
+  segments.push(finalSegment)
+  return segments
 }
 
 function headOf(tokens: string[]): string {
@@ -450,11 +495,7 @@ const RG_REJECT_FLAG_PREFIX = '--pre'
  * (read_file / list_directory / workspace_search), mirroring the read-only git
  * fast path. Fails closed on anything else.
  */
-export function isInspectionShellCommand(command: unknown): boolean {
-  if (typeof command !== 'string') return false
-  const trimmed = command.trim()
-  if (!trimmed || trimmed.length > MAX_COMMAND_LENGTH) return false
-  const tokens = inspectionTokensOf(trimmed)
+function inspectionTokensAreReadOnly(tokens: string[] | null): boolean {
   if (!tokens || tokens.length === 0) return false
   // Word-initial `~` is the one in-charset character the shell still expands.
   if (tokens.some((token) => token.startsWith('~'))) return false
@@ -475,6 +516,16 @@ export function isInspectionShellCommand(command: unknown): boolean {
     : undefined
   if (screened) return screened(tokens.slice(1))
   return INSPECTION_HEADS_ANY_FLAGS.has(head)
+}
+
+export function isInspectionShellCommand(command: unknown): boolean {
+  if (typeof command !== 'string') return false
+  const trimmed = command.trim()
+  if (!trimmed || trimmed.length > MAX_COMMAND_LENGTH) return false
+  const segments = inspectionPipelineSegmentsOf(trimmed)
+  return Boolean(
+    segments?.every((segment) => inspectionTokensAreReadOnly(inspectionTokensOf(segment)))
+  )
 }
 
 /**

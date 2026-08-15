@@ -91,6 +91,29 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
     expect(isInspectionShellCommand("git grep '--open-files-in-pager' canvas")).toBe(false)
   })
 
+  it('accepts pipelines only when every stage is proven read-only', () => {
+    for (const cmd of [
+      "cat -n ./swift/StudioViewerWindow.swift | sed -n '740,760p'",
+      "cat -n ./swift/StudioViewerWindow.swift | sed -n '1355,1380p'",
+      'cat package.json | grep scripts | head -n 5',
+      "grep 'alpha|beta' notes.txt"
+    ]) {
+      expect(isInspectionShellCommand(cmd), cmd).toBe(true)
+    }
+    for (const cmd of [
+      'cat package.json | tee copy.json',
+      'cat package.json | sh',
+      "cat package.json || sed -n '1,3p' package.json",
+      "cat package.json | sed -n '1,3p;w out.txt'",
+      "cat package.json | sed -i 's/a/b/' package.json",
+      'cat $(touch pwned) | head',
+      'cat package.json | grep scripts > out.txt',
+      'cat package.json |& head'
+    ]) {
+      expect(isInspectionShellCommand(cmd), cmd).toBe(false)
+    }
+  })
+
   it('rejects the write- and exec-capable completions of screened heads', () => {
     for (const cmd of [
       'sort -o out.txt in.txt', // -o writes <file>
