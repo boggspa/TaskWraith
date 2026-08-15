@@ -305,6 +305,18 @@ func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
     return playhead
 }
 
+/// The forward-advance envelope may never exceed this fraction of the live
+/// slider span.
+///
+/// WHY AN ABSOLUTE CAP IS NOT ENOUGH. 1,000,000 ticks is roughly two seconds on
+/// the 500 kHz fixture and FIFTY-FIVE TIMES the entire 18,000-tick asset. The
+/// settlement predicate allows `candidate - ticks <= tolerance + envelope`, so
+/// an envelope wider than the asset lets any observation satisfy it — a failed
+/// or wildly short seek would report settled. The bound has to be relative to
+/// the media actually loaded, which is why it lives here rather than in the
+/// request builder: this is where the live range is read.
+let playheadForwardAdvanceRangeDivisor: Int64 = 100
+
 func setAccessibilityPlayhead(
     _ playhead: AXUIElement,
     in window: AXUIElement,
@@ -323,6 +335,10 @@ func setAccessibilityPlayhead(
           let maximum = numberAttribute(kAXMaxValueAttribute, of: playhead)?.int64Value,
           minimum == 0,
           maximum >= minimum,
+          // Proportional bound, checked after the span is known. Integer
+          // division floors, so a zero envelope stays valid on every timebase
+          // and paused/exact callers are unaffected.
+          maximumForwardAdvanceTicks <= (maximum - minimum) / playheadForwardAdvanceRangeDivisor,
           ticks <= maximum else {
         throw DriverFailure.refused("requested Playhead value is outside its exact bounded range")
     }

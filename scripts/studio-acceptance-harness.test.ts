@@ -1471,6 +1471,54 @@ describe('Studio acceptance harness', () => {
     ).toThrow(/unsupported UI action/)
   })
 
+  /// THE ABSOLUTE CAP IS NOT A BOUND ON A SMALL ASSET.
+  ///
+  /// 1,000,000 ticks is about two seconds on the 500 kHz fixture and fifty-five
+  /// times the ENTIRE 18,000-tick asset. Since the settled() predicate allows
+  /// `candidate - ticks <= tolerance + envelope`, a cap that exceeds the span
+  /// lets any observation on a low-timescale asset satisfy the check, so a
+  /// failed or wildly short seek reports settled. The guard therefore has to be
+  /// relative to the live range, and it has to sit where that range is already
+  /// read.
+  it('bounds the forward envelope against the live slider span, not only the absolute cap', async () => {
+    const driverSource = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
+      'utf8'
+    )
+
+    // Pinned at the exact expression: a dropped clause, a flipped comparison or
+    // a renamed divisor all fail here. This arm is source-pinned because the
+    // guard needs a live AXUIElement and cannot be invoked from a unit test.
+    expect(driverSource).toContain(
+      'maximumForwardAdvanceTicks <= (maximum - minimum) / playheadForwardAdvanceRangeDivisor'
+    )
+    // The absolute cap stays as the backstop; the range bound is additional.
+    expect(driverSource).toContain('maximumForwardAdvanceTicks <= 1_000_000')
+
+    const divisor = Number(
+      driverSource.match(/let playheadForwardAdvanceRangeDivisor: Int64 = (\d+)/)?.[1]
+    )
+    expect(Number.isSafeInteger(divisor)).toBe(true)
+    // A divisor of 1 would readmit the whole span and restore the defect.
+    expect(divisor).toBeGreaterThanOrEqual(100)
+
+    // Executable arm: the same arithmetic the shipped guard runs, driven by the
+    // divisor read out of the driver rather than a number retyped here, so a
+    // drifted constant changes these outcomes rather than passing silently.
+    const permits = (span: number, envelope: number): boolean =>
+      envelope <= Math.floor(span / divisor)
+
+    // The reported false-green, on the exact low-timescale asset that exposed it.
+    expect(permits(18_000, 1_000_000)).toBe(false)
+    // A proportionate envelope on that same asset remains usable.
+    expect(permits(18_000, 180)).toBe(true)
+    // The proven 500 kHz seek is unaffected.
+    expect(permits(300_000_000, 500_000)).toBe(true)
+    // Default zero stays valid on every timebase — paused callers are untouched.
+    expect(permits(18_000, 0)).toBe(true)
+    expect(permits(300_000_000, 0)).toBe(true)
+  })
+
   it('makes background mode observation-only and gates every interactive path explicitly', async () => {
     const driverSource = await fsPromises.readFile(
       path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
