@@ -339,7 +339,11 @@ func setAccessibilityPlayhead(
           foregroundAfter == foregroundBefore,
           !application.isActive else {
         throw DriverFailure.refused(
-            "Playhead value-set did not settle without changing foreground ownership"
+            "Playhead value-set did not settle: requested=\(ticks) " +
+                "observed=\(String(describing: observed)) " +
+                "foregroundBefore=\(String(describing: foregroundBefore)) " +
+                "foregroundAfter=\(String(describing: foregroundAfter)) " +
+                "companionActive=\(application.isActive)"
         )
     }
     return ticks
