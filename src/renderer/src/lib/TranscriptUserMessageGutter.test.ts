@@ -383,7 +383,7 @@ describe('layoutGutterVerticalFrame (rail band vs the workspace terminal)', () =
 })
 
 describe('cut 1b gutter liveSpy merge', () => {
-  it('clears the liveSpy latch when structural spy props change (streaming growth)', () => {
+  it('invalidates the liveSpy latch when structural spy props change (streaming growth)', () => {
     // Panel recomputes progress from a taller live total while the user is
     // scrolled up; the RAF sink may not fire, so props must win.
     expect(

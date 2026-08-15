@@ -8,11 +8,10 @@ import {
   layoutGutterLens,
   layoutGutterVerticalFrame,
   layoutTranscriptUserGutterMarkers,
-  shouldAcceptGutterLiveSpy,
-  structuralGutterSpyPropsChanged,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
 import type { TranscriptScrollSpy } from '../lib/TranscriptVirtualWindow'
+import { useGutterLiveSpy } from '../lib/useGutterLiveSpy'
 import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { collectMessageMediaRefs } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
@@ -261,17 +260,15 @@ export function TranscriptUserMessageGutter({
 }: TranscriptUserMessageGutterProps): React.JSX.Element | null {
   const [frame, setFrame] = useState<GutterFrame | null>(null)
   const [activeMarker, setActiveMarker] = useState<ActiveMarkerState | null>(null)
-  // Cut 1b — live spy from the virtualiser RAF sink. Overrides structural
-  // spy props for lens / is-read / is-in-view while the mounted window band
-  // is held (no scrollTick). Kept local so TranscriptPanel does not re-render.
-  // Cleared when structural props freshen (content growth while scrolled up)
-  // so the latch cannot permanently ignore parent recomputes.
-  const [liveSpy, setLiveSpy] = useState<TranscriptScrollSpy | null>(null)
-  const lastStructuralSpyPropsRef = useRef<{
-    scrollProgress: number | undefined
-    scrollViewportFraction: number | undefined
-    activeScrollRowKey: string | null | undefined
-  } | null>(null)
+  // Per-frame virtualiser snapshots stay local to the gutter, while fresher
+  // structural props invalidate a stale snapshot declaratively. In particular,
+  // structural changes never schedule a passive setState that can fight the
+  // next RAF sink tick and trip React's nested-update guard.
+  const liveSpy = useGutterLiveSpy(spySinkRef, {
+    scrollProgress,
+    scrollViewportFraction,
+    activeScrollRowKey
+  })
   const markerRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const dismissTimerRef = useRef<number | null>(null)
   // Preview open-delay (pointer only): a short dwell before the popover commits,
@@ -379,29 +376,6 @@ export function TranscriptUserMessageGutter({
   // filtered transitionend). Kept identical to the sibling filter rail so the
   // two can't drift apart again. See lib/useRailFrameRemeasure.
   useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
-
-  // Cut 1b — register gutter-local setState as the virtualiser's spy sink.
-  useLayoutEffect(() => {
-    if (!spySinkRef) return
-    spySinkRef.current = (snap) => {
-      setLiveSpy((prev) => (shouldAcceptGutterLiveSpy(prev, snap) ? snap : prev))
-    }
-    return () => {
-      spySinkRef.current = null
-    }
-  }, [spySinkRef])
-
-  // When TranscriptPanel recomputes structural spy props (streaming growth,
-  // band commit, measure), drop the RAF latch so props win until the next
-  // sink tick. Without this, liveSpy != null forever ignores fresher props.
-  useEffect(() => {
-    const next = { scrollProgress, scrollViewportFraction, activeScrollRowKey }
-    const prev = lastStructuralSpyPropsRef.current
-    lastStructuralSpyPropsRef.current = next
-    if (structuralGutterSpyPropsChanged(prev, next)) {
-      setLiveSpy(null)
-    }
-  }, [scrollProgress, scrollViewportFraction, activeScrollRowKey])
 
   // Prefer live RAF spy when present; fall back to structural props from the
   // last band-commit / mount render.
