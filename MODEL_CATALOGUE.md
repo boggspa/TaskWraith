@@ -48,7 +48,7 @@ not the monoline glyph set.
 | **GPT-5.5** `gpt-5.5` **(Default)**           | Light · Medium · High · Extra                   | Toggle | Default while the GPT-5.6 rollout remains account-dependent.     |
 | **GPT-5.4** `gpt-5.4`                         | Light · Medium · High · Extra                   | Toggle | Still offered when directly runnable even if discovery omits it. |
 | **GPT-5.4 Mini** `gpt-5.4-mini`               | Light · Medium · High · Extra                   | —      | Smaller GPT-5.4 option.                                          |
-| **GPT-5.3 Codex Spark** `gpt-5.3-codex-spark` | Light · Medium                                  | —      | Research preview where available.                                |
+| **GPT-5.3 Codex Spark** `gpt-5.3-codex-spark` | Light · Medium · High · Extra                   | —      | Research preview where available.                                |
 
 <table>
   <tr>

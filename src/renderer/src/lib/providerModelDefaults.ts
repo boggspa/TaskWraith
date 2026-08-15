@@ -127,7 +127,12 @@ const CODEX_DEFAULT_MODELS = activeCodexModelRows([
   {
     id: 'gpt-5.3-codex-spark',
     label: 'GPT-5.3 Codex Spark',
-    supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }],
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ],
     defaultReasoningEffort: 'low'
     // Fast tier removed alongside 5.3 — see note above.
   }

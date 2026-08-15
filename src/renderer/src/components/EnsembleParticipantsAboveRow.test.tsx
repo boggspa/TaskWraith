@@ -25,6 +25,7 @@ import {
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import { groupAntigravityModelRows } from '../../../shared/antigravityAgyModelGrouping'
+import { CODEX_DEFAULT_MODELS } from '../lib/providerModelDefaults'
 
 function makeParticipant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
   return {
@@ -685,6 +686,22 @@ describe('EnsembleParticipantsAboveRow', () => {
           fastModeEnabled: false
         }
       )
+    })
+
+    it('offers the full Spark ladder in the Add Participant popover fallback', () => {
+      const providerGroups = [
+        {
+          provider: 'codex' as const,
+          label: 'Codex',
+          modelOptions: CODEX_DEFAULT_MODELS.filter((model) => model.id === 'gpt-5.3-codex-spark')
+        }
+      ]
+
+      expect(
+        getEnsembleAddReasoningOptions('codex', 'gpt-5.3-codex-spark', providerGroups).map(
+          (option) => option.value
+        )
+      ).toEqual(['low', 'medium', 'high', 'xhigh'])
     })
 
     it('keeps live models and honors their reasoning metadata', () => {

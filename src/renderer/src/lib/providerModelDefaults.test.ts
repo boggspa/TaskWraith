@@ -22,6 +22,16 @@ describe('Codex provider model defaults', () => {
     }
   })
 
+  it('offers the full Spark ladder in the provider/model/reasoning popover fallback', () => {
+    const spark = CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.3-codex-spark')
+    expect(spark?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+  })
+
   it('exposes GPT-5.6 rows with official GA metadata (tiers, names, defaults)', () => {
     // Official (2026-07-09): hyphenated names; Sol defaults LOW; max on all
     // three; ultra('ultracode') on Sol + Terra only.
