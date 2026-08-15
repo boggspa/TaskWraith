@@ -252,3 +252,115 @@ struct ReconnectStormForegroundTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// Round 3 (2026-08-15, user-reported on device): opening the app from the home
+/// screen behaves, but opening it from a notification / approval / Live Activity
+/// storms. The difference is the wake SOURCE — `handleRemoteWake` is reached only
+/// from the three notification entry points, and iOS delivers the queued silent
+/// pushes back to back the moment the app wakes.
+@Suite("Reconnect storm — APNs wake lane")
+@MainActor
+struct ReconnectStormApnsWakeTests {
+    /// Public cleartext `ws://`, so the ATS preflight rejects it and the walk
+    /// fails without touching the network — the "Mac unreachable" shape.
+    private static let unroutableRelay = "ws://reconnect-storm-apns.invalid:9"
+
+    /// A burst of queued pushes must not each buy a fresh relay-door walk.
+    @Test("a burst of queued APNs wakes does not dial once per push")
+    func apnsBurstDoesNotDialPerPush() async {
+        let model = makePairedModel()
+
+        // The wake that actually finds the Mac gone: one walk, then `.error`
+        // with the 1.5s→30s backoff ladder armed.
+        _ = await model.handleRemoteWake(reason: "remote-notification", timeoutMs: 0)
+        await settle()
+        let afterFirst = model.trustedReconnectDialsForTesting
+
+        // iOS flushes the backlog: five more silent pushes in well under a
+        // second, each landing while the ladder is still waiting on its
+        // first rung.
+        for _ in 0..<5 {
+            _ = await model.handleRemoteWake(reason: "remote-notification", timeoutMs: 0)
+            await settle()
+        }
+
+        #expect(
+            model.trustedReconnectDialsForTesting == afterFirst,
+            "each queued push bought its own relay-door walk instead of coalescing")
+        model.forgetAllHosts()
+    }
+
+    /// The cooldown must never strand the user behind it: the Retry button is
+    /// the one gesture that always earns a fresh walk.
+    @Test("an explicit user retry still dials inside the cooldown")
+    func userRetryBypassesCooldown() async {
+        let model = makePairedModel()
+
+        _ = await model.handleRemoteWake(reason: "remote-notification", timeoutMs: 0)
+        await settle()
+        let afterFirst = model.trustedReconnectDialsForTesting
+
+        model.requestReconnect(.user)
+        await settle()
+
+        #expect(
+            model.trustedReconnectDialsForTesting == afterFirst + 1,
+            "a user tap must not be swallowed by the post-failure cooldown")
+        model.forgetAllHosts()
+    }
+
+    /// The pure policy, stated directly: a wake landing in the cooldown after a
+    /// FAILED attempt is dropped; the same wake past it is honoured.
+    @Test("the coordinator drops non-user wakes inside the redial cooldown")
+    func coordinatorHoldsTheRedialFloor() {
+        var coord = ReconnectCoordinator()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+        #expect(coord.evaluate(reason: .apns, phase: .error("x"), now: t0) == .start)
+        coord.markAttemptStarted(at: t0)
+        coord.markAttemptFailed(at: t0.addingTimeInterval(0.2))
+
+        // The push backlog lands in the next few hundred milliseconds.
+        for offset in [0.25, 0.4, 0.9, 1.6] {
+            #expect(
+                coord.evaluate(
+                    reason: .apns, phase: .error("x"), now: t0.addingTimeInterval(offset))
+                    == .ignore,
+                "a push at \(offset)s must defer to the armed retry ladder")
+        }
+
+        // Past the floor it is genuine new evidence the Mac may be back.
+        #expect(
+            coord.evaluate(reason: .apns, phase: .error("x"), now: t0.addingTimeInterval(2.0))
+                == .start)
+    }
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// Let the (network-free) walk fail and settle back to `.error`.
+    private func settle() async {
+        try? await Task.sleep(nanoseconds: 30_000_000)
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectStormApns.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-15T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: ApnsSeedStore(), pairingStore: store)
+    }
+
+    private struct ApnsSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}

@@ -1731,7 +1731,10 @@ public final class RemoteSessionModel: ObservableObject {
                     + "once with the Mac's current QR to add its Tailscale door."
             }
             self.phase = .error(detail)
-            self.reconnectCoordinator.markAttemptFinished()
+            // FAILED, not merely finished: this arms the coordinator's redial
+            // floor so the APNs backlog that follows a notification wake defers
+            // to the ladder below instead of buying a walk per queued push.
+            self.reconnectCoordinator.markAttemptFailed()
             // Self-heal: cold cellular launches race the VPN tunnel — keep
             // re-walking on a backoff (the path monitor also fires the
             // moment a new route appears, whichever comes first).

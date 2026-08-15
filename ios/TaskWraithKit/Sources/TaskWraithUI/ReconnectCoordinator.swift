@@ -29,25 +29,51 @@ public enum ReconnectAction: String, Sendable, Equatable {
 /// Supersedes only on connect timeout, half-open-from-connected, or an explicit
 /// generation bump (`.user`). Never supersedes on `connecting && !alive` —
 /// during dial, a dead socket probe is the normal state and restarting it flaps.
+///
+/// Single-flight alone is NOT enough. It collapses wakes that OVERLAP a running
+/// dial; it says nothing about wakes that arrive one after another once a dial
+/// has already failed. Every wake source that fires once per app-open (the
+/// scenePhase `.foreground` wake) is invisible to that gap — but APNs fires once
+/// per queued push, and iOS flushes the whole backlog the instant the app wakes.
+/// Against an unreachable Mac each walk fails in milliseconds (a LAN-only door
+/// off-network is rejected by the ATS preflight without a socket), so six queued
+/// pushes bought six full relay-door walks. `redialCooldown` is the missing
+/// half: a floor between a FAILED attempt and the next non-user wake.
 public struct ReconnectCoordinator: Sendable, Equatable {
+    /// Matches the auto-retry ladder's first rung (`scheduleAutoReconnect`,
+    /// 1.5s). A wake inside the window defers to the ladder that the failed
+    /// attempt already armed, instead of preempting it — which is what kept the
+    /// documented 1.5s→30s curve from ever being reached: `reconnectTrusted()`
+    /// opens with `cancelAutoReconnect`, so every push cancelled the pending
+    /// retry and dialled immediately in its place.
+    public static let defaultRedialCooldown: TimeInterval = 1.5
+
     public var generation: Int
     public var inFlight: Bool
     public var attemptStartedAt: Date?
     public var pendingReasons: Set<ReconnectWakeReason>
     public var connectTimeout: TimeInterval
+    /// When the last attempt FAILED. nil after a success — a healthy connect
+    /// must never leave a cooldown behind for the next genuine wake.
+    public var lastAttemptFailedAt: Date?
+    public var redialCooldown: TimeInterval
 
     public init(
         generation: Int = 0,
         inFlight: Bool = false,
         attemptStartedAt: Date? = nil,
         pendingReasons: Set<ReconnectWakeReason> = [],
-        connectTimeout: TimeInterval = 15
+        connectTimeout: TimeInterval = 15,
+        lastAttemptFailedAt: Date? = nil,
+        redialCooldown: TimeInterval = ReconnectCoordinator.defaultRedialCooldown
     ) {
         self.generation = generation
         self.inFlight = inFlight
         self.attemptStartedAt = attemptStartedAt
         self.pendingReasons = pendingReasons
         self.connectTimeout = connectTimeout
+        self.lastAttemptFailedAt = lastAttemptFailedAt
+        self.redialCooldown = redialCooldown
     }
 
     /// Evaluate a wake against the current session phase and flight state.
@@ -109,6 +135,15 @@ public struct ReconnectCoordinator: Sendable, Equatable {
             }
 
         case .idle, .error:
+            // The redial floor. `.user` and `.timeout` already returned above;
+            // `.resume` is exempt because its only two callers are self-paced
+            // (launch-time `resumeIfIdle`, and the auto-retry ladder's own
+            // timer — whose first rung IS this interval, so gating it here
+            // would race the boundary and could silence the ladder entirely).
+            if reason != .resume, isInRedialCooldown(now: now) {
+                pendingReasons.insert(reason)
+                return .ignore
+            }
             return beginOrSupersede(reason: reason, now: now)
         }
     }
@@ -131,10 +166,24 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         if let budgetSeconds, budgetSeconds > 0 { connectTimeout = budgetSeconds }
     }
 
-    /// Caller invokes when the attempt reaches `.connected` or a terminal `.error`.
+    /// Caller invokes when the attempt reaches `.connected`. Clears any cooldown:
+    /// we are connected, so the next genuine wake must not be held behind a floor
+    /// left over from an earlier failure.
     public mutating func markAttemptFinished() {
         inFlight = false
         attemptStartedAt = nil
+        lastAttemptFailedAt = nil
+        pendingReasons.removeAll()
+    }
+
+    /// Caller invokes when the attempt ends in a terminal `.error` — i.e. the
+    /// walk tried every door and reached none. Arms `redialCooldown` so the
+    /// backlog of wakes that follows defers to the auto-retry ladder the caller
+    /// arms alongside it, rather than each buying its own walk.
+    public mutating func markAttemptFailed(at now: Date = Date()) {
+        inFlight = false
+        attemptStartedAt = nil
+        lastAttemptFailedAt = now
         pendingReasons.removeAll()
     }
 
@@ -147,6 +196,15 @@ public struct ReconnectCoordinator: Sendable, Equatable {
         case .connecting, .awaitingMacConfirm: return true
         default: return false
         }
+    }
+
+    private func isInRedialCooldown(now: Date) -> Bool {
+        guard redialCooldown > 0, let failed = lastAttemptFailedAt else { return false }
+        // A clock that jumped backwards (NTP correction while suspended) must
+        // not strand the phone behind a cooldown that can never expire.
+        let elapsed = now.timeIntervalSince(failed)
+        guard elapsed >= 0 else { return false }
+        return elapsed < redialCooldown
     }
 
     private func shouldTreatAsTimedOut(now: Date) -> Bool {
