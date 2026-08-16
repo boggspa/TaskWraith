@@ -148,6 +148,18 @@ const PENDING_CONFIGURED_PROVIDER_SNAPSHOT: ConfiguredProviderSnapshot = {
 }
 
 /**
+ * The main detector starts after first paint and its slowest staggered lane has
+ * a 1.5s bounded probe. One settle read at five seconds covers that window
+ * without turning provider discovery into another renderer polling loop.
+ */
+export const CONFIGURED_PROVIDER_FALLBACK_SETTLE_MS = 5_000
+
+interface CachedConfiguredProviderFallback {
+  refreshKey: string
+  snapshot: ConfiguredProviderSnapshot
+}
+
+/**
  * Host Arc Wave 5c Phase 1 — pure map from Desktop Host projection state to
  * the configured-provider snapshot leaf consumers already understand.
  *
@@ -217,10 +229,13 @@ export function configuredProviderSnapshotFromHostProjection(
 /**
  * Host Arc Wave 5c Phase 1 — configured provider roster from Host projection.
  *
- * Authority is the Host `providers` family (already projected by Host from the
- * main-process discovery cache). This hook does not call
- * `window.api.getConfiguredProviderSnapshot` and does not invent a second
- * socket: it reads the app-scope `HostProjectionStore` via context.
+ * Authority is normally the Host `providers` family (already projected by
+ * Host from the main-process discovery cache). A full Host baseline can fail
+ * independently of provider discovery, though, and without a baseline the
+ * store must discard otherwise-valid provider deltas. In that degraded case
+ * this hook reads the SAME main-process discovery cache over the existing IPC
+ * seam: once immediately, and at most once more after the detector's bounded
+ * post-paint settle window. The successful result stays cached in React state.
  *
  * When Host is idle/loading/unavailable, its cache lacks live-baseline
  * continuity, or the provider source is not ready, returns
@@ -233,14 +248,45 @@ export function configuredProviderSnapshotFromHostProjection(
  *
  * The renderer-lifetime Host store owns continuity and caches the last coherent
  * projection. This hook never adds another polling loop: a credential mutation
- * causes one explicit refresh, while normal discovery completion arrives on
- * the store's existing sync cadence.
+ * causes one explicit Host refresh plus one bounded cache read generation;
+ * normal Host discovery completion still arrives on the store's existing sync
+ * cadence.
  */
 export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProviderSnapshot {
   const store = useHostProjectionStore()
   const state = useHostProjection(store)
   const prevRefreshKey = useRef(refreshKey)
   const [blockedForRefreshKey, setBlockedForRefreshKey] = useState(false)
+  const [fallbackCache, setFallbackCache] = useState<CachedConfiguredProviderFallback | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let settleTimer: number | undefined
+    const readSnapshot = window.api?.getConfiguredProviderSnapshot
+    if (typeof readSnapshot !== 'function') return
+
+    const read = async (retryAfterSettle: boolean): Promise<void> => {
+      let snapshot = PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+      try {
+        snapshot = sanitizeConfiguredProviderSnapshot(await readSnapshot())
+      } catch {
+        // The Host path remains primary; an unavailable fallback stays pending.
+      }
+      if (cancelled) return
+      setFallbackCache({ refreshKey, snapshot })
+      if (!snapshot.ready && retryAfterSettle) {
+        settleTimer = window.setTimeout(() => {
+          void read(false)
+        }, CONFIGURED_PROVIDER_FALLBACK_SETTLE_MS)
+      }
+    }
+
+    void read(true)
+    return () => {
+      cancelled = true
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer)
+    }
+  }, [refreshKey])
 
   // Clear a prior settings generation before paint. In particular, enabling
   // AntiGravity again must not briefly reuse models cached before a fresh
@@ -269,7 +315,12 @@ export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProvid
     }
   }, [store, blockedForRefreshKey, refreshKey])
 
-  return blockedForRefreshKey
-    ? PENDING_CONFIGURED_PROVIDER_SNAPSHOT
-    : configuredProviderSnapshotFromHostProjection(state)
+  if (blockedForRefreshKey) return PENDING_CONFIGURED_PROVIDER_SNAPSHOT
+
+  const hostSnapshot = configuredProviderSnapshotFromHostProjection(state)
+  if (hostSnapshot.ready) return hostSnapshot
+
+  return fallbackCache?.refreshKey === refreshKey && fallbackCache.snapshot.ready
+    ? fallbackCache.snapshot
+    : PENDING_CONFIGURED_PROVIDER_SNAPSHOT
 }

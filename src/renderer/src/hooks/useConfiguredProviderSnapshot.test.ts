@@ -17,6 +17,7 @@ import {
   isAntigravityRendererAdmitted,
   isDispatchableProviderForRun,
   ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT,
+  CONFIGURED_PROVIDER_FALLBACK_SETTLE_MS,
   notifyAntigravityGeminiApiSecretMutation,
   sanitizeConfiguredProviderSnapshot,
   useConfiguredProviderSnapshot,
@@ -414,6 +415,60 @@ describe('successful Gemini API mutation refresh signal', () => {
     ).toBe(true)
     // The delta no longer trips the not-ready settle loop into a full refresh.
     expect(fetchSnapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses at most one cached settle retry when Host cannot establish a baseline', async () => {
+    vi.useFakeTimers()
+    const container = installMinimalRendererDom()
+    let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
+    const getConfiguredProviderSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({ ready: false, providerIds: [] })
+      .mockResolvedValue({
+        ready: true,
+        providerIds: ['antigravity'],
+        modelsByProvider: {
+          antigravity: [{ id: 'agy-cached-model', label: 'AGY cached model' }]
+        }
+      })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { getConfiguredProviderSnapshot }
+    })
+    const store = new HostProjectionStore({
+      fetchSnapshot: async () => Promise.reject(new Error('host_unavailable'))
+    })
+    function Harness(): null {
+      renderedSnapshot = useConfiguredProviderSnapshot()
+      return null
+    }
+
+    await act(async () => {
+      mountedRoot = createRoot(container)
+      mountedRoot.render(
+        // eslint-disable-next-line react/no-children-prop -- props.children required by HostProjectionProviderProps for tsc
+        createElement(HostProjectionProvider, {
+          store,
+          children: createElement(Harness)
+        })
+      )
+      await Promise.resolve()
+    })
+    expect(renderedSnapshot).toEqual({ ready: false, providerIds: [] })
+    expect(getConfiguredProviderSnapshot).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONFIGURED_PROVIDER_FALLBACK_SETTLE_MS)
+      await Promise.resolve()
+    })
+    expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
+    expect(renderedSnapshot.modelsByProvider?.antigravity?.[0]?.id).toBe('agy-cached-model')
+    expect(getConfiguredProviderSnapshot).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONFIGURED_PROVIDER_FALLBACK_SETTLE_MS * 4)
+    })
+    expect(getConfiguredProviderSnapshot).toHaveBeenCalledTimes(2)
   })
 })
 
