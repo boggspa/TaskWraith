@@ -4498,6 +4498,7 @@ describe('Studio acceptance harness', () => {
       adjudication: {
         transcriptPixels: { ok: true, region: 'timeline' },
         currentProposedPixels: { ok: true, region: 'material' },
+        ghostRejectPixels: { ok: true, region: 'material' },
         sharedClock: {
           sourceBeforeTicks: 1_500_000,
           sourceAfterTicks: 1_501_000,
@@ -4543,6 +4544,7 @@ describe('Studio acceptance harness', () => {
       'window:review',
       'driver:ghost-reject',
       'driver:r,reject-sent',
+      'compare:material:ghost-reject.png:reject-sent.png',
       'journal:resolve_proposal:reject',
       'driver:press-playback,press-playback'
     ])

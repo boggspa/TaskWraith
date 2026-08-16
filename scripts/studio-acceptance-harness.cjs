@@ -4529,8 +4529,33 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   afterRevision = rejectedProposal.revision
   await drive(['w'], sourceTarget)
   const rejectedReviewTarget = await waitForReviewTarget()
-  await drive([{ type: 'screenshot', name: 'ghost-reject' }], rejectedReviewTarget)
-  await drive(['r', { type: 'screenshot', name: 'reject-sent' }], rejectedReviewTarget)
+  const rejectedReviewBounds = assertSafeUiDriverTarget(rejectedReviewTarget).bounds
+  // ADJUDICATE THE GHOST, DO NOT MERELY PHOTOGRAPH IT.
+  //
+  // Both of these screenshots were previously captured and then discarded, so
+  // proposal ghost rendering had NO adjudication at all: a Review route that
+  // drew no ghost, or drew one that rejection failed to remove, produced the
+  // same ok:true journey as a correct one. The pair is adjacent in time on one
+  // target, so the only difference between them is the live proposal itself.
+  const ghostRejectCapture = await drive(
+    [{ type: 'screenshot', name: 'ghost-reject' }],
+    rejectedReviewTarget
+  )
+  const rejectSentCapture = await drive(
+    ['r', { type: 'screenshot', name: 'reject-sent' }],
+    rejectedReviewTarget
+  )
+  const ghostRejectScreenshots = screenshotPaths(ghostRejectCapture)
+  const rejectSentScreenshots = screenshotPaths(rejectSentCapture)
+  if (ghostRejectScreenshots.length !== 1 || rejectSentScreenshots.length !== 1) {
+    throw new Error('Studio proposal ghost journey did not capture both exact rejection states')
+  }
+  const ghostRejectPixels = compareCaptures(
+    ghostRejectScreenshots[0],
+    rejectSentScreenshots[0],
+    rejectedReviewBounds,
+    'material'
+  )
   const rejectedResolution = await waitJournal(
     plan,
     {
@@ -4579,6 +4604,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     adjudication: {
       transcriptPixels,
       currentProposedPixels,
+      ghostRejectPixels,
       sharedClock,
       playbackRoundTrip
     },
