@@ -205,8 +205,9 @@ It is optional and never auto-installs Xcode or Simulator.app.
    Canvas**.
 3. Preview uses `simctl` screenshots of a booted device. The dock bezel follows
    the last frame’s width/height when available; a **Stale frame** badge appears
-   when the screenshot is older than ~4s. Use the toolbar **Poll** control
-   (1s / 1.5s / 2s) to change preview cadence.
+   when the screenshot is older than ~4s. Preview cadence is fixed and not
+   user-adjustable: screenshots poll at 1.5s, interaction state at 2s, and
+   control status at 5s.
 4. For human tap/type/swipe drive, install Facebook's **idb** (opt-in; never
    auto-installed):
    - Companion (Homebrew): `brew tap facebook/fb && brew install idb-companion`

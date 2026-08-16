@@ -278,7 +278,6 @@ percentage threshold or PR coverage ratchet.
 ```sh
 npm run verify:provider-compatibility
 npm run verify:provider-permissions:live
-npm run verify:provider-permissions:release
 npm run test:coverage:baseline
 ```
 

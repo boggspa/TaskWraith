@@ -6,8 +6,11 @@
 # them, because every provider shells out to git.
 #
 # It is deliberately narrow. A hook that cries wolf gets disabled, and a
-# disabled hook protects nothing — so exactly one condition BLOCKS (staging a
-# path another live session has claimed) and everything else advises.
+# disabled hook protects nothing — so exactly two conditions BLOCK and
+# everything else advises. Those two are: staging a path another live session
+# has claimed (section 1), and force-adding a gitignored path into a public
+# repository (section 0). See the note above section 0 for why the second one
+# earns its place against the narrowness rule.
 #
 # Enable:  git config core.hooksPath .githooks
 # Override once: TW_ALLOW_CLAIMED=1 git commit ...

@@ -19,8 +19,8 @@ untracked files when you know you are the only session in the tree.
 `npm run format:check` is the verifying form, suitable for a CI gate.
 
 Do not run `npm run format:all`, `prettier --write .`, or any repo-wide
-Prettier glob. The baseline is ~44% unformatted — 1094 of 2472 tracked
-`src` ts/tsx files as of 2026-07-25 — so a repo-wide write is not a
+Prettier glob. The baseline is ~27% unformatted — 1183 of 4457 considered
+files, per `scripts/format-baseline.json` — so a repo-wide write is not a
 tidy-up: it is a ~30,000-line mass reformat that rewrites `git blame` for
 a thousand files and conflicts with every open branch and fan-out
 worktree.
@@ -64,9 +64,11 @@ satisfied in a way that is much worse than the problem:
   difference between "you formatted the new file you just added" and "you
   reformatted a monolith to buy headroom for it". The second is the
   cheapest way to make the number go green and the most destructive thing
-  you can do to the tree: measured 2026-07-27, `src/main/index.ts` is
-  48,861 lines and a reformat rewrites ~2,558 of them; `App.tsx` is 30,481
-  lines and rewrites ~3,421. That is thousands of unrelated lines, `git
+  you can do to the tree: measured 2026-08-16, `src/main/index.ts` is
+  ~58,600 lines and `App.tsx` ~31,700. At the 2026-07-27 measurement
+  (48,861 and 30,481) a reformat rewrote ~2,558 and ~3,421 lines
+  respectively; both files have only grown since, so treat those rewrite
+  counts as a floor. That is thousands of unrelated lines, `git
   blame` destroyed across two files everything depends on, and a conflict
   in every open worktree — to satisfy a counter. Fix the file you dirtied.
 
@@ -397,18 +399,28 @@ at the git layer, which every provider goes through:
 npm run hooks:install        # git config core.hooksPath .githooks
 ```
 
-[`.githooks/pre-commit`](.githooks/pre-commit) **blocks exactly one thing** —
-staging a path claimed by another owner. A manual claim blocks only while its
-pid is alive and its expiry has not passed; a valid runtime-derived claim
+[`.githooks/pre-commit`](.githooks/pre-commit) **blocks exactly two things.**
+The first is staging a path claimed by another owner. A manual claim blocks
+only while its pid is alive and its expiry has not passed; a valid
+runtime-derived claim
 blocks until durable authority removes it, regardless of projected pid or
-expiry. Everything else advises: whole-file staging of a >5,000-line file,
+expiry. The second is force-adding a gitignored path into this public repo.
+Everything else advises: whole-file staging of a >5,000-line file,
 forty-plus staged paths, your own claim still being up, and a decayed manual
-claim still standing (adopt or delete it). One block and otherwise quiet is
+claim still standing (adopt or delete it). Two blocks and otherwise quiet is
 deliberate; a hook that cries wolf gets disabled, and a disabled hook protects
 nothing.
 
 `TW_ALLOW_CLAIMED=1 git commit …` overrides a claim you know to be wrong. Use
 it rather than deleting someone's marker.
+
+`TW_ALLOW_IGNORED_ADD=1 git commit …` overrides the gitignored-add block. This
+is not exotic: `docs/` is ignore-by-default with ~187 files force-tracked
+individually, so a plain `git mv` of an already-tracked doc trips it — the
+destination reads as a brand-new ignored path. Before overriding, prove you
+are not publishing anything new (`git show HEAD:<oldpath>` should match the
+new file, and the old path should already be tracked). The hook logs an
+`override:` line either way.
 
 Hooks are not cloned by a fresh checkout and only fire at commit time, so this
 is a backstop, not a guarantee — the rules above still stand on their own.
