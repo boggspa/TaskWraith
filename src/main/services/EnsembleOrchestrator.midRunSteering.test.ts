@@ -515,6 +515,84 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
+  it('keeps a lower-order User Fan-Out lane behind its own dispatch receipt', async () => {
+    const roster = [
+      participant('orchestrator', 'claude', 1, {
+        role: 'Orchestrator',
+        stageRole: 'background'
+      }),
+      participant('owner', 'codex', 5, { role: 'Owner' }),
+      participant('work-1', 'kimi', 6, { role: 'Work1' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'owner'
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Keep the existing Work1 lane active while the user adds Orchestrator.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('owner')
+
+    const olderWave = await harness.orchestrator.fanoutForRun(
+      harness.dispatched[0].appRunId,
+      {
+        targets: ['Work1'],
+        prompt: 'Keep inspecting while the owner continues.'
+      }
+    )
+    expect(olderWave.ok).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    stream(harness, 1, 'OLDER-WORK1-LANE.')
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) => message.content.includes('OLDER-WORK1-LANE.'))
+      ).toBe(true)
+    )
+
+    const userPrompt = '@Orchestrator confirm the live round remains healthy.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: userPrompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('orchestrator')
+
+    const dispatchIndex = harness.chat.messages.findIndex(
+      (message) =>
+        message.metadata?.kind === 'ensembleRoundStatus' &&
+        message.content.startsWith('User Fan-Out · 1 participant(s) dispatched concurrently')
+    )
+    expect(dispatchIndex).toBeGreaterThanOrEqual(0)
+    const dispatchWaveId = harness.chat.messages[dispatchIndex].metadata?.ensembleFanoutWaveId
+    expect(dispatchWaveId).toBe(harness.chat.messages[dispatchIndex].id)
+
+    stream(harness, 2, 'NEW-ORCHESTRATOR-LANE.')
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) => message.content.includes('NEW-ORCHESTRATOR-LANE.'))
+      ).toBe(true)
+    )
+    const newLaneIndex = harness.chat.messages.findIndex((message) =>
+      message.content.includes('NEW-ORCHESTRATOR-LANE.')
+    )
+    expect(newLaneIndex).toBeGreaterThan(dispatchIndex)
+    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(
+      dispatchWaveId
+    )
+
+    complete(harness, 2)
+    complete(harness, 1)
+    stream(harness, 0, 'Owner finished after both waves.')
+    complete(harness, 0)
+  })
+
   it('expands a user @All steer to every idle enabled seat without duplicating the speaker', async () => {
     const roster = [
       participant('codex', 'codex', 1, { role: 'Worker', stageRole: 'worker' }),

@@ -1616,6 +1616,10 @@ function isComparableFanoutTimelineMessage(
   run: ActiveParticipantRun
 ): boolean {
   if (message.metadata?.ensembleRoundId !== run.roundId) return false
+  // Participant order is meaningful only inside one dispatch wave. Sorting a
+  // later low-order seat against an older wave can hoist its first fragment
+  // above the durable receipt that explains why the lane exists.
+  if (message.metadata?.ensembleFanoutWaveId !== run.fanoutWaveId) return false
   const laneId = messageLaneId(message)
   if (!laneId || laneId === run.laneId) return false
   if (message.role !== 'assistant' && message.role !== 'tool') return false
@@ -1706,8 +1710,21 @@ function insertRunTimelineMessages(
   }
   // First flush of a fan-out lane: keep sibling lanes in participant order,
   // but only within the round's tail lane cluster so the slot-in can never
-  // leapfrog a serial participant's already-rendered rows.
-  const clusterStart = tailLaneClusterStart(messages, run.roundId)
+  // leapfrog a serial participant's already-rendered rows. The matching
+  // dispatch receipt is also a hard lower bound: even a malformed sibling row
+  // must not pull this lane above its own wave anchor.
+  const dispatchAnchorIndex = run.fanoutWaveId
+    ? messages.findIndex(
+        (message) =>
+          message.role === 'system' &&
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.metadata?.ensembleFanoutWaveId === run.fanoutWaveId
+      )
+    : -1
+  const clusterStart = Math.max(
+    tailLaneClusterStart(messages, run.roundId),
+    dispatchAnchorIndex + 1
+  )
   let insertionIndex = -1
   for (let i = clusterStart; i < messages.length; i += 1) {
     const message = messages[i]
