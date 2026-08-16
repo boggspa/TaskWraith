@@ -152,7 +152,7 @@ function policiesFor(args: {
 
   for (const policy of policies) {
     const memberKey = `${policy.channelId}\u0000${policy.memberId}`
-    const sourceKey = `${policy.sourceShareId}\u0000${policy.sourceCollaboratorId}`
+    const sourceKey = JSON.stringify([policy.sourceShareId, policy.sourceCollaboratorId])
     const metadata = metadataByChannel.get(policy.channelId)
     const member = metadata?.members.find((candidate) => candidate.memberId === policy.memberId)
     if (

@@ -274,6 +274,46 @@ describe('PeopleToChannelMigrationPolicyWriter', () => {
     expect(built.policies.list()).toHaveLength(2)
   })
 
+  it('does not conflate distinct source tuples that share a NUL-delimited encoding', () => {
+    const built = fixture({ pending: false })
+    const { materializationDigest: _baseDigest, ...baseDraft } = clone(built.base)
+    const firstPolicy = baseDraft.policies[0]
+    firstPolicy.sourceShareId = 'share'
+    firstPolicy.sourceCollaboratorId = 'collaborator\u0000suffix'
+
+    const { executionDigest: _historyDigest, ...historyDraft } = clone(built.history)
+    const firstMember = historyDraft.metadataMutations[0].members.find(
+      (member) => member.memberId === firstPolicy.memberId
+    )!
+    const secondMember = {
+      ...firstMember,
+      memberId: 'member_two',
+      displayName: 'Second collaborator',
+      identityPublicKey: 'collaborator_key_two'
+    }
+    historyDraft.metadataMutations[0].members.push(secondMember)
+    baseDraft.policies.push({
+      ...clone(firstPolicy),
+      memberId: secondMember.memberId,
+      sourceShareId: 'share\u0000collaborator',
+      sourceCollaboratorId: 'suffix'
+    })
+    baseDraft.migratedShareIds = ['share', 'share\u0000collaborator']
+    const base = sealBase(baseDraft)
+    const history = sealHistory({
+      ...historyDraft,
+      baseMaterializationDigest: base.materializationDigest
+    })
+
+    // The policy store correctly rejects control characters in identifiers.
+    // This assertion pins the failure's real cause: these distinct tuples must
+    // reach identifier validation rather than being conflated as a duplicate.
+    expect(() => writer(built).apply({ base, history })).toThrowError(
+      'Channel human migration policy is invalid'
+    )
+    expect(existsSync(built.policyPath)).toBe(false)
+  })
+
   it('rejects missing, owner, and revoked policy targets before persistence', () => {
     const missing = fixture({ pending: false })
     const { materializationDigest: _missingDigest, ...missingDraft } = clone(missing.base)
