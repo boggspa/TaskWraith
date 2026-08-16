@@ -17,6 +17,7 @@ const {
   assertStudioAcceptanceCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceArtifacts,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
@@ -40,6 +41,7 @@ const {
   parseProcessTable,
   parseStudioTransportMutationText,
   readDetachedCoordinatorStatus,
+  runStudioAcceptanceBuild,
   runStudioUiDriver,
   studioProposalInsertionEvidence,
   validateDetachedCoordinatorRequest,
@@ -72,6 +74,7 @@ const {
     options: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  measureStudioAcceptanceArtifacts: (repoRoot: string) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
     args: Record<string, any>,
@@ -194,6 +197,7 @@ const {
     expectation: Record<string, any>,
     options?: Record<string, any>
   ) => Promise<Record<string, any>>
+  runStudioAcceptanceBuild: (options?: Record<string, any>) => Promise<Record<string, any>>
   runStudioAcceptance: (
     args: Record<string, any>,
     adapters?: Record<string, any>
@@ -4340,6 +4344,97 @@ describe('Studio acceptance harness', () => {
     })
   })
 
+  it('builds the exact resolver-preferred debug products before selecting them', async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = []
+    const result = await runStudioAcceptanceBuild({
+      repoRoot: '/virtual/repo',
+      execFile: async (command: string, args: string[], options: { cwd: string }) => {
+        calls.push({ command, args, cwd: options.cwd })
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+    })
+
+    expect(calls).toEqual([
+      {
+        command: 'swift',
+        args: [
+          'build',
+          '--disable-sandbox',
+          '-c',
+          'debug',
+          '--package-path',
+          'swift/TaskWraithBridge',
+          '--product',
+          'TaskWraithBridgeDaemon'
+        ],
+        cwd: '/virtual/repo'
+      },
+      {
+        command: 'swift',
+        args: [
+          'build',
+          '--disable-sandbox',
+          '-c',
+          'debug',
+          '--package-path',
+          'swift/TaskWraithBridge',
+          '--product',
+          'TaskWraithStudioCompanion'
+        ],
+        cwd: '/virtual/repo'
+      },
+      {
+        command: 'npm',
+        args: ['run', 'prebuild:bridge-daemon'],
+        cwd: '/virtual/repo'
+      },
+      {
+        command: 'npm',
+        args: ['run', 'prebuild:studio-companion'],
+        cwd: '/virtual/repo'
+      },
+      {
+        command: 'npx',
+        args: ['electron-vite', 'build'],
+        cwd: '/virtual/repo'
+      }
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      selectedNativeProducts: {
+        bridgeDaemon: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+        companion: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion'
+      }
+    })
+  })
+
+  it('never substitutes retained release binaries for the selected debug products', async () => {
+    const root = await temporaryRoot('studio-acceptance-native-selection-')
+    const releaseRoot = path.join(root, 'swift/TaskWraithBridge/.build/release')
+    const debugRoot = path.join(root, 'swift/TaskWraithBridge/.build/debug')
+    await fsPromises.mkdir(path.join(root, 'out'), { recursive: true })
+    await fsPromises.mkdir(releaseRoot, { recursive: true })
+    await fsPromises.writeFile(path.join(root, 'out/main.js'), 'built renderer')
+    await fsPromises.writeFile(path.join(releaseRoot, 'TaskWraithStudioCompanion'), 'release')
+    await fsPromises.writeFile(path.join(releaseRoot, 'TaskWraithBridgeDaemon'), 'release')
+
+    await expect(measureStudioAcceptanceArtifacts(root)).rejects.toThrow(
+      /selected companion binary/
+    )
+
+    await fsPromises.mkdir(debugRoot, { recursive: true })
+    await fsPromises.writeFile(path.join(debugRoot, 'TaskWraithStudioCompanion'), 'debug companion')
+    await fsPromises.writeFile(path.join(debugRoot, 'TaskWraithBridgeDaemon'), 'debug bridge')
+    await expect(measureStudioAcceptanceArtifacts(root)).resolves.toMatchObject({
+      artifactCount: 3,
+      outCount: 1,
+      companionPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
+      companionSha256: crypto.createHash('sha256').update('debug companion').digest('hex'),
+      bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+      bridgeDaemonSha256: crypto.createHash('sha256').update('debug bridge').digest('hex')
+    })
+  })
+
   it('measures the pinned live-build source and support custody from the workspace', async () => {
     const receipt = await measureStudioAcceptanceCustody({
       repoRoot: path.resolve(__dirname, '..'),
@@ -4419,7 +4514,9 @@ describe('Studio acceptance harness', () => {
       sourceCount: sourceCustody.sourceCount,
       buildEnvironmentDigest: sourceCustody.buildEnvironmentDigest,
       buildEnvironmentCount: sourceCustody.buildEnvironmentCount,
+      companionPath: custodyBefore.companionPath,
       companionSha256: custodyBefore.companionSha256,
+      bridgeDaemonPath: custodyBefore.bridgeDaemonPath,
       bridgeDaemonSha256: custodyBefore.bridgeDaemonSha256
     }
 
@@ -4483,6 +4580,15 @@ describe('Studio acceptance harness', () => {
     expect(() =>
       assertStudioAcceptanceCustody(
         { ...custodyBefore, companionSha256: 'f'.repeat(64) },
+        { phase: 'before-run', sourceCustody, fixture, expected }
+      )
+    ).toThrow(/built artifact custody pins/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        {
+          ...custodyBefore,
+          companionPath: 'swift/TaskWraithBridge/.build/release/TaskWraithStudioCompanion'
+        },
         { phase: 'before-run', sourceCustody, fixture, expected }
       )
     ).toThrow(/built artifact custody pins/)
@@ -4642,7 +4748,9 @@ describe('Studio acceptance harness', () => {
       sourceCount: custodySource.sourceCount,
       buildEnvironmentDigest: custodySource.buildEnvironmentDigest,
       buildEnvironmentCount: custodySource.buildEnvironmentCount,
+      companionPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
       companionSha256: '9'.repeat(64),
+      bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
       bridgeDaemonSha256: 'a'.repeat(64)
     }
     const args = {

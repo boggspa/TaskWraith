@@ -157,6 +157,38 @@ const STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS = Object.freeze([
   '.env.production.local'
 ])
 const STUDIO_ACCEPTANCE_RUNNER_PATH = 'scripts/studio-acceptance-harness.cjs'
+const STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS = Object.freeze({
+  bridgeDaemon: Object.freeze({
+    label: 'selected bridge daemon',
+    relativePath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+    command: 'swift',
+    args: Object.freeze([
+      'build',
+      '--disable-sandbox',
+      '-c',
+      'debug',
+      '--package-path',
+      'swift/TaskWraithBridge',
+      '--product',
+      'TaskWraithBridgeDaemon'
+    ])
+  }),
+  companion: Object.freeze({
+    label: 'selected companion binary',
+    relativePath: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
+    command: 'swift',
+    args: Object.freeze([
+      'build',
+      '--disable-sandbox',
+      '-c',
+      'debug',
+      '--package-path',
+      'swift/TaskWraithBridge',
+      '--product',
+      'TaskWraithStudioCompanion'
+    ])
+  })
+})
 const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'IOS_REMOTE_TRUE',
   'MACOSX_DEPLOYMENT_TARGET',
@@ -171,7 +203,9 @@ const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
   sourceCount: 2232,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
+  companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
   companionSha256: '21f70055169e10b1bf05f9b235459635a41e458a9d0b230a32d7d823086d1104',
+  bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
   bridgeDaemonSha256: 'ba3cd5ce8630b143eb64f4c8d726b1c22afea02a10133807039ba485617961cb'
 })
 
@@ -763,41 +797,30 @@ async function measureStudioAcceptanceSource(repoRoot) {
   return digestStudioAcceptanceEntries(entries)
 }
 
-async function resolveStudioAcceptanceBuiltFile(repoRoot, candidates, label) {
-  for (const relativePath of candidates) {
-    const absolutePath = path.resolve(repoRoot, relativePath)
-    const stat = await assertSafeRegularFile(absolutePath, label, { allowMissing: true })
-    if (stat) return { relativePath, absolutePath, stat }
+async function measureStudioAcceptanceSelectedNativeProduct(repoRoot, product) {
+  const absolutePath = path.resolve(repoRoot, product.relativePath)
+  const stat = await assertSafeRegularFile(absolutePath, product.label, { allowMissing: true })
+  if (!stat) {
+    throw new Error(
+      `Studio acceptance ${product.label} is missing after its exact debug build: ${product.relativePath}`
+    )
   }
-  throw new Error(`Studio acceptance ${label} is missing after build`)
+  return {
+    path: product.relativePath,
+    sha256: await sha256Hex(absolutePath)
+  }
 }
 
 async function measureStudioAcceptanceArtifacts(repoRoot) {
   const outEntries = await collectStudioAcceptanceCustodyEntries(repoRoot, 'out')
-  const companion = await resolveStudioAcceptanceBuiltFile(
+  const companionEntry = await measureStudioAcceptanceSelectedNativeProduct(
     repoRoot,
-    [
-      'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
-      'swift/TaskWraithBridge/.build/release/TaskWraithStudioCompanion'
-    ],
-    'selected companion binary'
+    STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion
   )
-  const bridge = await resolveStudioAcceptanceBuiltFile(
+  const bridgeEntry = await measureStudioAcceptanceSelectedNativeProduct(
     repoRoot,
-    [
-      'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
-      'swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon'
-    ],
-    'selected bridge daemon'
+    STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon
   )
-  const companionEntry = {
-    path: companion.relativePath,
-    sha256: await sha256Hex(companion.absolutePath)
-  }
-  const bridgeEntry = {
-    path: bridge.relativePath,
-    sha256: await sha256Hex(bridge.absolutePath)
-  }
   const out = digestStudioAcceptanceEntries(outEntries)
   const artifact = digestStudioAcceptanceEntries([...outEntries, companionEntry, bridgeEntry])
   return {
@@ -805,9 +828,9 @@ async function measureStudioAcceptanceArtifacts(repoRoot) {
     artifactCount: artifact.fileCount,
     outDigest: out.digest,
     outCount: out.fileCount,
-    companionPath: companion.relativePath,
+    companionPath: companionEntry.path,
     companionSha256: companionEntry.sha256,
-    bridgeDaemonPath: bridge.relativePath,
+    bridgeDaemonPath: bridgeEntry.path,
     bridgeDaemonSha256: bridgeEntry.sha256
   }
 }
@@ -891,6 +914,12 @@ async function measureStudioAcceptanceCustody(options = {}, adapters = {}) {
       supportPaths: Object.keys(STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES),
       buildInputExactPaths: STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS,
       optionalEnvironmentPaths: STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS,
+      selectedNativeProducts: Object.fromEntries(
+        Object.entries(STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS).map(([name, product]) => [
+          name,
+          product.relativePath
+        ])
+      ),
       sourcePrefix: 'src/',
       swiftSourcePrefix: 'swift/TaskWraithBridge/Sources/',
       sourceTestsExcluded: true
@@ -1005,7 +1034,9 @@ function assertStudioAcceptanceCustody(actual, options = {}) {
     throw new Error('Studio acceptance built artifact custody is invalid')
   }
   if (
+    actual.companionPath !== expected.companionPath ||
     actual.companionSha256 !== expected.companionSha256 ||
+    actual.bridgeDaemonPath !== expected.bridgeDaemonPath ||
     actual.bridgeDaemonSha256 !== expected.bridgeDaemonSha256
   ) {
     throw new Error('Studio acceptance built artifact custody pins do not match')
@@ -2914,7 +2945,12 @@ function assertCleanWatchdogTerminal(terminal) {
 async function runStudioAcceptanceBuild(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '..'))
   const runExec = options.execFile || defaultExecFile
+  const selectedNativeEntries = Object.entries(STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS)
   const steps = [
+    ...selectedNativeEntries.map(([, product]) => ({
+      command: product.command,
+      args: [...product.args]
+    })),
     { command: 'npm', args: ['run', 'prebuild:bridge-daemon'] },
     { command: 'npm', args: ['run', 'prebuild:studio-companion'] },
     { command: 'npx', args: ['electron-vite', 'build'] }
@@ -2929,7 +2965,14 @@ async function runStudioAcceptanceBuild(options = {}) {
       })
     )
   }
-  return { ok: true, steps: steps.map((step) => [step.command, ...step.args].join(' ')), results }
+  return {
+    ok: true,
+    steps: steps.map((step) => [step.command, ...step.args].join(' ')),
+    selectedNativeProducts: Object.fromEntries(
+      selectedNativeEntries.map(([name, product]) => [name, product.relativePath])
+    ),
+    results
+  }
 }
 
 async function findStudioCompanion(rootPid, adapters = {}) {
@@ -4731,6 +4774,7 @@ module.exports = {
   assertGeneratedSpeechFixtureCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceArtifacts,
   assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
