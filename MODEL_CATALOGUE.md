@@ -97,7 +97,8 @@ not the monoline glyph set.
 
 | Model                                               | Reasoning           | Fast     | Notes                                                |
 | --------------------------------------------------- | ------------------- | -------- | ---------------------------------------------------- |
-| **Grok 4.5 Fast** `grok-4.5` **(Default)**          | Low · Medium · High | Included | 500K-context coding model; Fast is provider-encoded. |
+| **Grok 4.6 Fast** `grok-4.6` **(Default)**          | Low · Medium · High · Extra-high | Included | 500K-context coding model; Fast is provider-encoded. |
+| **Grok 4.5 Fast** `grok-4.5`                        | Low · Medium · High | Included | Previous default; retained as a selectable row.      |
 | **Grok Composer 2.5 Fast** `grok-composer-2.5-fast` | —                   | Included | Historical/specialised Fast model row.               |
 
 <table>
@@ -119,6 +120,7 @@ and workspace Tool Grants apply to TaskWraith-mediated calls; see
 | ------------------------------------------------------- | ------------------- | -------- | ----------------------------------------------------- |
 | **Composer 2.5 Fast** `composer-2.5-fast` **(Default)** | —                   | Included | Fast route is encoded in the selected model row.      |
 | **Composer 2.5** `composer-2.5`                         | —                   | Pair     | Select this normal row or its Fast counterpart above. |
+| **Cursor Grok 4.6** `grok-4.6`                          | Low · Medium · High · Extra-high | Toggle | First-party Cursor model pool with 256K context.       |
 | **Cursor Grok 4.5** `grok-4.5`                          | Low · Medium · High | Toggle   | First-party Cursor model pool with 500K context.      |
 
 <table>
@@ -140,18 +142,22 @@ AntiGravity subscription catalogue. Its newest family is:
 
 The independent bring-your-own-key lane curates the authenticated Gemini API
 `models.list` response, so the live picker—not a frozen documentation table—is
-authoritative. Its current GA highlights are:
+authoritative. Its current static fallback floor is:
 
 | Model                                                               | Reasoning | Fast | Notes                                                       |
 | ------------------------------------------------------------------- | --------- | ---- | ----------------------------------------------------------- |
 | **Gemini 3.6 Flash** `gemini-api:gemini-3.6-flash`                  | —         | —    | Latest balanced model for agentic and multimodal work.      |
 | **Gemini 3.5 Flash** `gemini-api:gemini-3.5-flash`                  | —         | —    | Sustained frontier performance for agentic and coding work. |
-| **Gemini 3.5 Flash-Lite** `gemini-api:gemini-3.5-flash-lite`        | —         | —    | Lowest-cost 3.5 model for high-throughput execution.        |
+| **Gemini 3.1 Pro Preview** `gemini-api:gemini-3.1-pro-preview`      | —         | —    | Preview-tier reasoning model retained in the fallback floor. |
+| **Gemini 3.1 Flash-Lite** `gemini-api:gemini-3.1-flash-lite`        | —         | —    | Lowest-cost row for high-throughput execution.              |
 
 Live discovery wins for both lanes. The consent-gated CLI catalogue has a
 current Gemini-family floor so a transient `agy models` failure does not hide
-the provider; the API-key lane likewise retains bounded fallback rows from the
-3.1 and 2.5 families. A stale row still fails visibly at dispatch. See Google's
+the provider; the API-key lane likewise retains bounded fallback rows, and the
+four rows above are exactly that floor — the 3.6, 3.5, and 3.1 families. The
+2.5 family was dropped from the floor because `gemini-2.5-flash` now 404s as
+"no longer available to new users". A stale row still fails visibly at
+dispatch. See Google's
 [Gemini API model catalogue](https://ai.google.dev/gemini-api/docs/models) for
 the upstream API lifecycle.
 
