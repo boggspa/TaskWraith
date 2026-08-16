@@ -6,6 +6,24 @@ export function normalizeOllamaModelKey(modelId?: string | null): string {
     .toLowerCase()
 }
 
+/**
+ * Ollama's local daemon accepts both the current `:cloud` source suffix and
+ * the legacy `-cloud` tag suffix. Keep this source classifier shared by main
+ * and renderer so a cloud row can never be mistaken for a pullable local tag.
+ */
+export function isOllamaCloudModelId(modelId?: string | null): boolean {
+  const key = normalizeOllamaModelKey(modelId)
+  return key.endsWith(':cloud') || key.endsWith('-cloud')
+}
+
+/** Remove only Ollama's explicit cloud source marker, preserving the model tag. */
+export function ollamaCloudBaseModelId(modelId?: string | null): string {
+  const value = String(modelId || '').trim()
+  if (!isOllamaCloudModelId(value)) return value
+  if (value.toLowerCase().endsWith(':cloud')) return value.slice(0, -':cloud'.length)
+  return value.slice(0, -'-cloud'.length)
+}
+
 export function ollamaModelIdAliases(modelId?: string | null): string[] {
   const key = normalizeOllamaModelKey(modelId)
   if (!key) return []
@@ -74,6 +92,7 @@ export function isOllamaModelInstalled(
 export function buildOllamaPullCommand(modelId?: string | null): string | null {
   const trimmed = String(modelId || '').trim()
   if (!trimmed || trimmed === 'custom' || trimmed.startsWith('-')) return null
+  if (isOllamaCloudModelId(trimmed)) return null
   if (!SAFE_OLLAMA_MODEL_ID.test(trimmed)) return null
   return `ollama pull ${trimmed}`
 }

@@ -20,6 +20,11 @@ import type { HostCommandProjectionHandle } from '../run/HostCommandOperationReg
 import type { RunManager, RunSessionStatus } from '../RunManager'
 import { formatSteeringInjection } from '../steering/BrokerSteerTransport'
 import { buildEstimatedStreamUsage, visiblePayloadChars } from '../../shared/tokenEstimate'
+import {
+  isOllamaCloudModelId,
+  normalizeOllamaModelKey,
+  ollamaCloudBaseModelId
+} from '../../shared/ollamaModelAvailability'
 import type {
   AppSettings,
   OllamaToolControlTier,
@@ -45,6 +50,10 @@ import {
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
+import {
+  discoverOllamaCloud,
+  type OllamaCloudDiscoverySnapshot
+} from './OllamaCloudCatalog'
 import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
 import {
   createOllamaHarnessRunState,
@@ -115,6 +124,11 @@ export interface OllamaModelInfo {
   label: string
   description?: string
   isDefault?: boolean
+  source?: 'local' | 'cloud'
+  isCloud?: boolean
+  installed?: boolean
+  disabled?: boolean
+  disabledReason?: string
   sizeBytes?: number
   digest?: string
   format?: string
@@ -125,6 +139,8 @@ export interface OllamaModelInfo {
   parameterSize?: string
   quantizationLevel?: string
   capabilities?: string[]
+  maxOutputTokens?: number
+  requiredPlan?: string
   show?: OllamaModelShowInfo
 }
 
@@ -150,9 +166,21 @@ export interface OllamaStatusSnapshot {
   setupRequired: boolean
   baseUrl: string
   modelCount: number
+  localModelCount: number
+  cloudModelCount: number
   defaultModel?: string
   models?: OllamaModelInfo[]
+  localModels?: OllamaModelInfo[]
+  cloudModels?: OllamaModelInfo[]
+  cloud: OllamaCloudDiscoverySnapshot
   error?: string
+}
+
+export interface OllamaModelCatalogSnapshot {
+  models: OllamaModelInfo[]
+  localModels: OllamaModelInfo[]
+  cloudModels: OllamaModelInfo[]
+  cloud: OllamaCloudDiscoverySnapshot
 }
 
 export interface OllamaProcessMemoryEntry {
@@ -259,6 +287,8 @@ interface OllamaTagsResponse {
     model?: string
     size?: number
     digest?: string
+    remote_model?: string
+    remote_host?: string
     details?: {
       format?: string
       family?: string
@@ -885,9 +915,13 @@ export function normalizeOllamaModels(
     const id = String(entry.model || entry.name || '').trim()
     if (!id || seen.has(id)) continue
     seen.add(id)
+    const cloud = isOllamaCloudModelId(id) || Boolean(entry.remote_host)
     const info: OllamaModelInfo = {
       id,
-      label: humanizeOllamaModelId(id),
+      label: humanizeOllamaModelId(cloud ? ollamaCloudBaseModelId(id) : id),
+      source: cloud ? 'cloud' : 'local',
+      isCloud: cloud,
+      installed: !cloud,
       isDefault: selectedDefault ? ollamaModelIdsMatch(id, selectedDefault) : seen.size === 1
     }
     const description = modelDescription(entry)
@@ -1049,7 +1083,7 @@ function createOllamaMemoryMonitor(intervalMs = OLLAMA_MEMORY_POLL_INTERVAL_MS) 
   }
 }
 
-export async function fetchOllamaModels(
+export async function fetchOllamaLocalModels(
   settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
   options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<OllamaModelInfo[]> {
@@ -1067,6 +1101,109 @@ export async function fetchOllamaModels(
   } finally {
     clearTimeout(timer)
   }
+}
+
+function cloudRecommendationModels(
+  cloud: OllamaCloudDiscoverySnapshot,
+  defaultModel?: string | null
+): OllamaModelInfo[] {
+  const selectedDefault = String(defaultModel || '').trim()
+  return cloud.models.map((recommendation) => {
+    const info: OllamaModelInfo = {
+      id: recommendation.model,
+      label: humanizeOllamaModelId(ollamaCloudBaseModelId(recommendation.model)),
+      description: recommendation.description,
+      source: 'cloud',
+      isCloud: true,
+      installed: false,
+      isDefault: selectedDefault
+        ? ollamaModelIdsMatch(recommendation.model, selectedDefault)
+        : false,
+      disabled: cloud.authenticated !== true
+    }
+    if (cloud.authenticated !== true) {
+      info.disabledReason =
+        cloud.authenticated === false
+          ? 'Sign in to Ollama Cloud with `ollama signin`.'
+          : 'Ollama Cloud account status is unavailable.'
+    }
+    if (recommendation.contextLength) info.contextLength = recommendation.contextLength
+    if (recommendation.maxOutputTokens) {
+      info.maxOutputTokens = recommendation.maxOutputTokens
+    }
+    if (recommendation.requiredPlan) info.requiredPlan = recommendation.requiredPlan
+    return info
+  })
+}
+
+export function mergeOllamaLocalAndCloudModels(
+  localModels: readonly OllamaModelInfo[],
+  cloud: OllamaCloudDiscoverySnapshot,
+  defaultModel?: string | null
+): OllamaModelCatalogSnapshot {
+  const byKey = new Map<string, OllamaModelInfo>()
+  const cloudModels = cloudRecommendationModels(cloud, defaultModel)
+  for (const model of [...cloudModels, ...localModels]) {
+    const key = normalizeOllamaModelKey(model.id)
+    const previous = byKey.get(key)
+    byKey.set(key, previous ? { ...previous, ...model } : { ...model })
+  }
+  const models = [...byKey.values()]
+  const configuredDefault = String(defaultModel || '').trim()
+  const defaultId =
+    (configuredDefault
+      ? models.find((model) => ollamaModelIdsMatch(model.id, configuredDefault))?.id
+      : '') ||
+    models.find((model) => model.source === 'local' && model.isDefault)?.id ||
+    models.find((model) => !model.disabled)?.id
+  for (const model of models) model.isDefault = Boolean(defaultId && model.id === defaultId)
+  return {
+    models,
+    localModels: models.filter((model) => model.source !== 'cloud'),
+    cloudModels: models.filter((model) => model.source === 'cloud'),
+    cloud
+  }
+}
+
+export async function fetchOllamaModelCatalog(
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  options: {
+    signal?: AbortSignal
+    timeoutMs?: number
+    launchAuthorized?: OllamaTransportLaunchAuthority
+  } = {}
+): Promise<OllamaModelCatalogSnapshot> {
+  const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
+  const localModels = await fetchOllamaLocalModels(
+    { ...settings, ollamaBaseUrl: baseUrl },
+    options
+  )
+  const cloud =
+    options.signal?.aborted || options.launchAuthorized?.() === false
+      ? {
+          supported: false,
+          enabled: true,
+          authenticated: null,
+          models: []
+        }
+      : await discoverOllamaCloud(baseUrl, {
+          signal: options.signal,
+          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500)
+        })
+  return mergeOllamaLocalAndCloudModels(localModels, cloud, settings.ollamaDefaultModel)
+}
+
+/** Models that can be dispatched now: installed local tags plus signed-in Cloud rows. */
+export async function fetchOllamaModels(
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  options: {
+    signal?: AbortSignal
+    timeoutMs?: number
+    launchAuthorized?: OllamaTransportLaunchAuthority
+  } = {}
+): Promise<OllamaModelInfo[]> {
+  const catalog = await fetchOllamaModelCatalog(settings, options)
+  return catalog.models.filter((model) => !model.disabled)
 }
 
 async function fetchOllamaModelShow(
@@ -1108,7 +1245,7 @@ async function enrichOllamaModelsWithShowInfo(
   baseUrl: string,
   models: OllamaModelInfo[]
 ): Promise<OllamaModelInfo[]> {
-  const targets = models.filter((model) => !model.contextLength).slice(0, 16)
+  const targets = models.filter((model) => !model.contextLength && !model.disabled).slice(0, 16)
   if (targets.length === 0) return models
   const showResults = await Promise.all(
     targets.map(async (model) => ({
@@ -1125,22 +1262,41 @@ export async function getOllamaStatusSnapshot(
 ): Promise<OllamaStatusSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   try {
+    const catalog = await fetchOllamaModelCatalog({ ...settings, ollamaBaseUrl: baseUrl })
     const models = await enrichOllamaModelsWithShowInfo(
       baseUrl,
-      await fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl })
+      catalog.models
     )
+    const localModels = models.filter((model) => model.source !== 'cloud')
+    const cloudModels = models.filter((model) => model.source === 'cloud')
+    const runnableCloudModelCount = catalog.cloud.authenticated
+      ? cloudModels.filter((model) => !model.disabled).length
+      : 0
+    const modelCount = localModels.length + runnableCloudModelCount
     const defaultModel =
       String(settings.ollamaDefaultModel || '').trim() ||
       models.find((model) => model.isDefault)?.id
     return {
       available: true,
-      setupRequired: models.length === 0,
+      setupRequired: modelCount === 0,
       baseUrl,
-      modelCount: models.length,
+      modelCount,
+      localModelCount: localModels.length,
+      cloudModelCount: cloudModels.length,
       defaultModel,
       models,
-      ...(models.length === 0
-        ? { error: 'Ollama is reachable, but no local models are installed.' }
+      localModels,
+      cloudModels,
+      cloud: catalog.cloud,
+      ...(modelCount === 0
+        ? {
+            error:
+              cloudModels.length > 0 && catalog.cloud.authenticated === false
+                ? 'Ollama is reachable. Sign in with `ollama signin` to use Cloud models, or pull a local model.'
+                : catalog.cloud.enabled === false
+                  ? 'Ollama is reachable, but Cloud is disabled and no local models are installed.'
+                  : 'Ollama is reachable, but no local models are installed and no signed-in Cloud model is available.'
+          }
         : {})
     }
   } catch (error) {
@@ -1149,6 +1305,14 @@ export async function getOllamaStatusSnapshot(
       setupRequired: true,
       baseUrl,
       modelCount: 0,
+      localModelCount: 0,
+      cloudModelCount: 0,
+      cloud: {
+        supported: false,
+        enabled: true,
+        authenticated: null,
+        models: []
+      },
       error: error instanceof Error ? error.message : String(error)
     }
   }
@@ -3080,8 +3244,27 @@ async function runOllamaChatTurn(input: {
     }
   })
 
-  if (!response.ok || !response.body) {
-    throw new Error(`Ollama chat failed with HTTP ${response.status}.`)
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const body = (await response.text()).slice(0, 2_000)
+      const parsed = JSON.parse(body) as { error?: unknown; message?: unknown }
+      const candidate = parsed.error ?? parsed.message
+      if (typeof candidate === 'string') detail = candidate.trim().slice(0, 500)
+    } catch {
+      // The HTTP status remains actionable when an older daemon sends no JSON.
+    }
+    if (isOllamaCloudModelId(input.model) && response.status === 401) {
+      throw new Error(
+        'Ollama Cloud authentication is required. Run `ollama signin` in Settings → Providers, then refresh models.'
+      )
+    }
+    throw new Error(
+      `Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`
+    )
+  }
+  if (!response.body) {
+    throw new Error('Ollama chat returned no response body.')
   }
 
   const decoder = new TextDecoder()
@@ -3251,7 +3434,10 @@ export async function runOllamaProvider(
       },
       {
         loadInstalledModels: () =>
-          fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl }, { signal: controller.signal }),
+          fetchOllamaModels(
+            { ...settings, ollamaBaseUrl: baseUrl },
+            { signal: controller.signal, launchAuthorized }
+          ),
         loadModelShow: (model) =>
           fetchOllamaModelShow(baseUrl, model, {
             signal: controller.signal,
@@ -3295,7 +3481,8 @@ export async function runOllamaProvider(
       thinkingLevel,
       harnessEnabled
     } = launchPlan
-    launchedModel = model
+    const cloudModel = isOllamaCloudModelId(model)
+    launchedModel = cloudModel ? null : model
     const modelInfo = launchPlan.modelManifest.merged
     // Tool-result truncation scales to the daemon-measured window (bounded by
     // the profile cap); an unmeasured window keeps the conservative floor.
@@ -3371,8 +3558,10 @@ export async function runOllamaProvider(
       deps.emitOllamaModelPreflight(event.sender, preflight, route)
       deps.markOllamaModelPreflightComplete?.(preflightKey)
     }
-    memoryMonitor = createOllamaMemoryMonitor()
-    memoryMonitor.start()
+    if (!cloudModel) {
+      memoryMonitor = createOllamaMemoryMonitor()
+      memoryMonitor.start()
+    }
 
     await deps.emitProviderCapabilityWarnings?.(
       event.sender,

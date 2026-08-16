@@ -58,6 +58,7 @@ import {
   unwrapOllamaStructuredResponseText,
   accumulateOllamaUsageStats,
   extractOllamaShowContextLength,
+  fetchOllamaModelCatalog,
   getOllamaStatusSnapshot,
   ollamaUsageStats,
   validateOllamaToolArguments,
@@ -3232,6 +3233,116 @@ describe('normalizeOllamaModels', () => {
     })
 
     expect(status.models?.[0]?.contextLength).toBe(98_304)
+  })
+
+  it('merges signed-in Cloud recommendations with installed local models', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              model: 'qwen3.5:9b',
+              details: { context_length: 262_144 },
+              capabilities: ['completion', 'tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) {
+        return jsonResponse({
+          id: 'not-exposed',
+          email: 'not-exposed@example.com',
+          plan: 'pro'
+        })
+      }
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({
+          recommendations: [
+            {
+              model: 'glm-5.2:cloud',
+              description: 'Cloud coding model',
+              context_length: 1_000_000,
+              max_output_tokens: 131_072,
+              required_plan: 'pro'
+            },
+            { model: 'gemma4:26b', context_length: 131_072 }
+          ]
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaDefaultModel: 'glm-5.2:cloud'
+    })
+
+    expect(status).toMatchObject({
+      available: true,
+      setupRequired: false,
+      modelCount: 2,
+      localModelCount: 1,
+      cloudModelCount: 1,
+      defaultModel: 'glm-5.2:cloud',
+      cloud: {
+        supported: true,
+        enabled: true,
+        authenticated: true,
+        plan: 'pro'
+      }
+    })
+    expect(status.cloudModels?.[0]).toMatchObject({
+      id: 'glm-5.2:cloud',
+      source: 'cloud',
+      isCloud: true,
+      installed: false,
+      disabled: false,
+      contextLength: 1_000_000,
+      maxOutputTokens: 131_072,
+      requiredPlan: 'pro'
+    })
+    expect(status.localModels?.[0]).toMatchObject({
+      id: 'qwen3.5:9b',
+      source: 'local',
+      isCloud: false,
+      installed: true
+    })
+    expect(JSON.stringify(status)).not.toContain('not-exposed@example.com')
+  })
+
+  it('lists signed-out Cloud rows as disabled without treating them as pullable models', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) }
+      }
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'minimax-m3:cloud' }] })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const catalog = await fetchOllamaModelCatalog({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaDefaultModel: ''
+    })
+
+    expect(catalog.models).toEqual([
+      expect.objectContaining({
+        id: 'minimax-m3:cloud',
+        source: 'cloud',
+        disabled: true,
+        disabledReason: expect.stringContaining('ollama signin')
+      })
+    ])
   })
 
   it('maps common local model ids to human-readable labels', () => {

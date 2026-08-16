@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildOllamaPullCommand,
+  isOllamaCloudModelId,
   isOllamaModelInstalled,
+  ollamaCloudBaseModelId,
   ollamaModelIdsMatch
 } from './ollamaModelAvailability'
 
@@ -51,6 +53,21 @@ describe('ollama model availability helpers', () => {
     expect(buildOllamaPullCommand('north-mini-code-1.0:q4_K_M')).toBe(
       'ollama pull north-mini-code-1.0:q4_K_M'
     )
+  })
+
+  it('classifies current and legacy Ollama Cloud source suffixes', () => {
+    expect(isOllamaCloudModelId('kimi-k2.5:cloud')).toBe(true)
+    expect(isOllamaCloudModelId('gpt-oss:120b-cloud')).toBe(true)
+    expect(isOllamaCloudModelId('kimi-k2.5:latest-cloud')).toBe(true)
+    expect(isOllamaCloudModelId('qwen3.5:9b')).toBe(false)
+    expect(ollamaCloudBaseModelId('kimi-k2.5:cloud')).toBe('kimi-k2.5')
+    expect(ollamaCloudBaseModelId('gpt-oss:120b-cloud')).toBe('gpt-oss:120b')
+    expect(ollamaCloudBaseModelId('kimi-k2.5:latest-cloud')).toBe('kimi-k2.5:latest')
+  })
+
+  it('never offers a local pull command for a cloud source model', () => {
+    expect(buildOllamaPullCommand('kimi-k2.5:cloud')).toBeNull()
+    expect(buildOllamaPullCommand('gpt-oss:120b-cloud')).toBeNull()
   })
 
   it('refuses shell-unsafe model ids', () => {

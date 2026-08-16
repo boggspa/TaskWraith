@@ -1,5 +1,6 @@
 import type { OllamaModelInfo } from './OllamaProvider'
 import type { ProviderCapabilityWarning } from '../store/types'
+import { isOllamaCloudModelId } from '../../shared/ollamaModelAvailability'
 
 export type OllamaModelFamily =
   | 'qwen3_4b'
@@ -631,56 +632,70 @@ export function evaluateOllamaModelPreflight(
   const { guidance, delegateHint } = familyGuidance(family, input.modelLabel)
   const checks: OllamaModelPreflightCheck[] = []
   const warnings: ProviderCapabilityWarning[] = []
+  const cloudModel = input.modelInfo?.isCloud === true || isOllamaCloudModelId(input.modelId)
 
-  const installed = modelInstalled(input.modelId, input.installedModelIds)
-  checks.push({
-    id: 'installed',
-    ok: installed,
-    detail: installed
-      ? 'Model tag is present in the local Ollama library.'
-      : 'Model tag was not found in /api/tags — run `ollama pull` before expecting reliable runs.'
-  })
-  if (!installed) {
-    warnings.push(
-      warning(
-        'ollama-model-missing',
-        'error',
-        'Model not installed',
-        `Pull ${input.modelId} with \`ollama pull ${input.modelId}\`, then refresh models.`
+  if (cloudModel) {
+    checks.push({
+      id: 'installed',
+      ok: true,
+      detail: 'Ollama Cloud routes this model remotely; no local model weights are required.'
+    })
+    checks.push({
+      id: 'ram',
+      ok: true,
+      detail: 'Inference runs on Ollama Cloud, so local model RAM sizing does not apply.'
+    })
+  } else {
+    const installed = modelInstalled(input.modelId, input.installedModelIds)
+    checks.push({
+      id: 'installed',
+      ok: installed,
+      detail: installed
+        ? 'Model tag is present in the local Ollama library.'
+        : 'Model tag was not found in /api/tags — run `ollama pull` before expecting reliable runs.'
+    })
+    if (!installed) {
+      warnings.push(
+        warning(
+          'ollama-model-missing',
+          'error',
+          'Model not installed',
+          `Pull ${input.modelId} with \`ollama pull ${input.modelId}\`, then refresh models.`
+        )
       )
-    )
-  }
+    }
 
-  const paramB =
-    parseOllamaParameterBillions(input.modelInfo?.parameterSize) ??
-    defaultParameterBillionsForFamily(family)
-  const estimatedRamGb = estimateOllamaModelRamGb({
-    parameterBillions: paramB,
-    quantizationLevel: input.modelInfo?.quantizationLevel,
-    sizeBytes: input.modelInfo?.sizeBytes
-  })
-  const usableRamBytes = Math.floor(input.totalMemoryBytes * 0.55)
-  const ramOk =
-    estimatedRamGb == null ? true : estimatedRamGb <= usableRamBytes / 1024 ** 3 + 0.5
-  checks.push({
-    id: 'ram',
-    ok: ramOk,
-    detail:
-      estimatedRamGb == null
-        ? 'RAM headroom could not be estimated from model metadata.'
-        : ramOk
-          ? `Estimated load ~${estimatedRamGb} GB fits within ~${formatMemoryGb(usableRamBytes)} usable RAM.`
-          : `Estimated load ~${estimatedRamGb} GB may exceed ~${formatMemoryGb(usableRamBytes)} usable RAM on this Mac — expect swapping or failed loads.`
-  })
-  if (!ramOk && estimatedRamGb != null) {
-    warnings.push(
-      warning(
-        'ollama-ram-tight',
-        'warning',
-        'RAM may be tight',
-        `This model may need ~${estimatedRamGb} GB resident while loaded. Close other heavy apps or pick a smaller quant/model.`
+    const paramB =
+      parseOllamaParameterBillions(input.modelInfo?.parameterSize) ??
+      defaultParameterBillionsForFamily(family)
+    const estimatedRamGb = estimateOllamaModelRamGb({
+      parameterBillions: paramB,
+      quantizationLevel: input.modelInfo?.quantizationLevel,
+      sizeBytes: input.modelInfo?.sizeBytes
+    })
+    const usableRamBytes = Math.floor(input.totalMemoryBytes * 0.55)
+    const ramOk =
+      estimatedRamGb == null ? true : estimatedRamGb <= usableRamBytes / 1024 ** 3 + 0.5
+    checks.push({
+      id: 'ram',
+      ok: ramOk,
+      detail:
+        estimatedRamGb == null
+          ? 'RAM headroom could not be estimated from model metadata.'
+          : ramOk
+            ? `Estimated load ~${estimatedRamGb} GB fits within ~${formatMemoryGb(usableRamBytes)} usable RAM.`
+            : `Estimated load ~${estimatedRamGb} GB may exceed ~${formatMemoryGb(usableRamBytes)} usable RAM on this Mac — expect swapping or failed loads.`
+    })
+    if (!ramOk && estimatedRamGb != null) {
+      warnings.push(
+        warning(
+          'ollama-ram-tight',
+          'warning',
+          'RAM may be tight',
+          `This model may need ~${estimatedRamGb} GB resident while loaded. Close other heavy apps or pick a smaller quant/model.`
+        )
       )
-    )
+    }
   }
 
   const nativeTools = modelSupportsNativeTools(input.modelInfo)
@@ -705,16 +720,25 @@ export function evaluateOllamaModelPreflight(
     )
   }
 
-  const headline = delegateHint ? `${guidance} ${delegateHint}` : guidance
+  const headline = cloudModel
+    ? 'Inference runs through the signed-in local Ollama daemon to Ollama Cloud. Local weights and RAM limits do not apply; network availability and your Ollama plan do.'
+    : delegateHint
+      ? `${guidance} ${delegateHint}`
+      : guidance
   warnings.unshift(
-    warning('ollama-model-guidance', 'info', `${input.modelLabel} — local expectations`, headline)
+    warning(
+      'ollama-model-guidance',
+      'info',
+      `${input.modelLabel} — ${cloudModel ? 'cloud' : 'local'} expectations`,
+      headline
+    )
   )
 
   return {
     family,
     checks,
     guidance: headline,
-    delegateHint,
+    delegateHint: cloudModel ? undefined : delegateHint,
     warnings
   }
 }

@@ -1763,6 +1763,7 @@ import {
   parseCapabilityRawItems
 } from './providers/ProviderCapabilityProbe'
 import {
+  fetchOllamaModelCatalog,
   fetchOllamaModels,
   getOllamaCapabilityContract,
   getOllamaStatusSnapshot,
@@ -55501,8 +55502,7 @@ if (isGeminiMcpBridgeProcess) {
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()
-          const models = await fetchOllamaModels(settings)
-          return models
+          return (await fetchOllamaModelCatalog(settings)).models
         } catch {
           return getStaticProviderModels('ollama')
         }

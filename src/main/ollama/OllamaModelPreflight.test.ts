@@ -552,6 +552,36 @@ describe('evaluateOllamaModelPreflight', () => {
     expect(missing.warnings.some((w) => w.id === 'ollama-ram-tight')).toBe(true)
   })
 
+  it('treats Ollama Cloud models as remote instead of missing local weights', () => {
+    const result = evaluateOllamaModelPreflight({
+      modelId: 'glm-5.2:cloud',
+      modelLabel: 'GLM 5.2',
+      modelInfo: {
+        id: 'glm-5.2:cloud',
+        label: 'GLM 5.2',
+        source: 'cloud',
+        isCloud: true,
+        contextLength: 1_000_000,
+        capabilities: ['completion', 'tools']
+      },
+      installedModelIds: [],
+      totalMemoryBytes: 8 * GB
+    })
+
+    expect(result.checks.find((check) => check.id === 'installed')).toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/remotely|no local model weights/i)
+    })
+    expect(result.checks.find((check) => check.id === 'ram')).toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/cloud|does not apply/i)
+    })
+    expect(result.warnings.some((entry) => entry.id === 'ollama-model-missing')).toBe(false)
+    expect(result.warnings.some((entry) => entry.id === 'ollama-ram-tight')).toBe(false)
+    expect(result.warnings[0]?.title).toContain('cloud expectations')
+    expect(result.guidance).toContain('signed-in local Ollama daemon')
+  })
+
   it('flags models that do not advertise native tools', () => {
     const result = evaluateOllamaModelPreflight({
       modelId: 'gpt-oss:latest',
