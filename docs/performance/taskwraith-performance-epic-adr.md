@@ -545,7 +545,7 @@ T2  HEAD baseline capture (30/50/dual/soak) under isolated userData   │
 T4  Chat journal/segments dual-read (S1→S2 dark-write) + deletion     │ — substantially landed 2026-08-16, `3bd11b12a`..`d61a63a47`, unflagged (see amendment)
      │                                              [@GrokWork1]      │
      ▼                                                                │
-T5  Tool-detail content-addressed blobs + hot projection-only         │
+T5  Tool-detail content-addressed blobs + hot projection-only         │ — substantially landed 2026-08-16, `bcaf74111`/`64316cf3f`/`1f956f761`, unflagged; storage is a byte-offset ledger with checksums, NOT content-addressed (see amendment)
      │                         [@GrokWork1 core store; @GrokWork2 UI/IPC projection]
      ▼                                                                │
 T6  IPC field-mask + by-id ops + byte-aware baselines  [@GrokWork2]   │
@@ -603,6 +603,64 @@ artifacts that precondition names are themselves now missing from disk (see
 `t2-baseline-artifact-index.md`). Whether that authorization was given out of
 band is not recorded anywhere in this repo. This note states the position; it
 does not adjudicate it.
+
+**Amendment (2026-08-16, T5 substantially landed — and the label is wrong):**
+three commits landed the tool-detail tranche a few hours after the amendment
+above was written: `bcaf74111` (types — `ToolActivityDetailRef`,
+`toolDetailExternalizationGeneration`), `64316cf3f`
+(`src/main/store/ToolActivityDetailLedger.ts` +
+`ChatToolDetailExternalization.ts`), and `1f956f761` (save path, the
+`get-tool-activity-details` IPC, and renderer lazy-hydration via
+`toolActivityDetailHydration.tsx`). The read path is live end-to-end, not
+write-only.
+
+`829535950` ("author live transcript operations") landed in the same window but
+is **not** T5 — it adds an id-indexed transcript mutation index to replace O(n)
+`findIndex` scans on the live flush path, and never touches tool activities,
+refs, hashes or blobs. Counting it as T5 would overstate the tranche.
+
+**What landed is not content-addressed, and this ladder's wording should stop
+saying it is.** `ToolActivityDetailRef` is, in its own doc comment, a
+"Byte-range pointer": `{runId, activityId, offset, byteLength, sha256}`. The
+artifact path derives from `runId` alone (`detailArtifactPaths`), never from a
+digest, and `sha256` is computed *after* the append position is chosen and used
+only to verify-on-read. Retrieval is an offset read. Two byte-identical tool
+outputs are therefore stored twice, at two offsets — no dedup, which is the
+main thing content addressing would have bought. This satisfies §5.1 item 4 and
+§12 item 1's "append-only … with checksums", but not the "content-addressed"
+half of T5's own name, and it makes §12.1 item 4 ("content-hash chunking for
+multi-MB tool payloads") moot as worded. Worth stressing: nothing in the landed
+code, comments or tests claims content addressing — the mismatch is this
+document's label, not a false claim in the implementation.
+
+**Third unflagged landing on shared `master`.** Neither new module reads an env
+var or feature flag; the write executes inside the ordinary save flow behind a
+fail-open `try/catch`. And the direct parent of `829535950` is `fb761370e` — the
+commit that added the amendment above recording exactly this tension with
+invariant 6. The pattern recurred immediately after it was written down. Noted,
+not adjudicated.
+
+**Still open, and one of them is a live honesty gap:**
+
+- §5.7's hot case is unaddressed. `isTerminalRun()` gates externalization, so a
+  running or streaming run keeps its tool activities fully inlined — the
+  landing helps the cold case, not the "saves are hottest" case §1 names.
+- §7.3's `exportFullAssemblyOk` ("after T5: markdown assembled from journal +
+  detail stream") is **not** satisfied. `src/main/TranscriptMarkdownExport.ts`
+  decides whether to emit its "raw tool details omitted" disclosure by
+  inspecting `parameters` / `rawUseEvent` / `rawResultEvent` / `rawEventRefs` /
+  the summary fields directly — precisely the fields externalization now strips
+  and replaces with `detailRef`. On an externalized terminal activity the
+  exporter therefore appears to stop flagging an omission it is still making,
+  which touches §3 item 3 ("no silent quality reduction") rather than being
+  mere wording drift. **Flagged, not fixed:** that file is dirty in the shared
+  checkout under another session right now, and I have not verified whether
+  they are already addressing it.
+- §5.4's proposed `chat-tool-detail-streams` deletion step is moot: the new
+  `tool-activity-details.jsonl` lives inside the existing per-run
+  `run-artifacts/<runId>/` directory, which both the global and per-chat
+  deletion paths already remove recursively. No resurrection gap.
+- §5.7 item 7 / Boss #9 (backfill with coverage manifests) remains untouched.
 
 **Item 6 (utility-process durable write) — committed, outside this ADR's core tranches:** `b745115a1` landed the worker (`src/main/store/PersistenceWriteWorker.ts` + `.test.ts`, `src/main/workers/persistenceWriteWorker.ts`), seam (`src/main/store/index.ts`), durability tests (`src/main/store/persistenceDurability.test.ts`, 14/14), Phase-0 baseline (`src/main/store/persistenceWriteBaseline.bench.test.ts`), and build entry (`electron.vite.config.ts`). Flag dark (`TASKWRAITH_UTILITY_WRITE=1`), no composition-root wiring. ~40 ms (57%) of the ~70 ms large-save block moves off main; serialize (~30 ms) stays. This narrows the freeze window until T4 — it does not replace v2 append-oriented persistence.
 
