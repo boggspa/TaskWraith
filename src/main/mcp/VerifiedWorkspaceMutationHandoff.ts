@@ -98,6 +98,8 @@ interface ValidatedCapabilities {
   cwdPathEvidence?: ResolvedCanonicalWorkspaceLockPath
   targets: VerifiedTarget[]
   workspaceOnly: boolean
+  /** One exact worktree-root `.git` capability acquired by repository tools. */
+  repositoryMetadataOnly: boolean
   leaseIds: string[]
 }
 
@@ -363,17 +365,30 @@ function validateCapabilities(
   if (!rootPath) {
     return fail('invalid_capability', 'Mutation capabilities lack a verified workspace root.')
   }
+  const validatedTargets = [...targets.values()]
+  const repositoryMetadataOnly =
+    !hasWorkspace &&
+    validatedTargets.length === 1 &&
+    isRepositoryMetadataTarget(validatedTargets[0], rootPath)
 
   return {
     ok: true,
     value: {
       rootPath,
       executionCwd: rootPath,
-      targets: [...targets.values()],
+      targets: validatedTargets,
       workspaceOnly: hasWorkspace,
+      repositoryMetadataOnly,
       leaseIds: [...leaseIds]
     }
   }
+}
+
+function isRepositoryMetadataTarget(target: VerifiedTarget, rootPath: string): boolean {
+  if (target.kind !== 'file') return false
+  const api = pathApi(target.evidence.pathFlavor)
+  const relative = api.relative(rootPath, target.executableTargetPath)
+  return normalizedRelative(relative, target.evidence) === '.git'
 }
 
 function firstDefined(
@@ -612,17 +627,20 @@ function resolveExecutionCwd(
   }
 }
 
-function rewriteWorkspaceScopedPath(
+function rewriteVerifiedRootScopedPath(
   rawPath: string,
-  workspaceTarget: VerifiedTarget,
+  capabilities: ValidatedCapabilities,
   label: string
 ): InternalResult<string> {
   if (!rawPath.trim()) {
     return fail('invalid_arguments', `${label} must be a non-empty string.`)
   }
-  const evidence = workspaceTarget.evidence
+  const evidence = capabilities.targets[0]?.evidence
+  if (!evidence) {
+    return fail('missing_capability', `${label} lacks verified workspace-root evidence.`)
+  }
   const api = pathApi(evidence.pathFlavor)
-  const canonicalRoot = workspaceTarget.executableTargetPath
+  const canonicalRoot = capabilities.rootPath
   let relative: string | undefined
   if (api.isAbsolute(rawPath)) {
     const absolute = api.resolve(rawPath)
@@ -633,7 +651,7 @@ function rewriteWorkspaceScopedPath(
     relative = relativeInside(canonicalRoot, api.resolve(canonicalRoot, rawPath), evidence)
   }
   if (relative === undefined) {
-    return fail('path_mismatch', `${label} escapes the verified workspace capability.`)
+    return fail('path_mismatch', `${label} escapes the verified workspace root.`)
   }
   return { ok: true, value: api.resolve(canonicalRoot, relative) }
 }
@@ -790,6 +808,7 @@ function handoffGitStage(
 ): VerifiedWorkspaceMutationHandoffResult {
   const patch = firstDefined(args, ['patch', 'diff'])
   const requestedPaths = stringArray(firstDefined(args, GIT_PATH_ALIASES))
+  const rootScoped = capabilities.workspaceOnly || capabilities.repositoryMetadataOnly
 
   if (patch !== undefined) {
     if (typeof patch !== 'string' || !patch.trim()) {
@@ -799,18 +818,18 @@ function handoffGitStage(
   }
 
   if (requestedPaths) {
-    if (capabilities.workspaceOnly) {
+    if (rootScoped) {
       if (capabilities.targets.length !== 1) {
         return fail(
           'capability_count_mismatch',
-          'Path-bearing git_stage requires one verified workspace capability.'
+          'Path-bearing git_stage requires one verified workspace or repository metadata capability.'
         )
       }
       const rewrittenPaths: string[] = []
       for (const [index, rawPath] of requestedPaths.entries()) {
-        const rewrittenPath = rewriteWorkspaceScopedPath(
+        const rewrittenPath = rewriteVerifiedRootScopedPath(
           rawPath,
-          capabilities.targets[0],
+          capabilities,
           `git_stage path ${index + 1}`
         )
         if (!rewrittenPath.ok) return rewrittenPath
@@ -848,10 +867,10 @@ function handoffGitStage(
   if (args.all !== true && args.update !== true) {
     return fail('invalid_arguments', 'git_stage requires paths, patch, all=true, or update=true.')
   }
-  if (!capabilities.workspaceOnly || capabilities.targets.length !== 1) {
+  if (!rootScoped || capabilities.targets.length !== 1) {
     return fail(
       'capability_count_mismatch',
-      'Repository-wide git_stage requires one verified workspace capability.'
+      'Repository-wide git_stage requires one verified workspace or repository metadata capability.'
     )
   }
   return {
@@ -897,20 +916,21 @@ function rewritePatchPath(
   rawValue: string,
   prefix: 'a/' | 'b/' | '',
   capabilities: ValidatedCapabilities,
+  rootScoped: boolean,
   used: Set<string>,
   label: string
 ): InternalResult<string> {
   const raw = patchRawPath(rawValue)
   if (!raw.ok) return raw
   if (raw.value === null) return { ok: true, value: '/dev/null' }
-  if (capabilities.workspaceOnly) {
+  if (rootScoped) {
     if (capabilities.targets.length !== 1) {
       return fail(
         'capability_count_mismatch',
-        'Workspace patch execution requires one verified workspace capability.'
+        'Workspace patch execution requires one verified workspace or repository metadata capability.'
       )
     }
-    const exactPath = rewriteWorkspaceScopedPath(raw.value, capabilities.targets[0], label)
+    const exactPath = rewriteVerifiedRootScopedPath(raw.value, capabilities, label)
     if (!exactPath.ok) return exactPath
     const relative = patchRelativePath(
       {
@@ -932,7 +952,8 @@ function rewritePatchPath(
 
 function rewriteUnifiedPatch(
   patch: string,
-  capabilities: ValidatedCapabilities
+  capabilities: ValidatedCapabilities,
+  rootScoped: boolean
 ): InternalResult<string> {
   if (
     !patch.trim() ||
@@ -996,9 +1017,23 @@ function rewriteUnifiedPatch(
 
     const diffHeader = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line)
     if (diffHeader) {
-      const oldPath = rewritePatchPath(diffHeader[1], 'a/', capabilities, used, 'Patch old path')
+      const oldPath = rewritePatchPath(
+        diffHeader[1],
+        'a/',
+        capabilities,
+        rootScoped,
+        used,
+        'Patch old path'
+      )
       if (!oldPath.ok) return oldPath
-      const newPath = rewritePatchPath(diffHeader[2], 'b/', capabilities, used, 'Patch new path')
+      const newPath = rewritePatchPath(
+        diffHeader[2],
+        'b/',
+        capabilities,
+        rootScoped,
+        used,
+        'Patch new path'
+      )
       if (!newPath.ok) return newPath
       rewritten.push(`diff --git ${oldPath.value} ${newPath.value}`)
       pathHeaderCount += 2
@@ -1014,6 +1049,7 @@ function rewriteUnifiedPatch(
         fileHeader[2],
         fileHeader[1] === '---' ? 'a/' : 'b/',
         capabilities,
+        rootScoped,
         used,
         fileHeader[1] === '---' ? 'Patch old path' : 'Patch new path'
       )
@@ -1029,6 +1065,7 @@ function rewriteUnifiedPatch(
         metadataPath[2],
         '',
         capabilities,
+        rootScoped,
         used,
         `Patch ${metadataPath[1]}`
       )
@@ -1051,7 +1088,7 @@ function rewriteUnifiedPatch(
   if (activeHunk || pathHeaderCount === 0) {
     return fail('unsafe_patch', 'Patch is incomplete or contains no verified file paths.')
   }
-  if (!capabilities.workspaceOnly) {
+  if (!rootScoped) {
     const unused = requireEveryTargetUsed(capabilities.targets, used)
     if (unused) return unused
   }
@@ -1063,7 +1100,9 @@ function handoffPatch(
   capabilities: ValidatedCapabilities,
   toolName: 'apply_patch' | 'git_stage'
 ): VerifiedWorkspaceMutationHandoffResult {
-  if (capabilities.workspaceOnly && toolName !== 'git_stage') {
+  const rootScoped =
+    capabilities.workspaceOnly || (toolName === 'git_stage' && capabilities.repositoryMetadataOnly)
+  if (rootScoped && toolName !== 'git_stage') {
     return fail(
       'capability_count_mismatch',
       `${toolName} requires precise capabilities for every patch path.`
@@ -1073,17 +1112,38 @@ function handoffPatch(
   if (typeof patchValue !== 'string') {
     return fail('invalid_arguments', `${toolName} patch must be a string.`)
   }
-  const patch = rewriteUnifiedPatch(patchValue, capabilities)
+  const patch = rewriteUnifiedPatch(patchValue, capabilities, rootScoped)
   if (!patch.ok) return patch
   const rewritten = withoutKeys(args, ['patch', 'diff'])
   rewritten.patch = patch.value
   return {
     ok: true,
-    mode: capabilities.workspaceOnly ? 'verified-workspace' : 'precise-targets',
+    mode: rootScoped ? 'verified-workspace' : 'precise-targets',
     args: rewritten,
-    executionContext: capabilities.workspaceOnly
+    executionContext: rootScoped
       ? workspaceContext(capabilities)
       : preciseContext(capabilities, capabilities.targets)
+  }
+}
+
+function handoffGitCommit(
+  args: Readonly<Record<string, unknown>>,
+  capabilities: ValidatedCapabilities
+): VerifiedWorkspaceMutationHandoffResult {
+  if (
+    capabilities.targets.length !== 1 ||
+    (!capabilities.workspaceOnly && !capabilities.repositoryMetadataOnly)
+  ) {
+    return fail(
+      'capability_count_mismatch',
+      'git_commit requires one verified workspace or repository metadata capability.'
+    )
+  }
+  return {
+    ok: true,
+    mode: 'verified-workspace',
+    args: { ...args },
+    executionContext: workspaceContext(capabilities)
   }
 }
 
@@ -1149,6 +1209,8 @@ function prepareVerifiedWorkspaceMutationHandoffUnfinalized(
       return handoffPatch(input.args, capabilities, 'apply_patch')
     case 'git_stage':
       return handoffGitStage(input.args, capabilities)
+    case 'git_commit':
+      return handoffGitCommit(input.args, capabilities)
     default:
       break
   }

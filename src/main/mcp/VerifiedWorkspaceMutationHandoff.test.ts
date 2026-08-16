@@ -131,6 +131,23 @@ function workspaceCapability(
   })
 }
 
+function repositoryCapability(
+  input: {
+    requestedRoot?: string
+    canonicalRoot?: string
+  } = {}
+): WorkspaceLockMutationCapability {
+  const requestedRoot = input.requestedRoot || '/repo'
+  const canonicalRoot = input.canonicalRoot || '/physical/repo'
+  return capability({
+    requestedRoot,
+    canonicalRoot,
+    requestedTarget: '.git',
+    executableTarget: nodePath.posix.join(canonicalRoot, '.git'),
+    kind: 'file'
+  })
+}
+
 function realWorkspaceCapability(rootPath: string): WorkspaceLockMutationCapability {
   leaseSequence += 1
   const leaseId = `lease-${leaseSequence}`
@@ -551,12 +568,108 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
     }
   })
 
+  it('normalizes path-bearing git staging through its exact repository metadata capability', () => {
+    const result = prepareVerifiedWorkspaceMutationHandoff({
+      toolName: 'git_stage',
+      args: {
+        paths: ['/repo/docs/channels-p6-plan.md', 'src/worker.ts'],
+        path: 'ignored.ts'
+      },
+      capabilities: [
+        repositoryCapability({
+          requestedRoot: '/repo',
+          canonicalRoot: '/physical/repo'
+        })
+      ]
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'verified-workspace',
+      args: {
+        paths: ['/physical/repo/docs/channels-p6-plan.md', '/physical/repo/src/worker.ts']
+      },
+      executionContext: {
+        cwd: '/physical/repo',
+        workspacePath: '/physical/repo',
+        executableTargetPaths: ['/physical/repo']
+      }
+    })
+  })
+
+  it.each([{ all: true }, { update: true }])(
+    'accepts repository-wide git staging through its exact metadata capability: %j',
+    (args) => {
+      expect(
+        prepareVerifiedWorkspaceMutationHandoff({
+          toolName: 'git_stage',
+          args,
+          capabilities: [repositoryCapability()]
+        })
+      ).toMatchObject({
+        ok: true,
+        mode: 'verified-workspace',
+        args
+      })
+    }
+  )
+
+  it('accepts git commit through the same exact repository metadata capability', () => {
+    expect(
+      prepareVerifiedWorkspaceMutationHandoff({
+        toolName: 'git_commit',
+        args: { message: 'docs: record the verified finding' },
+        capabilities: [repositoryCapability()]
+      })
+    ).toMatchObject({
+      ok: true,
+      mode: 'verified-workspace',
+      args: { message: 'docs: record the verified finding' },
+      executionContext: {
+        cwd: '/physical/repo',
+        workspacePath: '/physical/repo'
+      }
+    })
+  })
+
+  it('never promotes an arbitrary precise file capability into repository authority', () => {
+    const arbitraryFile = capability({
+      requestedTarget: 'src/a.ts',
+      executableTarget: '/physical/repo/src/a.ts'
+    })
+
+    expect(
+      prepareVerifiedWorkspaceMutationHandoff({
+        toolName: 'git_stage',
+        args: { paths: ['src/b.ts'] },
+        capabilities: [arbitraryFile]
+      })
+    ).toMatchObject({ ok: false, reason: 'path_mismatch' })
+    expect(
+      prepareVerifiedWorkspaceMutationHandoff({
+        toolName: 'git_commit',
+        args: { message: 'must fail' },
+        capabilities: [arbitraryFile]
+      })
+    ).toMatchObject({ ok: false, reason: 'capability_count_mismatch' })
+  })
+
   it('refuses workspace-wide git path selectors that escape the verified root', () => {
     expect(
       prepareVerifiedWorkspaceMutationHandoff({
         toolName: 'git_stage',
         args: { paths: ['../outside.ts'] },
         capabilities: [workspaceCapability()]
+      })
+    ).toMatchObject({ ok: false, reason: 'path_mismatch' })
+  })
+
+  it('refuses repository-capability git path selectors that escape the verified root', () => {
+    expect(
+      prepareVerifiedWorkspaceMutationHandoff({
+        toolName: 'git_stage',
+        args: { paths: ['../outside.ts'] },
+        capabilities: [repositoryCapability()]
       })
     ).toMatchObject({ ok: false, reason: 'path_mismatch' })
   })
@@ -670,6 +783,28 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
         ].join('\n')
       )
     }
+  })
+
+  it('rewrites git-stage patch headers under the exact repository metadata capability', () => {
+    const patch = [
+      'diff --git a/docs/a.md b/docs/a.md',
+      '--- a/docs/a.md',
+      '+++ b/docs/a.md',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new'
+    ].join('\n')
+    const result = prepareVerifiedWorkspaceMutationHandoff({
+      toolName: 'git_stage',
+      args: { patch },
+      capabilities: [repositoryCapability()]
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'verified-workspace',
+      args: { patch }
+    })
   })
 
   it('refuses unsafe or capability-incomplete patches without returning raw paths', () => {
