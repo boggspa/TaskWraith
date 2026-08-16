@@ -321,7 +321,15 @@ describe('registerGitHandlers', () => {
         commits: []
       }
     })
-    expect(deps.gitService.unpushedCommits).toHaveBeenCalledWith('/repo')
+    expect(deps.gitService.unpushedCommits).toHaveBeenCalledWith('/repo', undefined)
+    await handlerFor('git:unpushed-commits')(
+      {},
+      { workspacePath: '/repo', page: { offset: 50, limit: 25 } }
+    )
+    expect(deps.gitService.unpushedCommits).toHaveBeenLastCalledWith('/repo', {
+      offset: 50,
+      limit: 25
+    })
     await expect(
       handlerFor('git:workspace-stats')({}, { workspacePath: '/repo', chatId: 'chat-1' })
     ).resolves.toEqual({

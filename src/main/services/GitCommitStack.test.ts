@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GitCommandRunner, GitRepositorySnapshot } from './GitService'
-import { parseGitUnpushedCommitLog, readGitUnpushedCommitStack } from './GitCommitStack'
+import {
+  MAX_GIT_UNPUSHED_COMMIT_PAGE_SIZE,
+  normalizeGitUnpushedCommitPage,
+  parseGitUnpushedCommitLog,
+  readGitUnpushedCommitStack
+} from './GitCommitStack'
 
 function snapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepositorySnapshot {
   return {
@@ -146,6 +151,43 @@ describe('readGitUnpushedCommitStack', () => {
 
     expect(result.comparison).toBe('remote-refs')
     expect(run.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['HEAD', '--not', '--remotes']))
+  })
+
+  it('reads a bounded newest-first page and exposes the next offset', async () => {
+    const run = vi.fn<GitCommandRunner>().mockResolvedValue({
+      stdout: [
+        record({ hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }),
+        record({ hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }),
+        record({ hash: 'cccccccccccccccccccccccccccccccccccccccc' })
+      ].join(''),
+      stderr: '',
+      code: 0
+    })
+
+    const result = await readGitUnpushedCommitStack({
+      repoRoot: '/repo',
+      snapshot: snapshot(),
+      run,
+      timeoutMs: 500,
+      page: { offset: 50, limit: 2 }
+    })
+
+    expect(result.commits.map((commit) => commit.hash)).toEqual([
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    ])
+    expect(result.page).toEqual({ offset: 50, limit: 2, hasMore: true, nextOffset: 52 })
+    expect(run.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(['--max-count=3', '--skip=50', '@{u}..HEAD'])
+    )
+  })
+
+  it('clamps renderer-provided page values before building Git arguments', () => {
+    expect(normalizeGitUnpushedCommitPage({ offset: -12, limit: Number.MAX_SAFE_INTEGER })).toEqual({
+      offset: 0,
+      limit: MAX_GIT_UNPUSHED_COMMIT_PAGE_SIZE
+    })
+    expect(normalizeGitUnpushedCommitPage({})).toEqual({ offset: 0, limit: 50 })
   })
 
   it('surfaces Git failures without returning a misleading empty stack', async () => {

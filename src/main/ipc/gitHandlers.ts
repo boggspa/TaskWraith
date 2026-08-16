@@ -21,7 +21,10 @@ import type {
   GitWorktreeList
 } from '../services/GitService'
 import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
-import type { GitUnpushedCommitStack } from '../services/GitCommitStack'
+import type {
+  GitUnpushedCommitPageRequest,
+  GitUnpushedCommitStack
+} from '../services/GitCommitStack'
 import type {
   GitCommitGroupPullRequestInput,
   GitCommitGroupPullRequestResult,
@@ -45,6 +48,7 @@ import type {
 } from '../ExternalPublishReceiptLedger'
 
 type GitIpcPayload = { workspacePath?: string; repoPath?: string; chatId?: string }
+type GitUnpushedCommitsPayload = GitIpcPayload & { page?: GitUnpushedCommitPageRequest }
 type GitWorkspaceStatsPayload = GitIpcPayload & { worktreePath?: string }
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
 type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
@@ -436,10 +440,10 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     'git:unpushed-commits',
     async (
       event,
-      payload?: GitIpcPayload
+      payload?: GitUnpushedCommitsPayload
     ): Promise<GitResult<GitUnpushedCommitStack> | { ok: false; error: string }> => {
       const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
-      return repo.ok ? deps.gitService.unpushedCommits(repo.path) : repo
+      return repo.ok ? deps.gitService.unpushedCommits(repo.path, payload?.page) : repo
     }
   )
 

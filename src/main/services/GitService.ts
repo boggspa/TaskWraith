@@ -36,6 +36,7 @@ import {
 } from './GitWorkspaceStats'
 import {
   readGitUnpushedCommitStack,
+  type GitUnpushedCommitPageRequest,
   type GitUnpushedCommitStack
 } from './GitCommitStack'
 import {
@@ -394,7 +395,10 @@ export class GitService {
     }
   }
 
-  async unpushedCommits(inputPath: string): Promise<GitResult<GitUnpushedCommitStack>> {
+  async unpushedCommits(
+    inputPath: string,
+    page?: GitUnpushedCommitPageRequest
+  ): Promise<GitResult<GitUnpushedCommitStack>> {
     try {
       const snapshot = await this.buildSnapshot(inputPath)
       return {
@@ -403,7 +407,8 @@ export class GitService {
           repoRoot: snapshot.repoRoot,
           snapshot,
           run: this.run,
-          timeoutMs: this.timeoutMs
+          timeoutMs: this.timeoutMs,
+          page
         })
       }
     } catch (error) {

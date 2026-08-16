@@ -241,7 +241,10 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
-import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
+import type {
+  GitUnpushedCommitPageRequest,
+  GitUnpushedCommitStack
+} from '../main/services/GitCommitStack'
 import type {
   GitCommitGroupPullRequestResult,
   GitPullRequestLifecycleAction,
@@ -876,6 +879,7 @@ declare global {
         workspacePath?: string
         repoPath?: string
         chatId?: string
+        page?: GitUnpushedCommitPageRequest
       }) => Promise<GitResult<GitUnpushedCommitStack>>
       gitWorkspaceStats: (payload: {
         workspacePath?: string

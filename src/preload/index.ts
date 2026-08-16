@@ -41,7 +41,10 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
-import type { GitUnpushedCommitStack } from '../main/services/GitCommitStack'
+import type {
+  GitUnpushedCommitPageRequest,
+  GitUnpushedCommitStack
+} from '../main/services/GitCommitStack'
 import type {
   GitCommitGroupPullRequestResult,
   GitPullRequestLifecycleAction,
@@ -778,6 +781,7 @@ const api = {
     workspacePath?: string
     repoPath?: string
     chatId?: string
+    page?: GitUnpushedCommitPageRequest
   }) =>
     ipcRenderer.invoke('git:unpushed-commits', payload) as Promise<
       GitResult<GitUnpushedCommitStack>
