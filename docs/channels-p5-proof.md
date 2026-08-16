@@ -12,10 +12,14 @@ taken, and a disposable-profile migration mission proved the blocked-channel
 deferral end to end.
 
 What P5 did **not** achieve, stated first so no reader infers otherwise: the
-legacy People substrate has **not** been retired, the production builds have
-not been exercised, and one residual remains genuinely open. Two of the three
-original residuals are now discharged — **by different kinds of evidence, and
-the difference matters**; both are written up in full below.
+legacy People substrate has **not** been retired, and one residual remains
+genuinely open. Two of the three original residuals are now discharged — **by
+different kinds of evidence, and the difference matters**; both are written up
+in full below.
+
+**Every runnable gate is green, and that is exactly when a document starts
+reading as finished.** It is not. D2 is blocked on a user capability decision,
+not completed, and a green gate set is not a finished D2.
 
 **D2 retirement is BLOCKED, not merely unfinished.** The consumer audit proved
 that a degraded launch still serves legacy People reads and reconnects, so
@@ -92,6 +96,37 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   touching the real profile: `mkdtempSync` work root, worker-owned userData and
   workspace, multiple relaunches. Two committed missions (`46ee7e14a`,
   `fc98b705b`), both with zero production changes.
+- **The dead transitional branch is removed (X4b, `8b699c9f0`).**
+  `ChannelExternalSeatLegacyAuthority` is now exactly `{ mode: 'channel_only' }`
+  — a single-member type, so the retired mode is **unrepresentable** rather than
+  merely unused, and the authority carries zero transitional, People, share or
+  presence-fallback references. Removal was observed red at 6 failed / 7 passed
+  and **all thirteen tests were rebased rather than deleted**, six of them
+  converted into Channel-only guarantees.
+
+  It also **rescued a live invariant that was riding inside the dead branch**:
+  duplicate migration-source-binding rejection, which the old fallback's tuple
+  map enforced incidentally. It is now a dedicated injective `seenPolicySources`
+  check, so retiring the branch did not quietly retire a guard with it. That is
+  the kind of thing a bulk deletion loses silently.
+
+  The safety question behind it is closed:
+  `startPeopleToChannelMigrationBootstrap` calls `runner.runToCompletion`
+  **first** and constructs Channels only after terminal success, and any throw
+  leaves `channelProductionBootstrap` null so external-seat resolution returns
+  `null` before the authority is ever constructed. A half-retired profile could
+  never have served the transitional authority, so the branch was not a valve.
+
+- **Production builds pass.** `npm run build` exits 0 — both runtime
+  qualifications, the full node/web/tui typecheck, `electron-vite build` at 1568
+  modules, and `tui:build`. Full platform packaging (`build:mac`, `build:win`,
+  `build:linux`) was **deliberately not run**: it additionally requires Swift
+  bridge builds, universal deps, electron-builder and signing/notarization
+  paths, which is release activity rather than a P5 acceptance gate.
+- **D1 is partially complete (`80b960af8`).** Four proven-dead renderer files
+  removed, −317. Proven by checking all eight exported symbols individually
+  rather than the module name alone. The join stylesheet is **not** part of it —
+  see the open list.
 - **Full typechecks pass** — `typecheck:node`, `typecheck:web`, and
   `typecheck:tui` are all clean at this boundary.
 - **Architecture and doctrine-integrity guards pass.**
@@ -126,24 +161,17 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
 - **Obsolete People IPC, preload types, sessions, invitations, storage, and
   startup wiring** are still present. Note: `src/preload/index.ts` was
   foreign-claimed during this round, so preload retirement was never openable.
-- **Applicable production builds** have not been run at this boundary.
-- **X4b — the unreachable transitional branch is still present** in
-  `ChannelExternalSeatAuthority`. X4 sealed the mode; it did not delete the
-  code. Removing it re-bases all thirteen tests in that module, because its
-  test helper defaults to `transitional`, so it is a proof-surface change owned
-  by that module's author rather than cleanup.
-
-  **The safety question behind it is now ANSWERED and closed.** The open
-  concern was whether the branch was a live valve against a _migration_ defect
-  — a profile serving with an enabled ordinary share still present, where
-  `transitional` would yield legacy seats and `channel_only` silently none. It
-  cannot happen: `startPeopleToChannelMigrationBootstrap` calls
-  `runner.runToCompletion` **first** and constructs Channels only after
-  terminal success, and any throw leaves `channelProductionBootstrap` null so
-  external-seat resolution returns `null` before the authority is ever
-  constructed. A half-retired profile can never serve the transitional
-  authority. The valve is dead, so X4b is safe removal rather than a narrowing
-  — it remains open only as a proof-surface change, not as a risk.
+- **The 54-class join stylesheet.** `18-human-collaboration-join.css` has 54 of
+  its 72 classes unreferenced, including the whole join modal and the
+  host-admission-banner surface. It is **not** a D1 leftover: the degraded-launch
+  capability that D2 preserves includes the legacy runtime projecting history,
+  so deleting classes that style that projection would silently degrade the
+  thing D2 protects — and no test catches it, because CSS absence is a visual
+  failure, not a test failure. The reference scan was also renderer-side while
+  that projection originates in main. Deferred as **D2-dependent**; when D2 is
+  answered, scope it by exercising a degraded reconnect and observing which
+  classes apply, not by reference counts. `.needs-input-banner*` is live and
+  must survive any such cleanup.
 
 - **Crash recovery across every new durable boundary** is proven for the
   runtime presence and per-channel barrier work, but not end to end through a
@@ -193,9 +221,10 @@ the ready path.
 **What remains unproven, stated plainly:** if a future change reintroduces a
 route by which a legacy share becomes both _enabled_ and _present_ alongside an
 active Channel, the dedupe logic behind it has never run against real
-production data. The code is now unreachable rather than removed
-(`ChannelExternalSeatAuthority` still contains the branch — see X4b), so that
-route would need re-opening deliberately.
+production data. The code is now **gone** rather than merely unreachable — X4b
+(`8b699c9f0`) removed the branch and narrowed the mode to a single-member type
+— so re-opening that route would mean deliberately rebuilding the fallback, not
+flipping a flag.
 
 ### 2. Ensemble delivery collapses a blocked authority to `[]` — DEFERRAL PROVEN, BOUND UNCHANGED
 
@@ -313,6 +342,14 @@ turns is worth less than one that names them.
   per channel). The decision that a People-only share resolves
   `recovery_blocked` is `@Advisor`'s, justified on startup-ordering merits. The
   two must not be merged in any later summary.
+- **This record itself went stale for three slices, and that is an
+  orchestration failure rather than an authoring one.** D1 (`80b960af8`), X4b
+  (`8b699c9f0`) and the production builds all landed after the last content
+  update, and none of them carried the obligation to update the record. It was
+  caught only by the final adversarial audit — **independently, by two
+  reviewers** — which is the strongest signal an audit can give, and also the
+  latest possible moment to find it. The structural rule at the end of this
+  document exists because of it.
 - **Two citations and three symbols were fabricated during the round** by three
   different seats, and none reached a commit. Every one was caught by opening
   the file. That is the only reason this record can be trusted.
@@ -338,15 +375,25 @@ cannot distinguish concurrent sessions.
 
 ## Acceptance boundary
 
-- Base: `1b3085f39`, branch `master`. First written at `7a723b835` and updated
-  in place, as its own closing instruction required.
-- Verified at this boundary: 919 Channels-surface tests, `typecheck:node`,
-  architecture guard, doctrine-integrity guard, and the format ratchet. The
-  full node/web/tui typecheck triple was clean at the `7a723b835` boundary.
+- Base: `3d576061d`, branch `master`. First written at `7a723b835` and updated
+  in place at `1b3085f39` and again here, as its own closing instruction
+  required.
+- Verified at this boundary: the Channels-surface suites, the full node/web/tui
+  typecheck triple, architecture guard, doctrine-integrity guard, the format
+  ratchet, and `npm run build` (exit 0).
 - Proven by committed disposable-profile mission: blocked-channel deferral with
   queue survival across relaunch (`46ee7e14a`), and inherited-share
   non-survival with Channel-only/transitional equivalence (`fc98b705b`).
-- Not verified at this boundary: production builds, and D1/D2 retirement of the
-  People substrate.
+- Not verified at this boundary: full platform packaging (out of P5 scope), and
+  D2 retirement of the People substrate (blocked on a user decision).
 - This record still describes a **partial** P5. It must be updated, not
-  replaced, if D1/D2 or X4b land.
+  replaced, when D2 or the join stylesheet are resolved.
+
+**A rule this record learned the hard way, and the reason it is written here
+rather than in a commit message: the record must be updated by the slice that
+changes its truth, not by a later pass. A slice is not complete until the
+record reflects it.** This document went stale for three consecutive slices —
+D1, X4b and the production builds — because each was routed without the update
+being part of it. A document that describes live state and has no
+owner-by-default goes stale silently, which is precisely the failure mode this
+round spent its time hunting in code.
