@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyChatUpdateDelivery, buildChatUpdateDelivery } from '../../shared/chatUpdateTransport'
 import { deriveChatRecordMutationWithProjection } from './ChatRecordMutation'
+import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
 import { ChatUpdateProjectionTracker } from './ChatUpdateProjectionTracker'
 import type { ChatMessage, ChatRecord } from './types'
 
@@ -115,6 +116,31 @@ describe('ChatUpdateProjectionTracker', () => {
     expect(observed.delta?.transcriptOps).toEqual([])
     expect(observed.delta?.changedMessageCount).toBe(0)
     expect(observed.state.retainedBytes).toBe(seeded.retainedBytes)
+  })
+
+  it('advances an authored whole-message update without a history diff', () => {
+    const before = chat([message('a', 'A')])
+    const after = advance(before, (next) => {
+      next.messages[0].content = 'A much longer update'
+    })
+    const author = new ChatTranscriptMutationAuthor(before.messages.length)
+    author.update(after.messages[0])
+    const tracker = new ChatUpdateProjectionTracker()
+    const seeded = tracker.seed(before)
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after, {
+        authoredTranscript: author.finish()
+      })
+    )
+
+    expect(observed.delta?.transcriptOps).toEqual([
+      { op: 'update', id: 'a', message: after.messages[0] }
+    ])
+    expect(observed.state.retainedBytes - seeded.retainedBytes).toBe(
+      'A much longer update'.length - 1
+    )
   })
 
   it('falls back to a freshly seeded snapshot state after a discontinuous mutation', () => {

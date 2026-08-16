@@ -101,6 +101,7 @@ const MUTATION_OPERATION_TYPES = new Set<ChatRecordMutationOperation['type']>([
   'record_patch',
   'messages_splice',
   'message_content_append',
+  'message_put',
   'message_patch',
   'tool_activities_presence',
   'tool_activities_splice',

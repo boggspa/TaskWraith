@@ -25,6 +25,7 @@ import { join } from 'path'
 import { chatUpdateProducerEnvelopeFor } from '../../shared/chatUpdateTransport'
 import { AppStore } from './index'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
 import type { ChatRecord, ChatRun } from './types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-journal-integration-test-${process.pid}`)
@@ -169,6 +170,29 @@ describe('T4a chat journal integration', () => {
         fs.readFileSync(chatFilePath('chat-v2-streaming'), 'utf8')
       ) as ChatRecord
       expect(legacyAfterFlush.title).toBe('chat-v2-streaming')
+    })
+
+    it('accepts exact producer-authored transcript operations on the hot save path', () => {
+      const chat = saveChat('chat-v2-authored', [runningRun('run-live')])
+      const appended = {
+        id: 'assistant-live',
+        role: 'assistant' as const,
+        content: 'streamed answer',
+        timestamp: '2026-08-16T00:00:00.000Z',
+        runId: 'run-live'
+      }
+      const author = new ChatTranscriptMutationAuthor(chat.messages.length)
+      author.append([appended])
+      chat.messages = [...chat.messages, appended]
+
+      const saved = AppStore.saveChat(chat, { authoredTranscript: author.finish() })
+      const envelope = chatUpdateProducerEnvelopeFor(saved)
+
+      expect(envelope?.delta?.transcriptOps).toEqual([{ op: 'append', messages: [appended] }])
+      expect(
+        createIncrementalChatJournal(incrementalJournalDir()).replay('chat-v2-authored').record
+          ?.messages
+      ).toEqual([appended])
     })
 
     it('replays V2 after a cold-cache restart when compatibility JSON is behind', () => {

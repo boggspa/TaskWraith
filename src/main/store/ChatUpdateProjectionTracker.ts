@@ -272,6 +272,16 @@ export class ChatUpdateProjectionTracker {
           tracked.state.retainedBytes += operation.content.length
           break
         }
+        case 'message_put': {
+          const previousBytes = tracked.messageBytesById.get(operation.messageId)
+          if (previousBytes === undefined || operation.message.id !== operation.messageId) {
+            throw new Error(`Tracked message ${operation.messageId} is missing`)
+          }
+          const nextBytes = estimateChatMessageBytes(operation.message)
+          tracked.messageBytesById.set(operation.messageId, nextBytes)
+          tracked.state.retainedBytes += nextBytes - previousBytes
+          break
+        }
         case 'message_patch': {
           if (!Object.prototype.hasOwnProperty.call(operation.set, 'content')) break
           const previousBytes = tracked.messageBytesById.get(operation.messageId)

@@ -22,6 +22,11 @@ export type ChatRecordMutationOperation =
       content: string
     }
   | {
+      type: 'message_put'
+      messageId: string
+      message: ChatMessage
+    }
+  | {
       type: 'message_patch'
       messageId: string
       set: Record<string, unknown>
@@ -73,6 +78,31 @@ export interface DerivedChatRecordMutation {
   /** null means the edit needs a recovery snapshot on the renderer wire. */
   transcriptOps: ChatTranscriptOp[] | null
   changedMessageCount: number
+}
+
+export type ChatTranscriptMutationOperation = Extract<
+  ChatRecordMutationOperation,
+  {
+    type:
+      | 'messages_splice'
+      | 'message_content_append'
+      | 'message_put'
+      | 'message_patch'
+      | 'tool_activities_presence'
+      | 'tool_activities_splice'
+      | 'tool_activity_put'
+  }
+>
+
+export interface AuthoredChatTranscriptMutation {
+  operations: ChatTranscriptMutationOperation[]
+  transcriptOps: ChatTranscriptOp[] | null
+  changedMessageCount: number
+}
+
+export interface DeriveChatRecordMutationOptions {
+  savedAt?: string
+  authoredTranscript?: AuthoredChatTranscriptMutation
 }
 
 interface ArrayStructureDelta<T> {
@@ -280,7 +310,7 @@ function deriveMessageOperations(
 export function deriveChatRecordMutationWithProjection(
   before: ChatRecord,
   after: ChatRecord,
-  options: { savedAt?: string } = {}
+  options: DeriveChatRecordMutationOptions = {}
 ): DerivedChatRecordMutation {
   if (!before.appChatId || before.appChatId !== after.appChatId) {
     throw new Error('Chat mutation requires one stable appChatId')
@@ -301,31 +331,47 @@ export function deriveChatRecordMutationWithProjection(
   )
   if (hasPatch(recordPatch)) operations.push({ type: 'record_patch', ...recordPatch })
 
-  const messageStructure = deriveArrayStructure(
-    before.messages,
-    after.messages,
-    (message) => message.id
-  )
-  const transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
-  const changedMessageCount =
-    transcriptOps?.reduce((count, operation) => {
-      if (operation.op === 'append') return count + operation.messages.length
-      return count + 1
-    }, 0) ??
-    (messageStructure.splice
-      ? messageStructure.splice.deleteCount + messageStructure.splice.items.length
-      : after.messages.length)
-  if (messageStructure.splice) {
-    const { index, deleteCount, items } = messageStructure.splice
-    operations.push({
-      type: 'messages_splice',
-      index,
-      deleteCount,
-      messages: items
-    })
-  }
-  for (const pair of messageStructure.stablePairs) {
-    deriveMessageOperations(pair.before, pair.after, operations)
+  let transcriptOps: ChatTranscriptOp[] | null
+  let changedMessageCount: number
+  if (options.authoredTranscript) {
+    if (
+      !Number.isSafeInteger(options.authoredTranscript.changedMessageCount) ||
+      options.authoredTranscript.changedMessageCount < 0
+    ) {
+      throw new Error('Authored transcript mutation has an invalid change count')
+    }
+    operations.push(
+      ...options.authoredTranscript.operations.map((operation) => jsonClone(operation))
+    )
+    transcriptOps = jsonClone(options.authoredTranscript.transcriptOps)
+    changedMessageCount = options.authoredTranscript.changedMessageCount
+  } else {
+    const messageStructure = deriveArrayStructure(
+      before.messages,
+      after.messages,
+      (message) => message.id
+    )
+    transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
+    changedMessageCount =
+      transcriptOps?.reduce((count, operation) => {
+        if (operation.op === 'append') return count + operation.messages.length
+        return count + 1
+      }, 0) ??
+      (messageStructure.splice
+        ? messageStructure.splice.deleteCount + messageStructure.splice.items.length
+        : after.messages.length)
+    if (messageStructure.splice) {
+      const { index, deleteCount, items } = messageStructure.splice
+      operations.push({
+        type: 'messages_splice',
+        index,
+        deleteCount,
+        messages: items
+      })
+    }
+    for (const pair of messageStructure.stablePairs) {
+      deriveMessageOperations(pair.before, pair.after, operations)
+    }
   }
 
   const runStructure = deriveArrayStructure(before.runs, after.runs, (run) => run.runId)
@@ -364,7 +410,7 @@ export function deriveChatRecordMutationWithProjection(
 export function deriveChatRecordMutation(
   before: ChatRecord,
   after: ChatRecord,
-  options: { savedAt?: string } = {}
+  options: DeriveChatRecordMutationOptions = {}
 ): ChatRecordMutationBatch {
   return deriveChatRecordMutationWithProjection(before, after, options).batch
 }
@@ -450,6 +496,14 @@ export function applyChatRecordMutation(
       case 'message_content_append': {
         const message = findMessage(record, operation.messageId)
         message.content += operation.content
+        break
+      }
+      case 'message_put': {
+        const index = record.messages.findIndex((candidate) => candidate.id === operation.messageId)
+        if (index < 0 || operation.message.id !== operation.messageId) {
+          throw new Error(`Chat mutation message ${operation.messageId} is missing`)
+        }
+        record.messages[index] = jsonClone(operation.message)
         break
       }
       case 'message_patch': {

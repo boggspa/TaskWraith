@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util'
 import {
   deriveChatRecordMutationWithProjection,
   estimateChatRecordMutationBytes,
+  type AuthoredChatTranscriptMutation,
   type DerivedChatRecordMutation
 } from './ChatRecordMutation'
 import type {
@@ -43,7 +44,8 @@ export interface IncrementalChatPersistence {
   persist(
     previous: ChatRecord | null,
     next: ChatRecord,
-    boundary: IncrementalChatPersistenceBoundary
+    boundary: IncrementalChatPersistenceBoundary,
+    authoredTranscript?: AuthoredChatTranscriptMutation
   ): IncrementalChatPersistResult
   verify(chatId: string, expected: ChatRecord, repair?: boolean): boolean
   replay(chatId: string): IncrementalChatReplayResult
@@ -120,13 +122,17 @@ export function createIncrementalChatPersistence(
 
   const ensureBaseline = (previous: ChatRecord): void => {
     const chatId = previous.appChatId
+    // Once parity is established, the journal head is advanced solely by this
+    // coordinator. Returning before durableClone/initialize is what makes the
+    // normal append path genuinely incremental rather than cloning the full
+    // transcript just to discover that its baseline already exists.
+    if (baselineVerifiedChatIds.has(chatId)) return
     try {
       journal.initialize(chatId, durableClone(previous))
     } catch (error) {
       if (!baselineMismatch(error)) throw error
       replaceAuthoritative(chatId, previous)
     }
-    if (baselineVerifiedChatIds.has(chatId)) return
     baselineChecks += 1
     if (!verify(chatId, previous, true)) {
       // verify(..., true) repaired the side-band state from the authoritative
@@ -138,7 +144,8 @@ export function createIncrementalChatPersistence(
   const persist = (
     previous: ChatRecord | null,
     next: ChatRecord,
-    boundary: IncrementalChatPersistenceBoundary
+    boundary: IncrementalChatPersistenceBoundary,
+    authoredTranscript?: AuthoredChatTranscriptMutation
   ): IncrementalChatPersistResult => {
     try {
       boundaryMix[boundary] += 1
@@ -157,7 +164,11 @@ export function createIncrementalChatPersistence(
       }
 
       ensureBaseline(previous)
-      const derived = deriveChatRecordMutationWithProjection(previous, next)
+      const derived = deriveChatRecordMutationWithProjection(
+        previous,
+        next,
+        authoredTranscript ? { authoredTranscript } : {}
+      )
       const { batch } = derived
       const mutationBytes = estimateChatRecordMutationBytes(batch)
       journal.append(batch)

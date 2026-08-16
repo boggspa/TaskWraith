@@ -53,6 +53,7 @@ import {
   ChatUpdateProjectionTracker,
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
+import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
@@ -875,13 +876,15 @@ function incrementalPersistenceBoundary(reason: FlushReason): IncrementalChatPer
 function persistIncrementalChat(
   previous: ChatRecord | null,
   next: ChatRecord,
-  reason: FlushReason
+  reason: FlushReason,
+  authoredTranscript?: AuthoredChatTranscriptMutation
 ): IncrementalChatPersistResult | null {
   try {
     return incrementalChatPersistence.persist(
       previous,
       next,
-      incrementalPersistenceBoundary(reason)
+      incrementalPersistenceBoundary(reason),
+      authoredTranscript
     )
   } catch {
     // Coordinator already records and logs the failure. The caller must take
@@ -4717,6 +4720,11 @@ function appendRunStreamArtifact(
   ]
 }
 
+export interface ChatSaveOptions {
+  /** Exact message operations authored by a trusted main-process producer. */
+  authoredTranscript?: AuthoredChatTranscriptMutation
+}
+
 export class AppStore {
   static resetTransientDeletionGuardsForTests(): void {
     deletedChatIds.clear()
@@ -6796,7 +6804,7 @@ export class AppStore {
     )
   }
 
-  static saveChat(chat: ChatRecord): ChatRecord {
+  static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],
@@ -6867,7 +6875,18 @@ export class AppStore {
     // events (inline screenshots become thumbnails, text raw drops) so chat
     // files stay parse-fast and save-cheap. The latest/running runs keep
     // full fidelity for live debugging.
-    const normalizedChat = this.normalizeChatRecord(compactChatForPersist(chatWithMainOwnedFields))
+    const compactedChat = compactChatForPersist(chatWithMainOwnedFields)
+    // Exact producer operations are valid only while the save pipeline kept
+    // the producer's transcript intact. A stale renderer merge or a one-time
+    // historical compaction falls back to the proven diff derivation rather
+    // than attaching a misleading operation chain.
+    const authoredTranscript =
+      options.authoredTranscript &&
+      reconciledMessages === rendererMessages &&
+      compactedChat.messages === chatWithMainOwnedFields.messages
+        ? options.authoredTranscript
+        : undefined
+    const normalizedChat = this.normalizeChatRecord(compactedChat)
     normalizedChat.updatedAt = Date.now()
     normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
@@ -6928,7 +6947,8 @@ export class AppStore {
       const incrementalResult = persistIncrementalChat(
         previousChatForFeedback,
         normalizedChat,
-        flushReason
+        flushReason,
+        authoredTranscript
       )
       chatUpdateProjection = incrementalResult?.derived
         ? chatUpdateProjectionTracker.observe(

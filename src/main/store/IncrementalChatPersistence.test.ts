@@ -7,7 +7,8 @@ import {
   createIncrementalChatPersistence,
   type IncrementalChatPersistence
 } from './IncrementalChatPersistence'
-import type { ChatRecord } from './types'
+import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
+import type { ChatMessage, ChatRecord } from './types'
 
 function chat(revision = 1, content = 'initial'): ChatRecord {
   return {
@@ -156,6 +157,48 @@ describe('IncrementalChatPersistence', () => {
     })
     expect(persistence.replay('chat-1').record).toEqual(third)
     expect(persistence.stats().baselineRepairs).toBe(1)
+  })
+
+  it('does not clone or iterate verified history for an authored append', () => {
+    const messages: ChatMessage[] = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `message-${index}`,
+      role: 'assistant',
+      content: `historical-${index}`,
+      timestamp: '2026-08-16T00:00:00.000Z'
+    }))
+    const first = { ...chat(), messages }
+    persistence.persist(null, first, 'normal')
+    const appended: ChatMessage = {
+      id: 'message-10000',
+      role: 'assistant',
+      content: 'new tail',
+      timestamp: '2026-08-16T00:00:01.000Z'
+    }
+    const author = new ChatTranscriptMutationAuthor(messages.length)
+    author.append([appended])
+    const guard = (value: ChatMessage[]): ChatMessage[] =>
+      new Proxy(value, {
+        get(target, property, receiver) {
+          if (
+            property === Symbol.iterator ||
+            (typeof property === 'string' && /^\d+$/.test(property))
+          ) {
+            throw new Error('incremental persistence iterated verified history')
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      })
+    const previous = { ...first, messages: guard(messages) }
+    const expected = {
+      ...first,
+      messages: [...messages, appended],
+      updatedAt: first.updatedAt + 1,
+      persistenceRevision: (first.persistenceRevision ?? 0) + 1
+    }
+    const next = { ...expected, messages: guard(expected.messages) }
+
+    expect(() => persistence.persist(previous, next, 'normal', author.finish())).not.toThrow()
+    expect(persistence.replay('chat-1').record).toEqual(expected)
   })
 
   it('purges per-chat state and clears all journal artifacts', () => {
