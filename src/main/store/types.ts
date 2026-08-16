@@ -3712,6 +3712,8 @@ export interface ChatRun {
   runId: string
   /** Persisted-chat compaction schema applied after this run became historical. */
   historyCompactionGeneration?: number
+  /** Full tool detail was checkpointed outside the hot chat record at terminal. */
+  toolDetailExternalizationGeneration?: number
   provider?: ProviderId
   providerReroute?: ProviderRunReroute
   providerRunId?: string
@@ -6230,6 +6232,22 @@ export interface ToolDiffSummary {
   confidence: 'exact' | 'estimated' | 'unknown'
 }
 
+/**
+ * Byte-range pointer to a complete ToolActivity checkpoint in the owning
+ * run's durable artifact ledger. The renderer keeps this small pointer in the
+ * transcript and asks main to hydrate the full detail only while it is visible
+ * or expanded.
+ */
+export interface ToolActivityDetailRef {
+  schemaVersion: 1
+  storage: 'run_event_artifact'
+  runId: string
+  activityId: string
+  offset: number
+  byteLength: number
+  sha256: string
+}
+
 export interface ToolActivity {
   id: string
   toolName: string
@@ -6246,6 +6264,8 @@ export interface ToolActivity {
   diffSummary?: ToolDiffSummary
   rawUseEvent?: unknown
   rawResultEvent?: unknown
+  /** Full parameters/result/raw fields live at this authenticated byte range. */
+  detailRef?: ToolActivityDetailRef
   /** If this tool call was emitted by a sub-agent, the tool_use id of the parent Task / Agent call that spawned it. */
   parentToolCallId?: string
   /** 1.0.4-AG — optional attribution metadata. `provider` names the
