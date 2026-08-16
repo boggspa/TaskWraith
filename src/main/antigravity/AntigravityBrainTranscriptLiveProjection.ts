@@ -16,6 +16,7 @@ import {
   type CliProviderThinkingSegmentsState
 } from '../providers/CliProviderThinking'
 import { normalizeAgyConversationId } from './AntigravityCli'
+import { AgyFinalResponseLiveness } from './AntigravityFinalResponseLiveness'
 import {
   agyCliRootPath,
   parseAgyProjectBoundSessionId,
@@ -264,6 +265,8 @@ export interface AgyBrainTranscriptMonitorDependencies {
   stat?: (path: string) => Promise<{ size: number; mtimeMs: number }>
   readReceipt?: (workspace: string | null | undefined) => Promise<string | null>
   listBrainConversationIds?: (brainRootPath: string) => Promise<readonly string[]>
+  finalResponseExitGraceMs?: number
+  now?: () => number
   homeDir?: string
   env?: Readonly<Record<string, string | undefined>>
   pollIntervalMs?: number
@@ -282,6 +285,7 @@ export interface AgyBrainTranscriptMonitorInput {
 export class AgyBrainTranscriptMonitor {
   private readonly deps: AgyBrainTranscriptMonitorDependencies
   private readonly projector: AgyBrainTranscriptProjector
+  private readonly finalResponseLiveness: AgyFinalResponseLiveness
   private conversationId: string | null
   private freshConversationBaseline: Set<string> | null = null
   private lastSnapshotKey = ''
@@ -293,6 +297,10 @@ export class AgyBrainTranscriptMonitor {
   constructor(private readonly input: AgyBrainTranscriptMonitorInput) {
     this.deps = input.deps || {}
     this.projector = new AgyBrainTranscriptProjector(input.appRunId)
+    this.finalResponseLiveness = new AgyFinalResponseLiveness(
+      this.deps.finalResponseExitGraceMs,
+      this.deps.now
+    )
     this.conversationId = parseAgyProjectBoundSessionId(input.providerSessionId)
   }
 
@@ -324,6 +332,7 @@ export class AgyBrainTranscriptMonitor {
   async stopAndDrain(): Promise<void> {
     if (this.stopped) return this.inFlight
     this.stopped = true
+    this.finalResponseLiveness.close()
     if (this.timer) clearTimeout(this.timer)
     await this.inFlight
     await this.poll(true)
@@ -355,10 +364,15 @@ export class AgyBrainTranscriptMonitor {
         this.lastSnapshotKey = ''
       }
 
-      if (!force && !(await this.transcriptChanged(this.conversationId))) return
+      if (!force && !(await this.transcriptChanged(this.conversationId))) {
+        this.emitFinalResponseLivenessWarning()
+        return
+      }
       const raw = await this.readTranscript(this.conversationId)
       if (raw === null) return
-      const events = this.projector.consume(raw.split(/\r?\n/))
+      const lines = raw.split(/\r?\n/)
+      this.finalResponseLiveness.observeTranscriptLines(lines)
+      const events = this.projector.consume(lines)
       for (const event of events) {
         try {
           this.input.emit(event)
@@ -367,6 +381,7 @@ export class AgyBrainTranscriptMonitor {
         }
       }
       await this.rememberSnapshot(this.conversationId)
+      if (!force) this.emitFinalResponseLivenessWarning()
     } catch {
       // Missing/partial transcript state is expected while agy allocates a project.
     }
@@ -386,6 +401,20 @@ export class AgyBrainTranscriptMonitor {
       'antigravity-cli',
       'brain'
     )
+  }
+
+  private emitFinalResponseLivenessWarning(): void {
+    const warning = this.finalResponseLiveness.takeWarning()
+    if (!warning) return
+    try {
+      this.input.emit({
+        type: 'provider_warning',
+        severity: 'warning',
+        ...warning
+      })
+    } catch {
+      // Projection is display-only.
+    }
   }
 
   private async listBrainConversationIds(): Promise<readonly string[]> {

@@ -330,4 +330,44 @@ describe('AgyBrainTranscriptMonitor', () => {
     expect(emitted).toHaveLength(2)
     expect(emitted[1]).toMatchObject({ output: 'Final planner trace' })
   })
+
+  it('warns when a final native response remains stuck before process exit', async () => {
+    const oldLine = step(10, 'PLANNER_RESPONSE', { thinking: 'Earlier planning' })
+    const finalContent = 'This final report must not be projected as assistant content.'
+    const finalLine = step(11, 'PLANNER_RESPONSE', {
+      thinking: '',
+      content: finalContent,
+      tool_calls: null
+    })
+    let raw = oldLine
+    let now = 1_000
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'stuck-native-exit-run',
+      workspace: '/repo',
+      providerSessionId: 'agy-project-v1:cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      emit: (event) => emitted.push(event),
+      deps: {
+        readFile: async () => raw,
+        stat: async () => ({ size: raw.length, mtimeMs: raw.length }),
+        finalResponseExitGraceMs: 30_000,
+        now: () => now
+      }
+    })
+
+    await monitor.prime()
+    raw = `${oldLine}\n${finalLine}`
+    await monitor.pollNow()
+    expect(emitted).toEqual([])
+
+    now = 31_000
+    await monitor.pollNow()
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'provider_warning',
+        title: 'AntiGravity final response is awaiting native exit'
+      })
+    ])
+    expect(JSON.stringify(emitted)).not.toContain(finalContent)
+  })
 })
