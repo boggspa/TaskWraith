@@ -160,6 +160,37 @@ describe('discoverAuthenticatedAntigravityGeminiApiModels', () => {
     ])
   })
 
+  it('keeps non-text output modalities out of the coding picker', async () => {
+    // The -tts and -image variants DO advertise generateContent, so the
+    // capability filter admits them, but the turn kernel never sets
+    // responseModalities or speechConfig — it can only drive a text/tool turn.
+    // Offering them puts a model in the coding picker that cannot answer it.
+    //
+    // Output modality only. `-vision` is an INPUT modality whose output is
+    // ordinary text, so it must survive: filtering on "multimodal" rather than
+    // on what comes BACK would drop models this adapter runs perfectly well.
+    const { client } = clientWithPager(
+      pager([
+        generateCapable('gemini-2.5-flash-preview-tts'),
+        generateCapable('gemini-2.5-pro-preview-tts'),
+        generateCapable('gemini-2.0-flash-preview-image-generation'),
+        generateCapable('gemini-2.5-flash-image'),
+        generateCapable('gemini-pro-vision'),
+        generateCapable('gemini-3.6-flash')
+      ])
+    )
+
+    const result = await discoverAuthenticatedAntigravityGeminiApiModels(
+      acceptedSettings,
+      depsFor(client)
+    )
+    expect(result.status).toBe('ok')
+    expect(result.models.map((model) => model.modelId)).toEqual([
+      'gemini-pro-vision',
+      'gemini-3.6-flash'
+    ])
+  })
+
   it('discovers only authenticated, generate-capable Gemini models under the API namespace', async () => {
     const { client, list } = clientWithPager(
       pager(

@@ -37,6 +37,24 @@ const RETIRED_MODEL_IDS: ReadonlySet<string> = new Set([
   'gemini-2.5-flash-lite'
 ])
 
+/**
+ * Variants whose OUTPUT modality this adapter cannot drive. The `-tts` and
+ * `-image` families advertise generateContent, so the capability filter admits
+ * them, but the turn kernel sets no `responseModalities` and no `speechConfig`
+ * — it builds a text/tool turn and nothing else. Offering them puts a model in
+ * the coding picker that cannot answer a coding request.
+ *
+ * This is a MODALITY rule, not a quota one. The note above about `quotaValue
+ * == 0` still stands: a model with no free-tier allowance stays, because it
+ * runs fine on a billing-enabled key. These are excluded because the adapter
+ * structurally cannot consume what they return, which no key changes.
+ *
+ * Matched on OUTPUT only. `-vision` is an INPUT modality whose response is
+ * ordinary text, so it is deliberately absent — filtering on "multimodal"
+ * would drop models this lane runs perfectly well.
+ */
+const NON_TEXT_OUTPUT_MODEL_ID = /(?:^|-)(?:tts|image)(?:-|$)/
+
 export interface AntigravityGeminiApiDiscoveredModel {
   /** Namespaced route token. It must never be mistaken for an official agy model ID. */
   readonly id: `${typeof ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}${string}`
@@ -226,6 +244,7 @@ function normalizeGenerateCapableGeminiModel(
   const modelId = name.slice('models/'.length)
   if (!GEMINI_MODEL_ID.test(modelId) || !hasGenerateCapability(value)) return null
   if (RETIRED_MODEL_IDS.has(modelId)) return null
+  if (NON_TEXT_OUTPUT_MODEL_ID.test(modelId)) return null
   return {
     id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}${modelId}`,
     modelId
