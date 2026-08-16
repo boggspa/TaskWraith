@@ -68,7 +68,8 @@ describe('resolvePiUpstreamBrand', () => {
 
 describe('resolvePiModelLabel', () => {
   it('humanises a catalogued wire id', () => {
-    expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2512')
+    expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2')
+    expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
   })
 
@@ -195,9 +196,8 @@ describe('iOS PiBrandTable twin', () => {
 
 describe('the renderer ensemble-editor mirror', () => {
   // A FOURTH hand-maintained copy of this catalog (main, shared, iOS, and the
-  // ensemble seat editor). It had already gone stale — carrying "Devstral 2"
-  // after the other three moved to "Devstral 2512" — which is exactly the drift
-  // that puts two different names for one model in front of the same user.
+  // ensemble seat editor). It has drifted before, which puts two different
+  // names for one model in front of the same user; pin ids and labels together.
   const source = readFileSync(
     join(process.cwd(), 'src/renderer/src/lib/ensembleProviderDefaults.ts'),
     'utf8'

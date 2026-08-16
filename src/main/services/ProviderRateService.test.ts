@@ -172,7 +172,7 @@ describe('BAKED_IN_RATES', () => {
 
   it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
-    expect(RATE_TABLE_VERSION).toBe('2026-08-12')
+    expect(RATE_TABLE_VERSION).toBe('2026-08-16')
     expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
@@ -183,7 +183,7 @@ describe('BAKED_IN_RATES', () => {
       longContextCachedInputUsdPerMillion: 1,
       longContextOutputUsdPerMillion: 12,
       sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
-      lastVerified: '2026-08-12'
+      lastVerified: RATE_TABLE_VERSION
     })
 
     expect(
@@ -193,7 +193,7 @@ describe('BAKED_IN_RATES', () => {
       cachedInputUsdPerMillion: 0.5,
       outputUsdPerMillion: 6,
       sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
-      lastVerified: '2026-08-12'
+      lastVerified: RATE_TABLE_VERSION
     })
     expect(
       BAKED_IN_RATES.cursor.models.find((model) => model.modelId === 'grok-4.6-fast')
@@ -202,7 +202,7 @@ describe('BAKED_IN_RATES', () => {
       cachedInputUsdPerMillion: 1,
       outputUsdPerMillion: 12,
       sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
-      lastVerified: '2026-08-12'
+      lastVerified: RATE_TABLE_VERSION
     })
   })
 
@@ -337,6 +337,10 @@ describe('BAKED_IN_RATES', () => {
           expect(model.inputUsdPerMillion).toBe(0)
           expect(model.outputUsdPerMillion).toBe(0)
           expect(model.notes, `${model.modelId} must document why it is zero`).toBeTruthy()
+        } else if (model.freeModel) {
+          expect(model.inputUsdPerMillion).toBe(0)
+          expect(model.outputUsdPerMillion).toBe(0)
+          expect(model.notes, `${model.modelId} must document why it is free`).toMatch(/free/i)
         } else {
           expect(model.inputUsdPerMillion).toBeGreaterThan(0)
           expect(model.outputUsdPerMillion).toBeGreaterThan(0)

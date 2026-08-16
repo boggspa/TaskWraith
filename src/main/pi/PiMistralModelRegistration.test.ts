@@ -6,6 +6,7 @@ import {
   PI_MISTRAL_CUSTOM_MODELS,
   writePiMistralModelRegistration
 } from './PiMistralModelRegistration'
+import { findPiStaticModel } from './PiModels'
 
 const temporaryHomes: string[] = []
 
@@ -22,6 +23,19 @@ afterEach(() => {
 })
 
 describe('writePiMistralModelRegistration', () => {
+  it('keeps each custom registration in lockstep with its picker metadata', () => {
+    for (const model of PI_MISTRAL_CUSTOM_MODELS) {
+      expect(findPiStaticModel(`mistral/${model.modelId}`)).toMatchObject({
+        modelId: model.modelId,
+        label: model.label,
+        contextWindow: model.contextWindow,
+        maxOutputTokens: model.maxTokens,
+        thinking: model.reasoning,
+        images: model.input.includes('image')
+      })
+    }
+  })
+
   it.each(PI_MISTRAL_CUSTOM_MODELS)(
     'registers only the selected $modelId deployment in Pi’s isolated home',
     (model) => {

@@ -67,9 +67,19 @@ public enum ContextWindows {
         "qwen-token-plan/qwen3.8-max-preview": 1_000_000,
         "minimax/MiniMax-M3": 1_000_000,
         "minimax/MiniMax-M2.7": 204_800,
-        "mistral/devstral-2512": 262_144,
+        "mistral/zai-glm-5-2": 1_000_000,
         "mistral/mistral-medium-3.5": 262_144,
+        "mistral/mistral-medium-latest": 262_144,
+        "mistral/mistral-small-2603": 256_000,
         "mistral/mistral-large-2512": 262_144,
+        "mistral/devstral-2512": 262_144,
+        "mistral/codestral-2508": 131_072,
+        "mistral/labs-leanstral-1-5": 262_144,
+        "mistral/mistral-medium-2508": 262_144,
+        "mistral/mistral-medium-2505": 131_072,
+        "mistral/ministral-14b-2512": 262_144,
+        "mistral/ministral-8b-2512": 262_144,
+        "mistral/ministral-3b-2512": 262_144,
         // Mistral Vibe CLI seat (ProviderId `mistral`) — a DIFFERENT provider
         // from the Pi upstream directly above, which merely shares the brand
         // word. Seat model ids are always BARE; the presence of a `/` is what

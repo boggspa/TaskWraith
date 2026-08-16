@@ -7,13 +7,16 @@
  * Static-floor rationale (the AntiGravity lesson): a provider whose model
  * list can transiently be empty vanishes from every picker, so the seat
  * ships a bundled list rather than shelling out to `pi --list-models`.
- * Metadata below is extracted verbatim from pi 0.82.1's bundled catalog
- * (@earendil-works/pi-ai providers/data); re-extract on pi upgrades.
+ * Built-in metadata below is extracted from pi 0.82.1's bundled catalog
+ * (@earendil-works/pi-ai providers/data). Newer Mistral deployments come from
+ * Mistral's own model cards and are registered per run; re-check both sources
+ * on pi upgrades.
  *
- * Curation is deliberate: flagship coder models per allowed upstream, no
- * resold duplicates (qwen-token-plan also carries deepseek/glm/minimax/kimi
- * copies — the kimi ones are policy-refused, the rest are pointless dupes).
- * Every entry must satisfy piModelPolicyVerdict; the test suite enforces it.
+ * Curation is deliberate: flagship coder models per allowed upstream. Resold
+ * duplicates stay out unless they expose a distinct user-paid entitlement
+ * lane (Mistral-hosted GLM-5.2 is the explicit exception); qwen-token-plan's
+ * hosted copies remain omitted. Every entry must satisfy piModelPolicyVerdict;
+ * the test suite enforces it.
  */
 
 import { isPiModelRetired } from '../../shared/piModelLifecycle'
@@ -47,15 +50,22 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   // MiniMax
   { wireId: 'minimax/MiniMax-M3', upstream: 'minimax', modelId: 'MiniMax-M3', label: 'MiniMax M3', contextWindow: 1_000_000, maxOutputTokens: 128_000, thinking: true, images: true },
   { wireId: 'minimax/MiniMax-M2.7', upstream: 'minimax', modelId: 'MiniMax-M2.7', label: 'MiniMax M2.7', contextWindow: 204_800, maxOutputTokens: 131_072, thinking: true, images: false },
-  // Mistral
-  { wireId: 'mistral/devstral-2512', upstream: 'mistral', modelId: 'devstral-2512', label: 'Devstral 2512', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: false },
+  // Mistral API — includes Mistral-hosted third-party and Labs deployments.
+  // Pi 0.82.1 does not bundle six of these ids; PiMistralModelRegistration
+  // registers only the selected missing row inside its isolated per-run home.
+  { wireId: 'mistral/zai-glm-5-2', upstream: 'mistral', modelId: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)', contextWindow: 1_000_000, maxOutputTokens: 131_072, thinking: false, images: false },
   { wireId: 'mistral/mistral-medium-3.5', upstream: 'mistral', modelId: 'mistral-medium-3.5', label: 'Mistral Medium 3.5', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: true, images: true },
-  // Mistral Large 3 (2512-01) — pi names it "Mistral Large 3"; the label keeps
-  // the dated build because Mistral also ships `mistral-large-2411` and a
-  // floating `mistral-large-latest`. `thinking: false` is pi's own
-  // `reasoning: false`: Large 3 is NOT a reasoning model (Magistral and
-  // mistral-medium-3.5 are), so it deliberately gets no reasoning options.
-  { wireId: 'mistral/mistral-large-2512', upstream: 'mistral', modelId: 'mistral-large-2512', label: 'Mistral Large 3 (2512)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
+  { wireId: 'mistral/mistral-medium-latest', upstream: 'mistral', modelId: 'mistral-medium-latest', label: 'Mistral Medium (Latest)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: true, images: true },
+  { wireId: 'mistral/mistral-small-2603', upstream: 'mistral', modelId: 'mistral-small-2603', label: 'Mistral Small 4', contextWindow: 256_000, maxOutputTokens: 256_000, thinking: true, images: true },
+  { wireId: 'mistral/mistral-large-2512', upstream: 'mistral', modelId: 'mistral-large-2512', label: 'Mistral Large 3', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
+  { wireId: 'mistral/devstral-2512', upstream: 'mistral', modelId: 'devstral-2512', label: 'Devstral 2', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: false },
+  { wireId: 'mistral/codestral-2508', upstream: 'mistral', modelId: 'codestral-2508', label: 'Codestral (Aug 2025)', contextWindow: 131_072, maxOutputTokens: 4_096, thinking: false, images: false },
+  { wireId: 'mistral/labs-leanstral-1-5', upstream: 'mistral', modelId: 'labs-leanstral-1-5', label: 'Leanstral 1.5 (Labs)', contextWindow: 262_144, maxOutputTokens: 131_072, thinking: false, images: false },
+  { wireId: 'mistral/mistral-medium-2508', upstream: 'mistral', modelId: 'mistral-medium-2508', label: 'Mistral Medium 3.1', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
+  { wireId: 'mistral/mistral-medium-2505', upstream: 'mistral', modelId: 'mistral-medium-2505', label: 'Mistral Medium 3', contextWindow: 131_072, maxOutputTokens: 131_072, thinking: false, images: true },
+  { wireId: 'mistral/ministral-14b-2512', upstream: 'mistral', modelId: 'ministral-14b-2512', label: 'Ministral 3 (14B)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
+  { wireId: 'mistral/ministral-8b-2512', upstream: 'mistral', modelId: 'ministral-8b-2512', label: 'Ministral 3 (8B)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
+  { wireId: 'mistral/ministral-3b-2512', upstream: 'mistral', modelId: 'ministral-3b-2512', label: 'Ministral 3 (3B)', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: true },
   // Groq — open-weights on fast inference silicon
   { wireId: 'groq/openai/gpt-oss-120b', upstream: 'groq', modelId: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', contextWindow: 131_072, maxOutputTokens: 65_536, thinking: true, images: false },
   { wireId: 'groq/qwen/qwen3-32b', upstream: 'groq', modelId: 'qwen/qwen3-32b', label: 'Qwen3 32B (Groq)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false },

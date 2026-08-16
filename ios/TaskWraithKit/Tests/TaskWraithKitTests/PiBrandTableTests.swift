@@ -49,7 +49,8 @@ struct PiBrandTableTests {
 
     @Test("humanises catalogued wire ids")
     func humanisesModels() {
-        #expect(PiBrandTable.modelLabel(forWireModelId: "mistral/devstral-2512") == "Devstral 2512")
+        #expect(PiBrandTable.modelLabel(forWireModelId: "mistral/devstral-2512") == "Devstral 2")
+        #expect(PiBrandTable.modelLabel(forWireModelId: "mistral/zai-glm-5-2") == "GLM-5.2 (via Mistral)")
         #expect(
             PiBrandTable.modelLabel(forWireModelId: "deepseek/deepseek-v4-flash")
                 == "DeepSeek V4 Flash")

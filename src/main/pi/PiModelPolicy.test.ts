@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveContextWindow } from '../../shared/contextWindows'
 import {
   PI_ALLOWED_UPSTREAMS,
   PI_UPSTREAM_KEY_ENV,
@@ -82,6 +83,12 @@ describe('catalog/policy lockstep', () => {
     for (const model of PI_STATIC_MODELS) {
       const split = splitPiWireModelId(model.wireId)
       expect(split, model.wireId).toEqual({ upstream: model.upstream, modelId: model.modelId })
+    }
+  })
+
+  it('registers the exact context window for every static Pi model', () => {
+    for (const model of PI_STATIC_MODELS) {
+      expect(resolveContextWindow('pi', model.wireId), model.wireId).toBe(model.contextWindow)
     }
   })
 

@@ -737,7 +737,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('message-meta provider-mistral')
     expect(html).not.toContain('message-meta provider-pi')
     expect(html).toContain('Mistral / Scout')
-    expect(html).toContain('Model: Devstral 2512')
+    expect(html).toContain('Model: Devstral 2')
   })
 
   it('uses the Pi upstream hue for provider-generated close-out badges', () => {

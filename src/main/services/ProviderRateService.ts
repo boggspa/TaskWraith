@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-08-12'
+export const RATE_TABLE_VERSION = '2026-08-16'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -89,6 +89,8 @@ export interface ModelRateEntry {
    * model's rate instead of leaving the estimate blank.
    */
   subscriptionLane?: true
+  /** The provider publishes this model itself at a zero per-token price. */
+  freeModel?: true
   /** Explicit source confidence for the rate value. Missing means
    * baked-in manual table. */
   confidence?: ProviderRateConfidence
@@ -977,12 +979,12 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // silently priced at row 0 — i.e. every Z.ai, Qwen, MiniMax, Mistral, Groq
   // and Cerebras run was being projected at DeepSeek V4 Flash rates.
   //
-  // Values extracted from pi's own bundled catalogue
-  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`), the same
-  // source PiModels' metadata came from — re-extract on pi upgrades. Table-level
-  // `pricingUrl` can only ever verify one vendor, so each entry carries the
-  // vendor's own `sourceUrl` for the human half of the diligence cycle; expect
-  // the probe to report not-verified for the other six.
+  // Values come from pi's bundled catalogue
+  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`) plus official
+  // Mistral model cards for deployments newer than pi 0.82.1. Re-check both on
+  // pi upgrades. Table-level `pricingUrl` can only ever verify one vendor, so
+  // each entry carries the vendor's own `sourceUrl` for the human half of the
+  // diligence cycle; expect the probe to report not-verified for the others.
   pi: {
     provider: 'pi',
     pricingUrl: 'https://pi.dev/docs/latest/providers',
@@ -1084,20 +1086,37 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'MiniMax model ids are CASE-SENSITIVE.'
       },
       {
-        modelId: 'mistral/devstral-2512',
-        inputUsdPerMillion: 0.4,
-        outputUsdPerMillion: 2,
-        cachedInputUsdPerMillion: 0.04,
-        sourceUrl: 'https://mistral.ai/pricing',
-        lastVerified: RATE_TABLE_VERSION
+        modelId: 'mistral/zai-glm-5-2',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.14,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Third-party Z.ai GLM-5.2 served without modification by Mistral.'
       },
       {
         modelId: 'mistral/mistral-medium-3.5',
         inputUsdPerMillion: 1.5,
         outputUsdPerMillion: 7.5,
         sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/mistral-medium-latest',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Priciest wired Mistral row; Mistral also publishes far cheaper tiers pi supports.'
+        notes: 'Floating Mistral Medium alias; currently priced like Mistral Medium 3.5.'
+      },
+      {
+        modelId: 'mistral/mistral-small-2603',
+        inputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 0.6,
+        cachedInputUsdPerMillion: 0.015,
+        sourceUrl: 'https://docs.mistral.ai/models/mistral-small-4-0-26-03',
+        lastVerified: RATE_TABLE_VERSION
       },
       {
         modelId: 'mistral/mistral-large-2512',
@@ -1108,6 +1127,71 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Mistral Large 3. Cheaper per token than medium-3.5 despite being the flagship — do not infer this row from the medium one.'
+      },
+      {
+        modelId: 'mistral/devstral-2512',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/codestral-2508',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 0.9,
+        cachedInputUsdPerMillion: 0.03,
+        sourceUrl: 'https://docs.mistral.ai/models/codestral-25-08',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/labs-leanstral-1-5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://docs.mistral.ai/models/leanstral-1-5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Free Mistral Labs public preview; Labs ids may change on short notice.'
+      },
+      {
+        modelId: 'mistral/mistral-medium-2508',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/mistral-medium-2505',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/ministral-14b-2512',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.02,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-14b-25-12',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/ministral-8b-2512',
+        inputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 0.15,
+        cachedInputUsdPerMillion: 0.015,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-8b-25-12',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/ministral-3b-2512',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.1,
+        cachedInputUsdPerMillion: 0.01,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-3b-25-12',
+        lastVerified: RATE_TABLE_VERSION
       },
       // Groq wire ids carry a SECOND slash — the id below is the whole key.
       {

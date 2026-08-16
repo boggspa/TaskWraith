@@ -45,9 +45,19 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'qwen-token-plan/qwen3.8-max-preview': 1_000_000,
   'minimax/MiniMax-M3': 1_000_000,
   'minimax/MiniMax-M2.7': 204_800,
-  'mistral/devstral-2512': 262_144,
+  'mistral/zai-glm-5-2': 1_000_000,
   'mistral/mistral-medium-3.5': 262_144,
+  'mistral/mistral-medium-latest': 262_144,
+  'mistral/mistral-small-2603': 256_000,
   'mistral/mistral-large-2512': 262_144,
+  'mistral/devstral-2512': 262_144,
+  'mistral/codestral-2508': 131_072,
+  'mistral/labs-leanstral-1-5': 262_144,
+  'mistral/mistral-medium-2508': 262_144,
+  'mistral/mistral-medium-2505': 131_072,
+  'mistral/ministral-14b-2512': 262_144,
+  'mistral/ministral-8b-2512': 262_144,
+  'mistral/ministral-3b-2512': 262_144,
   // Mistral seat (ProviderId 'mistral', the Vibe CLI over ACP) — NOT the Pi
   // BYOK upstream rows directly above. Bare (no-slash) ids, so they can't
   // collide with the `mistral/<model>` Pi wire ids. The CLI's display model
