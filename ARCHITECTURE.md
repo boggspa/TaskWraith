@@ -118,11 +118,13 @@ emit a warning and make no promotion. A shared liveness guard
 (`ensembleRoundLifecycle`) prevents stale round records from keeping the
 composer busy after the actual work has finished. Plain mention highlighting
 and routing share the alias-aware tokenizer, but the renderer is not a dispatch
-authority. In the source-ahead
-checkout, the desktop picker writes a structured participant-id link and main
-re-resolves every desktop/remote direct prompt against the canonical roster;
-ambiguous plain aliases and stale structured ids fail before launch. This
-main-authoritative routing hardening is newer than the v1.9.4 release baseline.
+authority. The desktop picker carries an exact participant id alongside the
+prompt — the legacy embedded `ensemble-dm://` link is still parsed for stored
+and retried prompts — and main re-resolves every desktop/remote direct prompt
+against the canonical roster; ambiguous plain aliases and stale structured ids
+fail before launch. This main-authoritative routing hardening is part of the
+v1.9.5 release baseline, not source-ahead of it: the resolver landed in
+v1.8.5 and the picker's out-of-band id in v1.8.8.
 
 ## Evidence Packs and Capability Ledger
 
