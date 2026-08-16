@@ -8,7 +8,6 @@ const {
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   UNPROMOTED_SESSION_DEPENDENCIES,
   assertDiagnostics,
-  buildFramePtsCensusCommand,
   buildReferenceExtractCommand,
   describeFixtureContract,
   isPlayableSample,
