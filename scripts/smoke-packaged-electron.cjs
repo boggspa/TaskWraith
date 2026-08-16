@@ -14,6 +14,7 @@ const bundleSizeGuardDisabled = process.env.TASKWRAITH_DISABLE_BUNDLE_SIZE_GUARD
 const maxAsarBytes = readMegabyteLimit('TASKWRAITH_MAX_ASAR_MB', 500)
 const maxZipBytes = readMegabyteLimit('TASKWRAITH_MAX_ZIP_MB', 700)
 const launchSmokeTimeoutMs = readIntegerEnv('TASKWRAITH_PACKAGE_SMOKE_TIMEOUT_MS', 8000)
+const DEVELOPER_ID_LEAF_PREFIX = 'Developer ID Application:'
 
 // Requiring this script — its unit tests do, to exercise the signing-posture
 // helpers — must not launch the smoke run against the real repository. Only
@@ -784,8 +785,6 @@ function validateMacAppSignature(packageRoot) {
     )}`
   )
 }
-
-const DEVELOPER_ID_LEAF_PREFIX = 'Developer ID Application:'
 
 /**
  * Parses a `codesign -dv --verbose=4` report into a signing posture.
