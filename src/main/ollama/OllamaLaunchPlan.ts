@@ -1,5 +1,9 @@
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
-import { ollamaModelIdsMatch as modelIdsMatchByAvailability } from '../../shared/ollamaModelAvailability'
+import {
+  isOllamaCloudModelId,
+  ollamaCloudBaseModelId,
+  ollamaModelIdsMatch as modelIdsMatchByAvailability
+} from '../../shared/ollamaModelAvailability'
 import type {
   AgenticNetworkPolicy,
   OllamaReasoningLevel,
@@ -42,8 +46,14 @@ export const OLLAMA_TOOL_HELP_NAME = 'tool_help'
 
 export interface OllamaFinalLaunchPlan {
   readonly schemaVersion: 1
+  /** Exact HTTP origin selected for this run (local daemon or direct Cloud API). */
   readonly baseUrl: string
+  /** Stable catalogue/provider model id retained in TaskWraith events and memory. */
   readonly model: string
+  /** Exact model id sent in the `/api/chat` request body. */
+  readonly wireModel: string
+  /** True only when the plan targets ollama.com with a separately stored API key. */
+  readonly directCloudApi: boolean
   readonly modelLabel: string
   readonly installedModels: OllamaModelInfo[]
   readonly modelManifest: {
@@ -81,6 +91,8 @@ export interface OllamaFinalLaunchPlan {
 
 export interface ResolveOllamaFinalLaunchPlanInput {
   readonly baseUrl: string
+  /** Present only when a direct Cloud credential is available for this launch. */
+  readonly directCloudApiBaseUrl?: string | null
   readonly requestedModel: string | null | undefined
   readonly configuredDefaultModel: string | null | undefined
   readonly prompt: string
@@ -106,7 +118,14 @@ export interface ResolveOllamaFinalLaunchPlanInput {
 
 export interface ResolveOllamaFinalLaunchPlanDeps {
   loadInstalledModels(): Promise<readonly OllamaModelInfo[]>
-  loadModelShow(model: string): Promise<OllamaModelShowInfo | null>
+  loadModelShow(
+    model: string,
+    transport: Readonly<{
+      baseUrl: string
+      wireModel: string
+      directCloudApi: boolean
+    }>
+  ): Promise<OllamaModelShowInfo | null>
   modelLabel(model: string): string
   buildNativeToolDefinitions(input: {
     compact: boolean
@@ -167,9 +186,19 @@ export async function resolveOllamaFinalLaunchPlan(
   )
   if (!model) return null
 
+  const directCloudApi = isOllamaCloudModelId(model) && Boolean(input.directCloudApiBaseUrl?.trim())
+  const baseUrl = directCloudApi ? input.directCloudApiBaseUrl!.trim() : input.baseUrl
+  const wireModel = directCloudApi ? ollamaCloudBaseModelId(model) : model
+
   const installedTag =
     installedModels.find((candidate) => ollamaModelIdsMatch(candidate.id, model)) ?? null
-  const show = cloneJson(await deps.loadModelShow(model))
+  const show = cloneJson(
+    await deps.loadModelShow(model, {
+      baseUrl,
+      wireModel,
+      directCloudApi
+    })
+  )
   const merged = mergeOllamaModelShow(installedTag, show)
   const toolProtocolEligible =
     input.toolExecutionAvailable &&
@@ -297,7 +326,7 @@ export async function resolveOllamaFinalLaunchPlan(
     firstRequestOptions.num_predict = Math.max(1, Math.trunc(firstNumPredict))
   }
   const firstRequest: Record<string, unknown> = {
-    model,
+    model: wireModel,
     stream: true,
     messages: cloneJson(openingMessages),
     ...(firstRequestTools.length ? { tools: cloneJson(firstRequestTools) } : {}),
@@ -318,8 +347,10 @@ export async function resolveOllamaFinalLaunchPlan(
 
   return deepFreeze({
     schemaVersion: 1,
-    baseUrl: input.baseUrl,
+    baseUrl,
     model,
+    wireModel,
+    directCloudApi,
     modelLabel: deps.modelLabel(model),
     installedModels,
     modelManifest: {

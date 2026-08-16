@@ -3457,6 +3457,7 @@ export async function runOllamaProvider(
     const launchPlan = await resolveOllamaFinalLaunchPlan(
       {
         baseUrl,
+        directCloudApiBaseUrl: cloudApiKey ? OLLAMA_CLOUD_API_BASE_URL : null,
         requestedModel: payload.model,
         configuredDefaultModel: settings.ollamaDefaultModel,
         prompt: payload.prompt,
@@ -3485,16 +3486,12 @@ export async function runOllamaProvider(
             { ...settings, ollamaBaseUrl: baseUrl },
             { signal: controller.signal, launchAuthorized, cloudApiKey }
           ),
-        loadModelShow: (model) =>
-          fetchOllamaModelShow(
-            isOllamaCloudModelId(model) && cloudApiKey ? OLLAMA_CLOUD_API_BASE_URL : baseUrl,
-            isOllamaCloudModelId(model) && cloudApiKey ? ollamaCloudBaseModelId(model) : model,
-            {
-              signal: controller.signal,
-              launchAuthorized,
-              ...(isOllamaCloudModelId(model) && cloudApiKey ? { apiKey: cloudApiKey } : {})
-            }
-          ),
+        loadModelShow: (_model, transport) =>
+          fetchOllamaModelShow(transport.baseUrl, transport.wireModel, {
+            signal: controller.signal,
+            launchAuthorized,
+            ...(transport.directCloudApi ? { apiKey: cloudApiKey } : {})
+          }),
         modelLabel: humanizeOllamaModelId,
         buildNativeToolDefinitions: (input) =>
           ollamaNativeToolDefinitions('provider_parity', input),
@@ -3522,6 +3519,9 @@ export async function runOllamaProvider(
     const {
       installedModels: models,
       model,
+      wireModel,
+      directCloudApi,
+      baseUrl: transportBaseUrl,
       modelLabel,
       toolProtocolEnabled,
       toolControlTier,
@@ -3536,10 +3536,7 @@ export async function runOllamaProvider(
       harnessEnabled
     } = launchPlan
     const cloudModel = isOllamaCloudModelId(model)
-    const directCloudApi = cloudModel && Boolean(cloudApiKey)
     directCloudRun = directCloudApi
-    const transportBaseUrl = directCloudApi ? OLLAMA_CLOUD_API_BASE_URL : baseUrl
-    const transportModel = directCloudApi ? ollamaCloudBaseModelId(model) : model
     launchedModel = cloudModel ? null : model
     const modelInfo = launchPlan.modelManifest.merged
     // Tool-result truncation scales to the daemon-measured window (bounded by
@@ -3777,7 +3774,7 @@ export async function runOllamaProvider(
       }
       const turn = await runOllamaChatTurn({
         baseUrl: transportBaseUrl,
-        model: transportModel,
+        model: wireModel,
         cloudModel,
         ...(directCloudApi ? { apiKey: cloudApiKey } : {}),
         messages,
@@ -3798,8 +3795,7 @@ export async function runOllamaProvider(
         toolProtocolEnabled,
         availableToolNames,
         formatToolNames,
-        request:
-          turnIndex === 0 ? { ...launchPlan.firstRequest, model: transportModel } : undefined,
+        request: turnIndex === 0 ? launchPlan.firstRequest : undefined,
         launchAuthorized,
         onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
           deps.sendAgentCompatLine(

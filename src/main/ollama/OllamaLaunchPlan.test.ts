@@ -178,6 +178,54 @@ describe('OllamaFinalLaunchPlan', () => {
     expect(Object.isFrozen(plan)).toBe(true)
   })
 
+  it('freezes direct Cloud transport and removes the local-only cloud suffix before dispatch', async () => {
+    const loadModelShow = vi.fn(
+      async (
+        model: string,
+        transport: { baseUrl: string; wireModel: string; directCloudApi: boolean }
+      ) => {
+        expect(model).toBe('minimax-m3:cloud')
+        expect(transport).toEqual({
+          baseUrl: 'https://ollama.com',
+          wireModel: 'minimax-m3',
+          directCloudApi: true
+        })
+        return { capabilities: ['completion', 'tools'] }
+      }
+    )
+    const plan = await resolveOllamaFinalLaunchPlan(
+      {
+        ...BASE_INPUT,
+        directCloudApiBaseUrl: 'https://ollama.com',
+        requestedModel: 'minimax-m3:cloud',
+        ensemble: { enabled: false }
+      },
+      {
+        loadInstalledModels: async () => [
+          { id: 'minimax-m3:cloud', label: 'MiniMax M3', source: 'cloud', isCloud: true }
+        ],
+        loadModelShow,
+        modelLabel: () => 'MiniMax M3',
+        buildNativeToolDefinitions: () => nativeDefinitions,
+        getSessionMemory: () => null,
+        prepareEnsemblePrompt: ({ prompt }) => prompt,
+        buildWorkspaceIndexBlock: () => '',
+        buildOpeningMessages: ({ userPrompt }) => [{ role: 'user', content: userPrompt }],
+        resolveNumCtx: () => 8192
+      }
+    )
+
+    expect(loadModelShow).toHaveBeenCalledOnce()
+    expect(plan).toMatchObject({
+      baseUrl: 'https://ollama.com',
+      model: 'minimax-m3:cloud',
+      wireModel: 'minimax-m3',
+      directCloudApi: true,
+      firstRequest: { model: 'minimax-m3' }
+    })
+    expect(Object.isFrozen(plan)).toBe(true)
+  })
+
   it('resolves official lightweight aliases to installed wires and preserves LFM thinking', async () => {
     expect(
       resolveOllamaRequestedWireModel('gemma3:4b', null, [
@@ -218,7 +266,14 @@ describe('OllamaFinalLaunchPlan', () => {
       }
     )
 
-    expect(loadModelShow).toHaveBeenCalledWith('lfm2.5-thinking:latest')
+    expect(loadModelShow).toHaveBeenCalledWith(
+      'lfm2.5-thinking:latest',
+      expect.objectContaining({
+        baseUrl: BASE_INPUT.baseUrl,
+        wireModel: 'lfm2.5-thinking:latest',
+        directCloudApi: false
+      })
+    )
     expect(plan).toMatchObject({
       model: 'lfm2.5-thinking:latest',
       thinkingLevel: 'high',
