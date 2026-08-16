@@ -7,11 +7,11 @@ vi.mock('electron', () => ({ dialog: { showMessageBox: vi.fn() } }))
 
 type Options = { message: string; detail: string; buttons: string[]; cancelId: number }
 
-function capture(response: number): {
-  showMessageBox: ReturnType<typeof vi.fn>
-  lastOptions: () => Options
-} {
-  const showMessageBox = vi.fn(async () => ({ response }))
+// No explicit return type: annotating it as ReturnType<typeof vi.fn> widens the
+// mock to Mock<Procedure | Constructable>, which no longer satisfies the
+// overloaded typeof dialog.showMessageBox. Inference keeps the precise type.
+function capture(response: number) {
+  const showMessageBox = vi.fn().mockResolvedValue({ response, checkboxChecked: false })
   return {
     showMessageBox,
     lastOptions: () => showMessageBox.mock.calls.at(-1)?.at(-1) as Options

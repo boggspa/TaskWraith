@@ -12,14 +12,11 @@ import { dialog } from 'electron'
 import type { CanvasConsequentialConfirmRequest } from './CanvasService'
 
 export interface CanvasConsequentialDialogDependencies {
-  showMessageBox: {
-    (options: MessageBoxOptions): Promise<{ response: number }>
-    (owner: BrowserWindow, options: MessageBoxOptions): Promise<{ response: number }>
-  }
+  showMessageBox: typeof dialog.showMessageBox
 }
 
 const DEFAULT_DEPENDENCIES: CanvasConsequentialDialogDependencies = {
-  showMessageBox: dialog.showMessageBox as CanvasConsequentialDialogDependencies['showMessageBox']
+  showMessageBox: dialog.showMessageBox.bind(dialog)
 }
 
 /** Bound anything that reaches the dialog, even our own strings. */
