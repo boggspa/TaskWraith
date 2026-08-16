@@ -13,6 +13,7 @@ const {
   adjudicatePlaybackRoundTrip,
   adjudicateRecognizedTranscript,
   adjudicateSharedStudioClock,
+  assertGeneratedSpeechFixtureCustody,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
@@ -51,6 +52,11 @@ const {
     sourceReceipt: Record<string, any>,
     reviewReceipt: Record<string, any>
   ) => Record<string, any>
+  assertGeneratedSpeechFixtureCustody: (
+    fixture: Record<string, any>,
+    asset: Record<string, any>,
+    artifactRoot: string
+  ) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
     args: Record<string, any>,
@@ -158,7 +164,10 @@ const {
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
   parseStudioTransportMutationText: (text: string) => Record<string, unknown>
-  studioProposalInsertionEvidence: (entry: Record<string, any>) => Record<string, any>
+  studioProposalInsertionEvidence: (
+    entry: Record<string, any>,
+    boundary: { assetId: string; durationSeconds: number }
+  ) => Record<string, any>
   runStudioUiDriver: (
     plan: Record<string, any>,
     target: Record<string, any>,
@@ -175,9 +184,13 @@ const {
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
 }
-const { expectedTranscriptPhrases } = require('./studio-generate-speech-fixture.cjs') as {
-  expectedTranscriptPhrases: () => string[]
-}
+const { buildMuxCommand, buildSayCommand, describeFixturePlan, expectedTranscriptPhrases } =
+  require('./studio-generate-speech-fixture.cjs') as {
+    buildMuxCommand: (options: Record<string, any>) => string[]
+    buildSayCommand: (options: Record<string, any>) => string[]
+    describeFixturePlan: (options: Record<string, any>) => Record<string, any>
+    expectedTranscriptPhrases: () => string[]
+  }
 const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog.cjs') as {
   classifyDetachedArtifactGroups: (options: {
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>
@@ -3725,9 +3738,15 @@ describe('Studio acceptance harness', () => {
       await fsPromises.writeFile(destination, PNG.sync.write(image))
       return destination
     }
-    const paint = (image: InstanceType<typeof PNG>, top: number) => {
-      for (let y = top; y < top + 24; y += 1) {
-        for (let x = 100; x < 124; x += 1) {
+    const paintRectangle = (
+      image: InstanceType<typeof PNG>,
+      left: number,
+      top: number,
+      width: number,
+      height: number
+    ) => {
+      for (let y = top; y < top + height; y += 1) {
+        for (let x = left; x < left + width; x += 1) {
           const offset = (y * image.width + x) * 4
           image.data[offset] = 0
           image.data[offset + 1] = 0
@@ -3737,19 +3756,47 @@ describe('Studio acceptance harness', () => {
       }
     }
     const baseline = await makeCapture('baseline.png')
-    const material = await makeCapture('material.png', (image) => paint(image, 200))
-    const timeline = await makeCapture('timeline.png', (image) => paint(image, 650))
+    const material = await makeCapture('material.png', (image) => {
+      for (const y of [96, 248, 440]) {
+        for (const x of [64, 416, 800, 1_184]) {
+          paintRectangle(image, x, y, 32, 32)
+        }
+      }
+    })
+    const localizedNoise = await makeCapture('localized-noise.png', (image) =>
+      paintRectangle(image, 100, 200, 8, 4)
+    )
+    const timeline = await makeCapture('timeline.png', (image) =>
+      paintRectangle(image, 100, 650, 24, 24)
+    )
 
     expect(compareStudioJourneyCaptures(baseline, material, bounds, 'material')).toMatchObject({
       ok: true,
-      region: 'material'
+      region: 'material',
+      spatialSpread: {
+        horizontalSpanFraction: expect.any(Number),
+        verticalSpanFraction: expect.any(Number),
+        occupiedCellCount: expect.any(Number)
+      },
+      threshold: {
+        calibration: {
+          generator: 'testsrc2=size=1920x1080:rate=30',
+          comparedFrameIndices: [30, 90],
+          materialPixelCount: 619_520,
+          changedPixelCount: 34_958,
+          occupiedCellCount: 9
+        }
+      }
     })
     expect(compareStudioJourneyCaptures(baseline, timeline, bounds, 'timeline')).toMatchObject({
       ok: true,
       region: 'timeline'
     })
+    expect(() =>
+      compareStudioJourneyCaptures(baseline, localizedNoise, bounds, 'material')
+    ).toThrow(/spatially distributed material change/)
     expect(() => compareStudioJourneyCaptures(baseline, timeline, bounds, 'material')).toThrow(
-      /material region did not materially change/
+      /spatially distributed material change/
     )
     expect(() => compareStudioJourneyCaptures(baseline, baseline, bounds, 'timeline')).toThrow(
       /timeline region did not materially change/
@@ -3771,15 +3818,34 @@ describe('Studio acceptance harness', () => {
         }
       }
     }
-    expect(studioProposalInsertionEvidence(proposalEntry)).toMatchObject({
+    const proposalBoundary = { assetId: 'asset-a', durationSeconds: 30 }
+    expect(studioProposalInsertionEvidence(proposalEntry, proposalBoundary)).toMatchObject({
       proposalId: 'proposal-a',
+      assetId: 'asset-a',
       insertionTicks: 1_500_000,
-      timebase: 500_000
+      timebase: 500_000,
+      durationSeconds: 30,
+      durationBoundTicks: '15000000'
     })
     const mismatchedTimebase = structuredClone(proposalEntry)
     mismatchedTimebase.op.proposal.op.at.d = 30_000
-    expect(() => studioProposalInsertionEvidence(mismatchedTimebase)).toThrow(
+    expect(() => studioProposalInsertionEvidence(mismatchedTimebase, proposalBoundary)).toThrow(
       /exact bounded insert_range/
+    )
+    const foreignAsset = structuredClone(proposalEntry)
+    foreignAsset.op.proposal.op.assetId = 'asset-b'
+    expect(() => studioProposalInsertionEvidence(foreignAsset, proposalBoundary)).toThrow(
+      /opened asset/
+    )
+    const unboundedSource = structuredClone(proposalEntry)
+    unboundedSource.op.proposal.op.sourceOut.n = Number.MAX_SAFE_INTEGER
+    expect(() => studioProposalInsertionEvidence(unboundedSource, proposalBoundary)).toThrow(
+      /fixture duration/
+    )
+    const unboundedInsertion = structuredClone(proposalEntry)
+    unboundedInsertion.op.proposal.op.at.n = Number.MAX_SAFE_INTEGER
+    expect(() => studioProposalInsertionEvidence(unboundedInsertion, proposalBoundary)).toThrow(
+      /fixture duration/
     )
 
     const source = {
@@ -3841,8 +3907,7 @@ describe('Studio acceptance harness', () => {
       'review-current-proposed',
       'accept',
       'propose-reject',
-      'reject',
-      'transport-review'
+      'reject'
     ])
 
     const calls: string[] = []
@@ -3865,9 +3930,11 @@ describe('Studio acceptance harness', () => {
             }
           ]
         },
+        asset: { sha256: 'asset-a' },
         speechFixture: {
           manifestPath: '/virtual/acceptance/studioJourney01/fixtures/speech-fixture-manifest.json',
           outputSha256: 'b'.repeat(64),
+          durationSeconds: 30,
           expectedPhrases: expectedTranscriptPhrases(),
           provenanceNote: 'generation alone does not prove recognition'
         }
@@ -4033,7 +4100,15 @@ describe('Studio acceptance harness', () => {
         }
       },
       accepted: { proposalId: 'proposal-1', resolutionRevision: 4 },
-      rejected: { proposalId: 'proposal-2', resolutionRevision: 6 },
+      rejected: {
+        proposalId: 'proposal-2',
+        resolutionRevision: 6,
+        proposal: {
+          proposalId: 'proposal-2',
+          assetId: 'asset-a',
+          durationSeconds: 30
+        }
+      },
       adjudication: {
         transcriptPixels: { ok: true, region: 'timeline' },
         currentProposedPixels: { ok: true, region: 'material' },
@@ -4053,7 +4128,7 @@ describe('Studio acceptance harness', () => {
     })
     expect(calls).toEqual([
       'driver:press-playback',
-      'journal:set_transcript:',
+      'journal:set_transcript:asset-a',
       'driver:transcript-band',
       'driver:tab',
       'driver:transcript-selected',
@@ -4083,8 +4158,7 @@ describe('Studio acceptance harness', () => {
       'driver:ghost-reject',
       'driver:r,reject-sent',
       'journal:resolve_proposal:reject',
-      'driver:press-playback,press-playback',
-      'driver:i,o,l,p,c,g,s,final'
+      'driver:press-playback,press-playback'
     ])
     expect(deliveries).toEqual([
       'background-observation-only',
@@ -4109,8 +4183,7 @@ describe('Studio acceptance harness', () => {
       'foreground-global-explicit',
       'background-observation-only',
       'foreground-global-explicit',
-      'background-observation-only',
-      'foreground-global-explicit'
+      'background-observation-only'
     ])
     expect(receipt.screenshots).toEqual([
       '/virtual/transcript-band.png',
@@ -4122,8 +4195,7 @@ describe('Studio acceptance harness', () => {
       '/virtual/proposed.png',
       '/virtual/accept-sent.png',
       '/virtual/ghost-reject.png',
-      '/virtual/reject-sent.png',
-      '/virtual/final.png'
+      '/virtual/reject-sent.png'
     ])
   })
 
@@ -4175,10 +4247,78 @@ describe('Studio acceptance harness', () => {
     expect(() => assertCleanWatchdogTerminal(terminal)).toThrow(/did not confirm clean/)
   })
 
+  it('binds the persisted generated fixture to the exact bytes opened by Studio', async () => {
+    const root = await temporaryRoot('studio-speech-fixture-custody-')
+    const artifactRoot = path.join(root, 'artifacts')
+    const fixtureDirectory = path.join(artifactRoot, 'fixtures')
+    const speechPath = path.join(fixtureDirectory, 'acceptance-speech.aiff')
+    const outputPath = path.join(fixtureDirectory, 'acceptance-speech-30s.mp4')
+    const manifestPath = path.join(fixtureDirectory, 'speech-fixture-manifest.json')
+    await fsPromises.mkdir(fixtureDirectory, { recursive: true })
+    const speechBytes = Buffer.from('deterministic speech')
+    const outputBytes = Buffer.from('deterministic muxed fixture')
+    await fsPromises.writeFile(speechPath, speechBytes)
+    await fsPromises.writeFile(outputPath, outputBytes)
+    const fixturePlan = describeFixturePlan({ durationSeconds: 30 })
+    const manifest = {
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-generated-speech-fixture',
+      ...fixturePlan,
+      speechPath,
+      outputPath,
+      manifestPath,
+      mimeType: 'video/mp4',
+      speechSha256: crypto.createHash('sha256').update(speechBytes).digest('hex'),
+      outputSha256: crypto.createHash('sha256').update(outputBytes).digest('hex'),
+      speechByteLength: speechBytes.length,
+      outputByteLength: outputBytes.length,
+      sayCommand: buildSayCommand({ outputPath: speechPath }),
+      muxCommand: buildMuxCommand({
+        speechPath,
+        outputPath,
+        durationSeconds: fixturePlan.durationSeconds
+      }),
+      sayExitCode: 0,
+      muxExitCode: 0
+    }
+    await fsPromises.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    const asset = await materializeOwnedMedia({
+      mediaPath: outputPath,
+      mimeType: 'video/mp4',
+      userDataPath: path.join(root, 'user-data')
+    })
+
+    await expect(
+      assertGeneratedSpeechFixtureCustody(manifest, asset, artifactRoot)
+    ).resolves.toMatchObject({
+      ok: true,
+      outputSha256: manifest.outputSha256,
+      outputByteLength: outputBytes.length,
+      assetSha256: crypto.createHash('sha256').update(outputBytes).digest('base64url'),
+      manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+
+    const forgedDigest = { ...manifest, outputSha256: 'b'.repeat(64) }
+    await fsPromises.writeFile(manifestPath, `${JSON.stringify(forgedDigest, null, 2)}\n`)
+    await expect(
+      assertGeneratedSpeechFixtureCustody(forgedDigest, asset, artifactRoot)
+    ).rejects.toThrow(/output digest/)
+
+    const forgedLength = { ...manifest, outputByteLength: outputBytes.length + 1 }
+    await fsPromises.writeFile(manifestPath, `${JSON.stringify(forgedLength, null, 2)}\n`)
+    await expect(
+      assertGeneratedSpeechFixtureCustody(forgedLength, asset, artifactRoot)
+    ).rejects.toThrow(/output byte length/)
+
+    const escapedPath = { ...manifest, outputPath: path.join(root, 'outside.mp4') }
+    await fsPromises.writeFile(manifestPath, `${JSON.stringify(escapedPath, null, 2)}\n`)
+    await expect(
+      assertGeneratedSpeechFixtureCustody(escapedPath, asset, artifactRoot)
+    ).rejects.toThrow(/artifact-root path/)
+  })
+
   it('drives the authorized renderer-to-durable-window joins in order without launching Electron', async () => {
     const root = await temporaryRoot('studio-acceptance-joins-')
-    const source = path.join(root, 'accept.mov')
-    await fsPromises.writeFile(source, 'fixture')
     const calls: string[] = []
     const renderer = { close: () => calls.push('renderer.close') }
     const watchdogTerminal = {
@@ -4188,6 +4328,7 @@ describe('Studio acceptance harness', () => {
       detachedGroupExitVerified: true
     }
     let journeyError: Error | null = null
+    let forgeFixtureDigest = false
     const session = {
       pid: 7001,
       pgid: 7001,
@@ -4199,16 +4340,7 @@ describe('Studio acceptance harness', () => {
       }
     }
 
-    const speechFixture = {
-      schemaVersion: 1,
-      kind: 'taskwraith-studio-generated-speech-fixture',
-      outputPath: source,
-      mimeType: 'video/mp4',
-      outputSha256: 'b'.repeat(64),
-      manifestPath: path.join(root, 'speech-fixture-manifest.json'),
-      expectedPhrases: expectedTranscriptPhrases(),
-      provenanceNote: 'generation alone does not prove recognition'
-    }
+    let speechFixture: Record<string, any> | null = null
     const args = {
       ...parseArgs([]),
       launch: true,
@@ -4224,7 +4356,41 @@ describe('Studio acceptance harness', () => {
         platform: 'darwin',
         adapters: { resolveElectronPath: () => '/virtual/Electron' }
       },
-      generateSpeechFixture: async () => {
+      generateSpeechFixture: async ({ artifactRoot }: { artifactRoot: string }) => {
+        const fixtureDirectory = path.join(artifactRoot, 'fixtures')
+        const speechPath = path.join(fixtureDirectory, 'acceptance-speech.aiff')
+        const outputPath = path.join(fixtureDirectory, 'acceptance-speech-30s.mp4')
+        const manifestPath = path.join(fixtureDirectory, 'speech-fixture-manifest.json')
+        await fsPromises.mkdir(fixtureDirectory, { recursive: true })
+        const speechBytes = Buffer.from('joined speech')
+        const outputBytes = Buffer.from('joined fixture')
+        await fsPromises.writeFile(speechPath, speechBytes)
+        await fsPromises.writeFile(outputPath, outputBytes)
+        const fixturePlan = describeFixturePlan({ durationSeconds: 30 })
+        speechFixture = {
+          schemaVersion: 1,
+          kind: 'taskwraith-studio-generated-speech-fixture',
+          ...fixturePlan,
+          speechPath,
+          outputPath,
+          manifestPath,
+          mimeType: 'video/mp4',
+          speechSha256: crypto.createHash('sha256').update(speechBytes).digest('hex'),
+          outputSha256: forgeFixtureDigest
+            ? 'b'.repeat(64)
+            : crypto.createHash('sha256').update(outputBytes).digest('hex'),
+          speechByteLength: speechBytes.length,
+          outputByteLength: outputBytes.length,
+          sayCommand: buildSayCommand({ outputPath: speechPath }),
+          muxCommand: buildMuxCommand({
+            speechPath,
+            outputPath,
+            durationSeconds: fixturePlan.durationSeconds
+          }),
+          sayExitCode: 0,
+          muxExitCode: 0
+        }
+        await fsPromises.writeFile(manifestPath, `${JSON.stringify(speechFixture, null, 2)}\n`)
         calls.push('fixture.generate')
         return speechFixture
       },
@@ -4298,6 +4464,12 @@ describe('Studio acceptance harness', () => {
         companion: { pid: 7002 },
         window: { visibleWindowCount: 1 },
         speechFixture,
+        speechFixtureCustody: {
+          ok: true,
+          outputSha256: speechFixture?.outputSha256,
+          outputByteLength: speechFixture?.outputByteLength,
+          manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+        },
         durable: { revision: 1 },
         journey: { ok: true, screenshots: ['/virtual/final.png'] },
         watchdogTerminal
@@ -4338,5 +4510,13 @@ describe('Studio acceptance harness', () => {
       'renderer.close',
       'watchdog.stop'
     ])
+
+    calls.length = 0
+    journeyError = null
+    forgeFixtureDigest = true
+    await expect(
+      runStudioAcceptance({ ...args, instanceId: 'studioForge01' }, adapters)
+    ).rejects.toThrow(/output digest/)
+    expect(calls).toEqual(['fixture.generate'])
   })
 })

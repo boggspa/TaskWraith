@@ -47,8 +47,34 @@ const {
 const SHORT_SPEECH_FIXTURE_DURATION_SECONDS = 30
 const STUDIO_JOURNEY_OVERLAY_POINTS = 118
 const STUDIO_JOURNEY_PIXEL_DELTA = 16
-const STUDIO_JOURNEY_MIN_CHANGED_PIXELS = 32
-const STUDIO_JOURNEY_MIN_CHANGED_FRACTION = 0.00002
+const STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_PIXELS = 32
+const STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_FRACTION = 0.00002
+// Pinned measurement of the generated testsrc2 plane at the proposal fixture's
+// exact source/current times: frames 30 and 90 at 30 fps, scaled to the 1280x720
+// capture plane and cropped above the 118-point overlay. The 619,520 material
+// pixels change by 34,958 (5.6427557%), occupy 9/12 cells, and span both axes.
+// The acceptance floor retains a 4x fraction margin, one full grid-row margin,
+// and half of each measured span; those margins are explicit evidence policy,
+// not a replacement for the calibration.
+const STUDIO_JOURNEY_MATERIAL_CALIBRATION = Object.freeze({
+  generator: 'testsrc2=size=1920x1080:rate=30',
+  comparedFrameIndices: [30, 90],
+  scaledCaptureSize: '1280x720',
+  materialPixelCount: 619_520,
+  changedPixelCount: 34_958,
+  changedPixelFraction: 34_958 / 619_520,
+  occupiedCellCount: 9,
+  horizontalSpanFraction: 1,
+  verticalSpanFraction: 1
+})
+const STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS = 4
+const STUDIO_JOURNEY_MATERIAL_GRID_ROWS = 3
+const STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS =
+  STUDIO_JOURNEY_MATERIAL_CALIBRATION.occupiedCellCount - STUDIO_JOURNEY_MATERIAL_GRID_ROWS
+const STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION =
+  STUDIO_JOURNEY_MATERIAL_CALIBRATION.changedPixelFraction / 4
+const STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION =
+  STUDIO_JOURNEY_MATERIAL_CALIBRATION.horizontalSpanFraction / 2
 const STUDIO_JOURNEY_CAPTURE_MAX_BYTES = 64 * 1024 * 1024
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
@@ -1617,6 +1643,152 @@ async function generateAcceptanceSpeechFixture(options, adapters = {}) {
   return manifest
 }
 
+async function assertGeneratedSpeechFixtureCustody(fixture, asset, artifactRootValue) {
+  if (!isRecord(fixture) || !isRecord(asset)) {
+    throw new Error('generated speech fixture custody requires fixture and asset records')
+  }
+  const artifactRoot = path.resolve(String(artifactRootValue || ''))
+  if (!path.isAbsolute(artifactRoot) || artifactRoot === path.parse(artifactRoot).root) {
+    throw new Error('generated speech fixture custody requires a bounded artifact root')
+  }
+  const fixtureDirectory = path.join(artifactRoot, 'fixtures')
+  const [realArtifactRoot, realFixtureDirectory] = await Promise.all([
+    fsPromises.realpath(artifactRoot),
+    fsPromises.realpath(fixtureDirectory)
+  ])
+  if (realFixtureDirectory !== path.join(realArtifactRoot, 'fixtures')) {
+    throw new Error('generated speech fixture directory is not the exact artifact-root path')
+  }
+  const expectedPaths = {
+    speechPath: path.join(fixtureDirectory, 'acceptance-speech.aiff'),
+    outputPath: path.join(fixtureDirectory, 'acceptance-speech-30s.mp4'),
+    manifestPath: path.join(fixtureDirectory, 'speech-fixture-manifest.json')
+  }
+  for (const [field, expectedPath] of Object.entries(expectedPaths)) {
+    if (
+      typeof fixture[field] !== 'string' ||
+      path.resolve(fixture[field]) !== path.resolve(expectedPath)
+    ) {
+      throw new Error(`generated speech fixture ${field} is not the exact artifact-root path`)
+    }
+  }
+
+  const manifestStat = await assertSafeRegularFile(
+    expectedPaths.manifestPath,
+    'generated speech fixture persisted manifest',
+    { maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES }
+  )
+  const speechStat = await assertSafeRegularFile(
+    expectedPaths.speechPath,
+    'generated speech fixture speech'
+  )
+  const outputStat = await assertSafeRegularFile(
+    expectedPaths.outputPath,
+    'generated speech fixture output'
+  )
+  if (speechStat.size < 1 || outputStat.size < 1) {
+    throw new Error('generated speech fixture custody refuses empty media')
+  }
+  const persisted = await readBoundedJsonFile(
+    expectedPaths.manifestPath,
+    'generated speech fixture persisted manifest'
+  )
+  const expectedPlan = describeFixturePlan({
+    durationSeconds: SHORT_SPEECH_FIXTURE_DURATION_SECONDS
+  })
+  for (const [label, candidate] of [
+    ['returned', fixture],
+    ['persisted', persisted]
+  ]) {
+    const verification = verifyFixtureManifest(candidate)
+    if (!verification.ok) {
+      throw new Error(
+        `generated speech fixture ${label} manifest is invalid: ${verification.failures.join('; ')}`
+      )
+    }
+    if (
+      candidate.schemaVersion !== 1 ||
+      candidate.kind !== 'taskwraith-studio-generated-speech-fixture' ||
+      candidate.mimeType !== 'video/mp4' ||
+      candidate.durationSeconds !== expectedPlan.durationSeconds ||
+      candidate.frameRate !== expectedPlan.frameRate ||
+      candidate.expectedFrameCount !== expectedPlan.expectedFrameCount ||
+      candidate.size !== expectedPlan.size ||
+      candidate.speechText !== expectedPlan.speechText ||
+      JSON.stringify(candidate.expectedPhrases) !== JSON.stringify(expectedPlan.expectedPhrases) ||
+      candidate.provenanceNote !== expectedPlan.provenanceNote ||
+      candidate.sayExitCode !== 0 ||
+      candidate.muxExitCode !== 0
+    ) {
+      throw new Error(
+        `generated speech fixture ${label} manifest does not match the exact short-fixture contract`
+      )
+    }
+  }
+  if (JSON.stringify(persisted) !== JSON.stringify(fixture)) {
+    throw new Error('generated speech fixture returned and persisted manifests do not agree')
+  }
+  if (
+    !Number.isSafeInteger(fixture.speechByteLength) ||
+    fixture.speechByteLength !== speechStat.size
+  ) {
+    throw new Error('generated speech fixture speech byte length does not match persisted bytes')
+  }
+  if (
+    !Number.isSafeInteger(fixture.outputByteLength) ||
+    fixture.outputByteLength !== outputStat.size
+  ) {
+    throw new Error('generated speech fixture output byte length does not match persisted bytes')
+  }
+
+  const [speechSha256, outputSha256, manifestSha256] = await Promise.all([
+    sha256Hex(expectedPaths.speechPath),
+    sha256Hex(expectedPaths.outputPath),
+    sha256Hex(expectedPaths.manifestPath)
+  ])
+  if (fixture.speechSha256 !== speechSha256) {
+    throw new Error('generated speech fixture speech digest does not match persisted bytes')
+  }
+  if (fixture.outputSha256 !== outputSha256) {
+    throw new Error('generated speech fixture output digest does not match persisted bytes')
+  }
+
+  const realOutputPath = await fsPromises.realpath(expectedPaths.outputPath)
+  const realAssetSourcePath = await fsPromises.realpath(String(asset.sourcePath || ''))
+  if (realAssetSourcePath !== realOutputPath) {
+    throw new Error('generated speech fixture output is not the exact opened asset source')
+  }
+  const assetStat = await assertSafeRegularFile(
+    String(asset.assetPath || ''),
+    'generated speech fixture isolated opened asset'
+  )
+  if (assetStat.size !== outputStat.size || asset.byteLength !== outputStat.size) {
+    throw new Error('generated speech fixture opened asset byte length does not match output')
+  }
+  const [openedOutputSha256, assetSha256] = await Promise.all([
+    sha256Hex(String(asset.assetPath)),
+    sha256Base64Url(String(asset.assetPath))
+  ])
+  if (openedOutputSha256 !== outputSha256 || asset.sha256 !== assetSha256) {
+    throw new Error('generated speech fixture opened asset digest does not match output')
+  }
+
+  return {
+    ok: true,
+    manifestPath: expectedPaths.manifestPath,
+    manifestSha256,
+    manifestByteLength: manifestStat.size,
+    speechPath: expectedPaths.speechPath,
+    speechSha256,
+    speechByteLength: speechStat.size,
+    outputPath: expectedPaths.outputPath,
+    outputSha256,
+    outputByteLength: outputStat.size,
+    assetPath: String(asset.assetPath),
+    assetSha256
+  }
+}
+
 const ISOLATED_GROK_GUARD = [
   '#!/bin/sh',
   '# TaskWraith Studio isolated acceptance: provider probe disabled',
@@ -2998,12 +3170,7 @@ function buildStudioAcceptanceJourney() {
       actions: ['w', 'tab', 'bracket-right', 'return'],
       wait: { type: 'propose_edit' }
     },
-    { id: 'reject', actions: ['r'], wait: { type: 'resolve_proposal', decision: 'reject' } },
-    {
-      id: 'transport-review',
-      actions: ['space', 'right', 'left', 'i', 'o', 'l', 'p', 'c', 'g', 's'],
-      screenshot: 'final'
-    }
+    { id: 'reject', actions: ['r'], wait: { type: 'resolve_proposal', decision: 'reject' } }
   ]
 }
 
@@ -3081,6 +3248,14 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
   let changedPixelCount = 0
   let maximumChannelDelta = 0
   let channelDeltaSum = 0
+  let minimumChangedX = Number.POSITIVE_INFINITY
+  let maximumChangedX = Number.NEGATIVE_INFINITY
+  let minimumChangedY = Number.POSITIVE_INFINITY
+  let maximumChangedY = Number.NEGATIVE_INFINITY
+  const materialCellCounts =
+    region === 'material'
+      ? Array(STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS * STUDIO_JOURNEY_MATERIAL_GRID_ROWS).fill(0)
+      : null
   for (let y = comparisonRegion.y; y < comparisonRegion.y + comparisonRegion.height; y += 1) {
     for (let x = comparisonRegion.x; x < comparisonRegion.x + comparisonRegion.width; x += 1) {
       const offset = (y * before.image.width + x) * 4
@@ -3093,14 +3268,67 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
         maximumChannelDelta = Math.max(maximumChannelDelta, delta)
         channelDeltaSum += delta
       }
-      if (pixelDelta > STUDIO_JOURNEY_PIXEL_DELTA) changedPixelCount += 1
+      if (pixelDelta > STUDIO_JOURNEY_PIXEL_DELTA) {
+        changedPixelCount += 1
+        minimumChangedX = Math.min(minimumChangedX, x)
+        maximumChangedX = Math.max(maximumChangedX, x)
+        minimumChangedY = Math.min(minimumChangedY, y)
+        maximumChangedY = Math.max(maximumChangedY, y)
+        if (materialCellCounts) {
+          const column = Math.min(
+            STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS - 1,
+            Math.floor(
+              ((x - comparisonRegion.x) * STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS) /
+                comparisonRegion.width
+            )
+          )
+          const row = Math.min(
+            STUDIO_JOURNEY_MATERIAL_GRID_ROWS - 1,
+            Math.floor(
+              ((y - comparisonRegion.y) * STUDIO_JOURNEY_MATERIAL_GRID_ROWS) /
+                comparisonRegion.height
+            )
+          )
+          materialCellCounts[row * STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS + column] += 1
+        }
+      }
     }
   }
   const pixelCount = comparisonRegion.width * comparisonRegion.height
   const changedPixelFraction = changedPixelCount / pixelCount
-  if (
-    changedPixelCount < STUDIO_JOURNEY_MIN_CHANGED_PIXELS ||
-    changedPixelFraction < STUDIO_JOURNEY_MIN_CHANGED_FRACTION
+  const gridCellPixelCount = Math.ceil(
+    pixelCount / (STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS * STUDIO_JOURNEY_MATERIAL_GRID_ROWS)
+  )
+  const minimumChangedPixelsPerOccupiedCell = Math.ceil(gridCellPixelCount / 256)
+  const occupiedCellCount = materialCellCounts
+    ? materialCellCounts.filter((count) => count >= minimumChangedPixelsPerOccupiedCell).length
+    : 0
+  const horizontalSpanFraction =
+    changedPixelCount > 0 ? (maximumChangedX - minimumChangedX + 1) / comparisonRegion.width : 0
+  const verticalSpanFraction =
+    changedPixelCount > 0 ? (maximumChangedY - minimumChangedY + 1) / comparisonRegion.height : 0
+  const spatialSpread = {
+    gridColumns: STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS,
+    gridRows: STUDIO_JOURNEY_MATERIAL_GRID_ROWS,
+    minimumChangedPixelsPerOccupiedCell,
+    occupiedCellCount,
+    horizontalSpanFraction,
+    verticalSpanFraction
+  }
+  if (region === 'material') {
+    if (
+      changedPixelFraction < STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION ||
+      occupiedCellCount < STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS ||
+      horizontalSpanFraction < STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION ||
+      verticalSpanFraction < STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION
+    ) {
+      throw new Error(
+        `Studio journey material region did not show spatially distributed material change: ${changedPixelCount}/${pixelCount} pixels across ${occupiedCellCount} cells`
+      )
+    }
+  } else if (
+    changedPixelCount < STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_PIXELS ||
+    changedPixelFraction < STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_FRACTION
   ) {
     throw new Error(
       `Studio journey ${region} region did not materially change: ${changedPixelCount}/${pixelCount} pixels`
@@ -3114,20 +3342,39 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
     pixelCount,
     changedPixelCount,
     changedPixelFraction,
+    ...(region === 'material' ? { spatialSpread } : {}),
     meanAbsoluteChannelDelta: channelDeltaSum / (pixelCount * 3),
     maximumChannelDelta,
     threshold: {
       channelDelta: STUDIO_JOURNEY_PIXEL_DELTA,
-      minimumChangedPixels: STUDIO_JOURNEY_MIN_CHANGED_PIXELS,
-      minimumChangedFraction: STUDIO_JOURNEY_MIN_CHANGED_FRACTION
+      ...(region === 'material'
+        ? {
+            minimumChangedFraction: STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION,
+            minimumOccupiedCells: STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS,
+            minimumSpanFraction: STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION,
+            calibration: STUDIO_JOURNEY_MATERIAL_CALIBRATION
+          }
+        : {
+            minimumChangedPixels: STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_PIXELS,
+            minimumChangedFraction: STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_FRACTION
+          })
     }
   }
 }
 
-function studioProposalInsertionEvidence(entry) {
+function studioProposalInsertionEvidence(entry, boundary) {
   const proposal = entry?.op?.proposal
   const edit = proposal?.op
   const rationals = [edit?.sourceIn, edit?.sourceOut, edit?.at]
+  if (
+    !isRecord(boundary) ||
+    typeof boundary.assetId !== 'string' ||
+    !boundary.assetId ||
+    !Number.isSafeInteger(boundary.durationSeconds) ||
+    boundary.durationSeconds <= 0
+  ) {
+    throw new Error('Studio journey proposal requires an opened asset and known fixture duration')
+  }
   if (
     !isRecord(proposal) ||
     typeof proposal.proposalId !== 'string' ||
@@ -3151,13 +3398,26 @@ function studioProposalInsertionEvidence(entry) {
   ) {
     throw new Error('Studio journey proposal does not contain one exact bounded insert_range')
   }
+  if (edit.assetId !== boundary.assetId) {
+    throw new Error('Studio journey proposal does not reference the exact opened asset')
+  }
+  const durationBoundTicks = BigInt(boundary.durationSeconds) * BigInt(edit.at.d)
+  if (
+    BigInt(edit.sourceIn.n) > durationBoundTicks ||
+    BigInt(edit.sourceOut.n) > durationBoundTicks ||
+    BigInt(edit.at.n) > durationBoundTicks
+  ) {
+    throw new Error('Studio journey proposal exceeds the known fixture duration')
+  }
   return {
     proposalId: proposal.proposalId,
     assetId: edit.assetId,
     insertionTicks: edit.at.n,
     timebase: edit.at.d,
     sourceInTicks: edit.sourceIn.n,
-    sourceOutTicks: edit.sourceOut.n
+    sourceOutTicks: edit.sourceOut.n,
+    durationSeconds: boundary.durationSeconds,
+    durationBoundTicks: durationBoundTicks.toString()
   }
 }
 
@@ -3313,7 +3573,14 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     'timeline'
   )
   const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
-  const acceptedProposalEvidence = studioProposalInsertionEvidence(acceptedProposal)
+  const proposalBoundary = {
+    assetId,
+    durationSeconds: target.speechFixture?.durationSeconds
+  }
+  const acceptedProposalEvidence = studioProposalInsertionEvidence(
+    acceptedProposal,
+    proposalBoundary
+  )
   const acceptedProposalId = acceptedProposalEvidence.proposalId
   afterRevision = acceptedProposal.revision
   await drive([{ type: 'screenshot', name: 'ghost' }], sourceTarget)
@@ -3385,9 +3652,13 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
 
   await drive(['w', 'tab', 'bracket-right', 'return'], sourceTarget)
   const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
-  const rejectedProposalId = rejectedProposal.op?.proposal?.proposalId
-  if (typeof rejectedProposalId !== 'string' || !rejectedProposalId) {
-    throw new Error('Studio reject journey did not journal a proposal identity')
+  const rejectedProposalEvidence = studioProposalInsertionEvidence(
+    rejectedProposal,
+    proposalBoundary
+  )
+  const rejectedProposalId = rejectedProposalEvidence.proposalId
+  if (rejectedProposalId === acceptedProposalId) {
+    throw new Error('Studio accept and reject journeys reused one proposal identity')
   }
   afterRevision = rejectedProposal.revision
   await drive(['w'], sourceTarget)
@@ -3417,7 +3688,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     }
   ])
   const playbackRoundTrip = adjudicatePlaybackRoundTrip(playbackRoundTripReceipt)
-  await drive(['i', 'o', 'l', 'p', 'c', 'g', 's', { type: 'screenshot', name: 'final' }])
 
   return {
     schemaVersion: 1,
@@ -3436,7 +3706,8 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     rejected: {
       proposalId: rejectedProposalId,
       proposalRevision: rejectedProposal.revision,
-      resolutionRevision: rejectedResolution.revision
+      resolutionRevision: rejectedResolution.revision,
+      proposal: rejectedProposalEvidence
     },
     finalRevision: afterRevision,
     adjudication: {
@@ -3555,6 +3826,9 @@ async function runStudioAcceptance(args, adapters = {}) {
     mimeType: speechFixture ? speechFixture.mimeType : args.mimeType,
     userDataPath: plan.profile.userDataPath
   })
+  const speechFixtureCustody = speechFixture
+    ? await assertGeneratedSpeechFixtureCustody(speechFixture, asset, plan.artifactRoot)
+    : null
 
   await (adapters.assertLaunchPortsFree || assertLaunchPortsFree)(
     {
@@ -3632,6 +3906,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       window,
       asset,
       speechFixture,
+      speechFixtureCustody,
       providerGuards,
       openResult,
       durable,
@@ -3838,6 +4113,7 @@ module.exports = {
   runDetachedCoordinatorProcess,
   materializeOwnedMedia,
   generateAcceptanceSpeechFixture,
+  assertGeneratedSpeechFixtureCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
   evaluateByValue,
