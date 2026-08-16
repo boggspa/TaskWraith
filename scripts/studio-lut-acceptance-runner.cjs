@@ -49,6 +49,25 @@ const companionPath = path.join(
   'TaskWraithStudioCompanion'
 )
 const runnerPath = __filename
+// The launch runner plus the five pinned Studio support scripts must be committed;
+// unrelated tracked dirt is recorded separately and cannot alter the pinned artifact.
+const studioCustodyScriptPaths = Object.freeze([
+  path.relative(repoRoot, runnerPath),
+  ...Object.keys(expectedSupportHashes).filter((relativePath) =>
+    relativePath.startsWith('scripts/studio-')
+  )
+])
+const studioSwiftProductSourcePrefix = 'swift/TaskWraithBridge/Sources/'
+const expectedCustodyPins = Object.freeze({
+  companionSha256: expectedCompanionSha256,
+  sourceDigest: expectedSourceDigest,
+  sourceCount: expectedSourceCount,
+  outDigest: expectedOutDigest,
+  outCount: expectedOutCount,
+  fixtureSha256: expectedFixtureSha256,
+  validCubeSha256: expectedValidCubeSha256,
+  invalidCubeSha256: expectedInvalidCubeSha256
+})
 const harness = require(path.join(repoRoot, 'scripts', 'studio-acceptance-harness.cjs'))
 const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS, compareWindowCaptureToReference } = require(
   path.join(repoRoot, 'scripts', 'studio-pixel-evidence-verifier.cjs')
@@ -215,6 +234,7 @@ const DRIVER_EVIDENCE_PATH_MAX_CHARACTERS = 4096
 const DRIVER_FAILURE_STAGE = /^[a-z][a-z0-9-]{0,63}$/
 
 let latestTransportMutationBracket = null
+let latestCustody = null
 
 function boundedAbsoluteEvidencePath(value) {
   return typeof value === 'string' &&
@@ -393,6 +413,106 @@ function assertUnlocked(label, state = consoleSessionState()) {
   return state
 }
 
+function parseTrackedStatus(trackedStatus) {
+  invariant(typeof trackedStatus === 'string', 'tracked Git status receipt is invalid')
+  if (trackedStatus.length > 0) {
+    invariant(trackedStatus.endsWith('\0'), 'tracked Git status receipt is not NUL terminated')
+  }
+  const fields = trackedStatus.split('\0')
+  fields.pop()
+  const entries = []
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]
+    invariant(
+      field.length >= 4 && field[2] === ' ',
+      'tracked Git status receipt has an invalid entry'
+    )
+    const status = field.slice(0, 2)
+    const relativePath = field.slice(3)
+    invariant(relativePath.length > 0, 'tracked Git status receipt has an empty path')
+    let originalPath = null
+    if (/[RC]/.test(status)) {
+      index += 1
+      invariant(index < fields.length && fields[index].length > 0, 'tracked rename is incomplete')
+      originalPath = fields[index]
+    }
+    entries.push({ status, path: relativePath, originalPath })
+  }
+  return entries
+}
+
+function trackedPathSha256(relativePath) {
+  const absolutePath = path.resolve(repoRoot, relativePath)
+  invariant(
+    absolutePath.startsWith(repoRoot + path.sep),
+    'tracked dirty path escaped the workspace'
+  )
+  let stats
+  try {
+    stats = fs.lstatSync(absolutePath)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+  if (stats.isSymbolicLink()) {
+    return sha256Bytes(fs.readlinkSync(absolutePath))
+  }
+  invariant(stats.isFile(), 'tracked dirty path is not a regular file')
+  return sha256File(absolutePath)
+}
+
+function isStudioCustodyPath(relativePath) {
+  return (
+    studioCustodyScriptPaths.includes(relativePath) ||
+    relativePath.startsWith(studioSwiftProductSourcePrefix)
+  )
+}
+
+function classifyTrackedDirt(trackedStatus, digestPath = trackedPathSha256) {
+  const entries = parseTrackedStatus(trackedStatus).map((entry) => {
+    const worktreeSha256 = digestPath(entry.path)
+    invariant(
+      worktreeSha256 === null || /^[a-f0-9]{64}$/.test(worktreeSha256),
+      'tracked dirty path hash is invalid'
+    )
+    return { ...entry, worktreeSha256 }
+  })
+  const studioTrackedDirt = []
+  const foreignTrackedDirt = []
+  for (const entry of entries) {
+    const studioPath =
+      isStudioCustodyPath(entry.path) ||
+      (entry.originalPath !== null && isStudioCustodyPath(entry.originalPath))
+    if (studioPath) {
+      studioTrackedDirt.push(entry)
+    } else {
+      foreignTrackedDirt.push(entry)
+    }
+  }
+  return {
+    wholeTrackedTreeClean: entries.length === 0,
+    studioPathsClean: studioTrackedDirt.length === 0,
+    studioTrackedDirt,
+    foreignTrackedDirt
+  }
+}
+
+function custodyMatches(actual, expected = expectedCustodyPins) {
+  return (
+    actual.productAncestorPresent &&
+    actual.studioPathsClean &&
+    actual.companionSha256 === expected.companionSha256 &&
+    actual.sourceDigest === expected.sourceDigest &&
+    actual.sourceCount === expected.sourceCount &&
+    actual.outDigest === expected.outDigest &&
+    actual.outCount === expected.outCount &&
+    actual.fixtureSha256 === expected.fixtureSha256 &&
+    actual.validCubeSha256 === expected.validCubeSha256 &&
+    actual.invalidCubeSha256 === expected.invalidCubeSha256 &&
+    actual.supportMatches
+  )
+}
+
 function assertCustody() {
   const head = runExact('git', ['rev-parse', 'HEAD']).stdout.trim()
   const ancestor = spawnSync(
@@ -400,7 +520,13 @@ function assertCustody() {
     ['merge-base', '--is-ancestor', requiredProductAncestor, head],
     { cwd: repoRoot, encoding: 'utf8', timeout: 5_000 }
   )
-  const trackedStatus = runExact('git', ['status', '--porcelain=v1', '--untracked-files=no']).stdout
+  const trackedStatus = runExact('git', [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=no'
+  ]).stdout
+  const trackedDirt = classifyTrackedDirt(trackedStatus)
   const sources = treeDigest(path.join(repoRoot, 'swift', 'TaskWraithBridge', 'Sources'))
   const out = treeDigest(path.join(repoRoot, 'out'))
   const support = Object.fromEntries(
@@ -409,11 +535,18 @@ function assertCustody() {
       sha256File(path.join(repoRoot, relativePath))
     ])
   )
+  const supportMatches = Object.entries(expectedSupportHashes).every(
+    ([relativePath, expected]) => support[relativePath] === expected
+  )
   const actual = {
     head,
     requiredProductAncestor,
     productAncestorPresent: ancestor.status === 0,
-    trackedTreeClean: trackedStatus.trim() === '',
+    studioPathScope: {
+      scriptPaths: studioCustodyScriptPaths,
+      swiftProductSourcePrefix: studioSwiftProductSourcePrefix
+    },
+    ...trackedDirt,
     companionSha256: sha256File(companionPath),
     sourceDigest: sources.digest,
     sourceCount: sources.fileCount,
@@ -423,30 +556,16 @@ function assertCustody() {
     validCubeSha256: sha256File(validCubePath),
     invalidCubeSha256: sha256File(invalidCubePath),
     support,
+    supportMatches,
     runnerPath: path.relative(repoRoot, runnerPath),
     runnerSha256: sha256File(runnerPath)
   }
-  const supportMatches = Object.entries(expectedSupportHashes).every(
-    ([relativePath, expected]) => actual.support[relativePath] === expected
-  )
-  invariant(
-    actual.productAncestorPresent &&
-      actual.trackedTreeClean &&
-      actual.companionSha256 === expectedCompanionSha256 &&
-      actual.sourceDigest === expectedSourceDigest &&
-      actual.sourceCount === expectedSourceCount &&
-      actual.outDigest === expectedOutDigest &&
-      actual.outCount === expectedOutCount &&
-      actual.fixtureSha256 === expectedFixtureSha256 &&
-      actual.validCubeSha256 === expectedValidCubeSha256 &&
-      actual.invalidCubeSha256 === expectedInvalidCubeSha256 &&
-      supportMatches,
-    `LUT acceptance custody mismatch: ${JSON.stringify(actual)}`
-  )
+  invariant(custodyMatches(actual), `LUT acceptance custody mismatch: ${JSON.stringify(actual)}`)
   for (const ports of PHASE_PORTS) {
     assertPortFree(ports.remoteDebuggingPort)
     assertPortFree(ports.mainInspectorPort)
   }
+  latestCustody = actual
   return actual
 }
 
@@ -1749,6 +1868,7 @@ function buildArtifactManifest(artifactRoot) {
 
 async function runAcceptance(artifactRoot) {
   latestTransportMutationBracket = null
+  latestCustody = null
   const startedAt = new Date().toISOString()
   const custody = assertCustody()
   const launchConsole = assertUnlocked('launch-preflight')
@@ -1879,7 +1999,8 @@ async function runAcceptance(artifactRoot) {
 async function writeFailureArtifacts(
   artifactRoot,
   error,
-  transportMutationBracket = latestTransportMutationBracket
+  transportMutationBracket = latestTransportMutationBracket,
+  custody = latestCustody
 ) {
   if (!artifactRoot || !fs.existsSync(artifactRoot)) return
   const evidencePath = path.join(artifactRoot, 'evidence.json')
@@ -1890,6 +2011,7 @@ async function writeFailureArtifacts(
     recordedAt: new Date().toISOString(),
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : null,
+    custody,
     latestTransportMutationBracket: transportMutationBracket,
     outcomePromotionAuthorized: false,
     retryPerformed: false
@@ -1966,7 +2088,9 @@ module.exports = {
   buildArtifactManifest,
   buildObservationRequest,
   captureNative,
+  classifyTrackedDirt,
   createSyntheticRedReference,
+  custodyMatches,
   evaluatePureRedCapture,
   parseCli,
   resolveArtifactRoot,

@@ -17,7 +17,9 @@ const {
   assertObservationOnlyRequest,
   buildObservationRequest,
   captureNative,
+  classifyTrackedDirt,
   createSyntheticRedReference,
+  custodyMatches,
   evaluatePureRedCapture,
   parseCli,
   resolveArtifactRoot,
@@ -37,11 +39,21 @@ const {
     name: string,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  classifyTrackedDirt: (
+    trackedStatus: string,
+    digestPath?: (relativePath: string) => string | null
+  ) => {
+    studioPathsClean: boolean
+    studioTrackedDirt: Record<string, any>[]
+    foreignTrackedDirt: Record<string, any>[]
+    wholeTrackedTreeClean: boolean
+  }
   createSyntheticRedReference: (options: {
     destination: string
     width: number
     height: number
   }) => Record<string, any>
+  custodyMatches: (actual: Record<string, any>, expected: Record<string, any>) => boolean
   evaluatePureRedCapture: (options: {
     capturePath: string
     referencePath: string
@@ -75,12 +87,40 @@ const {
   writeFailureArtifacts: (
     artifactRoot: string,
     error: Error,
-    transportMutationBracket?: Record<string, any>
+    transportMutationBracket?: Record<string, any> | null,
+    custody?: Record<string, any> | null
   ) => Promise<void>
   validateTerminalReceipt: (terminal: Record<string, any>) => Record<string, any>
 }
 
 const temporaryDirectories: string[] = []
+
+const custodyTestExpected = Object.freeze({
+  companionSha256: 'companion',
+  sourceDigest: 'source',
+  sourceCount: 68,
+  outDigest: 'out',
+  outCount: 105,
+  fixtureSha256: 'fixture',
+  validCubeSha256: 'valid-cube',
+  invalidCubeSha256: 'invalid-cube'
+})
+
+function matchingCustody(dirt: Record<string, any>): Record<string, any> {
+  return {
+    ...dirt,
+    productAncestorPresent: true,
+    companionSha256: custodyTestExpected.companionSha256,
+    sourceDigest: custodyTestExpected.sourceDigest,
+    sourceCount: custodyTestExpected.sourceCount,
+    outDigest: custodyTestExpected.outDigest,
+    outCount: custodyTestExpected.outCount,
+    fixtureSha256: custodyTestExpected.fixtureSha256,
+    validCubeSha256: custodyTestExpected.validCubeSha256,
+    invalidCubeSha256: custodyTestExpected.invalidCubeSha256,
+    supportMatches: true
+  }
+}
 
 const validTransportMutationText =
   'tm1 kind=lifecycleAttach route=review preSrc=audio postSrc=audio ' +
@@ -249,6 +289,82 @@ afterEach(async () => {
 })
 
 describe('studio LUT acceptance runner contract', () => {
+  it('passes matching pins with foreign tracked dirt and seals its hashes into evidence', async () => {
+    const dirt = classifyTrackedDirt(
+      ' M src/main/collaboration/ExternalSeatResolution.ts\0 M src/main/index.ts\0',
+      (relativePath) => (relativePath.endsWith('index.ts') ? 'a' : 'b').repeat(64)
+    )
+    const custody = matchingCustody(dirt)
+
+    expect(dirt).toMatchObject({
+      wholeTrackedTreeClean: false,
+      studioPathsClean: true,
+      studioTrackedDirt: [],
+      foreignTrackedDirt: [
+        {
+          status: ' M',
+          path: 'src/main/collaboration/ExternalSeatResolution.ts',
+          worktreeSha256: 'b'.repeat(64)
+        },
+        {
+          status: ' M',
+          path: 'src/main/index.ts',
+          worktreeSha256: 'a'.repeat(64)
+        }
+      ]
+    })
+    expect(custodyMatches(custody, custodyTestExpected)).toBe(true)
+
+    const directory = await temporaryDirectory()
+    await writeFailureArtifacts(directory, new Error('bounded failure'), null, custody)
+    const evidence = JSON.parse(
+      await fsPromises.readFile(path.join(directory, 'evidence.json'), 'utf8')
+    )
+    expect(evidence.custody).toMatchObject({
+      studioPathsClean: true,
+      foreignTrackedDirt: dirt.foreignTrackedDirt
+    })
+  })
+
+  it.each([
+    'scripts/studio-lut-acceptance-runner.cjs',
+    'scripts/studio-acceptance-harness.cjs',
+    'scripts/studio-acceptance-ui-driver.swift',
+    'scripts/studio-acceptance-watchdog.cjs',
+    'scripts/studio-acceptance-window-probe.swift',
+    'scripts/studio-pixel-evidence-verifier.cjs'
+  ])('rejects tracked dirt in protected Studio script %s', (relativePath) => {
+    const trackedStatus = ` M ${relativePath}\0`
+    const dirt = classifyTrackedDirt(trackedStatus, () => 'c'.repeat(64))
+
+    expect(dirt.studioPathsClean).toBe(false)
+    expect(dirt.studioTrackedDirt).toHaveLength(1)
+    expect(dirt.foreignTrackedDirt).toEqual([])
+    expect(custodyMatches(matchingCustody(dirt), custodyTestExpected)).toBe(false)
+  })
+
+  it('rejects tracked dirt in a Studio Swift product source', () => {
+    const trackedStatus =
+      ' M swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioPlaybackClock.swift\0'
+    const dirt = classifyTrackedDirt(trackedStatus, () => 'c'.repeat(64))
+
+    expect(dirt.studioPathsClean).toBe(false)
+    expect(dirt.studioTrackedDirt).toHaveLength(1)
+    expect(dirt.foreignTrackedDirt).toEqual([])
+    expect(custodyMatches(matchingCustody(dirt), custodyTestExpected)).toBe(false)
+  })
+
+  it('still rejects an out digest mismatch when foreign tracked dirt is allowed', () => {
+    const dirt = classifyTrackedDirt(' M src/main/index.ts\0', () => 'd'.repeat(64))
+    const custody = {
+      ...matchingCustody(dirt),
+      outDigest: 'rebuilt-out'
+    }
+
+    expect(dirt.studioPathsClean).toBe(true)
+    expect(custodyMatches(custody, custodyTestExpected)).toBe(false)
+  })
+
   it('keeps the exact two-phase load/reject then replay/clear order', () => {
     expect(JOURNEY_PHASES).toEqual([
       'phase-1-neutral-load-invalid-retention',
