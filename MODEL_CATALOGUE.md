@@ -180,6 +180,67 @@ them onto the shared ladder vocabulary.
 
 <table>
   <tr>
+    <td width="10" bgcolor="#D44404"></td>
+    <td width="54" align="center" valign="middle">
+      <img src="design-assets/provider-logos/png/provider-logo-mistral.png" alt="Mistral logo" width="34" />
+    </td>
+    <td valign="middle"><strong>Mistral Vibe</strong><br /><sub>Mistral orange provider hue · active for new runs</sub></td>
+  </tr>
+</table>
+
+| Model                                                | Reasoning     | Fast | Notes                                                          |
+| ---------------------------------------------------- | ------------- | ---- | -------------------------------------------------------------- |
+| **Devstral Small** `devstral-small` **(Default)**    | —             | —    | 256K context · coding-tuned · $0.10/$0.30 per Mtok.            |
+| **Mistral Medium 3.5** `mistral-medium-3.5`          | High (fixed)  | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Always thinks at High. |
+
+Vibe's third catalogue entry, `local`, is a llamacpp backend and is
+deliberately omitted: local inference is Ollama's lane here, and listing it
+would leave a permanently dead row for anyone without their own llama-server.
+
+<table>
+  <tr>
+    <td width="10" bgcolor="#68768C"></td>
+    <td width="54" align="center" valign="middle">
+      <img src="design-assets/provider-logos/png/provider-logo-pi-on-light.png" alt="Pi logo" width="34" />
+    </td>
+    <td valign="middle"><strong>Pi</strong><br /><sub>Slate provider hue · active for new runs · bring your own upstream keys</sub></td>
+  </tr>
+</table>
+
+Pi brokers several upstreams behind one seat. Unlike AntiGravity's API lane,
+the catalogue is **not** live-discovered: it is a version-pinned list extracted
+from the Pi CLI's bundled catalogue, because a provider whose model list can
+transiently come back empty would vanish from every picker. You only see rows
+for upstreams you have configured a key for, so this table is the full set, not
+what any one install shows. Rows retire on dated lifecycle entries.
+
+| Model                                                     | Reasoning    | Fast | Notes                                       |
+| ----------------------------------------------------------- | ------------ | ---- | --------------------------------------------- |
+| **DeepSeek V4 Pro** `deepseek/deepseek-v4-pro`             | —            | —    | 1M context via DeepSeek.                    |
+| **DeepSeek V4 Flash** `deepseek/deepseek-v4-flash` **(Default)** | —      | —    | 1M context via DeepSeek.                    |
+| **GLM-5.2** `zai/glm-5.2`                                  | —            | —    | 1M context via Z.ai.                        |
+| **GLM-5.1** `zai/glm-5.1`                                  | —            | —    | 200K context via Z.ai.                      |
+| **GLM-4.7** `zai/glm-4.7`                                  | —            | —    | ~200K context via Z.ai.                     |
+| **Qwen3.7 Max** `qwen-token-plan/qwen3.7-max`              | —            | —    | 1M context via the Qwen token plan.         |
+| **Qwen3.7 Plus** `qwen-token-plan/qwen3.7-plus`            | —            | —    | 1M context via the Qwen token plan.         |
+| **Qwen3.8 Max Preview** `qwen-token-plan/qwen3.8-max-preview` | —         | —    | 1M context via the Qwen token plan.         |
+| **MiniMax M3** `minimax/MiniMax-M3`                        | —            | —    | 1M context via MiniMax.                     |
+| **MiniMax M2.7** `minimax/MiniMax-M2.7`                    | —            | —    | ~200K context via MiniMax.                  |
+| **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
+| **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. |
+| **Mistral Large 3 (2512)** `mistral/mistral-large-2512`    | —            | —    | 256K context via Mistral. Not a reasoning model. |
+| **GPT-OSS 120B (Groq)** `groq/openai/gpt-oss-120b`         | —            | —    | 131K context via Groq.                      |
+| **Qwen3 32B (Groq)** `groq/qwen/qwen3-32b`                 | —            | —    | 131K context via Groq.                      |
+| **GLM-4.7 (Cerebras)** `cerebras/zai-glm-4.7`              | —            | —    | 131K context via Cerebras. **Retires 2026-08-17** and drops out of the picker on that date. |
+| **GPT-OSS 120B (Cerebras)** `cerebras/gpt-oss-120b`        | —            | —    | 131K context via Cerebras.                  |
+
+Pi's sealed launch policy never sends a `--thinking` flag, so every row runs
+its upstream's own default and honestly shows no reasoning control. The one
+exception is Mistral Medium 3.5, whose upstream schema pins it at High — the
+same locked-single-stop shape as Kimi's "On (fixed)".
+
+<table>
+  <tr>
     <td width="10" bgcolor="#1A8562"></td>
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-ollama.png" alt="Ollama logo" width="28" />
