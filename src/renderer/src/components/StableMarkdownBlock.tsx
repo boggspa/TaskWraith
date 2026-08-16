@@ -193,6 +193,17 @@ function tokeniseParticipantMentions(
         </ParticipantMention>
       )
     }
+    if (segment.kind === 'group-mention') {
+      return (
+        <ParticipantMention
+          key={`pm-group-${index}-${segment.group}`}
+          reference={segment.text.replace(/^@+/, '')}
+          displayText={segment.text}
+        >
+          {segment.text}
+        </ParticipantMention>
+      )
+    }
     return (
       <ParticipantMention
         key={`pm-${index}-${segment.participant.id}`}

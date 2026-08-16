@@ -66,7 +66,7 @@ export const COMPOSER_MARKDOWN_FLAGS: readonly ComposerMarkdownFlag[] = [
 
 export type ComposerMentionRun = Extract<
   MentionTokenSegment,
-  { kind: 'mention' } | { kind: 'user-mention' }
+  { kind: 'mention' } | { kind: 'user-mention' } | { kind: 'group-mention' }
 >
 
 export interface ComposerRichRun {

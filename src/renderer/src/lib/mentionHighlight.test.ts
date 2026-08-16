@@ -53,3 +53,32 @@ describe('tokeniseMentions provider hue class', () => {
     expect(hasResolvedMention(value, participants)).toBe(true)
   })
 })
+
+describe('tokeniseMentions roster groups', () => {
+  it('emits provider-neutral group segments without requiring a roster', () => {
+    const segments = tokeniseMentions('@All ask @Reviewers, then @BG.', [])
+
+    expect(segments.filter((segment) => segment.kind === 'group-mention')).toEqual([
+      {
+        kind: 'group-mention',
+        text: '@All',
+        group: 'all',
+        sourceLength: '@All'.length
+      },
+      {
+        kind: 'group-mention',
+        text: '@Reviewers',
+        group: 'reviewers',
+        sourceLength: '@Reviewers'.length
+      },
+      {
+        kind: 'group-mention',
+        text: '@BG',
+        group: 'backgrounds',
+        sourceLength: '@BG'.length
+      }
+    ])
+    expect(segments.map((segment) => segment.text).join('')).toBe('@All ask @Reviewers, then @BG.')
+    expect(hasResolvedMention('@Scouts inspect this', [])).toBe(true)
+  })
+})

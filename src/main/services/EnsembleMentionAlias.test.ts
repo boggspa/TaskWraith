@@ -8,6 +8,7 @@ import {
   generateModelAliases,
   getParticipantAliases,
   hasMention,
+  isGroupMentionToken,
   isReservedMentionToken,
   isUserMentionToken,
   normalizeAlias,
@@ -209,7 +210,7 @@ describe('getParticipantAliases', () => {
     expect(aliases.has('me')).toBe(false)
   })
 
-  it('adds BG and background aliases only for a background-stage seat', () => {
+  it('keeps background as a seat alias while reserving BG for the whole group', () => {
     const background = participant({
       id: 'ensemble-shell',
       provider: 'claude',
@@ -217,9 +218,18 @@ describe('getParticipantAliases', () => {
       stageRole: 'background' as EnsembleParticipant['stageRole']
     })
     const aliases = new Set(getParticipantAliases(background))
-    expect(aliases.has('bg')).toBe(true)
+    expect(aliases.has('bg')).toBe(false)
     expect(aliases.has('background')).toBe(true)
     expect(new Set(getParticipantAliases(CLAUDE)).has('bg')).toBe(false)
+  })
+
+  it('does not let participant roles steal canonical group tokens', () => {
+    const namedAll = participant({
+      id: 'ensemble-all-role',
+      provider: 'codex',
+      role: 'All'
+    })
+    expect(getParticipantAliases(namedAll)).not.toContain('all')
   })
 })
 
@@ -250,6 +260,16 @@ describe('isUserMentionToken', () => {
     expect(isUserMentionToken('me')).toBe(false)
     expect(isUserMentionToken('self')).toBe(false)
     expect(isUserMentionToken('')).toBe(false)
+  })
+})
+
+describe('isGroupMentionToken', () => {
+  it('recognises only the provider-neutral public group aliases', () => {
+    for (const token of ['@All', 'scouts', '@Workers', 'reviewers', '@BG']) {
+      expect(isGroupMentionToken(token)).toBe(true)
+    }
+    expect(isGroupMentionToken('@Scout')).toBe(false)
+    expect(isGroupMentionToken('@Background')).toBe(false)
   })
 })
 
@@ -388,6 +408,24 @@ describe('findAllMentions', () => {
     const all = findAllMentions(text, QUARTET)
     expect(text[all[0].atIndex]).toBe('@')
   })
+
+  it('returns participant, group, and user mentions in source order', () => {
+    const all = findAllMentions('@codex then @Reviewers then @user', QUARTET)
+    expect(all.map((match) => match.kind)).toEqual(['participant', 'group', 'user'])
+    expect(all[1]).toMatchObject({ kind: 'group', group: 'reviewers', text: 'Reviewers' })
+  })
+
+  it('resolves group mentions without a roster and leaves punctuation outside the match', () => {
+    const text = '@SCOUTS, please inspect.'
+    const [match] = findAllMentions(text, [])
+    expect(match).toMatchObject({
+      kind: 'group',
+      group: 'scouts',
+      text: 'SCOUTS',
+      consumedLength: '@SCOUTS'.length
+    })
+    expect(text.slice(match.atIndex + match.consumedLength)).toBe(', please inspect.')
+  })
 })
 
 describe('hasMention', () => {
@@ -397,6 +435,7 @@ describe('hasMention', () => {
   it('returns true for resolved mentions', () => {
     expect(hasMention('hi @codex', QUARTET)).toBe(true)
     expect(hasMention('hi @GPT 5.5', QUARTET)).toBe(true)
+    expect(hasMention('hi @All', [])).toBe(true)
   })
   it('returns false for emails / unresolved tokens', () => {
     expect(hasMention('chris@example.com', QUARTET)).toBe(false)
@@ -561,6 +600,11 @@ describe('resolveSingleEnsembleDmTarget', () => {
     expect(resolveSingleEnsembleDmTarget('@user what do you think', panel)).toBeNull()
   })
 
+  it('keeps roster-group mentions panel-routed', () => {
+    expect(resolveSingleEnsembleDmTarget('@All compare this', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('@Reviewers verify this', panel)).toBeNull()
+  })
+
   it('returns null for ambiguous provider mentions', () => {
     expect(resolveSingleEnsembleDmTarget('@codex review this', [CODEX, CODEX_MINI])).toBeNull()
   })
@@ -706,6 +750,17 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
         advisoryParticipantId: CLAUDE_READ.id
       })
     ).toEqual({ kind: 'target', participantId: CLAUDE_WRITE.id, source: 'plain' })
+  })
+
+  it('does not let a renderer advisory collapse a group routing signal to one DM', () => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Workers take this',
+        participants: [CLAUDE_WRITE, CLAUDE_READ],
+        advisoryParticipantId: CLAUDE_READ.id,
+        exactPickerParticipantId: CLAUDE_WRITE.id
+      })
+    ).toEqual({ kind: 'multiple' })
   })
 
   it('does not infer a plain alias to a disabled participant', () => {

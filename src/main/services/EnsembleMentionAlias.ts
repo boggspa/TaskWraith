@@ -48,6 +48,10 @@
  */
 
 import type { EnsembleParticipant, ProviderId } from '../store/types'
+import {
+  resolveEnsembleGroupMentionToken,
+  type EnsembleGroupMentionId
+} from '../../shared/ensembleGroupMention'
 
 /**
  * Word-boundary characters that can immediately precede `@` for a
@@ -302,7 +306,12 @@ export function getParticipantAliases(p: EnsembleParticipant): string[] {
   const push = (s: string | undefined): void => {
     if (!s) return
     const n = normalizeAlias(s)
-    if (n && n.length >= 2 && !RESERVED_TOKENS.has(n)) {
+    if (
+      n &&
+      n.length >= 2 &&
+      !RESERVED_TOKENS.has(n) &&
+      !resolveEnsembleGroupMentionToken(n)
+    ) {
       out.add(n)
       const concat = n.replace(/\s+/g, '')
       if (concat !== n && concat.length >= 3) out.add(concat)
@@ -397,7 +406,17 @@ export interface UserMentionMatch extends BaseMentionMatch {
   kind: 'user'
 }
 
-export type MentionMatch = ParticipantMentionMatch | UserMentionMatch
+/**
+ * Provider-neutral roster-group address. Unlike a participant alias, this
+ * remains resolvable when the current roster is empty and can expand to more
+ * than one enabled seat at the user fan-out boundary.
+ */
+export interface GroupMentionMatch extends BaseMentionMatch {
+  kind: 'group'
+  group: EnsembleGroupMentionId
+}
+
+export type MentionMatch = ParticipantMentionMatch | UserMentionMatch | GroupMentionMatch
 
 /**
  * Type predicate for callers that need to narrow MentionMatch
@@ -410,6 +429,10 @@ export function isParticipantMention(match: MentionMatch): match is ParticipantM
 
 export function isUserMention(match: MentionMatch): match is UserMentionMatch {
   return match.kind === 'user'
+}
+
+export function isGroupMention(match: MentionMatch): match is GroupMentionMatch {
+  return match.kind === 'group'
 }
 
 /**
@@ -449,6 +472,19 @@ export function findAllMentions(
     // predictable.
     const firstWordRaw = phrase.split(/\s+/)[0] || ''
     const firstWordNormalised = normalizeAlias(firstWordRaw.replace(TRAILING_PUNCT_RE, ''))
+    const groupMention = resolveEnsembleGroupMentionToken(firstWordNormalised)
+    if (groupMention) {
+      const consumedText = firstWordRaw.replace(TRAILING_PUNCT_RE, '')
+      matches.push({
+        kind: 'group',
+        group: groupMention.id,
+        atIndex,
+        consumedLength: 1 + consumedText.length,
+        text: consumedText
+      })
+      MENTION_REGEX.lastIndex = atIndex + 1 + consumedText.length
+      continue
+    }
     if (USER_ALIASES.has(firstWordNormalised)) {
       matches.push({
         kind: 'user',
@@ -577,10 +613,14 @@ export function resolveEnsembleDmTargetForDispatch(input: {
   // Plain aliases address the active panel only. Disabled seats must never win
   // either a text alias or a stale structured picker link merely by appearing
   // in the persisted roster.
-  const participantMentions = findAllMentions(
+  const plainMentions = findAllMentions(
     input.text,
     input.participants.filter((participant) => participant.enabled !== false)
-  ).filter(isParticipantMention)
+  )
+  // A group address is an explicit panel/fan-out routing signal. Never let a
+  // renderer advisory or exact participant picker collapse it to one DM.
+  if (plainMentions.some(isGroupMention)) return { kind: 'multiple' }
+  const participantMentions = plainMentions.filter(isParticipantMention)
   const ambiguousMentions = participantMentions.filter((match) => match.ambiguousAmong?.length)
   const advisoryParticipantId = input.advisoryParticipantId?.trim()
   const exactPickerParticipantId = input.exactPickerParticipantId?.trim()
@@ -828,7 +868,7 @@ export function findFirstMention(
  * activate the transparent-textarea overlay layer.
  */
 export function hasMention(text: string, participants: EnsembleParticipant[]): boolean {
-  if (!text || !text.includes('@') || participants.length === 0) return false
+  if (!text || !text.includes('@')) return false
   return findFirstMention(text, participants) !== null
 }
 
@@ -900,4 +940,9 @@ export function isReservedMentionToken(token: string): boolean {
  * drift. Exported for tests. */
 export function isUserMentionToken(token: string): boolean {
   return USER_ALIASES.has(token.trim().toLowerCase())
+}
+
+/** Is this bare or `@`-prefixed token one of the canonical roster groups? */
+export function isGroupMentionToken(token: string): boolean {
+  return resolveEnsembleGroupMentionToken(token) !== null
 }

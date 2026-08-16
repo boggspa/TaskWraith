@@ -6,6 +6,7 @@ import {
   isUserMentionToken,
   resolvePhraseToParticipant
 } from '../../../main/services/EnsembleMentionAlias'
+import { resolveEnsembleGroupMentionToken } from '../../../shared/ensembleGroupMention'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 interface ParticipantMentionProps {
@@ -67,6 +68,26 @@ export function ParticipantMention({
   const chat = useContext(AgentIdentityContext)
   const participants = chat?.ensemble?.participants ?? []
   const trimmed = reference.trim()
+  const sourceText = displayText || textFromChildren(children)
+
+  // Canonical roster groups outrank plain participant aliases. A role named
+  // "All" or a background seat that previously claimed `BG` must not steal
+  // the provider-neutral group address. An already-resolved structured
+  // participant remains exact and bypasses this plain-token check.
+  const groupMention = resolvedParticipant
+    ? null
+    : resolveEnsembleGroupMentionToken(sourceText || trimmed)
+  if (groupMention) {
+    return (
+      <span
+        className="participant-mention participant-mention--group"
+        style={{ color: 'var(--user-bubble-base, var(--accent))' }}
+        title={groupMention.description}
+      >
+        {sourceText || groupMention.token}
+      </span>
+    )
+  }
 
   // Resolve by id first (markdown-link case), then by role, then by
   // the shared alias resolver (role/provider/model aliases). The role
@@ -104,7 +125,6 @@ export function ParticipantMention({
   const providerClass = resolveProviderHueClass(providerId, participant.model)
   const brandLabel = resolveProviderBrandLabel(providerId, participant.model)
   const tint = `var(--provider-${providerClass}-color, var(--accent))`
-  const sourceText = displayText || textFromChildren(children)
   const displayName = (sourceText?.replace(/^@+/, '') || participant.role || brandLabel || getProviderName(providerId)) || providerId
 
   const titleParts = [brandLabel || getProviderName(providerId)]

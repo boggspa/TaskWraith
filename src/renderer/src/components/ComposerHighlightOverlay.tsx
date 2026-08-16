@@ -289,6 +289,17 @@ export function ComposerHighlightOverlay({
               </span>
             )
           }
+          if (run.mention?.kind === 'group-mention') {
+            return (
+              <span
+                key={idx}
+                className={`composer-mention-token composer-mention-token--group${flagClasses ? ` ${flagClasses}` : ''}`}
+                style={{ color: `var(--user-bubble-base, var(--accent))` }}
+              >
+                {run.text}
+              </span>
+            )
+          }
           if (run.mention) {
             return (
               <span
@@ -324,6 +335,17 @@ export function ComposerHighlightOverlay({
               <span
                 key={idx}
                 className="composer-mention-token composer-mention-token--user"
+                style={{ color: `var(--user-bubble-base, var(--accent))` }}
+              >
+                {segment.text}
+              </span>
+            )
+          }
+          if (segment.kind === 'group-mention') {
+            return (
+              <span
+                key={idx}
+                className="composer-mention-token composer-mention-token--group"
                 style={{ color: `var(--user-bubble-base, var(--accent))` }}
               >
                 {segment.text}

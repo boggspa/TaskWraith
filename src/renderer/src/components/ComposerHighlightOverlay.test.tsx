@@ -124,6 +124,21 @@ describe('ComposerHighlightOverlay', () => {
     expect(html).not.toContain('[@Reviewer]')
   })
 
+  it('renders roster-group mentions with the neutral accent in mention-only mode', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value="@All ask @Reviewers and @BG."
+        participants={[]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+      />
+    )
+
+    expect((html.match(/composer-mention-token--group/g) || []).length).toBe(3)
+    expect(html).toContain('--user-bubble-base')
+    expect(html).not.toContain('--provider-')
+  })
+
   /*
    * 1.0.4-AR1 — pure-function coverage for the scroll-sync helper.
    *
@@ -224,6 +239,22 @@ describe('ComposerHighlightOverlay', () => {
 
     expect(html).toContain('composer-mention-token composer-md-bold')
     expect(html).toContain('@Reviewer')
+  })
+
+  it('keeps a group mention intact inside rich markdown highlighting', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value={'**ping @Workers**'}
+        participants={[]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+        richText
+      />
+    )
+
+    expect(html).toContain('composer-mention-token--group composer-md-bold')
+    expect(html).toContain('@Workers')
+    expect(html).toContain('--user-bubble-base')
   })
 
   it('still renders the ghost suggestion span in richText mode', () => {

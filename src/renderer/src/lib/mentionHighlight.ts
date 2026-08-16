@@ -3,6 +3,7 @@ import {
   findAllMentions,
   resolvePhraseToParticipant
 } from '../../../main/services/EnsembleMentionAlias'
+import type { EnsembleGroupMentionId } from '../../../shared/ensembleGroupMention'
 import { resolveProviderHueClass } from './ollamaDisplayBrand'
 
 /**
@@ -54,6 +55,14 @@ export type MentionTokenSegment =
        * provider. No `participant` field. */
       kind: 'user-mention'
       text: string
+      /** See the participant-mention variant — source chars consumed. */
+      sourceLength?: number
+    }
+  | {
+      /** Provider-neutral roster-group address (`@All`, `@Scouts`, etc.). */
+      kind: 'group-mention'
+      text: string
+      group: EnsembleGroupMentionId
       /** See the participant-mention variant — source chars consumed. */
       sourceLength?: number
     }
@@ -170,6 +179,13 @@ export function tokeniseMentions(
       segments.push({
         kind: 'user-mention',
         text: `@${match.text}`,
+        sourceLength: match.consumedLength
+      })
+    } else if (match.kind === 'group') {
+      segments.push({
+        kind: 'group-mention',
+        text: `@${match.text}`,
+        group: match.group,
         sourceLength: match.consumedLength
       })
     } else {

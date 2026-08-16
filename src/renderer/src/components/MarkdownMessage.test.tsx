@@ -357,6 +357,24 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('<h2>')
   })
 
+  it('tokenises provider-neutral group addresses in assistant Markdown', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          '## Ask @All',
+          '',
+          '@Scouts inspect, @Workers implement, @Reviewers verify, and @BG run soak tests.'
+        ].join('\n')}
+      />
+    )
+
+    expect((html.match(/participant-mention--group/g) || []).length).toBe(5)
+    expect(html).toContain('--user-bubble-base')
+    expect(html).toContain('@Reviewers')
+    expect(html).toContain('<h2>')
+    expect(html).not.toContain('--provider-')
+  })
+
   it('tokenises transcript participant mentions through the shared multi-word resolver', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage

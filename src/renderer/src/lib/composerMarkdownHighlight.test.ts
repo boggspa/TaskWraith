@@ -219,6 +219,15 @@ describe('segmentComposerRichText — mention interplay', () => {
     expect(mentionRun?.flags).toEqual(['md-quote'])
     expect(flagsOf(runs, ' now')).toEqual(['md-quote'])
   })
+
+  it('keeps provider-neutral group mentions intact across emphasis', () => {
+    const runs = seg('**ask @Reviewers now**')
+    const mentionRun = runs.find((run) => run.mention?.kind === 'group-mention')
+    expect(mentionRun?.text).toBe('@Reviewers')
+    expect(mentionRun?.mention).toMatchObject({ group: 'reviewers' })
+    expect(mentionRun?.flags).toEqual(['md-bold'])
+    expect(concat(runs)).toBe('**ask @Reviewers now**')
+  })
 })
 
 describe('segmentComposerRichText — robustness', () => {
