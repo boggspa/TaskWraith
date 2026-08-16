@@ -145,4 +145,25 @@ describe('CommitsInspector', () => {
     expect(html).toContain('Everything is pushed')
     expect(html).toContain('No commits on this checkout are ahead of origin/master.')
   })
+
+  it('labels a partial newest-first page while older commits load', () => {
+    const snapshot = stack(commits)
+    const html = renderToStaticMarkup(
+      <CommitsInspectorView
+        stack={snapshot}
+        rows={inspectorCommitRows(snapshot, [])}
+        selectedHashes={new Set()}
+        onToggleCommit={vi.fn()}
+        onSelectAll={vi.fn()}
+        onClearSelection={vi.fn()}
+        onRefresh={vi.fn()}
+        loadingMore
+      />
+    )
+
+    expect(html).toContain('2+ commits · loading older…')
+    expect(html).toContain('0 of 2 loaded selected')
+    expect(html).toContain('Select loaded')
+    expect(html).toContain('newest 2 ready')
+  })
 })

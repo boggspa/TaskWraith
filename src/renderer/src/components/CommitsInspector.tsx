@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ChatRecord } from '../../../main/store/types'
 import type {
   GitUnpushedCommit,
@@ -13,6 +13,10 @@ import {
   type TaskWraithCommitAttribution,
   resolveTaskWraithCommitAttribution
 } from '../lib/commitAttribution'
+import {
+  useWorkspaceUnpushedCommitState,
+  workspaceUnpushedCommitStore
+} from '../lib/workspaceUnpushedCommitStore'
 import {
   RunCompleteEpicStack,
   type CommitAttributionFallback,
@@ -64,6 +68,8 @@ export interface CommitsInspectorViewProps {
   onClearSelection: () => void
   onRefresh: () => void
   refreshing?: boolean
+  loadingMore?: boolean
+  loadError?: string | null
   onStartPrRequest?: (commits: GitUnpushedCommit[]) => void
   pullRequestsByCommit?: ReadonlyMap<string, GitPrSummary[]>
   loadCommitFiles?: (commit: CloseoutCommit) => Promise<CommitFilePreviewLoadResult | null>
@@ -78,6 +84,8 @@ export function CommitsInspectorView({
   onClearSelection,
   onRefresh,
   refreshing = false,
+  loadingMore = false,
+  loadError,
   onStartPrRequest,
   pullRequestsByCommit,
   loadCommitFiles
@@ -104,7 +112,8 @@ export function CommitsInspectorView({
         <>
           <div className="commits-inspector-selection" aria-label="Commit selection controls">
             <span>
-              {selectedHashes.size} of {rows.length} selected
+              {selectedHashes.size} of {rows.length}
+              {loadingMore ? ' loaded' : ''} selected
             </span>
             <div>
               <button
@@ -112,7 +121,7 @@ export function CommitsInspectorView({
                 onClick={onSelectAll}
                 disabled={selectedHashes.size === rows.length}
               >
-                Select all
+                {loadingMore ? 'Select loaded' : 'Select all'}
               </button>
               <button type="button" onClick={onClearSelection} disabled={selectedHashes.size === 0}>
                 Clear
@@ -165,7 +174,18 @@ export function CommitsInspectorView({
               )
             }}
             loadCommitFiles={loadCommitFiles}
+            commitCountLabel={loadingMore ? `${rows.length}+ commits · loading older…` : undefined}
           />
+          {loadingMore && (
+            <div className="commits-inspector-page-status" role="status">
+              Loading older commits in the background · newest {rows.length} ready
+            </div>
+          )}
+          {loadError && (
+            <div className="commits-inspector-page-status is-error" role="alert">
+              Older commits paused: {loadError}
+            </div>
+          )}
         </>
       ) : (
         <section className="file-change-summary-card commits-inspector-empty">
@@ -186,10 +206,9 @@ export function CommitsInspector({
   chatId?: string
   chats?: ChatRecord[]
 }): ReactNode {
-  const [stack, setStack] = useState<GitUnpushedCommitStack | null>(null)
+  const commitState = useWorkspaceUnpushedCommitState(workspacePath)
+  const { stack, loading, loadingMore, error } = commitState
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(() => new Set())
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [requestOpen, setRequestOpen] = useState(false)
   const [pullRequestWorkspace, setPullRequestWorkspace] =
     useState<GitPullRequestWorkspaceSnapshot | null>(null)
@@ -197,7 +216,6 @@ export function CommitsInspector({
     workspaceId: string
     values: Map<string, TaskWraithCommitAttribution>
   } | null>(null)
-  const requestIdRef = useRef(0)
 
   const attributionWorkspaceId = useMemo(() => {
     const current = chatId ? chats.find((chat) => chat.appChatId === chatId) : undefined
@@ -275,28 +293,9 @@ export function CommitsInspector({
     return values
   }, [attributionWorkspaceId, loadedAttributions, workspaceChats])
 
-  const refresh = useCallback(async () => {
-    if (!workspacePath) {
-      setStack(null)
-      setError(null)
-      return
-    }
-    const requestId = ++requestIdRef.current
-    setLoading(true)
-    const result = await window.api
-      .gitUnpushedCommits({ workspacePath, chatId })
-      .catch((cause) => ({
-        ok: false as const,
-        error: cause instanceof Error ? cause.message : 'Could not read unpushed commits.'
-      }))
-    if (requestId !== requestIdRef.current) return
-    setLoading(false)
-    if (!result.ok) {
-      setError(result.error)
-      return
-    }
-    setError(null)
-    setStack(result.data)
+  const refresh = useCallback(() => {
+    if (!workspacePath) return Promise.resolve()
+    return workspaceUnpushedCommitStore.refresh({ workspacePath, chatId })
   }, [chatId, workspacePath])
 
   useEffect(() => {
@@ -380,6 +379,8 @@ export function CommitsInspector({
         onStartPrRequest={() => setRequestOpen(true)}
         onRefresh={() => void refresh()}
         refreshing={loading}
+        loadingMore={loadingMore}
+        loadError={stack ? error : null}
         pullRequestsByCommit={pullRequestsByCommit}
         loadCommitFiles={loadCommitFiles}
       />

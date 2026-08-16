@@ -187,7 +187,8 @@ export function RunCompleteEpicStack({
   commitAttributionFallback,
   commitNumbering = false,
   commitSelection,
-  commitHashAdornment
+  commitHashAdornment,
+  commitCountLabel
 }: {
   participantTable?: CloseoutParticipantTable | null
   subagentDelegations?: CloseoutSubagentDelegation[] | null
@@ -201,6 +202,7 @@ export function RunCompleteEpicStack({
   commitNumbering?: boolean
   commitSelection?: CommitSelectionState
   commitHashAdornment?: (commit: CloseoutCommit) => ReactNode
+  commitCountLabel?: ReactNode
 }): ReactNode {
   const rows = participantTable?.rows || []
   const allSubagentRows = Array.isArray(subagentDelegations) ? subagentDelegations : []
@@ -462,7 +464,8 @@ export function RunCompleteEpicStack({
             <strong>Commits</strong>
             <div className="file-change-summary-meta">
               <span>
-                {commitRows.length} commit{commitRows.length === 1 ? '' : 's'}
+                {commitCountLabel ??
+                  `${commitRows.length} commit${commitRows.length === 1 ? '' : 's'}`}
               </span>
             </div>
           </div>
