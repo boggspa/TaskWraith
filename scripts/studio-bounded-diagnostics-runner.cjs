@@ -63,6 +63,26 @@ const repoRoot = path.resolve(__dirname, '..')
  */
 const DIAGNOSTICS_PRESENTED_RATE_BOUNDS = { minimum: 20, maximum: 90 }
 
+/**
+ * Every visible counter assertDiagnostics reports as evidence. Listed explicitly
+ * so a field cannot be added to the verdict without also being required to be
+ * legible - the omission that made heldFrames and textures decoration.
+ */
+const REQUIRED_VISIBLE_COUNTERS = [
+  'droppedFrames',
+  'heldFrames',
+  'shownFrames',
+  'cacheHits',
+  'textures'
+]
+
+/**
+ * Upper bound on a believable visible RSS reading, in megabytes. OCR can inflate
+ * digits, and an absurd value would otherwise be compared against the real process
+ * footprint as though it were a measurement.
+ */
+const DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES = 1_048_576
+
 /** Tolerance when matching a rounded HUD timecode back to an exact source PTS. */
 const PTS_SELECTION_TOLERANCE_SECONDS = 0.000_501
 
@@ -332,6 +352,52 @@ function assertDiagnostics(samples, firstResources, lastResources) {
     if (!sample.diagnostics || !sample.players || sample.state !== 'PLAY') {
       throw new Error('sample omitted visible diagnostics: ' + String(index))
     }
+
+    // EVERY counter this claim reports must have been legibly read. Before this
+    // gate existed the function reported all five diagnostics in its verdict while
+    // only ever examining three of them, and those three rejected an unreadable
+    // value by coercion accident rather than by validation: null !== 0 tripped the
+    // dropped-frame check, null <= null tripped monotonicity, null < 1 tripped the
+    // player bound. heldFrames and textures were never examined; cacheHits passed
+    // because null < null is false; and an unreadable RSS survived whenever the
+    // process footprint was small enough for the tolerance floor to absorb it.
+    // A HUD rendering blanks would therefore have produced a truthful-looking
+    // Green - the counters were decoration, not evidence.
+    for (const field of REQUIRED_VISIBLE_COUNTERS) {
+      const value = sample.diagnostics[field]
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(
+          'visible diagnostics counter is unreadable or invalid at sample ' +
+            String(index) +
+            ': ' +
+            JSON.stringify({ field, value })
+        )
+      }
+    }
+    if (!Number.isInteger(sample.players.count) || sample.players.count < 0) {
+      throw new Error(
+        'visible player count is unreadable or invalid at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({ value: sample.players.count })
+      )
+    }
+    if (
+      !Number.isFinite(sample.players.rssMegabytes) ||
+      sample.players.rssMegabytes < 0 ||
+      sample.players.rssMegabytes > DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES
+    ) {
+      throw new Error(
+        'visible RSS is unreadable or out of bounds at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({
+            value: sample.players.rssMegabytes,
+            ceilingMegabytes: DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES
+          })
+      )
+    }
+
     if (sample.diagnostics.droppedFrames !== 0) {
       throw new Error(
         'visible dropped-frame counter is nonzero at sample ' +
@@ -453,6 +519,8 @@ async function runBoundedDiagnostics() {
 
 module.exports = {
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
+  DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
+  REQUIRED_VISIBLE_COUNTERS,
   PTS_SELECTION_TOLERANCE_SECONDS,
   UNPROMOTED_SESSION_DEPENDENCIES,
   assertDiagnostics,

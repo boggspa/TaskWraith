@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const {
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
+  DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   UNPROMOTED_SESSION_DEPENDENCIES,
   assertDiagnostics,
   buildFramePtsCensusCommand,
@@ -13,6 +14,7 @@ const {
   parseFramePtsCensus,
   parseOcrInteger,
   parseVisibleHud,
+  REQUIRED_VISIBLE_COUNTERS,
   resolveMediaTool,
   runBoundedDiagnostics
 } = require('./studio-bounded-diagnostics-runner.cjs')
@@ -353,6 +355,141 @@ describe('assertDiagnostics is the Outcome 9 claim, and it must reject each way 
     // A control that reads the same constant the implementation reads is a
     // tautology: shrink the constant and the control shrinks with it.
     expect(DIAGNOSTICS_PRESENTED_RATE_BOUNDS).toEqual({ minimum: 20, maximum: 90 })
+  })
+})
+
+describe('assertDiagnostics validates every counter it claims to have read', () => {
+  // WHY THIS BLOCK EXISTS. assertDiagnostics is documented as THE Outcome 9 claim,
+  // but it originally read five diagnostics fields and only ever *checked* three -
+  // and those three rejected an unreadable value by COERCION ACCIDENT rather than
+  // by validation: null !== 0 tripped the dropped-frame gate, null <= null tripped
+  // monotonicity, null < 1 tripped the player bound. Two fields (heldFrames,
+  // textures) were never examined at all, cacheHits slipped through because
+  // null < null is false, and an unreadable RSS passed whenever the process
+  // footprint was small enough for the tolerance to swallow it.
+  //
+  // That is the exact false-Green shape this arc keeps paying for: the verdict
+  // object reported the counters as evidence while the claim never required them
+  // to be readable. A HUD that renders blanks would have produced a truthful-
+  // looking Green.
+  const series = (over: Record<string, unknown> = {}) => [
+    observation(over),
+    observation({
+      contentPtsText: '00:00:20.000',
+      contentPtsSeconds: 20,
+      ...over,
+      diagnostics: {
+        droppedFrames: 0,
+        heldFrames: 3,
+        shownFrames: 600,
+        cacheHits: 240,
+        textures: 8,
+        ...((over.diagnostics as Record<string, unknown>) || {})
+      }
+    })
+  ]
+
+  // Literal per-field controls. Named individually so a regression names the field
+  // rather than reporting "assertDiagnostics failed".
+  for (const field of ['droppedFrames', 'heldFrames', 'shownFrames', 'cacheHits', 'textures']) {
+    it('rejects a sample whose ' + field + ' counter could not be read', () => {
+      expect(() =>
+        assertDiagnostics(
+          series({ diagnostics: { [field]: null } }),
+          resources(500_000),
+          resources(520_000)
+        )
+      ).toThrow(/unreadable/i)
+    })
+  }
+
+  it('rejects an unreadable player count', () => {
+    expect(() =>
+      assertDiagnostics(
+        series({ players: { count: null } }),
+        resources(500_000),
+        resources(520_000)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('rejects an unreadable visible RSS even when a small process footprint would mask it', () => {
+    // The nastiest of the set: with a large process RSS the tolerance check happened
+    // to reject this, so it looked guarded. At ~60MB the tolerance floor of 64MB
+    // swallows the difference and the unreadable value passes. A gate that only
+    // holds for large processes is not a gate.
+    expect(() =>
+      assertDiagnostics(
+        series({ players: { rssMegabytes: null } }),
+        resources(500_000),
+        resources(61_440)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('rejects a counter OCR returned as text rather than a number', () => {
+    expect(() =>
+      assertDiagnostics(
+        series({ diagnostics: { heldFrames: 'eight' } }),
+        resources(500_000),
+        resources(520_000)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('rejects a negative counter, which no frame tally can legitimately be', () => {
+    expect(() =>
+      assertDiagnostics(
+        series({ diagnostics: { heldFrames: -1 } }),
+        resources(500_000),
+        resources(520_000)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('rejects a fractional frame counter', () => {
+    expect(() =>
+      assertDiagnostics(
+        series({ diagnostics: { textures: 1.5 } }),
+        resources(500_000),
+        resources(520_000)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('rejects an absurd OCR-inflated RSS rather than trusting the digits', () => {
+    expect(() =>
+      assertDiagnostics(
+        series({ players: { rssMegabytes: 99_999_999 } }),
+        resources(500_000),
+        resources(520_000)
+      )
+    ).toThrow(/unreadable/i)
+  })
+
+  it('states the RSS ceiling as a literal rather than reading the constant back', () => {
+    expect(DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES).toBe(1_048_576)
+  })
+
+  it('requires exactly the five counters the verdict reports, no fewer and no more', () => {
+    // The per-field controls above iterate a list written out LITERALLY in this
+    // file, so shrinking the implementation constant cannot silently shrink
+    // coverage. This asserts the constant equals that literal list, which also
+    // catches a counter being ADDED to the verdict without a legibility control.
+    expect(REQUIRED_VISIBLE_COUNTERS).toEqual([
+      'droppedFrames',
+      'heldFrames',
+      'shownFrames',
+      'cacheHits',
+      'textures'
+    ])
+  })
+
+  it('still accepts the truthful series, so the new gate is not simply refusing everything', () => {
+    // A control that reds for ANY reason is indistinguishable from a working one.
+    const verdict = assertDiagnostics(series(), resources(500_000), resources(520_000))
+    expect(verdict.presentedRate).toBeCloseTo(30, 5)
+    expect(verdict.droppedFramesStayedZero).toBe(true)
   })
 })
 
