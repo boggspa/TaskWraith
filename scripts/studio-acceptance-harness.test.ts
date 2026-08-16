@@ -220,6 +220,8 @@ function processIsAlive(pid: number): boolean {
 function processGroupRows(
   pgid: number
 ): Array<{ pid: number; ppid: number; pgid: number; command: string }> {
+  // @portability-ok: this process-group helper is called only by the POSIX-gated
+  // detached-process cases; Windows has no equivalent pgid contract.
   const sample = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='], {
     encoding: 'utf8',
     timeout: 2_000,
@@ -2985,6 +2987,8 @@ describe('Studio acceptance harness', () => {
       ]
     })
     expect(execFile).toHaveBeenCalledTimes(7)
+    // @portability-ok: the Swift/AppKit Studio UI driver is a macOS-only
+    // acceptance surface, and this assertion pins its system interpreter.
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
     expect(execFile.mock.calls[0][1][0]).toMatch(/studio-acceptance-ui-driver\.swift$/)
     expect(execFile.mock.calls[0][2]).toMatchObject({ timeoutMs: 105_000 })

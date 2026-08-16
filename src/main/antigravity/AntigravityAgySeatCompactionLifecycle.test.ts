@@ -62,6 +62,8 @@ describe('runAntigravityAgySeatSummary', () => {
 
     expect(deps.spawn).toHaveBeenCalledTimes(1)
     const [command, args, options] = vi.mocked(deps.spawn!).mock.calls[0]
+    // @portability-ok: verifies an opaque caller-supplied agy executable path
+    // is preserved byte-for-byte; the runtime does not invent this path.
     expect(command).toBe('/usr/local/bin/agy')
     expect(args).toEqual(
       expect.arrayContaining([
