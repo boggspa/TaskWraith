@@ -159,6 +159,10 @@ export function createIncrementalChatPersistence(
       return { seeded: false, mutationBytes, checkpointed, parityVerified }
     } catch (error) {
       failures += 1
+      // The legacy path may still advance after this side-band failure. Force
+      // the next save to re-establish its baseline instead of retrying forever
+      // against a journal head that is now one or more revisions behind.
+      baselineVerifiedChatIds.delete(next.appChatId)
       logger.error('[incremental-chat] mutation persistence failed', error)
       throw error
     }

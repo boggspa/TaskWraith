@@ -41,6 +41,12 @@ import {
 } from './persistenceProbes'
 import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
+import { createIncrementalChatJournal } from './IncrementalChatJournal'
+import {
+  createIncrementalChatPersistence,
+  type IncrementalChatPersistenceBoundary,
+  type IncrementalChatPersistenceStats
+} from './IncrementalChatPersistence'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
@@ -572,6 +578,13 @@ const saveCoalescer =
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
 const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
+const incrementalChatPersistence = createIncrementalChatPersistence({
+  journal: createIncrementalChatJournal(path.join(userDataPath, 'chat-journal-v2'))
+})
+const incrementalChatIdleCheckpointTimer = setInterval(() => {
+  incrementalChatPersistence.checkpointIdle()
+}, 5_000)
+incrementalChatIdleCheckpointTimer.unref()
 
 /**
  * T9a: install the harness-gated perf sampling handle. Wired here rather than
@@ -786,6 +799,10 @@ export function resetPersistenceWriteSeamForTests(): void {
 }
 
 function purgeChatJournalArtifacts(chatId: string): void {
+  // V2 is a second durable history source. Unlike the legacy best-effort
+  // cleanup below, failure must stop the deletion transaction so transcript
+  // mutations cannot survive a reported successful delete.
+  incrementalChatPersistence.purge(chatId)
   try {
     chatJournal.delete(chatId)
   } catch (e) {
@@ -831,6 +848,32 @@ function appendChatJournalEntry(chatId: string, record: ChatRecord): void {
     renameMs: 0,
     totalMs: Math.max(0, Date.now() - startedAt)
   })
+}
+
+function incrementalPersistenceBoundary(reason: FlushReason): IncrementalChatPersistenceBoundary {
+  if (reason === 'normal') return 'normal'
+  if (reason === 'approval') return 'approval'
+  return 'terminal'
+}
+
+/**
+ * V2 dual-write seam. Mutation append is independently fsynced and may lead
+ * the still-authoritative legacy file during its bounded coalescing window.
+ * Any V2 failure leaves the existing legacy write path untouched; parity is
+ * proven at the first baseline and every approval/terminal boundary before
+ * the legacy hot rewrite is eligible for removal.
+ */
+function persistIncrementalChat(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  reason: FlushReason
+): void {
+  try {
+    incrementalChatPersistence.persist(previous, next, incrementalPersistenceBoundary(reason))
+  } catch {
+    // Coordinator already records and logs the failure. Legacy remains the
+    // read-authoritative durability fallback throughout this dual-write phase.
+  }
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
@@ -4672,6 +4715,7 @@ export class AppStore {
     openApprovalSignatureByChatId.clear()
     this.chatRecordCache.clear()
     chatListIndexStore.clearCache()
+    incrementalChatPersistence.clear()
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
@@ -6795,11 +6839,13 @@ export class AppStore {
     // 2026-08-05: 136 MB re-parsed every launch, ~100% main CPU for 1-2 min).
     let indexSourceStat: { mtimeMs: number; size: number } | undefined
     const chatFileExists = fs.existsSync(chatPath)
+    const flushReason = deriveSaveFlushReason(normalizedChat)
     if (!chatFileExists) {
       writeJson(chatPath, normalizedChat)
       // Same contract ordering as the coalesced path: the journal must mirror
       // every legacy write, including the synchronous first save.
       appendChatJournalEntry(normalizedChat.appChatId, normalizedChat)
+      persistIncrementalChat(null, normalizedChat, flushReason)
       let postStat: fs.Stats | null = null
       try {
         postStat = fs.statSync(chatPath)
@@ -6824,7 +6870,7 @@ export class AppStore {
         record: normalizedChat
       })
       const chatId = normalizedChat.appChatId
-      const flushReason = deriveSaveFlushReason(normalizedChat)
+      persistIncrementalChat(previousChatForFeedback, normalizedChat, flushReason)
       saveCoalescer.schedule(
         chatId,
         () => {
@@ -6956,6 +7002,11 @@ export class AppStore {
    */
   static flushAllChatSaves(): void {
     saveCoalescer.flushAll()
+    incrementalChatPersistence.checkpointAll()
+  }
+
+  static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {
+    return incrementalChatPersistence.stats()
   }
 
   /**
@@ -7708,6 +7759,7 @@ export class AppStore {
         // and getChats() enumerates this directory, so the deleted chat would
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
+        incrementalChatPersistence.clear()
         removePathStrict(chatsDir, 'chat history directory')
         // T4a: the journal is a second durable copy of chat history. Deleting
         // the legacy files while leaving the journal intact would leave the
@@ -7782,7 +7834,15 @@ export class AppStore {
             persistenceRevision: chatPersistenceRevision(chat) + 1
           })
         )
-        if (chatContainsTruncatableHistory(chat)) writeJson(chatPath, truncated)
+        if (chatContainsTruncatableHistory(chat)) {
+          writeJson(chatPath, truncated)
+          incrementalChatPersistence.replaceAuthoritative(chatId, truncated)
+        } else {
+          // Idempotent recovery: a prior attempt may have committed the legacy
+          // truncation and failed before replacing V2. Reassert the already-
+          // truncated record so no old mutation/checkpoint survives the rerun.
+          incrementalChatPersistence.replaceAuthoritative(chatId, chat)
+        }
         this.chatRecordCache.delete(chatId)
         const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
         if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {

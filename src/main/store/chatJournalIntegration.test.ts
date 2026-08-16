@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
 import { AppStore } from './index'
+import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import type { ChatRecord, ChatRun } from './types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-journal-integration-test-${process.pid}`)
@@ -43,6 +44,11 @@ vi.mock('electron', () => ({
 const chatFilePath = (chatId: string): string => join(userDataPath, 'chats', `${chatId}.json`)
 const journalDir = (): string => join(userDataPath, 'chat-journal')
 const journalFilePath = (chatId: string): string => join(journalDir(), `${chatId}.jsonl`)
+const incrementalJournalDir = (): string => join(userDataPath, 'chat-journal-v2')
+const incrementalMutationPath = (chatId: string): string =>
+  join(incrementalJournalDir(), `${chatId}.mutations.jsonl`)
+const incrementalCheckpointPath = (chatId: string): string =>
+  join(incrementalJournalDir(), `${chatId}.checkpoint.json`)
 
 function runningRun(runId: string): ChatRun {
   return { runId, startedAt: '2026-05-08T00:00:00.000Z', status: 'running' }
@@ -73,6 +79,11 @@ const settleTimers = (): Promise<void> => new Promise((resolve) => setTimeout(re
 function journalArtifacts(chatId: string): string[] {
   if (!fs.existsSync(journalDir())) return []
   return fs.readdirSync(journalDir()).filter((name) => name.startsWith(`${chatId}.`))
+}
+
+function incrementalJournalArtifacts(chatId: string): string[] {
+  if (!fs.existsSync(incrementalJournalDir())) return []
+  return fs.readdirSync(incrementalJournalDir()).filter((name) => name.startsWith(`${chatId}.`))
 }
 
 describe('T4a chat journal integration', () => {
@@ -112,6 +123,81 @@ describe('T4a chat journal integration', () => {
       // The legacy file is authoritative and must carry the same update.
       const persisted = JSON.parse(fs.readFileSync(chatFilePath('chat-deferred'), 'utf-8'))
       expect(persisted.title).toBe('streaming update')
+    })
+  })
+
+  describe('V2 mutation journal parity', () => {
+    it('seeds the first durable record as a replay checkpoint', () => {
+      const saved = saveChat('chat-v2-first')
+
+      expect(fs.existsSync(incrementalCheckpointPath('chat-v2-first'))).toBe(true)
+      expect(fs.existsSync(incrementalMutationPath('chat-v2-first'))).toBe(false)
+      const replayed = createIncrementalChatJournal(incrementalJournalDir()).replay('chat-v2-first')
+      expect(replayed.record?.persistenceRevision).toBe(saved.persistenceRevision)
+      expect(replayed.record?.title).toBe('chat-v2-first')
+    })
+
+    it('fsyncs a mutation immediately while the legacy whole record is still deferred', async () => {
+      const chat = saveChat('chat-v2-streaming', [runningRun('run-live')])
+      chat.title = 'mutation is already durable'
+      AppStore.saveChat(chat)
+
+      expect(fs.existsSync(incrementalMutationPath('chat-v2-streaming'))).toBe(true)
+      const mutationLine = fs.readFileSync(incrementalMutationPath('chat-v2-streaming'), 'utf8')
+      expect(mutationLine).not.toContain('"record"')
+      const replayed =
+        createIncrementalChatJournal(incrementalJournalDir()).replay('chat-v2-streaming')
+      expect(replayed.record?.title).toBe('mutation is already durable')
+
+      const legacyDuringDeferral = JSON.parse(
+        fs.readFileSync(chatFilePath('chat-v2-streaming'), 'utf8')
+      ) as ChatRecord
+      expect(legacyDuringDeferral.title).toBe('chat-v2-streaming')
+
+      await settleTimers()
+      const legacyAfterFlush = JSON.parse(
+        fs.readFileSync(chatFilePath('chat-v2-streaming'), 'utf8')
+      ) as ChatRecord
+      expect(legacyAfterFlush.title).toBe('mutation is already durable')
+    })
+
+    it('materializes and verifies a checkpoint at the terminal boundary', () => {
+      const mismatchesBefore = AppStore.getIncrementalChatPersistenceStats().parityMismatches
+      const chat = saveChat('chat-v2-terminal', [runningRun('run-live')])
+      chat.title = 'terminal state'
+      chat.runs = [
+        {
+          ...chat.runs[0],
+          status: 'success',
+          endedAt: '2026-08-16T00:00:01.000Z'
+        }
+      ]
+
+      AppStore.saveChat(chat)
+
+      expect(fs.existsSync(incrementalMutationPath('chat-v2-terminal'))).toBe(false)
+      const checkpoint = JSON.parse(
+        fs.readFileSync(incrementalCheckpointPath('chat-v2-terminal'), 'utf8')
+      ) as { reason: string; record: ChatRecord }
+      expect(checkpoint.reason).toBe('terminal')
+      expect(checkpoint.record.title).toBe('terminal state')
+      expect(AppStore.getIncrementalChatPersistenceStats().parityMismatches).toBe(mismatchesBefore)
+    })
+
+    it('materializes every dirty mutation tail during the shutdown flush', () => {
+      const chat = saveChat('chat-v2-shutdown', [runningRun('run-live')])
+      chat.title = 'shutdown state'
+      AppStore.saveChat(chat)
+      expect(fs.existsSync(incrementalMutationPath('chat-v2-shutdown'))).toBe(true)
+
+      AppStore.flushAllChatSaves()
+
+      expect(fs.existsSync(incrementalMutationPath('chat-v2-shutdown'))).toBe(false)
+      const checkpoint = JSON.parse(
+        fs.readFileSync(incrementalCheckpointPath('chat-v2-shutdown'), 'utf8')
+      ) as { reason: string; record: ChatRecord }
+      expect(checkpoint.reason).toBe('shutdown')
+      expect(checkpoint.record.title).toBe('shutdown state')
     })
   })
 
@@ -176,6 +262,7 @@ describe('T4a chat journal integration', () => {
       // Not just the journal and snapshot: the tombstone marker is NAMED after
       // the chat, so leaving it would keep a deleted chat's id on disk.
       expect(journalArtifacts('chat-doomed')).toEqual([])
+      expect(incrementalJournalArtifacts('chat-doomed')).toEqual([])
       expect(fs.existsSync(chatFilePath('chat-doomed'))).toBe(false)
       expect(AppStore.getChats().some((c) => c.appChatId === 'chat-doomed')).toBe(false)
     })
@@ -189,7 +276,9 @@ describe('T4a chat journal integration', () => {
       await settleTimers()
 
       expect(journalArtifacts('chat-victim')).toEqual([])
+      expect(incrementalJournalArtifacts('chat-victim')).toEqual([])
       expect(fs.existsSync(journalFilePath('chat-survivor'))).toBe(true)
+      expect(incrementalJournalArtifacts('chat-survivor').length).toBeGreaterThan(0)
     })
 
     it('removes the whole journal directory when all history is cleared', async () => {
@@ -204,6 +293,7 @@ describe('T4a chat journal integration', () => {
       // A global delete must not leave a second durable copy of the deleted
       // transcripts sitting in the journal directory.
       expect(fs.existsSync(journalDir())).toBe(false)
+      expect(fs.existsSync(incrementalJournalDir())).toBe(false)
       expect(AppStore.getChats()).toHaveLength(0)
     })
   })

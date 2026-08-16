@@ -133,6 +133,26 @@ describe('IncrementalChatPersistence', () => {
     expect(persistence.replay('chat-1').record).toEqual(approval)
   })
 
+  it('re-establishes the authoritative baseline after one failed append', () => {
+    const first = chat()
+    const second = advance(first, 'second')
+    const third = advance(second, 'third')
+    const journal = createIncrementalChatJournal(baseDir)
+    const append = vi.spyOn(journal, 'append')
+    append.mockImplementationOnce(() => {
+      throw new Error('simulated fsync failure')
+    })
+    persistence = createIncrementalChatPersistence({ journal, logger })
+    persistence.persist(null, first, 'normal')
+
+    expect(() => persistence.persist(first, second, 'normal')).toThrow(/simulated fsync failure/)
+    expect(persistence.persist(second, third, 'terminal')).toMatchObject({
+      parityVerified: true
+    })
+    expect(persistence.replay('chat-1').record).toEqual(third)
+    expect(persistence.stats().baselineRepairs).toBe(1)
+  })
+
   it('purges per-chat state and clears all journal artifacts', () => {
     const first = chat()
     persistence.persist(null, first, 'normal')
