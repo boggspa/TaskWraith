@@ -46,6 +46,7 @@ const {
   resolveStudioWorkspaceWindow,
   studioProposalInsertionEvidence,
   studioReviewHostCaptureRegion,
+  studioSourceHostOverlayCaptureRegion,
   studioWorkspaceReviewPresented,
   validateStudioWorkspaceObservation,
   validateDetachedCoordinatorRequest,
@@ -193,6 +194,11 @@ const {
   ) => Record<string, any>
   resolveStudioWorkspaceWindow: (target: Record<string, any>) => Record<string, any>
   studioReviewHostCaptureRegion: (
+    image: { width: number; height: number },
+    windowBounds: Record<string, number>,
+    hostFrame: Record<string, number>
+  ) => { x: number; y: number; width: number; height: number }
+  studioSourceHostOverlayCaptureRegion: (
     image: { width: number; height: number },
     windowBounds: Record<string, number>,
     hostFrame: Record<string, number>
@@ -4387,6 +4393,7 @@ describe('Studio acceptance harness', () => {
     const windowTargetsSeen: Array<Record<string, any>> = []
     let proposalNumber = 0
     let sharedPlayheadTicks = 1_500_000
+    let readWorkspaceCallCount = 0
     const receipt = await driveStudioUiJourney(
       { artifactRoot: '/virtual/acceptance/studioJourney01', transcriptTimeoutMs: 720_000 },
       {
@@ -4498,6 +4505,13 @@ describe('Studio acceptance harness', () => {
           windowTargetsSeen.push(target?.window?.windows?.[0] ?? null)
           if (actions.length === 1 && actions[0].type === 'read-workspace') {
             calls.push('driver:read-workspace')
+            readWorkspaceCallCount += 1
+            // The very first read-workspace call happens at journey start,
+            // before Timeline is ever shown: Source is selected/visible and
+            // Timeline is not. Every later call (the accept/reject
+            // waitForWorkspaceReview polls) happens after `w` has shown
+            // Timeline, so review=true from then on.
+            const review = readWorkspaceCallCount > 1
             return {
               schemaVersion: 1,
               kind: 'taskwraith-studio-ui-driver-receipt',
@@ -4508,7 +4522,7 @@ describe('Studio acceptance harness', () => {
                 {
                   index: 0,
                   type: 'read-workspace',
-                  workspace: validWorkspaceObservation(true)
+                  workspace: validWorkspaceObservation(review)
                 }
               ]
             }
@@ -4591,7 +4605,7 @@ describe('Studio acceptance harness', () => {
         }
       },
       adjudication: {
-        transcriptPixels: { ok: true, region: 'timeline' },
+        transcriptPixels: { ok: true, region: 'source-host-overlay' },
         currentProposedPixels: { ok: true, region: 'review-host' },
         ghostRejectPixels: { ok: true, region: 'review-host' },
         workspace: {
@@ -4620,6 +4634,7 @@ describe('Studio acceptance harness', () => {
     })
     expect(calls).toEqual([
       'journal:set_transcript:asset-a',
+      'driver:read-workspace',
       'driver:press-playback',
       'driver:transcript-band',
       'driver:tab',
@@ -4628,7 +4643,7 @@ describe('Studio acceptance harness', () => {
       'driver:trim-pending',
       'driver:return',
       'driver:proposal-sent',
-      'compare:timeline:transcript-band.png:transcript-selected.png',
+      'compare:source-host-overlay:transcript-band.png:transcript-selected.png',
       'journal:propose_edit:',
       'driver:ghost',
       'driver:w',
@@ -4735,7 +4750,14 @@ describe('Studio acceptance harness', () => {
           },
           runUiDriver: async () => {
             driverCalls += 1
-            if (driverCalls === 2) throw new Error('screenshot failed')
+            if (driverCalls === 1) {
+              return {
+                actions: [
+                  { index: 0, type: 'read-workspace', workspace: validWorkspaceObservation(false) }
+                ]
+              }
+            }
+            if (driverCalls === 3) throw new Error('screenshot failed')
             return { actions: [] }
           }
         }
@@ -6045,6 +6067,137 @@ describe('Studio acceptance harness', () => {
           actions: [{ type: 'read-workspace', callerControlledValue: 'must-be-ignored' }]
         })
         expect(Object.keys(built.actions[0])).toEqual(['type'])
+      })
+    })
+
+    describe('Hold 1: real one-window transcript-region computation', () => {
+      // These exercise the REAL region math end to end (real PNGs through
+      // the real comparator), not a mocked compareCaptures — the mock is
+      // exactly why the deterministic throw against real one-window
+      // geometry went unnoticed until an independent review measured it.
+      const oneWindowBounds = { x: 0, y: 0, width: 1280, height: 800 }
+
+      async function makeOneWindowCapture(
+        root: string,
+        name: string,
+        mutate?: (image: InstanceType<typeof PNG>) => void
+      ): Promise<string> {
+        const image = new PNG({ width: 2_560, height: 1_600 })
+        image.data.fill(255)
+        mutate?.(image)
+        const destination = path.join(root, name)
+        await fsPromises.writeFile(destination, PNG.sync.write(image))
+        return destination
+      }
+
+      function paintOneWindowRectangle(
+        image: InstanceType<typeof PNG>,
+        left: number,
+        top: number,
+        width: number,
+        height: number
+      ): void {
+        for (let y = top; y < top + height; y += 1) {
+          for (let x = left; x < left + width; x += 1) {
+            const offset = (y * image.width + x) * 4
+            image.data[offset] = 0
+            image.data[offset + 1] = 0
+            image.data[offset + 2] = 0
+            image.data[offset + 3] = 255
+          }
+        }
+      }
+
+      it('rejects the legacy whole-window "timeline" region against real one-window 1280x800 geometry', async () => {
+        const root = await temporaryRoot('studio-onewindow-legacy-timeline-')
+        const before = await makeOneWindowCapture(root, 'before.png')
+        const after = await makeOneWindowCapture(root, 'after.png', (image) =>
+          paintOneWindowRectangle(image, 100, 1_400, 40, 40)
+        )
+        // This is exactly Hold 1, reproduced from real bytes rather than
+        // asserted from arithmetic: 1280*9/16=720 video height, 800-720=80
+        // pseudo-titlebar, and 80 falls outside the legacy 20...40 bound
+        // that only ever made sense for the old dedicated per-route window.
+        expect(() =>
+          compareStudioJourneyCaptures(before, after, oneWindowBounds, 'timeline')
+        ).toThrow(/bounded Companion geometry/)
+      })
+
+      it('derives the transcript overlay band from the live Source host frame and detects a real change inside it', async () => {
+        const sourceHostFrame = { x: 0, y: 100, width: 640, height: 600 }
+        const root = await temporaryRoot('studio-onewindow-source-overlay-')
+        const before = await makeOneWindowCapture(root, 'before.png')
+        // Overlay band is the bottom 118pt (236px at 2x) of the 600pt-tall
+        // host: y in [200, 1200) scaled, so the band is y in [1164, 1400).
+        const after = await makeOneWindowCapture(root, 'after.png', (image) =>
+          paintOneWindowRectangle(image, 50, 1_200, 20, 20)
+        )
+        const result = compareStudioJourneyCaptures(
+          before,
+          after,
+          oneWindowBounds,
+          'source-host-overlay',
+          sourceHostFrame
+        )
+        expect(result).toMatchObject({ ok: true, region: 'source-host-overlay' })
+        expect(
+          studioSourceHostOverlayCaptureRegion({ width: 2_560, height: 1_600 }, oneWindowBounds, sourceHostFrame)
+        ).toEqual({ x: 0, y: 1_164, width: 1_280, height: 236 })
+      })
+
+      it('does not detect a change painted outside the live overlay band (correctly scoped, not whole-host)', async () => {
+        const sourceHostFrame = { x: 0, y: 100, width: 640, height: 600 }
+        const root = await temporaryRoot('studio-onewindow-source-overlay-scope-')
+        const before = await makeOneWindowCapture(root, 'before.png')
+        // Painted well above the overlay band (y=1164..1400), inside the
+        // rest of the Source host and the rest of the window.
+        const after = await makeOneWindowCapture(root, 'after.png', (image) =>
+          paintOneWindowRectangle(image, 50, 300, 20, 20)
+        )
+        expect(() =>
+          compareStudioJourneyCaptures(before, after, oneWindowBounds, 'source-host-overlay', sourceHostFrame)
+        ).toThrow(/source-host-overlay region did not materially change/)
+      })
+
+      it('fails the journey loudly if Source is not selected/visible at journey start', async () => {
+        await expect(
+          driveStudioUiJourney(
+            { artifactRoot: '/virtual/acceptance/studioJourneySourceGate' },
+            {
+              companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
+              electronPgid: 7001,
+              window: {
+                pid: 7002,
+                visibleWindowCount: 1,
+                windows: [
+                  { windowId: 42, title: 'TaskWraith Studio', bounds: oneWindowBounds }
+                ]
+              }
+            },
+            {
+              waitForJournalOperation: async () => ({ revision: 2, op: { type: 'set_transcript' } }),
+              runUiDriver: async () => ({
+                actions: [
+                  // review=true: Timeline selected/visible, Source hidden —
+                  // exactly the state that must never be silently accepted
+                  // as "Source presented" for the transcript-overlay crop.
+                  { index: 0, type: 'read-workspace', workspace: validWorkspaceObservation(true) }
+                ]
+              })
+            }
+          )
+        ).rejects.toThrow(/requires Source selected and visible at journey start/)
+      })
+
+      it('rejects a Source host frame too short to contain the overlay band', () => {
+        const shortFrame = { x: 0, y: 0, width: 640, height: 50 }
+        expect(() =>
+          studioSourceHostOverlayCaptureRegion(
+            { width: 2_560, height: 1_600 },
+            oneWindowBounds,
+            shortFrame
+          )
+        ).toThrow(/overlay band does not fit/)
       })
     })
   })

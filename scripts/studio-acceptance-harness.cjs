@@ -4377,9 +4377,87 @@ function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   return { x, y, width, height }
 }
 
+// The transcript/HUD overlay is a fixed-height band along the bottom edge of
+// the live Source host, not the whole window. Deliberately duplicates
+// studioReviewHostCaptureRegion's clip/scale math (own error text) rather
+// than sharing it, so a change to one host-relative crop cannot silently
+// alter the other's already-accepted behavior.
+function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
+  const logicalX = Number(windowBounds?.x)
+  const logicalY = Number(windowBounds?.y)
+  const logicalWidth = Number(windowBounds?.width)
+  const logicalHeight = Number(windowBounds?.height)
+  if (
+    !Number.isInteger(logicalWidth) ||
+    !Number.isInteger(logicalHeight) ||
+    logicalWidth <= 0 ||
+    logicalHeight <= 0 ||
+    !Number.isFinite(logicalX) ||
+    !Number.isFinite(logicalY)
+  ) {
+    throw new Error('Studio journey capture window bounds are invalid')
+  }
+  const captureWidth = logicalWidth * 2
+  const captureHeight = logicalHeight * 2
+  if (image.width !== captureWidth || image.height !== captureHeight) {
+    throw new Error('Studio journey capture does not match the exact 2x window bounds')
+  }
+  if (
+    !isRecord(hostFrame) ||
+    !['x', 'y', 'width', 'height'].every(
+      (key) => typeof hostFrame[key] === 'number' && Number.isFinite(hostFrame[key])
+    ) ||
+    hostFrame.width <= 0 ||
+    hostFrame.height <= 0
+  ) {
+    throw new Error('Studio source host frame is not a bounded finite rectangle')
+  }
+  const localX = hostFrame.x - logicalX
+  const localY = hostFrame.y - logicalY
+  const clipX = Math.max(0, localX)
+  const clipY = Math.max(0, localY)
+  const clipRight = Math.min(logicalWidth, localX + hostFrame.width)
+  const clipBottom = Math.min(logicalHeight, localY + hostFrame.height)
+  const clipWidth = clipRight - clipX
+  const clipHeight = clipBottom - clipY
+  if (clipWidth <= 0 || clipHeight <= 0) {
+    throw new Error('Studio source host frame is outside the immutable window bounds')
+  }
+  if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
+    throw new Error('Studio source host capture region must not equal the whole window')
+  }
+  const hostX = Math.round(clipX * 2)
+  const hostY = Math.round(clipY * 2)
+  const hostWidth = Math.round(clipWidth * 2)
+  const hostHeight = Math.round(clipHeight * 2)
+  if (
+    hostX < 0 ||
+    hostY < 0 ||
+    hostWidth <= 0 ||
+    hostHeight <= 0 ||
+    hostX + hostWidth > image.width ||
+    hostY + hostHeight > image.height
+  ) {
+    throw new Error('Studio source host capture region is outside the screenshot')
+  }
+  const overlayHeight = STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  if (overlayHeight <= 0 || overlayHeight > hostHeight) {
+    throw new Error('Studio source host overlay band does not fit the live host frame')
+  }
+  return {
+    x: hostX,
+    y: hostY + hostHeight - overlayHeight,
+    width: hostWidth,
+    height: overlayHeight
+  }
+}
+
 function studioJourneyCaptureRegion(image, windowBounds, region, reviewHostFrame = null) {
   if (region === 'review-host') {
     return studioReviewHostCaptureRegion(image, windowBounds, reviewHostFrame)
+  }
+  if (region === 'source-host-overlay') {
+    return studioSourceHostOverlayCaptureRegion(image, windowBounds, reviewHostFrame)
   }
   const logicalWidth = Number(windowBounds?.width)
   const logicalHeight = Number(windowBounds?.height)
@@ -4703,7 +4781,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     screenshots.push(...screenshotPaths(receipt))
     return receipt
   }
-  const sourceBounds = windowBounds
   const assetId = target.asset && target.asset.sha256
   const transcript = await waitJournal(
     plan,
@@ -4733,6 +4810,29 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       provenanceNote: target.speechFixture.provenanceNote
     }
   }
+  // The transcript-band/selected comparison crops the live Source host's
+  // overlay band, not the whole window, so it needs the host's real AX frame
+  // before the first screenshot rather than assuming Source is presented.
+  const initialWorkspaceReceipt = await runDriver(
+    plan,
+    journeyTarget,
+    [{ type: 'read-workspace' }],
+    {
+      ...(adapters.driverAdapters || {}),
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false
+    }
+  )
+  const initialWorkspace = readWorkspaceObservationFromReceipt(initialWorkspaceReceipt, windowBounds)
+  if (
+    !isRecord(initialWorkspace.sourceRoute) ||
+    initialWorkspace.sourceRoute.value !== 'selected' ||
+    !isRecord(initialWorkspace.sourceHost) ||
+    initialWorkspace.sourceHost.visible !== true
+  ) {
+    throw new Error('Studio UI journey requires Source selected and visible at journey start')
+  }
+  const sourceHostFrame = initialWorkspace.sourceHost.frame
   await drive([
     {
       type: 'press-playback',
@@ -4758,8 +4858,9 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const transcriptPixels = compareCaptures(
     transcriptBandScreenshots[0],
     transcriptSelectedScreenshots[0],
-    sourceBounds,
-    'timeline'
+    windowBounds,
+    'source-host-overlay',
+    sourceHostFrame
   )
   const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const proposalBoundary = {
@@ -5608,6 +5709,7 @@ module.exports = {
   resolveStudioWorkspaceWindow,
   validateStudioWorkspaceObservation,
   studioReviewHostCaptureRegion,
+  studioSourceHostOverlayCaptureRegion,
   studioWorkspaceReviewPresented,
   driveStudioUiJourney,
   studioProposalInsertionEvidence,
