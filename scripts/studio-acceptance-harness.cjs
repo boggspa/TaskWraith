@@ -71,6 +71,35 @@ const STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION =
   STUDIO_JOURNEY_MATERIAL_POLICY.minimumChangedFraction
 const STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION = STUDIO_JOURNEY_MATERIAL_POLICY.minimumSpanFraction
 const STUDIO_JOURNEY_CAPTURE_MAX_BYTES = 64 * 1024 * 1024
+const STUDIO_WORKSPACE_WINDOW_TITLE = 'TaskWraith Studio'
+const STUDIO_WORKSPACE_ROOT_ID = 'studio.workspace.root'
+const STUDIO_WORKSPACE_SOURCE_HOST_ID = 'studio.workspace.viewer.source'
+const STUDIO_WORKSPACE_TIMELINE_HOST_ID = 'studio.workspace.viewer.timeline'
+const STUDIO_WORKSPACE_SOURCE_ROUTE_ID = 'studio.workspace.route.source'
+const STUDIO_WORKSPACE_TIMELINE_ROUTE_ID = 'studio.workspace.route.timeline'
+const STUDIO_WORKSPACE_CURRENT_VERSION_ID = 'studio.workspace.review-version.current'
+const STUDIO_WORKSPACE_PROPOSED_VERSION_ID = 'studio.workspace.review-version.proposed'
+const STUDIO_WORKSPACE_ELEMENT_IDS = Object.freeze([
+  STUDIO_WORKSPACE_ROOT_ID,
+  STUDIO_WORKSPACE_SOURCE_ROUTE_ID,
+  STUDIO_WORKSPACE_TIMELINE_ROUTE_ID,
+  STUDIO_WORKSPACE_SOURCE_HOST_ID,
+  STUDIO_WORKSPACE_TIMELINE_HOST_ID,
+  STUDIO_WORKSPACE_CURRENT_VERSION_ID,
+  STUDIO_WORKSPACE_PROPOSED_VERSION_ID
+])
+const STUDIO_WORKSPACE_ROUTE_IDS = new Set([
+  STUDIO_WORKSPACE_SOURCE_ROUTE_ID,
+  STUDIO_WORKSPACE_TIMELINE_ROUTE_ID
+])
+const STUDIO_WORKSPACE_VERSION_IDS = new Set([
+  STUDIO_WORKSPACE_CURRENT_VERSION_ID,
+  STUDIO_WORKSPACE_PROPOSED_VERSION_ID
+])
+const STUDIO_WORKSPACE_HOST_IDS = new Set([
+  STUDIO_WORKSPACE_SOURCE_HOST_ID,
+  STUDIO_WORKSPACE_TIMELINE_HOST_ID
+])
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
 const DETACHED_COORDINATOR_SCHEMA_VERSION = 1
@@ -3287,6 +3316,9 @@ function buildStudioUiDriverRequest(options) {
         accessibilityLabel: 'Transport mutation detail'
       }
     }
+    if (action.type === 'read-workspace') {
+      return { type: 'read-workspace' }
+    }
     if (action.type === 'read-av-sync' || action.type === 'coreaudio-route-health') {
       return { type: action.type }
     }
@@ -3342,6 +3374,224 @@ function buildStudioUiDriverRequest(options) {
     artifactRoot,
     actions: normalizedActions
   }
+}
+
+const STUDIO_WORKSPACE_NORMALIZED_KEYS = Object.freeze({
+  [STUDIO_WORKSPACE_ROOT_ID]: 'root',
+  [STUDIO_WORKSPACE_SOURCE_ROUTE_ID]: 'sourceRoute',
+  [STUDIO_WORKSPACE_TIMELINE_ROUTE_ID]: 'timelineRoute',
+  [STUDIO_WORKSPACE_SOURCE_HOST_ID]: 'sourceHost',
+  [STUDIO_WORKSPACE_TIMELINE_HOST_ID]: 'timelineHost',
+  [STUDIO_WORKSPACE_CURRENT_VERSION_ID]: 'currentVersion',
+  [STUDIO_WORKSPACE_PROPOSED_VERSION_ID]: 'proposedVersion'
+})
+
+function resolveStudioWorkspaceWindow(target) {
+  const window = target && target.window
+  if (!isRecord(window) || !Array.isArray(window.windows)) {
+    throw new Error('Studio UI journey requires an exact visible-window set')
+  }
+  const windows = window.windows
+  if (windows.length !== 1 || window.visibleWindowCount !== 1) {
+    throw new Error('Studio UI journey requires exactly one visible workspace window')
+  }
+  const entry = windows[0]
+  if (!isRecord(entry) || entry.title !== STUDIO_WORKSPACE_WINDOW_TITLE) {
+    throw new Error(
+      `Studio UI journey requires the single ${STUDIO_WORKSPACE_WINDOW_TITLE} workspace window`
+    )
+  }
+  return { ...target, expectedWindowTitle: entry.title }
+}
+
+function studioWorkspaceFrameWithinWindow(frame, windowBounds) {
+  if (
+    !isRecord(windowBounds) ||
+    !['x', 'y', 'width', 'height'].every(
+      (key) => typeof windowBounds[key] === 'number' && Number.isFinite(windowBounds[key])
+    ) ||
+    windowBounds.width <= 0 ||
+    windowBounds.height <= 0
+  ) {
+    return false
+  }
+  if (
+    !isRecord(frame) ||
+    !['x', 'y', 'width', 'height'].every(
+      (key) => typeof frame[key] === 'number' && Number.isFinite(frame[key])
+    ) ||
+    frame.width <= 0 ||
+    frame.height <= 0
+  ) {
+    return false
+  }
+  const tolerance = 1
+  return (
+    frame.x >= windowBounds.x - tolerance &&
+    frame.y >= windowBounds.y - tolerance &&
+    frame.x + frame.width <= windowBounds.x + windowBounds.width + tolerance &&
+    frame.y + frame.height <= windowBounds.y + windowBounds.height + tolerance
+  )
+}
+
+function validateStudioWorkspaceElement(element, id, windowBounds) {
+  const { visible, role, value, enabled, frame } = element
+  if (id === STUDIO_WORKSPACE_ROOT_ID) {
+    if (!visible) throw new Error('Studio workspace root must be visible')
+    if (role !== 'AXGroup') throw new Error('Studio workspace root is not an AXGroup')
+    if (value !== null) throw new Error('Studio workspace root must not carry a value')
+    if (enabled !== null) throw new Error('Studio workspace root must not carry an enabled flag')
+    if (!studioWorkspaceFrameWithinWindow(frame, windowBounds)) {
+      throw new Error('Studio workspace root frame is outside the immutable window bounds')
+    }
+    return { visible, role, value, enabled, frame }
+  }
+  if (STUDIO_WORKSPACE_HOST_IDS.has(id)) {
+    if (!visible) {
+      if (role !== null || value !== null || enabled !== null || frame !== null) {
+        throw new Error(
+          `Studio hidden workspace host ${id} must not carry role/value/enabled/frame`
+        )
+      }
+      return { visible, role, value, enabled, frame }
+    }
+    if (role !== 'AXGroup') throw new Error(`Studio workspace host ${id} is not an AXGroup`)
+    if (value !== null) throw new Error(`Studio workspace host ${id} must not carry a value`)
+    if (enabled !== null) throw new Error(`Studio workspace host ${id} must not carry an enabled flag`)
+    if (!studioWorkspaceFrameWithinWindow(frame, windowBounds)) {
+      throw new Error(`Studio workspace host ${id} frame is outside the immutable window bounds`)
+    }
+    return { visible, role, value, enabled, frame }
+  }
+  if (STUDIO_WORKSPACE_ROUTE_IDS.has(id)) {
+    if (!visible) throw new Error(`Studio workspace route control ${id} must be visible`)
+    if (role !== 'AXCheckBox') {
+      throw new Error(`Studio workspace route control ${id} is not an AXCheckBox`)
+    }
+    if (value !== 'selected' && value !== 'not selected') {
+      throw new Error(`Studio workspace route control ${id} has an invalid value`)
+    }
+    if (enabled !== true) {
+      throw new Error(`Studio workspace route control ${id} must be enabled`)
+    }
+    if (!studioWorkspaceFrameWithinWindow(frame, windowBounds)) {
+      throw new Error(`Studio workspace route control ${id} frame is outside the immutable window bounds`)
+    }
+    return { visible, role, value, enabled, frame }
+  }
+  if (STUDIO_WORKSPACE_VERSION_IDS.has(id)) {
+    if (!visible) throw new Error(`Studio workspace version control ${id} must be visible`)
+    if (role !== 'AXRadioButton') {
+      throw new Error(`Studio workspace version control ${id} is not an AXRadioButton`)
+    }
+    if (value !== 'selected' && value !== 'not selected' && value !== 'unavailable') {
+      throw new Error(`Studio workspace version control ${id} has an invalid value`)
+    }
+    if (enabled !== (value !== 'unavailable')) {
+      throw new Error(
+        `Studio workspace version control ${id} enabled state does not match its value`
+      )
+    }
+    if (!studioWorkspaceFrameWithinWindow(frame, windowBounds)) {
+      throw new Error(`Studio workspace version control ${id} frame is outside the immutable window bounds`)
+    }
+    return { visible, role, value, enabled, frame }
+  }
+  throw new Error(`Studio workspace observation carries an unknown identifier ${id}`)
+}
+
+function validateStudioWorkspaceObservation(workspace, windowBounds) {
+  if (
+    !isRecord(workspace) ||
+    Object.keys(workspace).length !== 1 ||
+    !Array.isArray(workspace.elements)
+  ) {
+    throw new Error('Studio workspace observation is not one exact elements array')
+  }
+  const elements = workspace.elements
+  if (elements.length !== STUDIO_WORKSPACE_ELEMENT_IDS.length) {
+    throw new Error('Studio workspace observation does not carry the exact element count')
+  }
+  const elementKeys = ['identifier', 'visible', 'role', 'value', 'enabled', 'frame']
+  const byId = new Map()
+  for (const element of elements) {
+    if (!isRecord(element) || Object.keys(element).length !== elementKeys.length) {
+      throw new Error('Studio workspace observation carries a malformed or extra element field')
+    }
+    for (const key of elementKeys) {
+      if (!(key in element)) {
+        throw new Error(`Studio workspace observation is missing element field ${key}`)
+      }
+    }
+    if (typeof element.identifier !== 'string' || !element.identifier) {
+      throw new Error('Studio workspace observation element identifier is not an exact string')
+    }
+    if (typeof element.visible !== 'boolean') {
+      throw new Error('Studio workspace observation element visibility is not boolean')
+    }
+    if (byId.has(element.identifier)) {
+      throw new Error(`Studio workspace observation duplicates identifier ${element.identifier}`)
+    }
+    byId.set(element.identifier, element)
+  }
+  for (const id of STUDIO_WORKSPACE_ELEMENT_IDS) {
+    if (!byId.has(id)) {
+      throw new Error(`Studio workspace observation is missing identifier ${id}`)
+    }
+  }
+  const normalized = {}
+  for (const id of STUDIO_WORKSPACE_ELEMENT_IDS) {
+    normalized[STUDIO_WORKSPACE_NORMALIZED_KEYS[id]] = validateStudioWorkspaceElement(
+      byId.get(id),
+      id,
+      windowBounds
+    )
+  }
+  return normalized
+}
+
+function readWorkspaceObservationFromReceipt(receipt, windowBounds) {
+  const actions = Array.isArray(receipt && receipt.actions) ? receipt.actions : []
+  const matches = actions.filter((action) => action && action.type === 'read-workspace')
+  if (matches.length !== 1) {
+    throw new Error('Studio workspace observation is missing from the driver receipt')
+  }
+  return validateStudioWorkspaceObservation(matches[0].workspace, windowBounds)
+}
+
+function studioWorkspaceAbReadyControl(control) {
+  return (
+    isRecord(control) &&
+    control.role === 'AXRadioButton' &&
+    control.visible === true &&
+    control.enabled === true &&
+    (control.value === 'selected' || control.value === 'not selected')
+  )
+}
+
+// Timeline-route-selected plus a visible Timeline host is necessary but not
+// sufficient: the journey is about to drive Current/Proposed actions, so both
+// A/B controls must themselves be ready (visible, enabled, radio-role) and
+// exactly one of the two may report selected. This does not require Source to
+// be hidden, so wide-dual presentation still counts as Review-presented.
+function studioWorkspaceReviewPresented(workspace) {
+  if (
+    !isRecord(workspace) ||
+    !isRecord(workspace.timelineRoute) ||
+    workspace.timelineRoute.value !== 'selected' ||
+    !isRecord(workspace.timelineHost) ||
+    workspace.timelineHost.visible !== true
+  ) {
+    return false
+  }
+  const current = workspace.currentVersion
+  const proposed = workspace.proposedVersion
+  if (!studioWorkspaceAbReadyControl(current) || !studioWorkspaceAbReadyControl(proposed)) {
+    return false
+  }
+  const currentSelected = current.value === 'selected'
+  const proposedSelected = proposed.value === 'selected'
+  return currentSelected !== proposedSelected
 }
 
 async function readStudioJournalOperations(plan) {
@@ -3909,6 +4159,16 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
           )
         }
       }
+      if (action.type === 'read-workspace') {
+        failureEvidence.failureStage = 'workspace-observation-validation'
+        try {
+          validateStudioWorkspaceObservation(observed.workspace, request.windowBounds)
+        } catch (error) {
+          throw new Error(
+            `Studio UI driver workspace receipt is invalid: ${error.message}`
+          )
+        }
+      }
       if (action.type === 'read-av-sync') {
         failureEvidence.failureStage = 'av-sync-validation'
         const peak = parseAvSyncPeakExport(observed.avSyncPeakValue)
@@ -4058,7 +4318,69 @@ function readStudioJourneyCapture(capturePath) {
   }
 }
 
-function studioJourneyCaptureRegion(image, windowBounds, region) {
+function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
+  const logicalX = Number(windowBounds?.x)
+  const logicalY = Number(windowBounds?.y)
+  const logicalWidth = Number(windowBounds?.width)
+  const logicalHeight = Number(windowBounds?.height)
+  if (
+    !Number.isInteger(logicalWidth) ||
+    !Number.isInteger(logicalHeight) ||
+    logicalWidth <= 0 ||
+    logicalHeight <= 0 ||
+    !Number.isFinite(logicalX) ||
+    !Number.isFinite(logicalY)
+  ) {
+    throw new Error('Studio journey capture window bounds are invalid')
+  }
+  const captureWidth = logicalWidth * 2
+  const captureHeight = logicalHeight * 2
+  if (image.width !== captureWidth || image.height !== captureHeight) {
+    throw new Error('Studio journey capture does not match the exact 2x window bounds')
+  }
+  if (
+    !isRecord(hostFrame) ||
+    !['x', 'y', 'width', 'height'].every(
+      (key) => typeof hostFrame[key] === 'number' && Number.isFinite(hostFrame[key])
+    ) ||
+    hostFrame.width <= 0 ||
+    hostFrame.height <= 0
+  ) {
+    throw new Error('Studio review host frame is not a bounded finite rectangle')
+  }
+  const localX = hostFrame.x - logicalX
+  const localY = hostFrame.y - logicalY
+  const clipX = Math.max(0, localX)
+  const clipY = Math.max(0, localY)
+  const clipRight = Math.min(logicalWidth, localX + hostFrame.width)
+  const clipBottom = Math.min(logicalHeight, localY + hostFrame.height)
+  const clipWidth = clipRight - clipX
+  const clipHeight = clipBottom - clipY
+  if (clipWidth <= 0 || clipHeight <= 0) {
+    throw new Error('Studio review host frame is outside the immutable window bounds')
+  }
+  // The Timeline host is always a strict sub-region of the workspace window
+  // (browser/inspector panes beside it, chrome above it, transcript/timeline/
+  // proposal-bar strip below it), so a clip that fills the entire window is a
+  // materiality violation, not a legitimate one-window layout: it would let
+  // Source-pane changes count as Review evidence. Reject rather than crop it.
+  if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
+    throw new Error('Studio review host capture region must not equal the whole window')
+  }
+  const x = Math.round(clipX * 2)
+  const y = Math.round(clipY * 2)
+  const width = Math.round(clipWidth * 2)
+  const height = Math.round(clipHeight * 2)
+  if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > image.width || y + height > image.height) {
+    throw new Error('Studio review host capture region is outside the screenshot')
+  }
+  return { x, y, width, height }
+}
+
+function studioJourneyCaptureRegion(image, windowBounds, region, reviewHostFrame = null) {
+  if (region === 'review-host') {
+    return studioReviewHostCaptureRegion(image, windowBounds, reviewHostFrame)
+  }
   const logicalWidth = Number(windowBounds?.width)
   const logicalHeight = Number(windowBounds?.height)
   if (
@@ -4094,14 +4416,15 @@ function studioJourneyCaptureRegion(image, windowBounds, region) {
   throw new Error('Studio journey capture comparison region is unsupported')
 }
 
-function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, region) {
+function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, region, reviewHostFrame = null) {
   const before = readStudioJourneyCapture(beforePath)
   const after = readStudioJourneyCapture(afterPath)
   if (before.image.width !== after.image.width || before.image.height !== after.image.height) {
     throw new Error('Studio journey captures do not have identical dimensions')
   }
-  const comparisonRegion = studioJourneyCaptureRegion(before.image, windowBounds, region)
-  const afterRegion = studioJourneyCaptureRegion(after.image, windowBounds, region)
+  const isMaterialRegion = region === 'material' || region === 'review-host'
+  const comparisonRegion = studioJourneyCaptureRegion(before.image, windowBounds, region, reviewHostFrame)
+  const afterRegion = studioJourneyCaptureRegion(after.image, windowBounds, region, reviewHostFrame)
   if (JSON.stringify(comparisonRegion) !== JSON.stringify(afterRegion)) {
     throw new Error('Studio journey capture comparison regions do not agree')
   }
@@ -4113,10 +4436,9 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
   let maximumChangedX = Number.NEGATIVE_INFINITY
   let minimumChangedY = Number.POSITIVE_INFINITY
   let maximumChangedY = Number.NEGATIVE_INFINITY
-  const materialCellCounts =
-    region === 'material'
-      ? Array(STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS * STUDIO_JOURNEY_MATERIAL_GRID_ROWS).fill(0)
-      : null
+  const materialCellCounts = isMaterialRegion
+    ? Array(STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS * STUDIO_JOURNEY_MATERIAL_GRID_ROWS).fill(0)
+    : null
   for (let y = comparisonRegion.y; y < comparisonRegion.y + comparisonRegion.height; y += 1) {
     for (let x = comparisonRegion.x; x < comparisonRegion.x + comparisonRegion.width; x += 1) {
       const offset = (y * before.image.width + x) * 4
@@ -4178,7 +4500,7 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
     horizontalSpanFraction,
     verticalSpanFraction
   }
-  if (region === 'material') {
+  if (isMaterialRegion) {
     if (
       changedPixelFraction < STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION ||
       occupiedCellCount < STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS ||
@@ -4205,12 +4527,12 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
     pixelCount,
     changedPixelCount,
     changedPixelFraction,
-    ...(region === 'material' ? { spatialSpread } : {}),
+    ...(isMaterialRegion ? { spatialSpread } : {}),
     meanAbsoluteChannelDelta: channelDeltaSum / (pixelCount * 3),
     maximumChannelDelta,
     threshold: {
       channelDelta: STUDIO_JOURNEY_PIXEL_DELTA,
-      ...(region === 'material'
+      ...(isMaterialRegion
         ? {
             minimumChangedFraction: STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION,
             minimumOccupiedCells: STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS,
@@ -4341,28 +4663,29 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const waitJournal = adapters.waitForJournalOperation || waitForStudioJournalOperation
   const runDriver = adapters.runUiDriver || runStudioUiDriver
   const compareCaptures = adapters.compareCaptures || compareStudioJourneyCaptures
-  const probeWindow = adapters.probeWindow || probeNativeWindow
-  const sourceWindowTitle = target.window?.windows?.[0]?.title
-  const sourceTarget = { ...target, expectedWindowTitle: sourceWindowTitle }
-  const reviewWindowTitle = 'TaskWraith Studio — Review'
-  const waitForReviewTarget = () =>
+  const journeyTarget = resolveStudioWorkspaceWindow(target)
+  const windowBounds = assertSafeUiDriverTarget(journeyTarget).bounds
+  const waitForWorkspaceReview = () =>
     waitFor({
-      label: 'exact visible Studio Review window',
+      label: 'exact visible Studio Review workspace presentation',
       timeoutMs: 10_000,
       intervalMs: 100,
       probe: async () => {
-        const window = await probeWindow(target.companion.pid, adapters.windowAdapters || {})
-        const matches = Array.isArray(window.windows)
-          ? window.windows.filter((entry) => entry?.title === reviewWindowTitle)
-          : []
-        return matches.length === 1
-          ? { ...target, window, expectedWindowTitle: reviewWindowTitle }
-          : null
+        const receipt = await runDriver(plan, journeyTarget, [{ type: 'read-workspace' }], {
+          ...(adapters.driverAdapters || {}),
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false
+        })
+        const workspace = readWorkspaceObservationFromReceipt(receipt, windowBounds)
+        if (!studioWorkspaceReviewPresented(workspace)) {
+          return null
+        }
+        return workspace
       }
     })
   const driverReceipts = []
   const screenshots = []
-  const drive = async (actions, driverTarget = sourceTarget) => {
+  const drive = async (actions, driverTarget = journeyTarget) => {
     const normalizedActions = actions.map((action) =>
       typeof action === 'string' ? { type: 'key', key: action } : action
     )
@@ -4380,7 +4703,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     screenshots.push(...screenshotPaths(receipt))
     return receipt
   }
-  const sourceBounds = assertSafeUiDriverTarget(sourceTarget).bounds
+  const sourceBounds = windowBounds
   const assetId = target.asset && target.asset.sha256
   const transcript = await waitJournal(
     plan,
@@ -4449,10 +4772,10 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   const acceptedProposalId = acceptedProposalEvidence.proposalId
   afterRevision = acceptedProposal.revision
-  await drive([{ type: 'screenshot', name: 'ghost' }], sourceTarget)
-  await drive(['w'], sourceTarget)
-  const acceptedReviewTarget = await waitForReviewTarget()
-  const reviewBounds = assertSafeUiDriverTarget(acceptedReviewTarget).bounds
+  await drive([{ type: 'screenshot', name: 'ghost' }], journeyTarget)
+  await drive(['w'], journeyTarget)
+  const acceptedWorkspace = await waitForWorkspaceReview()
+  const acceptedReviewHostFrame = acceptedWorkspace.timelineHost.frame
   await drive(
     [
       {
@@ -4462,13 +4785,13 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
         playheadMaximumForwardAdvanceTicks: 0
       }
     ],
-    acceptedReviewTarget
+    journeyTarget
   )
   const currentCapture = await drive(
     [{ type: 'screenshot', name: 'current' }],
-    acceptedReviewTarget
+    journeyTarget
   )
-  await drive(['v'], acceptedReviewTarget)
+  await drive(['v'], journeyTarget)
   await drive(
     [
       {
@@ -4478,11 +4801,11 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
         playheadMaximumForwardAdvanceTicks: 0
       }
     ],
-    acceptedReviewTarget
+    journeyTarget
   )
   const proposedCapture = await drive(
     [{ type: 'screenshot', name: 'proposed' }],
-    acceptedReviewTarget
+    journeyTarget
   )
   const currentScreenshots = screenshotPaths(currentCapture)
   const proposedScreenshots = screenshotPaths(proposedCapture)
@@ -4492,19 +4815,20 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const currentProposedPixels = compareCaptures(
     currentScreenshots[0],
     proposedScreenshots[0],
-    reviewBounds,
-    'material'
+    windowBounds,
+    'review-host',
+    acceptedReviewHostFrame
   )
   const sourceStep = await drive(
     [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
-    sourceTarget
+    journeyTarget
   )
   const reviewStep = await drive(
     [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
-    acceptedReviewTarget
+    journeyTarget
   )
   const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep)
-  await drive(['a', { type: 'screenshot', name: 'accept-sent' }], acceptedReviewTarget)
+  await drive(['a', { type: 'screenshot', name: 'accept-sent' }], journeyTarget)
   const acceptedResolution = await waitJournal(
     plan,
     {
@@ -4516,7 +4840,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   afterRevision = acceptedResolution.revision
 
-  await drive(['w', 'tab', 'bracket-right', 'return'], sourceTarget)
+  await drive(['w', 'tab', 'bracket-right', 'return'], journeyTarget)
   const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const rejectedProposalEvidence = studioProposalInsertionEvidence(
     rejectedProposal,
@@ -4527,9 +4851,9 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     throw new Error('Studio accept and reject journeys reused one proposal identity')
   }
   afterRevision = rejectedProposal.revision
-  await drive(['w'], sourceTarget)
-  const rejectedReviewTarget = await waitForReviewTarget()
-  const rejectedReviewBounds = assertSafeUiDriverTarget(rejectedReviewTarget).bounds
+  await drive(['w'], journeyTarget)
+  const rejectedWorkspace = await waitForWorkspaceReview()
+  const rejectedReviewHostFrame = rejectedWorkspace.timelineHost.frame
   // ADJUDICATE THE GHOST, DO NOT MERELY PHOTOGRAPH IT.
   //
   // Both of these screenshots were previously captured and then discarded, so
@@ -4539,11 +4863,11 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   // target, so the only difference between them is the live proposal itself.
   const ghostRejectCapture = await drive(
     [{ type: 'screenshot', name: 'ghost-reject' }],
-    rejectedReviewTarget
+    journeyTarget
   )
   const rejectSentCapture = await drive(
     ['r', { type: 'screenshot', name: 'reject-sent' }],
-    rejectedReviewTarget
+    journeyTarget
   )
   const ghostRejectScreenshots = screenshotPaths(ghostRejectCapture)
   const rejectSentScreenshots = screenshotPaths(rejectSentCapture)
@@ -4553,8 +4877,9 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const ghostRejectPixels = compareCaptures(
     ghostRejectScreenshots[0],
     rejectSentScreenshots[0],
-    rejectedReviewBounds,
-    'material'
+    windowBounds,
+    'review-host',
+    rejectedReviewHostFrame
   )
   const rejectedResolution = await waitJournal(
     plan,
@@ -4606,7 +4931,11 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       currentProposedPixels,
       ghostRejectPixels,
       sharedClock,
-      playbackRoundTrip
+      playbackRoundTrip,
+      workspace: {
+        accepted: acceptedWorkspace,
+        rejected: rejectedWorkspace
+      }
     },
     screenshots,
     driverReceipts
@@ -5276,6 +5605,10 @@ module.exports = {
   adjudicateSharedStudioClock,
   buildStudioAcceptanceJourney,
   compareStudioJourneyCaptures,
+  resolveStudioWorkspaceWindow,
+  validateStudioWorkspaceObservation,
+  studioReviewHostCaptureRegion,
+  studioWorkspaceReviewPresented,
   driveStudioUiJourney,
   studioProposalInsertionEvidence,
   verifyDurableOpen,

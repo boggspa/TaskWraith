@@ -12,6 +12,24 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
+let workspaceRootIdentifier = "studio.workspace.root"
+let workspaceSourceHostIdentifier = "studio.workspace.viewer.source"
+let workspaceTimelineHostIdentifier = "studio.workspace.viewer.timeline"
+let workspaceSourceRouteIdentifier = "studio.workspace.route.source"
+let workspaceTimelineRouteIdentifier = "studio.workspace.route.timeline"
+let workspaceCurrentVersionIdentifier = "studio.workspace.review-version.current"
+let workspaceProposedVersionIdentifier = "studio.workspace.review-version.proposed"
+
+let workspaceElementIdentifiers: [String] = [
+    workspaceRootIdentifier,
+    workspaceSourceHostIdentifier,
+    workspaceTimelineHostIdentifier,
+    workspaceSourceRouteIdentifier,
+    workspaceTimelineRouteIdentifier,
+    workspaceCurrentVersionIdentifier,
+    workspaceProposedVersionIdentifier
+]
+
 struct WindowBounds: Codable {
     let x: Double
     let y: Double
@@ -89,6 +107,66 @@ struct AudioProbeReceipt: Codable {
     let defaultOutputDevice: OutputDeviceReceipt
 }
 
+struct WorkspaceFrame: Codable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct WorkspaceElementReceipt: Codable {
+    let identifier: String
+    let visible: Bool
+    let role: String?
+    let value: String?
+    let enabled: Bool?
+    let frame: WorkspaceFrame?
+
+    private enum CodingKeys: String, CodingKey {
+        case identifier, visible, role, value, enabled, frame
+    }
+
+    init(
+        identifier: String,
+        visible: Bool,
+        role: String?,
+        value: String?,
+        enabled: Bool?,
+        frame: WorkspaceFrame?
+    ) {
+        self.identifier = identifier
+        self.visible = visible
+        self.role = role
+        self.value = value
+        self.enabled = enabled
+        self.frame = frame
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        identifier = try container.decode(String.self, forKey: .identifier)
+        visible = try container.decode(Bool.self, forKey: .visible)
+        role = try container.decodeIfPresent(String.self, forKey: .role)
+        value = try container.decodeIfPresent(String.self, forKey: .value)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
+        frame = try container.decodeIfPresent(WorkspaceFrame.self, forKey: .frame)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(identifier, forKey: .identifier)
+        try container.encode(visible, forKey: .visible)
+        try container.encode(role, forKey: .role)
+        try container.encode(value, forKey: .value)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(frame, forKey: .frame)
+    }
+}
+
+struct WorkspaceObservationReceipt: Codable {
+    let elements: [WorkspaceElementReceipt]
+}
+
 struct ActionReceipt: Codable {
     let index: Int
     let type: String
@@ -114,6 +192,7 @@ struct ActionReceipt: Codable {
     let accessibilityAction: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
+    let workspace: WorkspaceObservationReceipt?
 
     init(
         index: Int,
@@ -139,7 +218,8 @@ struct ActionReceipt: Codable {
         accessibilityValue: String? = nil,
         accessibilityAction: String? = nil,
         playbackValueBefore: String? = nil,
-        playbackValueAfter: String? = nil
+        playbackValueAfter: String? = nil,
+        workspace: WorkspaceObservationReceipt? = nil
     ) {
         self.index = index
         self.type = type
@@ -165,6 +245,7 @@ struct ActionReceipt: Codable {
         self.accessibilityAction = accessibilityAction
         self.playbackValueBefore = playbackValueBefore
         self.playbackValueAfter = playbackValueAfter
+        self.workspace = workspace
     }
 }
 
@@ -646,6 +727,146 @@ func readAccessibilityAvSync(
           pgidAfter == pgidBefore else {
         throw DriverFailure.refused(
             "A/V sync observation changed foreground, process, or executable identity"
+        )
+    }
+    return observed
+}
+
+func workspacePoint(of element: AXUIElement) -> CGPoint? {
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &raw) == .success,
+          let value = raw,
+          CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    let axValue = value as! AXValue
+    guard AXValueGetType(axValue) == .cgPoint else { return nil }
+    var point = CGPoint.zero
+    return AXValueGetValue(axValue, .cgPoint, &point) ? point : nil
+}
+
+func workspaceSize(of element: AXUIElement) -> CGSize? {
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &raw) == .success,
+          let value = raw,
+          CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    let axValue = value as! AXValue
+    guard AXValueGetType(axValue) == .cgSize else { return nil }
+    var size = CGSize.zero
+    return AXValueGetValue(axValue, .cgSize, &size) ? size : nil
+}
+
+func workspaceFrame(of element: AXUIElement) -> WorkspaceFrame? {
+    guard let position = workspacePoint(of: element),
+          let size = workspaceSize(of: element) else { return nil }
+    return WorkspaceFrame(
+        x: Double(position.x),
+        y: Double(position.y),
+        width: Double(size.width),
+        height: Double(size.height)
+    )
+}
+
+func workspaceBoolAttribute(_ attribute: String, of element: AXUIElement) -> Bool? {
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
+        return nil
+    }
+    return (raw as? NSNumber)?.boolValue
+}
+
+/// Reads the one-window workspace AX descendants in a single bounded traversal.
+///
+/// This is an observation, not an action: the driver reports exactly the seven
+/// agreed workspace identifiers and never asserts route/review state itself.
+/// A hidden viewer host is pruned from the AppKit AX tree and is reported as
+/// visible=false with nil role/value/enabled/frame; a duplicated identifier is
+/// a structural ambiguity and is refused rather than guessed.
+func exactWorkspaceObservation(in window: AXUIElement) throws -> WorkspaceObservationReceipt {
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var visited = 0
+    var matches: [String: [AXUIElement]] = [:]
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        if let identifier = stringAttribute(kAXIdentifierAttribute, of: element),
+           workspaceElementIdentifiers.contains(identifier)
+        {
+            matches[identifier, default: []].append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("workspace accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512 else {
+        throw DriverFailure.refused("workspace accessibility tree exceeds 512 elements")
+    }
+    for (identifier, elements) in matches where elements.count > 1 {
+        throw DriverFailure.refused("workspace accessibility identifier \(identifier) is duplicated")
+    }
+    let elements = workspaceElementIdentifiers.map { identifier -> WorkspaceElementReceipt in
+        guard let element = matches[identifier]?.first else {
+            return WorkspaceElementReceipt(
+                identifier: identifier,
+                visible: false,
+                role: nil,
+                value: nil,
+                enabled: nil,
+                frame: nil
+            )
+        }
+        return WorkspaceElementReceipt(
+            identifier: identifier,
+            visible: true,
+            role: stringAttribute(kAXRoleAttribute, of: element),
+            value: stringAttribute(kAXValueAttribute, of: element),
+            enabled: workspaceBoolAttribute(kAXEnabledAttribute, of: element),
+            frame: workspaceFrame(of: element)
+        )
+    }
+    return WorkspaceObservationReceipt(elements: elements)
+}
+
+func readWorkspaceObservation(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> WorkspaceObservationReceipt {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background workspace read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    let observed = try exactWorkspaceObservation(in: window)
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "workspace observation changed foreground, process, or executable identity"
         )
     }
     return observed
@@ -1518,7 +1739,29 @@ do {
         }
         try validateWindow(request)
 
-        if action.type == "read-av-sync",
+        if action.type == "read-workspace",
+           request.inputDelivery == "background-observation-only"
+        {
+            let workspace = try readWorkspaceObservation(
+                in: accessibilityWindow,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-workspace",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    workspace: workspace
+                )
+            )
+        } else if action.type == "read-av-sync",
            request.inputDelivery == "background-observation-only"
         {
             let observed = try readAccessibilityAvSync(

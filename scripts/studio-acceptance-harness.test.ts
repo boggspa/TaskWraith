@@ -43,7 +43,11 @@ const {
   readDetachedCoordinatorStatus,
   runStudioAcceptanceBuild,
   runStudioUiDriver,
+  resolveStudioWorkspaceWindow,
   studioProposalInsertionEvidence,
+  studioReviewHostCaptureRegion,
+  studioWorkspaceReviewPresented,
+  validateStudioWorkspaceObservation,
   validateDetachedCoordinatorRequest,
   waitForStudioJournalOperation,
   runStudioAcceptance
@@ -116,7 +120,8 @@ const {
     beforePath: string,
     afterPath: string,
     windowBounds: Record<string, number>,
-    region: 'material' | 'timeline'
+    region: 'material' | 'timeline' | 'review-host',
+    reviewHostFrame?: Record<string, number>
   ) => Record<string, any>
   descendantsOf: (
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>,
@@ -186,6 +191,17 @@ const {
     entry: Record<string, any>,
     boundary: { assetId: string; durationSeconds: number }
   ) => Record<string, any>
+  resolveStudioWorkspaceWindow: (target: Record<string, any>) => Record<string, any>
+  studioReviewHostCaptureRegion: (
+    image: { width: number; height: number },
+    windowBounds: Record<string, number>,
+    hostFrame: Record<string, number>
+  ) => { x: number; y: number; width: number; height: number }
+  validateStudioWorkspaceObservation: (
+    workspace: Record<string, any>,
+    windowBounds: Record<string, number>
+  ) => Record<string, any>
+  studioWorkspaceReviewPresented: (workspace: Record<string, any>) => boolean
   runStudioUiDriver: (
     plan: Record<string, any>,
     target: Record<string, any>,
@@ -229,6 +245,81 @@ const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog
   }
 }
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+const WORKSPACE_WINDOW_BOUNDS = { x: 0, y: 0, width: 1280, height: 800 }
+const WORKSPACE_REVIEW_HOST_FRAME = { x: 640, y: 28, width: 640, height: 772 }
+
+function workspaceElement(
+  identifier: string,
+  visible: boolean,
+  role: string | null,
+  value: string | null,
+  enabled: boolean | null,
+  frame: Record<string, number> | null
+): Record<string, any> {
+  return { identifier, visible, role, value, enabled, frame }
+}
+
+function validWorkspaceObservation(review: boolean): { elements: Array<Record<string, any>> } {
+  return {
+    elements: [
+      workspaceElement('studio.workspace.root', true, 'AXGroup', null, null, {
+        x: 0,
+        y: 28,
+        width: 1280,
+        height: 772
+      }),
+      workspaceElement(
+        'studio.workspace.route.source',
+        true,
+        'AXCheckBox',
+        review ? 'not selected' : 'selected',
+        true,
+        { x: 4, y: 4, width: 40, height: 20 }
+      ),
+      workspaceElement(
+        'studio.workspace.route.timeline',
+        true,
+        'AXCheckBox',
+        review ? 'selected' : 'not selected',
+        true,
+        { x: 48, y: 4, width: 48, height: 20 }
+      ),
+      workspaceElement(
+        'studio.workspace.viewer.source',
+        !review,
+        !review ? 'AXGroup' : null,
+        null,
+        null,
+        review ? null : { x: 0, y: 28, width: 640, height: 772 }
+      ),
+      workspaceElement(
+        'studio.workspace.viewer.timeline',
+        review,
+        review ? 'AXGroup' : null,
+        null,
+        null,
+        review ? WORKSPACE_REVIEW_HOST_FRAME : null
+      ),
+      workspaceElement(
+        'studio.workspace.review-version.current',
+        true,
+        'AXRadioButton',
+        review ? 'selected' : 'unavailable',
+        review ? true : false,
+        { x: 100, y: 4, width: 60, height: 20 }
+      ),
+      workspaceElement(
+        'studio.workspace.review-version.proposed',
+        true,
+        'AXRadioButton',
+        review ? 'not selected' : 'unavailable',
+        review ? true : false,
+        { x: 164, y: 4, width: 80, height: 20 }
+      )
+    ]
+  }
+}
 
 const roots: string[] = []
 
@@ -4293,6 +4384,7 @@ describe('Studio acceptance harness', () => {
 
     const calls: string[] = []
     const deliveries: string[] = []
+    const windowTargetsSeen: Array<Record<string, any>> = []
     let proposalNumber = 0
     let sharedPlayheadTicks = 1_500_000
     const receipt = await driveStudioUiJourney(
@@ -4305,9 +4397,9 @@ describe('Studio acceptance harness', () => {
           visibleWindowCount: 1,
           windows: [
             {
-              windowId: 41,
-              title: 'TaskWraith Studio — Source',
-              bounds: { x: 1, y: 2, width: 640, height: 360 }
+              windowId: 42,
+              title: 'TaskWraith Studio',
+              bounds: { x: 0, y: 0, width: 1280, height: 800 }
             }
           ]
         },
@@ -4384,25 +4476,6 @@ describe('Studio acceptance harness', () => {
             }
           }
         },
-        probeWindow: async () => {
-          calls.push('window:review')
-          return {
-            pid: 7002,
-            visibleWindowCount: 2,
-            windows: [
-              {
-                windowId: 41,
-                title: 'TaskWraith Studio — Source',
-                bounds: { x: 1, y: 2, width: 640, height: 360 }
-              },
-              {
-                windowId: 42,
-                title: 'TaskWraith Studio — Review',
-                bounds: { x: 3, y: 4, width: 640, height: 360 }
-              }
-            ]
-          }
-        },
         compareCaptures: (
           beforePath: string,
           afterPath: string,
@@ -4414,10 +4487,32 @@ describe('Studio acceptance harness', () => {
         },
         runUiDriver: async (
           _plan: unknown,
-          _target: unknown,
+          target: Record<string, any>,
           actions: Array<Record<string, any>>,
           driverOptions: Record<string, any>
         ) => {
+          // Every single driver call across the whole journey — transcript
+          // reads, ghost, current/proposed, accept, reject, read-workspace
+          // probes — must resolve the exact same immutable one-window
+          // identity and bounds. This is asserted in full below.
+          windowTargetsSeen.push(target?.window?.windows?.[0] ?? null)
+          if (actions.length === 1 && actions[0].type === 'read-workspace') {
+            calls.push('driver:read-workspace')
+            return {
+              schemaVersion: 1,
+              kind: 'taskwraith-studio-ui-driver-receipt',
+              pid: 7002,
+              pgid: 7001,
+              windowId: 42,
+              actions: [
+                {
+                  index: 0,
+                  type: 'read-workspace',
+                  workspace: validWorkspaceObservation(true)
+                }
+              ]
+            }
+          }
           deliveries.push(driverOptions.inputDelivery)
           const actionNames = actions.map((action) => {
             if (action.type === 'key') return action.key
@@ -4497,8 +4592,18 @@ describe('Studio acceptance harness', () => {
       },
       adjudication: {
         transcriptPixels: { ok: true, region: 'timeline' },
-        currentProposedPixels: { ok: true, region: 'material' },
-        ghostRejectPixels: { ok: true, region: 'material' },
+        currentProposedPixels: { ok: true, region: 'review-host' },
+        ghostRejectPixels: { ok: true, region: 'review-host' },
+        workspace: {
+          accepted: {
+            timelineRoute: { value: 'selected' },
+            timelineHost: { visible: true }
+          },
+          rejected: {
+            timelineRoute: { value: 'selected' },
+            timelineHost: { visible: true }
+          }
+        },
         sharedClock: {
           sourceBeforeTicks: 1_500_000,
           sourceAfterTicks: 1_501_000,
@@ -4527,13 +4632,13 @@ describe('Studio acceptance harness', () => {
       'journal:propose_edit:',
       'driver:ghost',
       'driver:w',
-      'window:review',
+      'driver:read-workspace',
       'driver:set:1500000',
       'driver:current',
       'driver:v',
       'driver:set:1500000',
       'driver:proposed',
-      'compare:material:current.png:proposed.png',
+      'compare:review-host:current.png:proposed.png',
       'driver:step:1',
       'driver:step:-1',
       'driver:a,accept-sent',
@@ -4541,10 +4646,10 @@ describe('Studio acceptance harness', () => {
       'driver:w,tab,bracket-right,return',
       'journal:propose_edit:',
       'driver:w',
-      'window:review',
+      'driver:read-workspace',
       'driver:ghost-reject',
       'driver:r,reject-sent',
-      'compare:material:ghost-reject.png:reject-sent.png',
+      'compare:review-host:ghost-reject.png:reject-sent.png',
       'journal:resolve_proposal:reject',
       'driver:press-playback,press-playback'
     ])
@@ -4585,6 +4690,17 @@ describe('Studio acceptance harness', () => {
       '/virtual/ghost-reject.png',
       '/virtual/reject-sent.png'
     ])
+    // No retired second Review window is ever targeted, and no call drifts
+    // onto a different windowId/title/bounds mid-journey: one immutable
+    // window carries every Source and Review action.
+    expect(windowTargetsSeen.length).toBeGreaterThan(5)
+    for (const seen of windowTargetsSeen) {
+      expect(seen).toEqual({
+        windowId: 42,
+        title: 'TaskWraith Studio',
+        bounds: { x: 0, y: 0, width: 1280, height: 800 }
+      })
+    }
   })
 
   it('fails a partial UI journey without manufacturing a success receipt', async () => {
@@ -4600,9 +4716,9 @@ describe('Studio acceptance harness', () => {
             visibleWindowCount: 1,
             windows: [
               {
-                windowId: 41,
-                title: 'TaskWraith Studio — Source',
-                bounds: { x: 1, y: 2, width: 640, height: 390 }
+                windowId: 42,
+                title: 'TaskWraith Studio',
+                bounds: { x: 0, y: 0, width: 1280, height: 800 }
               }
             ]
           }
@@ -5376,5 +5492,560 @@ describe('Studio acceptance harness', () => {
       runStudioAcceptance({ ...args, instanceId: 'studioDirty01' }, adapters)
     ).rejects.toThrow(/build-input dirt/)
     expect(calls).toEqual(['custody.source'])
+  })
+
+  describe('Studio one-window workspace acceptance join', () => {
+    describe('resolveStudioWorkspaceWindow', () => {
+      it('accepts the exact single workspace window and stamps expectedWindowTitle', () => {
+        const target = {
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+          }
+        }
+        const resolved = resolveStudioWorkspaceWindow(target)
+        expect(resolved.expectedWindowTitle).toBe('TaskWraith Studio')
+        expect(resolved.window).toBe(target.window)
+      })
+
+      it('rejects a missing window set', () => {
+        expect(() => resolveStudioWorkspaceWindow({})).toThrow(/exact visible-window set/)
+      })
+
+      it('rejects zero visible windows', () => {
+        const target = { window: { pid: 7002, visibleWindowCount: 0, windows: [] } }
+        expect(() => resolveStudioWorkspaceWindow(target)).toThrow(
+          /exactly one visible workspace window/
+        )
+      })
+
+      it('rejects the retired two-window Source/Review model', () => {
+        const target = {
+          window: {
+            pid: 7002,
+            visibleWindowCount: 2,
+            windows: [
+              { windowId: 41, title: 'TaskWraith Studio — Source', bounds: WORKSPACE_WINDOW_BOUNDS },
+              { windowId: 42, title: 'TaskWraith Studio — Review', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          }
+        }
+        expect(() => resolveStudioWorkspaceWindow(target)).toThrow(
+          /exactly one visible workspace window/
+        )
+      })
+
+      it('rejects duplicate exact-title windows', () => {
+        const target = {
+          window: {
+            pid: 7002,
+            visibleWindowCount: 2,
+            windows: [
+              { windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS },
+              { windowId: 43, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          }
+        }
+        expect(() => resolveStudioWorkspaceWindow(target)).toThrow(
+          /exactly one visible workspace window/
+        )
+      })
+
+      it('rejects a single window with a mismatched title', () => {
+        const target = {
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [
+              { windowId: 42, title: 'TaskWraith Studio — Source', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          }
+        }
+        expect(() => resolveStudioWorkspaceWindow(target)).toThrow(
+          /requires the single TaskWraith Studio workspace window/
+        )
+      })
+    })
+
+    describe('validateStudioWorkspaceObservation', () => {
+      it('accepts the exact valid review-presented observation and normalizes keys', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        expect(Object.keys(normalized).sort()).toEqual(
+          [
+            'currentVersion',
+            'proposedVersion',
+            'root',
+            'sourceHost',
+            'sourceRoute',
+            'timelineHost',
+            'timelineRoute'
+          ].sort()
+        )
+        expect(normalized.timelineHost).toEqual({
+          visible: true,
+          role: 'AXGroup',
+          value: null,
+          enabled: null,
+          frame: WORKSPACE_REVIEW_HOST_FRAME
+        })
+        expect(normalized.sourceHost).toEqual({
+          visible: false,
+          role: null,
+          value: null,
+          enabled: null,
+          frame: null
+        })
+      })
+
+      it('accepts the exact valid source-only observation', () => {
+        expect(() =>
+          validateStudioWorkspaceObservation(validWorkspaceObservation(false), WORKSPACE_WINDOW_BOUNDS)
+        ).not.toThrow()
+      })
+
+      it('rejects a non-record or extra-keyed top-level observation', () => {
+        expect(() => validateStudioWorkspaceObservation(null, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /not one exact elements array/
+        )
+        expect(() =>
+          validateStudioWorkspaceObservation({ elements: [], extra: true }, WORKSPACE_WINDOW_BOUNDS)
+        ).toThrow(/not one exact elements array/)
+      })
+
+      it('rejects a wrong element count', () => {
+        const obs = validWorkspaceObservation(true)
+        obs.elements.pop()
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /exact element count/
+        )
+      })
+
+      it('rejects a required identifier displaced by a duplicate', () => {
+        const obs = validWorkspaceObservation(true)
+        obs.elements[0].identifier = obs.elements[1].identifier
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /duplicates identifier/
+        )
+      })
+
+      it('rejects a required identifier displaced by an unrecognized one', () => {
+        const obs = validWorkspaceObservation(true)
+        obs.elements[0].identifier = 'studio.workspace.bogus'
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /is missing identifier studio\.workspace\.root/
+        )
+      })
+
+      it('rejects an element with an extra field', () => {
+        const obs = validWorkspaceObservation(true)
+        ;(obs.elements[0] as Record<string, any>).extra = true
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /malformed or extra element field/
+        )
+      })
+
+      it('rejects an element with a renamed required field', () => {
+        const obs = validWorkspaceObservation(true)
+        const element = obs.elements[0] as Record<string, any>
+        element.frames = element.frame
+        delete element.frame
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /missing element field frame/
+        )
+      })
+
+      it('rejects a non-string identifier', () => {
+        const obs = validWorkspaceObservation(true)
+        ;(obs.elements[0] as Record<string, any>).identifier = 42
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /identifier is not an exact string/
+        )
+      })
+
+      it('rejects a non-boolean visible flag', () => {
+        const obs = validWorkspaceObservation(true)
+        ;(obs.elements[0] as Record<string, any>).visible = 'true'
+        expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+          /visibility is not boolean/
+        )
+      })
+
+      describe('root element contract', () => {
+        it('rejects a hidden root', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[0].visible = false
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /root must be visible/
+          )
+        })
+        it('rejects a non-AXGroup root role', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[0].role = 'AXWindow'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /root is not an AXGroup/
+          )
+        })
+        it('rejects a root carrying a value', () => {
+          const obs = validWorkspaceObservation(true)
+          ;(obs.elements[0] as Record<string, any>).value = 'oops'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /root must not carry a value/
+          )
+        })
+        it('rejects a root carrying an enabled flag', () => {
+          const obs = validWorkspaceObservation(true)
+          ;(obs.elements[0] as Record<string, any>).enabled = true
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /root must not carry an enabled flag/
+          )
+        })
+        it('rejects a root frame outside the window', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[0].frame = { x: 5000, y: 5000, width: 10, height: 10 }
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /root frame is outside the immutable window bounds/
+          )
+        })
+      })
+
+      describe('host element contract', () => {
+        it('rejects a hidden host carrying a role', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[3].role = 'AXGroup' // sourceHost is hidden when review === true
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /hidden workspace host .* must not carry role\/value\/enabled\/frame/
+          )
+        })
+        it('rejects a hidden host carrying a frame', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[3].frame = { x: 0, y: 0, width: 10, height: 10 }
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /hidden workspace host .* must not carry role\/value\/enabled\/frame/
+          )
+        })
+        it('rejects a visible host with the wrong role', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[4].role = 'AXScrollArea' // timelineHost is visible when review === true
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /is not an AXGroup/
+          )
+        })
+        it('rejects a visible host carrying a value', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[4].value = 'oops'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /must not carry a value/
+          )
+        })
+        it('rejects a visible host frame outside the window', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[4].frame = { x: 5000, y: 5000, width: 10, height: 10 }
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /frame is outside the immutable window bounds/
+          )
+        })
+      })
+
+      describe('route element contract', () => {
+        it('rejects a hidden route control', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[1].visible = false
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /route control .* must be visible/
+          )
+        })
+        it('rejects a non-AXCheckBox route role', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[1].role = 'AXButton'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /is not an AXCheckBox/
+          )
+        })
+        it('rejects an invalid route value', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[1].value = 'on'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /has an invalid value/
+          )
+        })
+        it('rejects a disabled route control', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[1].enabled = false
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /must be enabled/
+          )
+        })
+        it('rejects a route frame outside the window', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[1].frame = { x: -5000, y: 0, width: 10, height: 10 }
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /route control .* frame is outside/
+          )
+        })
+      })
+
+      describe('review-version element contract', () => {
+        it('rejects a hidden version control', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[5].visible = false
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /version control .* must be visible/
+          )
+        })
+        it('rejects a non-AXRadioButton version role', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[5].role = 'AXCheckBox'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /is not an AXRadioButton/
+          )
+        })
+        it('rejects an invalid version value', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[5].value = 'on'
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /has an invalid value/
+          )
+        })
+        it('rejects enabled=true paired with value=unavailable', () => {
+          const obs = validWorkspaceObservation(false)
+          obs.elements[5].enabled = true
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /enabled state does not match its value/
+          )
+        })
+        it('rejects enabled=false paired with a real selection value', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[5].enabled = false
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /enabled state does not match its value/
+          )
+        })
+        it('rejects a version control frame outside the window', () => {
+          const obs = validWorkspaceObservation(true)
+          obs.elements[5].frame = { x: 0, y: 5000, width: 10, height: 10 }
+          expect(() => validateStudioWorkspaceObservation(obs, WORKSPACE_WINDOW_BOUNDS)).toThrow(
+            /version control .* frame is outside/
+          )
+        })
+      })
+    })
+
+    describe('studioWorkspaceReviewPresented', () => {
+      it('is true for a fully review-ready workspace', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(true)
+      })
+
+      it('is false before the Timeline route is selected', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(false),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when Timeline is selected but its host is still hidden (necessary, not sufficient)', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.timelineHost = { ...normalized.timelineHost, visible: false }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when the Timeline host is visible but its route is not selected', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.timelineRoute = { ...normalized.timelineRoute, value: 'not selected' }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when neither Current nor Proposed reports selected', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.currentVersion = { ...normalized.currentVersion, value: 'not selected' }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when both Current and Proposed report selected', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.proposedVersion = { ...normalized.proposedVersion, value: 'selected' }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when an A/B control is disabled/unavailable', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.proposedVersion = { ...normalized.proposedVersion, enabled: false, value: 'unavailable' }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('is false when an A/B control does not carry the radio role', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.currentVersion = { ...normalized.currentVersion, role: 'AXCheckBox' }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(false)
+      })
+
+      it('does not require Source to be hidden (wide-dual presentation still counts)', () => {
+        const normalized = validateStudioWorkspaceObservation(
+          validWorkspaceObservation(true),
+          WORKSPACE_WINDOW_BOUNDS
+        )
+        normalized.sourceHost = { ...normalized.sourceHost, visible: true }
+        expect(studioWorkspaceReviewPresented(normalized)).toBe(true)
+      })
+    })
+
+    describe('studioReviewHostCaptureRegion', () => {
+      const bounds = { x: 100, y: 50, width: 1280, height: 800 }
+      const image = { width: 2560, height: 1600 }
+
+      it('derives an explicit, tested 2x transform from the host frame (no orientation flip)', () => {
+        const hostFrame = { x: 740, y: 90, width: 620, height: 700 }
+        const region = studioReviewHostCaptureRegion(image, bounds, hostFrame)
+        expect(region).toEqual({ x: 1280, y: 80, width: 1240, height: 1400 })
+        expect(region.x + region.width).toBeLessThanOrEqual(image.width)
+        expect(region.y + region.height).toBeLessThanOrEqual(image.height)
+      })
+
+      it('rejects non-integer or non-positive window bounds', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(
+            image,
+            { x: 0, y: 0, width: 1280.5, height: 800 },
+            { x: 0, y: 0, width: 10, height: 10 }
+          )
+        ).toThrow(/window bounds are invalid/)
+        expect(() =>
+          studioReviewHostCaptureRegion(
+            image,
+            { x: 0, y: 0, width: 0, height: 800 },
+            { x: 0, y: 0, width: 10, height: 10 }
+          )
+        ).toThrow(/window bounds are invalid/)
+      })
+
+      it('rejects a non-finite window origin', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(
+            image,
+            { x: Number.NaN, y: 0, width: 1280, height: 800 },
+            { x: 0, y: 0, width: 10, height: 10 }
+          )
+        ).toThrow(/window bounds are invalid/)
+      })
+
+      it('rejects a screenshot that is not exactly 2x the window bounds', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion({ width: 100, height: 100 }, bounds, {
+            x: 740,
+            y: 90,
+            width: 620,
+            height: 700
+          })
+        ).toThrow(/exact 2x window bounds/)
+      })
+
+      it('rejects a non-finite or non-positive host frame', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, { x: 0, y: 0, width: 0, height: 10 })
+        ).toThrow(/bounded finite rectangle/)
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, {
+            x: Number.POSITIVE_INFINITY,
+            y: 0,
+            width: 10,
+            height: 10
+          })
+        ).toThrow(/bounded finite rectangle/)
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, { x: 0, y: 0, width: -10, height: 10 })
+        ).toThrow(/bounded finite rectangle/)
+      })
+
+      it('rejects a host frame with no overlap with the window', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, { x: 5000, y: 5000, width: 10, height: 10 })
+        ).toThrow(/outside the immutable window bounds/)
+      })
+
+      it('clips a host frame that overhangs one window edge without covering the full window', () => {
+        const hostFrame = { x: 100, y: 50, width: 1281, height: 700 }
+        const region = studioReviewHostCaptureRegion(image, bounds, hostFrame)
+        expect(region).toEqual({ x: 0, y: 0, width: 2560, height: 1400 })
+        expect(region.x + region.width).toBeLessThanOrEqual(image.width)
+        expect(region.y + region.height).toBeLessThanOrEqual(image.height)
+      })
+
+      it('rejects a host frame that clips to exactly the whole window (materiality violation)', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, { x: 100, y: 50, width: 1280, height: 800 })
+        ).toThrow(/must not equal the whole window/)
+      })
+
+      it('rejects a host frame that clips to more than the whole window', () => {
+        expect(() =>
+          studioReviewHostCaptureRegion(image, bounds, { x: 0, y: 0, width: 2000, height: 2000 })
+        ).toThrow(/must not equal the whole window/)
+      })
+    })
+
+    describe('buildStudioUiDriverRequest for read-workspace', () => {
+      it('strips caller-controlled fields down to the bare action type', () => {
+        const target = {
+          companion: {
+            pid: 7002,
+            ppid: 7001,
+            pgid: 7001,
+            command: '/virtual/TaskWraithStudioCompanion --viewer'
+          },
+          electronPgid: 7001,
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [
+              { windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          },
+          artifactRoot: '/virtual/acceptance/studioWorkspaceRead01'
+        }
+        expect(
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              { type: 'read-workspace', callerControlledValue: 'must-be-ignored', windowId: 999 }
+            ]
+          })
+        ).toMatchObject({
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false,
+          actions: [{ type: 'read-workspace' }]
+        })
+        const built = buildStudioUiDriverRequest({
+          ...target,
+          actions: [{ type: 'read-workspace', callerControlledValue: 'must-be-ignored' }]
+        })
+        expect(Object.keys(built.actions[0])).toEqual(['type'])
+      })
+    })
   })
 })
