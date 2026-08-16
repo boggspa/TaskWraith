@@ -611,7 +611,10 @@ import {
   type HistoryClearDispatchReservation,
   type HistoryClearRunPersistenceAuthority
 } from './HistoryClearAdmissionGate'
-import { ChannelExternalSeatAuthority } from './collaboration/ChannelExternalSeatAuthority'
+import {
+  ChannelExternalSeatAuthority,
+  type ChannelExternalSeat
+} from './collaboration/ChannelExternalSeatAuthority'
 import {
   HumanCollaborationStore,
   type HumanCollaborationShare
@@ -619,7 +622,6 @@ import {
 import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
 import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
 import {
-  externalSeatsForShare,
   hasNonExternalApprovalAuthority as evaluateNonExternalApprovalAuthority,
   resolveChatEffectiveRoster
 } from './collaboration/ExternalSeatResolution'
@@ -50282,12 +50284,13 @@ if (isGeminiMcpBridgeProcess) {
     // Channel-only seal. A blocked recovery answers null (cannot enumerate),
     // never [] — an empty array here would read as "no externals exist" and
     // silently elevate every approval gate that consumes this.
-    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] | null => {
-      // Unreachable today: both call sites guard with `chatId &&` (the
-      // approval-authority wrapper and the bossman metadata builder) and this
-      // binding is module-local and unexported. Returning null anyway, because
-      // [] asserts "there are definitively no externals" about an unknown chat,
-      // and a third caller added without that guard would elevate silently.
+    // ONE construction site for the seat authority. Two consumers building it
+    // separately could drift, and a channel_only here with a transitional
+    // there would be a silent partial cutover.
+    const resolveChannelExternalSeats = (chatId: string): readonly ChannelExternalSeat[] | null => {
+      // Unreachable today: every call site guards on a truthy chatId and this
+      // binding is module-local. null anyway, because [] would assert "there
+      // are definitively no externals" about a chat we cannot identify.
       if (!chatId) return null
       const service = channelProductionBootstrap?.service
       if (!service || service.status().state !== 'running') return null
@@ -50303,10 +50306,14 @@ if (isGeminiMcpBridgeProcess) {
               humanCollaborationPresence.collaboratorState(collaboratorId)
           }
         }).resolve(chatId)
-        return resolution.state === 'ready' ? resolution.seats.map((seat) => seat.seatId) : null
+        return resolution.state === 'ready' ? resolution.seats : null
       } catch {
         return null
       }
+    }
+    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] | null => {
+      const seats = resolveChannelExternalSeats(chatId)
+      return seats === null ? null : seats.map((seat) => seat.seatId)
     }
     // P2a — bounded, durable audit of host-visible collaboration events
     // (rules changes, invites, admission, contributions, drafts, revocations).
@@ -56236,10 +56243,30 @@ if (isGeminiMcpBridgeProcess) {
       // orchestrator's delivery pass returns early when either is absent, so
       // omitting them here makes the whole feature silently inert rather than
       // failing. It shipped that way once.
-      resolveExternalSeats: (chatId) =>
-        externalSeatsForShare(humanCollaborationStore.getShareForChat(chatId), (id) =>
-          humanCollaborationPresence.collaboratorState(id)
-        ),
+      resolveExternalSeats: (chatId) => {
+        const seats = resolveChannelExternalSeats(chatId)
+        if (seats === null) {
+          // DEFERRAL, NOT LOSS: the contribution stays in the queue and the
+          // next delivery pass retries once recovery completes. Logged because
+          // silence is the exact failure this seam already shipped once, and
+          // the orchestrator's dep cannot express "unknown" — an empty roster
+          // and an unreadable one look identical to it.
+          console.warn('[channels] external seat delivery deferred: seat authority is not ready')
+          return []
+        }
+        return seats.map((seat) => ({
+          // A Channel-native seat has no legacy share. Seat identity is keyed
+          // on collaboratorId alone (effectiveEnsembleRoster.ts:210) and an
+          // absent shareId already normalises to '' there (:223), so this is
+          // an explicit "no legacy share", never an invented id.
+          shareId: '',
+          collaboratorId: seat.seatId,
+          displayName: seat.displayName,
+          ...(seat.seatOrder === undefined ? {} : { seatOrder: seat.seatOrder }),
+          present: seat.present,
+          enabled: seat.enabled
+        }))
+      },
       externalContributionQueue,
       signRunPermissionPosture: signRunPosture,
       allocateFanoutLaneWorktree: (input) =>

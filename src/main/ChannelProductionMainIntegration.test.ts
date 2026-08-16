@@ -197,7 +197,7 @@ describe('Channels production main integration', () => {
 
   it('resolves external collaborator seats through the Channel authority, transitionally', () => {
     const resolver = between(
-      'resolveExternalCollaboratorSeatIds = (chatId: string)',
+      'const resolveChannelExternalSeats = (',
       'const humanCollaborationAuditLog = new HumanCollaborationAuditLog('
     )
     // Channel-native, built from the service seam rather than reopening stores.
@@ -222,6 +222,28 @@ describe('Channels production main integration', () => {
     expect(resolver).toContain(': null')
     // The retired People read is gone from this resolver entirely.
     expect(resolver).not.toContain('humanCollaborationStore.getShareForChat')
+
+    // And gone from the whole composition root: this was the last legacy
+    // share read in index.ts, across all three consumers.
+    expect(source).not.toContain('humanCollaborationStore.getShareForChat')
+  })
+
+  it('feeds ensemble external-seat delivery from the Channel authority', () => {
+    const delivery = between('resolveExternalSeats: (chatId) => {', 'externalContributionQueue,')
+    expect(delivery).toContain('resolveChannelExternalSeats(chatId)')
+    expect(delivery).not.toContain('getShareForChat')
+
+    // The orchestrator dep cannot express "unknown": an empty roster and an
+    // unreadable one look identical to it. An unreadable authority therefore
+    // DEFERS (the contribution stays queued and the next pass retries) and
+    // says so, because silent inertness is the failure this seam shipped once.
+    expect(delivery).toContain('if (seats === null)')
+    expect(delivery).toContain('console.warn(')
+
+    // A Channel-native seat carries no legacy share id, and identity stays on
+    // collaboratorId — never a synthesised or inferred share.
+    expect(delivery).toContain("shareId: ''")
+    expect(delivery).toContain('collaboratorId: seat.seatId')
   })
 
   it('projects remote isShared from the active-channel set, not the retired share store', () => {
