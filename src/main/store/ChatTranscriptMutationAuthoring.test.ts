@@ -4,7 +4,10 @@ import {
   applyChatRecordMutation,
   deriveChatRecordMutationWithProjection
 } from './ChatRecordMutation'
-import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
+import {
+  ChatTranscriptMutationAuthor,
+  ChatTranscriptMutationIndex
+} from './ChatTranscriptMutationAuthoring'
 import type { ChatMessage, ChatRecord } from './types'
 
 function message(id: string, content: string): ChatMessage {
@@ -102,5 +105,41 @@ describe('ChatTranscriptMutationAuthor', () => {
 
     expect(derived.transcriptOps).toEqual([{ op: 'append', messages: [appended] }])
     expect(derived.changedMessageCount).toBe(1)
+  })
+
+  it('reuses one id index across live flushes and invalidates on revision drift', () => {
+    const messages = Array.from({ length: 28_000 }, (_, index) =>
+      message(`message-${index}`, `history-${index}`)
+    )
+    const index = new ChatTranscriptMutationIndex(messages, 7)
+    const transaction = index.begin()
+    const updated = message('message-27999', 'updated tail')
+    const appended = message('message-28000', 'appended tail')
+
+    expect(transaction.indexOf(updated.id)).toBe(27_999)
+    transaction.update(updated)
+    transaction.append([appended])
+    expect(transaction.finish()).toMatchObject({
+      transcriptOps: [
+        { op: 'update', id: updated.id, message: updated },
+        { op: 'append', messages: [appended] }
+      ],
+      changedMessageCount: 2
+    })
+    transaction.commit(8)
+
+    expect(index.isCurrent(8, 28_001)).toBe(true)
+    expect(index.isCurrent(9, 28_001)).toBe(false)
+  })
+
+  it('invalidates a live index when persistence aborts', () => {
+    const index = new ChatTranscriptMutationIndex([message('a', 'A')], 2)
+    const transaction = index.begin()
+
+    transaction.append([message('b', 'B')])
+    transaction.abort()
+
+    expect(index.isCurrent(2, 2)).toBe(false)
+    expect(() => index.begin()).toThrow('Transcript mutation index is invalid')
   })
 })

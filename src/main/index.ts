@@ -945,7 +945,8 @@ import {
   makeDebugLoggerSink,
   type RunEventChannel
 } from './RunEventBus'
-import { AppStore } from './store'
+import { AppStore, type ChatSaveOptions } from './store'
+import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
@@ -6048,9 +6049,30 @@ type BridgeRunTranscriptState = {
   executionGraphBinding?: ExecutionGraphAttemptResultBinding
   providerTerminalCandidate?: 'completed' | 'failed' | 'cancelled'
   providerTerminalCandidateConflict?: boolean
+  /** Live-only id index; recovered once after any out-of-band chat mutation. */
+  messageMutationIndex?: ChatTranscriptMutationIndex
 }
 
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
+
+function liveTranscriptMutationIndex(
+  state: { messageMutationIndex?: ChatTranscriptMutationIndex },
+  chat: ChatRecord
+): ChatTranscriptMutationIndex | null {
+  if (state.messageMutationIndex?.isCurrent(chat.persistenceRevision, chat.messages.length)) {
+    return state.messageMutationIndex
+  }
+  try {
+    const index = new ChatTranscriptMutationIndex(chat.messages, chat.persistenceRevision)
+    state.messageMutationIndex = index
+    return index
+  } catch {
+    // Legacy duplicate/missing ids cannot support exact operations. Preserve
+    // behavior via AppStore's diff fallback and retry after the record changes.
+    delete state.messageMutationIndex
+    return null
+  }
+}
 
 /** Stamp a transcript entry as recently active (see `lastActivityAt`). */
 function touchBridgeRunTranscript(state: BridgeRunTranscriptState): void {
@@ -10569,10 +10591,12 @@ function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
   return transcriptMediaAssetStore
 }
 
-function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
+function saveAndBroadcastChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
   const previous = AppStore.getChat(normalized.appChatId)
-  const saved = AppStore.saveChat(normalized)
+  const saveOptions =
+    options.authoredTranscript && normalized.messages !== chat.messages ? {} : options
+  const saved = AppStore.saveChat(normalized, saveOptions)
   broadcastChatUpdated(saved)
   blackboardExpiryServiceRef?.observeChat(saved)
   maybeScheduleCodexNativeGoalSync(previous, saved, 'chat-save')
@@ -11386,6 +11410,18 @@ function seedAgentDrivenSubThreadTranscript(args: {
           startedAt
         )
       : current.delegationContext?.workerControl
+  const messageMutationIndex = (() => {
+    try {
+      return new ChatTranscriptMutationIndex(current.messages, current.persistenceRevision)
+    } catch {
+      return null
+    }
+  })()
+  const transcriptMutation = messageMutationIndex?.begin()
+  const promptAlreadyPresent = transcriptMutation
+    ? transcriptMutation.indexOf(promptMessageId) >= 0
+    : current.messages.some((message) => message.id === promptMessageId)
+  if (!promptAlreadyPresent) transcriptMutation?.append([promptMessage])
   const seeded: ChatRecord = {
     ...current,
     ...(current.delegationContext
@@ -11407,15 +11443,22 @@ function seedAgentDrivenSubThreadTranscript(args: {
           }
         }
       : {}),
-    messages: current.messages.some((message) => message.id === promptMessageId)
-      ? current.messages
-      : [...current.messages, promptMessage],
+    messages: promptAlreadyPresent ? current.messages : [...current.messages, promptMessage],
     runs: current.runs.some((existingRun) => existingRun.runId === runId)
       ? current.runs
       : [...current.runs, run],
     updatedAt: Date.now()
   }
-  saveAndBroadcastChat(seeded)
+  let savedSeed: ChatRecord
+  try {
+    savedSeed = saveAndBroadcastChat(seeded, {
+      ...(transcriptMutation ? { authoredTranscript: transcriptMutation.finish() } : {})
+    })
+    transcriptMutation?.commit(savedSeed.persistenceRevision)
+  } catch (error) {
+    transcriptMutation?.abort()
+    throw error
+  }
   backgroundSubThreadTranscripts.set(runId, {
     runId,
     chatId: subThread.appChatId,
@@ -11428,7 +11471,8 @@ function seedAgentDrivenSubThreadTranscript(args: {
     assistantMessageId,
     startedAt,
     content: '',
-    status: 'running'
+    status: 'running',
+    ...(messageMutationIndex ? { messageMutationIndex } : {})
   })
   return runId
 }
@@ -11459,9 +11503,13 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
   }
   const current = AppStore.getChat(state.chatId)
   if (!current) return
+  const mutationIndex = liveTranscriptMutationIndex(state, current)
+  const transcriptMutation = mutationIndex?.begin()
   const timestamp = new Date().toISOString()
   let messages = [...current.messages]
-  const assistantIndex = messages.findIndex((message) => message.id === state.assistantMessageId)
+  const assistantIndex = transcriptMutation
+    ? transcriptMutation.indexOf(state.assistantMessageId)
+    : messages.findIndex((message) => message.id === state.assistantMessageId)
   if (state.content.length > 0 || (state.mediaRefs && state.mediaRefs.length > 0)) {
     const mediaMetadata =
       state.mediaRefs && state.mediaRefs.length > 0 ? { mediaRefs: state.mediaRefs } : undefined
@@ -11488,20 +11536,21 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
           }
     if (assistantIndex >= 0) {
       messages[assistantIndex] = assistantMessage
+      transcriptMutation?.update(assistantMessage)
     } else {
       messages = [...messages, assistantMessage]
+      transcriptMutation?.append([assistantMessage])
     }
   } else if (final && state.status === 'failed' && state.errorMessage) {
-    messages = [
-      ...messages,
-      {
-        id: `subthread-error-${state.chatId}-${Date.now()}`,
-        role: 'system',
-        content: `Sub-thread run failed before producing assistant output: ${state.errorMessage}`,
-        timestamp,
-        runId: state.runId
-      }
-    ]
+    const errorMessage: ChatMessage = {
+      id: `subthread-error-${state.chatId}-${Date.now()}`,
+      role: 'system',
+      content: `Sub-thread run failed before producing assistant output: ${state.errorMessage}`,
+      timestamp,
+      runId: state.runId
+    }
+    messages = [...messages, errorMessage]
+    transcriptMutation?.append([errorMessage])
   }
 
   const runs = [...current.runs]
@@ -11546,7 +11595,16 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
     runs,
     updatedAt: Date.now()
   }
-  saveAndBroadcastChat(updated)
+  let saved: ChatRecord
+  try {
+    saved = saveAndBroadcastChat(updated, {
+      ...(transcriptMutation ? { authoredTranscript: transcriptMutation.finish() } : {})
+    })
+    transcriptMutation?.commit(saved.persistenceRevision)
+  } catch (error) {
+    transcriptMutation?.abort()
+    throw error
+  }
   state.flushedOnce = true
 
   if (final) {
@@ -12326,13 +12384,17 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   }
   const current = AppStore.getChat(state.chatId)
   if (!current) return
+  const mutationIndex = liveTranscriptMutationIndex(state, current)
+  const transcriptMutation = mutationIndex?.begin()
   const timestamp = new Date().toISOString()
   let messages = [...current.messages]
   // Interleaved parts: each contiguous text stretch and each tool burst is
   // its OWN message, in stream order — matching how the desktop renderer
   // interleaves text around ActivityStacks instead of grouping all tool
   // calls above the response.
-  let insertAfter = messages.findIndex((message) => message.id === state.promptMessageId)
+  let insertAfter = transcriptMutation
+    ? transcriptMutation.indexOf(state.promptMessageId)
+    : messages.findIndex((message) => message.id === state.promptMessageId)
   for (const part of state.parts) {
     if (
       part.kind === 'text' &&
@@ -12374,19 +12436,26 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
             runId: state.runId,
             toolActivities: part.activities.map((activity) => ({ ...activity }))
           }
-    const existingIndex = messages.findIndex((message) => message.id === part.id)
+    const existingIndex = transcriptMutation
+      ? transcriptMutation.indexOf(part.id)
+      : messages.findIndex((message) => message.id === part.id)
     if (existingIndex >= 0) {
-      messages[existingIndex] = { ...messages[existingIndex], ...partMessage }
+      const updatedMessage = { ...messages[existingIndex], ...partMessage }
+      messages[existingIndex] = updatedMessage
+      transcriptMutation?.update(updatedMessage)
       insertAfter = existingIndex
     } else if (insertAfter >= 0) {
+      const insertionIndex = insertAfter + 1
       messages = [
-        ...messages.slice(0, insertAfter + 1),
+        ...messages.slice(0, insertionIndex),
         partMessage,
-        ...messages.slice(insertAfter + 1)
+        ...messages.slice(insertionIndex)
       ]
+      transcriptMutation?.splice(insertionIndex, 0, [], [partMessage])
       insertAfter += 1
     } else {
       messages = [...messages, partMessage]
+      transcriptMutation?.append([partMessage])
       insertAfter = messages.length - 1
     }
   }
@@ -12408,17 +12477,24 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
         exitCode: 1
       })
     }
-    const existingErrorIndex = messages.findIndex((message) => message.id === errorMessageId)
+    const existingErrorIndex = transcriptMutation
+      ? transcriptMutation.indexOf(errorMessageId)
+      : messages.findIndex((message) => message.id === errorMessageId)
     if (existingErrorIndex >= 0) {
-      messages[existingErrorIndex] = { ...messages[existingErrorIndex], ...errorMessage }
+      const updatedError = { ...messages[existingErrorIndex], ...errorMessage }
+      messages[existingErrorIndex] = updatedError
+      transcriptMutation?.update(updatedError)
     } else if (insertAfter >= 0) {
+      const insertionIndex = insertAfter + 1
       messages = [
-        ...messages.slice(0, insertAfter + 1),
+        ...messages.slice(0, insertionIndex),
         errorMessage,
-        ...messages.slice(insertAfter + 1)
+        ...messages.slice(insertionIndex)
       ]
+      transcriptMutation?.splice(insertionIndex, 0, [], [errorMessage])
     } else {
       messages = [...messages, errorMessage]
+      transcriptMutation?.append([errorMessage])
     }
   }
 
@@ -12492,7 +12568,16 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
       )
     }
   }
-  const saved = saveAndBroadcastChat(finalizedChat)
+  let saved: ChatRecord
+  try {
+    saved = saveAndBroadcastChat(finalizedChat, {
+      ...(transcriptMutation ? { authoredTranscript: transcriptMutation.finish() } : {})
+    })
+    transcriptMutation?.commit(saved.persistenceRevision)
+  } catch (error) {
+    transcriptMutation?.abort()
+    throw error
+  }
   state.flushedOnce = true
   if (final) {
     // Cleanup BEFORE the push tail: a broadcaster hiccup below must not leak

@@ -67,6 +67,8 @@ export interface BackgroundSubThreadTranscriptState {
   flushTimer?: ReturnType<typeof setTimeout>
   flushedOnce?: boolean
   finalized?: boolean
+  /** Live-only id index; seeded once, then advanced with exact transcript operations. */
+  messageMutationIndex?: import('./store/ChatTranscriptMutationAuthoring').ChatTranscriptMutationIndex
 }
 
 export type WorkspacePopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'chat'
