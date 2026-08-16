@@ -4963,9 +4963,7 @@ export function SettingsPanel({
   const renderOllamaModelOption = (model: any): React.JSX.Element => {
     const modelId = String(model.id || '')
     const cloudModel = model.source === 'cloud' || isOllamaCloudModelId(modelId)
-    const selected = ollamaDefaultModel
-      ? modelId === ollamaDefaultModel
-      : model.isDefault === true
+    const selected = ollamaDefaultModel ? modelId === ollamaDefaultModel : model.isDefault === true
     const disabled = Boolean(model.disabled)
     const chips = [
       cloudModel ? 'Cloud' : 'Local',

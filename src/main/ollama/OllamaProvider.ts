@@ -50,10 +50,7 @@ import {
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
-import {
-  discoverOllamaCloud,
-  type OllamaCloudDiscoverySnapshot
-} from './OllamaCloudCatalog'
+import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
 import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
 import {
   createOllamaHarnessRunState,
@@ -1174,10 +1171,7 @@ export async function fetchOllamaModelCatalog(
   } = {}
 ): Promise<OllamaModelCatalogSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
-  const localModels = await fetchOllamaLocalModels(
-    { ...settings, ollamaBaseUrl: baseUrl },
-    options
-  )
+  const localModels = await fetchOllamaLocalModels({ ...settings, ollamaBaseUrl: baseUrl }, options)
   const cloud =
     options.signal?.aborted || options.launchAuthorized?.() === false
       ? {
@@ -1263,10 +1257,7 @@ export async function getOllamaStatusSnapshot(
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   try {
     const catalog = await fetchOllamaModelCatalog({ ...settings, ollamaBaseUrl: baseUrl })
-    const models = await enrichOllamaModelsWithShowInfo(
-      baseUrl,
-      catalog.models
-    )
+    const models = await enrichOllamaModelsWithShowInfo(baseUrl, catalog.models)
     const localModels = models.filter((model) => model.source !== 'cloud')
     const cloudModels = models.filter((model) => model.source === 'cloud')
     const runnableCloudModelCount = catalog.cloud.authenticated
@@ -3259,9 +3250,7 @@ async function runOllamaChatTurn(input: {
         'Ollama Cloud authentication is required. Run `ollama signin` in Settings → Providers, then refresh models.'
       )
     }
-    throw new Error(
-      `Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`
-    )
+    throw new Error(`Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`)
   }
   if (!response.body) {
     throw new Error('Ollama chat returned no response body.')

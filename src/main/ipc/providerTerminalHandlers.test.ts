@@ -216,9 +216,7 @@ describe('registerProviderTerminalHandlers', () => {
       deps.resolveCliProviderBinary.mockResolvedValueOnce(createResolved(binary))
       registerProviderTerminalHandlers(deps)
 
-      await expect(
-        handlerFor(`provider:open-${action}-terminal`)({}, 'ollama')
-      ).resolves.toEqual({
+      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'ollama')).resolves.toEqual({
         ok: true,
         scope: 'user-owned-provider-setup',
         managedRunReady: false,
