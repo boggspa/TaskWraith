@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ChatRecord } from '../../../main/store/types'
-import type {
-  GitUnpushedCommit,
-  GitUnpushedCommitStack
-} from '../../../shared/gitUnpushedCommits'
+import type { GitUnpushedCommit, GitUnpushedCommitStack } from '../../../shared/gitUnpushedCommits'
 import type { GitPullRequestWorkspaceSnapshot } from '../../../main/services/GitPullRequestWorkflow'
 import type { GitPrSummary } from '../../../main/services/GitService'
 import type { CloseoutCommit } from '../lib/taskWraithCloseoutMessage'

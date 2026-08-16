@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type {
-  GitUnpushedCommit,
-  GitUnpushedCommitStack
-} from '../../../shared/gitUnpushedCommits'
+import type { GitUnpushedCommit, GitUnpushedCommitStack } from '../../../shared/gitUnpushedCommits'
 import type { GitSnapshotChangedPayload } from '../../../main/services/GitSnapshotPublisher'
 import {
   WorkspaceUnpushedCommitStore,

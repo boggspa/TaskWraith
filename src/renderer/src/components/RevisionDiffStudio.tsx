@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { GitRevisionDiffResult, GitRevisionDiffTarget } from '../../../main/DiffService'
-import type {
-  GitUnpushedCommit,
-  GitUnpushedCommitStack
-} from '../../../shared/gitUnpushedCommits'
+import type { GitUnpushedCommit, GitUnpushedCommitStack } from '../../../shared/gitUnpushedCommits'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { ChatRecord } from '../../../main/store/types'
 import { taskWraithCommitGroupHashes } from '../../../shared/gitPullRequestGroups'
