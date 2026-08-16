@@ -9,11 +9,11 @@ const { PNG } = require('pngjs')
 
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
-const requiredProductAncestor = '8e94b83e0f3ad8e3a8cf2a3164717f84991a6c35'
-const expectedCompanionSha256 = '9925f2f283860ca190d2c165b1f81d3a860ff02f24bea20695cd757b2672c533'
-const expectedSourceDigest = '8ec45c2800447e4d36f250da61448895a1a17f44274f23802598a055d8cb9acb'
-const expectedSourceCount = 67
-const expectedOutDigest = 'c3d86d74966a13b60dc186bf1197184f6991fcc09d3fa35cce89d82835f5619b'
+const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
+const expectedCompanionSha256 = '325730f8bcef7f64ae539ecef55dda48a3f2385890bf32755aeb994b5c4c13d9'
+const expectedSourceDigest = 'e9cc05df327981c5db912125ba6ae443092a0860430e9abe1169a1e91400f0b5'
+const expectedSourceCount = 68
+const expectedOutDigest = '364fe912257fc936125cd734ed0c305a8fe8585c597d39fdc0b8b707ae4cb7e2'
 const expectedOutCount = 99
 const expectedFixtureSha256 = 'add40cd910994004545620b11e9cc127d4d012a6dd15f0e1087c6ce5434c6535'
 const expectedFixtureAssetId = Buffer.from(expectedFixtureSha256, 'hex').toString('base64url')
@@ -21,9 +21,9 @@ const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '04b6903a93ddacfcbec94b648b4e43237becb0b0732864043072592391393d21',
+    'b354b973413e6ad61208df24909b2c65aacd5bb5b39d8f0210c63d09760c99b1',
   'scripts/studio-acceptance-ui-driver.swift':
-    'ed7751da09a2468e2628b68f0273913ac7c287626a7c65662e1a7f8b9966902a',
+    'd164f1bf263dd5d0f680f43799a87cb007f89b6cb0f25b8278219c7f8ef71b76',
   'scripts/studio-acceptance-watchdog.cjs':
     'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
   'scripts/studio-acceptance-window-probe.swift':
