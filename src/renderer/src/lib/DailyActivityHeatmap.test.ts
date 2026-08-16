@@ -174,6 +174,46 @@ describe('accents and intensity', () => {
     expect(median).toBeLessThan(0.8)
   })
 
+  it('never emits an opacity outside [0,1], whatever the rollup contains', () => {
+    // A non-finite value used to poison the whole ramp. The min-span guard is
+    // `hi - lo < MIN_RAMP_DECADES`, and both `NaN < 1` and `Infinity < 1` are
+    // false — so the one case that most needs widening was the one case that
+    // skipped it, and the span came out NaN or Infinity. Every subsequent
+    // lookup then returned NaN, including for the perfectly good days
+    // alongside it.
+    const poisoned: number[][] = [
+      [Infinity],
+      [-Infinity],
+      [Number.NaN],
+      [1000, Infinity],
+      [1000, Number.NaN],
+      [0, 0, 0],
+      []
+    ]
+    for (const values of poisoned) {
+      const ramp = buildDailyIntensityRamp(values)
+      for (const probe of [0, 1, 1000, 1e12, Infinity, -Infinity, Number.NaN, -5]) {
+        const result = ramp(probe)
+        expect(Number.isFinite(result), `ramp(${probe}) on ${JSON.stringify(values)}`).toBe(true)
+        expect(result).toBeGreaterThanOrEqual(0)
+        expect(result).toBeLessThanOrEqual(1)
+        // A non-finite day reads as NO DATA, not as the busiest day of the
+        // year. Without the guard in the returned function it clamps to 1,
+        // which is in range but is the loudest possible way to be wrong.
+        if (!Number.isFinite(probe) || probe <= 0) {
+          expect(result, `ramp(${probe}) should be exactly 0`).toBe(0)
+        }
+      }
+    }
+  })
+
+  it('keeps a real day readable next to a corrupt one', () => {
+    // The silent-data-loss half: with `[1000, Infinity]` the real 1000-token
+    // day was pinned to the floor because the band stretched to infinity.
+    const ramp = buildDailyIntensityRamp([1000, Infinity])
+    expect(ramp(1000)).toBeGreaterThan(MIN_ACTIVE_INTENSITY)
+  })
+
   it('excludes the extremes from the band even on a SMALL sample', () => {
     // Exercised directly, because the difference only shows when the sample is
     // small: with eleven values, rounding the 95th percentile to NEAREST gives

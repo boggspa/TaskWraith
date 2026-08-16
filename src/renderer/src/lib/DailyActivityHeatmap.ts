@@ -76,7 +76,16 @@ const MIN_RAMP_DECADES = 1
  * still means how much.
  */
 export function buildDailyIntensityRamp(values: readonly number[]): (value: number) => number {
-  const active = values.filter((value) => value > 0).sort((a, b) => a - b)
+  // Finiteness is checked here, not just positivity. A single Infinity — from a
+  // hand-edited rollup, or any future caller handing this raw data past the
+  // `Number.isFinite` guard in `externalActivityRecordTokens` — used to poison
+  // the entire ramp: `log(Infinity)` is Infinity, so the span came out Infinity
+  // or NaN, and the min-span rescue below never fired because both `NaN < 1`
+  // and `Infinity < 1` are false. Every lookup then returned NaN, so genuinely
+  // good days alongside it silently vanished from the chart rather than
+  // rendering wrong. Treating non-finite as "no data" matches what
+  // `externalActivityRecordTokens` already does upstream.
+  const active = values.filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b)
   if (active.length === 0) return () => 0
 
   const log = (value: number): number => Math.log10(value + 1)
@@ -100,7 +109,7 @@ export function buildDailyIntensityRamp(values: readonly number[]): (value: numb
   const span = hi - lo
 
   return (value: number): number => {
-    if (!(value > 0)) return 0
+    if (!Number.isFinite(value) || value <= 0) return 0
     const position = Math.min(1, Math.max(0, (log(value) - lo) / span))
     return MIN_ACTIVE_INTENSITY + (1 - MIN_ACTIVE_INTENSITY) * position
   }
@@ -298,7 +307,11 @@ export function buildDailyHeatmapGrid(
     // Filtering dims the tiles but never rewrites the tooltip or the totals —
     // the day's real composition is what the reader asked to see.
     const visible = filter === 'all' || providers.some((entry) => entry.provider === filter)
-    const filteredTokens = filter === 'all' ? dayTokens : (totals?.[filter]?.tokens ?? 0)
+    // Same helper the ramp was built from, deliberately — not a second copy of
+    // the expression. The ramp is only meaningful if it is scaled to exactly
+    // the quantity it is later applied to, and two textually separate but
+    // identical expressions are one careless edit away from disagreeing.
+    const filteredTokens = tokensForDay(key)
     const filteredRuns = filter === 'all' ? dayRuns : (totals?.[filter]?.runs ?? 0)
 
     let intensity = 0
