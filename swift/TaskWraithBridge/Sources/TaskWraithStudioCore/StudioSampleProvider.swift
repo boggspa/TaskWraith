@@ -68,7 +68,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
     public let isAllIntra: Bool
     private let metadata: [StudioSampleIndexEntry]
     private let formatDescription: CMVideoFormatDescription
-    private let makeReader: () throws -> AVAssetReader
+    private let makeReader: (CMTime) throws -> AVAssetReader
     private let makeOutput: (AVAssetReader) throws -> AVAssetReaderTrackOutput
     private let payloadCacheLimit: Int
 
@@ -84,7 +84,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         initialReader: AVAssetReader? = nil,
         initialOutput: AVAssetReaderTrackOutput? = nil,
         initialReaderPosition: Int = 0,
-        makeReader: @escaping () throws -> AVAssetReader,
+        makeReader: @escaping (CMTime) throws -> AVAssetReader,
         makeOutput: @escaping (AVAssetReader) throws -> AVAssetReaderTrackOutput,
         payloadCacheLimit: Int = 240
     ) {
@@ -99,6 +99,12 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         self.makeOutput = makeOutput
         self.payloadCacheLimit = max(1, payloadCacheLimit)
     }
+
+    /// Compressed payloads pulled from the reader since construction.
+    /// Test-only diagnostic: it makes "only the selected sample was read"
+    /// provable without timing the wall clock, which would be flaky and would
+    /// not say WHY a read was slow.
+    private(set) var payloadReadCount: Int = 0
 
     /// Number of compressed payloads currently resident. Test-only diagnostic;
     /// the bound is the contract, not a performance knob.
@@ -193,7 +199,17 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
             cursor -= 1
         }
 
-        let newReader = try makeReader()
+        // SCOPE THE READER TO THE KEYFRAME INSTEAD OF SCANNING TO IT.
+        //
+        // This used to open at time zero and discard payloads one at a time
+        // until it reached `keyframeIndex`. The old comment claimed the skip was
+        // "bounded by the GOP"; it was not — the walk started at 0, so a request
+        // near the tail of an 18,000-frame asset discarded ~17,700 samples on the
+        // AppKit actor. Measured on the acceptance fixture that was a ~79 second
+        // main-thread stall, which is what stopped answering accessibility reads
+        // mid-run. The GOP bound only ever applied AFTER the keyframe.
+        let startTime = metadata[keyframeIndex].presentationTime
+        let newReader = try makeReader(startTime)
         let output = try makeOutput(newReader)
         guard newReader.startReading() else {
             throw StudioMediaLoadError.readFailed(String(describing: newReader.error))
@@ -202,18 +218,22 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         reader = newReader
         readerOutput = output
 
-        // Skip exactly to the keyframe by count. This is exact regardless of
-        // container timebase quirks, and the skip length is bounded by the GOP.
-        var currentIndex = 0
-        while currentIndex < keyframeIndex {
-            guard nextPayloadBuffer(from: output) != nil else {
-                throw StudioMediaLoadError.readFailed("unexpected end while skipping to keyframe")
-            }
-            currentIndex += 1
-        }
-
         guard let finalBuffer = nextPayloadBuffer(from: output) else {
             throw StudioMediaLoadError.readFailed("no valid samples at requested keyframe")
+        }
+
+        // FAIL CLOSED ON IDENTITY. A time-scoped reader is only as exact as the
+        // container's edit list and rounding; if it hands back a different
+        // sample than the metadata pass indexed, every later decode index would
+        // be silently off by that difference. Wrong pictures at correct-looking
+        // timestamps is the failure class this whole arc has been chasing, so a
+        // mismatch is an error rather than a best effort.
+        let observed = CMSampleBufferGetPresentationTimeStamp(finalBuffer)
+        guard CMTimeCompare(observed, startTime) == 0 else {
+            throw StudioMediaLoadError.readFailed(
+                "scoped reader started at \(observed.seconds)s, expected "
+                    + "\(startTime.seconds)s for sync sample \(keyframeIndex)"
+            )
         }
 
         insert(
@@ -242,6 +262,9 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
     private func nextPayloadBuffer(from output: AVAssetReaderTrackOutput) -> CMSampleBuffer? {
         while true {
             guard let buffer = output.copyNextSampleBuffer() else { return nil }
+            // Counted at the single pull site, so it measures real reader work
+            // rather than a caller-side estimate.
+            payloadReadCount += 1
             if CMSampleBufferGetDataBuffer(buffer) != nil,
                 CMSampleBufferGetPresentationTimeStamp(buffer).isValid
             {

@@ -329,7 +329,13 @@ public enum StudioMediaSourceLoader {
         let provider = BoundedStudioSampleProvider(
             metadata: metadata,
             formatDescription: formatDescription,
-            makeReader: { try AVAssetReader(asset: urlAsset) },
+            makeReader: { start in
+                let reader = try AVAssetReader(asset: urlAsset)
+                // Open AT the sync sample rather than at zero; the provider
+                // then reads only the GOP it actually needs.
+                reader.timeRange = CMTimeRange(start: start, duration: .positiveInfinity)
+                return reader
+            },
             makeOutput: { reader in
                 let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
                 output.alwaysCopiesSampleData = false
