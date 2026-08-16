@@ -3297,6 +3297,7 @@ describe('normalizeOllamaModels', () => {
     })
     expect(status.cloudModels?.[0]).toMatchObject({
       id: 'glm-5.2:cloud',
+      label: 'GLM 5.2',
       source: 'cloud',
       isCloud: true,
       installed: false,
@@ -3338,6 +3339,7 @@ describe('normalizeOllamaModels', () => {
     expect(catalog.models).toEqual([
       expect.objectContaining({
         id: 'minimax-m3:cloud',
+        label: 'MiniMax M3',
         source: 'cloud',
         disabled: true,
         disabledReason: expect.stringContaining('ollama signin')
@@ -3346,6 +3348,8 @@ describe('normalizeOllamaModels', () => {
   })
 
   it('maps common local model ids to human-readable labels', () => {
+    expect(humanizeOllamaModelId('glm-5.2')).toBe('GLM 5.2')
+    expect(humanizeOllamaModelId('minimax-m3')).toBe('MiniMax M3')
     expect(humanizeOllamaModelId('qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')

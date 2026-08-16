@@ -23,7 +23,8 @@ import { buildEstimatedStreamUsage, visiblePayloadChars } from '../../shared/tok
 import {
   isOllamaCloudModelId,
   normalizeOllamaModelKey,
-  ollamaCloudBaseModelId
+  ollamaCloudBaseModelId,
+  ollamaCloudModelDisplayName
 } from '../../shared/ollamaModelAvailability'
 import type {
   AppSettings,
@@ -777,6 +778,8 @@ function waitForOllamaRetry(delayMs: number, signal: AbortSignal): Promise<void>
 export function humanizeOllamaModelId(model: string): string {
   const id = model.trim()
   const key = id.toLowerCase()
+  const cloudDisplayName = ollamaCloudModelDisplayName(id)
+  if (cloudDisplayName) return cloudDisplayName
   if (key === 'qwen3:4b-instruct') return 'Qwen 3 (4B Param)'
   if (key === 'qwen3.5:2b' || key.startsWith('qwen3.5:2b-')) {
     return 'Qwen 3.5 (2B Param)'

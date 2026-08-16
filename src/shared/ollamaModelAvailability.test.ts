@@ -4,6 +4,7 @@ import {
   isOllamaCloudModelId,
   isOllamaModelInstalled,
   ollamaCloudBaseModelId,
+  ollamaCloudModelDisplayName,
   ollamaModelIdsMatch
 } from './ollamaModelAvailability'
 
@@ -63,6 +64,13 @@ describe('ollama model availability helpers', () => {
     expect(ollamaCloudBaseModelId('kimi-k2.5:cloud')).toBe('kimi-k2.5')
     expect(ollamaCloudBaseModelId('gpt-oss:120b-cloud')).toBe('gpt-oss:120b')
     expect(ollamaCloudBaseModelId('kimi-k2.5:latest-cloud')).toBe('kimi-k2.5:latest')
+  })
+
+  it('resolves curated Cloud ids to display names without altering unknown ids', () => {
+    expect(ollamaCloudModelDisplayName('glm-5.2:cloud')).toBe('GLM 5.2')
+    expect(ollamaCloudModelDisplayName('minimax-m3:cloud')).toBe('MiniMax M3')
+    expect(ollamaCloudModelDisplayName('GLM-5.2')).toBe('GLM 5.2')
+    expect(ollamaCloudModelDisplayName('future-model:cloud')).toBeUndefined()
   })
 
   it('never offers a local pull command for a cloud source model', () => {

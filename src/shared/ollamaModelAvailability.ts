@@ -24,6 +24,21 @@ export function ollamaCloudBaseModelId(modelId?: string | null): string {
   return value.slice(0, -'-cloud'.length)
 }
 
+const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  'glm-5.2': 'GLM 5.2',
+  'minimax-m3': 'MiniMax M3'
+}
+
+/**
+ * Resolve Cloud account model ids to product-facing names without changing the
+ * exact wire id used by the daemon. Unknown recommendations deliberately return
+ * undefined so callers can preserve a new upstream id instead of guessing.
+ */
+export function ollamaCloudModelDisplayName(modelId?: string | null): string | undefined {
+  const key = normalizeOllamaModelKey(ollamaCloudBaseModelId(modelId))
+  return OLLAMA_CLOUD_MODEL_DISPLAY_NAMES[key]
+}
+
 export function ollamaModelIdAliases(modelId?: string | null): string[] {
   const key = normalizeOllamaModelKey(modelId)
   if (!key) return []
