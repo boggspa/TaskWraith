@@ -249,11 +249,22 @@ same locked-single-stop shape as Kimi's "On (fixed)".
   </tr>
 </table>
 
-Ollama is discovered from the local daemon, so only pulled model tags can run.
-The curated presets below make common choices easy to find; **Custom model ID**
-accepts another compatible installed tag. There is no generic TaskWraith
-reasoning or Fast switch for local models—native tool, vision, and thinking
-capabilities remain model-specific.
+Ollama now has two lanes, and the picker separates them. **Local** models are
+discovered from the local daemon, so only pulled model tags can run; the
+curated presets below make common choices easy to find, and **Custom model ID**
+accepts another compatible installed tag.
+
+**Cloud** models are discovered from your signed-in Ollama account rather than
+from pulled tags, so they run without being present on disk (source-ahead of
+v1.9.5). Discovery reports whether the daemon supports cloud, whether cloud is
+enabled, and whether you are authenticated; a model may additionally name a
+required plan. Nothing appears unless the daemon both supports and enables
+cloud, so a local-only install is unchanged. In the composer picker a cloud
+group is marked with a cloud icon in place of the usual provider swatch, and
+model preflight states cloud rather than local expectations for those rows.
+
+There is no generic TaskWraith reasoning or Fast switch for either lane—native
+tool, vision, and thinking capabilities remain model-specific.
 
 | Curated local model        | Model ID             | Picker note                                     |
 | -------------------------- | -------------------- | ----------------------------------------------- |
