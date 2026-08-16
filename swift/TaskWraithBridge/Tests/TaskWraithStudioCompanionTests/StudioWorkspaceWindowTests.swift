@@ -315,4 +315,33 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertFalse(review.isPresentationAttached)
     XCTAssertTrue(workspace.window.isVisible)
   }
+
+  func testViewerDeckChromeProjectsExplicitWorkspaceRoutes() throws {
+    let workspace = try makeWorkspace()
+    let viewport = try XCTUnwrap(StudioWorkspaceViewport(width: 1_600, height: 900))
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+
+    let source = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.source")
+    )
+    let timeline = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.timeline")
+    )
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(timeline.state, .on)
+
+    workspace.update(
+      visibleRoutes: [.review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+    XCTAssertEqual(source.state, .off)
+    XCTAssertEqual(timeline.state, .on)
+  }
 }

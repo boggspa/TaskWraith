@@ -170,6 +170,7 @@ final class StudioViewerView: NSView {
     /// The app state owns leases; this callback releases this route's pool lease
     /// when AppKit closes its window without invalidating a shared decoder.
     var onPresentationDetached: (() -> Void)?
+    var onPresentationStateChanged: (() -> Void)?
     /// Which asset the attached sound came from. Nil when nothing is attached.
     private var audioAssetId: String?
     /// Sequence PCM must already be resident in the Review attachment. A nil
@@ -795,6 +796,7 @@ final class StudioViewerView: NSView {
             if parkedMarks != nil { toggleReviewLoop() }
         }
         needsDisplay = true
+        onPresentationStateChanged?()
     }
 
     /// Which version the viewer is addressing. Toggling is only meaningful
@@ -807,6 +809,15 @@ final class StudioViewerView: NSView {
         reviewVersion = reviewVersion == .current ? .proposed : .current
         report(message: reviewVersion == .current ? "Showing Current" : "Showing Proposed")
         needsDisplay = true
+        onPresentationStateChanged?()
+    }
+
+    func performReviewVersionShortcut() {
+        guard route == .review else {
+            report(message: "Current/Proposed lives in the Review route (w)")
+            return
+        }
+        toggleReviewVersion()
     }
 
     func adopt(transcript: StudioTranscript?) {
@@ -1410,11 +1421,7 @@ final class StudioViewerView: NSView {
             renderer.grade = gradeSettings
             report(message: gradeLabel)
         case "v":
-            guard route == .review else {
-                report(message: "Current/Proposed lives in the Review route (w)")
-                break
-            }
-            toggleReviewVersion()
+            performReviewVersionShortcut()
         case "a":
             resolveOpenProposal(accept: true)
         case "r":
@@ -1735,6 +1742,9 @@ final class StudioViewerWindowController {
         view.onPresentationDetached = { [weak self] in
             self?.presentationDidDetach()
         }
+        view.onPresentationStateChanged = { [weak self] in
+            self?.onPresentationStateChanged?()
+        }
     }
 
     var isPresentationAttached: Bool {
@@ -1745,6 +1755,7 @@ final class StudioViewerWindowController {
     }
 
     var onPresentationDetached: (() -> Void)?
+    var onPresentationStateChanged: (() -> Void)?
 
     /// Called by the AppKit view when its content view is detached. Keeping the
     /// ownership callback here makes close/reopen testable without asking an
@@ -1819,6 +1830,10 @@ final class StudioViewerWindowController {
 
     func toggleReviewVersion() {
         view.toggleReviewVersion()
+    }
+
+    func performReviewVersionShortcut() {
+        view.performReviewVersionShortcut()
     }
 
     func adopt(revision: Int) {
@@ -1989,6 +2004,14 @@ final class StudioViewerAppState {
             self?.reviewAttachment?.detach()
             self?.reviewAttachment?.detachSequence()
         }
+        workspaceController?.configureChromeActions(
+            onToggleRoute: { [weak self] route in
+                _ = self?.toggleRoute(route)
+            },
+            onSelectReviewVersion: { [weak self] version in
+                self?.selectReviewVersion(version)
+            }
+        )
         refreshWorkspacePresentation()
     }
 
@@ -2055,6 +2078,16 @@ final class StudioViewerAppState {
             sequence: activeSequence,
             activeProposalId: openProposalId
         )
+    }
+
+    private func selectReviewVersion(_ version: StudioReviewVersion) {
+        guard let reviewController,
+            let context = reviewController.activeReviewContext
+        else { return }
+        if context.version != version {
+            reviewController.toggleReviewVersion()
+        }
+        refreshWorkspacePresentation()
     }
 
     private func windowController(

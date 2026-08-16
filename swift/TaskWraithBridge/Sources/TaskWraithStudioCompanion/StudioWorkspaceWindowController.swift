@@ -17,6 +17,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   private let upperStack: NSStackView
   private let lowerStack: NSStackView
   private let viewerDeck: NSStackView
+  let viewerDeckChrome: StudioViewerDeckChrome
   private let browserPane: NSView
   private let inspectorPane: NSView
   private let transcriptPane: NSView
@@ -90,10 +91,16 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     )
     reviewHost = reviewHostView
 
-    viewerDeck = NSStackView(views: [sourceHostView, reviewHostView])
+    viewerDeckChrome = StudioViewerDeckChrome()
+    let routeStack = NSStackView(views: [sourceHostView, reviewHostView])
+    routeStack.orientation = .horizontal
+    routeStack.distribution = .fillEqually
+    routeStack.spacing = 1
+
+    viewerDeck = NSStackView(views: [viewerDeckChrome, routeStack])
     viewerDeck.identifier = NSUserInterfaceItemIdentifier("studio.workspace.viewer-deck")
-    viewerDeck.orientation = .horizontal
-    viewerDeck.distribution = .fillEqually
+    viewerDeck.orientation = .vertical
+    viewerDeck.distribution = .fill
     viewerDeck.spacing = 1
 
     upperStack = NSStackView(views: [browserPane, viewerDeck, inspectorPane])
@@ -140,6 +147,12 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     }
 
     super.init()
+    sourceController.onPresentationStateChanged = { [weak self] in
+      self?.refreshChrome()
+    }
+    reviewController?.onPresentationStateChanged = { [weak self] in
+      self?.refreshChrome()
+    }
     window.delegate = self
     window.center()
     apply(lastSnapshot)
@@ -155,6 +168,14 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
 
   var exportActionTitle: String {
     lastSnapshot.exportActionTitle
+  }
+
+  func configureChromeActions(
+    onToggleRoute: @escaping (StudioViewerRoute) -> Void,
+    onSelectReviewVersion: @escaping (StudioReviewVersion) -> Void
+  ) {
+    viewerDeckChrome.onToggleRoute = onToggleRoute
+    viewerDeckChrome.onSelectReviewVersion = onSelectReviewVersion
   }
 
   func show() {
@@ -257,7 +278,15 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
       validClipIds: validClipIds,
       activeProposalId: activeProposalId
     )
+    refreshChrome()
     apply(lastSnapshot)
+  }
+
+  private func refreshChrome() {
+    viewerDeckChrome.update(
+      visibleRoutes: visibleRoutes,
+      reviewContext: reviewController?.activeReviewContext
+    )
   }
 
   private func apply(_ snapshot: StudioWorkspacePresentationSnapshot) {
