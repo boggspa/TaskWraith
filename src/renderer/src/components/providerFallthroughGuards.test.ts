@@ -25,7 +25,12 @@ import { getStaticProviderModels } from '../../../main/providers/StaticProviderM
 import { getDefaultModelForProvider as getMainDefaultModelForProvider } from '../../../main/services/ComposerService'
 import type { ProviderId } from '../../../main/store/types'
 import { getProviderName } from './Sidebar'
-import { getEnsembleModelDefaults } from '../lib/ensembleProviderDefaults'
+import {
+  getDefaultEnsembleParticipantConfig,
+  getEnsembleModelDefaults
+} from '../lib/ensembleProviderDefaults'
+import { ANTIGRAVITY_GEMINI_API_MODEL_PREFIX } from '../../../main/antigravity/AntigravityGeminiApiModelDiscovery'
+import { ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS } from '../../../main/antigravity/AntigravityGeminiApiStaticModels'
 import {
   DYNAMIC_CATALOGUE_PROVIDER_IDS,
   GEMINI_DEFAULT_MODEL,
@@ -305,5 +310,45 @@ describe('ensemble model defaults fallthrough', () => {
         `${provider} defaults to "${defaults.defaultModelId}", which is not one of its own models`
       ).toContain(defaults.defaultModelId)
     }
+  })
+})
+
+// AntiGravity is deliberately absent from LIVE_SELECTABLE_PROVIDER_IDS, so the
+// two loops above never reach it and its three copies of the gemini-api floor
+// went unguarded. They drifted: the 2.5 family was probed dead on 2026-07-26
+// and only the canonical list was corrected, leaving the main catalogue and the
+// renderer mirror offering rows that 404 — and seeding every newly added
+// antigravity seat with one of them.
+describe('antigravity gemini-api floor stays in lockstep across its copies', () => {
+  const canonical = ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS.map(
+    (id) => `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}${id}`
+  )
+
+  it('offers exactly the canonical floor on both the main and renderer sides', () => {
+    expect(
+      getStaticProviderModels('antigravity').map((model) => model.id),
+      'main catalogue drifted from the gemini-api floor it is meant to mirror'
+    ).toEqual(canonical)
+    expect(
+      getEnsembleModelDefaults('antigravity').modelOptions.map((option) => option.id),
+      'renderer mirror drifted from the gemini-api floor it is meant to mirror'
+    ).toEqual(canonical)
+  })
+
+  it('seeds a new seat with a model the floor actually contains', () => {
+    // The failure this catches is invisible in the picker: the seeded id only
+    // surfaces when the seat dispatches and Google answers 404.
+    const seeded = getDefaultEnsembleParticipantConfig('antigravity').model
+    expect(canonical, `a new antigravity seat is seeded with "${seeded}"`).toContain(seeded)
+    expect(canonical).toContain(getEnsembleModelDefaults('antigravity').defaultModelId)
+  })
+
+  it('marks exactly one main-catalogue row as the default', () => {
+    const defaults = getStaticProviderModels('antigravity').filter(
+      (model) => (model as { isDefault?: boolean }).isDefault
+    )
+    expect(defaults.map((model) => model.id)).toEqual([
+      getEnsembleModelDefaults('antigravity').defaultModelId
+    ])
   })
 })

@@ -181,11 +181,21 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     // alias rows (`pro`/`flash`/`cli-default`), and agy-CLI rows stay
     // discovery-owned.
     expect(antigravity).toEqual([
-      'gemini-api:gemini-2.5-pro',
-      'gemini-api:gemini-2.5-flash',
-      'gemini-api:gemini-2.5-flash-lite',
-      'gemini-api:gemini-2.0-flash'
+      'gemini-api:gemini-3.6-flash',
+      'gemini-api:gemini-3.5-flash',
+      'gemini-api:gemini-3.1-pro-preview',
+      'gemini-api:gemini-3.1-flash-lite'
     ])
+    // The floor must name only models that can still be dispatched. The 2.5
+    // family was probed dead on 2026-07-26; a fallback row that 404s is worse
+    // than a short list, because it lands on a user who had no other choice.
+    expect(antigravity).not.toEqual(
+      expect.arrayContaining([
+        'gemini-api:gemini-2.5-flash',
+        'gemini-api:gemini-2.5-flash-lite',
+        'gemini-api:gemini-2.0-flash'
+      ])
+    )
     expect(antigravity.every((id) => id.startsWith('gemini-api:'))).toBe(true)
     expect(gemini).toContain('flash')
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))

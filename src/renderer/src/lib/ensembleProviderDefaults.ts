@@ -276,12 +276,23 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
 /** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
  * load-bearing (dispatch + discovery both key on it); the live discovery
  * snapshot may extend this list, but these four wire models are the
- * deterministic floor. Mirrors the contextWindows registrations. */
+ * deterministic floor.
+ *
+ * MUST stay in lockstep with ANTIGRAVITY_GEMINI_API_STATIC_MODEL_IDS in
+ * src/main/antigravity/AntigravityGeminiApiStaticModels.ts, which owns the
+ * floor and is the list that gets re-probed. This is a hand-mirror because the
+ * renderer must not import from src/main; providerFallthroughGuards.test.ts
+ * fails if the two drift. They did drift once: the 2.5 family was probed dead
+ * on 2026-07-26 and only the main-side list was corrected, leaving every new
+ * antigravity seat seeded with a model that 404s at dispatch.
+ *
+ * Context windows resolve through the provider-level antigravity fallback
+ * (1M), not per-model rows — shared/contextWindows.ts has no 3.x entries. */
 const ANTIGRAVITY_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'gemini-api:gemini-2.5-pro', label: 'Gemini 2.5 Pro (API)' },
-  { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini 2.5 Flash (API)' },
-  { id: 'gemini-api:gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (API)' },
-  { id: 'gemini-api:gemini-2.0-flash', label: 'Gemini 2.0 Flash (API)' }
+  { id: 'gemini-api:gemini-3.6-flash', label: '3.6 Flash' },
+  { id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' },
+  { id: 'gemini-api:gemini-3.1-pro-preview', label: '3.1 Pro Preview' },
+  { id: 'gemini-api:gemini-3.1-flash-lite', label: '3.1 Flash-Lite' }
 ]
 
 /** Pi seat models. Wire ids are `<upstream>/<model>` (pi's own syntax) and
@@ -584,7 +595,7 @@ export function getDefaultEnsembleParticipantConfig(
       // (dispatch routes on it); the discovery snapshot may widen the option
       // list, but the seed stays deterministic.
       return {
-        model: 'gemini-api:gemini-2.5-flash',
+        model: 'gemini-api:gemini-3.6-flash',
         permissionPresetId: 'default'
       }
     case 'pi':
@@ -1220,7 +1231,7 @@ export function getEnsembleModelDefaults(
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'gemini-api:gemini-2.5-flash'
+        defaultModelId: 'gemini-api:gemini-3.6-flash'
       }
     case 'pi':
       return {

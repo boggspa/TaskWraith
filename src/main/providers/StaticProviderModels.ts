@@ -1,4 +1,6 @@
 import type { ProviderId } from '../store/types'
+import { ANTIGRAVITY_GEMINI_API_MODEL_PREFIX } from '../antigravity/AntigravityGeminiApiModelDiscovery'
+import { antigravityGeminiApiStaticModels } from '../antigravity/AntigravityGeminiApiStaticModels'
 import {
   concreteModelForPreviewPlaceholder,
   isPreviewCatalogModelId,
@@ -609,29 +611,24 @@ function piStaticModelRows(now: Date = new Date()) {
 }
 const PI_MODEL_WIRE_IDS = new Set(PI_STATIC_MODELS.map((model) => model.wireId))
 
-const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = [
-  {
-    id: 'gemini-api:gemini-2.5-pro',
-    label: 'Gemini 2.5 Pro (API)',
-    description: 'Gemini API key lane · 1M context'
-  },
-  {
-    id: 'gemini-api:gemini-2.5-flash',
-    label: 'Gemini 2.5 Flash (API)',
-    description: 'Gemini API key lane · 1M context',
-    isDefault: true
-  },
-  {
-    id: 'gemini-api:gemini-2.5-flash-lite',
-    label: 'Gemini 2.5 Flash Lite (API)',
-    description: 'Gemini API key lane · 1M context'
-  },
-  {
-    id: 'gemini-api:gemini-2.0-flash',
-    label: 'Gemini 2.0 Flash (API)',
-    description: 'Gemini API key lane · 1M context'
-  }
-]
+/**
+ * Derived from the gemini-api lane's own floor rather than restated here. The
+ * two lists were added together and only that one was corrected when the 2.5
+ * family was probed dead on 2026-07-26, so this copy went on offering rows
+ * that 404 at dispatch. Deriving keeps the ids in lockstep by construction;
+ * only the presentation (description, default) is local.
+ */
+const ANTIGRAVITY_DEFAULT_MODEL_ID = `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}gemini-3.6-flash`
+
+const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = antigravityGeminiApiStaticModels().map((model) => ({
+  id: model.id,
+  // Label verbatim from the shared formatter, which live discovery also uses,
+  // so a fallback row is indistinguishable from a discovered one. No lane
+  // marker in the text — the API lane carries its own glyph.
+  label: model.label,
+  description: 'Gemini API key lane · 1M context',
+  ...(model.id === ANTIGRAVITY_DEFAULT_MODEL_ID ? { isDefault: true } : {})
+}))
 
 const OLLAMA_STATIC_MODELS = [
   {

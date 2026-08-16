@@ -69,8 +69,11 @@ describe('antigravity gemini-api seat models', () => {
     const models = buildEnsembleParticipantModelCatalog('antigravity')
     expect(models.length).toBeGreaterThanOrEqual(4)
     const ids = models.map((model) => model.id)
-    expect(ids).toContain('gemini-api:gemini-2.5-flash')
-    expect(ids).toContain('gemini-api:gemini-2.5-pro')
+    expect(ids).toContain('gemini-api:gemini-3.6-flash')
+    expect(ids).toContain('gemini-api:gemini-3.1-pro-preview')
+    // Never offer a seat a model that 404s: the 2.5 family was probed dead on
+    // 2026-07-26 and this catalogue kept serving it for weeks afterwards.
+    expect(ids).not.toContain('gemini-api:gemini-2.5-flash')
     // The prefix is load-bearing (dispatch routes on it) — every row keeps it.
     for (const id of ids) {
       expect(id.startsWith('gemini-api:')).toBe(true)

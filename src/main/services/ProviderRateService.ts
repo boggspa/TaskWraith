@@ -1215,6 +1215,48 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
+      },
+      // The 2.5/2.0 rows above are retained deliberately: they no longer
+      // appear in the offer floor but still price historical runs. The three
+      // rows below are the current floor's remaining ids — without them
+      // `resolveModelRate` falls through to `models[0]` and prices them at 2.5
+      // Flash, which is exactly how gemini-2.0-flash shipped mispriced.
+      {
+        // PROMOTIONAL: $0.75/$3.75/$0.075 holds through 2026-12-31, then
+        // doubles to $1.50/$7.50/$0.15 on 2027-01-01. The table carries one
+        // flat rate per model, so every 3.6 Flash projection UNDERSTATES cost
+        // by 2x from that date until this row is re-verified.
+        modelId: 'gemini-api:gemini-3.6-flash',
+        inputUsdPerMillion: 0.75,
+        outputUsdPerMillion: 3.75,
+        cachedInputUsdPerMillion: 0.075,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Gemini API paid tier via the AntiGravity BYO-key lane. Promotional rate through 2026-12-31; doubles 2027-01-01.'
+      },
+      {
+        modelId: 'gemini-api:gemini-3.5-flash',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 9.0,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
+      },
+      {
+        // Same rate as the `gemini-3.1-pro` row above, which already declared
+        // it covered this alias by prefix. Stated exactly rather than left to
+        // the prefix match, because a prefix hit resolves under the OTHER
+        // row's id and reads as unpriced to the offered-model coverage guard.
+        modelId: 'gemini-api:gemini-3.1-pro-preview',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 12.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Gemini API paid tier, ≤200K-prompt rate; >200K prompts bill higher (not modelled — long-prompt estimates undercount).'
       }
     ]
   },
