@@ -366,16 +366,19 @@ function deepSeekSnapshot(
   now: number
 ): QuotaSnapshotHookSnapshot {
   const totalTopUp = billing?.totalTopUp
+  const creditCeiling = totalTopUp ?? billing?.monthlyBudgetUsd
   const windows: QuotaSnapshotHookWindow[] = []
-  if (totalTopUp) {
+  if (creditCeiling) {
     windows.push(
       financialWindow({
         id: 'deepseek-credit-used',
         label: 'Credit used',
-        amount: Math.max(0, Math.min(totalTopUp, totalTopUp - observation.totalBalance)),
-        total: totalTopUp,
+        amount: Math.max(0, Math.min(creditCeiling, creditCeiling - observation.totalBalance)),
+        total: creditCeiling,
         currency: observation.currency,
-        subtitle: 'Configured top-ups minus official remaining balance'
+        subtitle: totalTopUp
+          ? 'Configured top-ups minus official remaining balance'
+          : 'Configured credit budget minus official remaining balance'
       })
     )
   } else {

@@ -323,6 +323,40 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     )
   })
 
+  it('fills DeepSeek credit usage against its soft budget when no top-up anchor exists', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({ deepseek: { monthlyBudgetUsd: 10 } }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance('0.79'))),
+      now: () => NOW
+    })
+
+    const [deepseek] = await read()
+
+    expect(deepseek).toEqual(
+      expect.objectContaining({
+        provider: 'deepseek',
+        windows: [
+          expect.objectContaining({
+            label: 'Credit used',
+            valueText: '$9.21',
+            usedPercent: expect.closeTo(92.1),
+            remainingPercent: expect.closeTo(7.9),
+            limitLabel: expect.stringContaining('$9.21 of $10.00')
+          })
+        ]
+      })
+    )
+    expect(deepseek?.balances).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: 'Total topped up' })])
+    )
+  })
+
   it('advances a Meta payment threshold from a zero anchor using later Muse spend', async () => {
     const now = Date.parse('2026-08-15T12:00:00.000Z')
     const hook = createTaskWraithQuotaSnapshotHook({
