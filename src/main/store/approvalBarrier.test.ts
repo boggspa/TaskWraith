@@ -8,10 +8,9 @@
  * full fsync of the chat record per save, for the entire time a human is
  * looking at the dialog — exactly the amplification this epic is removing.
  *
- * Narrowing, not removing: the barrier still fires on the save that OPENS or
- * CHANGES an approval, because that is the state transition a reader must see
- * promptly. Subsequent saves while the same approval is still open defer like
- * any other streaming save.
+ * Narrowing, not removing: the compatibility checkpoint still fires on the
+ * save that OPENS or CHANGES an approval. Subsequent saves while the same
+ * approval stays open are fsynced as V2 mutations without another full write.
  *
  * Why deferring those is safe — all three verified in source, not assumed:
  *  1. Approval DECISIONS never went through this path. `writeApprovalLedger`
@@ -226,7 +225,7 @@ describe('approval save barrier', () => {
    * deriveSaveFlushReason and is covered end-to-end by
    * saveCoalescerDeletion.test.ts and AppStoreHistoryDeletionTransaction.test.ts. */
 
-  it('lands the deferred save once the coalescing window elapses', async () => {
+  it('keeps later approval streaming durable without another whole-record rewrite', async () => {
     const chat = baseChat('chat-lands', [runningRun('run-live')])
     AppStore.saveChat(chat)
     chat.ensemble = awaitingApproval('lane-1')
@@ -239,8 +238,10 @@ describe('approval save barrier', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200))
 
-    // Deferred, not dropped — the coalescer's ceiling still bounds the
-    // crash-loss window.
-    expect(persistedTitle('chat-lands')).toBe('eventually durable')
+    // The compatibility checkpoint remains at the approval transition; the
+    // later streaming mutation is already fsynced in V2 and cold-replayable.
+    expect(persistedTitle('chat-lands')).toBe('approval opened')
+    AppStore.clearChatRecordCacheForTests()
+    expect(AppStore.getChat('chat-lands')?.title).toBe('eventually durable')
   })
 })

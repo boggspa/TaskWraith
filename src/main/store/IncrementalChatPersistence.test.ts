@@ -69,6 +69,7 @@ describe('IncrementalChatPersistence', () => {
 
     expect(persistence.replay('chat-1').record).toEqual(second)
     expect(persistence.stats()).toMatchObject({
+      boundaryMix: { normal: 2, approval: 0, terminal: 0 },
       seeds: 1,
       mutationBatchesAppended: 1,
       failures: 0

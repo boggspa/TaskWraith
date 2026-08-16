@@ -1,6 +1,6 @@
 /**
- * T4a integration: the dual-write seam between the legacy chat file, the
- * append-only journal, and the chat-list index.
+ * Incremental persistence integration: V2 mutation authority, compatibility
+ * checkpoints/journal, and the chat-list index.
  *
  * WHY THIS FILE EXISTS (DSeekScout's binding edge): the hookup creates THREE
  * durable artifacts per save. `chatJournal.test.ts` proves the journal in
@@ -9,15 +9,14 @@
  * this epic one crash-between-renames scar — this is the same class of bug
  * one layer up.
  *
- * The ordering contract is:
- *   1. legacy `chats/{id}.json`  (read-authoritative)
- *   2. journal append
- *   3. chat-list index entry
+ * The normal-save contract is:
+ *   1. fsynced V2 mutation (read-authoritative when ahead)
+ *   2. chat-list index entry
+ * Initial, approval, terminal and V2-failure boundaries additionally refresh
+ * legacy `chats/{id}.json` and its compatibility journal.
  *
- * Only 1->2 is genuinely order-sensitive. The index is NOT ordered against
- * them because it self-heals: `getChatList` validates each entry against the
- * chat file's mtime+size and rebuilds from the file on mismatch. These tests
- * assert that reasoning rather than assuming it.
+ * The index remains derived and self-healing. These tests prove cold replay,
+ * parity, fallback, shutdown and deletion rather than assuming the cutover.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -103,7 +102,7 @@ describe('T4a chat journal integration', () => {
       expect(fs.existsSync(journalFilePath('chat-first'))).toBe(true)
     })
 
-    it('mirrors a coalesced save into the journal only when the write lands', async () => {
+    it('keeps streaming mutations out of the legacy whole-record journal', async () => {
       const chat = saveChat('chat-deferred', [runningRun('run-live')])
       const journalAfterFirst = fs.readFileSync(journalFilePath('chat-deferred'), 'utf-8')
       const linesAfterFirst = journalAfterFirst.trim().split('\n').length
@@ -111,18 +110,17 @@ describe('T4a chat journal integration', () => {
       chat.title = 'streaming update'
       AppStore.saveChat(chat)
 
-      // The second save is deferred, so the journal must NOT have grown yet:
-      // the journal follows the legacy write, it does not race ahead of it.
+      // V2 owns the hot mutation. The compatibility journal must not grow.
       const duringDeferral = fs.readFileSync(journalFilePath('chat-deferred'), 'utf-8')
       expect(duringDeferral.trim().split('\n').length).toBe(linesAfterFirst)
 
       await settleTimers()
 
       const afterFlush = fs.readFileSync(journalFilePath('chat-deferred'), 'utf-8')
-      expect(afterFlush.trim().split('\n').length).toBe(linesAfterFirst + 1)
-      // The legacy file is authoritative and must carry the same update.
+      expect(afterFlush.trim().split('\n').length).toBe(linesAfterFirst)
+      // No trailing timer rewrites the compatibility checkpoint later.
       const persisted = JSON.parse(fs.readFileSync(chatFilePath('chat-deferred'), 'utf-8'))
-      expect(persisted.title).toBe('streaming update')
+      expect(persisted.title).toBe('chat-deferred')
     })
   })
 
@@ -158,7 +156,35 @@ describe('T4a chat journal integration', () => {
       const legacyAfterFlush = JSON.parse(
         fs.readFileSync(chatFilePath('chat-v2-streaming'), 'utf8')
       ) as ChatRecord
-      expect(legacyAfterFlush.title).toBe('mutation is already durable')
+      expect(legacyAfterFlush.title).toBe('chat-v2-streaming')
+    })
+
+    it('replays V2 after a cold-cache restart when compatibility JSON is behind', () => {
+      const chat = saveChat('chat-v2-restart', [runningRun('run-live')])
+      chat.title = 'recovered from mutation tail'
+      AppStore.saveChat(chat)
+      expect(
+        (JSON.parse(fs.readFileSync(chatFilePath('chat-v2-restart'), 'utf8')) as ChatRecord).title
+      ).toBe('chat-v2-restart')
+
+      AppStore.clearChatRecordCacheForTests()
+
+      expect(AppStore.getChat('chat-v2-restart')?.title).toBe('recovered from mutation tail')
+    })
+
+    it('falls back to a synchronous compatibility checkpoint when mutation fsync fails', () => {
+      const chat = saveChat('chat-v2-fallback', [runningRun('run-live')])
+      // Deterministic EISDIR on the exact append target; unlike chmod this also
+      // fails under privileged CI users.
+      fs.mkdirSync(incrementalMutationPath('chat-v2-fallback'))
+      chat.title = 'compatibility fallback'
+
+      AppStore.saveChat(chat)
+
+      const legacy = JSON.parse(
+        fs.readFileSync(chatFilePath('chat-v2-fallback'), 'utf8')
+      ) as ChatRecord
+      expect(legacy.title).toBe('compatibility fallback')
     })
 
     it('materializes and verifies a checkpoint at the terminal boundary', () => {
@@ -205,6 +231,7 @@ describe('T4a chat journal integration', () => {
     it('converges when a crash leaves the legacy file ahead of the journal', async () => {
       const chat = saveChat('chat-crash-a', [runningRun('run-live')])
       chat.title = 'update that only reached the legacy file'
+      chat.runs = [{ ...chat.runs[0], status: 'success', endedAt: '2026-08-16T00:00:01.000Z' }]
       AppStore.saveChat(chat)
       await settleTimers()
 
@@ -222,6 +249,7 @@ describe('T4a chat journal integration', () => {
     it('converges when a crash leaves the journal ahead of the index', async () => {
       const chat = saveChat('chat-crash-b', [runningRun('run-live')])
       chat.title = 'update that reached legacy and journal'
+      chat.runs = [{ ...chat.runs[0], status: 'success', endedAt: '2026-08-16T00:00:01.000Z' }]
       AppStore.saveChat(chat)
       await settleTimers()
 

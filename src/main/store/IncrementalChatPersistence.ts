@@ -10,6 +10,7 @@ import type { ChatRecord } from './types'
 export type IncrementalChatPersistenceBoundary = 'normal' | 'approval' | 'terminal'
 
 export interface IncrementalChatPersistenceStats {
+  boundaryMix: Record<IncrementalChatPersistenceBoundary, number>
   seeds: number
   mutationBatchesAppended: number
   mutationBytesAppended: number
@@ -67,6 +68,11 @@ export function createIncrementalChatPersistence(
   const { journal } = options
   const logger = options.logger ?? console
   const baselineVerifiedChatIds = new Set<string>()
+  const boundaryMix: Record<IncrementalChatPersistenceBoundary, number> = {
+    normal: 0,
+    approval: 0,
+    terminal: 0
+  }
   let seeds = 0
   let mutationBatchesAppended = 0
   let mutationBytesAppended = 0
@@ -99,7 +105,7 @@ export function createIncrementalChatPersistence(
     if (repair) {
       logger.warn(
         `[incremental-chat] replay parity mismatch for ${chatId}; ` +
-          'restoring the still-authoritative legacy record'
+          'restoring the canonical AppStore record'
       )
       replaceAuthoritative(chatId, expected)
     }
@@ -129,6 +135,7 @@ export function createIncrementalChatPersistence(
     boundary: IncrementalChatPersistenceBoundary
   ): IncrementalChatPersistResult => {
     try {
+      boundaryMix[boundary] += 1
       if (!previous) {
         journal.initialize(next.appChatId, durableClone(next))
         baselineVerifiedChatIds.add(next.appChatId)
@@ -203,6 +210,7 @@ export function createIncrementalChatPersistence(
   }
 
   const stats = (): IncrementalChatPersistenceStats => ({
+    boundaryMix: { ...boundaryMix },
     seeds,
     mutationBatchesAppended,
     mutationBytesAppended,

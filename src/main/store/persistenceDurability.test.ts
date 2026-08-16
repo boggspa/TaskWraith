@@ -1,31 +1,32 @@
 /**
- * Item 6 — persistence durability tests (GemProWork lane).
+ * Incremental persistence cutover durability tests.
  *
- * These tests prove the non-negotiable invariants that make moving durable
- * writes off the main thread safe. They are written RED FIRST: each one
- * falsifies its invariant before proving it holds.
+ * These tests originated with the utility whole-record writer and now pin the
+ * cutover contract: normal saves are ordered, fsynced V2 mutations; full JSON
+ * writes remain compatibility checkpoints at explicit barriers only.
  *
  * INVARIANTS UNDER TEST:
  *  1. ORDERING — N concurrent saves to one chatId land in issue order.
- *  2. BARRIER HONESTY — terminal/approval/history-deletion saves do not
- *     resolve before the worker ACKs the fsync.
- *  3. CRASH SAFETY — worker dies mid-write → previous file intact (atomic
- *     rename) and the store falls back to sync.
- *  4. FLAG-OFF EQUIVALENCE — TASKWRAITH_UTILITY_WRITE=0 produces byte-
- *     identical chat files to today.
+ *  2. BARRIER HONESTY — terminal/approval/history-deletion checkpoints are
+ *     durable before return.
+ *  3. CRASH SAFETY — compatibility-writer failure cannot corrupt or hide the
+ *     mutation-authoritative record.
+ *  4. FLAG ISOLATION — the retired hot whole-record worker flag cannot bring
+ *     normal rewrite amplification back.
  *
  * SCOPED TO THIS FILE ONLY:
  *  - Fake enqueue registered via registerPersistenceWriteEnqueue (the real
  *    integration seam @SolWork built — no phantom module mock).
  *  - AppStore.saveChat (the integration seam)
  *  - chat-list-index write (lean, validated in ChatListIndexProjection.test.ts)
- *  - chatJournal append (side-band, not authoritative)
+ *  - incremental mutation replay (normal-save authority)
+ *  - legacy chat JSON / chatJournal (compatibility checkpoints)
  *
  * DELIBERATELY OUT OF SCOPE:
  *  - Worker process lifecycle (GrokWork's PersistenceWriteWorker.test.ts)
  *  - Coalescing semantics (saveCoalescer.test.ts)
  *  - Approval-barrier derivation (approvalBarrier.test.ts)
- *  - Journal authority (T4 — not item 6)
+ *  - Incremental journal filesystem mechanics (IncrementalChatJournal.test.ts)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -186,8 +187,8 @@ describe('persistenceDurability', () => {
      GREEN: the worker receives enqueue calls for chat saves.
   ─────────────────────────────────────────────────────────────────── */
 
-  describe('integration seam — worker is used when flag is on', () => {
-    it('routes writes through the worker when TASKWRAITH_UTILITY_WRITE=1', async () => {
+  describe('integration seam — mutation authority supersedes full-record worker traffic', () => {
+    it('keeps normal saves off the whole-record worker when TASKWRAITH_UTILITY_WRITE=1', async () => {
       // FIRST save: the file does not exist yet, so saveChat writes
       // synchronously via writeJson (the coalescer only engages for
       // existing files).  This is the pre-T3a-1 behaviour and is
@@ -200,24 +201,17 @@ describe('persistenceDurability', () => {
       // Clear the call log from the first sync save.
       workerCallLog.length = 0
 
-      // SECOND save: the file now exists, so the coalescer schedules it.
-      // With TASKWRAITH_UTILITY_WRITE=1 and the enqueue registered, this
-      // MUST route through the worker.
+      // SECOND save: V2 fsyncs a mutation. The compatibility writer must stay
+      // cold even when its old feature flag is enabled.
       process.env.TASKWRAITH_UTILITY_WRITE = '1'
       chat.title = 'via-worker'
       AppStore.saveChat(chat)
       await settleAllSaves()
 
-      // The worker must have been called.  If the integration is not landed
-      // the call log is empty — that is the intended RED.
-      expect(workerCallLog.length).toBeGreaterThanOrEqual(1)
-      const lastCall = workerCallLog[workerCallLog.length - 1]
-      expect(lastCall.chatId).toBe('chat-seam')
-      expect(lastCall.filePath).toBe(chatFilePath('chat-seam'))
-      expect(lastCall.dataBytes).toBeGreaterThan(0)
-
-      // The file must reflect the second save — the write succeeded.
-      expect(persistedTitle('chat-seam')).toBe('via-worker')
+      expect(workerCallLog).toEqual([])
+      expect(persistedTitle('chat-seam')).toBe('initial-sync')
+      AppStore.clearChatRecordCacheForTests()
+      expect(AppStore.getChat('chat-seam')?.title).toBe('via-worker')
     })
 
     it('does NOT route through the worker when the flag is off', async () => {
@@ -260,9 +254,10 @@ describe('persistenceDurability', () => {
 
       await settleAllSaves()
 
-      // The last save issued must be what is on disk.  If ordering is
-      // broken the file will contain an earlier title.
-      const final = persistedRecord('chat-ordered')
+      // Cold replay must preserve issue order even though compatibility JSON
+      // remains at its initial checkpoint.
+      AppStore.clearChatRecordCacheForTests()
+      const final = AppStore.getChat('chat-ordered')
       expect(final).not.toBeNull()
       expect(final!.title).toBe('E-fifth')
     })
@@ -282,9 +277,10 @@ describe('persistenceDurability', () => {
 
       await settleAllSaves()
 
-      // Different chatIds are independent; both must reflect their last save.
-      expect(persistedTitle('chat-A')).toBe('A-last')
-      expect(persistedTitle('chat-B')).toBe('B-last')
+      // Different chatIds are independent; both replay their own final head.
+      AppStore.clearChatRecordCacheForTests()
+      expect(AppStore.getChat('chat-A')?.title).toBe('A-last')
+      expect(AppStore.getChat('chat-B')?.title).toBe('B-last')
     })
 
     it('FALSIFIES: when single-flight is violated, racing writes leave a stale title', () => {
@@ -368,8 +364,11 @@ describe('persistenceDurability', () => {
       chat.title = 'after-approval'
       AppStore.saveChat(chat)
 
-      // The approval barrier must write through synchronously.
-      expect(persistedTitle('chat-approval')).toBe('after-approval')
+      // The first save opened the approval and materialized its compatibility
+      // checkpoint. The unchanged approval then uses the V2 mutation path.
+      expect(persistedTitle('chat-approval')).toBe('before-approval')
+      AppStore.clearChatRecordCacheForTests()
+      expect(AppStore.getChat('chat-approval')?.title).toBe('after-approval')
     })
 
     it('a history-deletion save has bytes on disk when the call returns', () => {
@@ -430,7 +429,7 @@ describe('persistenceDurability', () => {
   ─────────────────────────────────────────────────────────────────── */
 
   describe('crash safety — atomic rename + sync fallback', () => {
-    it('a worker crash mid-write leaves the file intact via atomic rename + sync fallback', async () => {
+    it('a compatibility-worker failure cannot corrupt mutation-authoritative state', async () => {
       process.env.TASKWRAITH_UTILITY_WRITE = '1'
 
       const chat = baseChat('chat-crash', [runningRun('run-c')])
@@ -450,20 +449,20 @@ describe('persistenceDurability', () => {
 
       await settleAllSaves()
 
-      // When the worker rejects, the store falls back to the synchronous
-      // path.  The file must contain 'fallback-write' — the sync fallback
-      // completed the save.  The critical invariant is that the file is
-      // VALID JSON (no partial write), not that it stayed stale.
+      // No full-record worker job is needed. Compatibility JSON stays valid,
+      // while cold replay returns the mutation-authoritative state.
       const record = persistedRecord('chat-crash')
       expect(record).not.toBeNull()
-      expect(record!.title).toBe('fallback-write')
+      expect(record!.title).toBe('pre-crash')
+      AppStore.clearChatRecordCacheForTests()
+      expect(AppStore.getChat('chat-crash')?.title).toBe('fallback-write')
 
       // The file must be valid, complete JSON — proving the sync fallback
       // is atomic and does not leave a partial artifact.
       const raw = fs.readFileSync(chatFilePath('chat-crash'), 'utf-8')
       expect(() => JSON.parse(raw)).not.toThrow()
       const reparsed = JSON.parse(raw)
-      expect(reparsed.title).toBe('fallback-write')
+      expect(reparsed.title).toBe('pre-crash')
     })
 
     it('falls back to synchronous write when the worker is unavailable', async () => {
@@ -483,9 +482,11 @@ describe('persistenceDurability', () => {
       chat.title = 'sync-fallback'
       AppStore.saveChat(chat)
 
-      // When the worker is unavailable the store must write synchronously.
+      // The removed hot rewrite no longer depends on worker availability.
       await settleAllSaves()
-      expect(persistedTitle('chat-fallback')).toBe('sync-fallback')
+      expect(persistedTitle('chat-fallback')).toBe('before-fallback')
+      AppStore.clearChatRecordCacheForTests()
+      expect(AppStore.getChat('chat-fallback')?.title).toBe('sync-fallback')
     })
 
     it('FALSIFIES: writing directly without atomic rename corrupts the file', () => {

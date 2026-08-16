@@ -1,10 +1,9 @@
 /**
  * T4c — which FlushReason each save emits, observed through real behaviour.
  *
- * The derivation is only meaningful if the barrier reasons actually stop a
- * save from sitting in a timer. These tests assert the OBSERVABLE consequence
- * (is the record on disk immediately, or only after the coalescing window?)
- * plus the recorded reason mix, rather than reaching into a private helper.
+ * Normal saves now fsync V2 mutations without scheduling a whole-record timer;
+ * barrier reasons still materialize compatibility checkpoints immediately.
+ * These tests assert those observable consequences and recorded reason mixes.
  *
  * Every status string used here was verified against the live type
  * definitions: `RunStatus` is success|success_with_warnings|failed|cancelled|
@@ -64,6 +63,10 @@ function reasonMix(): Record<string, number> {
   return AppStore.getPersistenceCoalescingStats().coalescer.reasonMix
 }
 
+function incrementalNormalSaves(): number {
+  return AppStore.getIncrementalChatPersistenceStats().boundaryMix.normal
+}
+
 describe('T4c save flush reason', () => {
   beforeEach(() => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
@@ -71,17 +74,18 @@ describe('T4c save flush reason', () => {
     fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
   })
 
-  it("defers a streaming save as 'normal'", () => {
+  it("persists a streaming save as an incremental 'normal' mutation", () => {
     const chat = baseChat('chat-streaming', [runningRun('run-live')])
     AppStore.saveChat(chat)
-    const before = reasonMix().normal
+    const before = incrementalNormalSaves()
 
     chat.title = 'deferred update'
     AppStore.saveChat(chat)
 
-    // Still the old title on disk: the save is sitting in the timer.
+    // The compatibility checkpoint stays cold; V2 already fsynced the delta.
     expect(persistedTitle('chat-streaming')).toBe('chat-streaming')
-    expect(reasonMix().normal).toBe(before + 1)
+    expect(AppStore.getChat('chat-streaming')?.title).toBe('deferred update')
+    expect(incrementalNormalSaves()).toBe(before + 1)
   })
 
   it("writes an idle save through immediately as 'terminal'", () => {

@@ -567,8 +567,9 @@ const saveCoalescer =
     : createSaveCoalescer(saveCoalesceMs, saveCoalesceMaxMs)
 
 /**
- * T4a: dual-write chat journal. Side-band this tranche — `chats/{id}.json`
- * stays read-authoritative, so a journal failure can never fail a save.
+ * T4a compatibility journal. V2 mutation replay now owns normal streaming
+ * saves; `chats/{id}.json` and this legacy journal materialize initial and
+ * barrier checkpoints (plus synchronous fallback when a V2 append fails).
  *
  * BYTE HONESTY: `append` writes the WHOLE record per save, so dual-write
  * roughly DOUBLES bytes-per-save rather than reducing them. That is expected
@@ -867,12 +868,14 @@ function persistIncrementalChat(
   previous: ChatRecord | null,
   next: ChatRecord,
   reason: FlushReason
-): void {
+): boolean {
   try {
     incrementalChatPersistence.persist(previous, next, incrementalPersistenceBoundary(reason))
+    return true
   } catch {
-    // Coordinator already records and logs the failure. Legacy remains the
-    // read-authoritative durability fallback throughout this dual-write phase.
+    // Coordinator already records and logs the failure. The caller must take
+    // the synchronous compatibility-checkpoint fallback for this exact save.
+    return false
   }
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
@@ -4722,6 +4725,10 @@ export class AppStore {
     historyDeletionFailureStepsForTests.clear()
   }
 
+  static clearChatRecordCacheForTests(): void {
+    this.chatRecordCache.clear()
+  }
+
   static setHistoryDeletionFailureInjectionForTests(steps: HistoryDeletionStep[]): void {
     historyDeletionFailureStepsForTests.clear()
     for (const step of steps) historyDeletionFailureStepsForTests.add(step)
@@ -5727,7 +5734,33 @@ export class AppStore {
     }
     const chat = readJson<ChatRecord | null>(chatPath, null)
     if (!chat) return null
-    const record = this.normalizeChatRecord(chat)
+    const legacyRecord = this.normalizeChatRecord(chat)
+    let record = legacyRecord
+    try {
+      const replayed = incrementalChatPersistence.replay(chatId).record
+      if (replayed) {
+        const incrementalRecord = this.normalizeChatRecord(replayed)
+        const legacyRevision = chatPersistenceRevision(legacyRecord)
+        const incrementalRevision = chatPersistenceRevision(incrementalRecord)
+        if (
+          incrementalRevision > legacyRevision ||
+          (incrementalRevision === legacyRevision &&
+            isDeepStrictEqual(incrementalRecord, legacyRecord))
+        ) {
+          record = incrementalRecord
+        } else if (incrementalRevision === legacyRevision) {
+          console.warn(
+            `[incremental-chat] equal-revision replay mismatch for ${chatId}; ` +
+              'using the compatibility checkpoint'
+          )
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[incremental-chat] replay failed for ${chatId}; using the compatibility checkpoint`,
+        error
+      )
+    }
     this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
     return record
   }
@@ -6828,10 +6861,10 @@ export class AppStore {
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
       return previousChatForFeedback || normalizedChat
     }
-    // T3a-1: If the file doesn't exist yet (first save of a new chat), write
-    // synchronously so filesystem enumeration (getChats, chat search, workspace
-    // filtering) sees the chat immediately. Subsequent saves on existing files
-    // are coalesced — those are the 8–14 rewrites/10s the T2 baseline measured.
+    // If the file doesn't exist yet, write one synchronous compatibility
+    // checkpoint so filesystem enumeration sees the chat immediately. Existing
+    // running chats persist mutation batches; approval/terminal saves refresh
+    // the compatibility file, as does the fail-safe path after a V2 error.
     // Stat of the bytes actually on disk, threaded into the chat-list index
     // entry below. Without it the entry carries no sourceChatMtimeMs/Size and
     // `getChatList` can never serve it from the index — every chat touched in a
@@ -6861,33 +6894,43 @@ export class AppStore {
         indexSourceStat = { mtimeMs: postStat.mtimeMs, size: postStat.size }
       }
     } else {
+      try {
+        const sourceStat = fs.statSync(chatPath)
+        indexSourceStat = { mtimeMs: sourceStat.mtimeMs, size: sourceStat.size }
+      } catch {
+        /* The compatibility checkpoint existed one branch decision ago. */
+      }
       // Optimistic cache with mtimeMs: -1 dirty marker — readChatRecordCached
-      // skips the file-stat check for dirty entries and returns the cached
-      // record directly.
+      // skips the compatibility-file stat and returns V2's current record.
       this.chatRecordCache.set(normalizedChat.appChatId, {
         mtimeMs: -1,
         size: -1,
         record: normalizedChat
       })
       const chatId = normalizedChat.appChatId
-      persistIncrementalChat(previousChatForFeedback, normalizedChat, flushReason)
-      saveCoalescer.schedule(
-        chatId,
-        () => {
+      const incrementalPersisted = persistIncrementalChat(
+        previousChatForFeedback,
+        normalizedChat,
+        flushReason
+      )
+      const legacyWriteReason: FlushReason = incrementalPersisted ? flushReason : 'terminal'
+      // Normal streaming saves are now complete once their mutation append is
+      // fsynced. Keep whole-record writes only at compatibility barriers.
+      if (legacyWriteReason !== 'normal') {
+        saveCoalescer.schedule(
+          chatId,
+          () => {
           const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
           // Everything that must happen AFTER the bytes land. Kept in one place
           // because the utility-write path runs it in the ACK continuation
           // rather than inline — running any of it early would publish a stat
           // for a file that has not been written yet.
           const settleAfterDurableWrite = (): void => {
-            // T4a INTEGRATION CONTRACT step 2: legacy write -> journal append.
-            // Ordering matters only between these two. A crash in between
-            // leaves the legacy file AHEAD of the journal, which is the safe
-            // direction because the legacy file is read-authoritative and the
-            // journal replays forward. The chat-list index write that follows
-            // is deliberately NOT ordered against these: it self-heals, because
-            // getChatList validates every entry against the chat file's
-            // mtime+size and rebuilds from the file on mismatch.
+            // Compatibility ordering: checkpoint file -> legacy journal. V2's
+            // mutation/checkpoint is already durable before this callback, so a
+            // crash between these two compatibility artifacts cannot lose the
+            // authoritative state. The chat-list index remains derived and
+            // self-heals from source metadata.
             appendChatJournalEntry(chatId, normalizedChat)
             try {
               const postStatActual = fs.statSync(chatPath)
@@ -6925,7 +6968,7 @@ export class AppStore {
             }
           }
 
-          const enqueueUtilityWrite = utilityWriteEnqueueFor(chatId, flushReason)
+          const enqueueUtilityWrite = utilityWriteEnqueueFor(chatId, legacyWriteReason)
           if (!enqueueUtilityWrite) {
             writeJson(chatPath, normalizedChat)
             settleAfterDurableWrite()
@@ -6951,9 +6994,10 @@ export class AppStore {
             .finally(() => {
               outstandingUtilityWriteChatIds.delete(chatId)
             })
-        },
-        flushReason
-      )
+          },
+          legacyWriteReason
+        )
+      }
     }
     // The chat-list-index write and harvests stay synchronous — they're cheap
     // thanks to T3c (incremental JSONL) and don't benefit from coalescing.
