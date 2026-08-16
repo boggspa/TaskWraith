@@ -3418,6 +3418,12 @@ interface ActiveRoundRuntime {
   /** Most recent foreground seat admitted by the serial loop. */
   lastForegroundParticipantId?: string
   midRunSteeringBoundaryState?: EnsembleMidRunSteeringBoundaryState
+  /** Active-goal drain is held until an undelivered user interjection can route. */
+  awaitingMidRunSteeringRecipient?: boolean
+  /** Prevent duplicate waiting rows for the same exact pending-entry set. */
+  midRunSteeringWaitVersion?: string
+  /** Coalesce successive user steers onto one post-handler recovery attempt. */
+  midRunSteeringResumeScheduled?: boolean
   /** Same-seat Path-B retry after discreet Cursor context-pressure recovery. */
   pendingCursorContextRecoveryParticipantId?: string
   /** At most one host recovery attempt per seat per round. */
@@ -4581,6 +4587,7 @@ export class EnsembleOrchestrator {
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
       ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })
+    this.scheduleWaitingMidRunSteeringResume(runtime)
     return {
       result: { status: 'steered', roundId: input.roundId },
       receipt
@@ -17403,6 +17410,8 @@ export class EnsembleOrchestrator {
       const deliveredTargetParticipantId = runtime.midRunSteeringTargetParticipantId
       runtime.midRunSteeringTargetParticipantId = undefined
       runtime.midRunSteeringBoundaryState = undefined
+      runtime.awaitingMidRunSteeringRecipient = false
+      runtime.midRunSteeringWaitVersion = undefined
       if (deliveredTargetParticipantId) {
         // The explicit handoff is complete. Do not let its earlier User
         // Fan-Out marker narrow the next Continuous pass back to that same
@@ -17447,15 +17456,104 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        'The user interjected at the round boundary, but no eligible foreground participant remained to receive it.'
+        'The user interjection is still pending: no eligible foreground participant accepted this delivery attempt.'
       )
       return null
     }
     if (plan.participant) {
+      runtime.awaitingMidRunSteeringRecipient = false
       runtime.userFanoutSerialParticipantIds ??= new Set()
       runtime.userFanoutSerialParticipantIds.add(plan.participant.id)
     }
     return plan.participant
+  }
+
+  /**
+   * A held round has no provider callback left to re-enter its drain tail. A
+   * later user steer is that recovery signal. Defer one microtask so the
+   * caller can first reserve any additive User Fan-Out lane; its normal lane
+   * settlement will then own the retry instead of racing a duplicate serial
+   * boundary dispatch.
+   */
+  private scheduleWaitingMidRunSteeringResume(runtime: ActiveRoundRuntime): void {
+    if (
+      !runtime.awaitingMidRunSteeringRecipient ||
+      runtime.midRunSteeringResumeScheduled ||
+      runtime.cancelled
+    ) {
+      return
+    }
+    runtime.awaitingMidRunSteeringRecipient = false
+    runtime.midRunSteeringResumeScheduled = true
+    queueMicrotask(() => {
+      runtime.midRunSteeringResumeScheduled = false
+      if (!this.ownsRunningRound(runtime)) return
+      if (this.deferDrainForActiveLanes(runtime)) return
+      const participant = this.takeMidRunSteeringBoundaryParticipant(runtime)
+      if (participant && !runtime.cancelled) {
+        void this.trackRoundActivity(
+          runtime,
+          this.runRound(runtime, [participant], { skipPreamble: true })
+        )
+        return
+      }
+      if (!runtime.cancelled && runtime.queuedPrompts.length === 0) {
+        const chat = this.deps.getChat(runtime.chatId)
+        if (chat) {
+          const continuationRoster = this.tryAutoContinueRound(runtime, chat)
+          if (continuationRoster && continuationRoster.length > 0 && !runtime.cancelled) {
+            void this.trackRoundActivity(
+              runtime,
+              this.runRound(runtime, continuationRoster, {
+                skipPreamble: true,
+                repeatOpeningScoutFanout: true
+              })
+            )
+            return
+          }
+        }
+      }
+      this.finalizeDrainedRound(runtime)
+    })
+  }
+
+  /**
+   * User input outranks ordinary completion. With an active goal, losing the
+   * last delivery candidate is recoverable state—not evidence that the round
+   * completed. Keep runtime ownership and the durable round open until a later
+   * steer changes the candidate version or a lane becomes eligible.
+   */
+  private holdActiveGoalForPendingMidRunSteering(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord | null | undefined
+  ): boolean {
+    if (
+      runtime.cancelled ||
+      runtime.returnedControlToUser ||
+      chat?.activeGoal?.status !== 'active'
+    ) {
+      runtime.awaitingMidRunSteeringRecipient = false
+      return false
+    }
+    const pendingIds = (this.deps.getPendingMidRunSteeringEntryIds?.(runtime.chatId) || []).filter(
+      Boolean
+    )
+    if (pendingIds.length === 0) {
+      runtime.awaitingMidRunSteeringRecipient = false
+      runtime.midRunSteeringWaitVersion = undefined
+      return false
+    }
+    runtime.awaitingMidRunSteeringRecipient = true
+    const pendingVersion = pendingIds.join('\u001f')
+    if (runtime.midRunSteeringWaitVersion !== pendingVersion) {
+      runtime.midRunSteeringWaitVersion = pendingVersion
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        'User interjection waiting · no eligible foreground participant accepted it. The active-goal round remains open and will retry after another steer or when an eligible lane becomes available.'
+      )
+    }
+    return true
   }
 
   /**
@@ -17470,6 +17568,7 @@ export class EnsembleOrchestrator {
     // this runtime. It owns neither another terminal projection nor teardown.
     if (!this.ownsRunningRound(runtime)) return
     const chat = this.deps.getChat(runtime.chatId)
+    if (this.holdActiveGoalForPendingMidRunSteering(runtime, chat)) return
     const continuationLimitStillOwnsClose =
       runtime.continuationLimitPending === true &&
       !runtime.cancelled &&
@@ -19293,6 +19392,11 @@ export class EnsembleOrchestrator {
     // autonomous panel pass. Once that participant answers/yields, control
     // returns to the user; agent mentions cannot widen the user's scope.
     if (runtime.dmTargetParticipantId) return null
+    // A mid-run @Seat is narrower but still authoritative while its message
+    // remains undelivered. Do not route that text to the wider Continuous
+    // panel merely because the requested recipient is temporarily ineligible;
+    // the drain invariant will hold the round in recoverable waiting instead.
+    if (runtime.midRunSteeringTargetParticipantId) return null
     // Stop once the goal leaves 'active' — completed (done), blocked, or paused.
     // Agents are prompted to call goal_complete when done and goal_blocked when
     // genuinely stuck; both hand control back to the user, so don't keep spinning

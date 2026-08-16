@@ -330,6 +330,80 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     })
   })
 
+  it('holds an active-goal round for pending steering and resumes from recoverable waiting', async () => {
+    const harness = makeHarness({
+      participants: [participant('work-1', 'codex', 1, { role: 'Work1' })],
+      rejectFirstBoundaryDispatch: true
+    })
+    harness.chat.activeGoal = {
+      id: 'goal-steering-wait',
+      objective: 'Finish the long-horizon task without losing user steering.',
+      status: 'active',
+      mode: 'taskwraith_steered',
+      provider: 'codex',
+      createdAt: '2026-07-29T03:00:00.000Z',
+      updatedAt: '2026-07-29T03:00:00.000Z'
+    }
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Begin the long-horizon task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: 'Preserve this interjection across the boundary.',
+        dmTargetParticipantId: 'work-1'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    stream(harness, 0, 'Original work completed.')
+    complete(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.accepted[1]).toBe(false)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('The active-goal round remains open')
+        )
+      ).toBe(true)
+    )
+    expect(harness.chat.ensemble?.activeRound).toMatchObject({
+      roundId: started.roundId,
+      status: 'running'
+    })
+    expect(harness.chat.ensemble?.activeRound?.endedAt).toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.dispatched).toHaveLength(2)
+
+    const participantState = harness.chat.ensemble!.activeRound!.participants[0]!
+    participantState.status = 'skipped'
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: 'Please retry now that Work1 is eligible again.',
+        dmTargetParticipantId: 'work-1'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.accepted[2]).toBe(true)
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('work-1')
+    expect(harness.dispatched[2].prompt).toContain('Please retry now that Work1 is eligible again.')
+    harness.chat.activeGoal!.status = 'completed'
+    stream(harness, 2, 'Recovered boundary answer.')
+    complete(harness, 2)
+    await vi.waitFor(() => {
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    })
+  })
+
   it('adds an immediate User Fan-Out for idle tags without interrupting the active speaker', async () => {
     const roster = [
       participant('codex', 'codex', 1, { role: 'Worker', stageRole: 'worker' }),
