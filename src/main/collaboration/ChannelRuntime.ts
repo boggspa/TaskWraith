@@ -61,6 +61,10 @@ import {
   type ChannelHumanReviewEntry,
   type ChannelHumanReviewStore
 } from './ChannelHumanReviewStore'
+import type {
+  ChannelExternalSeatPresence,
+  ChannelExternalSeatRuntimeAuthority
+} from './ChannelExternalSeatAuthority'
 
 const HANDSHAKE_TTL_MS = 2 * 60 * 1000
 const MAX_PENDING_HANDSHAKES = 32
@@ -71,6 +75,7 @@ const APPEND_RATE_WINDOW_MS = 60_000
 const MAX_APPENDS_PER_MEMBER_WINDOW = 120
 const MAX_OUTBOUND_FRAME_BYTES = 950_000
 const MAX_SNAPSHOT_MEMBERS = 64
+const PRESENCE_GRACE_MS = 90_000
 const HUMAN_REVIEW_AUDIT_DOMAIN = 'taskwraith.channel.human-review-audit.v1'
 
 function humanReviewAuditDedupeKey(kind: string, reviewId: string): string {
@@ -178,6 +183,12 @@ interface RuntimeSession {
   live: boolean
 }
 
+interface MemberPresenceRecord {
+  state: 'live' | 'grace' | 'expired'
+  since: number
+  graceEnteredAt?: number
+}
+
 function wireError(error: unknown): ChannelWireError {
   if (error instanceof ChannelError) {
     return { code: error.code, message: error.message.slice(0, 240) }
@@ -199,7 +210,7 @@ function safeCodeEquals(actual: string, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 
-export class ChannelRuntime {
+export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
   private readonly opts: ChannelRuntimeOptions
   private readonly now: () => number
   private readonly hostIdentityPubKeyB64: string
@@ -210,6 +221,8 @@ export class ChannelRuntime {
   private readonly quiescingChannels = new Set<string>()
   private readonly handshakeRates = new Map<string, number[]>()
   private readonly appendRates = new Map<string, number[]>()
+  private readonly memberPresenceByChannel = new Map<string, Map<string, MemberPresenceRecord>>()
+  private authorityReady = false
   private disposed = false
 
   constructor(options: ChannelRuntimeOptions) {
@@ -226,6 +239,81 @@ export class ChannelRuntime {
 
   hostIdentityPublicKey(): string {
     return this.hostIdentityPubKeyB64
+  }
+
+  /**
+   * Global recovery signal for the external-seat authority. The runtime starts
+   * NOT ready so that X1's projection fails closed until startup recovery has
+   * completed; a caller that serves the authority before this returns true can
+   * otherwise mistake a policy record lost mid-migration for a legitimate
+   * People fallback.
+   */
+  markRecovered(): void {
+    this.authorityReady = true
+  }
+
+  memberPresence(channelId: string, memberId: string): ChannelExternalSeatPresence {
+    if (!this.authorityReady || this.disposed || this.quiescingChannels.has(channelId)) {
+      return 'recovery_blocked'
+    }
+    const record = this.memberPresenceByChannel.get(channelId)?.get(memberId)
+    if (!record) return 'unknown'
+    return this.resolveMemberPresenceRecord(record)
+  }
+
+  private ensureMemberPresenceChannel(channelId: string): Map<string, MemberPresenceRecord> {
+    let forChannel = this.memberPresenceByChannel.get(channelId)
+    if (!forChannel) {
+      forChannel = new Map()
+      this.memberPresenceByChannel.set(channelId, forChannel)
+    }
+    return forChannel
+  }
+
+  private resolveMemberPresenceRecord(record: MemberPresenceRecord): ChannelExternalSeatPresence {
+    if (record.state === 'grace' && record.graceEnteredAt !== undefined) {
+      const elapsed = this.now() - record.graceEnteredAt
+      if (elapsed >= PRESENCE_GRACE_MS) {
+        record.state = 'expired'
+        record.since = this.now()
+        record.graceEnteredAt = undefined
+        return 'expired'
+      }
+      if (elapsed < 0) {
+        // Clock moved backwards (wake-from-sleep, NTP correction). Re-anchor
+        // rather than expire: a negative age is never evidence that someone left.
+        record.graceEnteredAt = this.now()
+      }
+    }
+    return record.state
+  }
+
+  private observeMemberPresence(channelId: string, memberId: string, now = this.now()): void {
+    const forChannel = this.ensureMemberPresenceChannel(channelId)
+    const record = forChannel.get(memberId)
+    if (record && record.state === 'expired') {
+      // Expiry is terminal for this record. A returning member arrives on a new
+      // session and must not be resurrected by a late frame on the dead one.
+      return
+    }
+    forChannel.set(memberId, {
+      state: 'live',
+      since: now,
+      graceEnteredAt: undefined
+    })
+  }
+
+  private noteMemberTransportClose(channelId: string, memberId: string, now = this.now()): void {
+    const record = this.memberPresenceByChannel.get(channelId)?.get(memberId)
+    if (!record || record.state !== 'live') return
+    record.state = 'grace'
+    record.since = now
+    record.graceEnteredAt = now
+  }
+
+  private expireMemberPresence(channelId: string, memberId: string, now = this.now()): void {
+    const forChannel = this.ensureMemberPresenceChannel(channelId)
+    forChannel.set(memberId, { state: 'expired', since: now })
   }
 
   createChannel(args: {
@@ -371,9 +459,15 @@ export class ChannelRuntime {
   }
 
   handleRoomDisconnected(roomId: string): void {
-    for (const [sessionId, session] of this.sessions) {
-      if (session.roomId !== roomId) continue
-      this.sessions.delete(sessionId)
+    const closing = [...this.sessions.values()].filter((session) => session.roomId === roomId)
+    for (const session of closing) {
+      const hasOtherLiveSession = [...this.sessions.values()].some(
+        (candidate) => candidate.memberId === session.memberId && candidate.roomId !== roomId
+      )
+      if (!hasOtherLiveSession && !this.quiescingChannels.has(session.channelId)) {
+        this.noteMemberTransportClose(session.channelId, session.memberId, this.now())
+      }
+      this.sessions.delete(session.sessionId)
       this.audit({
         kind: 'session.disconnected',
         channelId: session.channelId,
@@ -523,6 +617,7 @@ export class ChannelRuntime {
     this.assertChannelAccepting(args.channelId)
     return this.enqueueChannel(args.channelId, async () => {
       this.assertChannelAccepting(args.channelId)
+      this.expireMemberPresence(args.channelId, args.memberId, args.now ?? this.now())
       await this.flushApprovedHumanReviewsWithinQueue(args.channelId, args.memberId)
       const member = this.opts.store.revokeMember(args)
       const channel = this.opts.store.getChannel(args.channelId)
@@ -578,14 +673,17 @@ export class ChannelRuntime {
       for (const [sessionId, session] of this.sessions) {
         if (session.channelId === channelId) this.sessions.delete(sessionId)
       }
+      this.memberPresenceByChannel.delete(channelId)
       for (const roomId of roomIds) this.transport?.close(roomId)
     })
   }
 
   dispose(): void {
     this.disposed = true
+    this.authorityReady = false
     this.pending.clear()
     this.sessions.clear()
+    this.memberPresenceByChannel.clear()
     this.quiescingChannels.clear()
     this.transport = null
   }
@@ -852,6 +950,7 @@ export class ChannelRuntime {
       live: false
     }
     this.sessions.set(session.sessionId, session)
+    this.observeMemberPresence(pending.channelId, pending.memberId, now)
     this.audit({
       kind: pending.mode === 'admission' ? 'admission.confirmed' : 'session.reconnected',
       channelId: pending.channelId,

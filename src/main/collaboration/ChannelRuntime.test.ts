@@ -373,3 +373,157 @@ describe('ChannelRuntime durability boundary', () => {
     runtime.dispose()
   })
 })
+
+describe('ChannelRuntime memberPresence', () => {
+  function harness(now: () => number) {
+    const root = directory()
+    const store = new ChannelStore(join(root, 'channels.json'))
+    const log = new ChannelMessageLog(join(root, 'logs'), store)
+    const runtime = new ChannelRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      log,
+      now
+    })
+    return { root, store, log, runtime }
+  }
+
+  function presenceInternals(runtime: ChannelRuntime): {
+    observeMemberPresence(channelId: string, memberId: string, now?: number): void
+    noteMemberTransportClose(channelId: string, memberId: string, now?: number): void
+    expireMemberPresence(channelId: string, memberId: string, now?: number): void
+  } {
+    return runtime as unknown as {
+      observeMemberPresence(channelId: string, memberId: string, now?: number): void
+      noteMemberTransportClose(channelId: string, memberId: string, now?: number): void
+      expireMemberPresence(channelId: string, memberId: string, now?: number): void
+    }
+  }
+
+  it('blocks the whole projection until recovery is marked complete', () => {
+    const now = () => 1_000
+    const { runtime } = harness(now)
+    const created = runtime.createChannel({
+      chatId: 'chat-recovery-gate',
+      title: 'Recovery gate',
+      ownerDisplayName: 'Host'
+    })
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('recovery_blocked')
+    runtime.markRecovered()
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('unknown')
+    runtime.dispose()
+  })
+
+  it('restarts with unknown presence and is never optimistically present', () => {
+    let now = 1_000
+    const { store, log, runtime } = harness(() => now)
+    const created = runtime.createChannel({
+      chatId: 'chat-restart',
+      title: 'Restart',
+      ownerDisplayName: 'Host'
+    })
+    runtime.markRecovered()
+    presenceInternals(runtime).observeMemberPresence(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('live')
+    runtime.dispose()
+
+    const restarted = new ChannelRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      log,
+      now: () => now
+    })
+    restarted.markRecovered()
+    expect(restarted.memberPresence(created.channel.channelId, 'member-a')).toBe('unknown')
+    restarted.dispose()
+  })
+
+  it('keeps a disconnected member present through the grace window, then expires', () => {
+    let now = 1_000
+    const { runtime } = harness(() => now)
+    runtime.markRecovered()
+    const created = runtime.createChannel({
+      chatId: 'chat-grace',
+      title: 'Grace',
+      ownerDisplayName: 'Host'
+    })
+    const internals = presenceInternals(runtime)
+    internals.observeMemberPresence(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('live')
+    internals.noteMemberTransportClose(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('grace')
+    now += 89_999
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('grace')
+    now += 1
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('expired')
+    runtime.dispose()
+  })
+
+  it('closes the grace window on reconnect', () => {
+    let now = 1_000
+    const { runtime } = harness(() => now)
+    runtime.markRecovered()
+    const created = runtime.createChannel({
+      chatId: 'chat-reconnect',
+      title: 'Reconnect',
+      ownerDisplayName: 'Host'
+    })
+    const internals = presenceInternals(runtime)
+    internals.observeMemberPresence(created.channel.channelId, 'member-a', now)
+    internals.noteMemberTransportClose(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('grace')
+    internals.observeMemberPresence(created.channel.channelId, 'member-a', now + 10_000)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('live')
+    runtime.dispose()
+  })
+
+  it('expires immediately on revoke and never resurrects the dead record', () => {
+    let now = 1_000
+    const { runtime } = harness(() => now)
+    runtime.markRecovered()
+    const created = runtime.createChannel({
+      chatId: 'chat-revoke',
+      title: 'Revoke',
+      ownerDisplayName: 'Host'
+    })
+    const internals = presenceInternals(runtime)
+    internals.observeMemberPresence(created.channel.channelId, 'member-a', now)
+    internals.expireMemberPresence(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('expired')
+    internals.observeMemberPresence(created.channel.channelId, 'member-a', now + 1_000)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('expired')
+    runtime.dispose()
+  })
+
+  it('refuses presence while the channel is quiescing', async () => {
+    let now = 1_000
+    const { runtime } = harness(() => now)
+    runtime.markRecovered()
+    const created = runtime.createChannel({
+      chatId: 'chat-quiesce-presence',
+      title: 'Quiesce',
+      ownerDisplayName: 'Host'
+    })
+    presenceInternals(runtime).observeMemberPresence(created.channel.channelId, 'member-a', now)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('live')
+    const quiescing = runtime.quiesceChannel(created.channel.channelId)
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('recovery_blocked')
+    await expect(quiescing).resolves.toBeUndefined()
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('recovery_blocked')
+    runtime.dispose()
+  })
+
+  it('refuses presence after dispose', () => {
+    let now = 1_000
+    const { runtime } = harness(() => now)
+    runtime.markRecovered()
+    const created = runtime.createChannel({
+      chatId: 'chat-dispose',
+      title: 'Dispose',
+      ownerDisplayName: 'Host'
+    })
+    presenceInternals(runtime).observeMemberPresence(created.channel.channelId, 'member-a', now)
+    runtime.dispose()
+    expect(runtime.memberPresence(created.channel.channelId, 'member-a')).toBe('recovery_blocked')
+  })
+})
