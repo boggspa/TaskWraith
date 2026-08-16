@@ -526,6 +526,7 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
   const discoveryPath = path.join(userDataPath, 'taskwraith-host-v2.json')
   const tokenPath = path.join(userDataPath, 'taskwraith-host-v2.token')
   let appPid
+  let shutdownProven = false
   let smokePackageRoot = packageRoot
 
   try {
@@ -599,6 +600,7 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
     }
     await waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)
     appPid = null
+    shutdownProven = true
     console.log(
       `packaged TUI live control smoke ok (offline tw auto-start → windowless packaged Host → owner-only v2 discovery/token → authenticated snapshot, ${Buffer.byteLength(
         frame,
@@ -608,12 +610,24 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error))
   } finally {
-    if (appPid && smokeHostCommandMatches(appPid, userDataPath, packageTarget)) {
-      await stopProcess(appPid)
+    if (!shutdownProven && appPid) {
+      try {
+        await waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)
+        shutdownProven = true
+      } catch {
+        // Never signal a PID learned from discovery: the intended Host could
+        // exit and that PID could be reused before a TERM/KILL escalation.
+      }
     }
-    removeSmokeTree(userDataPath)
-    if (smokePackageRoot !== packageRoot) {
-      removeSmokeTree(smokePackageRoot)
+    if (!shutdownProven) {
+      console.warn(
+        `preserving disposable package-smoke artifacts after an unproven shutdown: ${userDataPath}`
+      )
+    } else {
+      removeSmokeTree(userDataPath)
+      if (smokePackageRoot !== packageRoot) {
+        removeSmokeTree(smokePackageRoot)
+      }
     }
   }
 }
@@ -1071,28 +1085,6 @@ function assertOwnerOnlyFile(filePath, label) {
 function formatChildOutput(chunks) {
   const detail = chunks.join('').trim()
   return detail ? `:\n${detail.slice(0, 16000)}` : ''
-}
-
-async function stopProcess(pid) {
-  try {
-    process.kill(pid, 'SIGTERM')
-  } catch {
-    return
-  }
-  const deadline = Date.now() + 5000
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0)
-    } catch {
-      return
-    }
-    await delay(50)
-  }
-  try {
-    process.kill(pid, 'SIGKILL')
-  } catch {
-    // Process exited between the final probe and escalation.
-  }
 }
 
 function delay(ms) {
