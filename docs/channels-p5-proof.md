@@ -247,6 +247,14 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
 - **Full platform packaging** (`build:mac`, `build:win`, `build:linux`) was
   never in P5 scope and was not run.
 
+**These are tracked forward in [`channels-p6-plan.md`](channels-p6-plan.md)** as
+verification gates for 1.9.7, so they cannot be lost when this record stops
+being read. That plan also records the platform-packaging exclusion as a ruling
+rather than an open question, and carries the watch-items that are **not**
+verification debt. It restates one thing this record insists on: the retained
+People substrate is **product state, not implementation debt**, and is not on
+that list.
+
 ## Named residuals
 
 These are the three things a reader must not have to discover.
