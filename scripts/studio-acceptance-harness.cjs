@@ -49,32 +49,27 @@ const STUDIO_JOURNEY_OVERLAY_POINTS = 118
 const STUDIO_JOURNEY_PIXEL_DELTA = 16
 const STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_PIXELS = 32
 const STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_FRACTION = 0.00002
-// Pinned measurement of the generated testsrc2 plane at the proposal fixture's
-// exact source/current times: frames 30 and 90 at 30 fps, scaled to the 1280x720
-// capture plane and cropped above the 118-point overlay. The 619,520 material
-// pixels change by 34,958 (5.6427557%), occupy 9/12 cells, and span both axes.
-// The acceptance floor retains a 4x fraction margin, one full grid-row margin,
-// and half of each measured span; those margins are explicit evidence policy,
-// not a replacement for the calibration.
-const STUDIO_JOURNEY_MATERIAL_CALIBRATION = Object.freeze({
-  generator: 'testsrc2=size=1920x1080:rate=30',
-  comparedFrameIndices: [30, 90],
-  scaledCaptureSize: '1280x720',
-  materialPixelCount: 619_520,
-  changedPixelCount: 34_958,
-  changedPixelFraction: 34_958 / 619_520,
-  occupiedCellCount: 9,
-  horizontalSpanFraction: 1,
-  verticalSpanFraction: 1
+// Fixed fail-closed policy for material-plane evidence. These limits are not
+// an empirical claim about a particular ffmpeg build or decoded frame pair:
+// executable controls prove that distributed video-plane change passes while
+// localized overlay noise does not.
+const STUDIO_JOURNEY_MATERIAL_POLICY = Object.freeze({
+  kind: 'fixed-spatial-material-change-policy',
+  basis: 'fixed-acceptance-policy-not-measured-calibration',
+  gridColumns: 4,
+  gridRows: 3,
+  minimumChangedFraction: 0.014,
+  minimumOccupiedCells: 6,
+  minimumSpanFraction: 0.5,
+  occupiedCellPixelDivisor: 256
 })
-const STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS = 4
-const STUDIO_JOURNEY_MATERIAL_GRID_ROWS = 3
+const STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS = STUDIO_JOURNEY_MATERIAL_POLICY.gridColumns
+const STUDIO_JOURNEY_MATERIAL_GRID_ROWS = STUDIO_JOURNEY_MATERIAL_POLICY.gridRows
 const STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS =
-  STUDIO_JOURNEY_MATERIAL_CALIBRATION.occupiedCellCount - STUDIO_JOURNEY_MATERIAL_GRID_ROWS
+  STUDIO_JOURNEY_MATERIAL_POLICY.minimumOccupiedCells
 const STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION =
-  STUDIO_JOURNEY_MATERIAL_CALIBRATION.changedPixelFraction / 4
-const STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION =
-  STUDIO_JOURNEY_MATERIAL_CALIBRATION.horizontalSpanFraction / 2
+  STUDIO_JOURNEY_MATERIAL_POLICY.minimumChangedFraction
+const STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION = STUDIO_JOURNEY_MATERIAL_POLICY.minimumSpanFraction
 const STUDIO_JOURNEY_CAPTURE_MAX_BYTES = 64 * 1024 * 1024
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
@@ -3299,7 +3294,9 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
   const gridCellPixelCount = Math.ceil(
     pixelCount / (STUDIO_JOURNEY_MATERIAL_GRID_COLUMNS * STUDIO_JOURNEY_MATERIAL_GRID_ROWS)
   )
-  const minimumChangedPixelsPerOccupiedCell = Math.ceil(gridCellPixelCount / 256)
+  const minimumChangedPixelsPerOccupiedCell = Math.ceil(
+    gridCellPixelCount / STUDIO_JOURNEY_MATERIAL_POLICY.occupiedCellPixelDivisor
+  )
   const occupiedCellCount = materialCellCounts
     ? materialCellCounts.filter((count) => count >= minimumChangedPixelsPerOccupiedCell).length
     : 0
@@ -3352,7 +3349,7 @@ function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, regio
             minimumChangedFraction: STUDIO_JOURNEY_MATERIAL_MIN_CHANGED_FRACTION,
             minimumOccupiedCells: STUDIO_JOURNEY_MATERIAL_MIN_OCCUPIED_CELLS,
             minimumSpanFraction: STUDIO_JOURNEY_MATERIAL_MIN_SPAN_FRACTION,
-            calibration: STUDIO_JOURNEY_MATERIAL_CALIBRATION
+            policy: STUDIO_JOURNEY_MATERIAL_POLICY
           }
         : {
             minimumChangedPixels: STUDIO_JOURNEY_TIMELINE_MIN_CHANGED_PIXELS,

@@ -3779,15 +3779,25 @@ describe('Studio acceptance harness', () => {
         occupiedCellCount: expect.any(Number)
       },
       threshold: {
-        calibration: {
-          generator: 'testsrc2=size=1920x1080:rate=30',
-          comparedFrameIndices: [30, 90],
-          materialPixelCount: 619_520,
-          changedPixelCount: 34_958,
-          occupiedCellCount: 9
+        channelDelta: 16,
+        minimumChangedFraction: 0.014,
+        minimumOccupiedCells: 6,
+        minimumSpanFraction: 0.5,
+        policy: {
+          kind: 'fixed-spatial-material-change-policy',
+          basis: 'fixed-acceptance-policy-not-measured-calibration',
+          gridColumns: 4,
+          gridRows: 3,
+          minimumChangedFraction: 0.014,
+          minimumOccupiedCells: 6,
+          minimumSpanFraction: 0.5,
+          occupiedCellPixelDivisor: 256
         }
       }
     })
+    expect(
+      compareStudioJourneyCaptures(baseline, material, bounds, 'material').threshold
+    ).not.toHaveProperty('calibration')
     expect(compareStudioJourneyCaptures(baseline, timeline, bounds, 'timeline')).toMatchObject({
       ok: true,
       region: 'timeline'
