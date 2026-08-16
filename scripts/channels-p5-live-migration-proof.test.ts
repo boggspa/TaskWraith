@@ -83,9 +83,11 @@ describe('Channels P5 disposable-profile live migration proof', () => {
         status: 'passed',
         profileKind: 'disposable',
         relaunchCount: 4,
-        assertionCount: 12
+        assertionCount: 14
       })
       expect(result.mission.assertions).toMatchObject({
+        inheritedPeopleShareUnreadableAfterMigration: true,
+        channelOnlyMatchesTransitionalAfterUpgrade: true,
         corruptChannelRecoveryBlocked: true,
         blockedEnsembleDeliveryDeferred: true,
         queuedEntrySurvivedBlockedRelaunch: true,
@@ -93,7 +95,7 @@ describe('Channels P5 disposable-profile live migration proof', () => {
         queuedEntryDeliveredExactlyOnce: true,
         queueSettlementSurvivedFinalRelaunch: true
       })
-      expect(Object.values(result.mission.assertions)).toEqual(Array(12).fill(true))
+      expect(Object.values(result.mission.assertions)).toEqual(Array(14).fill(true))
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

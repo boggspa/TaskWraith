@@ -93,7 +93,7 @@ function runMission(workRoot) {
   assertProof(mission.status === 'passed', 'mission did not pass')
   assertProof(mission.profileKind === 'disposable', 'mission did not use a disposable profile')
   assertProof(mission.relaunchCount >= 3, 'mission did not perform multiple relaunches')
-  assertProof(mission.assertionCount === 12, 'E2a assertion count changed')
+  assertProof(mission.assertionCount === 14, 'E2 assertion count changed')
   assertProof(
     Object.values(mission.assertions).every((value) => value === true),
     'mission contains a failed assertion'

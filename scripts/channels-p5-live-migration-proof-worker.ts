@@ -196,21 +196,32 @@ interface ExternalSeat {
   enabled: boolean
 }
 
+function seatAuthority(
+  service: ChannelProductionService,
+  people: HumanCollaborationStore,
+  mode: 'transitional' | 'channel_only'
+): ChannelExternalSeatAuthority {
+  return new ChannelExternalSeatAuthority({
+    channelStore: service.externalSeatChannelStore(),
+    humanPolicyStore: service.externalSeatHumanPolicyStore(),
+    runtime: service.externalSeatRuntimeAuthority(),
+    legacy:
+      mode === 'transitional'
+        ? {
+            mode,
+            shareStore: people,
+            resolvePresence: () => 'unknown'
+          }
+        : { mode }
+  })
+}
+
 function externalSeatResolver(
   service: ChannelProductionService,
   people: HumanCollaborationStore
 ): () => readonly ExternalSeat[] {
   return () => {
-    const resolution = new ChannelExternalSeatAuthority({
-      channelStore: service.externalSeatChannelStore(),
-      humanPolicyStore: service.externalSeatHumanPolicyStore(),
-      runtime: service.externalSeatRuntimeAuthority(),
-      legacy: {
-        mode: 'transitional',
-        shareStore: people,
-        resolvePresence: () => 'unknown'
-      }
-    }).resolve(CHAT_ID)
+    const resolution = seatAuthority(service, people, 'transitional').resolve(CHAT_ID)
     if (resolution.state !== 'ready') return []
     return resolution.seats.map((seat) => ({
       shareId: '',
@@ -276,23 +287,30 @@ async function main(): Promise<void> {
     initial.service.status().recoveryBlockedChannelCount === 0,
     'initial launch blocked'
   )
-  const initialResolution = new ChannelExternalSeatAuthority({
-    channelStore: initial.service.externalSeatChannelStore(),
-    humanPolicyStore: initial.service.externalSeatHumanPolicyStore(),
-    runtime: initial.service.externalSeatRuntimeAuthority(),
-    legacy: {
-      mode: 'transitional',
-      shareStore: new HumanCollaborationStore(sourcePath),
-      resolvePresence: () => 'unknown'
-    }
-  }).resolve(CHAT_ID)
+  const migratedPeople = new HumanCollaborationStore(sourcePath)
+  const initialResolution = seatAuthority(initial.service, migratedPeople, 'transitional').resolve(
+    CHAT_ID
+  )
+  const channelOnlyResolution = seatAuthority(
+    initial.service,
+    migratedPeople,
+    'channel_only'
+  ).resolve(CHAT_ID)
   assertMission(initialResolution.state === 'ready', 'initial seat authority was not ready')
   assertMission(
     initialResolution.seats.filter((seat) => seat.seatId === COLLABORATOR_ID).length === 1,
     'migrated Channel collaborator did not project exactly once'
   )
   assertMission(
-    new HumanCollaborationStore(sourcePath).listShares().length === 0,
+    migratedPeople.getShareForChat(CHAT_ID) === null,
+    'transitional authority could still read the inherited People share after migration'
+  )
+  assertMission(
+    JSON.stringify(channelOnlyResolution) === JSON.stringify(initialResolution),
+    'Channel-only authority changed the resolved upgrade-profile seats'
+  )
+  assertMission(
+    migratedPeople.listShares().length === 0,
     'ordinary People share survived terminal migration'
   )
   await initial.stop()
@@ -395,6 +413,8 @@ async function main(): Promise<void> {
     workerCreatedDisposableProfile: true,
     migrationCommitted: true,
     ordinaryPeopleShareRetired: true,
+    inheritedPeopleShareUnreadableAfterMigration: true,
+    channelOnlyMatchesTransitionalAfterUpgrade: true,
     initialChannelReady: true,
     migratedChannelSeatProjected: true,
     durableContributionApproved: true,
