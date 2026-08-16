@@ -434,7 +434,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('blocks presence on a recovery_blocked channel even when a member was live', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-channel-blocked',
@@ -451,7 +451,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('restarts blocked until the service certifies the channel, then unknown', () => {
-    let now = 1_000
+    const now = 1_000
     const { store, log, runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-restart',
@@ -497,7 +497,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('closes the grace window on reconnect', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-reconnect',
@@ -514,7 +514,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('expires immediately on revoke and a validated new admission returns live', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-revoke',
@@ -534,7 +534,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('refuses presence while the channel is quiescing', async () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-quiesce-presence',
@@ -551,7 +551,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('refuses presence after dispose', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-dispose',
@@ -582,7 +582,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('classifies a transient session loss as grace, not expiry', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-transport-failure',
@@ -602,7 +602,7 @@ describe('ChannelRuntime memberPresence', () => {
   })
 
   it('classifies a trust-bearing session failure as immediate expiry', () => {
-    let now = 1_000
+    const now = 1_000
     const { runtime } = harness(() => now)
     const created = runtime.createChannel({
       chatId: 'chat-trust-failure',

@@ -33,7 +33,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { spawn, spawnSync } = require('node:child_process')
+const { spawnSync } = require('node:child_process')
 const { createServer } = require('node:net')
 const { createWindowsCmdInvocation } = require('./windows-cmd-invocation.cjs')
 const { assertNodeRuntimeLicense } = require('./node-runtime-license.cjs')

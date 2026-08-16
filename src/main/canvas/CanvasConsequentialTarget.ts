@@ -82,7 +82,7 @@ export interface CanvasConsequentialAssessment {
 /**
  * Normalize a page-supplied label for matching: collapse whitespace, strip
  * anything that is not a letter, digit or space, and lowercase. This keeps
- * "Delete Account", "DELETE ACCOUNT!", and "delete-account" equivalent
+ * "Delete Account", "DELETE ACCOUNT!", and "delete-account" equivalent
  * without letting punctuation-splitting hide a term.
  */
 export function normalizeTargetLabel(raw: string | null | undefined): string {

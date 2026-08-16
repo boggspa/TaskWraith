@@ -6,7 +6,7 @@ import { HostLifecycleController } from './HostLifecycleController'
 function supervisor(overrides: Partial<HostSupervisor> = {}): HostSupervisor {
   let running = false
   let stopped = false
-  let connectedClientCount = 0
+  const connectedClientCount = 0
   const value: HostSupervisor = {
     start: vi.fn(async () => {
       running = true
