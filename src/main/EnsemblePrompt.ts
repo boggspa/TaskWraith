@@ -1326,6 +1326,18 @@ export function buildEnsembleParticipantPromptProjection(
     excludeCurrentRoundUserPrompt ? { excludeEnsembleRoundPromptRoundId: input.roundId } : undefined
   )
   const transcript = transcriptProjection.text
+  const requestPresentation = presentEnsembleRequest(input)
+  // A latest host steer may be outside the bounded transcript window. Treat
+  // its durable row as part of the accepted prompt anyway so the dispatch
+  // receipt can prove that this explicit direction reached the provider.
+  const projectionInput = requestPresentation.messageId
+    ? {
+        ...input,
+        currentPrompt: requestPresentation.text,
+        currentPromptLabel: requestPresentation.label,
+        currentPromptMessageId: requestPresentation.messageId
+      }
+    : input
 
   // Ollama locals get a request-first capsule instead of the full Rules
   // encyclopaedia — small models bury the ask under Boss/fan-out prose and
@@ -1358,8 +1370,8 @@ export function buildEnsembleParticipantPromptProjection(
         stageRole: input.participant.stageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
-        currentPrompt: sanitizeText(input.currentPrompt),
-        currentPromptLabel: input.currentPromptLabel,
+        currentPrompt: requestPresentation.text,
+        currentPromptLabel: requestPresentation.label,
         roster: roster || '- No other enabled participants.',
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
@@ -1387,7 +1399,7 @@ export function buildEnsembleParticipantPromptProjection(
     return participantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
-      input,
+      projectionInput,
       capsuleProjection.suppliedMessageIds
     )
   }
@@ -1419,8 +1431,8 @@ export function buildEnsembleParticipantPromptProjection(
         stageRole: input.participant.stageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
-        currentPrompt: sanitizeText(input.currentPrompt),
-        currentPromptLabel: input.currentPromptLabel,
+        currentPrompt: requestPresentation.text,
+        currentPromptLabel: requestPresentation.label,
         roster,
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
@@ -1448,7 +1460,7 @@ export function buildEnsembleParticipantPromptProjection(
     return participantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
-      input,
+      projectionInput,
       capsuleProjection.suppliedMessageIds
     )
   }
@@ -1533,15 +1545,15 @@ export function buildEnsembleParticipantPromptProjection(
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
       '',
-      input.currentPromptLabel || 'Current user request:',
-      sanitizeText(input.currentPrompt),
+      requestPresentation.label || 'Current user request:',
+      requestPresentation.text,
       ...(advisoryTurnBoundary ? ['', advisoryTurnBoundary] : []),
       '',
       yieldExecutionCheck,
       '',
       `Respond now as [${participantLabel}].`
     ].join('\n')
-    return participantPromptProjection(prompt, deltaTranscriptProjection, input)
+    return participantPromptProjection(prompt, deltaTranscriptProjection, projectionInput)
   }
 
   const prompt = [
@@ -1842,15 +1854,63 @@ export function buildEnsembleParticipantPromptProjection(
     'Recent tagged transcript:',
     transcript || '[No prior transcript]',
     '',
-    input.currentPromptLabel || 'Current user request:',
-    sanitizeText(input.currentPrompt),
+    requestPresentation.label || 'Current user request:',
+    requestPresentation.text,
     ...(advisoryTurnBoundary ? ['', advisoryTurnBoundary] : []),
     '',
     yieldExecutionCheck,
     '',
     `Respond now as [${participantLabel}].`
   ].join('\n')
-  return participantPromptProjection(prompt, transcriptProjection, input)
+  return participantPromptProjection(prompt, transcriptProjection, projectionInput)
+}
+
+/**
+ * Keep a long-lived round's opening request from masquerading as the newest
+ * user instruction after a mid-run steer. The round prompt is intentionally
+ * immutable for routing/recovery, so the prompt surface must name it as
+ * historical and lift the newest in-round host steer into an explicit,
+ * receipt-backed request block. Only rows from this active round qualify;
+ * older round steers must not be resurrected in a fresh round.
+ */
+function presentEnsembleRequest(input: BuildEnsemblePromptInput): {
+  label?: string
+  text: string
+  messageId?: string
+} {
+  const defaultPresentation = {
+    label: input.currentPromptLabel,
+    text: sanitizeText(input.currentPrompt)
+  }
+  if (input.currentPromptLabel) return defaultPresentation
+  const activeRound = input.config.activeRound
+  if (!activeRound || activeRound.roundId !== input.roundId) return defaultPresentation
+  const roundStartedAt = Date.parse(activeRound.startedAt)
+  const latestSteering = [...(input.chat.messages || [])].reverse().find((message) => {
+    if (
+      message.role !== 'user' ||
+      message.metadata?.kind !== 'midRunSteering' ||
+      message.metadata?.sourceTrust === 'external_untrusted'
+    ) {
+      return false
+    }
+    const messageAt = Date.parse(message.timestamp)
+    return (
+      !Number.isFinite(roundStartedAt) || !Number.isFinite(messageAt) || messageAt >= roundStartedAt
+    )
+  })
+  if (!latestSteering) return defaultPresentation
+  return {
+    label: 'Current user direction (latest steering):',
+    text: [
+      'Latest host steering (current direction; follow this over the opening request):',
+      sanitizeText(latestSteering.content),
+      '',
+      'Round-opening request (historical context):',
+      defaultPresentation.text
+    ].join('\n'),
+    messageId: latestSteering.id
+  }
 }
 
 function sessionEventFingerprint(event: SessionActivityLedgerEntry): string {
@@ -2348,12 +2408,10 @@ function participantPromptProjection(
   const suppliedMessageIds = exactSuppliedMessageIds
     ? [...exactSuppliedMessageIds]
     : [...transcript.suppliedMessageIds]
-  if (
-    !exactSuppliedMessageIds &&
-    input.currentPromptMessageId &&
-    sanitizeText(input.currentPrompt)
-  ) {
-    suppliedMessageIds.push(input.currentPromptMessageId)
+  if (input.currentPromptMessageId && sanitizeText(input.currentPrompt)) {
+    if (!suppliedMessageIds.includes(input.currentPromptMessageId)) {
+      suppliedMessageIds.push(input.currentPromptMessageId)
+    }
   }
   const suppliedSet = new Set(suppliedMessageIds)
   const suppliedRows = transcript.suppliedRows.filter((row) => suppliedSet.has(row.messageId))

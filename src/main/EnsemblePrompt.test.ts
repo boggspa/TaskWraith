@@ -709,6 +709,126 @@ describe('Ensemble prompt composition', () => {
     }
   })
 
+  it('surfaces the newest in-round steer instead of treating the opening prompt as current', () => {
+    const openingPrompt = 'Lets continue 🙂'
+    const latestSteer = 'Stop here — respect the wind-down, no more scope tonight'
+    const liveConfig: EnsembleConfig = {
+      ...ensemble,
+      ensembleContextChars: 5_000,
+      activeRound: {
+        roundId: 'round-live',
+        status: 'running',
+        prompt: openingPrompt,
+        startedAt: '2026-08-16T09:24:09.332Z',
+        participants: ensemble.participants.map((participant) => ({
+          participantId: participant.id,
+          provider: participant.provider,
+          role: participant.role,
+          order: participant.order,
+          status: 'idle' as const
+        }))
+      }
+    }
+    const shared = {
+      ...chat(),
+      ensemble: liveConfig,
+      messages: [
+        ...chat().messages,
+        buildMidRunSteeringMessage({
+          id: 'latest-steer',
+          content: latestSteer,
+          timestampIso: '2026-08-16T21:18:52.327Z',
+          author: HOST_MIDRUN_STEERING_AUTHOR
+        }),
+        ...Array.from({ length: 12 }, (_, index) => ({
+          id: `newer-${index}`,
+          role: 'assistant' as const,
+          content: `Newer lane update ${index}`,
+          timestamp: `2026-08-16T21:19:${String(index).padStart(2, '0')}.000Z`,
+          metadata: {
+            ensembleParticipantId: 'claude',
+            ensembleProvider: 'claude' as const,
+            ensembleRole: 'Reviewer'
+          }
+        }))
+      ]
+    }
+
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: shared,
+      config: liveConfig,
+      participant: liveConfig.participants[1],
+      currentPrompt: openingPrompt,
+      roundId: 'round-live',
+      chatContextTurns: 1
+    })
+
+    expect(projection.prompt).toContain('Current user direction (latest steering):')
+    expect(projection.prompt).toContain(
+      'Round-opening request (historical context):\nLets continue 🙂'
+    )
+    expect(projection.prompt).toContain(
+      `Latest host steering (current direction; follow this over the opening request):\n${latestSteer}`
+    )
+    expect(projection.prompt).not.toContain(`Current user request:\n${openingPrompt}`)
+    expect(projection.suppliedMessageIds).toContain('latest-steer')
+  })
+
+  it('does not resurrect a steer from a previous round into the current request block', () => {
+    const liveConfig: EnsembleConfig = {
+      ...ensemble,
+      activeRound: {
+        roundId: 'round-new',
+        status: 'running',
+        prompt: 'Continue the current review.',
+        startedAt: '2026-08-16T21:00:00.000Z',
+        participants: ensemble.participants.map((participant) => ({
+          participantId: participant.id,
+          provider: participant.provider,
+          role: participant.role,
+          order: participant.order,
+          status: 'idle' as const
+        }))
+      }
+    }
+    const shared = {
+      ...chat(),
+      ensemble: liveConfig,
+      messages: [
+        ...chat().messages,
+        buildMidRunSteeringMessage({
+          id: 'old-steer',
+          content: 'Old round instruction',
+          timestampIso: '2026-08-16T20:59:59.000Z',
+          author: HOST_MIDRUN_STEERING_AUTHOR
+        }),
+        ...Array.from({ length: 4 }, (_, index) => ({
+          id: `current-${index}`,
+          role: 'assistant' as const,
+          content: `Current round update ${index}`,
+          timestamp: `2026-08-16T21:00:0${index}.000Z`,
+          metadata: {
+            ensembleParticipantId: 'claude',
+            ensembleProvider: 'claude' as const,
+            ensembleRole: 'Reviewer'
+          }
+        }))
+      ]
+    }
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: liveConfig,
+      participant: liveConfig.participants[1],
+      currentPrompt: 'Continue the current review.',
+      roundId: 'round-new',
+      chatContextTurns: 1
+    })
+
+    expect(prompt).toContain('Current user request:\nContinue the current review.')
+    expect(prompt).not.toContain('Current user direction (latest steering):')
+  })
+
   it('keeps the current user request alongside a peer-authored fan-out lane request', () => {
     const originalRequest = 'Inspect only the routing code.'
     const peerLaneRequest = 'Compare the retry paths, then report only concrete race risks.'
