@@ -29,7 +29,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
-    '63ef25eaeaf01105ccf2492062b627f0ba95989b261190c47426efe25f6826bc',
+    '779388aa4f4c31674c99bca16b8e9fd56e9743c651bac3f2d9f409f7b6cbe627',
   '.local-only/taskwraith-studio/acceptance/w1acc10e/studio-hud-ocr.swift':
     '504e17abc6f6781e936babe5288100178e3c12d5400d91c31816b2f3f0f8b7f2',
   '.local-only/taskwraith-studio/acceptance/w1acc10e/input-isolation-snapshot.swift':
@@ -50,7 +50,7 @@ const companionPath = path.join(
 )
 const runnerPath = __filename
 const harness = require(path.join(repoRoot, 'scripts', 'studio-acceptance-harness.cjs'))
-const { compareWindowCaptureToReference } = require(
+const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS, compareWindowCaptureToReference } = require(
   path.join(repoRoot, 'scripts', 'studio-pixel-evidence-verifier.cjs')
 )
 const { attachMainInspectorSession, attachRendererCdpSession, discoverMainInspectorUrl } = require(
@@ -545,7 +545,7 @@ function evaluatePureRedCapture({
   capturePath,
   referencePath,
   windowBounds,
-  hudOverlayHeight = 92
+  hudOverlayHeight = DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
 }) {
   const comparator = compareWindowCaptureToReference(capturePath, referencePath, windowBounds, {
     hudOverlayHeight

@@ -170,6 +170,37 @@ async function temporaryDirectory(): Promise<string> {
   return directory
 }
 
+function writeDefaultOverlayCapture(destination: string): void {
+  const width = 320
+  const height = 210
+  const titleBarHeight = 30
+  const videoHeight = 180
+  const timelineTop = videoHeight - (84 + 34)
+  const hudTop = videoHeight - 92
+  const image = new PNG({ width, height })
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4
+      const videoY = y - titleBarHeight
+      if (y < titleBarHeight) {
+        image.data[offset] = 48
+        image.data[offset + 1] = 48
+        image.data[offset + 2] = 48
+      } else if (videoY >= timelineTop && videoY < hudTop) {
+        image.data[offset] = 0
+        image.data[offset + 1] = 255
+        image.data[offset + 2] = 0
+      } else {
+        image.data[offset] = 255
+        image.data[offset + 1] = 0
+        image.data[offset + 2] = 0
+      }
+      image.data[offset + 3] = 255
+    }
+  }
+  fs.writeFileSync(destination, PNG.sync.write(image))
+}
+
 function writeCapture(
   destination: string,
   mode: 'pure-red' | 'ungraded' | 'uniform-gray' | 'partial-red'
@@ -584,6 +615,32 @@ describe('studio LUT acceptance runner contract', () => {
     expect(() => parseCli(['--artifact-root', '/tmp/example', '--unknown'])).toThrow(
       /unknown argument/
     )
+  })
+
+  it('uses the verifier overlay default for LUT material-color gates', async () => {
+    const directory = await temporaryDirectory()
+    const capturePath = path.join(directory, 'capture.png')
+    const referencePath = path.join(directory, 'synthetic-red.png')
+    writeDefaultOverlayCapture(capturePath)
+    createSyntheticRedReference({
+      destination: referencePath,
+      width: 320,
+      height: 180
+    })
+
+    const result = evaluatePureRedCapture({
+      capturePath,
+      referencePath,
+      windowBounds: { width: 320, height: 210 }
+    })
+
+    expect(result.clean).toBe(true)
+    expect(result.comparator.registration).toMatchObject({
+      logicalHudOverlayHeight: 118,
+      comparisonHeight: 62,
+      videoHeight: 180
+    })
+    expect(result.absolute.redDominantFraction).toBe(1)
   })
 
   it('accepts a pure-red material plane through the real comparator and absolute gate', async () => {

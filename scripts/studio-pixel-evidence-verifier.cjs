@@ -28,6 +28,10 @@ const VISUAL_THRESHOLDS = Object.freeze({
   maximumFractionAbove80: 0.01
 })
 
+// StudioOverlayMetrics.hudHeight is 92 points. The timeline reaches higher:
+// StudioTimelineMetrics.bandBottomInset 84 + bandHeight 34 = 118 points.
+const DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS = Math.max(92, 84 + 34)
+
 const EXPECTED = Object.freeze({
   evidenceSha256: '331d60817d598c4838444c7918f9bc794e3855bb7513f567815f6d8c6b5678cc',
   fixtureSha256: 'f7e39d4237fe1e408a76d213a322f60a8788eeaedac5252d95677135b08380f9',
@@ -189,7 +193,8 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   const topShadowPixels =
     verticalShadowPixels === 0 ? 0 : (verticalShadowPixels - 16 * backingScale) / 2
   const captureY = captureExtent.y + topShadowPixels + titleBarHeight
-  const logicalHudOverlayHeight = options.hudOverlayHeight ?? 92
+  const logicalHudOverlayHeight =
+    options.hudOverlayHeight ?? DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
   const hudOverlayHeight = logicalHudOverlayHeight * backingScale
   const comparisonHeight = videoHeight - hudOverlayHeight
   invariant(
@@ -646,6 +651,7 @@ if (require.main === module) {
 
 module.exports = {
   CYCLES,
+  DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS,
   DEFAULT_VISUAL_REFERENCES,
   EXPECTED,
   VISUAL_THRESHOLDS,

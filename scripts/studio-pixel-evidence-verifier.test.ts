@@ -7,11 +7,13 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
+  DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS,
   EXPECTED,
   compareWindowCaptureToReference,
   expectedValueSequence,
   verifyStudioPixelEvidence
 } = require('./studio-pixel-evidence-verifier.cjs') as {
+  DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS: number
   EXPECTED: {
     cycleTwoScreenshotSha256: string
     finalContentPtsSeconds: number
@@ -263,6 +265,69 @@ function createVisualFixture(corrupt: boolean, backingScale = 1) {
   }
 }
 
+function createDefaultOverlayFixture(mutation: 'timeline-band' | 'above-timeline' | 'wrong-frame') {
+  const directory = mkdtempSync(join(tmpdir(), 'studio-overlay-mask-'))
+  const referencePath = join(directory, 'reference.png')
+  const capturePath = join(directory, 'capture.png')
+  const reference = new PNG({ width: 64, height: 36 })
+  for (let y = 0; y < reference.height; y += 1) {
+    for (let x = 0; x < reference.width; x += 1) {
+      const pixel = (y * reference.width + x) * 4
+      reference.data[pixel] = (x * 7 + y * 3) % 256
+      reference.data[pixel + 1] = (x * 2 + y * 11) % 256
+      reference.data[pixel + 2] = (x * 13 + y * 5) % 256
+      reference.data[pixel + 3] = 255
+    }
+  }
+
+  const windowBounds = { width: 320, height: 210 }
+  const videoWidth = 320
+  const videoHeight = 180
+  const titleBarHeight = 30
+  const timelineTop = videoHeight - (84 + 34)
+  const hudTop = videoHeight - 92
+  const capture = new PNG({ width: windowBounds.width, height: windowBounds.height })
+  for (let y = 0; y < capture.height; y += 1) {
+    for (let x = 0; x < capture.width; x += 1) {
+      const pixel = (y * capture.width + x) * 4
+      capture.data[pixel] = 48
+      capture.data[pixel + 1] = 48
+      capture.data[pixel + 2] = 48
+      capture.data[pixel + 3] = 255
+    }
+  }
+
+  for (let y = 0; y < videoHeight; y += 1) {
+    for (let x = 0; x < videoWidth; x += 1) {
+      const pixel = ((titleBarHeight + y) * capture.width + x) * 4
+      const shiftedX = mutation === 'wrong-frame' ? (x + videoWidth / 4) % videoWidth : x
+      for (let channel = 0; channel < 3; channel += 1) {
+        const referenceValue = syntheticBilinearChannel(
+          reference,
+          ((shiftedX + 0.5) * reference.width) / videoWidth - 0.5,
+          ((y + 0.5) * reference.height) / videoHeight - 0.5,
+          channel
+        )
+        const corruptTimeline = mutation === 'timeline-band' && y >= timelineTop && y < hudTop
+        const corruptBoundary = mutation === 'above-timeline' && y === timelineTop - 1
+        const value =
+          corruptTimeline || corruptBoundary ? 255 - Math.round(referenceValue) : referenceValue
+        capture.data[pixel + channel] = Math.max(0, Math.min(255, Math.round(value)))
+      }
+      capture.data[pixel + 3] = 255
+    }
+  }
+
+  writeFileSync(referencePath, PNG.sync.write(reference))
+  writeFileSync(capturePath, PNG.sync.write(capture))
+  return {
+    capturePath,
+    cleanup: () => rmSync(directory, { force: true, recursive: true }),
+    referencePath,
+    windowBounds
+  }
+}
+
 describe('Studio pixel evidence verifier', () => {
   it('recomputes the exact packaged 527/523 sequence and PTS invariant', () => {
     const { documents, evidence } = createFixture()
@@ -329,6 +394,77 @@ describe('Studio pixel evidence verifier', () => {
         documents
       )
     ).toThrow('driver 120ms action sleep is missing')
+  })
+
+  it('excludes the declared timeline band above the transport HUD by default', () => {
+    const fixture = createDefaultOverlayFixture('timeline-band')
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds
+      )
+
+      expect(DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS).toBe(118)
+      expect(comparison.clean).toBe(true)
+      expect(comparison.registration).toMatchObject({
+        logicalHudOverlayHeight: 118,
+        comparisonHeight: 62,
+        videoHeight: 180
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('rejects that same timeline band under the former 92-point HUD-only mask', () => {
+    const fixture = createDefaultOverlayFixture('timeline-band')
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 92 }
+      )
+
+      expect(comparison.clean).toBe(false)
+      expect(comparison.metrics.fractionAbove80).toBeGreaterThan(0.01)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('keeps the first row above the 118-point boundary inside evidence', () => {
+    const fixture = createDefaultOverlayFixture('above-timeline')
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds
+      )
+
+      expect(comparison.clean).toBe(false)
+      expect(comparison.registration.comparisonHeight).toBe(62)
+      expect(comparison.metrics.fractionAbove80).toBeGreaterThan(0.01)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('still rejects a wrong frame under the complete overlay exclusion', () => {
+    const fixture = createDefaultOverlayFixture('wrong-frame')
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds
+      )
+
+      expect(comparison.clean).toBe(false)
+      expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
+    } finally {
+      fixture.cleanup()
+    }
   })
 
   it('accepts a clean registered video region despite bounded color conversion', () => {
