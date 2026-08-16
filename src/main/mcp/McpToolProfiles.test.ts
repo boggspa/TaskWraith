@@ -539,10 +539,16 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // is attempted delivery, not proof the recipient processed the note. The
     // canonical description reaches all four transports (+212 each); both
     // fresh transports retain more than 1,300 characters of 40k headroom.
-    expect(fullChars).toBe(145_441)
-    expect(gatewayChars).toBe(42_790)
-    expect(freshGatewayChars).toBe(37_498)
-    expect(freshMeshGatewayChars).toBe(38_611)
+    // Re-measured 2026-08-16. Two changes land together here because the
+    // artifacts were already adrift: `ensemble_fanout` reader-intent wording
+    // (606cf7d2b) changed the catalogue without re-pinning, and canvas_click
+    // now documents the consequential-action refusal so an agent that meets it
+    // asks the user instead of routing around it. Fresh transports keep more
+    // than 1,000 characters of 40k headroom.
+    expect(fullChars).toBe(145_938)
+    expect(gatewayChars).toBe(43_044)
+    expect(freshGatewayChars).toBe(37_499)
+    expect(freshMeshGatewayChars).toBe(38_612)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
