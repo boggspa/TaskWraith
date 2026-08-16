@@ -545,10 +545,18 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // now documents the consequential-action refusal so an agent that meets it
     // asks the user instead of routing around it. Fresh transports keep more
     // than 1,000 characters of 40k headroom.
-    expect(fullChars).toBe(145_938)
-    expect(gatewayChars).toBe(43_044)
-    expect(freshGatewayChars).toBe(37_499)
-    expect(freshMeshGatewayChars).toBe(38_612)
+    // Re-measured 2026-08-16 after four intentional direct-surface changes:
+    // blackboard_delete advertises its bounded count-only receipt (6d70a2ed2),
+    // ensemble_send preserves explicit User summaries (6e7caed47),
+    // ensemble_fanout_all fails closed on writer intent (5f334f4c9), and the
+    // concurrent fan-out allowance rose from two to three calls (f354f80d7).
+    // Full/immutable grow by 502 characters; the two compact fresh transports
+    // grow by 501. Both fresh profiles remain below 40k, the over-ceiling
+    // inventory is unchanged, and no budget or ratio assertion is relaxed.
+    expect(fullChars).toBe(146_440)
+    expect(gatewayChars).toBe(43_546)
+    expect(freshGatewayChars).toBe(38_000)
+    expect(freshMeshGatewayChars).toBe(39_113)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
