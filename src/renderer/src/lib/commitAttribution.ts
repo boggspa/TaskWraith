@@ -8,6 +8,8 @@ export interface TaskWraithCommitAttribution {
   participantId?: string
 }
 
+type WorkspaceChatLoader = (workspaceId: string) => Promise<readonly ChatRecord[]>
+
 function normalizedCommitHash(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const hash = value.trim().toLowerCase()
@@ -48,6 +50,31 @@ export function collectTaskWraithCommitAttributions(
     }
   }
   return attributions
+}
+
+/**
+ * Chat-list rows intentionally omit transcripts, so an inactive thread cannot
+ * contribute its commit receipts directly. Hydrate only while the Commits
+ * inspector is open, keep the read workspace-scoped, and let an already-live
+ * renderer record win over its durable copy.
+ */
+export async function loadWorkspaceTaskWraithCommitAttributions(input: {
+  chats: readonly ChatRecord[]
+  workspaceId: string
+  loadWorkspaceChats: WorkspaceChatLoader
+}): Promise<Map<string, TaskWraithCommitAttribution>> {
+  const hydrated = await input.loadWorkspaceChats(input.workspaceId)
+  const chatsById = new Map<string, ChatRecord>()
+  for (const chat of hydrated) {
+    if (chat.workspaceId !== input.workspaceId) continue
+    chatsById.set(chat.appChatId, chat)
+  }
+  for (const chat of input.chats) {
+    if (chat.workspaceId !== input.workspaceId) continue
+    const isSummary = (chat as ChatRecord & { summaryOnly?: boolean }).summaryOnly === true
+    if (!isSummary || !chatsById.has(chat.appChatId)) chatsById.set(chat.appChatId, chat)
+  }
+  return collectTaskWraithCommitAttributions(Array.from(chatsById.values()))
 }
 
 /** Match full Git hashes with the abbreviated receipts emitted by Git tools. */

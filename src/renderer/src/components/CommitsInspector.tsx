@@ -9,6 +9,8 @@ import type { GitPrSummary } from '../../../main/services/GitService'
 import type { CloseoutCommit } from '../lib/taskWraithCloseoutMessage'
 import {
   collectTaskWraithCommitAttributions,
+  loadWorkspaceTaskWraithCommitAttributions,
+  type TaskWraithCommitAttribution,
   resolveTaskWraithCommitAttribution
 } from '../lib/commitAttribution'
 import {
@@ -29,9 +31,10 @@ function commitStats(commit: GitUnpushedCommit): string {
 
 export function inspectorCommitRows(
   stack: GitUnpushedCommitStack,
-  chats: readonly ChatRecord[]
+  chats: readonly ChatRecord[],
+  workspaceAttributions?: ReadonlyMap<string, TaskWraithCommitAttribution>
 ): CloseoutCommit[] {
-  const attributions = collectTaskWraithCommitAttributions(chats)
+  const attributions = workspaceAttributions || collectTaskWraithCommitAttributions(chats)
   return stack.commits.map((commit) => {
     const attribution = resolveTaskWraithCommitAttribution(attributions, commit.hash)
     return {
@@ -190,7 +193,87 @@ export function CommitsInspector({
   const [requestOpen, setRequestOpen] = useState(false)
   const [pullRequestWorkspace, setPullRequestWorkspace] =
     useState<GitPullRequestWorkspaceSnapshot | null>(null)
+  const [loadedAttributions, setLoadedAttributions] = useState<{
+    workspaceId: string
+    values: Map<string, TaskWraithCommitAttribution>
+  } | null>(null)
   const requestIdRef = useRef(0)
+
+  const attributionWorkspaceId = useMemo(() => {
+    const current = chatId ? chats.find((chat) => chat.appChatId === chatId) : undefined
+    if (current?.workspaceId) return current.workspaceId
+    return chats.find((chat) => chat.workspacePath === workspacePath)?.workspaceId
+  }, [chatId, chats, workspacePath])
+  const workspaceChats = useMemo(
+    () =>
+      attributionWorkspaceId
+        ? chats.filter((chat) => chat.workspaceId === attributionWorkspaceId)
+        : chatId
+          ? chats.filter((chat) => chat.appChatId === chatId)
+          : [],
+    [attributionWorkspaceId, chatId, chats]
+  )
+  const workspaceSummaryRevision = useMemo(
+    () =>
+      workspaceChats
+        .flatMap((chat) => {
+          const summary = chat as ChatRecord & {
+            summaryOnly?: boolean
+            messageCount?: number
+            sourceChatMtimeMs?: number
+            sourceChatSize?: number
+          }
+          if (summary.summaryOnly !== true) return []
+          return [
+            [
+              chat.appChatId,
+              chat.persistenceRevision,
+              chat.updatedAt,
+              summary.messageCount,
+              summary.sourceChatMtimeMs,
+              summary.sourceChatSize
+            ].join(':')
+          ]
+        })
+        .sort()
+        .join('|'),
+    [workspaceChats]
+  )
+
+  useEffect(() => {
+    if (!attributionWorkspaceId) return
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      void loadWorkspaceTaskWraithCommitAttributions({
+        chats: [],
+        workspaceId: attributionWorkspaceId,
+        loadWorkspaceChats: (workspaceId) => window.api.getChats(workspaceId)
+      })
+        .then((values) => {
+          if (!cancelled) setLoadedAttributions({ workspaceId: attributionWorkspaceId, values })
+        })
+        .catch(() => {
+          // The active chat still supplies live evidence; Git's author remains
+          // the truthful fallback if historical transcript hydration fails.
+        })
+    }, 100)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [attributionWorkspaceId, workspaceSummaryRevision])
+
+  const commitAttributions = useMemo(() => {
+    const values = new Map<string, TaskWraithCommitAttribution>()
+    const loaded = loadedAttributions
+    if (loaded && loaded.workspaceId === attributionWorkspaceId) {
+      for (const [hash, attribution] of loaded.values) values.set(hash, attribution)
+    }
+    for (const [hash, attribution] of collectTaskWraithCommitAttributions(workspaceChats)) {
+      values.set(hash, attribution)
+    }
+    return values
+  }, [attributionWorkspaceId, loadedAttributions, workspaceChats])
 
   const refresh = useCallback(async () => {
     if (!workspacePath) {
@@ -233,7 +316,10 @@ export function CommitsInspector({
     })
   }, [stack])
 
-  const rows = useMemo(() => (stack ? inspectorCommitRows(stack, chats) : []), [chats, stack])
+  const rows = useMemo(
+    () => (stack ? inspectorCommitRows(stack, workspaceChats, commitAttributions) : []),
+    [commitAttributions, stack, workspaceChats]
+  )
   const pullRequestsByCommit = useMemo(
     () => pullRequestsByOriginalCommit(pullRequestWorkspace?.pullRequests || []),
     [pullRequestWorkspace?.pullRequests]
