@@ -1,8 +1,6 @@
 import type { ChannelMember, ChannelStore, HumanChannelMember } from './ChannelStore'
 import type { ChannelHumanPolicyRecord, ChannelHumanPolicyStore } from './ChannelHumanPolicyStore'
-import type { HumanCollaborationShare, HumanCollaborationStore } from './HumanCollaborationStore'
 import type { HumanCollaborationPresenceStateOrUnknown } from './HumanCollaborationPresence'
-import type { ResolveCollaboratorPresence } from './ExternalSeatResolution'
 
 /**
  * Main-private seat projection. seatId is a native Channel member id unless
@@ -45,24 +43,16 @@ export type ChannelExternalSeatResolution =
       readonly state: 'recovery_blocked'
     }
 
-export type ChannelExternalSeatLegacyAuthority =
-  | {
-      readonly mode: 'transitional'
-      readonly shareStore: Pick<HumanCollaborationStore, 'getShareForChat'>
-      readonly resolvePresence: ResolveCollaboratorPresence
-    }
-  | {
-      readonly mode: 'channel_only'
-    }
+export type ChannelExternalSeatLegacyAuthority = {
+  readonly mode: 'channel_only'
+}
 
 export interface ChannelExternalSeatAuthorityOptions {
   readonly channelStore: Pick<ChannelStore, 'listChannels' | 'listMembers'>
   readonly humanPolicyStore: Pick<ChannelHumanPolicyStore, 'list'>
   readonly runtime: ChannelExternalSeatRuntimeAuthority
   /**
-   * Transitional mode is explicit so omitting the People fallback can never
-   * accidentally become the Channel-only seal. X4 changes this mode only after
-   * restart equivalence and zero remaining People consumers are proven.
+   * Channel-only is explicit so legacy People reads cannot return by omission.
    */
   readonly legacy: ChannelExternalSeatLegacyAuthority
 }
@@ -105,20 +95,6 @@ function seatFromMember(
   }
 }
 
-function seatFromLegacyParticipant(
-  participant: HumanCollaborationShare['participants'][number],
-  presence: ReturnType<ResolveCollaboratorPresence>
-): ChannelExternalSeat {
-  return {
-    seatId: participant.collaboratorId,
-    displayName: participant.displayName,
-    ...(participant.seatOrder === undefined ? {} : { seatOrder: participant.seatOrder }),
-    ...(participant.colorIndex === undefined ? {} : { colorIndex: participant.colorIndex }),
-    enabled: participant.seatDisabled !== true,
-    present: isPresent(presence)
-  }
-}
-
 function compareSeats(left: ChannelExternalSeat, right: ChannelExternalSeat): number {
   const leftOrder = left.seatOrder ?? Number.MAX_SAFE_INTEGER
   const rightOrder = right.seatOrder ?? Number.MAX_SAFE_INTEGER
@@ -130,9 +106,8 @@ function compareSeats(left: ChannelExternalSeat, right: ChannelExternalSeat): nu
  * Channel-native external-seat authority.
  *
  * It is a projection over the already-durable Channel metadata and migration
- * policy stores plus ChannelRuntime presence. It owns no persistence. During
- * transition it unions one exact enabled People share and dedupes only through
- * the durable source-share/source-collaborator to Channel-member binding.
+ * policy stores plus ChannelRuntime presence. It owns no persistence and reads
+ * no legacy People state.
  */
 export class ChannelExternalSeatAuthority {
   constructor(private readonly options: ChannelExternalSeatAuthorityOptions) {}
@@ -165,13 +140,11 @@ export class ChannelExternalSeatAuthority {
 
     const seats: ChannelExternalSeat[] = []
     const seenSeatIds = new Set<string>()
-    const channelSeatSources = new Set<string>()
-    let policyBySource = new Map<string, ChannelHumanPolicyRecord>()
-    let memberById = new Map<string, ChannelMember>()
+    const seenPolicySources = new Set<string>()
 
     if (activeChannel) {
       const members = this.options.channelStore.listMembers(activeChannel.channelId)
-      memberById = new Map()
+      const memberById = new Map<string, ChannelMember>()
       for (const member of members) {
         if (member.channelId !== activeChannel.channelId || memberById.has(member.memberId))
           blocked()
@@ -182,7 +155,6 @@ export class ChannelExternalSeatAuthority {
 
       const policies = this.options.humanPolicyStore.list(activeChannel.channelId)
       const policyByMember = new Map<string, ChannelHumanPolicyRecord>()
-      policyBySource = new Map()
       for (const policy of policies) {
         if (policy.channelId !== activeChannel.channelId || policyByMember.has(policy.memberId)) {
           blocked()
@@ -192,9 +164,9 @@ export class ChannelExternalSeatAuthority {
           blocked()
         }
         const key = sourceKey(policy.sourceShareId, policy.sourceCollaboratorId)
-        if (policyBySource.has(key)) blocked()
+        if (seenPolicySources.has(key)) blocked()
         policyByMember.set(policy.memberId, policy)
-        policyBySource.set(key, policy)
+        seenPolicySources.add(key)
       }
 
       const activeExternalMembers = members
@@ -213,67 +185,13 @@ export class ChannelExternalSeatAuthority {
         )
         seats.push(seatFromMember(member, seatId, isPresent(presence)))
         seenSeatIds.add(seatId)
-        if (policy) {
-          channelSeatSources.add(sourceKey(policy.sourceShareId, policy.sourceCollaboratorId))
-        }
-      }
-    }
-
-    let legacyShare: HumanCollaborationShare | null = null
-    if (this.options.legacy.mode === 'transitional') {
-      legacyShare = this.options.legacy.shareStore.getShareForChat(chatId)
-      if (legacyShare && (legacyShare.chatId !== chatId || legacyShare.enabled !== true)) blocked()
-      if (legacyShare && matchedChannel?.status === 'closed') blocked()
-      if (legacyShare && !activeChannel) blocked()
-
-      if (legacyShare) {
-        const activeParticipants = legacyShare.participants
-          .filter((participant) => participant.status === 'active')
-          .sort((left, right) => left.collaboratorId.localeCompare(right.collaboratorId))
-        const activeParticipantKeys = new Set(
-          activeParticipants.map((participant) =>
-            sourceKey(legacyShare!.shareId, participant.collaboratorId)
-          )
-        )
-
-        for (const policy of policyBySource.values()) {
-          const key = sourceKey(policy.sourceShareId, policy.sourceCollaboratorId)
-          if (
-            channelSeatSources.has(key) &&
-            policy.sourceShareId === legacyShare.shareId &&
-            !activeParticipantKeys.has(key)
-          ) {
-            blocked()
-          }
-        }
-
-        for (const participant of activeParticipants) {
-          const key = sourceKey(legacyShare.shareId, participant.collaboratorId)
-          const binding = policyBySource.get(key)
-          if (binding) {
-            const member = memberById.get(binding.memberId)
-            if (
-              !activeChannel ||
-              !member ||
-              !isActiveExternalHuman(member, activeChannel.ownerMemberId) ||
-              !channelSeatSources.has(key)
-            ) {
-              blocked()
-            }
-            continue
-          }
-          if (seenSeatIds.has(participant.collaboratorId)) blocked()
-          const presence = this.options.legacy.resolvePresence(participant.collaboratorId)
-          seats.push(seatFromLegacyParticipant(participant, presence))
-          seenSeatIds.add(participant.collaboratorId)
-        }
       }
     }
 
     seats.sort(compareSeats)
     return {
       state: 'ready',
-      isShared: Boolean(activeChannel || legacyShare),
+      isShared: Boolean(activeChannel),
       seats
     }
   }

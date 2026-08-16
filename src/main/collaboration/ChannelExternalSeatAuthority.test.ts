@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Channel, ChannelMember, HumanChannelMember } from './ChannelStore'
 import type { ChannelHumanPolicyRecord } from './ChannelHumanPolicyStore'
-import type { HumanCollaborationShare } from './HumanCollaborationStore'
 import {
   ChannelExternalSeatAuthority,
   type ChannelExternalSeatAuthorityOptions,
@@ -65,54 +64,19 @@ function makePolicy(overrides: Partial<ChannelHumanPolicyRecord> = {}): ChannelH
   } as ChannelHumanPolicyRecord
 }
 
-function makeShare(overrides: Partial<HumanCollaborationShare> = {}): HumanCollaborationShare {
-  return {
-    shareId: 'share-1',
-    chatId: 'chat-1',
-    mode: 'comments',
-    enabled: true,
-    createdAt: 1,
-    updatedAt: 1,
-    nextSequence: 1,
-    participants: [],
-    invites: [],
-    idempotency: {},
-    ...overrides
-  }
-}
-
-function participant(
-  overrides: Partial<HumanCollaborationShare['participants'][number]> = {}
-): HumanCollaborationShare['participants'][number] {
-  return {
-    collaboratorId: 'legacy-alex',
-    displayName: 'Alex',
-    publicKeyId: 'identity-1',
-    status: 'active',
-    joinedAt: 1,
-    ...overrides
-  }
-}
-
 function harness(
   input: {
     channels?: Channel[]
     members?: ChannelMember[]
     policies?: ChannelHumanPolicyRecord[]
-    share?: HumanCollaborationShare | null
     channelPresence?: (channelId: string, memberId: string) => ChannelExternalSeatPresence
     channelAuthorityState?: (channelId: string) => 'ready' | 'recovery_blocked'
-    legacyPresence?: (
-      collaboratorId: string
-    ) => 'live' | 'grace' | 'expired' | 'unknown' | undefined
-    mode?: 'transitional' | 'channel_only'
     overrides?: Partial<ChannelExternalSeatAuthorityOptions>
   } = {}
 ): ChannelExternalSeatAuthority {
   const channels = input.channels ?? []
   const members = input.members ?? []
   const policies = input.policies ?? []
-  const mode = input.mode ?? 'transitional'
   return new ChannelExternalSeatAuthority({
     channelStore: {
       listChannels: () => channels,
@@ -125,16 +89,7 @@ function harness(
       channelAuthorityState: input.channelAuthorityState ?? (() => 'ready'),
       memberPresence: input.channelPresence ?? (() => 'unknown')
     },
-    legacy:
-      mode === 'channel_only'
-        ? { mode: 'channel_only' }
-        : {
-            mode: 'transitional',
-            shareStore: {
-              getShareForChat: () => input.share ?? null
-            },
-            resolvePresence: input.legacyPresence ?? (() => 'unknown')
-          },
+    legacy: { mode: 'channel_only' },
     ...input.overrides
   })
 }
@@ -243,7 +198,6 @@ describe('ChannelExternalSeatAuthority', () => {
       channels: [channel],
       members: [makeHumanMember({ memberId: channel.ownerMemberId }), member],
       policies: [makePolicy({ memberId: member.memberId })],
-      mode: 'channel_only',
       channelPresence: () => 'live'
     }).resolve(channel.chatId)
 
@@ -271,32 +225,24 @@ describe('ChannelExternalSeatAuthority', () => {
     ])
   })
 
-  it('dedupes dual Channel and People state only through the exact durable binding', () => {
+  it('projects mapped and native Channel seats without synthesizing legacy participants', () => {
     const channel = makeChannel()
-    const member = makeHumanMember({
-      memberId: 'channel-member',
-      displayName: 'Channel name',
+    const mapped = makeHumanMember({
+      memberId: 'mapped-member',
+      displayName: 'Mapped Channel member',
       presentation: { seatOrder: 2 }
+    })
+    const native = makeHumanMember({
+      memberId: 'native-member',
+      displayName: 'Native Channel member',
+      identityPublicKey: 'identity-2',
+      presentation: { seatOrder: 5 }
     })
     const result = harness({
       channels: [channel],
-      members: [makeHumanMember({ memberId: channel.ownerMemberId }), member],
-      policies: [makePolicy({ memberId: member.memberId })],
-      share: makeShare({
-        participants: [
-          participant({ displayName: 'Legacy name', seatOrder: 9 }),
-          participant({
-            collaboratorId: 'people-only',
-            displayName: 'People fallback',
-            publicKeyId: 'identity-2',
-            seatOrder: 5
-          }),
-          participant({ collaboratorId: 'pending', status: 'pending' }),
-          participant({ collaboratorId: 'revoked', status: 'revoked', revokedAt: 2 })
-        ]
-      }),
-      channelPresence: () => 'live',
-      legacyPresence: (id) => (id === 'people-only' ? 'grace' : 'expired')
+      members: [makeHumanMember({ memberId: channel.ownerMemberId }), mapped, native],
+      policies: [makePolicy({ memberId: mapped.memberId })],
+      channelPresence: () => 'live'
     }).resolve(channel.chatId)
 
     expect(result).toEqual({
@@ -305,14 +251,14 @@ describe('ChannelExternalSeatAuthority', () => {
       seats: [
         {
           seatId: 'legacy-alex',
-          displayName: 'Channel name',
+          displayName: 'Mapped Channel member',
           seatOrder: 2,
           enabled: true,
           present: true
         },
         {
-          seatId: 'people-only',
-          displayName: 'People fallback',
+          seatId: 'native-member',
+          displayName: 'Native Channel member',
           seatOrder: 5,
           enabled: true,
           present: true
@@ -321,21 +267,15 @@ describe('ChannelExternalSeatAuthority', () => {
     })
   })
 
-  it('blocks a People-only share until migration establishes recoverable Channel authority', () => {
-    const result = harness({
-      share: makeShare({
-        participants: [
-          participant({ collaboratorId: 'live', displayName: 'Live' }),
-          participant({ collaboratorId: 'away', displayName: 'Away' })
-        ]
-      }),
-      legacyPresence: (id) => (id === 'live' ? 'live' : 'unknown')
-    }).resolve('chat-1')
-
-    expect(result).toEqual({ state: 'recovery_blocked' })
+  it('does not treat migration policy data as shared without an active Channel', () => {
+    expect(harness({ policies: [makePolicy()] }).resolve('chat-1')).toEqual({
+      state: 'ready',
+      isShared: false,
+      seats: []
+    })
   })
 
-  it('blocks contradictory closed-Channel fallback and malformed active ownership', () => {
+  it('does not serve a closed Channel and blocks malformed active ownership', () => {
     const closed = makeChannel({
       status: 'closed',
       display: {
@@ -348,9 +288,9 @@ describe('ChannelExternalSeatAuthority', () => {
     expect(
       harness({
         channels: [closed],
-        share: makeShare({ participants: [participant()] })
+        members: [makeHumanMember({ memberId: closed.ownerMemberId })]
       }).resolve(closed.chatId)
-    ).toEqual({ state: 'recovery_blocked' })
+    ).toEqual({ state: 'ready', isShared: false, seats: [] })
 
     const active = makeChannel()
     expect(
@@ -383,14 +323,13 @@ describe('ChannelExternalSeatAuthority', () => {
         makeHumanMember({ memberId: channel.ownerMemberId }),
         makeHumanMember({ memberId: 'native-active' })
       ],
-      share: makeShare({ participants: [participant()] }),
       channelPresence: () => 'recovery_blocked'
     }).resolve(channel.chatId)
 
     expect(result).toEqual({ state: 'recovery_blocked' })
   })
 
-  it('blocks an incomplete exact binding instead of falling back heuristically', () => {
+  it('does not project an inactive policy-bound member', () => {
     const channel = makeChannel()
     const revoked = makeHumanMember({
       memberId: 'mapped-member',
@@ -400,38 +339,37 @@ describe('ChannelExternalSeatAuthority', () => {
     const result = harness({
       channels: [channel],
       members: [makeHumanMember({ memberId: channel.ownerMemberId }), revoked],
-      policies: [makePolicy({ memberId: revoked.memberId })],
-      share: makeShare({ participants: [participant()] })
+      policies: [makePolicy({ memberId: revoked.memberId })]
     }).resolve(channel.chatId)
 
-    expect(result).toEqual({ state: 'recovery_blocked' })
+    expect(result).toEqual({ state: 'ready', isShared: true, seats: [] })
   })
 
-  it('keeps NUL-containing legacy source identities structurally distinct', () => {
+  it('keeps NUL-containing migration source identities structurally distinct', () => {
     const channel = makeChannel()
-    const member = makeHumanMember({ memberId: 'mapped-member' })
+    const left = makeHumanMember({ memberId: 'mapped-left', displayName: 'Left' })
+    const right = makeHumanMember({
+      memberId: 'mapped-right',
+      displayName: 'Right',
+      identityPublicKey: 'identity-2'
+    })
     const result = harness({
       channels: [channel],
-      members: [makeHumanMember({ memberId: channel.ownerMemberId }), member],
+      members: [makeHumanMember({ memberId: channel.ownerMemberId }), left, right],
       policies: [
         makePolicy({
-          memberId: member.memberId,
+          memberId: left.memberId,
           sourceShareId: 'a\u0000b',
           sourceCollaboratorId: 'c'
+        }),
+        makePolicy({
+          memberId: right.memberId,
+          sourceShareId: 'a',
+          sourceCollaboratorId: 'b\u0000c',
+          sourceDigest: 'c'.repeat(64)
         })
       ],
-      share: makeShare({
-        shareId: 'a',
-        participants: [
-          participant({
-            collaboratorId: 'b\u0000c',
-            displayName: 'Distinct People identity',
-            publicKeyId: 'identity-2'
-          })
-        ]
-      }),
-      channelPresence: () => 'live',
-      legacyPresence: () => 'live'
+      channelPresence: () => 'live'
     }).resolve(channel.chatId)
 
     expect(result).toEqual({
@@ -440,13 +378,13 @@ describe('ChannelExternalSeatAuthority', () => {
       seats: [
         {
           seatId: 'b\u0000c',
-          displayName: 'Distinct People identity',
+          displayName: 'Right',
           enabled: true,
           present: true
         },
         {
           seatId: 'c',
-          displayName: 'Alex',
+          displayName: 'Left',
           enabled: true,
           present: true
         }
@@ -487,7 +425,7 @@ describe('ChannelExternalSeatAuthority', () => {
     ).toEqual({ state: 'recovery_blocked' })
   })
 
-  it('fails closed when any transitional authority is unreadable', () => {
+  it('fails closed when any Channel authority store is unreadable', () => {
     const channel = makeChannel()
     const member = makeHumanMember({ memberId: 'native-active' })
     const base = {
@@ -512,14 +450,11 @@ describe('ChannelExternalSeatAuthority', () => {
       harness({
         ...base,
         overrides: {
-          legacy: {
-            mode: 'transitional',
-            shareStore: {
-              getShareForChat: () => {
-                throw new Error('corrupt People state')
-              }
-            },
-            resolvePresence: () => 'unknown'
+          channelStore: {
+            listChannels: () => [channel],
+            listMembers: () => {
+              throw new Error('corrupt members')
+            }
           }
         }
       }).resolve(channel.chatId)
