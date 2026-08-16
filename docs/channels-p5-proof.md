@@ -12,10 +12,16 @@ taken, and a disposable-profile migration mission proved the blocked-channel
 deferral end to end.
 
 What P5 did **not** achieve, stated first so no reader infers otherwise: the
-legacy People substrate has **not** been retired (D1/D2), the production builds
-have not been exercised, and one residual remains genuinely open. Two of the
-three original residuals are now discharged — **by different kinds of evidence,
-and the difference matters**; both are written up in full below.
+legacy People substrate has **not** been retired, the production builds have
+not been exercised, and one residual remains genuinely open. Two of the three
+original residuals are now discharged — **by different kinds of evidence, and
+the difference matters**; both are written up in full below.
+
+**D2 retirement is BLOCKED, not merely unfinished.** The consumer audit proved
+that a degraded launch still serves legacy People reads and reconnects, so
+retiring the substrate would remove a live recovery capability. That is the
+goal's "only when proven safe" condition failing on evidence — the process
+working, not the work stalling. A blocked D2 is not a finished D2.
 
 Do not read "index.ts contains zero People reads" as "People is retired." The
 composition root is clear; `HumanCollaborationRuntime`, the `ChatService`
@@ -96,6 +102,22 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
 
 ### Open — not done, and not claimed
 
+- **D2 People retirement is BLOCKED on a user capability decision.** The
+  consumer classification is complete; the retirement is not authorised. The
+  audit found that production **contradicts its own comment**: the degraded
+  Channels startup path claimed "neither runtime serves collaboration state
+  this launch", but execution continues past that catch, so the People store,
+  runtime and IPC handlers are all still constructed and
+  `reopenCollaborationRooms` re-opens the host seat for every enabled share's
+  still-live invite — including consumed invites whose collaborator is still
+  active. Writes are quiesced; **reads and reconnects are not**. Because
+  Channels are absent on that launch, the legacy path is the only collaboration
+  state a user can reach, so retiring it removes a live recovery capability.
+  The goal's own condition — retire "only when proven safe" — has failed on
+  evidence. **The default in force is KEEP**, taken conservatively when the
+  user decision could not be obtained: not-retiring is reversible, removing a
+  capability that protects data access during a failure is not. The false
+  comment was corrected in `ad5706d74` so the next engineer cannot inherit it.
 - **D1/D2 People retirement.** The remaining live consumers are
   `HumanCollaborationRuntime`, the `ChatService` collaboration lifecycle,
   clear/delete preservation, the external contribution queue, and the
@@ -110,6 +132,18 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   code. Removing it re-bases all thirteen tests in that module, because its
   test helper defaults to `transitional`, so it is a proof-surface change owned
   by that module's author rather than cleanup.
+
+  **The safety question behind it is now ANSWERED and closed.** The open
+  concern was whether the branch was a live valve against a *migration* defect
+  — a profile serving with an enabled ordinary share still present, where
+  `transitional` would yield legacy seats and `channel_only` silently none. It
+  cannot happen: `startPeopleToChannelMigrationBootstrap` calls
+  `runner.runToCompletion` **first** and constructs Channels only after
+  terminal success, and any throw leaves `channelProductionBootstrap` null so
+  external-seat resolution returns `null` before the authority is ever
+  constructed. A half-retired profile can never serve the transitional
+  authority. The valve is dead, so X4b is safe removal rather than a narrowing
+  — it remains open only as a proof-surface change, not as a risk.
 - **Crash recovery across every new durable boundary** is proven for the
   runtime presence and per-channel barrier work, but not end to end through a
   real migrated profile.
