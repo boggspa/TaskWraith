@@ -72,12 +72,6 @@ export interface PeopleToChannelMigrationFinalizationProductionRunnerOptions {
   hostDisplayName: string
   listChats: () => readonly PeopleToChannelInventoryChat[]
   listWorkflowChatIds?: () => readonly string[]
-  /**
-   * Temporary P5-C composition shim. A new capture may declare only the exact
-   * empty tuple; nonempty compatibility ids come exclusively from a sealed P4
-   * execution and this callback is never consulted during sealed recovery.
-   */
-  retainedWorkspaceBootstrapShareIds?: () => readonly []
   now?: () => number
   /** Test/observability seam invoked only after the named durable transition. */
   afterStage?: (stage: PeopleToChannelMigrationFinalizationProductionRunnerStage) => void
@@ -207,9 +201,7 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       !options.hostDisplayName.trim() ||
       typeof options.listChats !== 'function' ||
       (options.listWorkflowChatIds !== undefined &&
-        typeof options.listWorkflowChatIds !== 'function') ||
-      (options.retainedWorkspaceBootstrapShareIds !== undefined &&
-        typeof options.retainedWorkspaceBootstrapShareIds !== 'function')
+        typeof options.listWorkflowChatIds !== 'function')
     ) {
       throw new Error('People migration terminal production runner options are invalid')
     }
@@ -228,14 +220,6 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
   runToCompletion(): PeopleToChannelMigrationFinalizationProductionRunResult {
     const committed = this.recoverCommitted()
     if (committed) return committed
-
-    const recoveryAtEntry = new PeopleToChannelMigrationRecoveryStore({
-      userDataPath: this.options.userDataPath,
-      now: this.now
-    }).load()
-    if (recoveryAtEntry?.phase !== 'finalizing') {
-      this.assertNoWorkspaceBootstrapPeopleProducer()
-    }
 
     const additive = this.additiveRunner.runToSoak()
     const runtime = this.runtime()
@@ -287,18 +271,6 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       terminalPlanId: sealed.delta.base.planId,
       finalization: clone(finalization),
       legacyWriteGate: this.legacyWriteGate
-    }
-  }
-
-  private assertNoWorkspaceBootstrapPeopleProducer(): void {
-    let declared: readonly unknown[]
-    try {
-      declared = this.options.retainedWorkspaceBootstrapShareIds?.() ?? []
-    } catch {
-      blocked('Channel-native workspace-bootstrap declaration could not be read')
-    }
-    if (!Array.isArray(declared) || declared.length !== 0) {
-      blocked('Channel-native workspace-bootstrap contract forbids a People producer')
     }
   }
 

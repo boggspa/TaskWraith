@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -208,7 +208,6 @@ function runner(
   built: Fixture,
   options: {
     crashAt?: PeopleToChannelMigrationFinalizationProductionRunnerStage
-    retainedWorkspaceBootstrapShareIds?: () => readonly string[]
     safeStorage?: HumanCollaborationSafeStorage
   } = {}
 ): PeopleToChannelMigrationFinalizationProductionRunner {
@@ -220,14 +219,6 @@ function runner(
     listChats: () => (built.empty ? [] : [built.chat]),
     listWorkflowChatIds: () => [],
     now: () => ++built.now,
-    ...(options.retainedWorkspaceBootstrapShareIds
-      ? {
-          // Bypass the empty-tuple type deliberately to exercise the runtime
-          // rejection and the rule that sealed recovery ignores this shim.
-          retainedWorkspaceBootstrapShareIds:
-            options.retainedWorkspaceBootstrapShareIds as () => readonly []
-        }
-      : {}),
     ...(options.crashAt
       ? {
           afterStage: (stage: PeopleToChannelMigrationFinalizationProductionRunnerStage) => {
@@ -371,24 +362,16 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
     15_000
   )
 
-  it('rejects a fresh workspace-bootstrap People producer before migration writes', () => {
+  it('retires a fresh workspace-bootstrap-shaped People share as ordinary source data', () => {
     const built = fixture({ includeP5: true })
-    expect(() =>
-      runner(built, {
-        retainedWorkspaceBootstrapShareIds: () => ['p5_workspace_bootstrap']
-      }).runToCompletion()
-    ).toThrow(/Channel-native workspace-bootstrap contract forbids a People producer/)
+    const completed = runner(built).runToCompletion()
     const durable = durableState(built)
 
-    expect(durable.people.listShares().map((share) => share.shareId)).toEqual([
-      'share_one',
-      'p5_workspace_bootstrap'
-    ])
-    expect(durable.channels.listChannels()).toEqual([])
-    expect(durable.recovery.load()).toBeNull()
-    expect(existsSync(peopleToChannelMigrationFinalizationExecutionPath(built.userDataPath))).toBe(
-      false
-    )
+    expect(completed.finalization).toMatchObject({
+      retireShareIds: ['p5_workspace_bootstrap', 'share_one'],
+      retainedWorkspaceBootstrapShareIds: []
+    })
+    expect(durable.people.listShares()).toEqual([])
   })
 
   it('resumes exact nonempty compatibility only after an older P4 checkpoint is sealed', () => {
@@ -403,6 +386,11 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
       safeStorage: storage
     })
     const captured = executionStore.load()!
+    expect(captured.scope).toEqual({
+      schemaVersion: 1,
+      retireShareIds: ['p5_workspace_bootstrap', 'share_one'],
+      retainedWorkspaceBootstrapShareIds: []
+    })
     const { finalizationDigest: _discardedDigest, ...withoutDigest } = captured
     const compatible = createPeopleToChannelMigrationFinalizationExecution({
       ...withoutDigest,
@@ -423,9 +411,7 @@ describe('PeopleToChannelMigrationFinalizationProductionRunner', () => {
       finalizationDigest: compatible.finalizationDigest
     })
 
-    const completed = runner(built, {
-      retainedWorkspaceBootstrapShareIds: () => ['must_not_override_sealed_scope']
-    }).runToCompletion()
+    const completed = runner(built).runToCompletion()
     expect(completed.finalization).toMatchObject({
       retireShareIds: ['share_one'],
       retainedWorkspaceBootstrapShareIds: ['p5_workspace_bootstrap']
