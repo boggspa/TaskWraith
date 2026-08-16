@@ -6,16 +6,22 @@ import XCTest
 
 @MainActor
 final class StudioWorkspaceWindowTests: XCTestCase {
-  private func makeWorkspace() throws -> StudioWorkspaceWindowController {
+  private func makeWorkspace(
+    includeReview: Bool = true
+  ) throws -> StudioWorkspaceWindowController {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw XCTSkip("no Metal device")
     }
     let timebase = try XCTUnwrap(
       StudioTimebase(timescale: 600, frameDurationTicks: 20)
     )
+    let reviewRenderer: StudioViewerRenderer? =
+      includeReview
+      ? try StudioViewerRenderer(device: device)
+      : nil
     return StudioWorkspaceWindowController(
       sourceRenderer: try StudioViewerRenderer(device: device),
-      reviewRenderer: try StudioViewerRenderer(device: device),
+      reviewRenderer: reviewRenderer,
       authority: StudioPlaybackAuthority(
         clock: StudioPlaybackClock(timebase: timebase, durationTicks: 0)
       )
@@ -66,6 +72,64 @@ final class StudioWorkspaceWindowTests: XCTestCase {
 
     XCTAssertFalse(workspace.sourceController.isPresentationAttached)
     XCTAssertFalse(review.isPresentationAttached)
+  }
+
+  func testClosedWorkspaceIgnoresBackgroundRefreshUntilExplicitShow() throws {
+    let workspace = try makeWorkspace()
+    let review = try XCTUnwrap(workspace.reviewController)
+    let viewport = try XCTUnwrap(StudioWorkspaceViewport(width: 1_600, height: 900))
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+    workspace.show()
+    workspace.window.close()
+
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: StudioTimelineSequence(items: [
+        StudioSequenceItem(
+          itemId: "clip-after-close",
+          assetId: "asset-after-close",
+          startTicks: 0,
+          endTicks: 600,
+          sourceInTicks: 0
+        )
+      ]),
+      activeProposalId: "proposal-after-close",
+      viewport: viewport
+    )
+
+    XCTAssertFalse(workspace.sourceController.isPresentationAttached)
+    XCTAssertFalse(review.isPresentationAttached)
+    XCTAssertFalse(workspace.window.isVisible)
+
+    workspace.show()
+
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
+    XCTAssertTrue(review.isPresentationAttached)
+    XCTAssertTrue(workspace.window.isVisible)
+  }
+
+  func testUnavailableReviewNormalizesReviewOnlyNarrowWorkspaceToSource() throws {
+    let workspace = try makeWorkspace(includeReview: false)
+    XCTAssertNil(workspace.reviewController)
+
+    workspace.setActiveRoute(.review)
+    workspace.update(
+      visibleRoutes: [.review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: try XCTUnwrap(StudioWorkspaceViewport(width: 800, height: 900))
+    )
+    workspace.show()
+
+    XCTAssertEqual(workspace.lastSnapshot.viewerPresentation, .single(.source))
+    XCTAssertTrue(workspace.routeHostIsVisible(.source))
+    XCTAssertFalse(workspace.routeHostIsVisible(.review))
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
   }
 
   func testWorkspaceHierarchyUsesTheLockedLiteralPaneOrder() throws {

@@ -171,7 +171,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     activeProposalId: String?,
     viewport: StudioWorkspaceViewport? = nil
   ) {
-    self.visibleRoutes = visibleRoutes.isEmpty ? [.source] : visibleRoutes
+    self.visibleRoutes = normalizedVisibleRoutes(visibleRoutes)
     activeSequence = sequence
     self.activeProposalId = activeProposalId
     if let viewport {
@@ -181,7 +181,11 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   }
 
   func setActiveRoute(_ route: StudioViewerRoute) {
-    presentationState.setActiveRoute(route)
+    let availableRoute: StudioViewerRoute =
+      route == .review && reviewController == nil
+      ? .source
+      : route
+    presentationState.setActiveRoute(availableRoute)
     refresh()
   }
 
@@ -214,6 +218,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   }
 
   func windowWillClose(_ notification: Notification) {
+    hasPresented = false
     sourceController.detachPresentation()
     reviewController?.detachPresentation()
   }
@@ -227,6 +232,21 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     else { return }
     viewport = measured
     refresh()
+  }
+
+  private func normalizedVisibleRoutes(
+    _ routes: Set<StudioViewerRoute>
+  ) -> Set<StudioViewerRoute> {
+    guard reviewController == nil else {
+      return routes.isEmpty ? [.source] : routes
+    }
+
+    var normalized = routes
+    normalized.remove(.review)
+    if normalized.isEmpty {
+      normalized.insert(.source)
+    }
+    return normalized
   }
 
   private func refresh() {
