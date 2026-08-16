@@ -28,7 +28,7 @@ Settings is a full-app takeover panel where you configure everything about TaskW
 - [Plugins tab](plugins-tab.md) — declarative capability bundles, installed state, and marketplace metadata.
 - [Local servers tab](local-servers-tab.md) — dev servers and watchers running under workspaces, with lifecycle controls.
 - [Devices tab](devices-tab.md) — iPhone/iPad pairing, remote workspace access, Tailscale, bridge networking, and push wake.
-- [Channels tab](shares-tab.md) — global overview of hosted and joined channels: members, revoke, close, audit.
+- [Channels tab](channels-tab.md) — global overview of hosted and joined channels: members, revoke, close, audit.
 - [Local model tool surface](local-model-tool-surface.md) — how Ollama exposes the compact gateway profile and reaches specialized tools on demand.
 
 ### Data

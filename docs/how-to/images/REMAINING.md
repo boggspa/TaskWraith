@@ -1,6 +1,6 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 63 top-level PNGs, but two do not count as current captures: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12, and `settings-and-configuration__shares-tab.png` predates the Channels cutover. That leaves 61 current captures against 86 guide pages. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
+Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 current captures against 86 guide pages. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
@@ -12,7 +12,7 @@ Capture replacements are being made against latest-source development apps. Use 
 
 - `settings-and-configuration__devices-tab` — use a demo or redacted pairing state; never publish a live QR code or device credential.
 - `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile (41 direct tools plus capability search/invoke) without exposing local endpoints or paths.
-- `settings-and-configuration__shares-tab` — the page was rewritten for the Channels cutover, so the PNG on disk shows the retired Shares tab and must be replaced. Capture **Settings → Integrations → Channels** with a demo or redacted membership state; never publish a live invite code or member credential. The `shares-tab` slug is legacy and still matches the page filename.
+- `settings-and-configuration__channels-tab` — the page was rewritten for the Channels cutover and the stale pre-cutover Shares capture has been removed. Capture **Settings → Integrations → Channels** with a demo or redacted membership state; never publish a live invite code or member credential.
 
 ## Needs live or transient desktop state
 

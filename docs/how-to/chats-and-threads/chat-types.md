@@ -23,4 +23,4 @@ Use the sidebar's **Chat** surface for General chats, **Code** for workspace-sco
 - [Workspace and chat tree](../sidebar-navigation/workspace-and-chat-tree.md) — how chats nest under workspaces.
 - [Create an Ensemble chat](../ensemble-mode/create-ensemble-chat.md) — running multiple agents in one chat.
 - [Sub-thread delegation](sub-thread-delegation.md) and [Side chat](side-chat.md) — linked child chats branched off a parent.
-- [Channels tab](../settings-and-configuration/shares-tab.md) — the global overview of channels you host or have joined.
+- [Channels tab](../settings-and-configuration/channels-tab.md) — the global overview of channels you host or have joined.

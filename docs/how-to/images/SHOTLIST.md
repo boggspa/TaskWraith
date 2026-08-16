@@ -2,7 +2,7 @@
 
 86 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 captured, 25 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 86 guide pages minus the 24 with no capture on disk, minus `settings-and-configuration__shares-tab`, whose PNG predates the Channels cutover and needs replacing.
+Current inventory, reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 captured, 25 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 86 guide pages minus the 25 with no capture on disk.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -132,7 +132,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `settings-and-configuration__provider-tools-tab.png` | Electron | Provider tools tab showing MCP bridge audit and tool catalog | **Settings → Integrations → Provider Tools**. |
 | `settings-and-configuration__providers-tab.png` | Electron | Providers tab showing provider sign-in cards and agentic policy matrix | Open **Settings → AI & Providers → Providers**. |
 | `settings-and-configuration__safety-and-privacy-tab.png` | Electron | Safety and privacy tab showing risk posture overview and deep-links | Open **Settings → Data → Safety & Privacy**. |
-| `settings-and-configuration__shares-tab.png` | Electron | Channels tab showing the hosted/joined channel list with member and revoke controls. The PNG on disk is a pre-Channels-cutover Shares capture and must be replaced; use a demo or redacted membership state. The `shares-tab` slug is legacy — the page is `settings-and-configuration/shares-tab.md`, titled "Channels tab". | **Settings → Integrations → Channels** |
+| `settings-and-configuration__channels-tab.png` | Electron | Channels tab showing the hosted/joined channel list with member and revoke controls. Use a demo or redacted membership state; never publish a live invite code or member credential. | **Settings → Integrations → Channels** |
 | `settings-and-configuration__workspaces-tab.png` | Electron | Workspaces tab showing loaded workspace list with pin/remove controls | **Settings → Workspaces → Workspaces**. |
 
 ### sidebar-navigation
