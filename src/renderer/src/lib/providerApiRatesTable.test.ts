@@ -271,7 +271,7 @@ describe('buildProviderApiRateGroups', () => {
       longContextInputUsdPerMillion: 4,
       longContextCachedInputUsdPerMillion: 1,
       longContextOutputUsdPerMillion: 12,
-      lastVerified: '2026-08-12',
+      lastVerified: RATE_TABLE_VERSION,
       status: 'baseline'
     })
     expect(cursor?.rows.find((row) => row.modelId === 'grok-4.6')).toMatchObject({
