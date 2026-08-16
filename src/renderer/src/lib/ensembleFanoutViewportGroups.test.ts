@@ -307,6 +307,41 @@ describe('fan-out disclosure groups', () => {
     expect(groups.every((group) => group.category === 'user')).toBe(true)
   })
 
+  it('recovers an explicitly tagged lane that was persisted before its dispatch receipt', () => {
+    const roundId = 'round-misordered-overlap'
+    const messages = [
+      status('older-wave', roundId, 'User Fan-Out · 1 participant(s) dispatched concurrently.', {
+        ensembleFanoutWaveId: 'older-wave',
+        ensembleFanoutCategory: 'user'
+      }),
+      lane('new-low-order-lane', roundId, {
+        ensembleOrder: 1,
+        ensembleFanoutWaveId: 'newer-wave'
+      }),
+      lane('older-high-order-lane', roundId, {
+        ensembleOrder: 6,
+        ensembleFanoutWaveId: 'older-wave'
+      }),
+      status('newer-wave', roundId, 'User Fan-Out · 1 participant(s) dispatched concurrently.', {
+        ensembleFanoutWaveId: 'newer-wave',
+        ensembleFanoutCategory: 'user'
+      })
+    ]
+
+    const groups = collectEnsembleFanoutViewportGroups('chat-misordered-overlap', roundId, messages)
+
+    expect(
+      groups.map((group) => [
+        group.waveId,
+        group.anchorIndex,
+        group.lanes.map((entry) => entry.message.id)
+      ])
+    ).toEqual([
+      ['older-wave', 0, ['older-high-order-lane']],
+      ['newer-wave', 3, ['new-low-order-lane']]
+    ])
+  })
+
   it('expands a late-flushed User Fan-Out lane under the one-liner, not at its raw transcript index', () => {
     // Background User Fan-Out: serial rotation continues, then the tagged lane
     // flushes after intervening turns — the durable wave still owns it.

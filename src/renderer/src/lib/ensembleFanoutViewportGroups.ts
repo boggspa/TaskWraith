@@ -229,9 +229,14 @@ export function collectEnsembleFanoutViewportGroups(
   const groups: MutableViewportGroup[] = []
   const groupByLaneKey = new Map<string, MutableViewportGroup>()
   const groupByWaveId = new Map<string, MutableViewportGroup>()
+  const dispatchGroupByIndex = new Map<number, MutableViewportGroup>()
   const openGroups: MutableViewportGroup[] = []
   let legacyGroup: MutableViewportGroup | null = null
 
+  // Index every durable receipt before assigning lane rows. A historical
+  // main-side ordering bug could persist the first fragment of a later wave
+  // ahead of that wave's receipt; the explicit wave id remains authoritative
+  // even when transcript order is not.
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]
     const statusMatch =
@@ -257,11 +262,23 @@ export function collectEnsembleFanoutViewportGroups(
         laneRows: []
       }
       groups.push(group)
-      openGroups.push(group)
+      dispatchGroupByIndex.set(index, group)
       groupByWaveId.set(durableWaveId, group)
+    }
+  }
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    const dispatchGroup = dispatchGroupByIndex.get(index)
+    if (dispatchGroup) {
+      if (
+        dispatchGroup.expectedLaneCount === null ||
+        dispatchGroup.lanes.length < dispatchGroup.expectedLaneCount
+      ) {
+        openGroups.push(dispatchGroup)
+      }
       continue
     }
-
     if (!isEnsembleFanoutLaneMessage(message)) continue
     const laneKey = fanoutLaneKey(message)
     const indexed = { message, index }
