@@ -1102,6 +1102,191 @@ final class StudioPumpAdoptionTests: XCTestCase {
         }
     }
 
+    // MARK: - Startup delivery cannot drop or reorder
+
+    private struct ViewerHarness {
+        let state: StudioViewerAppState
+        let sourceRenderer: StudioViewerRenderer
+        let reviewRenderer: StudioViewerRenderer
+    }
+
+    private func makeViewerHarness(device: MTLDevice) throws -> ViewerHarness {
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        return ViewerHarness(
+            state: StudioViewerAppState(
+                controller: StudioViewerWindowController(
+                    renderer: sourceRenderer, authority: authority, route: .source
+                ),
+                renderer: sourceRenderer,
+                reviewController: StudioViewerWindowController(
+                    renderer: reviewRenderer, authority: authority, route: .review
+                ),
+                presentSource: {}
+            ),
+            sourceRenderer: sourceRenderer,
+            reviewRenderer: reviewRenderer
+        )
+    }
+
+    private func hydrationUpdate(
+        asset: StudioMediaAsset,
+        effectPreview: StudioEffectPreviewChange = .clear
+    ) -> StudioCompanionStdioPump.Update {
+        StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: []
+            ),
+            latestRevision: 0,
+            hydration: StudioCompanionSession.Hydration(
+                assets: [asset],
+                proposals: [],
+                transcripts: [],
+                effectPreview: effectPreview,
+                sequence: StudioTimelineSequence(items: [])
+            )
+        )
+    }
+
+    /// CONTROL 3 — the drop this arc created for itself.
+    ///
+    /// `run()` started the pump thread BEFORE constructing the app state, and
+    /// the callback read `StudioViewerAppState.shared?`. While hydration was
+    /// wrongly repeated, a lost first envelope was replayed on the next edit and
+    /// nobody could see it. Now that hydration is correctly one-shot, that sole
+    /// envelope is the only one there will ever be, and optional chaining would
+    /// discard it silently and permanently.
+    ///
+    /// The earliest possible callback must be adopted.
+    func testDeliveryAdoptsTheVeryFirstUpdateItIsEverGiven() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie(lumaLevels: [128])
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let harness = try makeViewerHarness(device: device)
+        let delivery = StudioUpdateDelivery(state: harness.state)
+
+        // The sole hydration envelope, handed over before anything else has
+        // ever touched this delivery.
+        delivery.deliver(
+            hydrationUpdate(
+                asset: StudioMediaAsset(assetId: "recovered", path: movie.path)
+            )
+        )
+        await delivery.awaitQuiescence()
+
+        XCTAssertTrue(
+            harness.sourceRenderer.diagnostics.hasSource,
+            "the first and only hydration envelope never reached the viewer"
+        )
+        XCTAssertTrue(harness.reviewRenderer.diagnostics.hasSource)
+    }
+
+    /// CONTROL 4 — the readiness guarantee itself, rather than one instance of
+    /// it working out.
+    ///
+    /// A delivery that holds the viewer state OPTIONALLY reintroduces the exact
+    /// drop path: it becomes constructible before the viewer exists, and the
+    /// pump can then be started too early again. Non-optional storage is what
+    /// makes the startup order a property of the object graph instead of a
+    /// comment someone has to obey.
+    func testDeliveryHoldsTheViewerStateNonOptionally() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let delivery = StudioUpdateDelivery(state: try makeViewerHarness(device: device).state)
+        let stored = try XCTUnwrap(
+            Mirror(reflecting: delivery).children.first { $0.label == "state" },
+            "StudioUpdateDelivery must retain the viewer state it delivers to"
+        )
+        XCTAssertNotEqual(
+            Mirror(reflecting: stored.value).displayStyle,
+            .optional,
+            "an optional viewer state is the drop path that lost the sole hydration "
+                + "envelope; the delivery must be unconstructible before the viewer exists"
+        )
+    }
+
+    /// CONTROL 5 — order across callbacks, which is a different guarantee from
+    /// order within one update.
+    ///
+    /// Each callback used to spawn an independent `Task { @MainActor in ... }`.
+    /// Unstructured tasks carry no FIFO guarantee between them, and adoption
+    /// SUSPENDS on media attachment — so the hydration stops to decode, the
+    /// live edit behind it runs to completion, and then the older document
+    /// lands last and clears it. Same inversion as the same-chunk defect, one
+    /// level up.
+    func testALiveEditCannotOvertakeAHydrationThatStopsToDecode() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie(lumaLevels: [128])
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let harness = try makeViewerHarness(device: device)
+        let delivery = StudioUpdateDelivery(state: harness.state)
+
+        // N — recovers the document and must attach real media, which suspends.
+        delivery.deliver(
+            hydrationUpdate(
+                asset: StudioMediaAsset(assetId: "preview-asset", path: movie.path)
+            )
+        )
+        // N+1 — the operator's Load, submitted immediately behind it and free
+        // to complete first if delivery is unordered.
+        delivery.deliver(
+            StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .set(try constantRedPreview())
+                ),
+                latestRevision: 3,
+                hydration: nil
+            )
+        )
+        await delivery.awaitQuiescence()
+
+        XCTAssertTrue(
+            harness.sourceRenderer.diagnostics.hasSource,
+            "the hydration never finished attaching its media"
+        )
+        XCTAssertEqual(
+            harness.sourceRenderer.grade.mode,
+            .effect,
+            "the older document overtook the newer live edit and cleared the LUT"
+        )
+        XCTAssertEqual(harness.reviewRenderer.grade.mode, .effect)
+
+        var clock = StudioPlaybackClock(
+            timebase: try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1)),
+            durationTicks: 300
+        )
+        clock.seek(toTicks: 0, atHost: 0)
+        let snapshot = clock.snapshot(atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128
+        )
+        for (label, renderer) in [
+            ("Source", harness.sourceRenderer), ("Review", harness.reviewRenderer),
+        ] {
+            XCTAssertTrue(renderer.render(snapshot: snapshot, to: target).didDraw)
+            let pixel = try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64)
+            XCTAssertGreaterThan(
+                Int(pixel.red),
+                Int(pixel.green) + 60,
+                "\(label) is not showing the LUT the live edit installed: \(pixel)"
+            )
+        }
+    }
+
     private func makeMovie(lumaLevels: [UInt8] = [128, 128]) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("studio-pump-adoption-\(UUID().uuidString).mov")

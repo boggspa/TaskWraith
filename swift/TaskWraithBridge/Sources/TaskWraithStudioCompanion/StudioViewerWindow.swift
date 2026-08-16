@@ -2317,22 +2317,6 @@ enum StudioViewerApp {
             exit(StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce))
         }
 
-        // AppKit must own the main thread, so the protocol pump moves to its own
-        // thread. It exits the process on EOF exactly as the headless path does.
-        // Opened assets hop to the main actor as plain Sendable identities; the
-        // renderer itself never crosses a thread boundary.
-        let pumpThread = Thread {
-            exit(
-                StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { update in
-                    Task { @MainActor in
-                        await StudioViewerAppState.shared?.adopt(update: update)
-                    }
-                }
-            )
-        }
-        pumpThread.name = "taskwraith-studio-stdio"
-        pumpThread.start()
-
         let application = NSApplication.shared
         // A supervised companion is infrastructure, not a startup window. Keep
         // it out of the Dock and foreground until Open in Studio arrives.
@@ -2367,12 +2351,105 @@ enum StudioViewerApp {
         }
         retainedReviewController = reviewController
 
-        StudioViewerAppState.shared = StudioViewerAppState(
+        let state = StudioViewerAppState(
             controller: controller,
             renderer: renderer,
             reviewController: reviewController
         )
+        StudioViewerAppState.shared = state
+
+        // DELIVERY IS BUILT BEFORE THE PUMP, AND THE PUMP CANNOT BE BUILT
+        // WITHOUT IT. The thread closure captures this value, which holds the
+        // state non-optionally, so "start the pump before the viewer exists" is
+        // no longer an ordering a future edit can get wrong by accident — it is
+        // a fact about the object graph.
+        //
+        // AppKit must own the main thread, so the protocol pump moves to its own
+        // thread. It exits the process on EOF exactly as the headless path does.
+        // Opened assets hop to the main actor as plain Sendable identities; the
+        // renderer itself never crosses a thread boundary.
+        let delivery = StudioUpdateDelivery(state: state)
+        let pumpThread = Thread {
+            exit(
+                StudioCompanionStdioPump.run(hydrateOnce: hydrateOnce) { update in
+                    delivery.deliver(update)
+                }
+            )
+        }
+        pumpThread.name = "taskwraith-studio-stdio"
+        pumpThread.start()
+
         application.run()
         exit(0)
+    }
+}
+
+/// Delivers pump updates to the viewer IN ORDER, and cannot drop one.
+///
+/// TWO DEFECTS AT ONE SEAM, both of which only became reachable once hydration
+/// was made genuinely one-shot in 6516f5a0d.
+///
+/// THE DROP. `run()` started the pump thread BEFORE constructing
+/// `StudioViewerAppState`, and the callback read `StudioViewerAppState.shared?`.
+/// A fast getDocument response could consume the SOLE hydration envelope while
+/// `shared` was still nil, and optional chaining then discarded it silently and
+/// permanently — no window, no ghost, no transcript, no error. The previous
+/// defective repeated hydration masked this by replaying the document on the
+/// next edit; removing that bug removed the mask. Holding the state
+/// NON-OPTIONALLY is the repair: this value cannot exist before the state does,
+/// so neither can the thread closure that captures it.
+///
+/// THE INVERSION. Each callback previously spawned an independent
+/// `Task { @MainActor in ... }`. Unstructured tasks carry no FIFO guarantee
+/// between them, and `adopt(update:)` suspends on media attachment — so a
+/// hydration that stops to decode can be overtaken by the live edit that
+/// follows it, and the OLDER document then lands last. That is precisely the
+/// inversion already fixed inside a single update; across updates it needs an
+/// explicit chain, because "they were submitted in order" is not a guarantee
+/// that they RUN in order.
+///
+/// `@unchecked Sendable` is justified narrowly: `state` is a `@MainActor` class
+/// and therefore already Sendable, and `tail` is only ever read or written
+/// under `lock`.
+final class StudioUpdateDelivery: @unchecked Sendable {
+    private let state: StudioViewerAppState
+    private let lock = NSLock()
+    private var tail: Task<Void, Never>?
+
+    init(state: StudioViewerAppState) {
+        self.state = state
+    }
+
+    /// Called on the PUMP THREAD. Never blocks it: the work is queued behind
+    /// whatever is already in flight and the caller returns immediately, so the
+    /// pump's stdio and protocol response writes keep their existing timing.
+    func deliver(_ update: StudioCompanionStdioPump.Update) {
+        lock.lock()
+        let previous = tail
+        let state = self.state
+        let next = Task { @MainActor in
+            // Awaiting the predecessor SUSPENDS rather than blocks, so the main
+            // actor stays free to draw while an earlier attachment decodes.
+            await previous?.value
+            await state.adopt(update: update)
+        }
+        tail = next
+        lock.unlock()
+    }
+
+    /// Awaits everything submitted so far. Ordering is not observable without a
+    /// way to wait for the chain to settle, so this exists for the controls
+    /// rather than for production, which never needs to wait.
+    func awaitQuiescence() async {
+        // The lock is taken in a SYNCHRONOUS accessor on purpose: NSLock is
+        // unavailable from async contexts because a suspension while holding it
+        // would block an arbitrary cooperative thread.
+        await currentTail()?.value
+    }
+
+    private func currentTail() -> Task<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return tail
     }
 }
