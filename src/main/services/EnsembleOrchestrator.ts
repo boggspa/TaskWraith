@@ -191,6 +191,7 @@ import {
   shouldMintFreshGoalIdentity,
   updateActiveGoalLifecycle
 } from '../GoalState'
+import { projectRoundParticipantFromChatRun } from '../EnsembleRoundParticipantProjection'
 import { gateBlocksActiveGoal } from '../ReviewGateScope'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
@@ -18888,6 +18889,7 @@ export class EnsembleOrchestrator {
       status: 'running',
       ensembleRoundId: runtime.roundId,
       ensembleParticipantId: participant.id,
+      ensembleParticipantStatus: 'running',
       ...(options.laneId ? { ensembleLaneId: options.laneId } : {}),
       ...(options.laneId ? { ensembleLaneIntent: options.laneIntent || 'read' } : {}),
       ensembleRole: participant.role,
@@ -18944,16 +18946,9 @@ export class EnsembleOrchestrator {
           activeRound: addLaneToRound(
             options.preserveParticipantRoundStatus
               ? chat.ensemble!.activeRound
-              : updateRoundParticipant(
-                  chat.ensemble!.activeRound,
-                  participant.id,
-                  {
-                    status: 'running',
-                    runId,
-                    startedAt
-                  },
-                  { setActive: !options.laneId }
-                ),
+              : projectRoundParticipantFromChatRun(chat.ensemble!.activeRound, run, {
+                  setActive: !options.laneId
+                }),
             options.laneId
               ? transitionLane(
                   createLane({
@@ -20290,6 +20285,7 @@ export class EnsembleOrchestrator {
         stats: run.stats || existingRun.stats,
         status: effectiveFinal ? statusToRunStatus(run.status) : existingRun.status || 'running',
         endedAt: effectiveFinal ? timestamp : existingRun.endedAt,
+        ensembleParticipantStatus: visibleStatus,
         ...(effectiveFinal && run.status === 'sleeping'
           ? {
               ensembleSleepWakeupId: reason
@@ -20306,6 +20302,11 @@ export class EnsembleOrchestrator {
         delete next.promptDynamicStateVersion
       } else if (shouldPersistDynamicStateReceipt) {
         next.promptDynamicStateVersion = run.promptDynamicStateVersion
+      }
+      if (effectiveFinal && reason && !silentMaintenanceRecovery) {
+        next.ensembleTerminalReason = reason
+      } else {
+        delete next.ensembleTerminalReason
       }
       return next
     })
@@ -20337,19 +20338,15 @@ export class EnsembleOrchestrator {
       }
       return next
     })
+    const projectedParticipantRun = runs.find((existingRun) => existingRun.runId === run.runId)
     const participantRound = run.preserveParticipantRoundStatus
       ? chat.ensemble.activeRound
-      : updateRoundParticipant(
-          chat.ensemble.activeRound,
-          run.participant.id,
-          {
-            status: visibleStatus,
-            runId: silentMaintenanceRecovery ? undefined : run.runId,
-            ...(effectiveFinal && reason && !silentMaintenanceRecovery ? { reason } : {}),
-            ...(effectiveFinal && !silentMaintenanceRecovery ? { endedAt: timestamp } : {})
-          },
-          { setActive: !run.laneId }
-        )
+      : projectedParticipantRun
+        ? projectRoundParticipantFromChatRun(chat.ensemble.activeRound, projectedParticipantRun, {
+            setActive: !run.laneId,
+            exposeRunId: !silentMaintenanceRecovery
+          })
+        : chat.ensemble.activeRound
     const transitionRound =
       participantRound && effectiveFinal && !run.laneId && !silentMaintenanceRecovery
         ? {

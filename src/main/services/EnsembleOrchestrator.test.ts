@@ -14726,6 +14726,55 @@ Next action:
     )
   })
 
+  it('projects a repeated continuous turn from its new run without stale terminal fields', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 2
+    harness.chat.ensemble!.participants = CONTINUOUS_PAIR.map((participant) => ({
+      ...participant
+    }))
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep working across another pass.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstCodexRunId = harness.dispatched[0].appRunId!
+
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeLatestContinuousForeground(harness)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+
+    const secondCodexRunId = harness.dispatched[2].appRunId!
+    const codexState = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'ensemble-codex'
+    )
+    const firstAttempt = harness.chat.runs.find((run) => run.runId === firstCodexRunId)
+    const secondAttempt = harness.chat.runs.find((run) => run.runId === secondCodexRunId)
+
+    expect(firstAttempt).toMatchObject({
+      ensembleParticipantStatus: 'answered',
+      status: 'success',
+      endedAt: expect.any(String)
+    })
+    expect(secondAttempt).toMatchObject({
+      ensembleParticipantStatus: 'running',
+      status: 'running'
+    })
+    expect(codexState).toMatchObject({
+      status: 'running',
+      runId: secondCodexRunId,
+      startedAt: secondAttempt?.startedAt
+    })
+    expect(codexState?.endedAt).toBeUndefined()
+    expect(codexState?.reason).toBeUndefined()
+    expect(codexState?.lastFailureReason).toBeUndefined()
+
+    await harness.orchestrator.cancelRound('ensemble-chat', 'test cleanup')
+  })
+
   it('repeats only the automatic Scout fan-out on a continuous continuation pass', async () => {
     const harness = makeHarness({ probeParticipant: async () => ({ reachable: true }) })
     harness.chat.ensemble!.orchestrationMode = 'continuous'

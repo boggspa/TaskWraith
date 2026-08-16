@@ -3777,6 +3777,13 @@ export interface ChatRun {
   ensembleRole?: string
   ensembleStageRole?: EnsembleStageRole
   ensembleOrder?: number
+  /** Exact per-attempt Ensemble lifecycle state. Unlike generic `status`, this
+   * preserves answered/yielded/skipped and is the authority for projecting the
+   * participant's latest-attempt row. */
+  ensembleParticipantStatus?: EnsembleParticipantStatus
+  /** Exact terminal reason for `ensembleParticipantStatus`. Kept on the run so
+   * a later attempt cannot inherit failure prose from an older attempt. */
+  ensembleTerminalReason?: string
   /** Per-turn immutable seat configuration for accurate round close-outs. */
   ensembleSeatSnapshot?: EnsembleSeatSnapshot
   /**
