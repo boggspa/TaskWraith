@@ -6,6 +6,8 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
+  unlinkSync,
   writeSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -161,6 +163,19 @@ export interface MissionFactLedgerOptions {
   readonly rootPath: string
   readonly now?: () => string
   readonly idFactory?: () => string
+}
+
+export interface MissionFactPurgeScope {
+  readonly all?: boolean
+  /** Exact ids frozen by a deletion intent before sibling history mutates. */
+  readonly missionIds?: readonly string[]
+  readonly chatIds?: readonly string[]
+  readonly workspaceIds?: readonly string[]
+}
+
+export interface MissionFactPurgeReport {
+  readonly scanned: number
+  readonly deletedMissionIds: readonly string[]
 }
 
 export class MissionFactSequenceConflictError extends Error {
@@ -665,6 +680,8 @@ function ledgerFileName(missionId: string): string {
   return `mission-${digest}.jsonl`
 }
 
+const MISSION_LEDGER_FILE_PATTERN = /^mission-[a-f0-9]{64}\.jsonl$/
+
 function fsyncDirectory(path: string): void {
   let fd: number | undefined
   try {
@@ -748,5 +765,84 @@ export class MissionFactLedgerRepository {
       throw new MissionFactLedgerCorruptError(record.missionId, verified.diagnostics)
     }
     return record
+  }
+
+  purge(scope: MissionFactPurgeScope): MissionFactPurgeReport {
+    if (!existsSync(this.rootPath)) return { scanned: 0, deletedMissionIds: [] }
+    const files = readdirSync(this.rootPath)
+      .filter((fileName) => MISSION_LEDGER_FILE_PATTERN.test(fileName))
+      .sort()
+    if (files.length === 0) return { scanned: 0, deletedMissionIds: [] }
+
+    if (scope.all === true) {
+      for (const fileName of files) unlinkSync(join(this.rootPath, fileName))
+      fsyncDirectory(this.rootPath)
+      return { scanned: files.length, deletedMissionIds: [] }
+    }
+
+    if (scope.missionIds !== undefined) {
+      const missionIds = [
+        ...new Set(
+          scope.missionIds.map((missionId) => requiredText(missionId, 'Mission id', MAX_ID_CHARS))
+        )
+      ].sort()
+      const deletedMissionIds: string[] = []
+      for (const missionId of missionIds) {
+        const filePath = join(this.rootPath, ledgerFileName(missionId))
+        if (!existsSync(filePath)) continue
+        unlinkSync(filePath)
+        deletedMissionIds.push(missionId)
+      }
+      if (deletedMissionIds.length > 0) fsyncDirectory(this.rootPath)
+      return { scanned: files.length, deletedMissionIds }
+    }
+
+    const missionIds = this.resolvePurgeMissionIds(scope)
+    for (const missionId of missionIds) {
+      unlinkSync(join(this.rootPath, ledgerFileName(missionId)))
+    }
+    if (missionIds.length > 0) fsyncDirectory(this.rootPath)
+    return { scanned: files.length, deletedMissionIds: missionIds }
+  }
+
+  resolvePurgeMissionIds(scope: Omit<MissionFactPurgeScope, 'all' | 'missionIds'>): string[] {
+    if (!existsSync(this.rootPath)) return []
+    const files = readdirSync(this.rootPath)
+      .filter((fileName) => MISSION_LEDGER_FILE_PATTERN.test(fileName))
+      .sort()
+
+    const chatIds = new Set((scope.chatIds || []).map((id) => id.trim()).filter(Boolean))
+    const workspaceIds = new Set((scope.workspaceIds || []).map((id) => id.trim()).filter(Boolean))
+    if (chatIds.size === 0 && workspaceIds.size === 0) {
+      return []
+    }
+
+    // Resolve and verify every ledger before deleting any. Scoped privacy
+    // erasure cannot silently skip a corrupt file whose provenance is unknown.
+    const targets: string[] = []
+    for (const fileName of files) {
+      const filePath = join(this.rootPath, fileName)
+      const firstLine = readFileSync(filePath, 'utf8').split('\n', 1)[0]
+      const first = parseMissionFactLine(firstLine)
+      if (!first || ledgerFileName(first.missionId) !== fileName) {
+        throw new MissionFactLedgerCorruptError(first?.missionId || fileName, [
+          {
+            code: 'invalid-record',
+            message: `Mission ledger ${fileName} cannot prove its identity for scoped deletion.`
+          }
+        ])
+      }
+      const replay = this.read(first.missionId)
+      if (!replay.valid) {
+        throw new MissionFactLedgerCorruptError(first.missionId, replay.diagnostics)
+      }
+      const matches = replay.records.some(
+        (record) =>
+          (record.provenance.chatId && chatIds.has(record.provenance.chatId)) ||
+          (record.provenance.workspaceId && workspaceIds.has(record.provenance.workspaceId))
+      )
+      if (matches) targets.push(first.missionId)
+    }
+    return targets.sort()
   }
 }

@@ -316,4 +316,73 @@ describe('MissionFactLedgerRepository', () => {
     expect(replay.valid).toBe(false)
     expect(replay.diagnostics.map((item) => item.code)).toContain('hash-mismatch')
   })
+
+  it('purges only ledgers whose verified provenance matches a scoped deletion', () => {
+    const repository = new MissionFactLedgerRepository({ rootPath })
+    repository.append(
+      input(
+        'fact-01',
+        { kind: 'mission_defined', objective: 'Mission A' },
+        {
+          missionId: 'mission-a',
+          provenance: { ...provenance, chatId: 'chat-a', workspaceId: 'workspace-a' }
+        }
+      )
+    )
+    repository.append(
+      input(
+        'fact-02',
+        { kind: 'mission_defined', objective: 'Mission B' },
+        {
+          missionId: 'mission-b',
+          provenance: { ...provenance, chatId: 'chat-b', workspaceId: 'workspace-b' }
+        }
+      )
+    )
+
+    expect(repository.purge({ chatIds: ['chat-a'] })).toEqual({
+      scanned: 2,
+      deletedMissionIds: ['mission-a']
+    })
+    expect(repository.read('mission-a').projection).toBeNull()
+    expect(repository.read('mission-b').valid).toBe(true)
+
+    expect(repository.purge({ workspaceIds: ['workspace-b'] }).deletedMissionIds).toEqual([
+      'mission-b'
+    ])
+    expect(readdirSync(rootPath)).toEqual([])
+  })
+
+  it('fails a scoped purge before deleting siblings when any ledger cannot prove scope', () => {
+    const repository = new MissionFactLedgerRepository({ rootPath })
+    repository.append(
+      input(
+        'fact-01',
+        { kind: 'mission_defined', objective: 'Mission' },
+        {
+          provenance: { ...provenance, chatId: 'chat-a' }
+        }
+      )
+    )
+    const [fileName] = readdirSync(rootPath)
+    appendFileSync(join(rootPath, fileName), '{"partial":', 'utf8')
+
+    expect(() => repository.purge({ chatIds: ['chat-a'] })).toThrow(MissionFactLedgerCorruptError)
+    expect(readdirSync(rootPath)).toEqual([fileName])
+    expect(repository.purge({ missionIds: ['mission-1'] }).deletedMissionIds).toEqual(['mission-1'])
+    expect(readdirSync(rootPath)).toEqual([])
+  })
+
+  it('globally purges every mission ledger even when a tail is corrupt', () => {
+    const repository = new MissionFactLedgerRepository({ rootPath })
+    repository.append(input('fact-01', { kind: 'mission_defined', objective: 'Mission' }))
+    const [fileName] = readdirSync(rootPath)
+    appendFileSync(join(rootPath, fileName), '{"partial":', 'utf8')
+
+    expect(repository.purge({ all: true })).toEqual({
+      scanned: 1,
+      deletedMissionIds: []
+    })
+    expect(readdirSync(rootPath)).toEqual([])
+  })
 })

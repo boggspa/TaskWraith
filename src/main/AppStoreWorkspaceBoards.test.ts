@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { AppStore } from './store'
 import type { ChatMessage } from './store/types'
+import { MissionFactLedgerRepository } from './missionLedger/MissionFactLedger'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-workspace-boards-test-${process.pid}`)
 
@@ -261,5 +262,51 @@ describe('AppStore workspace boards', () => {
       provenance
     })
     expect(agentUpdatedCard?.activity.at(-1)?.actor).toBe('agent')
+  })
+
+  it('shadows linked Goal and Board state into the mission fact ledger', () => {
+    const sourceChat = AppStore.createChat('ws-a', '/repo-a')
+    const observedAt = '2026-08-16T00:00:00.000Z'
+    AppStore.saveChat({
+      ...sourceChat,
+      activeGoal: {
+        id: 'goal-board-shadow',
+        objective: 'Ship the board shadow',
+        objectiveSource: 'user',
+        status: 'active',
+        mode: 'taskwraith_steered',
+        provider: 'codex',
+        createdAt: observedAt,
+        updatedAt: observedAt
+      }
+    })
+    const missionFacts = new MissionFactLedgerRepository({
+      rootPath: path.join(userDataPath, 'mission-facts')
+    })
+    expect(missionFacts.read('goal-board-shadow').projection).toMatchObject({
+      objective: 'Ship the board shadow',
+      status: 'active'
+    })
+
+    const board = saveBoard('board-shadow', 'ws-a', '/repo-a')
+    const card = AppStore.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: board.workspaceId,
+      columnId: 'running',
+      title: 'Wire the board observer',
+      sortOrder: 1,
+      link: { kind: 'chat', id: sourceChat.appChatId }
+    })
+    expect(missionFacts.read('goal-board-shadow').projection?.workItems).toMatchObject([
+      { workItemId: card.id, status: 'running' }
+    ])
+
+    AppStore.updateWorkspaceBoardCard(card.id, { columnId: 'done' })
+    expect(missionFacts.read('goal-board-shadow').projection?.workItems).toMatchObject([
+      { workItemId: card.id, status: 'done' }
+    ])
+
+    AppStore.deleteWorkspaceBoardCard(card.id)
+    expect(missionFacts.read('goal-board-shadow').projection?.workItems).toEqual([])
   })
 })

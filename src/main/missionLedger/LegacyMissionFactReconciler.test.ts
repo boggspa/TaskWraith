@@ -21,6 +21,7 @@ function snapshot(
       objective: 'Ship the mission ledger',
       status: 'active',
       observedAt: '2026-08-16T00:00:00.000Z',
+      statusProvenance: { actor: 'system', chatId: 'chat-1', workspaceId: 'workspace-1' },
       provenance: { actor: 'user', chatId: 'chat-1', workspaceId: 'workspace-1' }
     },
     plan: {
@@ -45,8 +46,24 @@ function snapshot(
         observedAt: '2026-08-16T00:00:02.000Z',
         provenance: { actor: 'user', workspaceId: 'workspace-1' },
         items: [
-          { workItemId: 'card-b', title: 'Cut over reads', status: 'pending', sortOrder: 2 },
-          { workItemId: 'card-a', title: 'Build kernel', status: 'running', sortOrder: 1 }
+          {
+            item: {
+              workItemId: 'card-b',
+              title: 'Cut over reads',
+              status: 'pending',
+              sortOrder: 2
+            }
+          },
+          {
+            item: {
+              workItemId: 'card-a',
+              title: 'Build kernel',
+              status: 'running',
+              sortOrder: 1
+            },
+            observedAt: '2026-08-16T00:00:03.000Z',
+            provenance: { actor: 'agent', workspaceId: 'workspace-1', runId: 'run-card-a' }
+          }
         ]
       }
     ],
@@ -94,6 +111,7 @@ describe('deriveLegacyMissionFactBatch', () => {
       missionId: 'goal-1',
       provenance: { surface: 'goal', actor: 'user', sourceId: 'goal-1' }
     })
+    expect(batch[1].provenance).toMatchObject({ surface: 'goal', actor: 'system' })
     expect(batch[2]).toMatchObject({
       provenance: {
         surface: 'plan',
@@ -104,6 +122,7 @@ describe('deriveLegacyMissionFactBatch', () => {
       }
     })
     expect(batch.slice(3).map((item) => item.provenance.sourceId)).toEqual(['card-a', 'card-b'])
+    expect(batch[3].provenance).toMatchObject({ actor: 'agent', runId: 'run-card-a' })
   })
 
   it('emits no facts when all observed legacy surfaces match the fold', () => {
@@ -142,8 +161,17 @@ describe('deriveLegacyMissionFactBatch', () => {
           observedAt: '2026-08-16T00:01:02.000Z',
           provenance: { actor: 'agent', workspaceId: 'workspace-1', runId: 'run-board' },
           items: [
-            { workItemId: 'card-a', title: 'Build kernel', status: 'done', sortOrder: 1 },
-            { workItemId: 'card-c', title: 'Wire shadow writes', status: 'running', sortOrder: 2 }
+            {
+              item: { workItemId: 'card-a', title: 'Build kernel', status: 'done', sortOrder: 1 }
+            },
+            {
+              item: {
+                workItemId: 'card-c',
+                title: 'Wire shadow writes',
+                status: 'running',
+                sortOrder: 2
+              }
+            }
           ]
         }
       ]

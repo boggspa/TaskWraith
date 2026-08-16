@@ -21,6 +21,8 @@ import {
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { resolveActiveGoalForEnsemble } from '../GoalState'
+import { MissionFactLedgerRepository } from '../missionLedger/MissionFactLedger'
+import { MissionFactShadowService } from '../missionLedger/MissionFactShadowService'
 import {
   kimiAcpSeatStatePath,
   kimiAcpSeatStateRoot,
@@ -498,6 +500,9 @@ let scheduledRunIdTombstoneCache: {
 } | null = null
 const workspaceBoardsPath = path.join(userDataPath, 'workspace-boards.json')
 const workspaceBoardCardsPath = path.join(userDataPath, 'workspace-board-cards.json')
+const missionFactsPath = path.join(userDataPath, 'mission-facts')
+const missionFactRepository = new MissionFactLedgerRepository({ rootPath: missionFactsPath })
+const missionFactShadowService = new MissionFactShadowService(missionFactRepository)
 const evidencePacksPath = path.join(userDataPath, 'evidence-packs.json')
 const repoConventionIndexesPath = path.join(userDataPath, 'repo-convention-indexes.json')
 const runQueuePath = path.join(userDataPath, 'run-queue.json')
@@ -989,6 +994,7 @@ type HistoryDeletionStep =
   | 'message-feedback'
   | 'sub-thread-mailboxes'
   | 'thread-messages'
+  | 'mission-facts'
   | 'run-events'
   | 'run-artifacts'
   | 'kimi-seat-state'
@@ -1008,6 +1014,7 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   // A queued peer message is a resurrection source: it would enter a live thread's
   // context after the chat that sent it was erased.
   'thread-messages',
+  'mission-facts',
   'run-events',
   'run-artifacts',
   'kimi-seat-state',
@@ -1026,6 +1033,7 @@ interface HistoryDeletionIntent {
   rootChatId?: string
   chatIds: string[]
   runIds: string[]
+  missionFactIds: string[]
   scheduledTaskIds: string[]
   retainedScheduledTaskIds: string[]
   workflowIds: string[]
@@ -1089,6 +1097,7 @@ export interface HistoryMutationAdmissionInput {
   chatIds?: ReadonlyArray<string | null | undefined>
   workspaceIds?: ReadonlyArray<string | null | undefined>
   runIds?: ReadonlyArray<string | null | undefined>
+  missionIds?: ReadonlyArray<string | null | undefined>
 }
 // Newest-N audit runs kept on disk. Each run holds its own findings/verdicts;
 // the per-run JSONL ledger (run-events) carries the replayable detail.
@@ -2843,6 +2852,13 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   }
   const chatIds = safeStrings(record.chatIds, 'chat ids', true)
   const runIds = safeStrings(record.runIds, 'run ids')
+  // Version-1 intents written before mission facts existed carry no inventory.
+  // Their existing chat/workspace fences remain authoritative, while every new
+  // prepare freezes the exact ids needed for deterministic recovery.
+  const missionFactIds =
+    record.missionFactIds === undefined
+      ? []
+      : safeStrings(record.missionFactIds, 'mission fact ids')
   // Never normalize a missing ownership inventory to empty: that would turn a
   // source-ahead journal upgrade into an apparently successful clear while an
   // old schedule could still recreate the transcript.
@@ -2989,6 +3005,7 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
     ...(typeof record.rootChatId === 'string' ? { rootChatId: record.rootChatId } : {}),
     chatIds,
     runIds,
+    missionFactIds,
     scheduledTaskIds,
     retainedScheduledTaskIds,
     workflowIds,
@@ -3035,12 +3052,18 @@ function assertHistoryMutationAdmission(
       (value): value is string => typeof value === 'string' && Boolean(value)
     )
   )
+  const missionIds = new Set(
+    (input.missionIds || []).filter(
+      (value): value is string => typeof value === 'string' && Boolean(value)
+    )
+  )
   const blocked =
     intent.kind === 'global' ||
     (intent.kind === 'workspace' &&
       Boolean(intent.workspaceId && workspaceIds.has(intent.workspaceId))) ||
     intent.chatIds.some((chatId) => chatIds.has(chatId)) ||
-    intent.runIds.some((runId) => runIds.has(runId))
+    intent.runIds.some((runId) => runIds.has(runId)) ||
+    intent.missionFactIds.some((missionId) => missionIds.has(missionId))
 
   if (blocked) {
     throw new HistoryDeletionMutationBlockedError(
@@ -4769,6 +4792,71 @@ function toolActivityDetailCheckpointInput(
         }
       }
     ]
+  }
+}
+
+function shadowWorkspaceBoardMissionFacts(
+  board: WorkspaceBoardDefinition,
+  cards: readonly WorkspaceBoardCard[],
+  removedCards: readonly WorkspaceBoardCard[] = [],
+  previousBoard?: WorkspaceBoardDefinition
+): void {
+  try {
+    const chatIds = new Set<string>()
+    const missionIds = new Set<string>()
+    const correlateChat = (chatId: string): ChatRecord | null => {
+      chatIds.add(chatId)
+      const chat = AppStore.getChat(chatId)
+      if (chat?.activeGoal?.id) missionIds.add(chat.activeGoal.id)
+      return chat
+    }
+    const correlateCard = (sourceBoard: WorkspaceBoardDefinition, card: WorkspaceBoardCard) => {
+      if (card.provenance?.sourceKind === 'goal' && card.provenance.sourceId) {
+        missionIds.add(card.provenance.sourceId)
+        return
+      }
+      const chatId =
+        card.link?.kind === 'chat'
+          ? card.link.id
+          : card.provenance?.sourceKind === 'thread'
+            ? card.provenance.sourceId
+            : sourceBoard.provenance?.sourceKind === 'thread'
+              ? sourceBoard.provenance.sourceId
+              : undefined
+      const chat = chatId ? correlateChat(chatId) : null
+      if (
+        !chat?.activeGoal?.id &&
+        sourceBoard.provenance?.sourceKind === 'goal' &&
+        sourceBoard.provenance.sourceId
+      ) {
+        missionIds.add(sourceBoard.provenance.sourceId)
+      }
+    }
+    for (const card of cards) correlateCard(board, card)
+    const removalBoard = previousBoard || board
+    for (const card of removedCards) correlateCard(removalBoard, card)
+    if (previousBoard) {
+      for (const card of cards) correlateCard(previousBoard, card)
+    }
+    if (chatIds.size > 0 || missionIds.size > 0) {
+      AppStore.assertHistoryMutationAllowed({
+        operation: 'Mission fact shadow persistence',
+        chatIds: [...chatIds],
+        workspaceIds: [board.workspaceId],
+        missionIds: [...missionIds]
+      })
+    }
+    missionFactShadowService.observeWorkspaceBoard({
+      board,
+      ...(previousBoard ? { previousBoard } : {}),
+      cards,
+      removedCards,
+      resolveChatById: (chatId) => AppStore.getChat(chatId),
+      resolveChatByMissionId: (missionId) =>
+        AppStore.getChats().find((chat) => chat.activeGoal?.id === missionId)
+    })
+  } catch (e) {
+    console.error('Failed to shadow mission facts from workspace board', e)
   }
 }
 
@@ -7142,6 +7230,19 @@ export class AppStore {
     } catch (e) {
       console.error('Failed to harvest agent stats', e)
     }
+    // Additive mission-ledger shadow. Streaming saves skip the transcript scan
+    // unless the goal itself changed; terminal/idle barriers capture proposed
+    // Plan state. Legacy Goal/Plan/Board reads remain authoritative for now.
+    if (
+      flushReason !== 'normal' ||
+      !isDeepStrictEqual(previousChatForFeedback?.activeGoal, normalizedChat.activeGoal)
+    ) {
+      try {
+        missionFactShadowService.observeChatTransition(previousChatForFeedback, normalizedChat)
+      } catch (e) {
+        console.error('Failed to shadow mission facts from chat', e)
+      }
+    }
     // Many main-owned mutation paths intentionally ignore the return value and
     // broadcast the object they passed in. Stamp only the server-owned token
     // back onto that object so those existing broadcasts still hand renderers
@@ -7308,6 +7409,17 @@ export class AppStore {
       }
     }
 
+    // Freeze the privacy target while every legacy provenance source is still
+    // present. Commit and crash recovery delete these exact files even if a
+    // later append leaves one ledger corrupt or an earlier step removes chats.
+    const missionFactIds =
+      input.kind === 'global'
+        ? []
+        : missionFactRepository.resolvePurgeMissionIds({
+            chatIds: [...chatIds],
+            ...(input.workspaceId ? { workspaceIds: [input.workspaceId] } : {})
+          })
+
     const runIds = new Set<string>()
     const kimiSeats: Array<{ chatId: string; participantId: string }> = []
     for (const chat of allChats) {
@@ -7355,6 +7467,7 @@ export class AppStore {
       ...(input.rootChatId ? { rootChatId: input.rootChatId } : {}),
       chatIds: [...chatIds].sort(),
       runIds: [],
+      missionFactIds,
       scheduledTaskIds: [],
       retainedScheduledTaskIds: [],
       workflowIds: [],
@@ -7861,6 +7974,12 @@ export class AppStore {
       if (residual.length > 0) {
         throw new Error(`Thread message history still references ${residual.join(', ')}.`)
       }
+      return
+    }
+    if (step === 'mission-facts') {
+      missionFactRepository.purge(
+        intent.kind === 'global' ? { all: true } : { missionIds: intent.missionFactIds }
+      )
       return
     }
     if (step === 'run-events') {
@@ -8933,8 +9052,9 @@ export class AppStore {
     )
     if (!normalized) throw new Error('Workspace board is invalid.')
     const index = boards.findIndex((item) => item.id === normalized.id)
+    const previousBoard = index >= 0 ? boards[index] : undefined
     if (index >= 0) {
-      const prior = boards[index]
+      const prior = previousBoard!
       if (
         prior.workspaceId !== normalized.workspaceId ||
         prior.workspacePath !== normalized.workspacePath
@@ -8958,7 +9078,14 @@ export class AppStore {
       boards.push(normalized)
     }
     writeJson(workspaceBoardsPath, boards)
-    return index >= 0 ? boards[index] : normalized
+    const saved = index >= 0 ? boards[index] : normalized
+    shadowWorkspaceBoardMissionFacts(
+      saved,
+      this.getWorkspaceBoardCards(saved.id),
+      [],
+      previousBoard
+    )
+    return saved
   }
 
   static updateWorkspaceBoard(
@@ -8997,10 +9124,18 @@ export class AppStore {
     if (!normalized) return null
     boards[index] = normalized
     writeJson(workspaceBoardsPath, boards)
+    shadowWorkspaceBoardMissionFacts(
+      normalized,
+      this.getWorkspaceBoardCards(normalized.id),
+      [],
+      source
+    )
     return normalized
   }
 
   static deleteWorkspaceBoard(id: string): void {
+    const board = this.getWorkspaceBoard(id)
+    const removedCards = this.getWorkspaceBoardCards(id)
     writeJson(
       workspaceBoardsPath,
       this.getWorkspaceBoards().filter((board) => board.id !== id)
@@ -9009,6 +9144,7 @@ export class AppStore {
       workspaceBoardCardsPath,
       this.getWorkspaceBoardCards().filter((card) => card.boardId !== id)
     )
+    if (board) shadowWorkspaceBoardMissionFacts(board, [], removedCards)
   }
 
   static getWorkspaceBoardCards(boardId?: string): WorkspaceBoardCard[] {
@@ -9148,7 +9284,13 @@ export class AppStore {
       cards.push(normalized)
     }
     writeJson(workspaceBoardCardsPath, cards)
-    return existingIndex >= 0 ? cards[existingIndex] : normalized
+    const saved = existingIndex >= 0 ? cards[existingIndex] : normalized
+    shadowWorkspaceBoardMissionFacts(
+      board,
+      cards.filter((candidate) => candidate.boardId === board.id),
+      existingCard ? [existingCard] : []
+    )
+    return saved
   }
 
   static updateWorkspaceBoardCard(
@@ -9196,14 +9338,29 @@ export class AppStore {
     if (!normalized) return null
     cards[index] = normalized
     writeJson(workspaceBoardCardsPath, cards)
+    shadowWorkspaceBoardMissionFacts(
+      board,
+      cards.filter((candidate) => candidate.boardId === board.id),
+      [source]
+    )
     return normalized
   }
 
   static deleteWorkspaceBoardCard(id: string): void {
+    const cards = this.getWorkspaceBoardCards()
+    const removed = cards.find((card) => card.id === id)
+    const board = removed ? this.getWorkspaceBoard(removed.boardId) : null
     writeJson(
       workspaceBoardCardsPath,
-      this.getWorkspaceBoardCards().filter((card) => card.id !== id)
+      cards.filter((card) => card.id !== id)
     )
+    if (board && removed) {
+      shadowWorkspaceBoardMissionFacts(
+        board,
+        cards.filter((card) => card.boardId === board.id && card.id !== id),
+        [removed]
+      )
+    }
   }
 
   // Evidence packs / capability ledger

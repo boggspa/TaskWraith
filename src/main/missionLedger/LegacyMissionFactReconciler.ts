@@ -18,6 +18,9 @@ export interface LegacyGoalMissionSnapshot {
   readonly status: MissionStatus
   readonly reason?: string
   readonly observedAt: string
+  /** Legacy ActiveGoal does not retain lifecycle actor provenance. Callers
+   * should pass `system` here rather than inheriting objective authorship. */
+  readonly statusProvenance?: SurfaceProvenance
   readonly provenance: SurfaceProvenance
 }
 
@@ -40,7 +43,14 @@ export interface LegacyBoardMissionSnapshot {
   readonly boardId: string
   readonly observedAt: string
   readonly provenance: SurfaceProvenance
-  readonly items: readonly Omit<MissionWorkItemState, 'sourceScopeId'>[]
+  readonly items: readonly LegacyBoardMissionItemSnapshot[]
+}
+
+export interface LegacyBoardMissionItemSnapshot {
+  readonly item: Omit<MissionWorkItemState, 'sourceScopeId'>
+  /** Card-level evidence wins over the board mutation fallback when present. */
+  readonly observedAt?: string
+  readonly provenance?: SurfaceProvenance
 }
 
 export interface LegacyMissionSurfaceSnapshot {
@@ -118,6 +128,11 @@ export function deriveLegacyMissionFactBatch(
 
   const facts: MissionFactInput[] = []
   const goalProvenance = surfaceProvenance('goal', snapshot.goal.provenance, missionId)
+  const goalStatusProvenance = surfaceProvenance(
+    'goal',
+    snapshot.goal.statusProvenance || snapshot.goal.provenance,
+    missionId
+  )
   const goalReason = snapshot.goal.reason?.trim() || undefined
   if (!projection) {
     facts.push(
@@ -140,7 +155,7 @@ export function deriveLegacyMissionFactBatch(
     projection.statusReason !== goalReason
   ) {
     facts.push(
-      fact(missionId, snapshot.goal.observedAt, goalProvenance, {
+      fact(missionId, snapshot.goal.observedAt, goalStatusProvenance, {
         kind: 'mission_status_set',
         status: snapshot.goal.status,
         ...(goalReason ? { reason: goalReason } : {})
@@ -170,9 +185,27 @@ export function deriveLegacyMissionFactBatch(
     )
   }
 
-  for (const board of [...(snapshot.boards || [])].sort((a, b) =>
-    a.boardId.localeCompare(b.boardId)
-  )) {
+  facts.push(...deriveLegacyBoardMissionFactBatch(projection, missionId, snapshot.boards || []))
+
+  return facts
+}
+
+/** Board-only delta adapter for low-frequency board mutations after the goal
+ * writer has already established the mission ledger. */
+export function deriveLegacyBoardMissionFactBatch(
+  projection: MissionProjection | null | undefined,
+  missionId: string,
+  boards: readonly LegacyBoardMissionSnapshot[]
+): MissionFactInput[] {
+  const normalizedMissionId = missionId.trim()
+  if (!normalizedMissionId) throw new Error('Legacy board snapshot requires a mission id.')
+  if (projection && projection.missionId !== normalizedMissionId) {
+    throw new Error(
+      `Legacy board snapshot "${normalizedMissionId}" cannot reconcile projection "${projection.missionId}".`
+    )
+  }
+  const facts: MissionFactInput[] = []
+  for (const board of [...boards].sort((a, b) => a.boardId.localeCompare(b.boardId))) {
     const currentItems = new Map(
       (projection?.workItems || [])
         .filter((item) => item.sourceScopeId === board.boardId)
@@ -180,22 +213,27 @@ export function deriveLegacyMissionFactBatch(
     )
     const observedIds = new Set<string>()
     const observedItems = board.items
-      .map<MissionWorkItemState>((item) => ({ ...item, sourceScopeId: board.boardId }))
+      .map((observation) => ({
+        item: { ...observation.item, sourceScopeId: board.boardId } as MissionWorkItemState,
+        observedAt: observation.observedAt || board.observedAt,
+        provenance: observation.provenance || board.provenance
+      }))
       .sort(
         (left, right) =>
-          (left.sortOrder ?? Number.MAX_SAFE_INTEGER) -
-            (right.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
-          left.workItemId.localeCompare(right.workItemId)
+          (left.item.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+            (right.item.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+          left.item.workItemId.localeCompare(right.item.workItemId)
       )
-    for (const item of observedItems) {
+    for (const observation of observedItems) {
+      const { item } = observation
       observedIds.add(item.workItemId)
       const current = currentItems.get(item.workItemId)
       if (current && workItemsEqual(current, item)) continue
       facts.push(
         fact(
-          missionId,
-          board.observedAt,
-          surfaceProvenance('board', board.provenance, item.workItemId),
+          normalizedMissionId,
+          observation.observedAt,
+          surfaceProvenance('board', observation.provenance, item.workItemId),
           { kind: 'work_item_upserted', item }
         )
       )
@@ -206,7 +244,7 @@ export function deriveLegacyMissionFactBatch(
       if (observedIds.has(current.workItemId)) continue
       facts.push(
         fact(
-          missionId,
+          normalizedMissionId,
           board.observedAt,
           surfaceProvenance('board', board.provenance, current.workItemId),
           { kind: 'work_item_removed', workItemId: current.workItemId }
@@ -214,7 +252,6 @@ export function deriveLegacyMissionFactBatch(
       )
     }
   }
-
   return facts
 }
 

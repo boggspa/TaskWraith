@@ -10,6 +10,7 @@ import {
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
 import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
 import type { ChatRecord, ChatRun } from './store/types'
+import { MissionFactLedgerRepository } from './missionLedger/MissionFactLedger'
 
 const userDataPath = vi.hoisted(
   () => `/tmp/taskwraith-history-deletion-transaction-test-${process.pid}`
@@ -33,6 +34,7 @@ const runArtifactsDir = join(userDataPath, 'run-artifacts')
 const scheduledTasksPath = join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = join(userDataPath, 'workflows.json')
 const workflowRunsDir = join(userDataPath, 'workflow-runs')
+const missionFactsDir = join(userDataPath, 'mission-facts')
 
 function chatPath(chatId: string): string {
   return join(chatsDir, `${chatId}.json`)
@@ -146,6 +148,53 @@ describe('AppStore strict history deletion transaction', () => {
 
     expect(fs.existsSync(chatPath('chat-a'))).toBe(false)
     expect(fs.existsSync(historyIntentPath)).toBe(false)
+  })
+
+  it('purges only mission facts belonging to the scoped chat', () => {
+    const goal = (id: string) => ({
+      id,
+      objective: `Complete ${id}`,
+      objectiveSource: 'user' as const,
+      status: 'active' as const,
+      mode: 'taskwraith_steered' as const,
+      provider: 'codex' as const,
+      createdAt: '2026-08-16T00:00:00.000Z',
+      updatedAt: '2026-08-16T00:00:00.000Z'
+    })
+    saveChat('chat-a', 'workspace-a', [], { activeGoal: goal('goal-a') })
+    saveChat('chat-b', 'workspace-b', [], { activeGoal: goal('goal-b') })
+    const missionFacts = new MissionFactLedgerRepository({ rootPath: missionFactsDir })
+    expect(missionFacts.read('goal-a').projection).not.toBeNull()
+    expect(missionFacts.read('goal-b').projection).not.toBeNull()
+
+    const prepared = AppStore.prepareHistoryDeletion({ kind: 'chat', rootChatId: 'chat-a' })
+    const intent = JSON.parse(fs.readFileSync(historyIntentPath, 'utf8')) as {
+      missionFactIds: string[]
+    }
+    expect(intent.missionFactIds).toEqual(['goal-a'])
+    expect(() =>
+      AppStore.assertHistoryMutationAllowed({
+        operation: 'Mission fact shadow persistence',
+        missionIds: ['goal-a']
+      })
+    ).toThrow(HistoryDeletionMutationBlockedError)
+    expect(() =>
+      AppStore.assertHistoryMutationAllowed({
+        operation: 'Mission fact shadow persistence',
+        missionIds: ['goal-b']
+      })
+    ).not.toThrow()
+    const targetFile = fs.readdirSync(missionFactsDir).find((fileName) => {
+      const firstLine = fs.readFileSync(join(missionFactsDir, fileName), 'utf8').split('\n', 1)[0]
+      return (JSON.parse(firstLine) as { missionId?: string }).missionId === 'goal-a'
+    })
+    expect(targetFile).toBeTruthy()
+    fs.appendFileSync(join(missionFactsDir, targetFile!), '{"partial":', 'utf8')
+
+    AppStore.commitPreparedHistoryDeletion(prepared.operationId)
+
+    expect(missionFacts.read('goal-a').projection).toBeNull()
+    expect(missionFacts.read('goal-b').projection).not.toBeNull()
   })
 
   it('reloads a crash-after-prepare intent and will not purge before recovery re-quiesces it', () => {
