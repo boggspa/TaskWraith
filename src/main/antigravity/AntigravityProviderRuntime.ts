@@ -20,6 +20,7 @@ import {
   type ResolvedAgyCliBinary
 } from './AntigravityCli'
 import { parseAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
+import { withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
 
 export interface PrepareAntigravityProviderLaunchInput {
   settings:
@@ -175,7 +176,7 @@ export async function prepareAntigravityProviderLaunch(
   const mode = writeCapableAgyMode(input) ? 'accept-edits' : 'plan'
   const resumedConversationId = parseAgyProjectBoundSessionId(input.conversationId)
   const argsInput = {
-    prompt: input.prompt,
+    prompt: withAntigravityLongTurnProgress(input.prompt),
     model: selectedAgyModel(input.model),
     reasoningEffort: input.reasoningEffort,
     ...(resumedConversationId ? { conversationId: resumedConversationId } : { newProject: true })
