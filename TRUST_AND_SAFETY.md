@@ -60,6 +60,25 @@ TaskWraith's authority is centered on the desktop app:
   Activity display state is the disclosed exception to ordinary remote E2EE.
   These surfaces still expand the attack surface and should be enabled
   deliberately.
+- **A model never states a number about its own run.** Close-out summaries
+  split qualitative prose from quantitative fact: counts, durations and token
+  totals come only from an app-computed `CloseoutReceipt`
+  (`src/shared/closeoutReceipt.ts`) built from TaskWraith's own structured
+  records, never from model text. Any generated close-out narrative containing
+  a numeral — digits or spelled-out words — is rejected rather than trimmed.
+  This is **source-ahead of v1.9.5** and carries no released guarantee yet.
+
+  The rejection is enforced independently at each layer that can produce or
+  render such prose, so no single bypass silently reinstates a model-authored
+  count: the shared guard `closeoutNarrativeHasAuthoredNumeral`; the main
+  process (`src/main/CloseoutSummarizer.ts`, "Foundation Models returned a
+  quantitative claim reserved for the app-owned receipt"); the Swift daemon,
+  which instructs the on-device model not to emit numbers *and* backstops that
+  instruction in code rather than trusting it; and the renderer, which drops a
+  non-conforming summary and falls back to a deterministic line. The reason to
+  read this as a trust boundary rather than a formatting rule: a count a model
+  asserts about its own work is unverifiable, and the telemetry it reads to
+  produce one is attacker-influenceable.
 
 The tagged v1.9.5 release is the current public baseline. This repository can
 also contain source-ahead work that is not a released guarantee until it is
