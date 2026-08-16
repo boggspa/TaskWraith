@@ -232,4 +232,31 @@ describe('IncrementalChatJournal', () => {
 
     expect(restarted.replay('chat-1').record).toEqual(third)
   })
+
+  it('can replace a drifted side-band baseline from the still-authoritative record', () => {
+    const first = chat()
+    const second = advance(first, 'journal ahead')
+    const authoritative = advance(second, 'authoritative recovery')
+    journal.initialize('chat-1', first)
+    journal.append(deriveChatRecordMutation(first, second))
+
+    journal.replaceAuthoritativeCheckpoint('chat-1', authoritative)
+
+    expect(journal.replay('chat-1').record).toEqual(authoritative)
+    expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
+  })
+
+  it('purges one chat or clears the flat journal directory without recursive deletion', () => {
+    const first = chat('chat-1')
+    const second = chat('chat-2')
+    journal.initialize('chat-1', first)
+    journal.initialize('chat-2', second)
+
+    journal.purge('chat-1')
+    expect(fs.readdirSync(baseDir).some((name) => name.startsWith('chat-1.'))).toBe(false)
+    expect(fs.readdirSync(baseDir).some((name) => name.startsWith('chat-2.'))).toBe(true)
+
+    journal.clear()
+    expect(fs.existsSync(baseDir)).toBe(false)
+  })
 })

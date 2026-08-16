@@ -65,10 +65,13 @@ export interface IncrementalChatJournal {
   initialize(chatId: string, record: ChatRecord): void
   append(batch: ChatRecordMutationBatch): void
   replay(chatId: string): IncrementalChatReplayResult
+  replaceAuthoritativeCheckpoint(chatId: string, record: ChatRecord): void
   checkpoint(chatId: string, reason: IncrementalChatCheckpointReason): boolean
   checkpointIdle(nowMs?: number): number
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
   delete(chatId: string): void
+  purge(chatId: string): void
+  clear(): void
   stats(): IncrementalChatJournalStats
 }
 
@@ -521,6 +524,40 @@ export function createIncrementalChatJournal(
     return true
   }
 
+  const replaceAuthoritativeCheckpoint = (chatId: string, record: ChatRecord): void => {
+    assertChatId(chatId)
+    if (record.appChatId !== chatId) throw new Error('Checkpoint chat identity mismatch')
+    const state = loadState(chatId)
+    if (state.tombstoned) {
+      tombstoneRejects += 1
+      throw new Error(`Chat ${chatId} is tombstoned`)
+    }
+    const revision = recordRevision(record)
+    const nextCheckpoint: IncrementalChatCheckpoint = {
+      format: INCREMENTAL_CHAT_CHECKPOINT_FORMAT,
+      version: INCREMENTAL_CHAT_CHECKPOINT_VERSION,
+      chatId,
+      revision,
+      savedAt: new Date(now()).toISOString(),
+      reason: 'recovery',
+      record: cloneRecord(record)
+    }
+    const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(nextCheckpoint))
+    checkpointsWritten += 1
+    checkpointBytesWritten += bytes
+    try {
+      fs.unlinkSync(journalPath(chatId))
+      fsyncDirectory()
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    state.headRevision = revision
+    state.journalEntries = 0
+    state.journalBytes = 0
+    state.dirtySinceMs = null
+    state.lastAppendAtMs = null
+  }
+
   const append = (batch: ChatRecordMutationBatch): void => {
     assertChatId(batch.chatId)
     if (!validMutationBatch(batch, batch.chatId)) throw new Error('Invalid chat mutation batch')
@@ -626,6 +663,40 @@ export function createIncrementalChatJournal(
     })
   }
 
+  const purge = (chatId: string): void => {
+    assertChatId(chatId)
+    for (const filePath of [journalPath(chatId), checkpointPath(chatId), tombstonePath(chatId)]) {
+      try {
+        fs.unlinkSync(filePath)
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    fsyncDirectory()
+    states.delete(chatId)
+  }
+
+  const clear = (): void => {
+    let entries: fs.Dirent[] = []
+    try {
+      entries = fs.readdirSync(baseDir, { withFileTypes: true })
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue
+      fs.unlinkSync(path.join(baseDir, entry.name))
+    }
+    try {
+      fs.rmdirSync(baseDir)
+    } catch (error: unknown) {
+      if (!['ENOENT', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        throw error
+      }
+    }
+    states.clear()
+  }
+
   const stats = (): IncrementalChatJournalStats => ({
     appends,
     mutationBytesWritten,
@@ -641,10 +712,13 @@ export function createIncrementalChatJournal(
     initialize,
     append,
     replay,
+    replaceAuthoritativeCheckpoint,
     checkpoint,
     checkpointIdle,
     checkpointAll,
     delete: deleteChat,
+    purge,
+    clear,
     stats
   }
 }
