@@ -31,6 +31,13 @@ export interface AssistantMentionRoutingPlan {
   groupNotices: AssistantGroupMentionRoutingNotice[]
 }
 
+export interface BackgroundMentionRoutingPlan {
+  /** Enabled background seats explicitly selected by a direct or group token. */
+  participantIds: Set<string>
+  /** Direct participant aliases that still require user disambiguation. */
+  ambiguities: ParticipantMentionMatch[]
+}
+
 function orderedGroupParticipants(input: {
   group: EnsembleGroupMentionId
   participants: readonly EnsembleParticipant[]
@@ -172,4 +179,44 @@ export function resolveEnsembleCommunicationTargets(input: {
   }
 
   return recipients
+}
+
+/**
+ * Resolve the detached background lanes requested by a user-authored round.
+ * `@BG` and `@All` are deliberate groups, so they expand to every enabled
+ * background seat. Direct participant aliases keep the legacy ambiguity
+ * behaviour; stage groups that cannot contain background seats are ignored.
+ */
+export function resolveBackgroundMentionRouting(input: {
+  text: string
+  participants: readonly EnsembleParticipant[]
+}): BackgroundMentionRoutingPlan {
+  const participantIds = new Set<string>()
+  const ambiguities: ParticipantMentionMatch[] = []
+
+  for (const match of findAllMentions(input.text, [...input.participants])) {
+    if (isGroupMention(match)) {
+      if (!ensembleGroupMentionMatchesStage(match.group, 'background')) continue
+      for (const participant of orderedGroupParticipants({
+        group: match.group,
+        participants: input.participants,
+        excludedParticipantIds: new Set()
+      })) {
+        if (participant.stageRole === 'background') participantIds.add(participant.id)
+      }
+      continue
+    }
+    if (!isParticipantMention(match)) continue
+    const candidates = [match.participant, ...(match.ambiguousAmong || [])]
+    if (!candidates.some((participant) => participant.stageRole === 'background')) continue
+    if (match.ambiguousAmong && match.ambiguousAmong.length > 0) {
+      ambiguities.push(match)
+      continue
+    }
+    if (match.participant.stageRole === 'background' && match.participant.enabled !== false) {
+      participantIds.add(match.participant.id)
+    }
+  }
+
+  return { participantIds, ambiguities }
 }

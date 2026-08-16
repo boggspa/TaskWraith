@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../store/types'
 import {
+  resolveBackgroundMentionRouting,
   resolveAssistantMentionRoutingPlan,
   resolveEnsembleCommunicationTargets
 } from './EnsembleGroupMentionRouting'
@@ -127,5 +128,47 @@ describe('resolveEnsembleCommunicationTargets', () => {
         senderParticipantId: 'boss'
       })
     ).toEqual([])
+  })
+})
+
+describe('resolveBackgroundMentionRouting', () => {
+  const backgroundRoster = [
+    ...ROSTER,
+    participant('grok-bg-2', 9, 'background'),
+    participant('disabled-bg', 10, 'background', { enabled: false })
+  ]
+
+  it('expands @BG and @All to every enabled background seat without ambiguity', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@BG collect traces, then @All inspect the result.',
+      participants: backgroundRoster
+    })
+
+    expect([...plan.participantIds]).toEqual(['grok-bg', 'grok-bg-2'])
+    expect(plan.ambiguities).toEqual([])
+  })
+
+  it('ignores foreground-only groups and preserves direct background aliases', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@Workers implement this while @grok-bg collects traces.',
+      participants: backgroundRoster
+    })
+
+    expect([...plan.participantIds]).toEqual(['grok-bg'])
+    expect(plan.ambiguities).toEqual([])
+  })
+
+  it('keeps ambiguous direct provider aliases unresolved', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@grok collect traces.',
+      participants: backgroundRoster
+    })
+
+    expect(plan.participantIds.size).toBe(0)
+    expect(plan.ambiguities).toHaveLength(1)
+    expect([
+      plan.ambiguities[0].participant.id,
+      ...(plan.ambiguities[0].ambiguousAmong || []).map((candidate) => candidate.id)
+    ]).toEqual(['grok-bg', 'grok-bg-2'])
   })
 })
