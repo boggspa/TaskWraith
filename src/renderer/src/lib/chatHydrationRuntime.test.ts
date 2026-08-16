@@ -105,6 +105,7 @@ describe('T7 App wiring — demote then rehydrate on focus', () => {
     expect((demoted as ChatListItem | undefined)?.summaryOnly).toBe(true)
     expect(demoted?.messages ?? []).toEqual([])
     expect(afterReconcile.get('focus')?.messages?.[0]?.content).toBe('keep-me')
+    expect(runtime.transcriptStore.has('cold')).toBe(false)
 
     // Simulate focus switch + getChat rehydrate (App hydrateSelectedChatAfterPaint).
     const rehydratedPayload = fullChat('cold', 'x'.repeat(8_000))
@@ -130,6 +131,6 @@ describe('T7 App wiring — demote then rehydrate on focus', () => {
     const options = reconcileHydrationOptions(runtime)
 
     expect(options.maxHydratedMessageBytes).toBe(123)
-    expect(options.hydrationRetention).toBe(runtime.byteLru)
+    expect(options.hydrationRetention).toBe(runtime.retention)
   })
 })

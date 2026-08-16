@@ -1,5 +1,6 @@
 import type { ChatRecord } from '../../../main/store/types'
 import { ChatByteLru, DEFAULT_MAX_HYDRATED_CHAT_BYTES } from './chatByteLru'
+import { RendererChatRetention } from './rendererChatRetention'
 import { ChatTranscriptStore } from './chatTranscriptStore'
 
 /**
@@ -20,6 +21,7 @@ export interface ChatHydrationRuntime {
   maxBytes: number
   byteLru: ChatByteLru
   transcriptStore: ChatTranscriptStore
+  retention: RendererChatRetention
   requestPool: ChatHydrationRequestPool<ChatRecord | null>
 }
 
@@ -83,10 +85,13 @@ export function createChatHydrationRuntime(options?: {
     typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)
       ? Math.max(0, Math.floor(options.maxBytes))
       : resolveMaxHydratedMessageBytes(options?.env)
+  const byteLru = new ChatByteLru({ maxBytes })
+  const transcriptStore = new ChatTranscriptStore()
   return {
     maxBytes,
-    byteLru: new ChatByteLru({ maxBytes }),
-    transcriptStore: new ChatTranscriptStore(),
+    byteLru,
+    transcriptStore,
+    retention: new RendererChatRetention({ byteLru, transcriptStore }),
     requestPool: new ChatHydrationRequestPool<ChatRecord | null>()
   }
 }
@@ -95,12 +100,12 @@ export function createChatHydrationRuntime(options?: {
 export function reconcileHydrationOptions(runtime: ChatHydrationRuntime): {
   maxHydratedMessageBytes: number
   pinnedChatIds: ReadonlySet<string>
-  hydrationRetention: Pick<ChatByteLru, 'retain'>
+  hydrationRetention: Pick<RendererChatRetention, 'retain'>
 } {
   return {
     maxHydratedMessageBytes: runtime.maxBytes,
     pinnedChatIds: runtime.byteLru.pinnedIds(),
-    hydrationRetention: runtime.byteLru
+    hydrationRetention: runtime.retention
   }
 }
 

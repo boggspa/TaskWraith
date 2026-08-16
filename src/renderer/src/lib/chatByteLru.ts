@@ -247,6 +247,14 @@ export class ChatByteLru {
     this.touchOrder.push(chatId)
   }
 
+  /** Release all renderer-residency metadata for an explicitly removed chat. */
+  forget(chatId: string): void {
+    if (!chatId) return
+    this.pins.delete(chatId)
+    const existing = this.touchOrder.indexOf(chatId)
+    if (existing >= 0) this.touchOrder.splice(existing, 1)
+  }
+
   private estimateRecord(chat: ChatRecord): number {
     const messages = chat.messages ?? []
     const runs = chat.runs ?? []

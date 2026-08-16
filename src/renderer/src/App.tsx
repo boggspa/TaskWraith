@@ -3369,10 +3369,27 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
-    const byteLru = chatHydrationRuntimeRef.current.byteLru
-    byteLru.pin(chatId, 'focused')
-    return () => byteLru.unpin(chatId, 'focused')
+    const retention = chatHydrationRuntimeRef.current.retention
+    retention.pin(chatId, 'focused')
+    return () => retention.unpin(chatId, 'focused')
   }, [currentChat?.appChatId])
+
+  // A pending approval is a live surface even when its chat is not focused.
+  // Keep every queue-owning transcript resident until the final card resolves.
+  useEffect(() => {
+    const retention = chatHydrationRuntimeRef.current.retention
+    const chatIds = new Set<string>()
+    for (const [chatId, approval] of Object.entries(pendingAgentApprovalByChatId)) {
+      if (approval) chatIds.add(chatId)
+    }
+    for (const [chatId, approvals] of Object.entries(pendingApprovalQueueByChatId)) {
+      if (approvals.length > 0) chatIds.add(chatId)
+    }
+    for (const chatId of chatIds) retention.pin(chatId, 'approval')
+    return () => {
+      for (const chatId of chatIds) retention.unpin(chatId, 'approval')
+    }
+  }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
 
   useEffect(() => {
     if (!inspectingRunId) return
@@ -3778,6 +3795,10 @@ function App(): React.JSX.Element {
   const chatFlushRafRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
+  chatHydrationRuntimeRef.current.retention.attachTransportBaselines(
+    chatUpdateBaselineByIdRef.current
+  )
+  chatHydrationRuntimeRef.current.retention.attachRawLogs(rawLogsByChatIdRef.current)
   const activeRunChatSnapshotRef = useRef<ChatRecord | null>(null)
   const activeRunChatIdRef = useRef<string | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
@@ -6032,8 +6053,8 @@ function App(): React.JSX.Element {
       resolveChat: (chatId) => chatByIdRef.current.get(chatId),
       isHydrated: (chat) => !isChatSummaryRecord(chat),
       hydrateChat: refreshSingleChat,
-      pinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.pin(chatId, 'pane'),
-      unpinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.unpin(chatId, 'pane')
+      pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'pane'),
+      unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'pane')
     }
   )
 
@@ -6065,8 +6086,8 @@ function App(): React.JSX.Element {
     resolveChat: (chatId) => chatByIdRef.current.get(chatId),
     isHydrated: (chat) => !isChatSummaryRecord(chat),
     hydrateChat: hydratePresentedSideChat,
-    pinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.pin(chatId, 'side'),
-    unpinChat: (chatId) => chatHydrationRuntimeRef.current.byteLru.unpin(chatId, 'side')
+    pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'side'),
+    unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'side')
   })
 
   const isValidModelForProvider = (
@@ -9702,6 +9723,7 @@ function App(): React.JSX.Element {
     }
     chatMutations.removeChat(chatId)
     chatByIdRef.current.delete(chatId)
+    chatHydrationRuntimeRef.current.retention.drop(chatId)
     if (currentChat?.appChatId === chatId) {
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
@@ -9774,7 +9796,7 @@ function App(): React.JSX.Element {
     await window.api.clearChats()
     const nextChats = await loadChatList().catch(() => [])
     chatByIdRef.current.clear()
-    rawLogsByChatIdRef.current.clear()
+    chatHydrationRuntimeRef.current.retention.clear()
     queuedRunsRef.current = []
     runQueueJobsRef.current = []
     setCurrentChatIdForNavigation(null)
@@ -9890,6 +9912,7 @@ function App(): React.JSX.Element {
             saveChatTimersRef.current.delete(id)
           }
           chatByIdRef.current.delete(id)
+          chatHydrationRuntimeRef.current.retention.drop(id)
         }
         chatMutations.removeChats(reaped)
       })
@@ -12478,7 +12501,7 @@ function App(): React.JSX.Element {
           while (baselines.size > 32) {
             const oldestChatId = baselines.keys().next().value
             if (typeof oldestChatId !== 'string') break
-            baselines.delete(oldestChatId)
+            chatHydrationRuntimeRef.current.retention.dropTransportBaseline(oldestChatId)
           }
           if (
             clearedChatIdsRef.current.has(chat.appChatId) &&

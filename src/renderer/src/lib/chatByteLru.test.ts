@@ -138,4 +138,17 @@ describe('chatByteLru', () => {
     expect(result.evictedIds).toEqual([])
     expect(result.stats.pinnedChatCount).toBe(2)
   })
+
+  it('forgets explicit removals without disturbing other residency metadata', () => {
+    const lru = new ChatByteLru({ maxBytes: 0 })
+    lru.pin('deleted', 'approval')
+    lru.pin('visible', 'pane')
+    lru.touch('deleted')
+
+    lru.forget('deleted')
+
+    expect(lru.isPinned('deleted')).toBe(false)
+    expect(lru.isPinned('visible')).toBe(true)
+    expect(lru.pinnedIds()).toEqual(new Set(['visible']))
+  })
 })
