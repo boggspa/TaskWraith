@@ -50283,7 +50283,12 @@ if (isGeminiMcpBridgeProcess) {
     // never [] — an empty array here would read as "no externals exist" and
     // silently elevate every approval gate that consumes this.
     resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] | null => {
-      if (!chatId) return []
+      // Unreachable today: both call sites guard with `chatId &&` (the
+      // approval-authority wrapper and the bossman metadata builder) and this
+      // binding is module-local and unexported. Returning null anyway, because
+      // [] asserts "there are definitively no externals" about an unknown chat,
+      // and a third caller added without that guard would elevate silently.
+      if (!chatId) return null
       const service = channelProductionBootstrap?.service
       if (!service || service.status().state !== 'running') return null
       try {
