@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitRepositorySnapshot } from '../../main/services/GitService'
-import { DiffViewer } from './components/DiffViewer'
 import { FileEditorPanel } from './components/FileEditorPanel'
+import { RevisionDiffStudio } from './components/RevisionDiffStudio'
 import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
 import { useAppearance } from './hooks/useAppearance'
 import {
@@ -99,6 +99,10 @@ export function PopoutApp() {
   const kind = parsePopoutKind(params.get('popout'))
   const workspacePath = params.get('workspace') || ''
   const chatId = params.get('chat') || ''
+  const workspaceIpcTarget = useMemo(
+    () => resolvePopoutWorkspaceIpcTarget(workspacePath, chatId),
+    [chatId, workspacePath]
+  )
   const [canMutateGit, setCanMutateGit] = useState(() =>
     popoutAllowsGitMutations(chatId, params.get('write'))
   )
@@ -109,6 +113,7 @@ export function PopoutApp() {
   const [status, setStatus] = useState('')
   const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
   const [diffActionPath, setDiffActionPath] = useState('')
+  const [diffRefreshToken, setDiffRefreshToken] = useState(0)
   const [openFileRequest, setOpenFileRequest] = useState<PopoutOpenFileRequest | null>(() =>
     targetFilePath ? { path: targetFilePath, nonce: 1, view: targetView } : null
   )
@@ -131,6 +136,7 @@ export function PopoutApp() {
       if (requestId !== diffRefreshSeqRef.current) return
       setDiff(nextDiff)
       setDiffGitSnapshot(nextGitSnapshot.ok ? nextGitSnapshot.data : null)
+      setDiffRefreshToken((token) => token + 1)
       setStatus('Diff refreshed')
     } catch (error) {
       if (requestId !== diffRefreshSeqRef.current) return
@@ -372,18 +378,18 @@ export function PopoutApp() {
             onDirtyChange={setDirtyBufferCount}
           />
         ) : kind === 'diff-studio' ? (
-          <div className="diff-studio popout-diff-studio">
-            <DiffViewer
-              diff={diff}
-              gitSnapshot={diffGitSnapshot}
-              busyPath={diffActionPath}
-              workspacePath={workspacePath}
-              selectionRequest={openFileRequest}
-              onOpenFile={chatId ? undefined : openDiffFileInEditor}
-              onStageFile={canMutateGit ? stageDiffFile : undefined}
-              onUnstageFile={canMutateGit ? unstageDiffFile : undefined}
-            />
-          </div>
+          <RevisionDiffStudio
+            workspacePath={workspacePath}
+            ipcTarget={workspaceIpcTarget}
+            workingTreeDiff={diff}
+            gitSnapshot={diffGitSnapshot}
+            busyPath={diffActionPath}
+            selectionRequest={openFileRequest}
+            refreshToken={diffRefreshToken}
+            onOpenFile={chatId ? undefined : openDiffFileInEditor}
+            onStageFile={canMutateGit ? stageDiffFile : undefined}
+            onUnstageFile={canMutateGit ? unstageDiffFile : undefined}
+          />
         ) : (
           <TaskWraithWorkbench
             workspacePath={workspacePath}

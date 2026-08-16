@@ -1,0 +1,271 @@
+.revision-diff-studio {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--panel-bg-solid, var(--panel-bg));
+}
+
+.revision-diff-sidebar {
+  min-width: 0;
+  min-height: 0;
+  padding-bottom: var(--space-md);
+  overflow: auto;
+  border-right: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 84%, var(--panel-bg));
+}
+
+.revision-diff-sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 12px var(--space-md) 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, var(--panel-bg));
+}
+
+.revision-diff-sidebar-header > span,
+.revision-diff-section > h3 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.revision-diff-sidebar-header > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.revision-diff-section {
+  padding: 10px 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.revision-diff-section > h3 {
+  padding: 2px 7px 4px;
+}
+
+.revision-diff-choice {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.revision-diff-choice:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.revision-diff-choice:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: 1px;
+}
+
+.revision-diff-choice.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 78%, transparent);
+}
+
+.revision-diff-choice:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.revision-diff-choice-mark {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-secondary) 22%, transparent);
+}
+
+.revision-diff-choice-mark.is-working-tree {
+  border-radius: 2px;
+  border-color: color-mix(in srgb, var(--success) 62%, transparent);
+  background: color-mix(in srgb, var(--success) 54%, transparent);
+}
+
+.revision-diff-choice-mark.is-pull-request {
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.revision-diff-choice-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.revision-diff-choice-copy > strong,
+.revision-diff-choice-copy > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-choice-copy > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.revision-diff-choice-copy > span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.revision-diff-attributions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.revision-diff-attribution {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.revision-diff-attribution-label,
+.revision-diff-git-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-attribution .seat-state-chips {
+  flex: 0 1 auto;
+  min-width: 0;
+  transform: scale(0.88);
+  transform-origin: left center;
+}
+
+.revision-diff-attribution-more,
+.revision-diff-readonly,
+.revision-diff-truncated {
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.revision-diff-empty,
+.revision-diff-sidebar-state {
+  padding: 5px 7px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.revision-diff-sidebar-state {
+  display: block;
+  margin: 8px;
+}
+
+.revision-diff-sidebar-state.is-error {
+  color: var(--danger);
+}
+
+.revision-diff-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.revision-diff-context {
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px var(--space-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  border-bottom: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 72%, transparent);
+}
+
+.revision-diff-context > div {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.revision-diff-context > div > span,
+.revision-diff-context > div > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-diff-context > div > span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.revision-diff-context > div > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.revision-diff-context > .revision-diff-attributions {
+  flex: 0 1 auto;
+  max-width: 48%;
+}
+
+.revision-diff-readonly {
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 18%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.revision-diff-main > .popout-diff-studio {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .revision-diff-studio {
+    grid-template-columns: minmax(190px, 225px) minmax(0, 1fr);
+  }
+
+  .revision-diff-context > .revision-diff-attributions {
+    display: none;
+  }
+}

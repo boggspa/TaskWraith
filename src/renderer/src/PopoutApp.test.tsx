@@ -15,6 +15,10 @@ const diffViewerCapture = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
 }))
 
+const revisionDiffStudioCapture = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>
+}))
+
 const fileEditorCapture = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
 }))
@@ -26,6 +30,13 @@ vi.mock('./hooks/useAppearance', () => ({
 vi.mock('./components/DiffViewer', () => ({
   DiffViewer: (props: Record<string, unknown>) => {
     diffViewerCapture.calls.push(props)
+    return null
+  }
+}))
+
+vi.mock('./components/RevisionDiffStudio', () => ({
+  RevisionDiffStudio: (props: Record<string, unknown>) => {
+    revisionDiffStudioCapture.calls.push(props)
     return null
   }
 }))
@@ -44,6 +55,7 @@ vi.mock('./components/TaskWraithWorkbench', () => ({
 describe('PopoutApp Diff Studio', () => {
   beforeEach(() => {
     diffViewerCapture.calls = []
+    revisionDiffStudioCapture.calls = []
     vi.stubGlobal('window', {
       location: {
         search: '?popout=diff-studio&workspace=%2Frepo&file=src%2FApp.tsx'
@@ -55,12 +67,13 @@ describe('PopoutApp Diff Studio', () => {
     vi.unstubAllGlobals()
   })
 
-  it('wires standalone Diff Studio action callbacks into DiffViewer', () => {
+  it('wires the standalone Diff Studio window into its revision sidebar', () => {
     renderToStaticMarkup(<PopoutApp />)
 
-    const props = diffViewerCapture.calls.at(-1)
+    const props = revisionDiffStudioCapture.calls.at(-1)
     expect(props).toMatchObject({
       workspacePath: '/repo',
+      ipcTarget: { workspacePath: '/repo' },
       busyPath: '',
       selectionRequest: {
         path: 'src/App.tsx',
@@ -82,8 +95,9 @@ describe('PopoutApp Diff Studio', () => {
 
     renderToStaticMarkup(<PopoutApp />)
 
-    const props = diffViewerCapture.calls.at(-1)
+    const props = revisionDiffStudioCapture.calls.at(-1)
     expect(props?.workspacePath).toBe('/external/repo')
+    expect(props?.ipcTarget).toEqual({ repoPath: '/external/repo', chatId: 'chat-2' })
     expect(props?.onOpenFile).toBeUndefined()
     expect(props?.onStageFile).toBeUndefined()
     expect(props?.onUnstageFile).toBeUndefined()
@@ -102,7 +116,7 @@ describe('PopoutApp Diff Studio', () => {
 
     renderToStaticMarkup(<PopoutApp />)
 
-    const props = diffViewerCapture.calls.at(-1)
+    const props = revisionDiffStudioCapture.calls.at(-1)
     expect(props?.onOpenFile).toBeUndefined()
     expect(typeof props?.onStageFile).toBe('function')
     expect(typeof props?.onUnstageFile).toBe('function')
