@@ -149,7 +149,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    '17c7e00b802cfda5860f847e237b6e748240b90abb71f5113bc5038ba4744e72',
+    'a358524787405a1e1e9cf9b4bb7923d82c05012abbf2abe6d2ab9a50d9dc6172',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -229,8 +229,8 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '3c2276c070534abd39e2d711b9e85612fe6be3a52aa4d9e2f9287359ed37ca53',
-  sourceCount: 2232,
+  sourceDigest: 'f10fcecf69bed21872921b5ac720bb17642c51977894345435d1610d88dedf56',
+  sourceCount: 2253,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
