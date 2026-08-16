@@ -59,6 +59,17 @@ describe('TaskWraith MCP tool registry', () => {
     expect(yieldTool?.description).toContain('normal serial routing resumes')
   })
 
+  it('routes scope-less full-roster writers to locked writer fan-out', () => {
+    const fanoutAll = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_fanout_all'
+    )
+
+    expect(fanoutAll?.description).toContain('fails before provider dispatch')
+    expect(fanoutAll?.description).toContain('Full WS Access')
+    expect(fanoutAll?.description).toContain('mode="locked_writers"')
+    expect(fanoutAll?.description).toContain('writeScopes keyed by every writer target')
+  })
+
   it('advertises explicit transcript-only User summaries without widening @All', () => {
     const sendTool = createTaskWraithMcpToolDefinitions().find(
       (tool) => tool.name === 'ensemble_send'

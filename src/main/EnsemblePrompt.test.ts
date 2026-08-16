@@ -535,6 +535,8 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain(
       'Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
     )
+    expect(prompt).toContain('`ensemble_fanout_all` has no writeScopes surface')
+    expect(prompt).toContain('`ensemble_fanout(mode="locked_writers", writeScopes=...)`')
     expect(prompt).not.toContain('active Captain after Boss unavailability')
   })
 

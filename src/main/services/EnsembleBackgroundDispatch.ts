@@ -68,8 +68,9 @@ export type BackgroundDispatchPosture =
  * the user-origin round path — composer @mention or DM chip target; every
  * beginRound prompt is user-authored by construction. Peer mentions and yield
  * routes never set it, so they always take the silent read-only clamp. The
- * TASKWRAITH_CONCURRENT_WRITE_LANES kill-switch restores the clamp for
- * user-directed lanes too — loudly, so the downgrade is visible in the round.
+ * User-directed lanes preserve the seat's permission posture, but remain
+ * reader-intent because this mention surface carries no explicit writeScopes.
+ * Parallel background mutation must use locked_writers like every other lane.
  */
 export function resolveBackgroundDispatchPosture(input: {
   honorSeatPosture: boolean
@@ -88,6 +89,6 @@ export function resolveBackgroundDispatchPosture(input: {
   }
   return {
     mode: 'own_permissions',
-    statusLine: `Background: launching ${input.laneCount} lane(s) under their own permissions (user-directed).`
+    statusLine: `Background: launching ${input.laneCount} reader-intent lane(s) under their own permission posture (user-directed). Parallel writes require ensemble_fanout mode="locked_writers" with explicit writeScopes.`
   }
 }

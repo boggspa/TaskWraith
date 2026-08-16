@@ -267,6 +267,7 @@ import {
 } from '../EnsembleTerminalUsage'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from '../bridge/BridgeTextFold'
+import { evaluateEnsembleFanoutWriteAdmission } from './EnsembleFanoutWriteAdmission'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -1117,10 +1118,9 @@ export interface EnsembleFanoutInput {
   isolation?: unknown
 }
 
-/** `ensemble_fanout_all` — the Boss/Captain "everyone, now" sibling of
- * `ensemble_fanout`. No mode/stage/writeScopes surface: stage filters and
- * per-seat permission ELIGIBILITY filters do not apply, and every lane runs
- * under its own normal-turn posture (see fanoutAllForRun). */
+/** `ensemble_fanout_all` — the Boss/Captain "everyone, now" reader sibling of
+ * `ensemble_fanout`. It has no writeScopes surface, so a roster containing a
+ * write-intent target fails closed and points the caller to locked_writers. */
 export interface EnsembleFanoutAllInput {
   targets?: unknown
   prompt?: string
@@ -1145,6 +1145,7 @@ export interface EnsembleFanoutAllResult {
     | 'invalid_target'
     | 'invalid_isolation'
     | 'no_eligible_targets'
+    | 'missing_write_scope'
     | 'not_authorized'
     | 'explicit_targets_required'
     | 'budget_exhausted'
@@ -12365,11 +12366,11 @@ export class EnsembleOrchestrator {
    *
    * Differences from `ensemble_fanout`: the round's fan-out policy, stage
    * filters (`targetStage`), and per-seat permission ELIGIBILITY filtering
-   * are all ignored — every tagged (default: every enabled, idle) seat
-   * dispatches concurrently, and each lane runs under the participant's OWN
-   * normal-turn posture and derives task intent from it instead of applying
-   * reader intent or locked-writer scopes. What it deliberately does NOT
-   * bypass: caller authority (must be
+   * are ignored for target resolution. Every lane keeps the participant's
+   * normal-turn permission posture, but this scope-less tool fails before
+   * dispatch when that posture would produce write intent; the caller must
+   * use `ensemble_fanout(mode=locked_writers, writeScopes=...)` instead. What
+   * it deliberately does NOT bypass: caller authority (must be
    * the configured Boss or Captain), the composer-directed
    * one-seat round boundary (user intent), the Boss budget, the roster cap,
    * and every posture clamp inside resolveParticipantPermissions (the
@@ -12493,6 +12494,27 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout_all',
         message: resolvedTargets.message,
         error: resolvedTargets.error
+      }
+    }
+
+    const writeAdmission = evaluateEnsembleFanoutWriteAdmission(
+      resolvedTargets.targets.map((participant) => ({
+        participantId: participant.id,
+        participantLabel: participantDisplayName(participant),
+        intent: this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
+          ? 'read'
+          : 'write',
+        approvedWriteScopeCount: 0
+      }))
+    )
+    if (!writeAdmission.ok) {
+      const message = `ensemble_fanout_all cannot infer lane write authority from seat permissions. ${writeAdmission.message}`
+      this.appendRoundStatus(run.chatId, run.roundId, message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message,
+        error: 'missing_write_scope'
       }
     }
 
@@ -15555,8 +15577,9 @@ export class EnsembleOrchestrator {
 
     // Parallel fan-out. Read is a WORK-INTENT policy, never a permission
     // preset: an opening Scout keeps its configured posture while receiving a
-    // read-only lane brief. All additionally lets the lane derive write intent
-    // from that posture. Writer-intent lanes under narrower policies still
+    // read-only lane brief. All adds the separate writer path below; it never
+    // turns a Scout/Reviewer wave into an unscoped writer lane merely because
+    // that seat has a write-capable normal-turn preset. Writer-intent lanes
     // require either Boss authorization via ensemble_fanout or, when no Boss
     // is assigned, a host-owned user-preflight claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
@@ -15564,7 +15587,6 @@ export class EnsembleOrchestrator {
     const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
     const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
     const shouldRunReadOnlyFanout = readFanoutRequested
-    const openingScoutUsesOwnIntent = roundFanoutPolicy === 'all'
     const shouldRunOpeningScoutFanout =
       !options.skipPreamble || options.repeatOpeningScoutFanout === true
     const shouldRunOpeningWriterFanout = !options.skipPreamble
@@ -15580,9 +15602,10 @@ export class EnsembleOrchestrator {
       // and never consults the seat's configured preset. Three-way partition:
       //   readers  — explicit stage 'scout' (any preset), or unstaged seats
       //              whose OWN permissions resolve read-only (the pre-stage
-      //              legacy inference) → round-start parallel pass. Read keeps
-      //              the task read-only while preserving the configured seat
-      //              posture; All derives task intent from that posture.
+      //              legacy inference) → round-start parallel pass. Read and
+      //              All keep that task read-only while preserving the
+      //              configured seat posture; All admits writer work only
+      //              through the separately scoped writer path below.
       //   writers  — explicit stage 'worker' (any preset, including presets
       //              that resolve read-only: it still takes its serial turn
       //              and must NOT be silently dropped from BOTH buckets — a
@@ -15638,9 +15661,8 @@ export class EnsembleOrchestrator {
         remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only',
-          // Both policies preserve the seat posture. All also lets the lane's
-          // task intent follow that posture; Read remains inspection-only.
-          deriveLaneIntentFromPermissions: openingScoutUsesOwnIntent,
+          // Read and All both keep Scout work reader-intent while preserving
+          // the seat posture. All's writers use the scoped path below.
           label: 'Automatic read stage'
         })
       } else if (shouldRunOpeningScoutFanout && readFanoutRequested && readers.length > 0) {
@@ -15794,7 +15816,7 @@ export class EnsembleOrchestrator {
       // path does). Stage roles are permission-agnostic (2026-08-04): a
       // write-postured reviewer joins the wave like any other. Fan-out Read
       // keeps reviewer intent read-only without weakening the seat's configured
-      // posture; Fan-out All derives intent from the posture, matching Scout.
+      // posture; Fan-out All's write work uses its separate scoped path.
       if (
         reviewerWaveEligible &&
         remaining.length >= 2 &&
@@ -15818,7 +15840,6 @@ export class EnsembleOrchestrator {
           remaining.splice(0, remaining.length, ...rest)
           await this.runParallelFanoutPass(runtime, chat, pendingReviewers, {
             mode: 'read_only',
-            deriveLaneIntentFromPermissions: openingScoutUsesOwnIntent,
             label: 'Review wave'
           })
           // Closing Review wave ends ordinary serial work for this pass.
@@ -18015,7 +18036,6 @@ export class EnsembleOrchestrator {
         label: 'User Fan-Out',
         promptAuthority: 'user',
         userPromptSourceMessageId: sourceMessageId,
-        deriveLaneIntentFromPermissions: true,
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: 'background'
@@ -18175,7 +18195,7 @@ export class EnsembleOrchestrator {
         sourceRunId: options.sourceRunId,
         label: 'Background',
         ...(posture.mode === 'own_permissions'
-          ? { deriveLaneIntentFromPermissions: true }
+          ? { mode: 'read_only' as const }
           : { mode: 'read_only' as const, forceReadOnlyDispatch: true }),
         acceptedRuns,
         waitForCompletion: false,
@@ -18313,65 +18333,8 @@ export class EnsembleOrchestrator {
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
-    for (const participant of participants) {
-      const permissions = options.forceReadOnlyDispatch
-        ? this.resolveForcedReadOnlyFanoutPermissions(chat, runtime, participant)
-        : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
-      if (options.forceReadOnlyDispatch && !permissions.readOnly) {
-        throw new Error(
-          `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${participant.id}.`
-        )
-      }
-      if (
-        mode === 'locked_writers' &&
-        !permissions.readOnly &&
-        (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
-      ) {
-        throw new Error(
-          `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
-        )
-      }
-    }
-
-    if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
-
     const readerIntentMode = mode === 'read_only' && !options.deriveLaneIntentFromPermissions
-    const readIntentCount = participants.filter((participant) => {
-      if (readerIntentMode) return true
-      const permissions = options.forceReadOnlyDispatch
-        ? this.resolveForcedReadOnlyFanoutPermissions(chat, runtime, participant)
-        : this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant)
-      return permissions.readOnly
-    }).length
-    const writeIntentCount = participants.length - readIntentCount
-    // Worktree isolation applies to WRITE-intent lanes only: read lanes need
-    // the live checkout (and cannot mutate it), while parallel writers are the
-    // stomping hazard. The chat-level Isolate policy is USER AUTHORITY,
-    // live-read at pass time (a mid-round toggle applies from the next pass):
-    // 'off'/'worktree' are pinned regimes a per-call override cannot escape;
-    // only 'any' delegates the choice to the caller, defaulting to the shared
-    // checkout when omitted.
-    const isolationPolicy = resolveEnsembleFanoutIsolationPolicy(
-      (this.deps.getChat(runtime.chatId) || chat).ensemble?.fanoutIsolation
-    )
-    const fanoutIsolation: EnsembleFanoutIsolation =
-      isolationPolicy === 'any' ? (options.isolation ?? 'off') : isolationPolicy
-    // Global-scope chats have no workspace checkout to isolate; write lanes
-    // there run as before. Missing allocator/workspace on a workspace-scoped
-    // chat is NOT an exemption — those lanes fail closed per-lane below
-    // instead of silently sharing the checkout.
-    const isolateWriteLanes =
-      fanoutIsolation === 'worktree' && writeIntentCount > 0 && chat.scope !== 'global'
-    const label =
-      options.label || (mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out')
-    const ollamaLaneCount = participants.filter((p) => p.provider === 'ollama').length
-    const ollamaRamNote =
-      ollamaLaneCount >= 2
-        ? ` ${ollamaLaneCount} Ollama lane(s) — local models share RAM; expect slower loads when multiple quants are resident.`
-        : ''
-    const isolationNote = isolateWriteLanes
-      ? ' Write lanes run in isolated worktrees (forked from the last commit); results land as candidates to compare and promote.'
-      : ''
+    if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
     // Wave 3 — same seat-compaction barrier as the serial path, for every
     // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
     await Promise.all(
@@ -18387,17 +18350,95 @@ export class EnsembleOrchestrator {
     // the cancel. The post-`Promise.all(completionPromises)` check further down
     // fires only AFTER the lanes have already run — too late.
     if (dispatchWasCancelled()) return []
+    // Permission settings can change while a seat is compacting. Freeze the
+    // post-barrier participant + intent plan, then admit that exact plan before
+    // seeding any run so a late permission upgrade cannot mint an unscoped
+    // writer lane between an earlier preflight and provider dispatch.
+    const dispatchPlanChat = this.deps.getChat(runtime.chatId) || chat
+    const lanePlans = participants.map((participant) => {
+      const currentParticipant =
+        dispatchPlanChat.ensemble?.participants?.find(
+          (candidate) => candidate.id === participant.id
+        ) || participant
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveForcedReadOnlyFanoutPermissions(
+            dispatchPlanChat,
+            runtime,
+            currentParticipant
+          )
+        : this.resolveFanoutEligibilityPermissions(
+            dispatchPlanChat,
+            runtime,
+            currentParticipant,
+            mode
+          )
+      if (options.forceReadOnlyDispatch && !permissions.readOnly) {
+        throw new Error(
+          `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${currentParticipant.id}.`
+        )
+      }
+      const laneIntent: 'read' | 'write' =
+        readerIntentMode || permissions.readOnly ? 'read' : 'write'
+      return {
+        participant: currentParticipant,
+        laneIntent,
+        approvedWriteScopes: options.writeScopesByParticipantId?.get(currentParticipant.id)
+      }
+    })
+    const admission = evaluateEnsembleFanoutWriteAdmission(
+      lanePlans.map(({ participant, laneIntent, approvedWriteScopes }) => ({
+        participantId: participant.id,
+        participantLabel: participantDisplayName(participant),
+        intent: laneIntent,
+        approvedWriteScopeCount: approvedWriteScopes?.length || 0
+      }))
+    )
+    if (!admission.ok) throw new Error(admission.message)
+    const readIntentCount = lanePlans.filter((plan) => plan.laneIntent === 'read').length
+    const writeIntentCount = lanePlans.length - readIntentCount
+    // Worktree isolation applies to WRITE-intent lanes only: read lanes need
+    // the live checkout (and cannot mutate it), while parallel writers are the
+    // stomping hazard. The chat-level Isolate policy is USER AUTHORITY,
+    // live-read at pass time (a mid-round toggle applies from the next pass):
+    // 'off'/'worktree' are pinned regimes a per-call override cannot escape;
+    // only 'any' delegates the choice to the caller, defaulting to the shared
+    // checkout when omitted.
+    const isolationPolicy = resolveEnsembleFanoutIsolationPolicy(
+      dispatchPlanChat.ensemble?.fanoutIsolation
+    )
+    const fanoutIsolation: EnsembleFanoutIsolation =
+      isolationPolicy === 'any' ? (options.isolation ?? 'off') : isolationPolicy
+    // Global-scope chats have no workspace checkout to isolate; write lanes
+    // there run as before. Missing allocator/workspace on a workspace-scoped
+    // chat is NOT an exemption — those lanes fail closed per-lane below
+    // instead of silently sharing the checkout.
+    const isolateWriteLanes =
+      fanoutIsolation === 'worktree' &&
+      writeIntentCount > 0 &&
+      dispatchPlanChat.scope !== 'global'
+    const label =
+      options.label || (mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out')
+    const ollamaLaneCount = lanePlans.filter(
+      ({ participant }) => participant.provider === 'ollama'
+    ).length
+    const ollamaRamNote =
+      ollamaLaneCount >= 2
+        ? ` ${ollamaLaneCount} Ollama lane(s) — local models share RAM; expect slower loads when multiple quants are resident.`
+        : ''
+    const isolationNote = isolateWriteLanes
+      ? ' Write lanes run in isolated worktrees (forked from the last commit); results land as candidates to compare and promote.'
+      : ''
     const fanoutCategory = options.promptAuthority === 'user' ? 'user' : 'orchestrated'
     const fanoutWaveId = this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
       writeIntentCount > 0
-        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
+        ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
         : options.forceReadOnlyDispatch
-          ? `${label} · ${participants.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
+          ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
           : readerIntentMode
-            ? `${label} · ${participants.length} participant(s) dispatched concurrently (reader-intent lanes; seat permissions preserved).${ollamaRamNote}`
-            : `${label} · ${participants.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
+            ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (reader-intent lanes; seat permissions preserved).${ollamaRamNote}`
+            : `${label} · ${lanePlans.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
       { fanoutCategory, fanoutLabel: label }
     )
 
@@ -18411,27 +18452,20 @@ export class EnsembleOrchestrator {
     // spreads its `chat` parameter to compose the next save. Using
     // the stale `chat` would clobber the status note we just
     // appended.
-    const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
-      const freshChat = this.deps.getChat(runtime.chatId) || chat
-      const freshParticipant =
-        freshChat.ensemble?.participants?.find((candidate) => candidate.id === participant.id) ||
-        participant
-      const permissions = options.forceReadOnlyDispatch
-        ? this.resolveForcedReadOnlyFanoutPermissions(freshChat, runtime, freshParticipant)
-        : this.resolveFanoutOwnDispatchPermissions(freshChat, runtime, freshParticipant)
-      const laneIntent = readerIntentMode || permissions.readOnly ? 'read' : 'write'
-      return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
-        laneId: this.nextLaneId(runtime, freshParticipant),
-        laneIntent,
-        ...(fanoutWaveId ? { fanoutWaveId } : {}),
-        fanoutLabel: label,
-        fanoutCategory,
-        preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
-        approvedWriteScopes: laneIntent === 'read'
-          ? undefined
-          : options.writeScopesByParticipantId?.get(freshParticipant.id)
-      })
-    })
+    const laneRuns: ActiveParticipantRun[] = lanePlans.map(
+      ({ participant: freshParticipant, laneIntent, approvedWriteScopes }) => {
+        const freshChat = this.deps.getChat(runtime.chatId) || chat
+        return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
+          laneId: this.nextLaneId(runtime, freshParticipant),
+          laneIntent,
+          ...(fanoutWaveId ? { fanoutWaveId } : {}),
+          fanoutLabel: label,
+          fanoutCategory,
+          preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
+          approvedWriteScopes: laneIntent === 'read' ? undefined : approvedWriteScopes
+        })
+      }
+    )
     for (const run of laneRuns) {
       runtime.activeScoutRunIds.add(run.runId)
     }

@@ -10,16 +10,18 @@ import { resolveBackgroundDispatchPosture } from './EnsembleBackgroundDispatch'
  * peer paths keep the silent read-only clamp.
  */
 describe('resolveBackgroundDispatchPosture', () => {
-  it('runs user-directed lanes under the seats own permissions when write lanes are on', () => {
+  it('preserves user-directed seat permissions while naming the reader-intent boundary', () => {
     const posture = resolveBackgroundDispatchPosture({
       honorSeatPosture: true,
       writeLanesEnabled: true,
       laneCount: 2
     })
     expect(posture.mode).toBe('own_permissions')
-    expect(posture.statusLine).toBe(
-      'Background: launching 2 lane(s) under their own permissions (user-directed).'
+    expect(posture.statusLine).toContain(
+      'launching 2 reader-intent lane(s) under their own permission posture'
     )
+    expect(posture.statusLine).toContain('mode="locked_writers"')
+    expect(posture.statusLine).toContain('explicit writeScopes')
   })
 
   it('clamps user-directed lanes read-only, loudly, when the write-lane kill-switch is off', () => {
@@ -65,7 +67,8 @@ describe('honorSeatPosture orchestrator wiring', () => {
     expect(start).toBeGreaterThan(-1)
     const body = source.slice(start, start + 8000)
     expect(body).toContain('resolveBackgroundDispatchPosture')
-    expect(body).toContain('deriveLaneIntentFromPermissions: true')
+    expect(body).toContain("posture.mode === 'own_permissions'")
+    expect(body).toContain("? { mode: 'read_only' as const }")
     expect(body).toContain('forceReadOnlyDispatch: true')
   })
 })

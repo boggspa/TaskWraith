@@ -2537,7 +2537,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout_all',
       description:
-        'In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged participant concurrently, including while both authority seats are available — omit targets to dispatch all enabled, idle peers. Unlike reader-intent ensemble_fanout, this ignores the round fan-out policy and stage filters, then derives each lane’s task intent from that participant’s OWN normal-turn permissions (writer seats get writer intent; read-only seats stay readers), exactly as their serial rotation turn would. It never elevates any seat beyond its configured posture, never widens a user-targeted (composer-directed) round, and still counts against the shared Boss/Captain fan-out budget. Concurrent write-capable lanes share the workspace — prefer disjoint work items per lane, or pass isolation=worktree to fork each write-intent lane into its own git worktree (from the last commit) whose result becomes a promotable candidate. The chat’s Isolate setting governs isolation: Shared pins the live checkout, Worktrees pins write-lane worktrees, and only Any honors the per-call isolation parameter. Returns a dispatch receipt immediately; lane results appear later in the transcript. At most 2 fan-outs may run at once; a third call is refused and you must ensemble_await one of them first. That caps concurrent CALLS, not lanes — one fan-out may still carry the whole roster.',
+        'In Ensemble Mode, the configured Boss or Captain fans out EVERY tagged reader-intent participant concurrently, including while both authority seats are available — omit targets to select all enabled, idle peers. Target resolution ignores the round fan-out policy and stage filters, and every dispatched seat keeps its own normal-turn permission posture. If any selected seat would produce WRITE intent, this scope-less tool fails before provider dispatch: seat permission, Full WS Access, and caller seniority cannot replace lane scopes. Use ensemble_fanout with mode="locked_writers" and explicit writeScopes keyed by every writer target instead. It never widens a user-targeted (composer-directed) round and still counts against the shared Boss/Captain fan-out budget. Returns a dispatch receipt immediately; lane results appear later in the transcript. At most 2 fan-outs may run at once; a third call is refused and you must ensemble_await one of them first. That caps concurrent CALLS, not lanes — one fan-out may still carry the whole roster.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2556,7 +2556,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           prompt: {
             type: 'string',
             description:
-              'Focused prompt for the fan-out lanes. Include exactly what each target should investigate or do; assign disjoint work items when write-capable seats are included.'
+              'Focused inspection, research, or review prompt for the reader-intent lanes. Use scoped locked_writers fan-out for implementation work.'
           },
           reason: {
             type: 'string',
@@ -2566,7 +2566,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['worktree', 'off'],
             description:
-              'Optional. worktree runs each write-intent lane in its own isolated git worktree (forked from the last commit) whose result becomes a promotable candidate; off keeps the shared checkout. Honored only while the chat’s Isolate setting is Any — a user-pinned Shared or Worktrees setting overrides this parameter (the receipt notes the clamp). Omit to defer to the chat’s Isolate setting.'
+              'Compatibility option. This scope-less tool admits only reader-intent lanes, so it never allocates a writer worktree; choose isolation on ensemble_fanout mode=locked_writers instead.'
           }
         },
         required: ['prompt']
