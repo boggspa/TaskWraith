@@ -4,54 +4,54 @@
 /**
  * Outcome 5/11 evidence instrument — decision core.
  *
- * WHAT THIS FILE IS FOR. Outcomes 5 and 11 claim that a ten-minute packaged
- * session holds A/V sync over variable-frame-rate media, that audio behaves,
- * and that nothing leaks. Every one of those is a claim a hopeful instrument
- * could fake, so the judgements live here as pure functions with executable
- * controls rather than inline in a launcher where nothing can reach them.
+ * WHY THIS FILE IS PARANOID. Its first version passed 29 controls and accepted
+ * a receipt with a twenty-second gap between the two clocks and a hand-written
+ * `err=0`. Its second passed 57 and still let a caller hand-build a "parsed"
+ * object to skip the parser entirely. Both were advertised as stricter than
+ * they were. Every rule below therefore recomputes what it can, refuses what it
+ * cannot, and treats absent/unknown/unsupported as Red.
  *
- * WHY THIS FILE IS PARANOID. Its first version passed 29 controls and still
- * accepted four separate forged-evidence shapes, the worst being a receipt with
- * a twenty-second gap between the two clocks and a hand-written `err=0`. It was
- * advertised as classifying "from the operands" while actually trusting the
- * summary field. Every rule below therefore recomputes what it can and refuses
- * what it cannot: absent, unknown and unsupported are Red, never Green.
+ * THE SEMANTIC CORRECTION THAT MATTERS MOST. The `av1` line published at
+ * StudioViewerWindow.swift:849 is `syncMeter.peakSample.diagnosticsExportText`
+ * — the RETAINED WORST SAMPLE since the last seek, not the live reading. The
+ * current error lives separately in `StudioAvSyncMeter.currentErrorTicks` and
+ * only reaches a surface through `summaryText`. Treating the peak as "current"
+ * both misclassifies a legitimately explained outlier (the measured -1088.5ms
+ * peak) as a live failure AND fails to prove live drift at all. Peak and
+ * current are modelled here as different kinds, and a peak can never satisfy a
+ * requirement for a current sample.
  *
  * THE ONE THING THIS FILE REFUSES TO DO. It never reports physical acoustic
- * audibility as proven. ScreenCaptureKit window audio proves the Studio window
- * EMITTED samples; CoreAudio route health proves the sink is CONFIGURED.
- * Neither proves a speaker moved air, and no post-mix/sink-energy or external
- * metering seam exists in this repository.
+ * audibility as proven, and `summarizeOutcome5` has no Green return at all in
+ * this repository.
  */
 
-/** The sample plan is a contract, not a tuning knob. */
 const SAMPLE_COUNT = 21
 const NOMINAL_CADENCE_SECONDS = 30
 const MIN_ELAPSED_SECONDS = 600
 
 /**
  * ITU-R BT.1359 detectability thresholds, ASYMMETRIC and widely mis-implemented
- * as a symmetric window. Mirrored exactly from the authoritative product source
- * (StudioAvSyncMeter.audioDelayedToleranceMilliseconds / audioAdvanced...).
+ * as a symmetric window. Mirrored from StudioAvSyncMeter.
  */
 const AUDIO_DELAYED_TOLERANCE_MS = 125
 const AUDIO_ADVANCED_TOLERANCE_MS = 45
 
 /**
- * Inherited from the accepted allocation-class contract at
- * StudioStressTests.swift:197 (growthBudgetMB: 24), whose
- * `trend.isStable(withinGrowthBytes:)` takes an ABSOLUTE budget. Inherited
- * UNSCALED on purpose: a leak grows with work, so scaling the budget with run
- * length would conceal exactly what a ten-minute run exists to expose.
+ * Inherited unscaled from the accepted allocation-class contract at
+ * StudioStressTests.swift:197. A leak grows with work, so scaling the budget
+ * with run length would conceal what a ten-minute run exists to expose.
  */
 const FOOTPRINT_GROWTH_BUDGET_MB = 24
 const MAX_RESIDENT_DECODER_GROWTH = 1
-
-/** IOSurface IDs are UInt32 in the product's own probe. */
 const MAX_IO_SURFACE_ID = 0xffffffff
 
-/** The export prints milliseconds with `%.3f`, so agreement is at 3 decimals. */
-const MILLISECOND_PRECISION = 0.001
+/**
+ * The export prints milliseconds with `%.3f`, so a faithful receipt rounds to
+ * the canonical form. Half a unit is the most a correct rounding can differ;
+ * a full unit out is a different number, not a rounding artefact.
+ */
+const MILLISECOND_AGREEMENT = 0.0005 + 1e-9
 
 const AV1_FIELDS = ['pf', 'ap', 'err', 'errms', 'win', 'winms', 'drawn', 'expl']
 const AV1_EXPLANATIONS = new Set(['explained', 'not_explained', 'unknown'])
@@ -59,6 +59,9 @@ const AV1_EXPLANATIONS = new Set(['explained', 'not_explained', 'unknown'])
 const isSafeInteger = (value) => Number.isSafeInteger(value)
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value)
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0
+const canonicalMs = (value) => Number(value.toFixed(3))
+const agreesToThreeDecimals = (actual, canonical) =>
+  isFiniteNumber(actual) && Math.abs(actual - canonical) <= MILLISECOND_AGREEMENT
 
 function planSamples({ startedAtMs = 0 } = {}) {
   const plan = []
@@ -71,14 +74,14 @@ function planSamples({ startedAtMs = 0 } = {}) {
 
 /**
  * A run can have every sample, in order, and still not be a ten-minute run.
- * Count and duration are therefore checked independently, and a sample with no
- * timestamps at all is Red rather than skipped — silently tolerating a missing
- * field is how an incomplete run reads as complete.
+ * BOTH clocks must span the duration: a run that reports 600s of elapsed time
+ * while its monotonic clock advanced 20ms is a bunched run wearing a costume.
  */
 function validateSampleSequence(samples) {
   const failures = []
   const list = Array.isArray(samples) ? samples : []
   const plan = planSamples({ startedAtMs: 0 })
+  const cadenceMs = NOMINAL_CADENCE_SECONDS * 1000
 
   if (list.length !== SAMPLE_COUNT) {
     failures.push(`sample count ${list.length}, expected ${SAMPLE_COUNT}`)
@@ -109,8 +112,6 @@ function validateSampleSequence(samples) {
       )
     }
 
-    // Absent timestamps are the shape that let an incomplete run pass. Both
-    // clocks are required on EVERY sample, finite and non-negative.
     for (const field of ['actualElapsedMs', 'monotonicMs']) {
       const value = sample[field]
       if (!isFiniteNumber(value)) {
@@ -120,59 +121,161 @@ function validateSampleSequence(samples) {
       }
     }
 
+    // Bunching guard, derived from the declared cadence rather than invented:
+    // a sample may run late by at most one nominal interval, and may never run
+    // EARLY, because early means the plan was not honoured at all.
+    if (expected && isFiniteNumber(sample.actualElapsedMs)) {
+      const lateness = sample.actualElapsedMs - expected.plannedElapsedMs
+      if (lateness < 0) {
+        failures.push(`sample ${i} fired ${-lateness}ms EARLY, before its planned instant`)
+      } else if (lateness > cadenceMs) {
+        failures.push(`sample ${i} fired ${lateness}ms late, over one ${cadenceMs}ms cadence`)
+      }
+    }
+
     if (i > 0) {
       const previous = list[i - 1]
-      if (
-        previous &&
-        isFiniteNumber(previous.monotonicMs) &&
-        isFiniteNumber(sample.monotonicMs) &&
-        sample.monotonicMs <= previous.monotonicMs
-      ) {
-        failures.push(
-          `monotonic clock did not advance at ${i}: ` +
-            `${sample.monotonicMs} <= ${previous.monotonicMs}`
-        )
+      for (const field of ['actualElapsedMs', 'monotonicMs']) {
+        if (
+          previous &&
+          isFiniteNumber(previous[field]) &&
+          isFiniteNumber(sample[field]) &&
+          sample[field] <= previous[field]
+        ) {
+          failures.push(`${field} did not advance at ${i}: ${sample[field]} <= ${previous[field]}`)
+        }
       }
     }
   }
 
   const first = list[0]
   const last = list[list.length - 1]
-  if (
-    first &&
-    last &&
-    isFiniteNumber(first.actualElapsedMs) &&
-    isFiniteNumber(last.actualElapsedMs)
-  ) {
-    const spanSeconds = (last.actualElapsedMs - first.actualElapsedMs) / 1000
-    if (spanSeconds < MIN_ELAPSED_SECONDS) {
+  const spanOf = (field) =>
+    first && last && isFiniteNumber(first[field]) && isFiniteNumber(last[field])
+      ? (last[field] - first[field]) / 1000
+      : null
+
+  if (first && first.actualElapsedMs !== 0) {
+    failures.push('the first sample must anchor elapsed time at zero')
+  }
+
+  const actualSpan = spanOf('actualElapsedMs')
+  const monotonicSpan = spanOf('monotonicMs')
+  for (const [label, span] of [
+    ['reported elapsed', actualSpan],
+    ['monotonic', monotonicSpan]
+  ]) {
+    if (span === null) {
+      failures.push(`under-duration: no measurable ${label} span`)
+    } else if (span < MIN_ELAPSED_SECONDS) {
       failures.push(
-        `under-duration: run spanned ${spanSeconds.toFixed(1)}s, ` +
+        `under-duration: ${label} span was ${span.toFixed(1)}s, ` +
           `endurance requires >= ${MIN_ELAPSED_SECONDS}s`
       )
     }
-  } else {
-    failures.push('under-duration: no measurable elapsed span')
+  }
+  if (actualSpan !== null && monotonicSpan !== null) {
+    const disagreementSeconds = Math.abs(actualSpan - monotonicSpan)
+    if (disagreementSeconds > NOMINAL_CADENCE_SECONDS) {
+      failures.push(
+        `the reported elapsed span and the monotonic span disagree by ` +
+          `${disagreementSeconds.toFixed(1)}s, over one cadence`
+      )
+    }
   }
 
   return { ok: failures.length === 0, failures }
 }
 
 /**
- * Fail-closed parse of the product's own `av1` diagnostics export.
+ * Recomputes EVERY relationship a receipt asserts about itself.
  *
- * RECOMPUTES RATHER THAN TRUSTS. `errorTicks` is defined by the product as
- * `presentedFrameTicks - audiblePositionTicks` (StudioAvSyncMeter.swift:193),
- * so a receipt whose `err` disagrees with its own operands is forged or
- * corrupt, not merely surprising. The first version of this parser read all
- * three and then believed `err`, which accepted a twenty-second clock gap
- * carrying a hand-written zero.
- *
- * An absent measurement window stays NULL. Zero would parse as "both clocks
- * were read together" — the strongest possible claim and the exact opposite of
- * what absence means.
+ * Deliberately independent of any `ok` flag. The second version of this file
+ * let a caller hand-build `{ ok: true, pf: 600000, ap: 0, err: 0 }` and skip
+ * the parser entirely, so "refused again at classification" was a claim rather
+ * than an implementation. This is the implementation.
  */
-function parseAvSyncExport(text) {
+function operandIntegrityFailure(receipt, timebase) {
+  if (!receipt || typeof receipt !== 'object') return 'no receipt'
+  if (
+    !timebase ||
+    !isSafeInteger(timebase.timescale) ||
+    timebase.timescale <= 0 ||
+    !isSafeInteger(timebase.frameDurationTicks) ||
+    timebase.frameDurationTicks <= 0
+  ) {
+    return 'no exact timebase (timescale and frameDurationTicks are both required)'
+  }
+
+  const { presentedFrameTicks: pf, audioPositionTicks: ap, errorTicks: err } = receipt
+  if (!isSafeInteger(pf) || !isSafeInteger(ap) || !isSafeInteger(err)) {
+    return 'operands are not exact safe integers'
+  }
+  if (err !== pf - ap) {
+    return (
+      `err ${err} disagrees with its own operands (pf ${pf} - ap ${ap} = ${pf - ap}); ` +
+      'the receipt is forged or corrupt'
+    )
+  }
+
+  const derivedErrorMs = canonicalMs((err / timebase.timescale) * 1000)
+  if (!agreesToThreeDecimals(receipt.errorMilliseconds, derivedErrorMs)) {
+    return (
+      `errms ${receipt.errorMilliseconds} is not the canonical ` +
+      `${derivedErrorMs.toFixed(3)} for err ${err} at timescale ${timebase.timescale}`
+    )
+  }
+
+  const win = receipt.measurementWindowNanoseconds
+  if (win === null || win === undefined) {
+    if (
+      receipt.measurementWindowMilliseconds !== null &&
+      receipt.measurementWindowMilliseconds !== undefined
+    ) {
+      return 'measurement window is only half absent'
+    }
+  } else {
+    if (!isSafeInteger(win) || win < 0) return 'measurement window is not a non-negative integer'
+    const derivedWindowMs = canonicalMs(win / 1_000_000)
+    if (!agreesToThreeDecimals(receipt.measurementWindowMilliseconds, derivedWindowMs)) {
+      return (
+        `winms ${receipt.measurementWindowMilliseconds} is not the canonical ` +
+        `${derivedWindowMs.toFixed(3)} for win ${win}ns`
+      )
+    }
+  }
+
+  if (typeof receipt.wasDrawn !== 'boolean') return 'drawn flag is not a boolean'
+
+  // Rederived exactly as StudioAvSyncMeter.errorIsExplainedByMeasurementWindow
+  // does: only a NEGATIVE error can be explained by the window, because the
+  // audio playhead is the operand read LAST.
+  let expectedExplanation
+  if (win === null || win === undefined) {
+    expectedExplanation = 'unknown'
+  } else {
+    const errorMs = (err / timebase.timescale) * 1000
+    const quantisationMs = (timebase.frameDurationTicks / timebase.timescale) * 1000
+    expectedExplanation =
+      errorMs < 0 && -errorMs <= win / 1_000_000 + quantisationMs ? 'explained' : 'not_explained'
+  }
+  if (receipt.explanation !== expectedExplanation) {
+    return (
+      `explanation "${receipt.explanation}" is not what these operands produce ` +
+      `("${expectedExplanation}"); the receipt is inconsistent or cross-read`
+    )
+  }
+
+  return null
+}
+
+/**
+ * Fail-closed parse of the product's `av1` export.
+ *
+ * TAGGED AS A PEAK, because that is what it is: the publish site is
+ * `syncMeter.peakSample.diagnosticsExportText`.
+ */
+function parseAvSyncPeakExport(text) {
   if (typeof text !== 'string' || text.trim().length === 0) {
     return { ok: false, reason: 'empty receipt' }
   }
@@ -200,8 +303,7 @@ function parseAvSyncExport(text) {
     const raw = fields.get(key)
     if (!/^-?\d+$/.test(raw)) return null
     const value = Number(raw)
-    if (!isSafeInteger(value)) return null
-    return value
+    return isSafeInteger(value) ? value : null
   }
   const exactDecimal = (key) => {
     const raw = fields.get(key)
@@ -216,15 +318,13 @@ function parseAvSyncExport(text) {
   if (presentedFrameTicks === null || audioPositionTicks === null || errorTicks === null) {
     return { ok: false, reason: 'non-integer or unsafe operand' }
   }
-
-  // THE INTEGRITY CHECK THIS PARSER WAS MISSING.
   if (errorTicks !== presentedFrameTicks - audioPositionTicks) {
     return {
       ok: false,
       reason:
         `err ${errorTicks} disagrees with its own operands ` +
         `(pf ${presentedFrameTicks} - ap ${audioPositionTicks} = ` +
-        `${presentedFrameTicks - audioPositionTicks}); the receipt is forged or corrupt`
+        `${presentedFrameTicks - audioPositionTicks})`
     }
   }
 
@@ -232,33 +332,42 @@ function parseAvSyncExport(text) {
   if (errorMilliseconds === null) {
     return { ok: false, reason: 'errms is not a finite three-decimal value' }
   }
+  // The full canonical check needs a timescale and therefore belongs to
+  // classification. Two parts of it do NOT: zero ticks are zero milliseconds at
+  // every timescale, and the sign cannot change. `err=0 errms=0.001` is caught
+  // here rather than waiting for a timebase that a caller might never supply.
+  if (errorTicks === 0 && errorMilliseconds !== 0) {
+    return { ok: false, reason: `errms ${errorMilliseconds} is not zero for err 0` }
+  }
+  if (Math.sign(errorTicks) !== Math.sign(errorMilliseconds)) {
+    return {
+      ok: false,
+      reason: `errms ${errorMilliseconds} does not share the sign of err ${errorTicks}`
+    }
+  }
 
   const rawWindow = fields.get('win')
   const rawWindowMs = fields.get('winms')
   let measurementWindowNanoseconds = null
   let measurementWindowMilliseconds = null
   if (rawWindow === '-' || rawWindowMs === '-') {
-    // Absence is all-or-nothing: a half-present window is a malformed receipt.
     if (rawWindow !== '-' || rawWindowMs !== '-') {
       return { ok: false, reason: 'measurement window is only half absent' }
     }
   } else {
     measurementWindowNanoseconds = exactInteger('win')
     if (measurementWindowNanoseconds === null || measurementWindowNanoseconds < 0) {
-      // The product's own type is UInt64; a negative window cannot exist.
       return { ok: false, reason: 'measurement window is not a non-negative integer' }
     }
     measurementWindowMilliseconds = exactDecimal('winms')
     if (measurementWindowMilliseconds === null) {
       return { ok: false, reason: 'winms is not a finite three-decimal value' }
     }
-    const derived = measurementWindowNanoseconds / 1_000_000
-    if (Math.abs(derived - measurementWindowMilliseconds) > MILLISECOND_PRECISION) {
+    const derived = canonicalMs(measurementWindowNanoseconds / 1_000_000)
+    if (!agreesToThreeDecimals(measurementWindowMilliseconds, derived)) {
       return {
         ok: false,
-        reason:
-          `winms ${measurementWindowMilliseconds} disagrees with win ` +
-          `${measurementWindowNanoseconds}ns (${derived.toFixed(3)}ms)`
+        reason: `winms ${measurementWindowMilliseconds} is not the canonical ${derived.toFixed(3)}`
       }
     }
   }
@@ -274,6 +383,7 @@ function parseAvSyncExport(text) {
 
   return {
     ok: true,
+    kind: 'peak',
     presentedFrameTicks,
     audioPositionTicks,
     errorTicks,
@@ -285,79 +395,97 @@ function parseAvSyncExport(text) {
   }
 }
 
-/**
- * Classifies one sample from the OPERANDS — and now actually does, rather than
- * claiming to. Everything derivable is recomputed against the exact timebase
- * and compared; a receipt that disagrees with itself is refused before any
- * tolerance question is asked.
- */
-function classifyAvSample({ parsed, timebase }) {
-  const red = (reason) => ({ status: 'red', withinTolerance: false, reason })
+function toleranceVerdict(errorMs) {
+  const bound = errorMs >= 0 ? AUDIO_DELAYED_TOLERANCE_MS : AUDIO_ADVANCED_TOLERANCE_MS
+  return { within: Math.abs(errorMs) <= bound, bound }
+}
 
-  if (!parsed || parsed.ok !== true) {
-    return red(`unreadable receipt: ${(parsed && parsed.reason) || 'absent'}`)
+/**
+ * Classifies the RETAINED PEAK.
+ *
+ * A peak is a diagnostic about the worst moment since the last seek, so an
+ * out-of-bound peak that the measurement window explains is retained as an
+ * explained diagnostic — neither a live pass nor a live failure. That is the
+ * measured -1088.5ms case. An out-of-bound peak with no explanation, or one
+ * that was never measured, is Red.
+ */
+function classifyAvPeakSample({ receipt, timebase }) {
+  const integrity = operandIntegrityFailure(receipt, timebase)
+  if (integrity) {
+    return { kind: 'peak', status: 'red', reason: `unusable peak receipt: ${integrity}` }
+  }
+  if (!receipt.wasDrawn) {
+    return { kind: 'peak', status: 'red', reason: 'peak came from a tick that drew nothing' }
+  }
+
+  const errorMs = (receipt.errorTicks / timebase.timescale) * 1000
+  const { within, bound } = toleranceVerdict(errorMs)
+  if (within) {
+    return {
+      kind: 'peak',
+      status: 'green',
+      errorMilliseconds: errorMs,
+      reason: 'peak within bound'
+    }
+  }
+  if (receipt.explanation === 'explained') {
+    return {
+      kind: 'peak',
+      status: 'explained-diagnostic',
+      errorMilliseconds: errorMs,
+      reason:
+        `peak ${errorMs.toFixed(3)}ms exceeds the ${bound}ms bound but is accounted for by ` +
+        'the measurement window; it is a diagnostic, not a live verdict'
+    }
+  }
+  return {
+    kind: 'peak',
+    status: 'red',
+    errorMilliseconds: errorMs,
+    reason: `peak ${errorMs.toFixed(3)}ms exceeds the ${bound}ms bound, unexplained`
+  }
+}
+
+/**
+ * Classifies a CURRENT sample.
+ *
+ * No explanation excuses a live out-of-bound error, and an absent measurement
+ * window makes the two operands a possible cross-read rather than a
+ * simultaneous reading. This is the only verdict the terminal summary accepts.
+ */
+function classifyAvCurrentSample({ receipt, timebase }) {
+  const integrity = operandIntegrityFailure(receipt, timebase)
+  if (integrity) {
+    return { kind: 'current', status: 'red', reason: `unusable current receipt: ${integrity}` }
+  }
+  if (!receipt.wasDrawn) {
+    return {
+      kind: 'current',
+      status: 'red',
+      reason: 'frame not drawn — the sample is evidence about nothing'
+    }
   }
   if (
-    !timebase ||
-    !isSafeInteger(timebase.timescale) ||
-    timebase.timescale <= 0 ||
-    !isSafeInteger(timebase.frameDurationTicks) ||
-    timebase.frameDurationTicks <= 0
+    receipt.measurementWindowNanoseconds === null ||
+    receipt.measurementWindowNanoseconds === undefined
   ) {
-    return red('no exact timebase (timescale and frameDurationTicks are both required)')
+    return {
+      kind: 'current',
+      status: 'red',
+      reason: 'absent measurement window — the operands may be a cross-read'
+    }
   }
 
-  const errorMs = (parsed.errorTicks / timebase.timescale) * 1000
-  if (Math.abs(errorMs - parsed.errorMilliseconds) > MILLISECOND_PRECISION) {
-    return red(
-      `errms ${parsed.errorMilliseconds} disagrees with err ${parsed.errorTicks} ticks ` +
-        `at timescale ${timebase.timescale} (${errorMs.toFixed(3)}ms)`
-    )
-  }
-
-  // Rederive the explanation exactly as the product does
-  // (StudioAvSyncMeter.errorIsExplainedByMeasurementWindow): only a NEGATIVE
-  // error can be explained by the window, because the audio playhead is read
-  // last. A receipt claiming otherwise is not describing this product.
-  let expectedExplanation
-  if (parsed.measurementWindowNanoseconds === null) {
-    expectedExplanation = 'unknown'
-  } else {
-    const quantisationMs = (timebase.frameDurationTicks / timebase.timescale) * 1000
-    const explained =
-      errorMs < 0 && -errorMs <= parsed.measurementWindowMilliseconds + quantisationMs
-    expectedExplanation = explained ? 'explained' : 'not_explained'
-  }
-  if (parsed.explanation !== expectedExplanation) {
-    return red(
-      `explanation "${parsed.explanation}" is not what these operands produce ` +
-        `("${expectedExplanation}"); the receipt is inconsistent or cross-read`
-    )
-  }
-
-  if (!parsed.wasDrawn) {
-    return red('frame not drawn — the sample is evidence about nothing')
-  }
-  if (parsed.measurementWindowNanoseconds === null) {
-    return red(
-      'absent measurement window — the two operands may be a cross-read rather ' +
-        'than a simultaneous one'
-    )
-  }
-
-  const withinTolerance =
-    errorMs >= 0 ? errorMs <= AUDIO_DELAYED_TOLERANCE_MS : -errorMs <= AUDIO_ADVANCED_TOLERANCE_MS
-
+  const errorMs = (receipt.errorTicks / timebase.timescale) * 1000
+  const { within, bound } = toleranceVerdict(errorMs)
   return {
-    status: withinTolerance ? 'green' : 'red',
-    withinTolerance,
+    kind: 'current',
+    status: within ? 'green' : 'red',
     errorMilliseconds: errorMs,
     direction: errorMs >= 0 ? 'audio-delayed' : 'audio-advanced',
-    explanation: parsed.explanation,
-    reason: withinTolerance
+    reason: within
       ? 'current error within the asymmetric BT.1359 bound'
-      : `current error ${errorMs.toFixed(3)}ms exceeds the ` +
-        `${errorMs >= 0 ? AUDIO_DELAYED_TOLERANCE_MS : AUDIO_ADVANCED_TOLERANCE_MS}ms bound`
+      : `current error ${errorMs.toFixed(3)}ms exceeds the ${bound}ms bound`
   }
 }
 
@@ -367,31 +495,83 @@ const SILENCE_FRACTION_CEILING = 0.01
 const POSITIVE_RMS_FLOOR = 0.02
 const POSITIVE_NON_SILENT_FRACTION_FLOOR = 0.5
 
-function audioReceiptIsComplete(receipt) {
-  if (!receipt || typeof receipt !== 'object') return false
+/**
+ * Validates a full AudioProbeReceipt as the driver actually emits it
+ * (studio-acceptance-ui-driver.swift:62-74), not three floating metrics.
+ */
+function audioProbeFailure(receipt, label) {
+  if (!receipt || typeof receipt !== 'object') return `${label} receipt is absent`
+  for (const field of [
+    'durationSeconds',
+    'sampleBufferCount',
+    'frameCount',
+    'sampleValueCount',
+    'channelCount'
+  ]) {
+    const value = receipt[field]
+    if (!isSafeInteger(value) || value <= 0) return `${label} ${field} is not a positive integer`
+  }
+  if (!isFiniteNumber(receipt.elapsedSeconds) || receipt.elapsedSeconds <= 0) {
+    return `${label} elapsedSeconds is not positive`
+  }
+  if (!isFiniteNumber(receipt.sampleRate) || receipt.sampleRate <= 0) {
+    return `${label} sampleRate is not positive`
+  }
   for (const field of ['rms', 'peak', 'nonSilentFraction']) {
     const value = receipt[field]
-    if (!isFiniteNumber(value) || value < 0 || value > 1) return false
+    if (!isFiniteNumber(value) || value < 0 || value > 1) return `${label} ${field} is out of range`
   }
-  return true
+  // A peak below its own RMS is physically impossible and marks a fabricated
+  // or mis-scaled receipt.
+  if (receipt.peak < receipt.rms) return `${label} peak is below its own RMS`
+  return null
+}
+
+/** Validates an OutputDeviceReceipt plus the explicit support flags. */
+function routeReceiptFailure(route, label) {
+  if (!route || typeof route !== 'object') return `${label} route receipt is absent`
+  if (!isSafeInteger(route.id) || route.id <= 0) {
+    return `${label} device id is not a positive exact integer`
+  }
+  if (!isNonEmptyString(route.uid)) return `${label} device uid is empty`
+  if (!isFiniteNumber(route.nominalSampleRate) || route.nominalSampleRate <= 0) {
+    return `${label} nominalSampleRate is not positive`
+  }
+  if (route.alive !== true || route.running !== true || route.hasOutputStream !== true) {
+    return `${label} device is not alive/running with an output stream`
+  }
+  if (!isSafeInteger(route.outputChannelCount) || route.outputChannelCount <= 0) {
+    return `${label} outputChannelCount is not a positive integer`
+  }
+  // Support must be DECLARED. A missing field is not evidence of anything, and
+  // inferring "unsupported" from absence is how an unreadable route passes.
+  if (typeof route.muteSupported !== 'boolean') return `${label} muteSupported is not declared`
+  if (typeof route.volumeSupported !== 'boolean') return `${label} volumeSupported is not declared`
+  if (!route.muteSupported) return `${label} mute state is unsupported, so it cannot be cleared`
+  if (route.muted !== false) return `${label} route is muted or its mute state is unreadable`
+  if (!route.volumeSupported) return `${label} volume is unsupported, so it cannot be cleared`
+  if (!isFiniteNumber(route.volume) || route.volume <= 0 || route.volume > 1) {
+    return `${label} volume is zero or out of range`
+  }
+  return null
 }
 
 /**
- * Separates three DIFFERENT claims that are easy to collapse into one:
+ * Separates three DIFFERENT claims:
  *   windowEmission     — the Studio window produced samples
  *   routeState         — the selected output device is configured and usable
  *   physicalAudibility — sound actually reached a listener
  *
- * Only the first two are measurable here. The third is BLOCKED, permanently,
- * until a post-mix/sink-energy or external metering seam exists.
+ * Only the first two are measurable here. The third is BLOCKED, permanently.
  */
 function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorRouteHealth }) {
   const failures = []
 
+  const positiveFailure = audioProbeFailure(windowAudio, 'positive window')
   let windowEmission
-  if (!audioReceiptIsComplete(windowAudio)) {
+  if (positiveFailure) {
     windowEmission = 'unknown'
-    failures.push('positive window receipt is incomplete or out of range')
+    failures.push(positiveFailure)
   } else if (
     windowAudio.rms >= POSITIVE_RMS_FLOOR &&
     windowAudio.nonSilentFraction >= POSITIVE_NON_SILENT_FRACTION_FLOOR
@@ -402,14 +582,11 @@ function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorR
     failures.push('positive window carried no measurable signal')
   }
 
-  // Without this, a stuck meter reporting signal forever would pass the
-  // positive test and prove nothing at all. RMS alone is not enough: a mostly
-  // silent window with one loud transient averages low, so peak and
-  // non-silent fraction are checked too.
+  const silenceFailure = audioProbeFailure(silenceWindow, 'intentional-silence window')
   let intentionalSilence
-  if (!audioReceiptIsComplete(silenceWindow)) {
+  if (silenceFailure) {
     intentionalSilence = 'unknown'
-    failures.push('intentional-silence receipt is incomplete or out of range')
+    failures.push(silenceFailure)
   } else if (
     silenceWindow.rms <= SILENCE_RMS_CEILING &&
     silenceWindow.peak <= SILENCE_PEAK_CEILING &&
@@ -421,60 +598,29 @@ function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorR
     failures.push('intentional-silence window was not silent')
   }
 
+  // BOTH readings are validated in full. Comparing a complete current receipt
+  // against an unvalidated prior would let a malformed prior manufacture a
+  // stability claim.
+  const currentRouteFailure = routeReceiptFailure(routeHealth, 'current')
+  const priorRouteFailure = routeReceiptFailure(priorRouteHealth, 'prior')
   let routeState
-  if (!routeHealth || typeof routeHealth !== 'object') {
+  if (currentRouteFailure || priorRouteFailure) {
     routeState = 'unknown'
+    if (currentRouteFailure) failures.push(currentRouteFailure)
+    if (priorRouteFailure) failures.push(priorRouteFailure)
   } else if (
-    !isNonEmptyString(routeHealth.deviceId) ||
-    !isNonEmptyString(routeHealth.deviceUid) ||
-    !isFiniteNumber(routeHealth.sampleRate) ||
-    routeHealth.sampleRate <= 0 ||
-    routeHealth.alive !== true ||
-    routeHealth.running !== true ||
-    routeHealth.hasOutputStream !== true ||
-    !isSafeInteger(routeHealth.outputChannelCount) ||
-    routeHealth.outputChannelCount <= 0
+    priorRouteHealth.id !== routeHealth.id ||
+    priorRouteHealth.uid !== routeHealth.uid ||
+    priorRouteHealth.nominalSampleRate !== routeHealth.nominalSampleRate
   ) {
-    routeState = 'unknown'
-  } else if (routeHealth.muted === true) {
-    routeState = 'muted'
-    failures.push('output route is muted')
-  } else if (routeHealth.muted !== false) {
-    // Unsupported is NOT the same as fine. An unreadable field is UNKNOWN.
-    routeState = 'unknown'
-  } else if (routeHealth.volume !== undefined && routeHealth.volume !== null) {
-    // Where volume IS supported, zero is silence by another name.
-    routeState =
-      isFiniteNumber(routeHealth.volume) && routeHealth.volume > 0 ? 'candidate' : 'unknown'
-    if (routeState === 'unknown') failures.push('output route volume is zero or unreadable')
+    routeState = 'changed'
+    failures.push('output device identity or sample rate changed mid-run')
   } else {
-    routeState = 'candidate'
-  }
-
-  if (routeState === 'candidate') {
-    // Stability is a claim about TWO readings. Without a prior identity there
-    // is nothing to compare, so it cannot be asserted.
-    if (!priorRouteHealth || typeof priorRouteHealth !== 'object') {
-      routeState = 'unknown'
-      failures.push('no prior route reading, so route stability cannot be claimed')
-    } else if (
-      priorRouteHealth.deviceUid !== routeHealth.deviceUid ||
-      priorRouteHealth.deviceId !== routeHealth.deviceId ||
-      priorRouteHealth.sampleRate !== routeHealth.sampleRate
-    ) {
-      routeState = 'changed'
-      failures.push('output device identity or sample rate changed mid-run')
-    } else {
-      routeState = 'healthy'
-    }
-  }
-  if (routeState === 'unknown') {
-    failures.push('output route health could not be established')
+    routeState = 'healthy'
   }
 
   return {
-    // Fixed, not computed. There is no input to this function that could make
-    // it anything else, and that is deliberate.
+    // Fixed, not computed. No input to this function can make it anything else.
     physicalAudibility: 'blocked',
     missingProof:
       'no post-mix/sink-energy tap or external metering seam exists; window ' +
@@ -490,10 +636,11 @@ function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorR
 }
 
 function ioSurfaceSet(ids) {
-  if (!Array.isArray(ids)) return null
+  if (!Array.isArray(ids) || ids.length === 0) return null
   const set = new Set()
   for (const id of ids) {
     if (!isSafeInteger(id) || id < 0 || id > MAX_IO_SURFACE_ID) return null
+    if (set.has(id)) return null // duplicate identities are a malformed probe
     set.add(id)
   }
   return set
@@ -506,20 +653,25 @@ const isStrictSuperset = (later, earlier) => {
 }
 
 /**
- * Aligned allocation-class trend, mirroring StudioMemoryTrend rather than
- * approximating it with two endpoints.
+ * Aligned allocation-class trend, mirroring StudioMemoryTrend.
  *
- * Endpoints alone cannot see the shape that matters: a footprint that grows on
- * EVERY sample is a leak even when the total lands inside budget, and a live
- * IOSurface set that strictly accumulates three times running is the surface
- * leak the Swift contract already refuses. Identity is compared, not just
- * count, because a stable count can hide a full turnover.
+ * Endpoints alone cannot see what matters: a footprint that grows on EVERY
+ * sample is a leak even inside budget, a live IOSurface set that strictly
+ * accumulates across three readings is the surface leak the Swift contract
+ * already refuses, and a decoder spike in the middle disappears entirely into
+ * a green endpoint — so the PEAK is bounded, not just the last value.
  */
 function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) {
   const failures = []
   const list = Array.isArray(readings) ? readings : []
-  if (list.length < 2) {
-    return { status: 'red', failures: ['fewer than two aligned resource readings'] }
+  if (list.length !== SAMPLE_COUNT) {
+    return {
+      status: 'red',
+      failures: [`${list.length} resource readings, expected exactly ${SAMPLE_COUNT}`]
+    }
+  }
+  if (!isSafeInteger(ioSurfaceCapacity) || ioSurfaceCapacity <= 0) {
+    return { status: 'red', failures: ['no declared renderer IOSurface capacity to compare'] }
   }
 
   const surfaceSets = []
@@ -529,9 +681,14 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
       failures.push(`resource reading ${i} is missing`)
       continue
     }
-    for (const field of ['footprintBytes', 'mallocBytes', 'residentDecoderCount']) {
+    for (const field of [
+      'footprintBytes',
+      'mallocInUseBytes',
+      'residentBytes',
+      'residentDecoderCount'
+    ]) {
       const value = reading[field]
-      if (!isFiniteNumber(value) || !isSafeInteger(value) || value < 0) {
+      if (!isSafeInteger(value) || value < 0) {
         failures.push(`resource reading ${i} has no finite non-negative ${field}`)
       }
     }
@@ -540,7 +697,7 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
       failures.push(`resource reading ${i} has no valid live IOSurface identity set`)
     } else {
       surfaceSets.push(set)
-      if (isSafeInteger(ioSurfaceCapacity) && set.size > ioSurfaceCapacity) {
+      if (set.size > ioSurfaceCapacity) {
         failures.push(
           `resource reading ${i} holds ${set.size} live IOSurfaces, ` +
             `over the renderer capacity of ${ioSurfaceCapacity}`
@@ -549,30 +706,23 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
     }
   }
   if (failures.length > 0) return { status: 'red', failures }
-  if (surfaceSets.length !== list.length) {
-    return { status: 'red', failures: ['IOSurface evidence is not aligned with the readings'] }
-  }
-  if (!isSafeInteger(ioSurfaceCapacity) || ioSurfaceCapacity <= 0) {
-    return { status: 'red', failures: ['no declared renderer IOSurface capacity to compare'] }
-  }
 
   const first = list[0]
   const last = list[list.length - 1]
   const budgetBytes = FOOTPRINT_GROWTH_BUDGET_MB * 1_048_576
 
-  const footprintGrowth = last.footprintBytes - first.footprintBytes
-  if (footprintGrowth > budgetBytes) {
-    failures.push(
-      `footprint grew ${(footprintGrowth / 1_048_576).toFixed(1)}MB, ` +
-        `exceeding the accepted ${FOOTPRINT_GROWTH_BUDGET_MB}MB allocation-class budget`
-    )
-  }
-  const mallocGrowth = last.mallocBytes - first.mallocBytes
-  if (mallocGrowth > budgetBytes) {
-    failures.push(
-      `malloc grew ${(mallocGrowth / 1_048_576).toFixed(1)}MB, ` +
-        `exceeding the accepted ${FOOTPRINT_GROWTH_BUDGET_MB}MB allocation-class budget`
-    )
+  for (const [label, field] of [
+    ['footprint', 'footprintBytes'],
+    ['malloc', 'mallocInUseBytes'],
+    ['resident', 'residentBytes']
+  ]) {
+    const growth = last[field] - first[field]
+    if (growth > budgetBytes) {
+      failures.push(
+        `${label} grew ${(growth / 1_048_576).toFixed(1)}MB, exceeding the accepted ` +
+          `${FOOTPRINT_GROWTH_BUDGET_MB}MB allocation-class budget`
+      )
+    }
   }
 
   let grewEveryStep = true
@@ -583,24 +733,28 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
     failures.push('footprint grew on every sample — a leak shape regardless of the total')
   }
 
-  let accumulatingRun = 0
+  // Swift's rule is three ACCUMULATING SAMPLES, which is TWO transitions:
+  // [1] -> [1,2] -> [1,2,3] is already the refused shape.
+  let accumulatingTransitions = 0
   for (let i = 1; i < surfaceSets.length; i += 1) {
     if (isStrictSuperset(surfaceSets[i], surfaceSets[i - 1])) {
-      accumulatingRun += 1
-      if (accumulatingRun >= 3) {
-        failures.push('live IOSurface identities strictly accumulated three samples running')
+      accumulatingTransitions += 1
+      if (accumulatingTransitions >= 2) {
+        failures.push('live IOSurface identities strictly accumulated across three samples')
         break
       }
     } else {
-      accumulatingRun = 0
+      accumulatingTransitions = 0
     }
   }
 
-  if (last.residentDecoderCount - first.residentDecoderCount > MAX_RESIDENT_DECODER_GROWTH) {
+  // The PEAK, not the endpoint: a mid-run decoder spike that is released before
+  // the last sample is still an unbounded lease while it is held.
+  const peakDecoders = list.reduce((max, r) => Math.max(max, r.residentDecoderCount), 0)
+  if (peakDecoders - first.residentDecoderCount > MAX_RESIDENT_DECODER_GROWTH) {
     failures.push(
-      `resident decoder count grew ${first.residentDecoderCount} -> ` +
-        `${last.residentDecoderCount}; the shared-decoder contract allows at most ` +
-        `+${MAX_RESIDENT_DECODER_GROWTH}`
+      `resident decoder count peaked at ${peakDecoders} from ${first.residentDecoderCount}; ` +
+        `the shared-decoder contract allows at most +${MAX_RESIDENT_DECODER_GROWTH}`
     )
   }
 
@@ -613,19 +767,21 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
   return {
     status: failures.length > 0 ? 'red' : 'green',
     failures,
-    footprintGrowthMb: footprintGrowth / 1_048_576,
-    mallocGrowthMb: mallocGrowth / 1_048_576
+    footprintGrowthMb: (last.footprintBytes - first.footprintBytes) / 1_048_576,
+    mallocGrowthMb: (last.mallocInUseBytes - first.mallocInUseBytes) / 1_048_576,
+    residentGrowthMb: (last.residentBytes - first.residentBytes) / 1_048_576,
+    peakResidentDecoderCount: peakDecoders
   }
 }
 
 /**
  * Terminal verdict.
  *
- * `blocked` and `red` are kept DISTINCT on purpose. Blocked means the evidence
- * we can gather is sound but insufficient; red means something measurably
- * failed OR is missing. Absent evidence is never softened into blocked —
- * laundering a hole into the gentler word is how an arc talks itself into
- * shipping.
+ * THERE IS NO GREEN RETURN IN THIS REPOSITORY. Physical audibility cannot be
+ * proven with any seam that exists here, so the best attainable outcome is
+ * `blocked`, and any evidence claiming otherwise is forged. `red` and `blocked`
+ * stay distinct: blocked means the evidence is sound but insufficient; red
+ * means something failed or is missing.
  */
 function summarizeOutcome5({ sequence, avSamples, audio, resources }) {
   const failures = []
@@ -643,39 +799,67 @@ function summarizeOutcome5({ sequence, avSamples, audio, resources }) {
   } else {
     for (let i = 0; i < samples.length; i += 1) {
       const sample = samples[i]
-      if (!sample || (sample.status !== 'green' && sample.status !== 'red')) {
+      if (!sample || typeof sample !== 'object') {
+        failures.push(`A/V sample ${i} is missing`)
+      } else if (sample.kind !== 'current') {
+        // A peak is a diagnostic about the worst past moment. It can never
+        // stand in for proof that sync held at this instant.
+        failures.push(`A/V sample ${i} is a "${sample.kind}" verdict, not a current sample`)
+      } else if (sample.status !== 'green' && sample.status !== 'red') {
         failures.push(`A/V sample ${i} has no recognised verdict`)
       } else if (sample.status === 'red') {
         failures.push(`A/V sample ${i} out of tolerance: ${sample.reason || 'unstated'}`)
+      } else if (!isFiniteNumber(sample.errorMilliseconds)) {
+        failures.push(`A/V sample ${i} carries no measured error`)
       }
     }
   }
 
-  if (!audio || typeof audio !== 'object' || typeof audio.physicalAudibility !== 'string') {
+  if (!audio || typeof audio !== 'object') {
     failures.push('no audio evidence')
-  } else if (audio.status === 'red') {
-    failures.push(...(audio.failures || ['audio evidence failed']))
-  } else if (audio.status !== 'blocked') {
-    failures.push(`unrecognised audio verdict ${audio.status}`)
+  } else {
+    if (audio.physicalAudibility !== 'blocked') {
+      // The only honest value. Anything else was not produced by this file.
+      failures.push(
+        `audio evidence claims physicalAudibility "${audio.physicalAudibility}", which no ` +
+          'seam in this repository can establish; the evidence is forged'
+      )
+    }
+    if (audio.status !== 'blocked') failures.push(`unrecognised audio verdict ${audio.status}`)
+    if (Array.isArray(audio.failures) && audio.failures.length > 0) {
+      failures.push(...audio.failures)
+    } else if (!Array.isArray(audio.failures)) {
+      failures.push('audio evidence carries no failure list')
+    }
+    if (audio.windowEmission !== 'proven') failures.push('window emission was not proven')
+    if (audio.intentionalSilence !== 'proven') failures.push('intentional silence was not proven')
+    if (audio.routeState !== 'healthy') failures.push('output route was not healthy')
+    if (!isNonEmptyString(audio.missingProof)) {
+      failures.push('audio evidence does not name the missing proof')
+    }
   }
 
   if (!resources || typeof resources !== 'object') {
     failures.push('no resource evidence')
-  } else if (resources.status === 'red') {
-    failures.push(...(resources.failures || ['resource growth failed']))
   } else if (resources.status !== 'green') {
-    failures.push(`unrecognised resource verdict ${resources.status}`)
+    failures.push(...(resources.failures || [`unrecognised resource verdict ${resources.status}`]))
+  } else if (
+    !Array.isArray(resources.failures) ||
+    !isFiniteNumber(resources.footprintGrowthMb) ||
+    !isFiniteNumber(resources.mallocGrowthMb) ||
+    !isSafeInteger(resources.peakResidentDecoderCount)
+  ) {
+    failures.push('resource evidence is a placeholder rather than a measured trend')
   }
 
-  if (!audio || audio.physicalAudibility !== 'proven') {
-    blockers.push(
-      'physical audibility is not proven: ' + ((audio && audio.missingProof) || 'no audio evidence')
-    )
-  }
+  blockers.push(
+    'physical audibility is not proven: ' +
+      ((audio && audio.missingProof) || 'no audio evidence') +
+      ' — this outcome cannot reach Green in this repository'
+  )
 
   if (failures.length > 0) return { status: 'red', failures, blockers }
-  if (blockers.length > 0) return { status: 'blocked', failures, blockers }
-  return { status: 'green', failures, blockers }
+  return { status: 'blocked', failures, blockers }
 }
 
 module.exports = {
@@ -684,13 +868,16 @@ module.exports = {
   FOOTPRINT_GROWTH_BUDGET_MB,
   MAX_IO_SURFACE_ID,
   MAX_RESIDENT_DECODER_GROWTH,
+  MILLISECOND_AGREEMENT,
   MIN_ELAPSED_SECONDS,
   NOMINAL_CADENCE_SECONDS,
   SAMPLE_COUNT,
   classifyAudioEvidence,
-  classifyAvSample,
+  classifyAvCurrentSample,
+  classifyAvPeakSample,
   classifyResourceGrowth,
-  parseAvSyncExport,
+  operandIntegrityFailure,
+  parseAvSyncPeakExport,
   planSamples,
   summarizeOutcome5,
   validateSampleSequence
