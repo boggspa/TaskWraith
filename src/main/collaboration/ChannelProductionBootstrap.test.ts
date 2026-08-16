@@ -178,6 +178,11 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
         channelAuthorityState: () => 'recovery_blocked' as const,
         memberPresence: () => 'recovery_blocked' as const
       })),
+      externalSeatChannelStore: vi.fn(() => ({
+        listChannels: () => [],
+        listMembers: () => []
+      })),
+      externalSeatHumanPolicyStore: vi.fn(() => ({ list: () => [] })),
       refreshRelayRooms: vi.fn(() => 0),
       listChannels: vi.fn(() => channels as never),
       inspectChannel: vi.fn(),

@@ -33,6 +33,7 @@ import type {
   TransportSocketFactory,
   TransportSocketHandlers
 } from '../remote/RemoteTransportClient'
+import { ChannelExternalSeatAuthority } from './ChannelExternalSeatAuthority'
 import { ChannelMemberClient } from './ChannelMemberClient'
 import {
   CHANNEL_AGENT_AUTHORITY_FILE_SUFFIX,
@@ -1838,6 +1839,71 @@ describe('ChannelProductionService', () => {
       openRoomCount: 0
     })
     expect(restarted.service.listAudit()).toEqual([])
+  })
+
+  it('exposes every projection the external-seat authority needs, unfiltered', async () => {
+    const relay = new BlindTestRelay()
+    const fixture = createService({
+      socketFactory: relay.socketFactory,
+      hostRelayUrl: () => 'ws://relay.test',
+      inviteRelayUrls: () => ['ws://relay.test']
+    })
+    fixture.service.start()
+    const channel = fixture.service.createChannel({
+      chatId: 'chat-seam',
+      title: 'Seam',
+      ownerDisplayName: 'Host'
+    })
+    const invite = fixture.service.issueInvite({ channelId: channel.channelId })
+    const client = new ChannelMemberClient({
+      socketFactory: relay.socketFactory,
+      identity: generateIdentityKeyPair(),
+      requestTimeoutMs: 2_000
+    })
+    client.connect('ws://relay.test', invite.roomId)
+    await client.whenConnected(2_000)
+    const member = await client.admit({
+      channelId: channel.channelId,
+      inviteId: invite.inviteId,
+      inviteToken: invite.inviteToken,
+      displayName: 'External',
+      expectedHostIdentityPubKeyB64: fixture.service.hostIdentityPublicKey()
+    })
+    client.dispose()
+    await fixture.service.revokeMember({
+      channelId: channel.channelId,
+      memberId: member.memberId
+    })
+
+    // inspectChannel DROPS revoked members and projects through memberView, so
+    // it cannot feed the authority: it would decide seat eligibility before the
+    // authority that owns that decision ever sees the record.
+    expect(
+      (fixture.service.inspectChannel(channel.channelId).members ?? []).map((view) => view.memberId)
+    ).not.toContain(member.memberId)
+
+    // The seam hands over the RAW member records, revoked ones included.
+    const channelStore = fixture.service.externalSeatChannelStore()
+    expect(
+      channelStore.listMembers(channel.channelId).map((entry) => [entry.memberId, entry.status])
+    ).toContainEqual([member.memberId, 'revoked'])
+
+    // The authority must be constructible from the public service API alone —
+    // no reopening stores from disk, no rebuilding policy from lossy views.
+    const authority = new ChannelExternalSeatAuthority({
+      channelStore,
+      humanPolicyStore: fixture.service.externalSeatHumanPolicyStore(),
+      runtime: fixture.service.externalSeatRuntimeAuthority(),
+      legacy: { mode: 'channel_only' }
+    })
+    // Active recovered Channel is shared; the revoked member is not a seat.
+    expect(authority.resolve('chat-seam')).toEqual({
+      state: 'ready',
+      isShared: true,
+      seats: []
+    })
+
+    await fixture.service.stop()
   })
 
   it('certifies per-channel seat recovery to the runtime barrier on restart', async () => {

@@ -225,6 +225,16 @@ export interface ChannelProductionService {
    * mutators.
    */
   externalSeatRuntimeAuthority(): ChannelExternalSeatRuntimeAuthority
+  /**
+   * Raw Channel/member reads for the external-seat authority. Deliberately NOT
+   * `inspectChannel`: that drops revoked members and projects through
+   * `memberView`, which would decide seat eligibility before the authority that
+   * owns that decision ever sees the record. Narrowed to the reads the
+   * authority declares; never the store's mutators.
+   */
+  externalSeatChannelStore(): Pick<ChannelStore, 'listChannels' | 'listMembers'>
+  /** Migrated human-policy reads for the external-seat authority's exact identity binding. */
+  externalSeatHumanPolicyStore(): Pick<ChannelHumanPolicyStore, 'list'>
   refreshRelayRooms(): number
   listChannels(): ChannelProductionChannelView[]
   inspectChannel(channelId: string): ChannelProductionChannelInspection
@@ -822,6 +832,14 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
 
   externalSeatRuntimeAuthority(): ChannelExternalSeatRuntimeAuthority {
     return this.requireRunning().runtime
+  }
+
+  externalSeatChannelStore(): Pick<ChannelStore, 'listChannels' | 'listMembers'> {
+    return this.requireRunning().store
+  }
+
+  externalSeatHumanPolicyStore(): Pick<ChannelHumanPolicyStore, 'list'> {
+    return this.requireRunning().humanPolicies
   }
 
   refreshRelayRooms(): number {
