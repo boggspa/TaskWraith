@@ -155,15 +155,18 @@ describe('resolveEnsembleCommunicationTargets', () => {
 })
 
 describe('resolveEnsembleCommunicationAudience', () => {
-  it.each(['@User', 'user', '@HUMAN', 'You'])('recognizes the deliberate User alias %s', (alias) => {
-    expect(
-      resolveEnsembleCommunicationAudience({
-        selectors: [alias],
-        participants: ROSTER,
-        senderParticipantId: 'worker-1'
-      })
-    ).toEqual({ participants: [], toUser: true })
-  })
+  it.each(['@User', 'user', '@HUMAN', 'You'])(
+    'recognizes the deliberate User alias %s',
+    (alias) => {
+      expect(
+        resolveEnsembleCommunicationAudience({
+          selectors: [alias],
+          participants: ROSTER,
+          senderParticipantId: 'worker-1'
+        })
+      ).toEqual({ participants: [], toUser: true })
+    }
+  )
 
   it('keeps @All roster-only and never adds the User implicitly', () => {
     const audience = resolveEnsembleCommunicationAudience({

@@ -70,7 +70,9 @@ describe('TaskWraith MCP tool registry', () => {
     expect(sendTool?.description).toContain('User delivery is transcript-only')
     expect(sendTool?.description).toContain('`@All` remains roster-only')
     expect(inputSchema.properties?.to?.description).toContain('User/Human/You')
-    expect(inputSchema.properties?.to?.description).toContain('@All targets roster participants only')
+    expect(inputSchema.properties?.to?.description).toContain(
+      '@All targets roster participants only'
+    )
     expect(inputSchema.properties?.message?.description).toContain('concise User summary')
   })
 

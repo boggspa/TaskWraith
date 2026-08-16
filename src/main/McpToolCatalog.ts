@@ -2464,7 +2464,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           message: {
             type: 'string',
-            description: 'The participant-authored note or concise User summary to preserve visibly.'
+            description:
+              'The participant-authored note or concise User summary to preserve visibly.'
           },
           reason: {
             type: 'string',

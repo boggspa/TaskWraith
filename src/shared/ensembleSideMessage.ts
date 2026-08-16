@@ -21,9 +21,7 @@ export function isEnsembleSideMessage(message: ChatMessage | null | undefined): 
 }
 
 /** Narrow user-addressed side messages without trusting metadata on other carriers. */
-export function isEnsembleSideMessageToUser(
-  message: ChatMessage | null | undefined
-): boolean {
+export function isEnsembleSideMessageToUser(message: ChatMessage | null | undefined): boolean {
   return isEnsembleSideMessage(message) && message?.metadata?.toUser === true
 }
 
