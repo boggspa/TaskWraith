@@ -1,6 +1,9 @@
 # TaskWraith TUI design contract
 
-This document is the design **contract** for the TaskWraith terminal sidecar.
+This document is the design **contract** for the TaskWraith terminal client.
+Its renderer is Electron-free. When no authenticated Host is reachable, the
+client may supervise the app executable in windowless Host mode; production
+authority remains in Electron main until the separate pure-Node extraction arc.
 It describes invariants the renderer must obey. Cut-point numbers and glyph
 shapes live in code; restating them here is how documentation drifts.
 

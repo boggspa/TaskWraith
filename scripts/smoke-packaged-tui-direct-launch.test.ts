@@ -45,4 +45,16 @@ describe('packaged TUI disposable macOS host launch', () => {
     expect(source).toContain('maxRetries: 10')
     expect(source).toContain('retryDelay: 100')
   })
+
+  it('boots a windowless Host-v2 process and connects without recursive startup', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('taskwraith-host-v2.json')
+    expect(source).toContain("'--taskwraith-headless-host'")
+    expect(source).toContain('`--taskwraith-headless-parent=${process.pid}`')
+    expect(source).toContain("'--no-start-host'")
+  })
 })

@@ -1,22 +1,25 @@
-# TaskWraith TUI sidecar
+# TaskWraith TUI + windowless Host
 
-The TaskWraith TUI is a local terminal view of the running Electron app. It is
-a separate executable and presentation target; Electron main remains the
+The TaskWraith TUI is a local terminal client that can start and supervise the
+TaskWraith Host without opening the desktop window. It is a separate executable
+and presentation target; the windowless Electron main process remains the one
 authority for chats, providers, models, permissions, approvals, run dispatch,
 cancellation, persistence, and audit.
 
-The v1 shape is deliberately a sidecar:
+The operational shape is deliberately GUI-independent, not Electron-free:
 
 ```text
-TaskWraith Electron main
-  └─ same-user local control socket
-       └─ taskwraith / tw (raw ANSI Node client)
+taskwraith / tw (raw ANSI Node client)
+  ├─ authenticate + attach to an existing Host, or
+  └─ directly launch the TaskWraith app executable in windowless Host mode
+       └─ same-user local control socket
 ```
 
 It does not scrape renderer state, read AppStore files, or load provider
 credentials. The host projects a small versioned contract and routes mutations
 through the same main-owned action executor used by TaskWraith's other remote
-surfaces.
+surfaces. The lifecycle and authority closeout is pinned in
+[`WINDOWLESS_HOST.md`](./WINDOWLESS_HOST.md).
 
 ## Try it
 
@@ -63,14 +66,20 @@ Build only the sidecar with `npm run tui:build`. The compiled entry point is
 linked or installed. `NO_COLOR=1` and `--no-animation` provide static
 fallbacks.
 
-The installed `taskwraith` / `tw` binary defaults to the release app. Use
-`--dev` to target `TaskWraith Dev`; it honours `TASKWRAITH_INSTANCE_ID` for
-parallel dev hosts. If automatic discovery is not the desired one, pass
-`--user-data <path>` or set `TASKWRAITH_USER_DATA`.
+The installed `taskwraith` / `tw` binary defaults to the release app. If its
+authenticated Host is offline, the TUI starts the app executable with no
+window, waits for an authenticated Host-v2 handshake, then connects. Use
+`--dev` to target a built `TaskWraith Dev`; it honours
+`TASKWRAITH_INSTANCE_ID` for parallel dev hosts. `--no-start-host` preserves a
+connect-only posture. If automatic discovery is not the desired one, pass
+`--user-data <path>` or set `TASKWRAITH_USER_DATA`; explicit profiles may be
+attached to, but are never auto-launched because the TUI cannot safely infer
+their private-profile launch authority.
 
 ### Packaged Developer Preview
 
-Keep the TaskWraith App running, then invoke the sidecar from the package:
+Invoke the sidecar directly from the package; the desktop App does not need to
+be open first:
 
 | Platform | Launcher                                                 |
 | -------- | -------------------------------------------------------- |
@@ -80,8 +89,9 @@ Keep the TaskWraith App running, then invoke the sidecar from the package:
 
 `taskwraith` aliases are alongside each `tw` launcher. The package ships its
 own Node runtime under `tui-runtime`; the launchers neither require system Node
-nor use `ELECTRON_RUN_AS_NODE`. The App remains the authoritative host, so an
-offline sidecar can only reconnect or ask you to open TaskWraith.
+nor use `ELECTRON_RUN_AS_NODE`. The App executable remains the authoritative
+Host process, but it can remain windowless for the whole TUI session. This is
+not an installed daemon or login item.
 
 ## Colour and ASCII fallbacks
 
@@ -114,7 +124,8 @@ width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
 | `Ctrl+C`                  | Clear a non-empty composer; press again to leave     |
 
 Slash commands are `/context`, `/threads`, `/missions`, `/history`, `/model`,
-`/seats`, `/help`, `/cancel`, and `/quit`. Mission control filters Active,
+`/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. `/dismiss` rejects the
+open question for the selected thread. Mission control filters Active,
 History, or All and shows the selected mission's round, routing/fan-out,
 provider outcomes, and paged participant cast at the Host generation/cursor.
 Cancellation is always an explicit command and is still validated by Host.
@@ -192,6 +203,10 @@ The client can currently:
   action;
 - cancel a solo run or an ensemble round through their respective main-owned
   action paths.
+- accept or decline the oldest pending approval for the selected thread by its
+  exact projected identity;
+- answer the oldest open question for the selected thread through the composer,
+  or explicitly dismiss it;
 - resume ordered Host deltas and resnapshot on generation/cursor discontinuity;
 - browse live and historical missions, rounds, routing and participant state;
 - print the coherent Host projection as JSON;
@@ -220,6 +235,8 @@ while everything renderer-owned (roster presets) or authority-expanding
 until it has a purpose-built terminal interaction and an equally strong
 authority contract.
 
-This boundary leaves a clean future route: the local-control host can move from
-Electron main into a dedicated TaskWraith daemon without rewriting the
-terminal renderer or weakening desktop behaviour.
+This boundary leaves a clean future route: production composition can be
+extracted from Electron main into a pure-Node Host without rewriting the
+terminal renderer. That larger migration still requires AppStore, provider,
+approval, credential, and single-writer extraction; the current implementation
+does not claim it has happened.

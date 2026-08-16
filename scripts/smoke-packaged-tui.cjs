@@ -14,8 +14,8 @@
  *      - launcher can print --help / --version via the bundled Node runtime
  *        (NOT ELECTRON_RUN_AS_NODE — FuseV1 RunAsNode is disabled)
  *      - live control smoke (packaged-host-first, running-host fallback):
- *          a) try a disposable packaged App + authenticated `tw --snapshot`
- *          b) on macOS LaunchServices / second-GUI registration aborts (or when
+ *          a) try a disposable windowless packaged Host + authenticated `tw --snapshot`
+ *          b) on macOS LaunchServices / second-App registration aborts (or when
  *             TASKWRAITH_TUI_SKIP_PACKAGED_HOST=1), use the already-running
  *             authoritative host's userData with the packaged launcher only
  *          c) TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST=1 fails closed without (b)
@@ -206,6 +206,14 @@ function validateSourceLayout() {
     console.log('note: out/tui/tui/cli.js missing — run npm run tui:build before electron-builder')
   } else {
     assertFile(cliJs, 'compiled TUI entry')
+    assertFile(
+      path.join(repoRoot, 'out/tui/tui/hostProcessManager.js'),
+      'compiled TUI Host process manager'
+    )
+    assertFile(
+      path.join(repoRoot, 'out/tui/main/TuiHeadlessHostSession.js'),
+      'compiled TUI headless Host contract'
+    )
   }
 
   // Runtime binaries are prepared on demand; warn-only when absent at layout time.
@@ -229,6 +237,14 @@ async function validatePackagedTui(packageRoot) {
 
   const cliJs = path.join(resourcesDir, 'tui', 'tui', 'cli.js')
   assertFile(cliJs, 'packaged TUI entry (outside app.asar)')
+  assertFile(
+    path.join(resourcesDir, 'tui', 'tui', 'hostProcessManager.js'),
+    'packaged TUI Host process manager'
+  )
+  assertFile(
+    path.join(resourcesDir, 'tui', 'main', 'TuiHeadlessHostSession.js'),
+    'packaged TUI headless Host contract'
+  )
 
   // Hard invariant: the TUI must not only live inside the asar.
   if (!cliJs.startsWith(resourcesDir) || cliJs.includes(`${path.sep}app.asar${path.sep}`)) {
@@ -452,7 +468,7 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
     )
   }
 
-  // Prefer packaged-host-first, but do not spawn a second GUI candidate while a
+  // Prefer packaged-host-first, but do not spawn a second App candidate while a
   // human's TaskWraith is already live — that path triggers LaunchServices
   // aborts and "quit unexpectedly" prompts. REQUIRE_PACKAGED_HOST opts into the
   // disposable App path for clean CI machines.
@@ -502,13 +518,13 @@ function isTaskWraithAlreadyRunning() {
 }
 
 /**
- * Disposable packaged App → owner-only discovery/token → authenticated snapshot.
+ * Disposable windowless packaged Host → owner-only v2 discovery/token → authenticated snapshot.
  * Stops only the smoke App process; never touches a human's production host.
  */
 async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-'))
-  const discoveryPath = path.join(userDataPath, 'taskwraith-control-v1.json')
-  const tokenPath = path.join(userDataPath, 'taskwraith-control-v1.token')
+  const discoveryPath = path.join(userDataPath, 'taskwraith-host-v2.json')
+  const tokenPath = path.join(userDataPath, 'taskwraith-host-v2.token')
   const outputChunks = []
   let app
   let appPid
@@ -523,6 +539,8 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
     const appArguments = [
       '--taskwraith-package-smoke',
       smokeUserDataArgument,
+      '--taskwraith-headless-host',
+      `--taskwraith-headless-parent=${process.pid}`,
       ...(packageTarget.platform === 'darwin' ? ['--use-mock-keychain'] : []),
       ...(packageTarget.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [])
     ]
@@ -569,7 +587,7 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
       )
     }
     console.log(
-      `packaged TUI live control smoke ok (packaged App → owner-only discovery/token → authenticated launcher snapshot, ${Buffer.byteLength(
+      `packaged TUI live control smoke ok (windowless packaged Host → owner-only v2 discovery/token → authenticated launcher snapshot, ${Buffer.byteLength(
         frame,
         'utf8'
       )} bytes)`
@@ -624,8 +642,8 @@ async function runRunningHostLiveRoundTrip(packageRoot, packageTarget, launcher)
     return
   }
 
-  const discoveryPath = path.join(host.userDataPath, 'taskwraith-control-v1.json')
-  const tokenPath = path.join(host.userDataPath, 'taskwraith-control-v1.token')
+  const discoveryPath = path.join(host.userDataPath, 'taskwraith-host-v2.json')
+  const tokenPath = path.join(host.userDataPath, 'taskwraith-host-v2.token')
   assertOwnerOnlyFile(discoveryPath, 'running-host control discovery')
   assertOwnerOnlyFile(tokenPath, 'running-host control token')
 
@@ -730,8 +748,8 @@ function resolveRunningHostUserData() {
     const resolved = path.resolve(candidate.userDataPath)
     if (seen.has(resolved)) continue
     seen.add(resolved)
-    const discoveryPath = path.join(resolved, 'taskwraith-control-v1.json')
-    const tokenPath = path.join(resolved, 'taskwraith-control-v1.token')
+    const discoveryPath = path.join(resolved, 'taskwraith-host-v2.json')
+    const tokenPath = path.join(resolved, 'taskwraith-host-v2.token')
     if (!fs.existsSync(discoveryPath) || !fs.existsSync(tokenPath)) continue
     // An explicitly named host is the caller's assertion that it is live: keep
     // selecting it so a dead pid there fails loudly downstream rather than
@@ -889,6 +907,7 @@ async function runLiveSnapshotWithRetry(
       launcher,
       [
         '--snapshot',
+        '--no-start-host',
         '--user-data',
         userDataPath,
         '--no-color',
