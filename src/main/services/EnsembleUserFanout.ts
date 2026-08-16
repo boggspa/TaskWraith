@@ -1,7 +1,11 @@
 import type { EnsembleParticipant } from '../store/types'
+import { ensembleGroupMentionMatchesStage } from '../../shared/ensembleGroupMention'
 import {
   findAllMentions,
+  isGroupMention,
   isParticipantMention,
+  type GroupMentionMatch,
+  type MentionMatch,
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
 
@@ -15,12 +19,18 @@ export interface EnsembleUserFanoutTargets {
   targets: EnsembleParticipant[]
   /** Visible participant tags that could not be narrowed to one current seat. */
   ambiguities: EnsembleUserFanoutAmbiguity[]
-  /** True only when the prompt contains a current participant routing signal. */
+  /** True when the prompt contains a participant or roster-group routing signal. */
   hasParticipantMention: boolean
 }
 
 function candidatesForMention(match: ParticipantMentionMatch): EnsembleParticipant[] {
   return [match.participant, ...(match.ambiguousAmong || [])]
+}
+
+type UserFanoutMentionMatch = ParticipantMentionMatch | GroupMentionMatch
+
+function isUserFanoutMention(match: MentionMatch): match is UserFanoutMentionMatch {
+  return isParticipantMention(match) || isGroupMention(match)
 }
 
 interface StructuredParticipantMention {
@@ -66,7 +76,7 @@ export function resolveEnsembleUserFanoutTargets(input: {
   const exactTargetId = input.exactTargetParticipantId?.trim()
   const structuredMentions = structuredParticipantMentions(input.text)
   const matches = findAllMentions(input.text, enabledParticipants)
-    .filter(isParticipantMention)
+    .filter(isUserFanoutMention)
     .filter(
       (match) =>
         !structuredMentions.some(
@@ -77,6 +87,9 @@ export function resolveEnsembleUserFanoutTargets(input: {
   const targets: EnsembleParticipant[] = []
   const ambiguities: EnsembleUserFanoutAmbiguity[] = []
   const seenTargetIds = new Set<string>()
+  const rosterOrderedParticipants = [...enabledParticipants].sort(
+    (left, right) => left.order - right.order
+  )
 
   const addTarget = (participant: EnsembleParticipant): void => {
     if (seenTargetIds.has(participant.id)) return
@@ -100,6 +113,14 @@ export function resolveEnsembleUserFanoutTargets(input: {
       continue
     }
     const match = signal.match
+    if (isGroupMention(match)) {
+      for (const participant of rosterOrderedParticipants) {
+        if (ensembleGroupMentionMatchesStage(match.group, participant.stageRole)) {
+          addTarget(participant)
+        }
+      }
+      continue
+    }
     const candidates = candidatesForMention(match).filter(
       (participant) => currentById.get(participant.id) === participant
     )

@@ -112,4 +112,92 @@ describe('resolveEnsembleUserFanoutTargets', () => {
 
     expect(result.targets.map((target) => target.id)).toEqual(['grok-scout', 'claude-review'])
   })
+
+  it('expands a stage group to every enabled seat in roster order', () => {
+    const scout2 = participant('grok-scout-2', 'GrokScout2', 5, { stageRole: 'scout' })
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@Scouts inspect the two paths.',
+      participants: [scout2, ...ROSTER]
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual(['grok-scout', 'grok-scout-2'])
+    expect(result.ambiguities).toEqual([])
+    expect(result.hasParticipantMention).toBe(true)
+  })
+
+  it('makes @All include enabled typed, untyped, and background seats', () => {
+    const anySeat = participant('claude-any', 'ClaudeAny', 4)
+    const background = participant('grok-bg', 'GrokBackground', 5, {
+      stageRole: 'background'
+    })
+    const disabled = participant('grok-disabled', 'GrokDisabled', 6, {
+      enabled: false,
+      stageRole: 'worker'
+    })
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@All re-check the latest steer.',
+      participants: [...ROSTER, anySeat, background, disabled]
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual([
+      'codex-boss',
+      'grok-scout',
+      'claude-review',
+      'claude-any',
+      'grok-bg'
+    ])
+  })
+
+  it('treats @BG as the background group rather than an ambiguous participant alias', () => {
+    const background1 = participant('grok-bg-1', 'BackgroundOne', 4, {
+      stageRole: 'background'
+    })
+    const background2 = participant('claude-bg-2', 'BackgroundTwo', 5, {
+      stageRole: 'background'
+    })
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@BG run the long checks.',
+      participants: [...ROSTER, background2, background1]
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual(['grok-bg-1', 'claude-bg-2'])
+    expect(result.ambiguities).toEqual([])
+  })
+
+  it('dedupes explicit seats across mixed participant and group signals', () => {
+    const background = participant('grok-bg', 'GrokBackground', 4, {
+      stageRole: 'background'
+    })
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@Workers first, @GrokScout second, then @All.',
+      participants: [...ROSTER, background]
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual([
+      'codex-boss',
+      'grok-scout',
+      'claude-review',
+      'grok-bg'
+    ])
+  })
+
+  it('does not let an exact participant picker narrow a group signal', () => {
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@Reviewers verify it.',
+      participants: ROSTER,
+      exactTargetParticipantId: 'codex-boss'
+    })
+
+    expect(result.targets.map((target) => target.id)).toEqual(['claude-review'])
+  })
+
+  it('retains an empty current group as an explicit routing signal', () => {
+    const result = resolveEnsembleUserFanoutTargets({
+      text: '@BG run the long checks.',
+      participants: ROSTER
+    })
+
+    expect(result.targets).toEqual([])
+    expect(result.hasParticipantMention).toBe(true)
+  })
 })

@@ -515,6 +515,72 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
+  it('expands a user @All steer to every idle enabled seat without duplicating the speaker', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker', stageRole: 'worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer', stageRole: 'reviewer' }),
+      participant('observer', 'kimi', 3, {
+        role: 'Scout',
+        stageRole: 'scout',
+        permissionPresetId: 'read_only'
+      }),
+      participant('grok-bg', 'grok', 4, { role: 'Background', stageRole: 'background' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+
+    const userPrompt = '@All validate the latest steer in your own lane.'
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: userPrompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      }).status
+    ).toBe('queued')
+    expect(
+      harness.orchestrator.steerQueuedPrompt({
+        chatId: CHAT_ID,
+        index: 0,
+        textPrefix: userPrompt,
+        event: { sender: {} as Electron.WebContents }
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(
+      harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
+    ).toEqual(['claude', 'observer', 'grok-bg'])
+    expect(
+      harness.dispatched.filter(
+        (payload) => payload.ensembleRun?.participantId === 'codex'
+      )
+    ).toHaveLength(1)
+    expect(
+      harness.promptEvidence
+        .slice(1)
+        .every((evidence) => evidence?.suppliedMessageIds.includes('steer-message-1'))
+    ).toBe(true)
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+
+    for (let index = 1; index < 4; index += 1) {
+      stream(harness, index, `Group lane ${index} answered.`)
+      complete(harness, index)
+    }
+    stream(harness, 0, 'Original speaker completed normally.')
+    complete(harness, 0)
+    await vi.waitFor(() => {
+      expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    })
+  })
+
   it('keeps an already-running tagged seat on ordinary steer semantics without a duplicate lane', async () => {
     const harness = makeHarness()
     const started = harness.orchestrator.startRound({
