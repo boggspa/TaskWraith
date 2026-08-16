@@ -62,6 +62,7 @@ const PEAK_SAMPLE_KIND = 'peak'
 const CURRENT_SAMPLE_KIND = 'current'
 
 const AV1_FIELDS = ['pf', 'ap', 'err', 'errms', 'win', 'winms', 'drawn', 'expl']
+const AVC1_FIELDS = ['ts', 'fd', ...AV1_FIELDS]
 const AV1_EXPLANATIONS = new Set(['explained', 'not_explained', 'unknown'])
 
 const isSafeInteger = (value) => Number.isSafeInteger(value)
@@ -427,6 +428,75 @@ function parseAvSyncPeakExport(text) {
     wasDrawn: drawnRaw === '1',
     explanation
   }
+}
+
+/**
+ * Fail-closed parse of the product's distinct live-current "avc1" export.
+ *
+ * The current receipt embeds the exact local timebase. That is required for a
+ * VFR run: one global denominator would close a mismatch by silently erasing
+ * the variable frame durations Outcome 5 exists to measure.
+ */
+function parseAvSyncCurrentExport(text) {
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    return { ok: false, reason: 'empty current receipt' }
+  }
+  const parts = text.trim().split(/\s+/)
+  if (parts[0] !== 'avc1') {
+    return {
+      ok: false,
+      reason: `unknown current schema ${parts[0] || '(none)'}; expected avc1, never av1`
+    }
+  }
+
+  const fields = new Map()
+  for (const part of parts.slice(1)) {
+    const separator = part.indexOf('=')
+    if (separator <= 0) return { ok: false, reason: `malformed field ${part}` }
+    const key = part.slice(0, separator)
+    if (fields.has(key)) return { ok: false, reason: `duplicate field ${key}` }
+    fields.set(key, part.slice(separator + 1))
+  }
+  for (const key of AVC1_FIELDS) {
+    if (!fields.has(key)) return { ok: false, reason: `missing current operand ${key}` }
+  }
+  for (const key of fields.keys()) {
+    if (!AVC1_FIELDS.includes(key)) return { ok: false, reason: `unknown current field ${key}` }
+  }
+
+  const exactPositiveInteger = (key) => {
+    const raw = fields.get(key)
+    if (!/^\d+$/.test(raw)) return null
+    const value = Number(raw)
+    return isSafeInteger(value) && value > 0 ? value : null
+  }
+  const timescale = exactPositiveInteger('ts')
+  const frameDurationTicks = exactPositiveInteger('fd')
+  if (timescale === null || frameDurationTicks === null) {
+    return { ok: false, reason: 'current timebase is not a pair of positive exact integers' }
+  }
+
+  const av1Text = `av1 ${AV1_FIELDS.map((key) => `${key}=${fields.get(key)}`).join(' ')}`
+  const parsed = parseAvSyncPeakExport(av1Text)
+  if (!parsed.ok) return { ok: false, reason: `invalid current operands: ${parsed.reason}` }
+
+  const timebase = { timescale, frameDurationTicks }
+  const receipt = { ...parsed, kind: CURRENT_SAMPLE_KIND, timebase }
+  const integrity = operandIntegrityFailure(receipt, timebase)
+  if (integrity) return { ok: false, reason: `invalid current operands: ${integrity}` }
+
+  const window = receipt.measurementWindowNanoseconds
+  const maximumWindow = (frameDurationTicks / timescale) * 1_000_000_000
+  if (!isSafeInteger(window) || window <= 0 || window > maximumWindow) {
+    return {
+      ok: false,
+      reason:
+        `current measurement window ${window} is outside the exact frame interval ` +
+        `(0, ${Math.round(maximumWindow)}]`
+    }
+  }
+
+  return receipt
 }
 
 function toleranceVerdict(errorMs) {
@@ -1172,6 +1242,7 @@ module.exports = {
   classifyAvPeakSample,
   classifyResourceGrowth,
   operandIntegrityFailure,
+  parseAvSyncCurrentExport,
   parseAvSyncPeakExport,
   planSamples,
   summarizeOutcome5,

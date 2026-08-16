@@ -190,6 +190,22 @@ final class StudioViewerEventTests: XCTestCase {
                 + "if this stops clamping, the guard below proves nothing")
     }
 
+    func testViewerPublishesPeakAndCurrentThroughSeparateDiagnosticsFields() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(
+                    "Sources/TaskWraithStudioCompanion/StudioViewerWindow.swift"),
+            encoding: .utf8)
+
+        XCTAssertTrue(
+            source.contains("syncDetail: syncMeter?.peakSample?.diagnosticsExportText"))
+        XCTAssertTrue(
+            source.contains("syncCurrentDetail: syncMeter?.currentDiagnosticsExportText"))
+        XCTAssertFalse(
+            source.contains("syncCurrentDetail: syncMeter?.peakSample"),
+            "a retained av1 peak must never be published in the live avc1 slot")
+    }
+
     /// THE GUARD. Every transport mutation in the viewer must read the same
     /// host source the renderer reads. A single site reverting to
     /// `CACurrentMediaTime()` reintroduces the teleport, and it would only show

@@ -59,6 +59,22 @@ struct OutputDeviceReceipt: Codable {
     let nominalSampleRate: Double
 }
 
+struct CoreAudioRouteHealthReceipt: Codable {
+    let id: UInt32
+    let name: String
+    let uid: String
+    let nominalSampleRate: Double
+    let alive: Bool
+    let running: Bool
+    let hasOutputStream: Bool
+    let outputStreamCount: Int
+    let outputChannelCount: Int
+    let muteSupported: Bool
+    let muted: Bool?
+    let volumeSupported: Bool
+    let volume: Double?
+}
+
 struct AudioProbeReceipt: Codable {
     let durationSeconds: Int
     let elapsedSeconds: Double
@@ -82,6 +98,9 @@ struct ActionReceipt: Codable {
     let xFraction: Double?
     let yFraction: Double?
     let audioProbe: AudioProbeReceipt?
+    let routeHealth: CoreAudioRouteHealthReceipt?
+    let avSyncPeakValue: String?
+    let avSyncCurrentValue: String?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
     let playheadMaximumForwardAdvanceTicks: Int64?
@@ -105,6 +124,9 @@ struct ActionReceipt: Codable {
         xFraction: Double?,
         yFraction: Double?,
         audioProbe: AudioProbeReceipt?,
+        routeHealth: CoreAudioRouteHealthReceipt? = nil,
+        avSyncPeakValue: String? = nil,
+        avSyncCurrentValue: String? = nil,
         playheadTicks: Int64? = nil,
         playheadToleranceTicks: Int64? = nil,
         playheadMaximumForwardAdvanceTicks: Int64? = nil,
@@ -127,6 +149,9 @@ struct ActionReceipt: Codable {
         self.xFraction = xFraction
         self.yFraction = yFraction
         self.audioProbe = audioProbe
+        self.routeHealth = routeHealth
+        self.avSyncPeakValue = avSyncPeakValue
+        self.avSyncCurrentValue = avSyncCurrentValue
         self.playheadTicks = playheadTicks
         self.playheadToleranceTicks = playheadToleranceTicks
         self.playheadMaximumForwardAdvanceTicks = playheadMaximumForwardAdvanceTicks
@@ -483,6 +508,110 @@ func readAccessibilityTransportMutation(
           pgidAfter == pgidBefore else {
         throw DriverFailure.refused(
             "transport mutation observation changed foreground, process, or executable identity"
+        )
+    }
+    return observed
+}
+
+let avSyncPeakAccessibilityLabel = "A/V sync detail"
+let avSyncCurrentAccessibilityLabel = "A/V sync current detail"
+
+struct AvSyncAccessibilityRead {
+    let peakMatchCount: Int
+    let currentMatchCount: Int
+    let peakValue: String
+    let currentValue: String
+}
+
+/// Reads retained peak and live current from one bounded traversal of one exact
+/// Studio window. Two independent actions could cross a display tick and pair
+/// values that never coexisted, so both identities are joined in this snapshot.
+func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibilityRead {
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var peakMatches: [AXUIElement] = []
+    var currentMatches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let label =
+            stringAttribute(kAXIdentifierAttribute, of: element) ??
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole {
+            if label == avSyncPeakAccessibilityLabel {
+                peakMatches.append(element)
+            } else if label == avSyncCurrentAccessibilityLabel {
+                currentMatches.append(element)
+            }
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("A/V sync accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512,
+          peakMatches.count == 1,
+          currentMatches.count == 1,
+          let peak = peakMatches.first,
+          let current = currentMatches.first,
+          let peakValue = stringAttribute(kAXValueAttribute, of: peak),
+          let currentValue = stringAttribute(kAXValueAttribute, of: current),
+          peakValue.hasPrefix("av1 "),
+          currentValue.hasPrefix("avc1 ") else {
+        throw DriverFailure.refused(
+            "exact peak and current A/V sync accessibility identities are unavailable"
+        )
+    }
+    return AvSyncAccessibilityRead(
+        peakMatchCount: peakMatches.count,
+        currentMatchCount: currentMatches.count,
+        peakValue: peakValue,
+        currentValue: currentValue
+    )
+}
+
+func readAccessibilityAvSync(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> AvSyncAccessibilityRead {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background A/V sync read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    let observed = try exactAccessibilityAvSync(in: window)
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "A/V sync observation changed foreground, process, or executable identity"
         )
     }
     return observed
@@ -856,6 +985,214 @@ func defaultOutputDeviceReceipt() throws -> OutputDeviceReceipt {
     )
 }
 
+func requiredCoreAudioUInt32(
+    objectId: AudioObjectID,
+    selector: AudioObjectPropertySelector,
+    scope: AudioObjectPropertyScope,
+    label: String
+) throws -> UInt32 {
+    var address = AudioObjectPropertyAddress(
+        mSelector: selector,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var value = UInt32(0)
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(objectId, &address, 0, nil, &size, &value)
+    guard status == noErr else {
+        throw DriverFailure.refused("CoreAudio \(label) read failed with OSStatus \(status)")
+    }
+    return value
+}
+
+func optionalCoreAudioUInt32(
+    objectId: AudioObjectID,
+    selector: AudioObjectPropertySelector,
+    scope: AudioObjectPropertyScope,
+    label: String
+) throws -> (supported: Bool, value: UInt32?) {
+    var address = AudioObjectPropertyAddress(
+        mSelector: selector,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(objectId, &address) else {
+        return (supported: false, value: nil)
+    }
+    var value = UInt32(0)
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    let status = AudioObjectGetPropertyData(objectId, &address, 0, nil, &size, &value)
+    guard status == noErr else {
+        throw DriverFailure.refused("CoreAudio \(label) read failed with OSStatus \(status)")
+    }
+    return (supported: true, value: value)
+}
+
+func optionalCoreAudioVolume(
+    objectId: AudioObjectID,
+    scope: AudioObjectPropertyScope
+) throws -> (supported: Bool, value: Double?) {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyVolumeScalar,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    guard AudioObjectHasProperty(objectId, &address) else {
+        return (supported: false, value: nil)
+    }
+    var value = Float32(0)
+    var size = UInt32(MemoryLayout<Float32>.size)
+    let status = AudioObjectGetPropertyData(objectId, &address, 0, nil, &size, &value)
+    guard status == noErr else {
+        throw DriverFailure.refused(
+            "CoreAudio output volume read failed with OSStatus \(status)"
+        )
+    }
+    guard value.isFinite else {
+        throw DriverFailure.refused("CoreAudio output volume was non-finite")
+    }
+    return (supported: true, value: Double(value))
+}
+
+func outputAudioStreams(deviceId: AudioObjectID) throws -> [AudioStreamID] {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyStreams,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var size = UInt32(0)
+    let sizeStatus = AudioObjectGetPropertyDataSize(deviceId, &address, 0, nil, &size)
+    guard sizeStatus == noErr,
+          size % UInt32(MemoryLayout<AudioStreamID>.stride) == 0 else {
+        throw DriverFailure.refused(
+            "CoreAudio output-stream size read failed with OSStatus \(sizeStatus)"
+        )
+    }
+    let count = Int(size) / MemoryLayout<AudioStreamID>.stride
+    guard count > 0 else { return [] }
+    var streams = [AudioStreamID](repeating: AudioStreamID(kAudioObjectUnknown), count: count)
+    let status = streams.withUnsafeMutableBufferPointer { buffer in
+        AudioObjectGetPropertyData(deviceId, &address, 0, nil, &size, buffer.baseAddress!)
+    }
+    guard status == noErr,
+          streams.allSatisfy({ $0 != kAudioObjectUnknown }) else {
+        throw DriverFailure.refused(
+            "CoreAudio output-stream identity read failed with OSStatus \(status)"
+        )
+    }
+    return streams
+}
+
+func outputChannelCount(streams: [AudioStreamID]) throws -> Int {
+    var total = 0
+    for stream in streams {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioStreamPropertyVirtualFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioObjectGetPropertyData(
+            stream,
+            &address,
+            0,
+            nil,
+            &size,
+            &format
+        )
+        guard status == noErr else {
+            throw DriverFailure.refused(
+                "CoreAudio output-stream format read failed with OSStatus \(status)"
+            )
+        }
+        total += Int(format.mChannelsPerFrame)
+    }
+    return total
+}
+
+func coreAudioRouteHealthReceipt() throws -> CoreAudioRouteHealthReceipt {
+    let device = try defaultOutputDeviceReceipt()
+    let deviceId = AudioObjectID(device.id)
+    let alive =
+        try requiredCoreAudioUInt32(
+            objectId: deviceId,
+            selector: kAudioDevicePropertyDeviceIsAlive,
+            scope: kAudioObjectPropertyScopeGlobal,
+            label: "device alive"
+        ) != 0
+    let running =
+        try requiredCoreAudioUInt32(
+            objectId: deviceId,
+            selector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            scope: kAudioObjectPropertyScopeGlobal,
+            label: "device running"
+        ) != 0
+    let streams = try outputAudioStreams(deviceId: deviceId)
+    let channelCount = try outputChannelCount(streams: streams)
+    let mute = try optionalCoreAudioUInt32(
+        objectId: deviceId,
+        selector: kAudioDevicePropertyMute,
+        scope: kAudioDevicePropertyScopeOutput,
+        label: "output mute"
+    )
+    let volume = try optionalCoreAudioVolume(
+        objectId: deviceId,
+        scope: kAudioDevicePropertyScopeOutput
+    )
+
+    return CoreAudioRouteHealthReceipt(
+        id: device.id,
+        name: device.name,
+        uid: device.uid,
+        nominalSampleRate: device.nominalSampleRate,
+        alive: alive,
+        running: running,
+        hasOutputStream: !streams.isEmpty && channelCount > 0,
+        outputStreamCount: streams.count,
+        outputChannelCount: channelCount,
+        muteSupported: mute.supported,
+        muted: mute.value.map { $0 != 0 },
+        volumeSupported: volume.supported,
+        volume: volume.value
+    )
+}
+
+func readCoreAudioRouteHealth(
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> CoreAudioRouteHealthReceipt {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background CoreAudio route read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    let routeHealth = try coreAudioRouteHealthReceipt()
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "CoreAudio route observation changed foreground, process, or executable identity"
+        )
+    }
+    return routeHealth
+}
+
 final class ExactWindowAudioAccumulator: NSObject, SCStreamOutput, @unchecked Sendable {
     private let lock = NSLock()
     private var failure: String?
@@ -1130,7 +1467,51 @@ do {
         }
         try validateWindow(request)
 
-        if action.type == "read-transport-mutation",
+        if action.type == "read-av-sync",
+           request.inputDelivery == "background-observation-only"
+        {
+            let observed = try readAccessibilityAvSync(
+                in: accessibilityWindow,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-av-sync",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    avSyncPeakValue: observed.peakValue,
+                    avSyncCurrentValue: observed.currentValue
+                )
+            )
+        } else if action.type == "coreaudio-route-health",
+                  request.inputDelivery == "background-observation-only"
+        {
+            let routeHealth = try readCoreAudioRouteHealth(
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "coreaudio-route-health",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    routeHealth: routeHealth
+                )
+            )
+        } else if action.type == "read-transport-mutation",
            request.inputDelivery == "background-observation-only",
            let accessibilityLabel = action.accessibilityLabel
         {

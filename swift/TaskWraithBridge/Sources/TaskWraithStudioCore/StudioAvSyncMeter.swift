@@ -174,6 +174,33 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
     /// value, never a history — see StudioAvSyncSample.
     public private(set) var peakSample: StudioAvSyncSample?
 
+    /// The most recent actual comparison, distinct from the retained peak.
+    ///
+    /// This is one bounded value, updated in place on every drawn or dropped
+    /// reading. A retained peak cannot prove live drift: it may describe a
+    /// long-finished stall whose wide read window already explains it.
+    public private(set) var currentSample: StudioAvSyncSample?
+
+    /// Machine-readable CURRENT schema. "av1" remains the retained peak schema
+    /// for compatibility; this distinct prefix and embedded timebase prevent a
+    /// peak from silently satisfying a live-current slot.
+    public var currentDiagnosticsExportText: String? {
+        guard let currentSample else { return nil }
+        let window = currentSample.measurementWindowNanoseconds.map(String.init) ?? "-"
+        let windowMilliseconds =
+            currentSample.measurementWindowMilliseconds.map {
+                String(format: "%.3f", $0)
+            } ?? "-"
+        return "avc1 ts=\(timebase.timescale) fd=\(timebase.frameDurationTicks)"
+            + " pf=\(currentSample.presentedFrameTicks)"
+            + " ap=\(currentSample.audiblePositionTicks)"
+            + " err=\(currentSample.errorTicks)"
+            + " errms=\(String(format: "%.3f", currentSample.errorMilliseconds))"
+            + " win=\(window) winms=\(windowMilliseconds)"
+            + " drawn=\(currentSample.wasDrawn ? 1 : 0)"
+            + " expl=\(currentSample.explanation.rawValue)"
+    }
+
     /// Records one presented frame against the audio playhead at that instant.
     ///
     /// - Parameter presentedFrameTicks: PTS of the frame actually drawn.
@@ -238,18 +265,20 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
         wasDrawn: Bool
     ) {
         currentErrorTicks = error
+        let sample = StudioAvSyncSample(
+            timebase: timebase,
+            presentedFrameTicks: presentedFrameTicks,
+            audiblePositionTicks: audiblePositionTicks,
+            errorTicks: error,
+            measurementWindowNanoseconds: measurementWindowNanoseconds,
+            wasDrawn: wasDrawn
+        )
+        currentSample = sample
         let magnitude = abs(error)
         // Compared BEFORE the peak moves, so the retained sample is the tick
         // that actually set it rather than the one that merely tied it.
         if peakSample == nil || magnitude > peakAbsoluteErrorTicks {
-            peakSample = StudioAvSyncSample(
-                timebase: timebase,
-                presentedFrameTicks: presentedFrameTicks,
-                audiblePositionTicks: audiblePositionTicks,
-                errorTicks: error,
-                measurementWindowNanoseconds: measurementWindowNanoseconds,
-                wasDrawn: wasDrawn
-            )
+            peakSample = sample
         }
         peakAbsoluteErrorTicks = max(peakAbsoluteErrorTicks, magnitude)
         errorSumTicks = errorSumTicks &+ error
@@ -273,6 +302,9 @@ public struct StudioAvSyncMeter: Equatable, Sendable {
         onScreenFrameTicks = nil
         // The explanation goes with the peak it explained.
         peakSample = nil
+        // Current is a live claim. A sample from before a seek or source change
+        // cannot describe the state after it.
+        currentSample = nil
     }
 
     public var currentErrorMilliseconds: Double {

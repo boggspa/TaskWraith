@@ -211,6 +211,9 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     /// same value out of the live process otherwise required attaching a
     /// debugger and resolving an internal Swift type by name.
     public let syncDetail: String?
+    /// Machine-parseable CURRENT A/V reading. Kept separate from syncDetail so
+    /// the retained av1 peak cannot substitute for the live avc1 sample.
+    public let syncCurrentDetail: String?
     /// Machine-parseable record of the last thing that MOVED the transport, or
     /// nil before any mutation. Accessibility-only, like syncDetail.
     public let transportMutationDetail: String?
@@ -236,6 +239,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         hardwareDecodeLabel: String,
         syncLabel: String = "a/v --",
         syncDetail: String? = nil,
+        syncCurrentDetail: String? = nil,
         transportMutationDetail: String? = nil,
         memoryLabel: String = "rss --",
         cacheHitCount: Int = 0,
@@ -248,6 +252,7 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
         self.hardwareDecodeLabel = hardwareDecodeLabel
         self.syncLabel = syncLabel
         self.syncDetail = syncDetail
+        self.syncCurrentDetail = syncCurrentDetail
         self.transportMutationDetail = transportMutationDetail
         self.cacheHitCount = cacheHitCount
         self.boundTextureCount = boundTextureCount
@@ -776,6 +781,22 @@ public enum StudioOverlayLayout {
                     role: .staticText,
                     label: "A/V sync detail",
                     value: syncDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
+
+        if let syncCurrentDetail = state.diagnostics?.syncCurrentDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "A/V sync current detail",
+                    value: syncCurrentDetail,
                     frame: StudioOverlayFrame(
                         x: margin,
                         y: diagnosticsY,

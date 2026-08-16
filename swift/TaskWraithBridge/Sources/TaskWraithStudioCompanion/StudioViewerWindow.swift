@@ -847,6 +847,7 @@ final class StudioViewerView: NSView {
                 // Accessibility-only. Nil until a reading exists, so no
                 // descriptor is published before there is something to read.
                 syncDetail: syncMeter?.peakSample?.diagnosticsExportText,
+                syncCurrentDetail: syncMeter?.currentDiagnosticsExportText,
                 transportMutationDetail: lastTransportMutation?.diagnosticsExportText,
                 memoryLabel: memoryLabel,
                 cacheHitCount: renderer.cacheHitCount,

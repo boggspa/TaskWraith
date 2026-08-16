@@ -1,3 +1,5 @@
+import { promises as fsPromises } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -13,6 +15,7 @@ const {
   classifyAvCurrentSample,
   classifyAvPeakSample,
   classifyResourceGrowth,
+  parseAvSyncCurrentExport,
   parseAvSyncPeakExport,
   planSamples,
   summarizeOutcome5,
@@ -70,6 +73,19 @@ function av1Text(options: Parameters<typeof receipt>[0] = {}): string {
     r.measurementWindowMilliseconds === null ? '-' : r.measurementWindowMilliseconds.toFixed(3)
   return (
     `av1 pf=${r.presentedFrameTicks} ap=${r.audioPositionTicks} err=${r.errorTicks} ` +
+    `errms=${r.errorMilliseconds.toFixed(3)} win=${win} winms=${winms} ` +
+    `drawn=${r.wasDrawn ? 1 : 0} expl=${r.explanation}`
+  )
+}
+
+function avc1Text(options: Parameters<typeof receipt>[0] = {}): string {
+  const r = receipt(options)
+  const win = r.measurementWindowNanoseconds === null ? '-' : String(r.measurementWindowNanoseconds)
+  const winms =
+    r.measurementWindowMilliseconds === null ? '-' : r.measurementWindowMilliseconds.toFixed(3)
+  return (
+    `avc1 ts=${TIMESCALE} fd=${FRAME_DURATION_TICKS} pf=${r.presentedFrameTicks} ` +
+    `ap=${r.audioPositionTicks} err=${r.errorTicks} ` +
     `errms=${r.errorMilliseconds.toFixed(3)} win=${win} winms=${winms} ` +
     `drawn=${r.wasDrawn ? 1 : 0} expl=${r.explanation}`
   )
@@ -265,6 +281,40 @@ describe('av1 parses as the RETAINED PEAK and recomputes its own claims', () => 
   })
 })
 
+describe('avc1 parses only a live current sample with its exact timebase', () => {
+  it('accepts the current schema and returns its authoritative timebase', () => {
+    expect(parseAvSyncCurrentExport(avc1Text({ errTicks: 450, winNs: 750_000 }))).toMatchObject({
+      ok: true,
+      kind: 'current',
+      presentedFrameTicks: 600_000,
+      audioPositionTicks: 599_550,
+      errorTicks: 450,
+      measurementWindowNanoseconds: 750_000,
+      wasDrawn: true,
+      timebase: TIMEBASE
+    })
+  })
+
+  it('rejects av1 so a retained peak cannot substitute for current evidence', () => {
+    expect(parseAvSyncCurrentExport(av1Text()).ok).toBe(false)
+    expect(parseAvSyncCurrentExport(av1Text()).reason).toMatch(/schema|current/i)
+  })
+
+  it('rejects forged algebra, noncanonical decimals, and unusable timebases or windows', () => {
+    expect(parseAvSyncCurrentExport(avc1Text().replace('err=0', 'err=1')).ok).toBe(false)
+    expect(parseAvSyncCurrentExport(avc1Text().replace('errms=0.000', 'errms=0.001')).ok).toBe(
+      false
+    )
+    expect(parseAvSyncCurrentExport(avc1Text().replace('winms=1.000', 'winms=1.001')).ok).toBe(
+      false
+    )
+    expect(parseAvSyncCurrentExport(avc1Text().replace('ts=30000', 'ts=0')).ok).toBe(false)
+    expect(parseAvSyncCurrentExport(avc1Text().replace('fd=1000', 'fd=0')).ok).toBe(false)
+    expect(parseAvSyncCurrentExport(avc1Text({ winNs: null })).ok).toBe(false)
+    expect(parseAvSyncCurrentExport(`${avc1Text()} ts=30000`).reason).toMatch(/duplicate/i)
+  })
+})
+
 describe('classification recomputes and never trusts a supplied ok bit', () => {
   // THE FALSE GREEN THE SECOND VERSION LEFT OPEN: a hand-built "parsed" object
   // skipped the parser entirely, so "refused again at classification" was a
@@ -433,6 +483,40 @@ describe('a PEAK is not a CURRENT sample', () => {
     expect(
       classifyAvCurrentSample({ receipt: receipt({ winNs: null }), timebase: TIMEBASE }).reason
     ).toMatch(/window/i)
+  })
+})
+
+describe('the Swift measurement driver exposes exact dual-clock and route receipts', () => {
+  it('reads peak and current in one bounded AX snapshot and fails closed on CoreAudio status', async () => {
+    const driver = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
+      'utf8'
+    )
+
+    expect(driver).toContain('func exactAccessibilityAvSync(')
+    expect(driver).toContain('let avSyncPeakAccessibilityLabel = "A/V sync detail"')
+    expect(driver).toContain('let avSyncCurrentAccessibilityLabel = "A/V sync current detail"')
+    expect(driver).toContain('peakMatches.count == 1')
+    expect(driver).toContain('currentMatches.count == 1')
+    expect(driver).toContain('peakValue.hasPrefix("av1 ")')
+    expect(driver).toContain('currentValue.hasPrefix("avc1 ")')
+    expect(driver).toContain('action.type == "read-av-sync"')
+    expect(driver).toContain('avSyncPeakValue: observed.peakValue')
+    expect(driver).toContain('avSyncCurrentValue: observed.currentValue')
+
+    expect(driver).toContain('struct CoreAudioRouteHealthReceipt: Codable')
+    expect(driver).toContain('func coreAudioRouteHealthReceipt() throws')
+    expect(driver).toContain('kAudioDevicePropertyDeviceIsAlive')
+    expect(driver).toContain('kAudioDevicePropertyDeviceIsRunningSomewhere')
+    expect(driver).toContain('kAudioDevicePropertyStreams')
+    expect(driver).toContain('kAudioStreamPropertyVirtualFormat')
+    expect(driver).toContain('kAudioDevicePropertyMute')
+    expect(driver).toContain('kAudioDevicePropertyVolumeScalar')
+    expect(driver.match(/guard status == noErr else/g)).toHaveLength(5)
+    expect(driver).toContain('muteSupported: mute.supported')
+    expect(driver).toContain('volumeSupported: volume.supported')
+    expect(driver).toContain('action.type == "coreaudio-route-health"')
+    expect(driver).toContain('routeHealth: routeHealth')
   })
 })
 

@@ -16,6 +16,86 @@ final class StudioAvSyncMeterTests: XCTestCase {
         StudioAvSyncMeter(timebase: ntsc)
     }
 
+    // MARK: - Current sample is not the retained peak
+
+    func testCurrentSampleIsNilUntilARealReadingAndResetsToNil() throws {
+        var subject = meter()
+        XCTAssertNil(subject.currentSample)
+        XCTAssertNil(subject.currentDiagnosticsExportText)
+
+        subject.record(
+            presentedFrameTicks: 60_000,
+            audiblePositionTicks: 59_550,
+            measurementWindowNanoseconds: 750_000
+        )
+
+        let current = try XCTUnwrap(subject.currentSample)
+        XCTAssertEqual(current.presentedFrameTicks, 60_000)
+        XCTAssertEqual(current.audiblePositionTicks, 59_550)
+        XCTAssertEqual(current.errorTicks, 450)
+        XCTAssertEqual(current.measurementWindowNanoseconds, 750_000)
+        XCTAssertTrue(current.wasDrawn)
+        XCTAssertEqual(current.timebase, ntsc)
+
+        subject.reset()
+        XCTAssertNil(subject.currentSample)
+        XCTAssertNil(subject.currentDiagnosticsExportText)
+    }
+
+    func testCurrentSampleUpdatesOnEveryRecordedAndDroppedReadingWithoutReplacingPeak() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+        let retainedPeak = try XCTUnwrap(subject.peakSample)
+
+        subject.record(
+            presentedFrameTicks: 60_000,
+            audiblePositionTicks: 59_700,
+            measurementWindowNanoseconds: 500_000
+        )
+        XCTAssertEqual(subject.currentSample?.errorTicks, 300)
+        XCTAssertEqual(subject.peakSample, retainedPeak)
+
+        subject.recordDroppedFrame(
+            audiblePositionTicks: 60_900,
+            measurementWindowNanoseconds: 600_000
+        )
+        let dropped = try XCTUnwrap(subject.currentSample)
+        XCTAssertEqual(dropped.presentedFrameTicks, 60_000)
+        XCTAssertEqual(dropped.audiblePositionTicks, 60_900)
+        XCTAssertEqual(dropped.errorTicks, -900)
+        XCTAssertFalse(dropped.wasDrawn)
+        XCTAssertEqual(subject.peakSample, retainedPeak)
+    }
+
+    func testCurrentAndPeakUseDistinctMachineReadableSchemas() throws {
+        var subject = meter()
+        subject.record(
+            presentedFrameTicks: 0,
+            audiblePositionTicks: 30_000,
+            measurementWindowNanoseconds: 1_000_000_000
+        )
+        subject.record(
+            presentedFrameTicks: 60_000,
+            audiblePositionTicks: 59_550,
+            measurementWindowNanoseconds: 750_000
+        )
+
+        let peak = try XCTUnwrap(subject.peakSample).diagnosticsExportText
+        let current = try XCTUnwrap(subject.currentDiagnosticsExportText)
+        XCTAssertTrue(peak.hasPrefix("av1 "), peak)
+        XCTAssertFalse(peak.hasPrefix("avc1 "), peak)
+        XCTAssertTrue(current.hasPrefix("avc1 "), current)
+        XCTAssertFalse(current.hasPrefix("av1 "), current)
+        XCTAssertTrue(current.contains("ts=30000 fd=1001"), current)
+        XCTAssertTrue(current.contains("pf=60000 ap=59550 err=450"), current)
+        XCTAssertTrue(current.contains("win=750000 winms=0.750"), current)
+        XCTAssertTrue(current.contains("drawn=1"), current)
+    }
+
     // MARK: - Sign convention
 
     /// POSITIVE means picture ahead of sound. Getting this backwards would
@@ -202,11 +282,15 @@ final class StudioAvSyncMeterTests: XCTestCase {
         // Pinning the footprint to a literal catches an INLINE buffer — someone
         // keeping the last N errors in a tuple or fixed-size array to compute a
         // median.
+        // One bounded current sample is now retained beside the historical
+        // peak, so the old one-sample 128-byte ceiling is intentionally raised
+        // to the next fixed alignment above the measured 178-byte layout. It is
+        // still a literal, never a function of sample count or run duration.
         XCTAssertLessThanOrEqual(
             MemoryLayout<StudioAvSyncMeter>.size,
-            128,
+            192,
             "meter footprint grew to \(MemoryLayout<StudioAvSyncMeter>.size) bytes — "
-                + "diagnostics must accumulate, not retain"
+                + "diagnostics may retain one current and one peak, never history"
         )
 
         // AND THAT BOUND HONESTLY DOES NOT CATCH THE LIKELIEST REGRESSION.

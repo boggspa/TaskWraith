@@ -687,7 +687,7 @@ final class StudioOverlayModelTests: XCTestCase {
     /// process boundary and is already read by the acceptance driver, so the
     /// sample rides a surface that works.
 
-    private func detailState(_ detail: String?) -> StudioOverlayState {
+    private func detailState(_ detail: String?, currentDetail: String? = nil) -> StudioOverlayState {
         var subject = state()
         subject.diagnostics = StudioOverlayDiagnostics(
             presentedFrameCount: 10,
@@ -695,7 +695,8 @@ final class StudioOverlayModelTests: XCTestCase {
             retainedFrameCount: 3,
             hardwareDecodeLabel: "hardware",
             syncLabel: "a/v -15.8ms pk 1088.5",
-            syncDetail: detail
+            syncDetail: detail,
+            syncCurrentDetail: currentDetail
         )
         return subject
     }
@@ -717,6 +718,27 @@ final class StudioOverlayModelTests: XCTestCase {
     func testNoDescriptorIsPublishedBeforeAnySampleExists() {
         let model = StudioOverlayLayout.build(detailState(nil))
         XCTAssertNil(model.accessibilityElements.first { $0.label == "A/V sync detail" })
+        XCTAssertNil(model.accessibilityElements.first { $0.label == "A/V sync current detail" })
+    }
+
+    func testPeakAndCurrentSamplesArePublishedAsDistinctDescriptorsInOneSnapshot() {
+        let peak =
+            "av1 pf=0 ap=30000 err=-30000 errms=-1000.000 win=1000000000 "
+            + "winms=1000.000 drawn=1 expl=explained"
+        let current =
+            "avc1 ts=30000 fd=1001 pf=60000 ap=59550 err=450 errms=15.000 "
+            + "win=750000 winms=0.750 drawn=1 expl=not_explained"
+        let model = StudioOverlayLayout.build(detailState(peak, currentDetail: current))
+
+        let peakDescriptor = model.accessibilityElements
+            .first { $0.label == "A/V sync detail" }
+        let currentDescriptor = model.accessibilityElements
+            .first { $0.label == "A/V sync current detail" }
+        XCTAssertEqual(peakDescriptor?.value, peak)
+        XCTAssertEqual(currentDescriptor?.value, current)
+        XCTAssertEqual(peakDescriptor?.role, .staticText)
+        XCTAssertEqual(currentDescriptor?.role, .staticText)
+        XCTAssertNotEqual(peakDescriptor?.label, currentDescriptor?.label)
     }
 
     /// ADDED, NOT SUBSTITUTED. The existing spoken controls are what a human
