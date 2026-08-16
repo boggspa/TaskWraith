@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -208,16 +209,22 @@ describe('the PTS census parser survives real ffprobe output', () => {
 
 describe('media tools resolve portably and fail closed', () => {
   it('rejects a candidate list containing no existing tool, naming the tool', () => {
+    const absentRoot = path.join(path.dirname(process.execPath), 'taskwraith-missing-media-tools')
     expect(() =>
-      resolveMediaTool('ffprobe', { candidates: ['/nonexistent/a', '/nonexistent/b'] })
+      resolveMediaTool('ffprobe', {
+        candidates: [path.join(absentRoot, 'a'), path.join(absentRoot, 'b')]
+      })
     ).toThrow(/ffprobe/)
   })
 
   it('returns the first candidate that exists', () => {
-    const resolved = resolveMediaTool('sh', {
-      candidates: ['/nonexistent/sh', '/bin/sh']
+    const resolved = resolveMediaTool('node', {
+      candidates: [
+        path.join(path.dirname(process.execPath), 'taskwraith-missing-node'),
+        process.execPath
+      ]
     })
-    expect(resolved).toBe('/bin/sh')
+    expect(resolved).toBe(process.execPath)
   })
 })
 
