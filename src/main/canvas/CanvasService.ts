@@ -40,10 +40,16 @@ import type {
   CanvasSessionSummary,
   CanvasSketchDocument,
   CanvasSketchUpdateInput,
+  CanvasTargetDescription,
   CanvasViewport,
   CanvasWindowOpenTarget
 } from './canvasTypes'
 import { assertCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
+import {
+  assessConsequentialTarget,
+  consequentialSummary,
+  type CanvasConsequentialCategory
+} from './CanvasConsequentialTarget'
 import {
   isValidBundleId,
   redactUrlQuery,
@@ -94,6 +100,25 @@ export interface CanvasServiceDeps {
   historyParticipants?: readonly CanvasHistoryParticipant[]
   /** Clear Chromium state for the dedicated app-wide Canvas Browser partition. */
   clearBrowserProfileData?: () => Promise<void>
+  /**
+   * Main-owned one-use human confirmation for a consequential web target
+   * (design §7, slice S12). Receives TaskWraith's own value-free summary — the
+   * page's label never travels here. Absent, throwing, or false all FAIL
+   * CLOSED: nothing is dispatched.
+   */
+  confirmConsequentialAction?: (request: CanvasConsequentialConfirmRequest) => Promise<boolean>
+}
+
+/** What the human is asked. Deliberately carries no page-authored text. */
+export interface CanvasConsequentialConfirmRequest {
+  readonly canvasId: string
+  readonly chatId?: string
+  readonly action: 'click' | 'fill'
+  /** TaskWraith-authored, built from the matched term. Never page prose. */
+  readonly summary: string
+  readonly category: CanvasConsequentialCategory
+  /** Query-redacted page URL for context. */
+  readonly url?: string
 }
 
 export interface CanvasNavStateBroadcast {
@@ -1060,6 +1085,92 @@ export class CanvasService implements CanvasController {
    * any outcome audit; `emit` independently refuses writes after a history
    * generation moves, preserving clear semantics.
    */
+  /**
+   * Decide whether this action needs one human confirmation before dispatch,
+   * and obtain it. Returns either a refusal (nothing dispatched) or the epoch
+   * pin to carry into the dispatch.
+   *
+   * The predicate is a JUDGMENT-ERROR speed bump, not a containment boundary:
+   * the label comes from the page and a hostile origin can rename its buttons.
+   * See CanvasConsequentialTarget before strengthening any claim about it.
+   *
+   * COST, accepted deliberately: this adds one read-only page evaluation per
+   * click/fill, including the ordinary non-consequential ones. It is kept this
+   * way because the policy then lives in TypeScript, where it is auditable and
+   * unit-tested, instead of being inlined into the injected page script. If
+   * this ever shows up as hot, the documented alternative is to have actScript
+   * carry the term list and refuse in-page, costing a second round trip only
+   * on a consequential target — at the price of moving policy into page world.
+   */
+  private async gateConsequentialAction(
+    canvasId: string,
+    session: LiveSession,
+    kind: 'click' | 'fill',
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<{ refusal?: CanvasActResult; pin: Partial<CanvasActionInput> }> {
+    const describeTarget = session.driver.describeTarget?.bind(session.driver)
+    // A surface with no page labels to judge (sketch, chart, image, device) is
+    // not gated: refusing on an absent probe would block every action there.
+    if (!describeTarget) return { pin: {} }
+
+    let description: CanvasTargetDescription
+    try {
+      description = await describeTarget({ ...args, kind })
+    } catch {
+      // A probe that cannot run tells us nothing about the target. Let the
+      // ordinary dispatch path report the real failure rather than inventing a
+      // consequential refusal for what is probably a closed surface.
+      return { pin: {} }
+    }
+    if (!description.found) return { pin: {} }
+
+    const assessment = assessConsequentialTarget(description.label)
+    if (!assessment.consequential || !assessment.category) return { pin: {} }
+
+    const refusal = (): CanvasActResult => ({
+      ok: false,
+      action: kind,
+      found: true,
+      executed: false,
+      verified: 'unknown',
+      refusalReason: 'consequential_confirmation_required',
+      message:
+        'This target looks irreversible or financial, so it needs the person at the keyboard to confirm it. Nothing was clicked. Ask the user to approve it, or choose a different control.',
+      ref: args.ref,
+      selector: args.selector
+    })
+
+    const confirm = this.deps.confirmConsequentialAction
+    // Fail closed: a consequential target with nobody to ask is not dispatched.
+    if (!confirm) return { refusal: refusal(), pin: {} }
+
+    let confirmed: boolean
+    try {
+      confirmed = await confirm({
+        canvasId,
+        ...(ctx.chatId ? { chatId: ctx.chatId } : {}),
+        action: kind,
+        summary: consequentialSummary(assessment),
+        category: assessment.category,
+        ...(session.record.url ? { url: session.record.url } : {})
+      })
+    } catch {
+      confirmed = false
+    }
+    if (!confirmed) return { refusal: refusal(), pin: {} }
+
+    // Pin the epoch the human actually decided against. If they touched the
+    // page while the dialog was open, the dispatch refuses with
+    // stale_input_epoch instead of acting on a surface nobody re-read.
+    return {
+      pin:
+        typeof description.inputEpoch === 'number'
+          ? { expectedInputEpoch: description.inputEpoch }
+          : {}
+    }
+  }
+
   private interact(
     canvasId: string,
     kind: 'click' | 'fill',
@@ -1089,12 +1200,27 @@ export class CanvasService implements CanvasController {
       } else {
         this.emit(canvasId, 'interaction', ctx, intentDetail)
       }
+      // Consequential-action confirmation (design §7). Runs BEFORE dispatch and
+      // inside the same serialization lock, so a second interaction cannot slip
+      // past while a human is deciding.
+      const gate = await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
+      if (gate.refusal) {
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          action: kind,
+          ...targetAudit,
+          outcome: 'consequential_confirmation_required',
+          dispatchStatus: 'not_dispatched',
+          verified: 'unknown'
+        })
+        return gate.refusal
+      }
       // A synchronous broadcast hook could have begun a clear while the intent
       // was emitted. Re-check before invoking the driver.
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
       let result: CanvasActResult
       try {
-        result = await session.driver.act({ ...args, kind })
+        result = await session.driver.act({ ...args, ...gate.pin, kind })
       } catch (error) {
         this.emit(canvasId, 'interaction', ctx, {
           phase: 'outcome',

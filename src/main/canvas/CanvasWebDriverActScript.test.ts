@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   actScript,
+  describeTargetScript,
   CANVAS_ISOLATED_STATE_KEY,
   CLEAR_SECRET_REDACTION_SCRIPT,
   REDACT_SECRETS_SCRIPT,
@@ -678,5 +679,79 @@ describe('screenshot secret redaction', () => {
 
     expect(evaluate(doc)).toBe(true)
     expect((layer as FakeNode & { removed?: boolean }).removed).toBe(true)
+  })
+})
+
+describe('describeTargetScript', () => {
+  function runDescribe(
+    action: CanvasActionInput,
+    opts: {
+      refElement?: StubElement
+      selectorElement?: StubElement
+      hitTest?: StubElement | null
+      trustedInputEpoch?: number
+    }
+  ): { found: boolean; label: string | null; inputEpoch: number | null } {
+    const doc = {
+      querySelector: (_selector: string) => opts.selectorElement || null,
+      elementFromPoint: (_x: number, _y: number) =>
+        opts.hitTest === undefined ? null : opts.hitTest
+    }
+    const isolatedGlobal: Record<string, unknown> = {
+      [CANVAS_ISOLATED_STATE_KEY]: {
+        refs: opts.refElement && action.ref ? { [action.ref]: opts.refElement } : {},
+        trustedInputEpoch: opts.trustedInputEpoch ?? 0
+      }
+    }
+    const evaluate = new Function(
+      'document',
+      'globalThis',
+      `return ${describeTargetScript(action)}`
+    )
+    return evaluate(doc, isolatedGlobal)
+  }
+
+  it('reports the accessible label and the current trusted epoch', () => {
+    const button = makeElement('BUTTON', { attrs: { 'aria-label': 'Delete account' } })
+    const result = runDescribe(
+      { kind: 'click', ref: 'e5' },
+      { refElement: button, trustedInputEpoch: 12 }
+    )
+    expect(result).toEqual({ found: true, label: 'Delete account', inputEpoch: 12 })
+  })
+
+  it('reads button text when there is no aria-label', () => {
+    const button = makeElement('BUTTON')
+    button.textContent = '  Delete   account  '
+    const result = runDescribe({ kind: 'click', ref: 'e5' }, { refElement: button })
+    expect(result.label).toBe('Delete account')
+  })
+
+  it('never dispatches, focuses or scrolls', () => {
+    const button = makeElement('BUTTON', { attrs: { 'aria-label': 'Pay now' } })
+    runDescribe({ kind: 'click', ref: 'e5' }, { refElement: button })
+    expect(button.clicks).toBe(0)
+    expect(button.focuses).toBe(0)
+    expect(button.scrolls).toBe(0)
+    expect(button.dispatched).toEqual([])
+  })
+
+  it('reports a detached or unresolved target as not found, still with the epoch', () => {
+    const detached = makeElement('BUTTON', { attrs: { 'aria-label': 'Delete' } })
+    detached.isConnected = false
+    expect(
+      runDescribe({ kind: 'click', ref: 'e5' }, { refElement: detached, trustedInputEpoch: 3 })
+    ).toEqual({ found: false, label: null, inputEpoch: 3 })
+    expect(runDescribe({ kind: 'click', ref: 'gone' }, { trustedInputEpoch: 3 })).toEqual({
+      found: false,
+      label: null,
+      inputEpoch: 3
+    })
+  })
+
+  it('bounds a hostile label rather than carrying it whole', () => {
+    const button = makeElement('BUTTON', { attrs: { 'aria-label': 'Delete ' + 'x'.repeat(5000) } })
+    const result = runDescribe({ kind: 'click', ref: 'e5' }, { refElement: button })
+    expect(result.label?.length).toBe(200)
   })
 })

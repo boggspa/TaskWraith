@@ -47,6 +47,7 @@ import type {
   CanvasSessionHandle,
   CanvasSketchDocument,
   CanvasSketchUpdateInput,
+  CanvasTargetDescription,
   CanvasViewport
 } from './canvasTypes'
 import { CanvasEvalEgressGate } from './CanvasEvalEgressGate'
@@ -427,6 +428,55 @@ function inspectScript(args: { ref?: string; selector?: string; styles?: string[
 // POSTCONDITION: a cheap document+target digest is taken either side of the
 // dispatch so the result can say whether anything actually moved. Synchronous
 // only — see the `verified` doc comment on CanvasActResult.
+/**
+ * Read-only pre-flight probe. Resolves the SAME target `actScript` would, using
+ * the same registry/selector/point order, and reports its accessible label and
+ * the current trusted input epoch — then stops. Nothing is clicked, filled,
+ * focused or scrolled.
+ *
+ * It deliberately omits actScript's occlusion and identity refusals: this is
+ * not the gate that decides whether the action may run, only what the target
+ * appears to BE. The real preconditions still run at dispatch, so a target that
+ * goes stale between probe and act is refused there.
+ *
+ * The label is PAGE-CONTROLLED and bounded here. It is used for term matching
+ * only and must never be rendered into a dialog the human reads.
+ *
+ * Exported for CanvasWebDriverActScript.test.ts, like actScript.
+ */
+export function describeTargetScript(action: CanvasActionInput): string {
+  const a = JSON.stringify({
+    ref: action.ref ?? null,
+    selector: action.selector ?? null,
+    x: typeof action.x === 'number' ? action.x : null,
+    y: typeof action.y === 'number' ? action.y : null
+  })
+  return `(() => {
+    const a = ${a};
+    const reg = globalThis[${JSON.stringify(CANVAS_ISOLATED_STATE_KEY)}];
+    const epoch = reg && Number.isSafeInteger(reg.trustedInputEpoch)
+      ? reg.trustedInputEpoch : null;
+    let el = null;
+    if (a.ref && reg && reg.refs) el = reg.refs[a.ref] || null;
+    if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
+    if (!el && a.x != null && a.y != null) el = document.elementFromPoint(a.x, a.y);
+    if (!el || el.nodeType !== 1 || el.isConnected === false) {
+      return { found: false, label: null, inputEpoch: epoch };
+    }
+    // Same precedence as the snapshot's accessible name, plus value/textContent
+    // so a <button value="Delete"> and <button>Delete</button> both read.
+    let label = '';
+    try {
+      label = el.getAttribute('aria-label') || el.getAttribute('title') ||
+        el.getAttribute('alt') ||
+        (typeof el.value === 'string' && el.value ? el.value : '') ||
+        el.textContent || '';
+    } catch (e) { label = ''; }
+    label = String(label).replace(/\\s+/g, ' ').trim().slice(0, 200);
+    return { found: true, label: label || null, inputEpoch: epoch };
+  })()`
+}
+
 // Exported for CanvasWebDriverActScript.test.ts: the preconditions live inside
 // the injected page script, so the only honest way to test them is to evaluate
 // the generated source against a DOM stub. There is no jsdom in this project.
@@ -1243,6 +1293,26 @@ export class CanvasWebDriver implements CanvasDriver {
   async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
     this.requireSurface().setContentSize(viewport.width, viewport.height)
     return viewport
+  }
+
+  /**
+   * Read-only target probe for the consequential-action check. Never dispatches.
+   * A failure here is reported as "not found" rather than thrown: the caller
+   * treats an unusable probe as "nothing to judge" and lets the ordinary
+   * dispatch path surface the real error.
+   */
+  async describeTarget(action: CanvasActionInput): Promise<CanvasTargetDescription> {
+    const wc = this.requireSurface().webContents
+    const result = await this.executeCanvasScript<{
+      found?: unknown
+      label?: unknown
+      inputEpoch?: unknown
+    }>(wc, describeTargetScript(action))
+    return {
+      found: result.found === true,
+      label: typeof result.label === 'string' ? result.label : null,
+      inputEpoch: Number.isSafeInteger(result.inputEpoch) ? Number(result.inputEpoch) : null
+    }
   }
 
   async act(action: CanvasActionInput): Promise<CanvasActResult> {

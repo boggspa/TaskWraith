@@ -290,6 +290,26 @@ export type CanvasActRefusalReason =
    */
   | 'consequential_confirmation_required'
 
+/**
+ * Read-only description of the target an action would hit. Produced before
+ * dispatch so a consequential control can be confirmed by the human first.
+ */
+export interface CanvasTargetDescription {
+  readonly found: boolean
+  /**
+   * Accessible name of the resolved element (aria-label, text, value, title).
+   * PAGE-CONTROLLED — treat as untrusted data for matching only. It must never
+   * be rendered into a dialog the human reads; see consequentialSummary.
+   */
+  readonly label: string | null
+  /**
+   * The surface's current trusted input epoch, to be pinned as
+   * `expectedInputEpoch` on the follow-up dispatch so the action refuses if the
+   * human touched the page while a confirmation was open.
+   */
+  readonly inputEpoch: number | null
+}
+
 /** Did the page move around the dispatch? See `CanvasActResult.verified`. */
 export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
 
@@ -508,6 +528,16 @@ export interface CanvasDriver {
   resize(viewport: CanvasViewport): Promise<CanvasViewport>
   // P1 interaction + annotation.
   act(action: CanvasActionInput): Promise<CanvasActResult>
+  /**
+   * Read-only pre-flight: resolve the same target `act` would and report its
+   * accessible label plus the surface's current trusted input epoch, WITHOUT
+   * dispatching anything. Feeds the consequential-action check (design §7).
+   *
+   * A driver whose surface has no page labels to judge (sketch, chart, image,
+   * device) leaves this undefined; the service then does not gate it, because
+   * refusing on an absent probe would block every action on those drivers.
+   */
+  describeTarget?(action: CanvasActionInput): Promise<CanvasTargetDescription>
   annotate(marks: CanvasMark[]): Promise<{ count: number }>
   sketchDocument(): Promise<CanvasSketchDocument>
   sketchUpdate(update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument>

@@ -595,6 +595,7 @@ import {
   type AppDrivePreviewFrameResult,
   type AppDrivePreviewFrameSource
 } from './nativeWindow/AppDrivePreviewFrame'
+import { requestCanvasConsequentialConfirmation } from './canvas/CanvasConsequentialDialog'
 import { createNativeWindowClickAuditClaim } from './nativeWindow/NativeWindowClickAudit'
 import { AuditService } from './services/AuditService'
 import {
@@ -4404,6 +4405,14 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
   clearBrowserProfileData: () => canvasBrowserProfile.clearBrowsingData(),
+  // One human decision before an irreversible or financial web control, even at
+  // tiers that authorize canvas_click for the run. See CanvasConsequentialTarget
+  // for what this does and does not claim.
+  confirmConsequentialAction: (request) =>
+    requestCanvasConsequentialConfirmation(
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      request
+    ),
   createDriver: (
     kind: CanvasDriverKind,
     sessionId: string,

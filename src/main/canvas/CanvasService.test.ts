@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { CanvasService, type CanvasServiceDeps } from './CanvasService'
+import {
+  CanvasService,
+  type CanvasConsequentialConfirmRequest,
+  type CanvasServiceDeps
+} from './CanvasService'
 import { CanvasStore } from './CanvasStore'
 import { createCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import type {
@@ -23,6 +27,7 @@ import type {
   CanvasSessionHandle,
   CanvasSketchDocument,
   CanvasSketchUpdateInput,
+  CanvasTargetDescription,
   CanvasViewport
 } from './canvasTypes'
 
@@ -96,7 +101,18 @@ class FakeDriver implements CanvasDriver {
   async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
     return viewport
   }
+  targetLabel: string | null = null
+  targetInputEpoch = 0
+  lastAction?: CanvasActionInput
+  describeTarget?: (action: CanvasActionInput) => Promise<CanvasTargetDescription> = async (
+    action
+  ) => ({
+    found: action.ref !== 'missing',
+    label: this.targetLabel,
+    inputEpoch: this.targetInputEpoch
+  })
   async act(action: CanvasActionInput): Promise<CanvasActResult> {
+    this.lastAction = action
     const found = action.ref !== 'missing'
     return {
       ok: found,
@@ -839,8 +855,11 @@ describe('CanvasService', () => {
 
     const first = service.click(c.canvasId, { kind: 'click', ref: 'a' }, {})
     const second = service.click(c.canvasId, { kind: 'click', ref: 'b' }, {})
-    await Promise.resolve()
-    await Promise.resolve()
+    // Wait for the invariant's precondition rather than a fixed number of
+    // microtasks: the pre-dispatch path legitimately awaits (target probe,
+    // audit), and counting ticks tests the implementation's shape instead of
+    // its guarantee. This still fails loudly if serialization breaks.
+    await vi.waitFor(() => expect(order).toContain('enter:a'))
     // The second interaction must not have touched the page yet.
     expect(order).toEqual(['enter:a'])
 
@@ -1426,5 +1445,100 @@ describe('CanvasService browser navigation', () => {
     })
     expect(navBroadcasts).toHaveLength(0)
     expect(store.getSession(opened.canvasId)).toBeNull()
+  })
+
+  // Design §7 / slice S12. Under Accept Edits and above canvas_click is
+  // authorized for the run, and since 1.9.5 the Browser is any-origin with a
+  // durable signed-in profile — so an irreversible control needs one human
+  // decision even when the tier would otherwise auto-run it.
+  describe('consequential-action confirmation', () => {
+    function serviceWith(
+      confirm: CanvasServiceDeps['confirmConsequentialAction'],
+      driver: FakeDriver = fake
+    ): CanvasService {
+      let seq = 0
+      return new CanvasService({
+        createDriver: () => driver,
+        store,
+        uuid: () => `conseq-${++seq}`,
+        now: () => '2026-06-21T00:00:00.000Z',
+        broadcast: (event) => events.push(event),
+        confirmConsequentialAction: confirm
+      })
+    }
+
+    it('asks once for a destructive control, then dispatches with the probe epoch pinned', async () => {
+      const confirm = vi.fn(async (_request: CanvasConsequentialConfirmRequest) => true)
+      fake.targetLabel = 'Delete account'
+      fake.targetInputEpoch = 7
+      service = serviceWith(confirm)
+      const opened = await service.open({ url: 'https://example.com' }, {})
+
+      const result = await service.click(opened.canvasId, { kind: 'click', ref: 'e9' }, {})
+
+      expect(result.executed).toBe(true)
+      expect(confirm).toHaveBeenCalledTimes(1)
+      // TaskWraith's own words, built from the matched term — never page prose.
+      expect(confirm.mock.calls[0][0]).toMatchObject({
+        summary: 'a destructive control (“delete account”)',
+        category: 'destructive'
+      })
+      // The human can take time. Pinning the probe's epoch means an action is
+      // refused rather than dispatched if they touched the page while deciding.
+      expect(fake.lastAction?.expectedInputEpoch).toBe(7)
+    })
+
+    it('refuses without dispatching when the human declines', async () => {
+      const confirm = vi.fn(async () => false)
+      fake.targetLabel = 'Delete account'
+      service = serviceWith(confirm)
+      const opened = await service.open({ url: 'https://example.com' }, {})
+
+      const result = await service.click(opened.canvasId, { kind: 'click', ref: 'e9' }, {})
+
+      expect(result.ok).toBe(false)
+      expect(result.executed).toBe(false)
+      expect(result.refusalReason).toBe('consequential_confirmation_required')
+      expect(fake.lastAction).toBeUndefined()
+    })
+
+    it('fails closed when no confirmation route exists', async () => {
+      // A consequential target with nobody to ask must not silently proceed.
+      fake.targetLabel = 'Pay now'
+      service = serviceWith(undefined)
+      const opened = await service.open({ url: 'https://example.com' }, {})
+
+      const result = await service.click(opened.canvasId, { kind: 'click', ref: 'e9' }, {})
+
+      expect(result.refusalReason).toBe('consequential_confirmation_required')
+      expect(fake.lastAction).toBeUndefined()
+    })
+
+    it('leaves ordinary controls alone', async () => {
+      const confirm = vi.fn(async () => true)
+      fake.targetLabel = 'Continue'
+      service = serviceWith(confirm)
+      const opened = await service.open({ url: 'https://example.com' }, {})
+
+      const result = await service.click(opened.canvasId, { kind: 'click', ref: 'e9' }, {})
+
+      expect(result.executed).toBe(true)
+      expect(confirm).not.toHaveBeenCalled()
+    })
+
+    it('does not gate a driver that cannot describe its targets', async () => {
+      // Sketch/chart/image surfaces have no page labels to judge. Gating them
+      // on an absent probe would refuse every action on those drivers.
+      const confirm = vi.fn(async () => true)
+      const blind = new FakeDriver()
+      delete blind.describeTarget
+      service = serviceWith(confirm, blind)
+      const opened = await service.open({ url: 'https://example.com' }, {})
+
+      const result = await service.click(opened.canvasId, { kind: 'click', ref: 'e9' }, {})
+
+      expect(result.executed).toBe(true)
+      expect(confirm).not.toHaveBeenCalled()
+    })
   })
 })
