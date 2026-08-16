@@ -1,10 +1,25 @@
-import { type IpcMainInvokeEvent, type WebContents, ipcMain } from 'electron'
+import { basename } from 'node:path'
+import {
+  type BrowserWindow,
+  type IpcMainInvokeEvent,
+  type SaveDialogOptions,
+  type WebContents,
+  ipcMain
+} from 'electron'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import type {
   TranscriptMessageTextExportResult,
   TranscriptMarkdownExportOptions,
-  TranscriptMarkdownExportResult
+  TranscriptMarkdownExportResult,
+  TranscriptMarkdownStreamResult
 } from '../TranscriptMarkdownExport'
+import {
+  isTranscriptExportScope,
+  scopeChatForTranscriptExport,
+  transcriptExportScopeLabel,
+  type ScopedTranscriptChat,
+  type TranscriptExportScope
+} from '../../shared/transcriptExportScope'
 
 type SidebarPathActionResult =
   | { ok: true; path: string }
@@ -33,22 +48,26 @@ type CopyChatMarkdownTranscriptResult =
 
 type CopyChatMessageTranscriptResult = CopyChatMarkdownTranscriptResult
 
-/**
- * The download variant hands the built Markdown back to the requesting
- * renderer (which blobs it out through the normal browser download path)
- * instead of writing the clipboard, so it carries the text and the
- * thread-titled file name the copy result has no use for.
- */
-interface DownloadChatMarkdownTranscriptSuccess extends CopyChatMarkdownTranscriptSuccess {
+/** Round downloads carry Markdown for the renderer's ordinary Blob path. */
+interface DownloadChatMarkdownTranscriptRendererSuccess
+  extends CopyChatMarkdownTranscriptSuccess {
   markdown: string
   fileName: string
+  streamed?: false
+}
+
+interface DownloadChatMarkdownTranscriptStreamedSuccess
+  extends CopyChatMarkdownTranscriptSuccess {
+  fileName: string
+  streamed: true
 }
 
 type DownloadChatMarkdownTranscriptResult =
   | SidebarPathActionResult
   | { ok: false; reason: 'unauthorized' | 'empty' }
   | CopyChatMarkdownTranscriptTooLarge
-  | DownloadChatMarkdownTranscriptSuccess
+  | DownloadChatMarkdownTranscriptRendererSuccess
+  | DownloadChatMarkdownTranscriptStreamedSuccess
 
 const TRANSCRIPT_FILE_NAME_MAX = 80
 
@@ -69,19 +88,27 @@ function isPrintableTitleChar(char: string): boolean {
  * sanitizes down to nothing (emoji-only, whitespace-only) falls back rather
  * than producing a bare dotfile.
  */
-export function chatTranscriptFileName(title: string | null | undefined): string {
+export function chatTranscriptFileName(
+  title: string | null | undefined,
+  roundOrdinal?: number
+): string {
   const collapsed = (typeof title === 'string' ? title : '').replace(/\s+/g, ' ').trim()
   const cleaned = Array.from(collapsed)
     .filter(isPrintableTitleChar)
     .join('')
     .replace(/[/\\:*?"<>|]/g, '-')
     .replace(/^[.\s]+|[.\s]+$/g, '')
-  const clipped = cleaned.slice(0, TRANSCRIPT_FILE_NAME_MAX).replace(/[.\s]+$/, '')
-  return `${clipped || 'transcript'}.md`
+  const roundSuffix =
+    Number.isSafeInteger(roundOrdinal) && Number(roundOrdinal) > 0
+      ? ` - Round ${roundOrdinal}`
+      : ''
+  const availableTitleLength = Math.max(1, TRANSCRIPT_FILE_NAME_MAX - roundSuffix.length)
+  const clipped = cleaned.slice(0, availableTitleLength).replace(/[.\s]+$/, '')
+  return `${clipped || 'transcript'}${roundSuffix}.md`
 }
 
 export interface SidebarHandlersDeps {
-  fromWebContents: (webContents: WebContents) => { isDestroyed: () => boolean } | null
+  fromWebContents: (webContents: WebContents) => BrowserWindow | null
   getWorkspaces: () => WorkspaceRecord[]
   getChat: (chatId: string) => ChatRecord | null | undefined
   getSettings: () => { storeLocalChatHistory?: boolean }
@@ -96,6 +123,15 @@ export interface SidebarHandlersDeps {
   estimateChatMarkdownTranscriptChars: (chat: ChatRecord) => number
   buildChatMessageTranscript: (chat: ChatRecord) => TranscriptMessageTextExportResult
   estimateChatMessageTranscriptChars: (chat: ChatRecord) => number
+  showSaveDialog: (
+    window: BrowserWindow,
+    options: SaveDialogOptions
+  ) => Promise<{ canceled: boolean; filePath?: string }>
+  writeChatMarkdownTranscriptToFile: (
+    chat: ChatRecord,
+    options: TranscriptMarkdownExportOptions,
+    filePath: string
+  ) => Promise<TranscriptMarkdownStreamResult>
   assertSafeChatId: (chatIdRaw: unknown, label: string) => string
   assertSenderWorkspaceScope: (event: IpcMainInvokeEvent, workspacePath: string) => void
   assertSenderChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
@@ -185,9 +221,72 @@ function copySidebarPath(deps: SidebarHandlersDeps, pathValue: string): SidebarP
  */
 type ChatMarkdownTranscriptFailure = Extract<CopyChatMarkdownTranscriptResult, { ok: false }>
 
+interface TranscriptRequest {
+  window: BrowserWindow
+  scope: TranscriptExportScope
+  scopeProvided: boolean
+  scoped: ScopedTranscriptChat
+  options: TranscriptMarkdownExportOptions
+}
+
+type TranscriptRequestResolution =
+  | { ok: false; failure: ChatMarkdownTranscriptFailure }
+  | { ok: true; request: TranscriptRequest }
+
 type MarkdownTranscriptPreparation =
   | { ok: false; failure: ChatMarkdownTranscriptFailure }
-  | { ok: true; chat: ChatRecord; built: TranscriptMarkdownExportResult }
+  | { ok: true; request: TranscriptRequest; built: TranscriptMarkdownExportResult }
+
+function resolveTranscriptRequest(
+  deps: SidebarHandlersDeps,
+  event: IpcMainInvokeEvent,
+  chatId: string,
+  scopeRaw: unknown,
+  label: string
+): TranscriptRequestResolution {
+  const window = deps.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) {
+    return { ok: false, failure: { ok: false, reason: 'unauthorized' } }
+  }
+  deps.assertSafeChatId(chatId, `${label} chatId`)
+  deps.assertSenderChatScope(event, chatId)
+  const chat = deps.getChat(chatId)
+  if (!chat) return { ok: false, failure: { ok: false, reason: 'not-found' } }
+  if (chat.archived) return { ok: false, failure: { ok: false, reason: 'archived' } }
+  if (!chat.messages?.length) return { ok: false, failure: { ok: false, reason: 'empty' } }
+
+  const scopeProvided = scopeRaw !== undefined && scopeRaw !== null
+  if (scopeProvided && !isTranscriptExportScope(scopeRaw)) {
+    return { ok: false, failure: { ok: false, reason: 'invalid-scope' } }
+  }
+  const scope: TranscriptExportScope = scopeProvided
+    ? (scopeRaw as TranscriptExportScope)
+    : { kind: 'entire-task' }
+  const scoped = scopeChatForTranscriptExport(chat, scope)
+  if (!scoped) return { ok: false, failure: { ok: false, reason: 'round-not-found' } }
+  if (!scoped.chat.messages.length) {
+    return { ok: false, failure: { ok: false, reason: 'empty' } }
+  }
+  const workspace = chat.workspaceId
+    ? deps.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) || null
+    : null
+  return {
+    ok: true,
+    request: {
+      window,
+      scope,
+      scopeProvided,
+      scoped,
+      options: {
+        workspace,
+        homeDir: deps.homedir(),
+        ...(scopeProvided
+          ? { scopeLabel: transcriptExportScopeLabel(scoped.round, scoped.roundCount) }
+          : {})
+      }
+    }
+  }
+}
 
 /**
  * Shared front half of the copy and download transcript channels: scope the
@@ -199,38 +298,34 @@ function prepareChatMarkdownTranscript(
   deps: SidebarHandlersDeps,
   event: IpcMainInvokeEvent,
   chatId: string,
+  scopeRaw: unknown,
   label: string,
   tooLargeNote: string
 ): MarkdownTranscriptPreparation {
-  if (!isAuthorizedSender(deps, event.sender)) {
-    return { ok: false, failure: { ok: false, reason: 'unauthorized' } }
-  }
-  deps.assertSafeChatId(chatId, `${label} chatId`)
-  deps.assertSenderChatScope(event, chatId)
-  const chat = deps.getChat(chatId)
-  if (!chat) return { ok: false, failure: { ok: false, reason: 'not-found' } }
-  if (chat.archived) return { ok: false, failure: { ok: false, reason: 'archived' } }
-  if (!chat.messages?.length) return { ok: false, failure: { ok: false, reason: 'empty' } }
-  const estimatedCharCount = deps.estimateChatMarkdownTranscriptChars(chat)
+  const resolved = resolveTranscriptRequest(deps, event, chatId, scopeRaw, label)
+  if (!resolved.ok) return resolved
+  return prepareResolvedChatMarkdownTranscript(deps, resolved.request, tooLargeNote)
+}
+
+function prepareResolvedChatMarkdownTranscript(
+  deps: SidebarHandlersDeps,
+  request: TranscriptRequest,
+  tooLargeNote: string
+): MarkdownTranscriptPreparation {
+  const estimatedCharCount = deps.estimateChatMarkdownTranscriptChars(request.scoped.chat)
   if (estimatedCharCount > 2_000_000) {
     return {
       ok: false,
       failure: {
         ok: false,
         reason: 'too-large',
-        messageCount: chat.messages.length,
+        messageCount: request.scoped.chat.messages.length,
         charCount: estimatedCharCount,
         omissions: [tooLargeNote]
       }
     }
   }
-  const workspace = chat.workspaceId
-    ? deps.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) || null
-    : null
-  const built = deps.buildChatMarkdownTranscript(chat, {
-    workspace,
-    homeDir: deps.homedir()
-  })
+  const built = deps.buildChatMarkdownTranscript(request.scoped.chat, request.options)
   if (!built.markdown.trim()) return { ok: false, failure: { ok: false, reason: 'empty' } }
   if (built.charCount > 2_000_000) {
     return {
@@ -244,7 +339,7 @@ function prepareChatMarkdownTranscript(
       }
     }
   }
-  return { ok: true, chat, built }
+  return { ok: true, request, built }
 }
 
 export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
@@ -307,11 +402,12 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
 
   ipcMain.handle(
     'copy-chat-markdown-transcript',
-    async (event, chatId: string): Promise<CopyChatMarkdownTranscriptResult> => {
+    async (event, chatId: string, scope?: unknown): Promise<CopyChatMarkdownTranscriptResult> => {
       const prepared = prepareChatMarkdownTranscript(
         deps,
         event,
         chatId,
+        scope,
         'copy-chat-markdown-transcript',
         'transcript too large for clipboard copy'
       )
@@ -333,19 +429,71 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
    */
   ipcMain.handle(
     'download-chat-markdown-transcript',
-    async (event, chatId: string): Promise<DownloadChatMarkdownTranscriptResult> => {
-      const prepared = prepareChatMarkdownTranscript(
+    async (
+      event,
+      chatId: string,
+      scope?: unknown
+    ): Promise<DownloadChatMarkdownTranscriptResult> => {
+      const resolved = resolveTranscriptRequest(
         deps,
         event,
         chatId,
-        'download-chat-markdown-transcript',
+        scope,
+        'download-chat-markdown-transcript'
+      )
+      if (!resolved.ok) return resolved.failure
+      const { request } = resolved
+
+      // The explicit entire-task option is main-owned from dialog to disk. No
+      // Markdown string crosses IPC or ever exists in renderer memory. Calls
+      // from older renderers omit scope and retain the legacy Blob behavior.
+      if (request.scopeProvided && request.scope.kind === 'entire-task') {
+        const fileName = chatTranscriptFileName(request.scoped.chat.title)
+        let selection: { canceled: boolean; filePath?: string }
+        try {
+          selection = await deps.showSaveDialog(request.window, {
+            title: 'Download entire task transcript',
+            buttonLabel: 'Download',
+            defaultPath: fileName,
+            filters: [{ name: 'Markdown', extensions: ['md'] }]
+          })
+        } catch {
+          return { ok: false, reason: 'save-failed' }
+        }
+        if (selection.canceled) return { ok: false, reason: 'cancelled' }
+        if (!selection.filePath) return { ok: false, reason: 'save-failed' }
+        try {
+          const streamed = await deps.writeChatMarkdownTranscriptToFile(
+            request.scoped.chat,
+            request.options,
+            selection.filePath
+          )
+          return {
+            ok: true,
+            streamed: true,
+            fileName: basename(selection.filePath),
+            messageCount: streamed.messageCount,
+            charCount: streamed.charCount,
+            omissions: streamed.omissions
+          }
+        } catch {
+          return { ok: false, reason: 'save-failed' }
+        }
+      }
+
+      const prepared = prepareResolvedChatMarkdownTranscript(
+        deps,
+        request,
         'transcript too large to download'
       )
       if (!prepared.ok) return prepared.failure
       return {
         ok: true,
         markdown: prepared.built.markdown,
-        fileName: chatTranscriptFileName(prepared.chat.title),
+        fileName: chatTranscriptFileName(
+          prepared.request.scoped.chat.title,
+          prepared.request.scoped.round?.ordinal
+        ),
         messageCount: prepared.built.messageCount,
         charCount: prepared.built.charCount,
         omissions: prepared.built.omissions
@@ -355,16 +503,16 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
 
   ipcMain.handle(
     'copy-chat-messages',
-    async (event, chatId: string): Promise<CopyChatMessageTranscriptResult> => {
-      if (!isAuthorizedSender(deps, event.sender)) {
-        return { ok: false, reason: 'unauthorized' }
-      }
-      deps.assertSafeChatId(chatId, 'copy-chat-messages chatId')
-      deps.assertSenderChatScope(event, chatId)
-      const chat = deps.getChat(chatId)
-      if (!chat) return { ok: false, reason: 'not-found' }
-      if (chat.archived) return { ok: false, reason: 'archived' }
-      if (!chat.messages?.length) return { ok: false, reason: 'empty' }
+    async (event, chatId: string, scope?: unknown): Promise<CopyChatMessageTranscriptResult> => {
+      const resolved = resolveTranscriptRequest(
+        deps,
+        event,
+        chatId,
+        scope,
+        'copy-chat-messages'
+      )
+      if (!resolved.ok) return resolved.failure
+      const chat = resolved.request.scoped.chat
       const estimatedCharCount = deps.estimateChatMessageTranscriptChars(chat)
       if (estimatedCharCount > 2_000_000) {
         return {

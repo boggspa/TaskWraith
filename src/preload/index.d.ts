@@ -88,6 +88,7 @@ import {
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
+import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
   LiveSteeringCancelRequest,
@@ -568,10 +569,20 @@ type CopyChatMarkdownTranscriptResult =
     }
   | {
       ok: false
-      reason: 'not-found' | 'archived' | 'empty' | 'too-large' | 'unauthorized'
+      reason:
+        | 'not-found'
+        | 'archived'
+        | 'empty'
+        | 'too-large'
+        | 'unauthorized'
+        | 'invalid-scope'
+        | 'round-not-found'
+        | 'cancelled'
+        | 'save-failed'
       messageCount?: number
       charCount?: number
       omissions?: string[]
+      error?: string
     }
 
 type CopyChatMessagesResult = CopyChatMarkdownTranscriptResult
@@ -584,6 +595,15 @@ type DownloadChatMarkdownTranscriptResult =
       messageCount: number
       charCount: number
       omissions: string[]
+      streamed?: false
+    }
+  | {
+      ok: true
+      fileName: string
+      messageCount: number
+      charCount: number
+      omissions: string[]
+      streamed: true
     }
   | Extract<CopyChatMarkdownTranscriptResult, { ok: false }>
 
@@ -716,11 +736,18 @@ declare global {
       sidebarShowChatWorkspaceInFinder: (chatId: string) => Promise<SidebarPathActionResult>
       sidebarCopyChatWorkingDirectory: (chatId: string) => Promise<SidebarPathActionResult>
       sidebarCopyChatTranscriptPath: (chatId: string) => Promise<SidebarPathActionResult>
-      copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
+      copyChatMarkdownTranscript: (
+        chatId: string,
+        scope?: TranscriptExportScope
+      ) => Promise<CopyChatMarkdownTranscriptResult>
       downloadChatMarkdownTranscript: (
-        chatId: string
+        chatId: string,
+        scope?: TranscriptExportScope
       ) => Promise<DownloadChatMarkdownTranscriptResult>
-      copyChatMessages: (chatId: string) => Promise<CopyChatMessagesResult>
+      copyChatMessages: (
+        chatId: string,
+        scope?: TranscriptExportScope
+      ) => Promise<CopyChatMessagesResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',
         provider?: string

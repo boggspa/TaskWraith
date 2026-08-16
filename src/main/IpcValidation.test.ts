@@ -6,6 +6,20 @@ import { installIpcValidation, validateIpcArgs, IPC_ARGUMENT_SCHEMAS } from './I
 import { HOST_CLI_TOOL_IDS } from '../shared/hostCliToolCatalog'
 
 describe('IpcValidation', () => {
+  it('shape-gates optional transcript export scopes while preserving legacy calls', () => {
+    for (const channel of [
+      'copy-chat-markdown-transcript',
+      'download-chat-markdown-transcript',
+      'copy-chat-messages'
+    ]) {
+      expect(() => validateIpcArgs(channel, ['chat-1'])).not.toThrow()
+      expect(() =>
+        validateIpcArgs(channel, ['chat-1', { kind: 'round', roundId: 'round-1' }])
+      ).not.toThrow()
+      expect(() => validateIpcArgs(channel, ['chat-1', 'round-1'])).toThrow(/object/)
+    }
+  })
+
   it('runs renderer authorization before dispatching a validated invocation', async () => {
     type InvokeHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
     const handlers = new Map<string, InvokeHandler>()

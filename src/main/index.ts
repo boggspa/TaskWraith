@@ -972,6 +972,7 @@ import {
   estimateChatMessageTranscriptChars,
   estimateChatMarkdownTranscriptChars
 } from './TranscriptMarkdownExport'
+import { writeChatMarkdownTranscriptToFile } from './TranscriptMarkdownFileExport'
 import {
   createWorkspacePathMediaRefs,
   extractProviderImageBlocksFromRawEvent,
@@ -54516,6 +54517,8 @@ if (isGeminiMcpBridgeProcess) {
       estimateChatMarkdownTranscriptChars,
       buildChatMessageTranscript,
       estimateChatMessageTranscriptChars,
+      showSaveDialog: (window, options) => dialog.showSaveDialog(window, options),
+      writeChatMarkdownTranscriptToFile,
       assertSafeChatId,
       assertSenderWorkspaceScope: (event, workspacePath) =>
         assertRendererFilesystemScope(event, {

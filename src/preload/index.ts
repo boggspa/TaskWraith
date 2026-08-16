@@ -65,6 +65,7 @@ import type {
   GitSnapshotSubscribeResult
 } from '../main/services/GitSnapshotPublisher'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type {
   LiveSteeringCancelRequest,
   LiveSteeringCancelResult,
@@ -590,14 +591,15 @@ const api = {
     ipcRenderer.invoke('sidebar:copy-chat-working-directory', chatId),
   sidebarCopyChatTranscriptPath: (chatId: string) =>
     ipcRenderer.invoke('sidebar:copy-chat-transcript-path', chatId),
-  copyChatMarkdownTranscript: (chatId: string) =>
-    ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
-  // Returns the same handoff Markdown as the copy channel plus a
-  // thread-titled file name; the renderer saves it rather than the main
-  // process, so the clipboard is left alone.
-  downloadChatMarkdownTranscript: (chatId: string) =>
-    ipcRenderer.invoke('download-chat-markdown-transcript', chatId),
-  copyChatMessages: (chatId: string) => ipcRenderer.invoke('copy-chat-messages', chatId),
+  copyChatMarkdownTranscript: (chatId: string, scope?: TranscriptExportScope) =>
+    ipcRenderer.invoke('copy-chat-markdown-transcript', chatId, scope),
+  // Round-sized downloads return Markdown for the renderer's ordinary Blob
+  // path. Explicit entire-task downloads are streamed main-side and return
+  // metadata only, so their complete payload never crosses IPC.
+  downloadChatMarkdownTranscript: (chatId: string, scope?: TranscriptExportScope) =>
+    ipcRenderer.invoke('download-chat-markdown-transcript', chatId, scope),
+  copyChatMessages: (chatId: string, scope?: TranscriptExportScope) =>
+    ipcRenderer.invoke('copy-chat-messages', chatId, scope),
   // Phase J1 (composer unification): the picker is now cross-provider —
   // optional `provider` argument so the main process can stamp the
   // grant with the requesting provider (defaults to 'codex' for

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ipcMain } from 'electron'
+import { ipcMain, type BrowserWindow } from 'electron'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import {
   chatTranscriptFileName,
@@ -57,7 +57,7 @@ function createDeps() {
   const chat = makeChat()
   const fromWebContents = vi.fn<SidebarHandlersDeps['fromWebContents']>(() => ({
     isDestroyed: () => false
-  }))
+  }) as unknown as BrowserWindow)
   const buildChatMarkdownTranscript = vi.fn<SidebarHandlersDeps['buildChatMarkdownTranscript']>(
     () => ({
       markdown: '# Chat',
@@ -94,6 +94,16 @@ function createDeps() {
     buildChatMessageTranscript,
     estimateChatMessageTranscriptChars:
       vi.fn<SidebarHandlersDeps['estimateChatMessageTranscriptChars']>(() => 5),
+    showSaveDialog: vi.fn<SidebarHandlersDeps['showSaveDialog']>(async () => ({
+      canceled: false,
+      filePath: '/tmp/Chat 1.md'
+    })),
+    writeChatMarkdownTranscriptToFile:
+      vi.fn<SidebarHandlersDeps['writeChatMarkdownTranscriptToFile']>(async () => ({
+        messageCount: 1,
+        charCount: 100,
+        omissions: []
+      })),
     assertSafeChatId: vi.fn<SidebarHandlersDeps['assertSafeChatId']>((chatId) => String(chatId)),
     assertSenderWorkspaceScope: vi.fn<SidebarHandlersDeps['assertSenderWorkspaceScope']>(),
     assertSenderChatScope: vi.fn<SidebarHandlersDeps['assertSenderChatScope']>(),
@@ -317,6 +327,141 @@ describe('registerSidebarHandlers', () => {
     expect(deps.writeClipboardText).not.toHaveBeenCalled()
   })
 
+  it('streams an explicit entire-task download main-side without building renderer Markdown', async () => {
+    const deps = createDeps()
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('download-chat-markdown-transcript')(
+        { sender: {} },
+        'chat-1',
+        { kind: 'entire-task' }
+      )
+    ).resolves.toEqual({
+      ok: true,
+      streamed: true,
+      fileName: 'Chat 1.md',
+      messageCount: 1,
+      charCount: 100,
+      omissions: []
+    })
+    expect(deps.showSaveDialog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Download entire task transcript',
+        defaultPath: 'Chat 1.md'
+      })
+    )
+    expect(deps.writeChatMarkdownTranscriptToFile).toHaveBeenCalledWith(
+      expect.objectContaining({ appChatId: 'app-chat-1' }),
+      {
+        workspace: expect.objectContaining({ id: 'ws-1' }),
+        homeDir: '/Users/test',
+        scopeLabel: 'Entire task'
+      },
+      '/tmp/Chat 1.md'
+    )
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+    expect(deps.estimateChatMarkdownTranscriptChars).not.toHaveBeenCalled()
+  })
+
+  it('treats dismissing the entire-task save dialog as a quiet cancellation', async () => {
+    const deps = createDeps()
+    deps.showSaveDialog.mockResolvedValue({ canceled: true })
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('download-chat-markdown-transcript')(
+        { sender: {} },
+        'chat-1',
+        { kind: 'entire-task' }
+      )
+    ).resolves.toEqual({ ok: false, reason: 'cancelled' })
+    expect(deps.writeChatMarkdownTranscriptToFile).not.toHaveBeenCalled()
+  })
+
+  it('applies one round boundary to markdown, messages, and round download names', async () => {
+    const deps = createDeps()
+    deps.getChat.mockReturnValue(
+      makeChat({
+        chatKind: 'ensemble',
+        runs: [],
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Round one',
+            timestamp: '2026-08-16T10:00:00.000Z',
+            metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-1' }
+          },
+          {
+            id: 'answer-1',
+            role: 'assistant',
+            content: 'First answer',
+            timestamp: '2026-08-16T10:00:01.000Z',
+            metadata: { ensembleRoundId: 'round-1' }
+          },
+          {
+            id: 'prompt-2',
+            role: 'user',
+            content: 'Round two',
+            timestamp: '2026-08-16T10:01:00.000Z',
+            metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-2' }
+          }
+        ]
+      })
+    )
+    registerSidebarHandlers(deps)
+    const scope = { kind: 'round', roundId: 'round-1' }
+
+    await handlerFor('copy-chat-markdown-transcript')({ sender: {} }, 'chat-1', scope)
+    await handlerFor('copy-chat-messages')({ sender: {} }, 'chat-1', scope)
+    await expect(
+      handlerFor('download-chat-markdown-transcript')({ sender: {} }, 'chat-1', scope)
+    ).resolves.toMatchObject({ ok: true, fileName: 'Chat 1 - Round 1.md' })
+
+    const markdownChats = deps.buildChatMarkdownTranscript.mock.calls.map(([candidate]) =>
+      candidate.messages.map((message) => message.id)
+    )
+    expect(markdownChats).toEqual([
+      ['prompt-1', 'answer-1'],
+      ['prompt-1', 'answer-1']
+    ])
+    expect(deps.buildChatMessageTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ id: 'prompt-1' }),
+          expect.objectContaining({ id: 'answer-1' })
+        ]
+      })
+    )
+    expect(deps.buildChatMarkdownTranscript).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scopeLabel: 'Round 1 of 2' })
+    )
+  })
+
+  it('rejects malformed or stale round scopes before any export work', async () => {
+    const deps = createDeps()
+    registerSidebarHandlers(deps)
+
+    await expect(
+      handlerFor('copy-chat-markdown-transcript')(
+        { sender: {} },
+        'chat-1',
+        { kind: 'round', roundId: ' missing ' }
+      )
+    ).resolves.toEqual({ ok: false, reason: 'invalid-scope' })
+    await expect(
+      handlerFor('copy-chat-markdown-transcript')(
+        { sender: {} },
+        'chat-1',
+        { kind: 'round', roundId: 'missing' }
+      )
+    ).resolves.toEqual({ ok: false, reason: 'round-not-found' })
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+  })
+
   it('applies the same scope, archive and size gates to download as to copy', async () => {
     const deps = createDeps()
     deps.estimateChatMarkdownTranscriptChars.mockReturnValue(2_000_001)
@@ -414,5 +559,12 @@ describe('chatTranscriptFileName', () => {
 
   it('keeps non-ASCII titles instead of blanking them', () => {
     expect(chatTranscriptFileName('日本語のスレッド')).toBe('日本語のスレッド.md')
+  })
+
+  it('reserves a readable round suffix when the title is long', () => {
+    const name = chatTranscriptFileName('a'.repeat(200), 42)
+
+    expect(name.endsWith(' - Round 42.md')).toBe(true)
+    expect(name.length).toBe(83)
   })
 })
