@@ -41,7 +41,7 @@ const STATIC_PROVIDER_COLORS = {
   claude: '#B16105',
   kimi: '#0073E6',
   grok: '#757575',
-  cursor: '#8D7312',
+  cursor: '#8C7508',
   ollama: '#1A8562',
   antigravity: '#308713',
   ensemble: '#986781',
@@ -81,7 +81,7 @@ const IOS_PROVIDER_CASES = [
   ['case "claude"', '#B16105'],
   ['case "kimi"', '#0073E6'],
   ['case "grok"', '#757575'],
-  ['case "cursor"', '#8D7312'],
+  ['case "cursor"', '#8C7508'],
   ['case "ollama"', '#1A8562'],
   ['case "antigravity", "google"', '#308713'],
   ['case "ensemble"', '#986781'],
@@ -103,7 +103,7 @@ const PROVIDER_RGB_TRIPLETS = {
   claude: '177 97 5',
   kimi: '0 115 230',
   grok: '117 117 117',
-  cursor: '141 115 18',
+  cursor: '140 117 8',
   ollama: '26 133 98',
   ensemble: '152 103 129'
 } as const

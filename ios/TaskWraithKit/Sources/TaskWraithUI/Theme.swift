@@ -162,7 +162,7 @@ public enum TWTheme {
         case "codex", "openai": return 0x705AFF
         case "claude": return 0xB16105
         case "kimi": return 0x0073E6
-        case "cursor": return 0x8D7312
+        case "cursor": return 0x8C7508
         case "ollama": return 0x1A8562
         case "antigravity", "google": return 0x308713
         case "pi": return 0x68768C

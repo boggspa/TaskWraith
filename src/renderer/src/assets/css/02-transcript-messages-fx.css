@@ -142,7 +142,7 @@
 }
 
 .app-transcript.provider-cursor {
-  --agent-accent-rgb: 141 115 18;
+  --agent-accent-rgb: 140 117 8;
   --transcript-provider-color: var(--provider-cursor-color);
 }
 

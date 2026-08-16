@@ -26,7 +26,7 @@ const ENSEMBLE_SPECTRUM_STOPS = [
   ['.267', '#E22B17', 'openbmb'],
   ['.333', '#B16105', 'claude'],
   ['.40', '#BE5809', 'deep-reinforce-ornith'],
-  ['.467', '#8D7312', 'cursor'],
+  ['.467', '#8C7508', 'cursor'],
   ['.533', '#538200', 'nvidia'],
   ['.60', '#308713', 'antigravity'],
   ['.667', '#1A8562', 'ollama'],

@@ -211,8 +211,8 @@
   /* Grok — balanced monochrome identity. This mid-gray is the integer-sRGB
    * point nearest equal WCAG contrast on pure white and pure black. */
   --provider-grok-color: #757575;
-  /* Cursor (Composer 2.5) — mustard yellow (leans yellow, not orange). */
-  --provider-cursor-color: #8D7312;
+  /* Cursor (Composer 2.5) — saturated golden yellow (leans yellow, not orange). */
+  --provider-cursor-color: #8C7508;
   /* Ollama / Local — green-teal for on-device inference. */
   --provider-ollama-color: #1A8562;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */

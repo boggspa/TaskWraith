@@ -145,7 +145,7 @@
 }
 
 .activity-progress-note[data-provider="cursor"] {
-  --activity-progress-note-thinking-accent: var(--provider-cursor-color, #8d7312);
+  --activity-progress-note-thinking-accent: var(--provider-cursor-color, #8c7508);
 }
 
 .activity-progress-note[data-provider="ollama"] {
@@ -448,7 +448,7 @@
 .compact-tool-trace-provider.provider-claude { color: var(--provider-claude-color, #b16105); }
 .compact-tool-trace-provider.provider-kimi   { color: var(--provider-kimi-color,   #0073e6); }
 .compact-tool-trace-provider.provider-grok   { color: var(--provider-grok-color,   #757575); }
-.compact-tool-trace-provider.provider-cursor { color: var(--provider-cursor-color, #8d7312); }
+.compact-tool-trace-provider.provider-cursor { color: var(--provider-cursor-color, #8c7508); }
 .compact-tool-trace-provider.provider-ollama { color: var(--provider-ollama-color, #1a8562); }
 
 /* Shared clickable file reference (compact trace + activity rows). A link-

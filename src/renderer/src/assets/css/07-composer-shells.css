@@ -3618,7 +3618,7 @@
 .child-agent-thread[data-provider='gemini'] { --subagent-provider-color: var(--provider-gemini-color, #346eec); }
 .child-agent-thread[data-provider='kimi'] { --subagent-provider-color: var(--provider-kimi-color, #0073e6); }
 .child-agent-thread[data-provider='grok'] { --subagent-provider-color: var(--provider-grok-color, #757575); }
-.child-agent-thread[data-provider='cursor'] { --subagent-provider-color: var(--provider-cursor-color, #8d7312); }
+.child-agent-thread[data-provider='cursor'] { --subagent-provider-color: var(--provider-cursor-color, #8c7508); }
 .child-agent-thread[data-provider='ollama'] { --subagent-provider-color: var(--provider-ollama-color, #1a8562); }
 .child-agent-thread[data-provider='mistral'] { --subagent-provider-color: var(--provider-mistral-color); }
 .child-agent-thread[data-provider='muse'] { --subagent-provider-color: var(--provider-muse-color); }
