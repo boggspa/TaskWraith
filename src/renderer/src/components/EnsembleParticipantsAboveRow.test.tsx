@@ -1053,6 +1053,67 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('status-answered')
   })
 
+  it('keeps selection separate while a serial speaker re-enters after fan-out', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'work-1', provider: 'codex', role: 'Work1', order: 1 }),
+      makeParticipant({ id: 'advisor', provider: 'codex', role: 'Advisor', order: 2 })
+    ])
+    chat.ensemble!.activeRound = {
+      roundId: 'round-continuous',
+      status: 'running',
+      prompt: 'Continue the mission.',
+      startedAt: '2026-08-16T16:00:00.000Z',
+      activeParticipantId: 'advisor',
+      orchestrationMode: 'continuous',
+      participants: [
+        {
+          participantId: 'work-1',
+          provider: 'codex',
+          role: 'Work1',
+          order: 1,
+          status: 'answered'
+        },
+        {
+          participantId: 'advisor',
+          provider: 'codex',
+          role: 'Advisor',
+          order: 2,
+          status: 'running'
+        }
+      ],
+      lanes: {
+        'lane-round-continuous-advisor-1': {
+          laneId: 'lane-round-continuous-advisor-1',
+          participantId: 'advisor',
+          provider: 'codex',
+          status: 'completed',
+          intent: 'read',
+          startedAt: '2026-08-16T16:00:00.000Z',
+          endedAt: '2026-08-16T16:01:00.000Z'
+        }
+      }
+    }
+
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId="work-1"
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    const advisorStart = html.indexOf('data-participant-id="advisor"')
+    const work1Markup = html.slice(0, advisorStart)
+    const advisorMarkup = html.slice(advisorStart)
+
+    expect(work1Markup).toContain('is-selected')
+    expect(work1Markup).not.toContain('is-live-shimmer')
+    expect(advisorMarkup).not.toContain('is-selected')
+    expect(advisorMarkup).toContain('is-live-shimmer')
+    expect(advisorMarkup).toContain('status-speaking')
+    expect(advisorMarkup).toContain('aria-label="speaking"')
+  })
+
   it('shows a Skip action for active read fan-out lanes without an active speaker', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),

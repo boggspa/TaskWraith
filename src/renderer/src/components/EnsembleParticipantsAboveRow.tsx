@@ -74,12 +74,12 @@ import { buildParticipantTokenChipTooltipLine } from '../lib/participantTokenChi
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
+import { deriveEnsembleParticipantChipStatus } from '../lib/ensembleParticipantChipStatus'
 import {
   resolveEffectiveRoster,
   isExternalSeat,
   type ExternalSeatInput
 } from '../../../shared/effectiveEnsembleRoster'
-import { isLaneFailureSupersededBySeatChange } from '../../../shared/ensembleSeatFailureClear'
 import {
   MIN_LIVE_ENSEMBLE_PARTICIPANTS,
   resolveEnsembleCollapseTarget
@@ -576,27 +576,6 @@ export function buildEnsembleParticipantAddition(
   }
 }
 
-function laneStatusToParticipantLabel(status: ConcurrentLane['status']): string {
-  switch (status) {
-    case 'pending':
-      return 'idle'
-    case 'running':
-      return 'speaking'
-    case 'completed':
-      return 'answered'
-    case 'failed':
-      return 'failed'
-    case 'cancelled':
-      return 'cancelled'
-    case 'blocked':
-      return 'failed'
-    case 'awaiting-approval':
-      return 'running'
-    default:
-      return 'idle'
-  }
-}
-
 function isLiveFanoutLane(lane: ConcurrentLane): boolean {
   return (
     lane.status === 'pending' ||
@@ -605,23 +584,6 @@ function isLiveFanoutLane(lane: ConcurrentLane): boolean {
     lane.status === 'awaiting-approval'
   )
 }
-
-function latestLaneForParticipant(
-  lanes: Record<string, ConcurrentLane> | undefined,
-  participantId: string
-): ConcurrentLane | undefined {
-  const matches = Object.values(lanes || {}).filter((lane) => lane.participantId === participantId)
-  return (
-    matches.find(
-      (lane) =>
-        lane.status === 'running' ||
-        lane.status === 'pending' ||
-        lane.status === 'awaiting-approval' ||
-        lane.status === 'blocked'
-    ) || matches[matches.length - 1]
-  )
-}
-
 
 function ParticipantLeadingRoleIcon({
   stageRole,
@@ -1253,22 +1215,13 @@ export function EnsembleParticipantsAboveRow({
         data-participant-count={totalSeatCount}
       >
         {participants.map((participant, participantIndex) => {
-          const state = activeRound?.participants.find(
-            (item) => item.participantId === participant.id
-          )
-          const lane = latestLaneForParticipant(activeRound?.lanes, participant.id)
-          // An authoritative seat change after this lane failed marks the
-          // failure superseded (shared/ensembleSeatFailureClear.ts) — fall
-          // back to the participant's (cleared) round state instead of
-          // painting a warning about a config that no longer exists.
-          const laneFailureSuperseded = lane ? isLaneFailureSupersededBySeatChange(lane) : false
-          const laneStatusLabel =
-            lane && !laneFailureSuperseded ? laneStatusToParticipantLabel(lane.status) : null
-          const active =
-            activeRound?.activeParticipantId === participant.id ||
-            lane?.status === 'running' ||
-            lane?.status === 'awaiting-approval'
-          const statusLabel = laneStatusLabel || (active ? 'speaking' : state?.status || 'idle')
+          const {
+            active,
+            lane,
+            laneFailureSuperseded,
+            participantState: state,
+            statusLabel
+          } = deriveEnsembleParticipantChipStatus(activeRound, participant.id)
           const isSelected = participant.id === selectedParticipantId
           // 1.0.4-AD — surface the pre-flight probe's failure reason
           // (or any subsequent failure reason stamped on the round
