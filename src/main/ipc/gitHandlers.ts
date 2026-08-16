@@ -24,7 +24,7 @@ import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
 import type {
   GitUnpushedCommitPageRequest,
   GitUnpushedCommitStack
-} from '../services/GitCommitStack'
+} from '../../shared/gitUnpushedCommits'
 import type {
   GitCommitGroupPullRequestInput,
   GitCommitGroupPullRequestResult,

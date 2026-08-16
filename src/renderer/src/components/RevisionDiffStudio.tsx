@@ -3,7 +3,7 @@ import type { GitRevisionDiffResult, GitRevisionDiffTarget } from '../../../main
 import type {
   GitUnpushedCommit,
   GitUnpushedCommitStack
-} from '../../../main/services/GitCommitStack'
+} from '../../../shared/gitUnpushedCommits'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { ChatRecord } from '../../../main/store/types'
 import { taskWraithCommitGroupHashes } from '../../../shared/gitPullRequestGroups'

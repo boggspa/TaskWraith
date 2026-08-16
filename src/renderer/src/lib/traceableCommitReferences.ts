@@ -1,4 +1,4 @@
-import type { GitUnpushedCommit } from '../../../main/services/GitCommitStack'
+import type { GitUnpushedCommit } from '../../../shared/gitUnpushedCommits'
 
 export interface TraceableCommitIndex {
   complete: boolean

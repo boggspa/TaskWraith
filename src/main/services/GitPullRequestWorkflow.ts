@@ -7,7 +7,7 @@ import type {
   GitPrSummary,
   GitRepositorySnapshot
 } from './GitService'
-import type { GitUnpushedCommit } from './GitCommitStack'
+import type { GitUnpushedCommit } from '../../shared/gitUnpushedCommits'
 import { isSafeGitRemoteName } from './GitCommandSecurity'
 import {
   taskWraithCommitGroupHashes,

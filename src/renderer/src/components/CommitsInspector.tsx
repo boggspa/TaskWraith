@@ -3,7 +3,7 @@ import type { ChatRecord } from '../../../main/store/types'
 import type {
   GitUnpushedCommit,
   GitUnpushedCommitStack
-} from '../../../main/services/GitCommitStack'
+} from '../../../shared/gitUnpushedCommits'
 import type { GitPullRequestWorkspaceSnapshot } from '../../../main/services/GitPullRequestWorkflow'
 import type { GitPrSummary } from '../../../main/services/GitService'
 import type { CloseoutCommit } from '../lib/taskWraithCloseoutMessage'

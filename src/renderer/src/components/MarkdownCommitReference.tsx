@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
-import type { GitUnpushedCommit } from '../../../main/services/GitCommitStack'
+import type { GitUnpushedCommit } from '../../../shared/gitUnpushedCommits'
 import {
   buildTraceableCommitIndex,
   resolveTraceableCommitReference

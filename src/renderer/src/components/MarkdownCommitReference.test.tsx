@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { GitUnpushedCommit } from '../../../main/services/GitCommitStack'
+import type { GitUnpushedCommit } from '../../../shared/gitUnpushedCommits'
 import { MarkdownCommitReference } from './MarkdownCommitReference'
 import { MarkdownCommitReferenceContext } from './MarkdownCommitReferenceContext'
 import { MarkdownMessage } from './MarkdownMessage'

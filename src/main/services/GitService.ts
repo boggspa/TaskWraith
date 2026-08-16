@@ -34,11 +34,11 @@ import {
   summarizeGitCommitActivity,
   type GitWorkspaceStats
 } from './GitWorkspaceStats'
-import {
-  readGitUnpushedCommitStack,
-  type GitUnpushedCommitPageRequest,
-  type GitUnpushedCommitStack
-} from './GitCommitStack'
+import { readGitUnpushedCommitStack } from './GitCommitStack'
+import type {
+  GitUnpushedCommitPageRequest,
+  GitUnpushedCommitStack
+} from '../../shared/gitUnpushedCommits'
 import {
   createGitCommitGroupPullRequest,
   manageGitPullRequest,

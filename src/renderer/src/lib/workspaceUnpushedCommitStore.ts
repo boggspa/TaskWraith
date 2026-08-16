@@ -3,7 +3,7 @@ import {
   DEFAULT_GIT_UNPUSHED_COMMIT_PAGE_SIZE,
   type GitUnpushedCommitPageRequest,
   type GitUnpushedCommitStack
-} from '../../../main/services/GitCommitStack'
+} from '../../../shared/gitUnpushedCommits'
 import type { GitResult } from '../../../main/services/GitService'
 import type { GitSnapshotChangedPayload } from '../../../main/services/GitSnapshotPublisher'
 import { normalizeWorkspacePath } from './composerWorktreeSelection'

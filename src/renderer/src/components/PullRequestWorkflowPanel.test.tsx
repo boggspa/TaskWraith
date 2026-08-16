@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { GitUnpushedCommit } from '../../../main/services/GitCommitStack'
+import type { GitUnpushedCommit } from '../../../shared/gitUnpushedCommits'
 import type { GitPrSummary } from '../../../main/services/GitService'
 import { withTaskWraithCommitGroup } from '../../../shared/gitPullRequestGroups'
 import {
