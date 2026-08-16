@@ -27,7 +27,7 @@ function baseInput(participants: EnsembleRoundParticipantState[], over: Record<s
     chatId: 'chat-1',
     roundId: 'round-1',
     participants,
-    hasSynthesizer: false,
+    hasCompletedSynthesis: false,
     createdAt: '2026-05-31T00:00:00.000Z',
     makeId: (kind: string) => `sig-${kind}`,
     ...over
@@ -145,7 +145,7 @@ describe('looping', () => {
 })
 
 describe('disagreement-unresolved', () => {
-  it('fires when >= 2 answered and no synthesizer', () => {
+  it('fires when >= 2 answered and no completed synthesis', () => {
     const out = detectComplexityEscalation(
       baseInput([p({ status: 'answered', participantId: 'a' }), p({ status: 'answered', participantId: 'b' })])
     )
@@ -154,10 +154,10 @@ describe('disagreement-unresolved', () => {
     expect(dis!.recommendedAction).toBe('call-synthesizer')
   })
 
-  it('does NOT fire when a synthesizer is configured', () => {
+  it('does NOT fire when a structured synthesis completed', () => {
     const out = detectComplexityEscalation(
       baseInput([p({ status: 'answered', participantId: 'a' }), p({ status: 'answered', participantId: 'b' })], {
-        hasSynthesizer: true
+        hasCompletedSynthesis: true
       })
     )
     expect(out.some((s) => s.kind === 'disagreement-unresolved')).toBe(false)

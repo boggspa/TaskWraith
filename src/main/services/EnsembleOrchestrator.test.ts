@@ -5113,8 +5113,28 @@ Next action:
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     const roundId = harness.chat.ensemble!.activeRound!.roundId
+    expect(harness.chat.ensemble?.activeRound?.synthesisStatus).toBe('completed')
     expect(harness.chat.ensemble?.lastRoundSummary).toContain('Capture in finishRound')
     expect(harness.chat.ensemble?.roundSummaries?.[roundId]?.summary).toContain('Next action:')
+  })
+
+  it('captures a deterministic authority synthesizer for continuous rounds', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate this mission.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.chat.ensemble?.synthesizerParticipantId).toBeUndefined()
+    expect(harness.chat.ensemble?.activeRound).toMatchObject({
+      synthesizerParticipantId: 'claude',
+      synthesisStatus: 'pending'
+    })
   })
 
   it('threads the captured summary into the next round prompt', async () => {

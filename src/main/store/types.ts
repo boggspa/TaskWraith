@@ -1242,6 +1242,8 @@ export interface EnsembleRoundTurnTransition {
   startedAt: string
 }
 
+export type EnsembleRoundSynthesisStatus = 'pending' | 'completed' | 'unresolved' | 'not-required'
+
 export interface EnsembleRoundState {
   roundId: string
   status: 'running' | 'completed' | 'cancelled' | 'failed'
@@ -1253,6 +1255,12 @@ export interface EnsembleRoundState {
   turnTransition?: EnsembleRoundTurnTransition
   /** User-addressed single-seat scope captured for a targeted/DM round. */
   dmTargetParticipantId?: string
+  /** Foreground synthesis owner captured for this round. Mutable roster or
+   * config changes cannot rewrite who was responsible for convergence. */
+  synthesizerParticipantId?: string
+  /** Main-derived synthesis lifecycle. `completed` requires a captured
+   * structured round summary; merely configuring an owner is not proof. */
+  synthesisStatus?: EnsembleRoundSynthesisStatus
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
@@ -1567,7 +1575,7 @@ export interface BlackboardEvictionTombstone {
 /** M5 — what a complexity-escalation signal is flagging.
  * - `stuck`                    : round completed but no participant produced an answer
  * - `looping`                  : round exhausted its handoff budget without returning to the user
- * - `disagreement-unresolved`  : multiple answers, no synthesizer to reconcile them
+ * - `disagreement-unresolved`  : multiple answers, no completed synthesis to reconcile them
  * - `tool-error-cluster`       : a cluster of participants failed / were unreachable */
 export type ComplexityEscalationKind =
   | 'stuck'
@@ -1575,9 +1583,9 @@ export type ComplexityEscalationKind =
   | 'disagreement-unresolved'
   | 'tool-error-cluster'
 
-/** M5 — the orchestrator's *recommended* response. Advisory only: the
- * orchestrator NEVER auto-acts on a signal — the renderer surfaces these as
- * chips and the user (or a future policy gate) decides. */
+/** M5 — the orchestrator's recommended remediation. A recommendation never
+ * grants authority; policy may take only bounded actions already inside the
+ * round's user-approved participant and permission scope. */
 export type ComplexityEscalationAction = 'extend-rounds' | 'call-synthesizer' | 'pause-for-user'
 
 /** M5 — a single complexity-escalation signal emitted at round end by the
@@ -1910,9 +1918,9 @@ export interface EnsembleConfig {
   /**
    * M5 (1.0.7) — complexity-escalation signals emitted by the orchestrator
    * heuristic at round end (stuck / looping / disagreement-unresolved /
-   * tool-error-cluster). Events ONLY — the orchestrator never auto-acts on
-   * them; the renderer surfaces them as advisory chips with a recommended
-   * action. Capped to the most recent few. See
+   * tool-error-cluster). `disagreement-unresolved` blocks a Green completion;
+   * the others retain their existing terminal severity. Capped to the most
+   * recent few. See
    * src/main/escalation/ComplexityEscalation.ts.
    */
   escalationSignals?: ComplexityEscalationSignal[]

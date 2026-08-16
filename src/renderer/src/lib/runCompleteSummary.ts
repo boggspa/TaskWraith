@@ -673,9 +673,8 @@ export const buildEnsembleRoundSummaryRows = (
  * Deliberately NOT ensemble-specific — `complete`, `cancelled`,
  * `awaiting-answer` and `exit-failure` all resolve for a solo
  * run; the surfaced escalation kinds are the ensemble-only
- * additions. `disagreement-unresolved` remains an advisory signal
- * but is deliberately excluded here: multiple answers without a
- * synthesizer is not evidence that the task failed.
+ * additions. `disagreement-unresolved` is a blocker because parallel
+ * answers without a captured synthesis have not converged.
  * ============================================================ */
 
 /**
@@ -687,10 +686,7 @@ export const buildEnsembleRoundSummaryRows = (
  */
 export type RunCompleteStatusTone = 'neutral' | 'warning' | 'danger'
 
-export type RunCompleteBlockerKind = Exclude<
-  ComplexityEscalationKind,
-  'disagreement-unresolved'
->
+export type RunCompleteBlockerKind = ComplexityEscalationKind
 
 export type RunCompleteStatusKind =
   /** Exit 0, nothing flagged. */
@@ -735,6 +731,7 @@ const STATUS_LABEL: Record<RunCompleteStatusKind, string> = {
   // Sentence case: this string now sits in the card's title slot alongside
   // "Task complete", where Title Case read as a different typographic voice.
   looping: 'Handoff/turns exhausted',
+  'disagreement-unresolved': 'Synthesis unresolved',
   'tool-error-cluster': 'Tool errors clustered'
 }
 
@@ -754,7 +751,8 @@ const GLOBAL_STATUS_LABEL: Partial<Record<RunCompleteStatusKind, string>> = {
 const BLOCKER_SEVERITY: Record<RunCompleteBlockerKind, number> = {
   stuck: 4,
   'tool-error-cluster': 3,
-  looping: 2
+  looping: 2,
+  'disagreement-unresolved': 1
 }
 
 function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRound']): string {
@@ -777,11 +775,6 @@ function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRoun
  * originating `roundId`), severity-ordered worst-first and de-duplicated by
  * kind. Returns [] when there's no active round or no signals.
  *
- * `disagreement-unresolved` is intentionally filtered from this presentation:
- * multiple answers without a synthesizer can be useful parallel work and is
- * not reliable evidence that the task failed. The signal remains persisted for
- * advisory/telemetry consumers. Other kinds remain eligible to title the card.
- *
  * Pure + side-effect-free so the mapping is unit-tested without a render
  * harness.
  */
@@ -793,7 +786,6 @@ export const buildRunCompleteBlockers = (chat: ChatRecord | null): RunCompleteBl
   const blockers: RunCompleteBlocker[] = []
   for (const signal of signals as ComplexityEscalationSignal[]) {
     if (signal.roundId !== round.roundId) continue
-    if (signal.kind === 'disagreement-unresolved') continue
     if (seenKinds.has(signal.kind)) continue
     seenKinds.add(signal.kind)
     blockers.push({

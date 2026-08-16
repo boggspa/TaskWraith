@@ -512,12 +512,12 @@ describe('buildRunCompleteBlockers', () => {
     expect(blockers).toEqual([{ kind: 'stuck', detail: 'first' }])
   })
 
-  it('filters disagreement-unresolved from the title while keeping tool errors', () => {
+  it('surfaces unresolved synthesis as a completion blocker', () => {
     expect(
       buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'disagreement-unresolved' })])).map(
         (b) => b.kind
       )
-    ).toEqual([])
+    ).toEqual(['disagreement-unresolved'])
     expect(
       buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'tool-error-cluster' })])).map(
         (b) => b.kind
@@ -537,7 +537,8 @@ describe('buildRunCompleteBlockers', () => {
     expect(blockers.map((b) => b.kind)).toEqual([
       'stuck',
       'tool-error-cluster',
-      'looping'
+      'looping',
+      'disagreement-unresolved'
     ])
   })
 

@@ -185,6 +185,44 @@ describe('projectSidebarTerminalOutcome', () => {
       )
     ).toMatchObject({ source: 'round', tone: 'success' })
   })
+
+  it('does not paint a round Green when synthesis remains unresolved', () => {
+    const ensembleChat = chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 4,
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'completed',
+          prompt: 'Go',
+          startedAt: ISO_START,
+          endedAt: ISO_END,
+          synthesisStatus: 'unresolved',
+          participants: []
+        },
+        escalationSignals: [
+          {
+            id: 'signal-synthesis',
+            chatId: 'chat-1',
+            roundId: 'round-1',
+            kind: 'disagreement-unresolved',
+            evidence: 'Two answers were not reconciled.',
+            recommendedAction: 'call-synthesizer',
+            createdAt: ISO_END
+          }
+        ],
+        updatedAt: ISO_END
+      },
+      runs: [run({ status: 'success' })]
+    })
+
+    expect(projectSidebarTerminalOutcome(ensembleChat)).toMatchObject({
+      source: 'round',
+      tone: 'failure'
+    })
+  })
 })
 
 describe('sidebar terminal outcome acknowledgements', () => {

@@ -5,11 +5,11 @@
  * calls `detectComplexityEscalation` once a round finishes; any signals are
  * appended to `chat.ensemble.escalationSignals` and broadcast to the renderer.
  *
- * Design intent (blueprint M5): emit EVENTS ONLY. Nothing here acts on a
- * signal — each carries a `recommendedAction` the renderer renders as an
- * advisory chip, and the user (or a future policy gate) decides. Kept pure so
- * the four heuristics are exhaustively unit-testable without an orchestrator
- * harness; ids are injected via `makeId` so there's no clock/random dependence.
+ * This module emits events only. Policy may attempt bounded remediation before
+ * calling it, while this detector records the terminal truth that remains.
+ * Kept pure so the four heuristics are exhaustively unit-testable without an
+ * orchestrator harness; ids are injected via `makeId` so there's no
+ * clock/random dependence.
  */
 import type {
   ComplexityEscalationAction,
@@ -38,8 +38,8 @@ export interface DetectEscalationInput {
   /** Handoffs consumed this round (continuous mode). */
   continuationHops?: number
   maxContinuationHops?: number
-  /** Whether the ensemble has a synthesizer participant configured. */
-  hasSynthesizer: boolean
+  /** Whether a structured synthesis was actually captured for this round. */
+  hasCompletedSynthesis: boolean
   createdAt: string
   /** Deterministic id factory — called with the signal kind. */
   makeId: (kind: ComplexityEscalationKind) => string
@@ -135,15 +135,14 @@ export function detectComplexityEscalation(
     )
   }
 
-  // 4. disagreement-unresolved — multiple parallel answers with no synthesizer
-  // to reconcile them. The recommended action is to add a synthesizer rather
-  // than pause.
-  if (!input.hasSynthesizer && answered.length >= 2) {
+  // 4. disagreement-unresolved — multiple parallel answers without a captured
+  // synthesis. A configured seat is intent, not evidence of convergence.
+  if (!input.hasCompletedSynthesis && answered.length >= 2) {
     signals.push(
       signal(
         input,
         'disagreement-unresolved',
-        `${answered.length} participants answered with no synthesizer configured to reconcile them.`,
+        `${answered.length} participants answered without a completed synthesis to reconcile them.`,
         'call-synthesizer'
       )
     )

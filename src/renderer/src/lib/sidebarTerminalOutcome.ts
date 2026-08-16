@@ -108,7 +108,12 @@ const TERMINAL_RUN_STATUSES = new Set([
   'success_with_warnings'
 ])
 
-const FAILURE_BLOCKER_KINDS = new Set(['looping', 'stuck', 'tool-error-cluster'])
+const FAILURE_BLOCKER_KINDS = new Set([
+  'looping',
+  'stuck',
+  'tool-error-cluster',
+  'disagreement-unresolved'
+])
 
 function latestSidebarRun(chat: ChatRecord): ChatRun | undefined {
   return (chat as Partial<ChatListItem>).lastRun || chat.runs?.[chat.runs.length - 1]

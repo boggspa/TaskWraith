@@ -55,6 +55,10 @@ import {
   configuredEnsembleCaptainParticipantIds,
   resolveActingCaptainParticipantId
 } from '../EnsembleAuthorityResolution'
+import {
+  electRoundSynthesizer,
+  resolveRoundSynthesisStatus
+} from '../EnsembleSynthesisLifecycle'
 import { currentEnsembleRuntimeInstanceId } from '../EnsembleRuntimeIdentity'
 import type {
   ActiveGoal,
@@ -15134,12 +15138,31 @@ export class EnsembleOrchestrator {
       secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
     })
     const secondInCommandParticipantId = captainParticipantIds[0]
+    const configuredSynthesizerParticipantId =
+      resolveForegroundSynthesizerParticipantId(chat.ensemble)
+    const shouldCaptureRoundSynthesizer =
+      Boolean(configuredSynthesizerParticipantId) || orchestrationMode === 'continuous'
+    const roundSynthesizer =
+      shouldCaptureRoundSynthesizer
+        ? electRoundSynthesizer({
+            participants: ordered,
+            configuredParticipantId: configuredSynthesizerParticipantId,
+            bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+            captainParticipantIds
+          })
+        : undefined
     const round: EnsembleRoundState = {
       roundId,
       status: 'running',
       prompt,
       startedAt,
       ...(dmTargetParticipant ? { dmTargetParticipantId: dmTargetParticipant.id } : {}),
+      ...(roundSynthesizer
+        ? {
+            synthesizerParticipantId: roundSynthesizer.participantId,
+            synthesisStatus: 'pending' as const
+          }
+        : { synthesisStatus: 'not-required' as const }),
       orchestrationMode,
       continuationHops: 0,
       maxContinuationHops,
@@ -20512,6 +20535,30 @@ export class EnsembleOrchestrator {
           queuedPromptEntries: undefined
         }
       : this.queuedPromptFields(options.queuedPromptEntries || [])
+    const nextRoundParticipants = activeRound.participants.map((participant) =>
+      participant.status === 'idle'
+        ? {
+            ...participant,
+            status: status === 'cancelled' ? ('cancelled' as const) : ('skipped' as const),
+            reason:
+              status === 'cancelled'
+                ? 'Round cancelled before this participant spoke.'
+                : 'Round superseded before this participant spoke.',
+            endedAt
+          }
+        : participant
+    )
+    const summaryRecord =
+      status === 'completed'
+        ? findTerminalSynthesizerRoundSummary({
+            messages: chat.messages,
+            roundId,
+            synthesizerParticipantId:
+              activeRound.synthesizerParticipantId ||
+              resolveForegroundSynthesizerParticipantId(chat.ensemble),
+            capturedAt: endedAt
+          })
+        : null
     const nextRound: EnsembleRoundState = {
       ...activeRound,
       status,
@@ -20519,29 +20566,16 @@ export class EnsembleOrchestrator {
       turnTransition: undefined,
       ...persistedQueueFields,
       endedAt,
-      participants: activeRound.participants.map((participant) =>
-        participant.status === 'idle'
-          ? {
-              ...participant,
-              status: status === 'cancelled' ? 'cancelled' : 'skipped',
-              reason:
-                status === 'cancelled'
-                  ? 'Round cancelled before this participant spoke.'
-                  : 'Round superseded before this participant spoke.',
-              endedAt
-            }
-          : participant
-      )
+      participants: nextRoundParticipants,
+      ...(status === 'completed'
+        ? {
+            synthesisStatus: resolveRoundSynthesisStatus({
+              participants: nextRoundParticipants,
+              hasStructuredSummary: Boolean(summaryRecord)
+            })
+          }
+        : {})
     }
-    const summaryRecord =
-      status === 'completed'
-        ? findTerminalSynthesizerRoundSummary({
-            messages: chat.messages,
-            roundId,
-            synthesizerParticipantId: resolveForegroundSynthesizerParticipantId(chat.ensemble),
-            capturedAt: endedAt
-          })
-        : null
     // M4 — derive blackboard entries from the synthesizer summary and upsert
     // them onto the shared scratchpad. Session-scoped + stable-keyed, so each
     // round's summary replaces the prior round's derived entries (the
@@ -20574,9 +20608,8 @@ export class EnsembleOrchestrator {
       }
     }
     // M5 — run the complexity-escalation heuristic over the finished round's
-    // end-state and append any signals. Advisory ONLY: we persist + broadcast
-    // (via the saveChat → 'chat-updated' path) but never auto-act. Deterministic
-    // ids (roundId + kind) keep this clock/random-free. Skipped for cancelled
+    // end-state and append any remaining terminal signals. Deterministic ids
+    // (roundId + kind) keep this clock/random-free. Skipped for cancelled
     // rounds (a user Stop isn't a complexity event).
     let nextEscalationSignals = chat.ensemble.escalationSignals
     if (status === 'completed') {
@@ -20586,7 +20619,7 @@ export class EnsembleOrchestrator {
         participants: nextRound.participants,
         continuationHops: nextRound.continuationHops,
         maxContinuationHops: nextRound.maxContinuationHops,
-        hasSynthesizer: Boolean(resolveForegroundSynthesizerParticipantId(chat.ensemble)),
+        hasCompletedSynthesis: Boolean(summaryRecord),
         createdAt: endedAt,
         makeId: (kind) => `${roundId}-esc-${kind}`
       })
