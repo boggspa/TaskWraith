@@ -784,8 +784,15 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     droppedFrames: 0,
     ioSurfaceCapacity: 24
   })
+  const timebasePlan = () =>
+    Array.from({ length: SAMPLE_COUNT }, (_, i) => ({
+      sampleIndex: i,
+      timescale: TIMESCALE,
+      frameDurationTicks: FRAME_DURATION_TICKS
+    }))
   const base = () => ({
     samples: run(),
+    timebasePlan: timebasePlan(),
     currentSamples: currentReceipts(),
     peakSamples: peakReceipts(),
     audio: {
@@ -804,6 +811,7 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     expect(verdict.blockers.join(' ')).toMatch(/cannot reach Green/i)
     expect(verdict.evidence.avVerdicts).toHaveLength(SAMPLE_COUNT)
     expect(verdict.evidence.peakVerdicts).toHaveLength(SAMPLE_COUNT)
+    expect(verdict.evidence.timebasePlan.ok).toBe(true)
     expect(verdict.evidence.audio.physicalAudibility).toBe('blocked')
   })
 
@@ -877,6 +885,63 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     const verdict = summarizeOutcome5(swapped)
     expect(verdict.status).toBe('red')
     expect(verdict.failures.join(' ')).toMatch(/cannot stand in for a live reading/i)
+  })
+
+  // ONE SAMPLE CANNOT INHABIT TWO TIMEBASES. The same 6,000-tick error reads
+  // 6ms Green at timescale 1,000,000 and 200ms Red at the real 30,000, so
+  // letting each stream pick its own denominator decides the verdict.
+  it('is red when current and peak evidence use different timebases for one sample', () => {
+    const divergent = base()
+    const forgivingTimebase = { timescale: 1_000_000, frameDurationTicks: 33_333 }
+    divergent.currentSamples[6] = aligned(6, {
+      receipt: receipt({ errTicks: 6_000, winNs: 33_000_000 }),
+      timebase: forgivingTimebase
+    })
+    const verdict = summarizeOutcome5(divergent)
+    expect(verdict.status).toBe('red')
+    expect(verdict.failures.join(' ')).toMatch(/timebase/i)
+    expect(verdict.failures.join(' ')).toMatch(/authoritative plan/i)
+  })
+
+  it('is red without an authoritative timebase plan, or with an unsafe one', () => {
+    const { timebasePlan: _omitted, ...noPlan } = base()
+    expect(summarizeOutcome5(noPlan).failures.join(' ')).toMatch(/timebase plan/i)
+    expect(summarizeOutcome5({ ...base(), timebasePlan: timebasePlan().slice(0, 20) }).status).toBe(
+      'red'
+    )
+    const unsafe = base()
+    unsafe.timebasePlan[3] = { sampleIndex: 3, timescale: 0, frameDurationTicks: 1000 }
+    expect(summarizeOutcome5(unsafe).failures.join(' ')).toMatch(/timescale/i)
+    const misindexed = base()
+    misindexed.timebasePlan[5] = { ...misindexed.timebasePlan[5], sampleIndex: 19 }
+    expect(summarizeOutcome5(misindexed).status).toBe('red')
+  })
+
+  // Equality between two absent names is not a match.
+  it('is red when every device name is absent, even though the identities compare equal', () => {
+    const nameless = base()
+    const stripName = (o: Record<string, unknown>) => {
+      const copy = { ...o }
+      delete copy.name
+      return copy
+    }
+    nameless.audio = {
+      windowAudio: { ...audioProbe(), defaultOutputDevice: stripName(device) },
+      silenceWindow: {
+        ...audioProbe({ rms: 0.0001, peak: 0.002, nonSilentFraction: 0 }),
+        defaultOutputDevice: stripName(device)
+      },
+      routeHealth: stripName(routeReceipt()),
+      priorRouteHealth: stripName(routeReceipt())
+    }
+    const verdict = summarizeOutcome5(nameless)
+    expect(verdict.status).toBe('red')
+    // Asserted SEPARATELY on purpose. Both layers must object in their own
+    // right: with a single generic assertion, dropping either check still reds
+    // because the other one covers for it, and neither is actually proven.
+    expect(verdict.failures.join(' ')).toMatch(/current device name is empty/i)
+    expect(verdict.failures.join(' ')).toMatch(/prior device name is empty/i)
+    expect(verdict.failures.join(' ')).toMatch(/embedded device name is empty/i)
   })
 
   it('cannot be unlocked by a forged physicalAudibility on the input', () => {

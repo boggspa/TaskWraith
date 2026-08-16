@@ -657,6 +657,16 @@ function audioProbeFailure(receipt, label, expectedRoute) {
   if (!device || typeof device !== 'object') {
     return `${label} carries no embedded defaultOutputDevice receipt`
   }
+  // Validate the embedded receipt IN ITS OWN RIGHT before comparing it to
+  // anything. Equality between two absent fields is not a match.
+  if (!isSafeInteger(device.id) || device.id <= 0) {
+    return `${label} embedded device id is not a positive exact integer`
+  }
+  if (!isNonEmptyString(device.name)) return `${label} embedded device name is empty`
+  if (!isNonEmptyString(device.uid)) return `${label} embedded device uid is empty`
+  if (!isFiniteNumber(device.nominalSampleRate) || device.nominalSampleRate <= 0) {
+    return `${label} embedded device nominalSampleRate is not positive`
+  }
   if (expectedRoute) {
     if (
       device.id !== expectedRoute.id ||
@@ -677,6 +687,9 @@ function routeReceiptFailure(route, label) {
     return `${label} device id is not a positive exact integer`
   }
   if (!isNonEmptyString(route.uid)) return `${label} device uid is empty`
+  // A name absent on BOTH the route and the embedded receipt used to compare
+  // equal, so "exact identity" was satisfied by two holes.
+  if (!isNonEmptyString(route.name)) return `${label} device name is empty`
   if (!isFiniteNumber(route.nominalSampleRate) || route.nominalSampleRate <= 0) {
     return `${label} nominalSampleRate is not positive`
   }
@@ -917,6 +930,68 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
   }
 }
 /**
+ * The authoritative per-sample timebase plan.
+ *
+ * ONE SAMPLE CANNOT INHABIT TWO TIMEBASES. Without a shared plan, the current
+ * and peak streams could each choose their own denominator for the same
+ * instant: a 6,000-tick error reads 6ms Green at timescale 1,000,000 and 200ms
+ * Red at the real 30,000. Exact rational time is the whole point of this
+ * outcome, so the denominator is declared once per sample and every stream must
+ * match it. Per-sample rather than global, because variable-frame-rate media
+ * genuinely changes its local frame duration.
+ */
+function validateTimebasePlan(plan) {
+  const failures = []
+  const list = Array.isArray(plan) ? plan : null
+  if (list === null) return { ok: false, failures: ['no authoritative timebase plan'], entries: [] }
+  if (list.length !== SAMPLE_COUNT) {
+    return {
+      ok: false,
+      failures: [`${list.length} timebase plan entries, expected exactly ${SAMPLE_COUNT}`],
+      entries: []
+    }
+  }
+  const entries = []
+  for (let i = 0; i < list.length; i += 1) {
+    const entry = list[i]
+    if (!entry || typeof entry !== 'object') {
+      failures.push(`timebase plan entry ${i} is missing`)
+      continue
+    }
+    if (entry.sampleIndex !== i) {
+      failures.push(`timebase plan entry ${i} claims sampleIndex ${entry.sampleIndex}`)
+    }
+    if (!isSafeInteger(entry.timescale) || entry.timescale <= 0) {
+      failures.push(`timebase plan entry ${i} has no exact positive timescale`)
+    }
+    if (!isSafeInteger(entry.frameDurationTicks) || entry.frameDurationTicks <= 0) {
+      failures.push(`timebase plan entry ${i} has no exact positive frameDurationTicks`)
+    }
+    entries.push(entry)
+  }
+  return { ok: failures.length === 0, failures, entries }
+}
+
+/** A stream entry must use the declared denominator, not one of its own. */
+function timebaseMismatch(entry, planEntry, index, label) {
+  const timebase = entry && entry.timebase
+  if (!timebase || typeof timebase !== 'object') {
+    return `${label} ${index} carries no timebase`
+  }
+  if (
+    timebase.timescale !== planEntry.timescale ||
+    timebase.frameDurationTicks !== planEntry.frameDurationTicks
+  ) {
+    return (
+      `${label} ${index} uses timebase ${timebase.timescale}/${timebase.frameDurationTicks} ` +
+      `but the sample's authoritative plan is ` +
+      `${planEntry.timescale}/${planEntry.frameDurationTicks}`
+    )
+  }
+  return null
+}
+
+/**
  * Cross-stream alignment.
  *
  * Length alone is not twenty-one observations: the same receipt repeated
@@ -957,13 +1032,23 @@ function alignmentFailure(entry, index, sample, label) {
  *
  * THERE IS NO GREEN RETURN IN THIS REPOSITORY.
  */
-function summarizeOutcome5({ samples, currentSamples, peakSamples, audio, resources }) {
+function summarizeOutcome5({
+  samples,
+  timebasePlan,
+  currentSamples,
+  peakSamples,
+  audio,
+  resources
+}) {
   const failures = []
   const blockers = []
 
   const sequence = validateSampleSequence(samples)
   if (!sequence.ok) failures.push(...sequence.failures)
   const sampleList = Array.isArray(samples) ? samples : []
+
+  const plan = validateTimebasePlan(timebasePlan)
+  if (!plan.ok) failures.push(...plan.failures)
 
   const classifyStream = (entries, label, classifier, accept) => {
     const verdicts = []
@@ -981,6 +1066,15 @@ function summarizeOutcome5({ samples, currentSamples, peakSamples, audio, resour
       if (misalignment) {
         failures.push(misalignment)
         continue
+      }
+      // The denominator is the plan's, not the entry's claim about itself.
+      const planEntry = plan.ok ? plan.entries[i] : null
+      if (planEntry) {
+        const mismatch = timebaseMismatch(entry, planEntry, i, label)
+        if (mismatch) {
+          failures.push(mismatch)
+          continue
+        }
       }
       const verdict = classifier({ receipt: entry.receipt, timebase: entry.timebase })
       verdicts.push(verdict)
@@ -1049,6 +1143,7 @@ function summarizeOutcome5({ samples, currentSamples, peakSamples, audio, resour
 
   const evidence = {
     sequence,
+    timebasePlan: plan,
     avVerdicts,
     peakVerdicts,
     audio: audioVerdict,
@@ -1060,6 +1155,7 @@ function summarizeOutcome5({ samples, currentSamples, peakSamples, audio, resour
 
 module.exports = {
   AUDIO_ADVANCED_TOLERANCE_MS,
+  validateTimebasePlan,
   CURRENT_SAMPLE_KIND,
   PEAK_SAMPLE_KIND,
   AUDIO_ELAPSED_ALLOWANCE_SECONDS,
