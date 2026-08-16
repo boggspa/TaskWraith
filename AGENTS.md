@@ -861,11 +861,31 @@ The participant Stage control has five choices: **Any**, **Scout**, **Work**,
 participant is different: it receives no ordinary serial or review turn and
 runs only when explicitly delegated.
 
-- A unique `@BG`, `@Background`, `@Role`, or `@Model` mention attempts to launch
-  that participant in a detached lane while foreground rotation continues.
+- A unique `@Background`, `@Role`, or `@Model` mention attempts to launch that
+  participant in a detached lane while foreground rotation continues.
   Concurrent lanes must be enabled, the seat must not already be active, and
-  admission/budget checks must pass. Bare `@BG` is rejected as ambiguous when
-  more than one BG seat matches.
+  admission/budget checks must pass.
+- **`@BG` is no longer one of those — it is a roster GROUP token** (source-ahead
+  of v1.9.5). `src/shared/ensembleGroupMention.ts` defines five provider-neutral
+  group tokens that address a whole stage at once: `@All` (every enabled
+  participant), `@Scouts`, `@Workers`, `@Reviewers`, and `@BG` (every enabled
+  background seat). `findAllMentions` tests the first word against the group
+  table **before** any per-participant alias resolution
+  (`EnsembleMentionAlias.ts`), so bare `@BG` now expands to every enabled BG
+  seat and **can no longer be ambiguous** — the previous "rejected as ambiguous
+  when more than one BG seat matches" behaviour is gone.
+- **`@BG` and `@Background` are no longer equivalent.** Only `bg` is registered
+  as a group alias; `@Background` still resolves through the ordinary
+  per-participant alias path and can still fail closed as ambiguous with
+  multiple BG seats. Do not treat the two as interchangeable in prose or tests.
+- Group tokens are fail-closed for assistants, not for users. A user may always
+  use one. A participant that writes a group token mid-round only fans out if it
+  holds Boss/Captain fan-out authority; otherwise the orchestrator appends a
+  round-status notice and no turns
+  (`EnsembleGroupMentionRouting.ts`). The `ensemble_send` tool path is
+  deliberately different again — it accepts group tokens as recipient selectors
+  under the tool's existing any-active-seat communication policy, without the
+  Boss/Captain gate.
 - Mention/yield launches are always capped to read-only posture. Scoped
   mutations must use the existing Boss- or Captain-authorized
   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
@@ -888,6 +908,20 @@ Each ensemble has a `orchestrationMode`:
   (default 6). The loop stops on an explicit `ensemble_yield(target: 'user')`,
   user cancellation, goal completion/block/pause, a queued user prompt or seat
   change, no progress/administrative deadlock, or budget exhaustion.
+- **A bounded final synthesis turn may be inserted immediately before the loop
+  actually stops** (source-ahead of v1.9.5). When a synthesizer is elected —
+  configured seat, else Boss, else Captain, else the last enabled foreground
+  participant — and two or more participants answered or yielded without a
+  structured convergence summary being captured, the orchestrator dispatches one
+  extra restricted turn before ending the round, whatever the stop cause. It is
+  exactly-once (guarded by a durable `synthesisAttemptedAt`), forbidden from new
+  work, tools, fan-out, yield or delegation, and must answer in the fixed
+  `Round summary:` / `Decisions:` / `Corrections:` / `Open risks:` /
+  `Next action:` shape. See `EnsembleSynthesisLifecycle.ts`.
+- Consequence worth knowing: `disagreement-unresolved` was advisory and
+  explicitly excluded from failure surfacing; it is now a real completion
+  blocker titled "Synthesis unresolved". A *configured* synthesizer no longer
+  suppresses the signal — only a *captured* summary does.
 
 The user picks the mode via the composer's Turn / Continuous chip.
 If the round is currently running, the toggle reflects the active

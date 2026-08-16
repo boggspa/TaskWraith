@@ -17,8 +17,10 @@ In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row o
 4. Click **Write** to allow writer-capable participants into parallel lanes too. This option is locked unless `TASKWRAITH_CONCURRENT_WRITE_LANES` is enabled, and it behaves differently depending on setup: if the chat has an assigned Boss, that Boss must call the `ensemble_fanout` tool with explicit write scopes; otherwise it's mediated by a user-enabled write-scope preflight (claim scopes, a host conflict check, then an acknowledgement) before any writer lane runs.
 5. Hover the toggle group, or the running round's status, to see a summary of the active fan-out policy (e.g. "+ Read fan-out" or "+ Writer fan-out").
 6. To keep a participant out of ordinary rotation, set its Stage to **BG**. A
-   unique `@BG`, `@Background`, `@Role`, or `@Model` mention attempts to launch
-   that seat asynchronously through the same lane executor. Concurrent lanes
+   unique `@Background`, `@Role`, or `@Model` mention attempts to launch
+   that seat asynchronously through the same lane executor. `@BG` is different —
+   it is a group token that launches **every** enabled BG seat, never just one.
+   Concurrent lanes
    must be enabled, the seat must not already be active, and admission/budget
    checks must pass. Automatic mention/yield launches are capped read-only; use
    the existing Boss-authorized
