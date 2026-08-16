@@ -43,32 +43,32 @@ compatibility state and is never inferred.
 
 ## Commits — what each one proved
 
-Seventeen commits, in ancestry order. Listed by what they *proved*, not by what
+Seventeen commits, in ancestry order. Listed by what they _proved_, not by what
 they touched.
 
-| Commit | Slice | What it proved |
-| --- | --- | --- |
-| `7a0aa69b7` | X0-RED | That a Channel-shared chat was reachable by the create-time reaper. The red printed the defect: production `getSharedChatIds` had no Channel source. Also **bounded** the exposure — an ensemble-converted or renamed chat is never reaped, so the real window is a chat shared but not yet joined. |
-| `471c8cd7f` | X0-FIX | That the reaper now sees Channel-shared chats, **and** that an unreadable Channel authority protects every chat rather than reading as "nothing is shared". |
-| `e4d84087a` | P5-A | That a fresh finalization capture cannot declare a workspace-bootstrap producer: `derive` accepts only `{ shares }` and rejects any extra key at runtime, while an already-sealed P4 list stays readable as compatibility state. |
-| `337e9ff5a` | X1 | That an external-seat authority can be a **projection** over existing Channel stores — enforced by type, since it is handed read-only method subsets and cannot write. Its result discriminates `ready` from `recovery_blocked`, and the blocked arm carries neither `isShared` nor `seats`, so a caller cannot destructure a roster off it. |
-| `7c6e70b6d` | X1-HARDEN | That two distinct legacy identities can no longer collide into one seat. The delimiter-joined key was replaced with a JSON tuple encoding, making the ambiguity impossible rather than unlikely. |
-| `e80471598` | X3 | That runtime member presence has an explicit state machine, with `unknown` treated as absent after restart and never optimistically present. |
-| `88ed1870a` | X3-FIX | That a member who reconnects after the grace window returns to `live` (it previously stayed `expired` forever), and that recovery blocking is **per channel**, with an uncertified channel defaulting to blocked. |
-| `066ac40d9` | X1-BARRIER | That the barrier is consulted **unconditionally**, not only while iterating members — closing the bypass where an owner-only Channel resolved `ready` without the barrier ever being read. |
-| `e67aac3e7` | X2-a′ | That the service certifies per-channel recovery to the barrier before reporting running. The red was a production bug: after **any** restart nothing certified a disk-recovered channel, so every channel stayed blocked for the whole session. |
-| `22cf8c760` | X2-a″ | That the authority is constructible **from the public service API alone** — proven end to end by building a real authority in a test and resolving a chat, which also proves X2-a′'s barrier certified the channel. |
-| `d404e481a` | X2-b | That the iOS shared projection is Channel-native, and that the retired People arm cannot return — asserted by inversion, not deletion. |
-| `2ebc72ef9` | X2-c | That an approval gate refuses when the external set **cannot be enumerated**. It previously answered "a non-external authority exists" whenever the resolver was absent, and both callers use that answer to *permit*. |
-| `bd49d3887` | X2-c2 | That external collaborator seat ids come from the Channel authority in explicit `transitional` mode, and that a blocked authority answers `null` rather than an empty array. Also that an omitted `externalParticipantIds` key skipped the external check entirely. |
-| `d6b22a4cc` | X2-c2-fix | That the last path returning `[]` for an unidentifiable chat now returns `null` like its siblings. Reachability was **established, not assumed**: both call sites guard on a truthy chat id, so the line was unreachable; it was changed as hardening. |
-| `c965f2fb3` | X2-d | That Ensemble seat delivery projects from the same authority through a single construction site, and that the adapter introduces no invented identity. |
-| `25d676263` | P5-C | That production declares no workspace-bootstrap People producer **at all** — not even an empty one. |
-| `7a723b835` | P5-C2 | That the now-dead runner shim is gone, with both P5-A proofs **converted rather than deleted**, and the durable persisted scope preserved. |
-| `f8df646e7` | P5-E1 | This record. |
-| `46ee7e14a` | P5-E2a | That a recovery-blocked channel **defers** Ensemble delivery rather than dropping it. A disposable profile, real terminal migration, four launches, a deliberately corrupted Channel log forcing a scoped block, the real queue and orchestrator — the approved entry stayed unmaterialised while blocked, survived on disk to a repaired relaunch, and delivered **exactly once**. 12/12 assertions, zero production changes. |
-| `fc98b705b` | P5-E2b | That an **inherited** pre-Channels People share cannot survive to be read: after terminal migration `getShareForChat` returns null, and Channel-only resolution equals transitional resolution. Red first at 12 vs 14 assertions. Zero production changes. This is the proof that made X4 safe. |
-| `1b3085f39` | P5-X4 | That production resolves external seats Channel-only. The transitional People fallback is retired as a **dead read**, not a narrowing. |
+| Commit      | Slice      | What it proved                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `7a0aa69b7` | X0-RED     | That a Channel-shared chat was reachable by the create-time reaper. The red printed the defect: production `getSharedChatIds` had no Channel source. Also **bounded** the exposure — an ensemble-converted or renamed chat is never reaped, so the real window is a chat shared but not yet joined.                                                                                                                            |
+| `471c8cd7f` | X0-FIX     | That the reaper now sees Channel-shared chats, **and** that an unreadable Channel authority protects every chat rather than reading as "nothing is shared".                                                                                                                                                                                                                                                                    |
+| `e4d84087a` | P5-A       | That a fresh finalization capture cannot declare a workspace-bootstrap producer: `derive` accepts only `{ shares }` and rejects any extra key at runtime, while an already-sealed P4 list stays readable as compatibility state.                                                                                                                                                                                               |
+| `337e9ff5a` | X1         | That an external-seat authority can be a **projection** over existing Channel stores — enforced by type, since it is handed read-only method subsets and cannot write. Its result discriminates `ready` from `recovery_blocked`, and the blocked arm carries neither `isShared` nor `seats`, so a caller cannot destructure a roster off it.                                                                                   |
+| `7c6e70b6d` | X1-HARDEN  | That two distinct legacy identities can no longer collide into one seat. The delimiter-joined key was replaced with a JSON tuple encoding, making the ambiguity impossible rather than unlikely.                                                                                                                                                                                                                               |
+| `e80471598` | X3         | That runtime member presence has an explicit state machine, with `unknown` treated as absent after restart and never optimistically present.                                                                                                                                                                                                                                                                                   |
+| `88ed1870a` | X3-FIX     | That a member who reconnects after the grace window returns to `live` (it previously stayed `expired` forever), and that recovery blocking is **per channel**, with an uncertified channel defaulting to blocked.                                                                                                                                                                                                              |
+| `066ac40d9` | X1-BARRIER | That the barrier is consulted **unconditionally**, not only while iterating members — closing the bypass where an owner-only Channel resolved `ready` without the barrier ever being read.                                                                                                                                                                                                                                     |
+| `e67aac3e7` | X2-a′      | That the service certifies per-channel recovery to the barrier before reporting running. The red was a production bug: after **any** restart nothing certified a disk-recovered channel, so every channel stayed blocked for the whole session.                                                                                                                                                                                |
+| `22cf8c760` | X2-a″      | That the authority is constructible **from the public service API alone** — proven end to end by building a real authority in a test and resolving a chat, which also proves X2-a′'s barrier certified the channel.                                                                                                                                                                                                            |
+| `d404e481a` | X2-b       | That the iOS shared projection is Channel-native, and that the retired People arm cannot return — asserted by inversion, not deletion.                                                                                                                                                                                                                                                                                         |
+| `2ebc72ef9` | X2-c       | That an approval gate refuses when the external set **cannot be enumerated**. It previously answered "a non-external authority exists" whenever the resolver was absent, and both callers use that answer to _permit_.                                                                                                                                                                                                         |
+| `bd49d3887` | X2-c2      | That external collaborator seat ids come from the Channel authority in explicit `transitional` mode, and that a blocked authority answers `null` rather than an empty array. Also that an omitted `externalParticipantIds` key skipped the external check entirely.                                                                                                                                                            |
+| `d6b22a4cc` | X2-c2-fix  | That the last path returning `[]` for an unidentifiable chat now returns `null` like its siblings. Reachability was **established, not assumed**: both call sites guard on a truthy chat id, so the line was unreachable; it was changed as hardening.                                                                                                                                                                         |
+| `c965f2fb3` | X2-d       | That Ensemble seat delivery projects from the same authority through a single construction site, and that the adapter introduces no invented identity.                                                                                                                                                                                                                                                                         |
+| `25d676263` | P5-C       | That production declares no workspace-bootstrap People producer **at all** — not even an empty one.                                                                                                                                                                                                                                                                                                                            |
+| `7a723b835` | P5-C2      | That the now-dead runner shim is gone, with both P5-A proofs **converted rather than deleted**, and the durable persisted scope preserved.                                                                                                                                                                                                                                                                                     |
+| `f8df646e7` | P5-E1      | This record.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `46ee7e14a` | P5-E2a     | That a recovery-blocked channel **defers** Ensemble delivery rather than dropping it. A disposable profile, real terminal migration, four launches, a deliberately corrupted Channel log forcing a scoped block, the real queue and orchestrator — the approved entry stayed unmaterialised while blocked, survived on disk to a repaired relaunch, and delivered **exactly once**. 12/12 assertions, zero production changes. |
+| `fc98b705b` | P5-E2b     | That an **inherited** pre-Channels People share cannot survive to be read: after terminal migration `getShareForChat` returns null, and Channel-only resolution equals transitional resolution. Red first at 12 vs 14 assertions. Zero production changes. This is the proof that made X4 safe.                                                                                                                                |
+| `1b3085f39` | P5-X4      | That production resolves external seats Channel-only. The transitional People fallback is retired as a **dead read**, not a narrowing.                                                                                                                                                                                                                                                                                         |
 
 Ownership: `@Work1` produced P5-A, X1, X1-HARDEN, X1-BARRIER, P5-C2, E2a and
 E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
@@ -134,7 +134,7 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   by that module's author rather than cleanup.
 
   **The safety question behind it is now ANSWERED and closed.** The open
-  concern was whether the branch was a live valve against a *migration* defect
+  concern was whether the branch was a live valve against a _migration_ defect
   — a profile serving with an enabled ordinary share still present, where
   `transitional` would yield legacy seats and `channel_only` silently none. It
   cannot happen: `startPeopleToChannelMigrationBootstrap` calls
@@ -144,6 +144,7 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   constructed. A half-retired profile can never serve the transitional
   authority. The valve is dead, so X4b is safe removal rather than a narrowing
   — it remains open only as a proof-surface change, not as a risk.
+
 - **Crash recovery across every new durable boundary** is proven for the
   runtime presence and per-channel barrier work, but not end to end through a
   real migrated profile.
@@ -171,7 +172,7 @@ The mission could not, and the reason is the finding. The state is not
 producible:
 
 - **It cannot be created.** `assertOrdinaryWriteAllowed` returns early only if
-  the gate is not quiesced *or* the share id is in the sealed compatibility
+  the gate is not quiesced _or_ the share id is in the sealed compatibility
   set. Every fresh P5 capture quiesces with an **empty** retained set, and
   nothing is a member of an empty set — so after migration every ordinary
   People write throws. Even the degraded startup path assigns a pre-quiesced
@@ -190,7 +191,7 @@ legacy share also has a truthy active channel, making
 the ready path.
 
 **What remains unproven, stated plainly:** if a future change reintroduces a
-route by which a legacy share becomes both *enabled* and *present* alongside an
+route by which a legacy share becomes both _enabled_ and _present_ alongside an
 active Channel, the dedupe logic behind it has never run against real
 production data. The code is now unreachable rather than removed
 (`ChannelExternalSeatAuthority` still contains the branch — see X4b), so that
@@ -260,8 +261,8 @@ The most transferable thing this round produced, in three variants. All three
 are the same failure: **the thing that looked like a guard was not one.**
 
 1. **Security-adjacent logic in the composition root can only be proven by a
-   textual pin.** A pin asserts that the source *says* something, never that it
-   is *right*. Both of this round's real defects lived in `src/main/index.ts`:
+   textual pin.** A pin asserts that the source _says_ something, never that it
+   is _right_. Both of this round's real defects lived in `src/main/index.ts`:
    the reaper's `getSharedChatIds` had no Channel source, and the approval gate
    failed open. Neither could be unit-tested where it lived. Both were fixed by
    moving the decision into a tested module — `AbandonedChatReaper` already had
@@ -280,7 +281,7 @@ are the same failure: **the thing that looked like a guard was not one.**
    cannot enumerate" is not neutral; it positively claims "there are none", and
    every consumer downstream believes it. The X1 discriminated result, the
    `null` seat resolver, and the per-channel `?? 'recovery_blocked'` default all
-   exist to keep *unknown* distinguishable from *empty*. Residual 2 is the one
+   exist to keep _unknown_ distinguishable from _empty_. Residual 2 is the one
    place that discipline breaks, and it is disclosed rather than hidden.
 
 A fourth, procedural: **a rewritten assertion is not automatically a weakened
@@ -308,7 +309,7 @@ turns is worth less than one that names them.
   startup constructs and quiesces a fresh gate, so "new People writes are
   impossible" holds on both the success and failure paths.
 - **The People-only fail-closed behaviour was DESIGN-RULED by `@Advisor`, not
-  user-approved.** The user ruled only on how the barrier *composes* (scoped,
+  user-approved.** The user ruled only on how the barrier _composes_ (scoped,
   per channel). The decision that a People-only share resolves
   `recovery_blocked` is `@Advisor`'s, justified on startup-ordering merits. The
   two must not be merged in any later summary.
