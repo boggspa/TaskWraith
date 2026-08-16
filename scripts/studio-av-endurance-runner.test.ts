@@ -120,6 +120,19 @@ describe('sequence integrity requires BOTH clocks to span the run', () => {
     expect(verdict.failures.join(' ')).not.toMatch(/disagree/i)
   })
 
+  // ADVISOR'S EXACT CASE: endpoint spans agree and the clock rises strictly,
+  // but samples 1..19 all happen in one late cluster. Only a per-sample
+  // comparison can see it.
+  it('refuses nineteen samples bunched at 580s with a final jump to 600s', () => {
+    const bunched = goodRun().map((s, i) => ({
+      ...s,
+      monotonicMs: 1_000_000 + (i === 0 ? 0 : i === SAMPLE_COUNT - 1 ? 600_000 : 580_000 + i)
+    }))
+    const verdict = validateSampleSequence(bunched)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.failures.join(' ')).toMatch(/bunched/i)
+  })
+
   it('refuses a monotonic span that disagrees with the reported span', () => {
     const drifted = goodRun().map((s, i) => ({ ...s, monotonicMs: 1_000_000 + i * 60_000 }))
     expect(validateSampleSequence(drifted).failures.join(' ')).toMatch(/disagree/i)
@@ -343,6 +356,42 @@ describe('a PEAK is not a CURRENT sample', () => {
     ).toBe('red')
   })
 
+  // A ten-second gap between the two clock reads cannot prove instantaneous
+  // sync no matter how small the resulting error looks.
+  it('refuses a CURRENT sample whose read window is wider than one frame', () => {
+    const wide = classifyAvCurrentSample({
+      receipt: receipt({ errTicks: 0, winNs: 10_000_000_000 }),
+      timebase: TIMEBASE
+    })
+    expect(wide.status).toBe('red')
+    expect(wide.reason).toMatch(/not simultaneous/i)
+
+    // One frame of quantisation is the boundary; just inside it is fine.
+    expect(
+      classifyAvCurrentSample({
+        receipt: receipt({ errTicks: 0, winNs: 33_000_000 }),
+        timebase: TIMEBASE
+      }).status
+    ).toBe('green')
+    // Just outside is not.
+    expect(
+      classifyAvCurrentSample({
+        receipt: receipt({ errTicks: 0, winNs: 34_000_000 }),
+        timebase: TIMEBASE
+      }).status
+    ).toBe('red')
+  })
+
+  // The PEAK keeps its separate semantics: it is allowed to describe a stall.
+  it('still allows a WIDE window on a peak, which is what explains a stall', () => {
+    expect(
+      classifyAvPeakSample({
+        receipt: receipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
+        timebase: TIMEBASE
+      }).status
+    ).toBe('explained-diagnostic')
+  })
+
   it('never lets an explanation excuse a CURRENT out-of-bound error', () => {
     const explainedButOut = classifyAvCurrentSample({
       receipt: receipt({ errTicks: msToTicks(-300), winNs: 400_000_000 }),
@@ -420,6 +469,20 @@ describe('audibility evidence is never allowed to overclaim', () => {
     expect(complete({ windowAudio: probe({ elapsedSeconds: 0 }) }).status).toBe('red')
     // A peak below its own RMS is physically impossible.
     expect(complete({ windowAudio: probe({ rms: 0.9, peak: 0.1 }) }).status).toBe('red')
+  })
+
+  // 600 seconds of capture cannot happen in a tenth of a second.
+  it('refuses an AudioProbe whose elapsed time cannot contain its duration', () => {
+    expect(
+      complete({ windowAudio: probe({ durationSeconds: 600, elapsedSeconds: 0.1 }) }).status
+    ).toBe('red')
+    expect(
+      complete({ silenceWindow: silenceProbe({ durationSeconds: 2, elapsedSeconds: 0.1 }) }).status
+    ).toBe('red')
+    // And an implausibly long capture is refused too.
+    expect(
+      complete({ windowAudio: probe({ durationSeconds: 3, elapsedSeconds: 300 }) }).status
+    ).toBe('red')
   })
 
   it('is red when a quiet AVERAGE hides a loud transient or a busy fraction', () => {
@@ -584,137 +647,154 @@ describe('resource bounds derive from the accepted contract', () => {
   })
 })
 
-describe('the terminal verdict has no Green return in this repository', () => {
-  const currentVerdicts = () =>
+describe('the terminal verdict reclassifies RAW evidence', () => {
+  const currentReceipts = () =>
     Array.from({ length: SAMPLE_COUNT }, () => ({
-      kind: 'current',
-      status: 'green',
-      errorMilliseconds: -1.2
+      receipt: receipt({ errTicks: msToTicks(-1.2), winNs: 1_000_000 }),
+      timebase: TIMEBASE
     }))
-  const audio = () =>
-    classifyAudioEvidence({
-      windowAudio: {
-        durationSeconds: 3,
-        elapsedSeconds: 3.01,
-        sampleBufferCount: 140,
-        frameCount: 144_000,
-        sampleValueCount: 288_000,
-        sampleRate: 48000,
-        channelCount: 2,
-        rms: 0.21,
-        peak: 0.8,
-        nonSilentFraction: 0.97
-      },
-      silenceWindow: {
-        durationSeconds: 3,
-        elapsedSeconds: 3.01,
-        sampleBufferCount: 140,
-        frameCount: 144_000,
-        sampleValueCount: 288_000,
-        sampleRate: 48000,
-        channelCount: 2,
-        rms: 0.0001,
-        peak: 0.002,
-        nonSilentFraction: 0
-      },
-      routeHealth: {
-        id: 71,
-        name: 'Speakers',
-        uid: 'uid-1',
-        nominalSampleRate: 48000,
-        alive: true,
-        running: true,
-        hasOutputStream: true,
-        outputChannelCount: 2,
-        muteSupported: true,
-        muted: false,
-        volumeSupported: true,
-        volume: 0.75
-      },
-      priorRouteHealth: {
-        id: 71,
-        name: 'Speakers',
-        uid: 'uid-1',
-        nominalSampleRate: 48000,
-        alive: true,
-        running: true,
-        hasOutputStream: true,
-        outputChannelCount: 2,
-        muteSupported: true,
-        muted: false,
-        volumeSupported: true,
-        volume: 0.75
-      }
-    })
-  const resources = () =>
-    classifyResourceGrowth({
-      readings: Array.from({ length: SAMPLE_COUNT }, (_, i) => ({
-        footprintBytes: 400_000_000 + (i % 2) * 1_000_000,
-        mallocInUseBytes: 100_000_000 + (i % 2) * 500_000,
-        residentBytes: 500_000_000 + (i % 2) * 1_000_000,
-        residentDecoderCount: 1,
-        liveIoSurfaceIds: Array.from({ length: 12 }, (_, k) => 1000 + k)
-      })),
-      droppedFrames: 0,
-      ioSurfaceCapacity: 24
-    })
+  const audioProbe = (overrides = {}) => ({
+    durationSeconds: 3,
+    elapsedSeconds: 3.01,
+    sampleBufferCount: 140,
+    frameCount: 144_000,
+    sampleValueCount: 288_000,
+    sampleRate: 48000,
+    channelCount: 2,
+    rms: 0.21,
+    peak: 0.8,
+    nonSilentFraction: 0.97,
+    ...overrides
+  })
+  const routeReceipt = (overrides = {}) => ({
+    id: 71,
+    name: 'Speakers',
+    uid: 'uid-1',
+    nominalSampleRate: 48000,
+    alive: true,
+    running: true,
+    hasOutputStream: true,
+    outputChannelCount: 2,
+    muteSupported: true,
+    muted: false,
+    volumeSupported: true,
+    volume: 0.75,
+    ...overrides
+  })
+  const rawResources = () => ({
+    readings: Array.from({ length: SAMPLE_COUNT }, (_, i) => ({
+      footprintBytes: 400_000_000 + (i % 2) * 1_000_000,
+      mallocInUseBytes: 100_000_000 + (i % 2) * 500_000,
+      residentBytes: 500_000_000 + (i % 2) * 1_000_000,
+      residentDecoderCount: 1,
+      liveIoSurfaceIds: Array.from({ length: 12 }, (_, k) => 1000 + k)
+    })),
+    droppedFrames: 0,
+    ioSurfaceCapacity: 24
+  })
   const base = () => ({
-    sequence: { ok: true, failures: [] },
-    avSamples: currentVerdicts(),
-    audio: audio(),
-    resources: resources()
+    samples: goodRun(),
+    currentSamples: currentReceipts(),
+    audio: {
+      windowAudio: audioProbe(),
+      silenceWindow: audioProbe({ rms: 0.0001, peak: 0.002, nonSilentFraction: 0 }),
+      routeHealth: routeReceipt(),
+      priorRouteHealth: routeReceipt()
+    },
+    resources: rawResources()
   })
 
-  it('returns blocked — never green — on complete, sound evidence', () => {
+  it('returns blocked — never green — on complete, sound RAW evidence', () => {
     const verdict = summarizeOutcome5(base())
     expect(verdict.status).toBe('blocked')
     expect(verdict.failures).toEqual([])
     expect(verdict.blockers.join(' ')).toMatch(/cannot reach Green/i)
+    // It reports what it computed, not what it was handed.
+    expect(verdict.evidence.avVerdicts).toHaveLength(SAMPLE_COUNT)
+    expect(verdict.evidence.audio.physicalAudibility).toBe('blocked')
   })
 
-  // THE BACKDOOR: a hand-supplied physicalAudibility must not unlock Green.
-  it('is red when audio evidence claims audibility was proven', () => {
-    const forged = { ...audio(), physicalAudibility: 'proven' }
-    const verdict = summarizeOutcome5({ ...base(), audio: forged })
+  // THE PLACEHOLDER FALSE-SOFT-BLOCK: hand-shaped verdict objects used to be
+  // indistinguishable from measured classifications, so the summary would claim
+  // every software gate had passed.
+  it('is red for hand-shaped placeholder verdicts instead of raw evidence', () => {
+    expect(
+      summarizeOutcome5({
+        samples: goodRun(),
+        currentSamples: Array.from({ length: SAMPLE_COUNT }, () => ({
+          kind: 'current',
+          status: 'green',
+          errorMilliseconds: 0
+        })),
+        audio: {
+          status: 'blocked',
+          physicalAudibility: 'blocked',
+          windowEmission: 'proven',
+          intentionalSilence: 'proven',
+          routeState: 'healthy',
+          failures: []
+        },
+        resources: { status: 'green', failures: [], footprintGrowthMb: 0 }
+      }).status
+    ).toBe('red')
+  })
+
+  // ISOLATED: everything else is genuine raw evidence, so ONLY the A/V
+  // reclassification can catch these placeholders. Without this the control
+  // above reds via the audio/resource paths and the A/V path stays untested.
+  it('is red for placeholder A/V verdicts even when all other evidence is real', () => {
+    const verdict = summarizeOutcome5({
+      ...base(),
+      currentSamples: Array.from({ length: SAMPLE_COUNT }, () => ({
+        kind: 'current',
+        status: 'green',
+        errorMilliseconds: 0
+      }))
+    })
     expect(verdict.status).toBe('red')
+    // and it must fail on the A/V receipts specifically
+    expect(verdict.failures.join(' ')).toMatch(/A\/V sample/i)
+    expect(verdict.failures.join(' ')).toMatch(/no receipt|unusable/i)
+  })
+
+  it('cannot be unlocked by a forged physicalAudibility on the input', () => {
+    const forged = base()
+    ;(forged.audio as Record<string, unknown>).physicalAudibility = 'proven'
+    const verdict = summarizeOutcome5(forged)
+    // The input field is simply not consulted; classification produces blocked.
+    expect(verdict.status).toBe('blocked')
+    expect(verdict.evidence.audio.physicalAudibility).toBe('blocked')
     expect(verdict.status).not.toBe('green')
-    expect(verdict.failures.join(' ')).toMatch(/forged/i)
   })
 
-  it('refuses a PEAK verdict standing in for a current sample', () => {
-    const peaks = currentVerdicts().map((v) => ({ ...v, kind: 'peak' }))
-    const verdict = summarizeOutcome5({ ...base(), avSamples: peaks })
+  it('reclassifies a bad current receipt even when it looks complete', () => {
+    const bad = base()
+    bad.currentSamples[7] = {
+      receipt: receipt({ errTicks: msToTicks(-300), winNs: 400_000_000 }),
+      timebase: TIMEBASE
+    }
+    const verdict = summarizeOutcome5(bad)
     expect(verdict.status).toBe('red')
-    expect(verdict.failures.join(' ')).toMatch(/not a current sample/i)
   })
 
-  it('is red for missing, miscounted or unrecognised A/V verdicts', () => {
-    expect(summarizeOutcome5({ ...base(), avSamples: [] }).status).toBe('red')
-    expect(summarizeOutcome5({ ...base(), avSamples: undefined }).status).toBe('red')
-    expect(summarizeOutcome5({ ...base(), avSamples: currentVerdicts().slice(0, 20) }).status).toBe(
-      'red'
-    )
-    const unknown = currentVerdicts()
-    unknown[7] = { ...unknown[7], status: 'unknown' }
-    expect(summarizeOutcome5({ ...base(), avSamples: unknown }).status).toBe('red')
-    const unmeasured = currentVerdicts()
-    delete (unmeasured[3] as Record<string, unknown>).errorMilliseconds
-    expect(summarizeOutcome5({ ...base(), avSamples: unmeasured }).status).toBe('red')
-  })
-
-  it('rejects bare placeholder audio and resource objects', () => {
+  it('is red for missing, miscounted or absent raw evidence', () => {
+    expect(summarizeOutcome5({ ...base(), currentSamples: [] }).status).toBe('red')
+    expect(summarizeOutcome5({ ...base(), currentSamples: undefined }).status).toBe('red')
+    expect(
+      summarizeOutcome5({ ...base(), currentSamples: currentReceipts().slice(0, 20) }).status
+    ).toBe('red')
     expect(summarizeOutcome5({ ...base(), audio: undefined }).status).toBe('red')
-    expect(
-      summarizeOutcome5({ ...base(), audio: { status: 'blocked', physicalAudibility: 'blocked' } })
-        .status
-    ).toBe('red')
-    expect(summarizeOutcome5({ ...base(), resources: { status: 'green' } }).status).toBe('red')
     expect(summarizeOutcome5({ ...base(), resources: undefined }).status).toBe('red')
+    expect(summarizeOutcome5({ ...base(), samples: goodRun().slice(0, 20) }).status).toBe('red')
   })
 
-  it('is red when the sequence itself was not a ten-minute run', () => {
-    expect(
-      summarizeOutcome5({ ...base(), sequence: { ok: false, failures: ['under-duration'] } }).status
-    ).toBe('red')
+  it('is red when the raw sequence was not a ten-minute run', () => {
+    const compressed = base()
+    compressed.samples = goodRun().map((s, i) => ({
+      ...s,
+      actualElapsedMs: i * 6_000,
+      monotonicMs: 1_000_000 + i * 6_000
+    }))
+    expect(summarizeOutcome5(compressed).status).toBe('red')
   })
 })

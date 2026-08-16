@@ -146,6 +146,32 @@ function validateSampleSequence(samples) {
         }
       }
     }
+
+    // PER-SAMPLE agreement, not just endpoint agreement. Nineteen samples
+    // bunched near 580s with a final jump to 600s produces matching endpoint
+    // spans AND a strictly rising clock, so only a per-sample comparison of the
+    // two elapsed measurements can see it. Both fields measure the SAME
+    // interval from the anchor, so they must agree; the allowance is the
+    // declared cadence, the coarsest unit already present in this contract.
+    const anchorSample = list[0]
+    if (
+      anchorSample &&
+      isFiniteNumber(anchorSample.actualElapsedMs) &&
+      isFiniteNumber(anchorSample.monotonicMs) &&
+      isFiniteNumber(sample.actualElapsedMs) &&
+      isFiniteNumber(sample.monotonicMs)
+    ) {
+      const reportedFromAnchor = sample.actualElapsedMs - anchorSample.actualElapsedMs
+      const monotonicFromAnchor = sample.monotonicMs - anchorSample.monotonicMs
+      const drift = Math.abs(reportedFromAnchor - monotonicFromAnchor)
+      if (drift > cadenceMs) {
+        failures.push(
+          `sample ${i} clocks disagree by ${drift}ms from the anchor ` +
+            `(reported ${reportedFromAnchor}ms, monotonic ${monotonicFromAnchor}ms); ` +
+            'the samples are bunched rather than spread across the run'
+        )
+      }
+    }
   }
 
   const first = list[0]
@@ -476,6 +502,27 @@ function classifyAvCurrentSample({ receipt, timebase }) {
     }
   }
 
+  // A CURRENT sample claims the two clocks were read together. A ten-second gap
+  // between them cannot support that claim no matter how small the resulting
+  // error looks — the reading is a cross-read wearing a current label. The
+  // bound is the frame-duration quantisation, because a gap wider than one
+  // frame can move the answer by a whole frame. The PEAK keeps its separate
+  // explained-window semantics precisely because a peak is allowed to describe
+  // a stall.
+  const quantisationNs = (timebase.frameDurationTicks / timebase.timescale) * 1_000_000_000
+  if (
+    receipt.measurementWindowNanoseconds <= 0 ||
+    receipt.measurementWindowNanoseconds > quantisationNs
+  ) {
+    return {
+      kind: 'current',
+      status: 'red',
+      reason:
+        `current read window ${receipt.measurementWindowNanoseconds}ns is outside ` +
+        `(0, ${Math.round(quantisationNs)}ns]; the operands are not simultaneous`
+    }
+  }
+
   const errorMs = (receipt.errorTicks / timebase.timescale) * 1000
   const { within, bound } = toleranceVerdict(errorMs)
   return {
@@ -488,6 +535,9 @@ function classifyAvCurrentSample({ receipt, timebase }) {
       : `current error ${errorMs.toFixed(3)}ms exceeds the ${bound}ms bound`
   }
 }
+
+/** Bounded setup allowance for a capture, mirroring the harness receipt rule. */
+const AUDIO_ELAPSED_ALLOWANCE_SECONDS = 10
 
 const SILENCE_RMS_CEILING = 0.005
 const SILENCE_PEAK_CEILING = 0.02
@@ -513,6 +563,21 @@ function audioProbeFailure(receipt, label) {
   }
   if (!isFiniteNumber(receipt.elapsedSeconds) || receipt.elapsedSeconds <= 0) {
     return `${label} elapsedSeconds is not positive`
+  }
+  // A capture cannot finish before it starts, and it cannot claim 600 seconds
+  // of audio gathered in a tenth of a second. Mirrors the harness receipt rule:
+  // elapsed must cover the requested duration, with a bounded setup allowance.
+  if (receipt.elapsedSeconds < receipt.durationSeconds) {
+    return (
+      `${label} claims ${receipt.durationSeconds}s of capture in ` +
+      `${receipt.elapsedSeconds}s of wall clock`
+    )
+  }
+  if (receipt.elapsedSeconds > receipt.durationSeconds + AUDIO_ELAPSED_ALLOWANCE_SECONDS) {
+    return (
+      `${label} took ${receipt.elapsedSeconds}s for a ${receipt.durationSeconds}s ` +
+      `capture, over the ${AUDIO_ELAPSED_ALLOWANCE_SECONDS}s allowance`
+    )
   }
   if (!isFiniteNumber(receipt.sampleRate) || receipt.sampleRate <= 0) {
     return `${label} sampleRate is not positive`
@@ -773,97 +838,98 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
     peakResidentDecoderCount: peakDecoders
   }
 }
-
 /**
- * Terminal verdict.
+ * Terminal verdict, computed from RAW EVIDENCE.
+ *
+ * WHY THIS TAKES RECEIPTS RATHER THAN VERDICTS. The previous version accepted
+ * caller-supplied verdict objects, so a hand-shaped `{ status: 'green' }` and a
+ * measured classification were indistinguishable to it — and the summary would
+ * then report that every software gate had passed and only physical audibility
+ * remained. That is the most expensive false statement this file could make,
+ * because it is the one a promotion decision reads. It now re-runs every
+ * validator itself; there is no shape a caller can pass that skips the work.
  *
  * THERE IS NO GREEN RETURN IN THIS REPOSITORY. Physical audibility cannot be
  * proven with any seam that exists here, so the best attainable outcome is
- * `blocked`, and any evidence claiming otherwise is forged. `red` and `blocked`
+ * `blocked`, and evidence claiming otherwise is forged. `red` and `blocked`
  * stay distinct: blocked means the evidence is sound but insufficient; red
  * means something failed or is missing.
  */
-function summarizeOutcome5({ sequence, avSamples, audio, resources }) {
+function summarizeOutcome5({ samples, currentSamples, audio, resources }) {
   const failures = []
   const blockers = []
 
-  if (!sequence || sequence.ok !== true) {
-    failures.push(...((sequence && sequence.failures) || ['sequence not validated']))
-  }
+  const sequence = validateSampleSequence(samples)
+  if (!sequence.ok) failures.push(...sequence.failures)
 
-  const samples = Array.isArray(avSamples) ? avSamples : null
-  if (samples === null) {
-    failures.push('no A/V sample verdicts')
-  } else if (samples.length !== SAMPLE_COUNT) {
-    failures.push(`${samples.length} A/V sample verdicts, expected exactly ${SAMPLE_COUNT}`)
+  const receipts = Array.isArray(currentSamples) ? currentSamples : null
+  const avVerdicts = []
+  if (receipts === null) {
+    failures.push('no raw current A/V receipts')
+  } else if (receipts.length !== SAMPLE_COUNT) {
+    failures.push(`${receipts.length} current A/V receipts, expected exactly ${SAMPLE_COUNT}`)
   } else {
-    for (let i = 0; i < samples.length; i += 1) {
-      const sample = samples[i]
-      if (!sample || typeof sample !== 'object') {
-        failures.push(`A/V sample ${i} is missing`)
-      } else if (sample.kind !== 'current') {
-        // A peak is a diagnostic about the worst past moment. It can never
-        // stand in for proof that sync held at this instant.
-        failures.push(`A/V sample ${i} is a "${sample.kind}" verdict, not a current sample`)
-      } else if (sample.status !== 'green' && sample.status !== 'red') {
-        failures.push(`A/V sample ${i} has no recognised verdict`)
-      } else if (sample.status === 'red') {
-        failures.push(`A/V sample ${i} out of tolerance: ${sample.reason || 'unstated'}`)
-      } else if (!isFiniteNumber(sample.errorMilliseconds)) {
-        failures.push(`A/V sample ${i} carries no measured error`)
+    for (let i = 0; i < receipts.length; i += 1) {
+      const entry = receipts[i]
+      if (!entry || typeof entry !== 'object') {
+        failures.push(`current A/V receipt ${i} is missing`)
+        continue
+      }
+      // Classified HERE, from the receipt and its timebase. A caller-supplied
+      // status is not consulted and cannot be.
+      const verdict = classifyAvCurrentSample({
+        receipt: entry.receipt,
+        timebase: entry.timebase
+      })
+      avVerdicts.push(verdict)
+      if (verdict.status !== 'green') {
+        failures.push(`A/V sample ${i}: ${verdict.reason}`)
       }
     }
   }
 
+  let audioVerdict = null
   if (!audio || typeof audio !== 'object') {
-    failures.push('no audio evidence')
+    failures.push('no raw audio evidence')
   } else {
-    if (audio.physicalAudibility !== 'blocked') {
-      // The only honest value. Anything else was not produced by this file.
-      failures.push(
-        `audio evidence claims physicalAudibility "${audio.physicalAudibility}", which no ` +
-          'seam in this repository can establish; the evidence is forged'
-      )
-    }
-    if (audio.status !== 'blocked') failures.push(`unrecognised audio verdict ${audio.status}`)
-    if (Array.isArray(audio.failures) && audio.failures.length > 0) {
-      failures.push(...audio.failures)
-    } else if (!Array.isArray(audio.failures)) {
-      failures.push('audio evidence carries no failure list')
-    }
-    if (audio.windowEmission !== 'proven') failures.push('window emission was not proven')
-    if (audio.intentionalSilence !== 'proven') failures.push('intentional silence was not proven')
-    if (audio.routeState !== 'healthy') failures.push('output route was not healthy')
-    if (!isNonEmptyString(audio.missingProof)) {
-      failures.push('audio evidence does not name the missing proof')
+    audioVerdict = classifyAudioEvidence({
+      windowAudio: audio.windowAudio,
+      silenceWindow: audio.silenceWindow,
+      routeHealth: audio.routeHealth,
+      priorRouteHealth: audio.priorRouteHealth
+    })
+    if (audioVerdict.failures.length > 0) failures.push(...audioVerdict.failures)
+    if (audioVerdict.physicalAudibility !== 'blocked') {
+      failures.push('audio classification did not produce the fixed audibility blocker')
     }
   }
 
+  let resourceVerdict = null
   if (!resources || typeof resources !== 'object') {
-    failures.push('no resource evidence')
-  } else if (resources.status !== 'green') {
-    failures.push(...(resources.failures || [`unrecognised resource verdict ${resources.status}`]))
-  } else if (
-    !Array.isArray(resources.failures) ||
-    !isFiniteNumber(resources.footprintGrowthMb) ||
-    !isFiniteNumber(resources.mallocGrowthMb) ||
-    !isSafeInteger(resources.peakResidentDecoderCount)
-  ) {
-    failures.push('resource evidence is a placeholder rather than a measured trend')
+    failures.push('no raw resource evidence')
+  } else {
+    resourceVerdict = classifyResourceGrowth({
+      readings: resources.readings,
+      droppedFrames: resources.droppedFrames,
+      ioSurfaceCapacity: resources.ioSurfaceCapacity
+    })
+    if (resourceVerdict.status !== 'green') failures.push(...resourceVerdict.failures)
   }
 
   blockers.push(
     'physical audibility is not proven: ' +
-      ((audio && audio.missingProof) || 'no audio evidence') +
+      ((audioVerdict && audioVerdict.missingProof) || 'no audio evidence') +
       ' — this outcome cannot reach Green in this repository'
   )
 
-  if (failures.length > 0) return { status: 'red', failures, blockers }
-  return { status: 'blocked', failures, blockers }
+  const evidence = { sequence, avVerdicts, audio: audioVerdict, resources: resourceVerdict }
+  if (failures.length > 0) return { status: 'red', failures, blockers, evidence }
+  return { status: 'blocked', failures, blockers, evidence }
 }
 
 module.exports = {
   AUDIO_ADVANCED_TOLERANCE_MS,
+  AUDIO_ELAPSED_ALLOWANCE_SECONDS,
   AUDIO_DELAYED_TOLERANCE_MS,
   FOOTPRINT_GROWTH_BUDGET_MB,
   MAX_IO_SURFACE_ID,
