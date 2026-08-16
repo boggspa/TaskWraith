@@ -197,6 +197,17 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('registers missing Mistral catalogue models only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain("upstream === 'mistral'")
+    expect(pi).toContain('writePiMistralModelRegistration({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiMistralModelRegistration({')).toBeLessThan(
+      pi.indexOf('await runCliProviderProcess(')
+    )
+  })
+
   it('applies compatibility redaction to explicitly supported Pi upstreams before launch', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 

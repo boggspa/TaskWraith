@@ -1661,6 +1661,7 @@ import {
   normalizePiCerebrasMaxCompletionTokens,
   writePiCerebrasCompletionCapOverride
 } from './pi/PiCerebrasCompletionCap'
+import { writePiMistralModelRegistration } from './pi/PiMistralModelRegistration'
 import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
@@ -22370,6 +22371,24 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       isolatedHomeLease.cleanup()
       failFast(
         `Could not prepare Pi's Cerebras completion cap: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        false
+      )
+      return
+    }
+  }
+
+  if (upstream === 'mistral') {
+    try {
+      writePiMistralModelRegistration({
+        isolatedHomeDir: isolatedHomeLease.path,
+        modelId: split.modelId
+      })
+    } catch (error) {
+      isolatedHomeLease.cleanup()
+      failFast(
+        `Could not prepare Pi's Mistral model registration: ${
           error instanceof Error ? error.message : String(error)
         }`,
         false
