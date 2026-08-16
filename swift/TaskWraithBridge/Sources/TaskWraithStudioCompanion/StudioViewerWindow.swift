@@ -165,6 +165,10 @@ final class StudioViewerView: NSView {
     /// Source and Review therefore share an oscillator as well as the playback
     /// authority; a cut changes its resident track, not the number of players.
     private let audioPlayer: StudioAudioPlayer
+
+    var audioPlayerIdentity: ObjectIdentifier {
+        ObjectIdentifier(audioPlayer)
+    }
     /// The one route allowed to schedule that shared device player.
     let audioSchedulingAuthority: StudioAudioSchedulingAuthority
     /// The app state owns leases; this callback releases this route's pool lease
@@ -1754,6 +1758,14 @@ final class StudioViewerWindowController {
         return window.contentView === view && view.window === window
     }
 
+    var audioPlayerIdentity: ObjectIdentifier {
+        view.audioPlayerIdentity
+    }
+
+    var audioSchedulingOwner: StudioViewerRoute {
+        view.audioSchedulingAuthority.owner
+    }
+
     var onPresentationDetached: (() -> Void)?
     var onPresentationStateChanged: (() -> Void)?
 
@@ -2006,7 +2018,9 @@ final class StudioViewerAppState {
         }
         workspaceController?.configureChromeActions(
             onToggleRoute: { [weak self] route in
-                _ = self?.toggleRoute(route)
+                guard let self else { return }
+                _ = self.toggleRoute(route)
+                self.refreshWorkspacePresentation()
             },
             onSelectReviewVersion: { [weak self] version in
                 self?.selectReviewVersion(version)

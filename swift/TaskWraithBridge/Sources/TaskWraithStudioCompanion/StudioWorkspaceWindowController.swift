@@ -115,6 +115,9 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
 
     rootStack = NSStackView(views: [upperStack, lowerStack])
     rootStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.root")
+    rootStack.setAccessibilityElement(true)
+    rootStack.setAccessibilityRole(.group)
+    rootStack.setAccessibilityLabel("Studio workspace")
     rootStack.orientation = .vertical
     rootStack.distribution = .fill
     rootStack.spacing = 1

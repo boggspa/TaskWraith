@@ -22,6 +22,39 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     )
   }
 
+  private func makeWorkspace(
+    audioPlayer: StudioAudioPlayer?,
+    audioSchedulingAuthority: StudioAudioSchedulingAuthority?
+  ) throws -> StudioWorkspaceWindowController {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("no Metal device")
+    }
+    let timebase = try XCTUnwrap(
+      StudioTimebase(timescale: 600, frameDurationTicks: 20)
+    )
+    return StudioWorkspaceWindowController(
+      sourceRenderer: try StudioViewerRenderer(device: device),
+      reviewRenderer: try StudioViewerRenderer(device: device),
+      authority: StudioPlaybackAuthority(
+        clock: StudioPlaybackClock(timebase: timebase, durationTicks: 6_000)
+      ),
+      audioPlayer: audioPlayer,
+      audioSchedulingAuthority: audioSchedulingAuthority
+    )
+  }
+
+  private func view(identifier: String, in root: NSView) -> NSView? {
+    if root.identifier?.rawValue == identifier {
+      return root
+    }
+    for child in root.subviews {
+      if let match = view(identifier: identifier, in: child) {
+        return match
+      }
+    }
+    return nil
+  }
+
   private func makeReviewTimeline() -> StudioProposedTimeline {
     let timebase = StudioTimebase(timescale: 600, frameDurationTicks: 20)!
     let op = StudioInsertRangeOp(
@@ -48,18 +81,30 @@ final class StudioViewerDeckChromeTests: XCTestCase {
 
     XCTAssertEqual(chrome.identifier?.rawValue, "studio.workspace.viewer-deck.chrome")
     XCTAssertEqual(chrome.accessibilityRole(), .group)
+    XCTAssertEqual(workspace.window.contentView?.identifier?.rawValue, "studio.workspace.root")
+    XCTAssertEqual(workspace.window.contentView?.accessibilityRole(), .group)
+    XCTAssertEqual(workspace.window.contentView?.accessibilityLabel(), "Studio workspace")
 
-    let expected: [(String, String)] = [
-      ("studio.workspace.route.source", "Source"),
-      ("studio.workspace.route.timeline", "Timeline"),
-      ("studio.workspace.review-version.current", "Current"),
-      ("studio.workspace.review-version.proposed", "Proposed"),
+    let expected: [(String, String, NSAccessibility.Role)] = [
+      ("studio.workspace.route.source", "Source", .checkBox),
+      ("studio.workspace.route.timeline", "Timeline", .checkBox),
+      ("studio.workspace.review-version.current", "Current", .radioButton),
+      ("studio.workspace.review-version.proposed", "Proposed", .radioButton),
     ]
-    for (identifier, label) in expected {
+    for (identifier, label, role) in expected {
       let button = try XCTUnwrap(chrome.button(identifier: identifier))
       XCTAssertEqual(button.title, label)
       XCTAssertEqual(button.accessibilityLabel(), label)
-      XCTAssertEqual(button.accessibilityRole(), .button)
+      XCTAssertEqual(button.accessibilityRole(), role)
+    }
+
+    for (identifier, label) in [
+      ("studio.workspace.viewer.source", "Source viewer"),
+      ("studio.workspace.viewer.timeline", "Timeline viewer"),
+    ] {
+      let host = try XCTUnwrap(view(identifier: identifier, in: workspace.window.contentView!))
+      XCTAssertEqual(host.accessibilityLabel(), label)
+      XCTAssertEqual(host.accessibilityRole(), .group)
     }
 
     XCTAssertEqual(workspace.window.title, "TaskWraith Studio")
@@ -145,6 +190,149 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     XCTAssertEqual(review.activeReviewContext?.version, .current)
     XCTAssertEqual(current.state, .on)
     XCTAssertEqual(proposed.state, .off)
+  }
+
+  func testSoleVisibleRouteRefusalKeepsChromeAndPresentationAttached() throws {
+    let workspace = try makeWorkspace()
+    let state = StudioViewerAppState(
+      controller: workspace.sourceController,
+      renderer: workspace.sourceController.renderer,
+      reviewController: try XCTUnwrap(workspace.reviewController),
+      workspaceController: workspace
+    )
+    _ = state
+    workspace.show()
+
+    let source = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.source")
+    )
+    let timeline = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.timeline")
+    )
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(timeline.state, .off)
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
+
+    source.performClick(nil)
+
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(timeline.state, .off)
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
+  }
+
+  func testCompactHostVisibilityDoesNotRewriteIndependentRouteSelection() throws {
+    let workspace = try makeWorkspace()
+    let viewport = try XCTUnwrap(StudioWorkspaceViewport(width: 1_600, height: 900))
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+    workspace.show()
+
+    workspace.setActiveRoute(.review)
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: try XCTUnwrap(StudioWorkspaceViewport(width: 800, height: 900))
+    )
+
+    let source = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.source")
+    )
+    let timeline = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(identifier: "studio.workspace.route.timeline")
+    )
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(timeline.state, .on)
+    XCTAssertFalse(workspace.routeHostIsVisible(.source))
+    XCTAssertTrue(workspace.routeHostIsVisible(.review))
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
+    XCTAssertTrue(try XCTUnwrap(workspace.reviewController).isPresentationAttached)
+  }
+
+  func testClosedWorkspaceRefreshesChromeWithoutReattachingUntilExplicitShow() throws {
+    let workspace = try makeWorkspace()
+    let review = try XCTUnwrap(workspace.reviewController)
+    let viewport = try XCTUnwrap(StudioWorkspaceViewport(width: 1_600, height: 900))
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+    workspace.show()
+    workspace.window.close()
+
+    review.adopt(reviewTimeline: makeReviewTimeline())
+    let proposed = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(
+        identifier: "studio.workspace.review-version.proposed"
+      )
+    )
+    XCTAssertTrue(proposed.isEnabled)
+    XCTAssertFalse(workspace.sourceController.isPresentationAttached)
+    XCTAssertFalse(review.isPresentationAttached)
+
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: "background-refresh",
+      viewport: viewport
+    )
+    XCTAssertFalse(workspace.sourceController.isPresentationAttached)
+    XCTAssertFalse(review.isPresentationAttached)
+
+    workspace.show()
+    XCTAssertTrue(workspace.sourceController.isPresentationAttached)
+    XCTAssertTrue(review.isPresentationAttached)
+  }
+
+  func testABTogglePreservesSharedPlaybackAndBoundedResourceOwnership() throws {
+    let sharedPlayer = StudioAudioPlayer()
+    let scheduling = StudioAudioSchedulingAuthority(owner: .source)
+    let workspace = try makeWorkspace(
+      audioPlayer: sharedPlayer,
+      audioSchedulingAuthority: scheduling
+    )
+    let review = try XCTUnwrap(workspace.reviewController)
+    let state = StudioViewerAppState(
+      controller: workspace.sourceController,
+      renderer: workspace.sourceController.renderer,
+      reviewController: review,
+      workspaceController: workspace
+    )
+    workspace.show()
+    XCTAssertEqual(state.toggleRoute(.review), .shown(.review))
+    review.adopt(reviewTimeline: makeReviewTimeline())
+
+    let authority = workspace.sourceController.playbackAuthority
+    authority.transport.play(atHost: 10)
+    let before = authority.transport.clock.snapshot(atHost: 10.5)
+    let authorityIdentity = ObjectIdentifier(authority)
+    let playerIdentity = workspace.sourceController.audioPlayerIdentity
+    let decoderCreations = state.sharedDecoderCreationCount
+    let residentDecoders = state.sharedResidentDecoderCount
+    let schedulingOwner = workspace.sourceController.audioSchedulingOwner
+
+    let proposed = try XCTUnwrap(
+      workspace.viewerDeckChrome.button(
+        identifier: "studio.workspace.review-version.proposed"
+      )
+    )
+    proposed.performClick(nil)
+
+    let after = authority.transport.clock.snapshot(atHost: 10.5)
+    XCTAssertTrue(authority === review.playbackAuthority)
+    XCTAssertEqual(ObjectIdentifier(review.playbackAuthority), authorityIdentity)
+    XCTAssertEqual(review.audioPlayerIdentity, playerIdentity)
+    XCTAssertEqual(review.audioSchedulingOwner, schedulingOwner)
+    XCTAssertEqual(before, after)
+    XCTAssertEqual(state.sharedDecoderCreationCount, decoderCreations)
+    XCTAssertEqual(state.sharedResidentDecoderCount, residentDecoders)
+    XCTAssertLessThanOrEqual(state.sharedResidentDecoderCount, 1)
   }
 
   func testKeyboardReviewShortcutRefreshesTheSameChromeState() throws {

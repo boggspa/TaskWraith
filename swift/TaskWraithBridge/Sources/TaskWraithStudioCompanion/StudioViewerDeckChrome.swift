@@ -21,19 +21,23 @@ final class StudioViewerDeckChrome: NSStackView {
   override init(frame frameRect: NSRect) {
     sourceButton = Self.makeButton(
       identifier: "studio.workspace.route.source",
-      label: "Source"
+      label: "Source",
+      role: .checkBox
     )
     timelineButton = Self.makeButton(
       identifier: "studio.workspace.route.timeline",
-      label: "Timeline"
+      label: "Timeline",
+      role: .checkBox
     )
     currentButton = Self.makeButton(
       identifier: "studio.workspace.review-version.current",
-      label: "Current"
+      label: "Current",
+      role: .radioButton
     )
     proposedButton = Self.makeButton(
       identifier: "studio.workspace.review-version.proposed",
-      label: "Proposed"
+      label: "Proposed",
+      role: .radioButton
     )
 
     super.init(frame: frameRect)
@@ -102,13 +106,17 @@ final class StudioViewerDeckChrome: NSStackView {
       unavailable ? "unavailable" : (selected ? "selected" : "not selected"))
   }
 
-  private static func makeButton(identifier: String, label: String) -> NSButton {
+  private static func makeButton(
+    identifier: String,
+    label: String,
+    role: NSAccessibility.Role
+  ) -> NSButton {
     let button = NSButton(title: label, target: nil, action: nil)
     button.identifier = NSUserInterfaceItemIdentifier(identifier)
     button.setAccessibilityElement(true)
-    button.setAccessibilityRole(.button)
+    button.setAccessibilityRole(role)
     button.setAccessibilityLabel(label)
-    button.setButtonType(.momentaryPushIn)
+    button.setButtonType(role == .checkBox ? .switch : .radio)
     button.isBordered = false
     button.state = .off
     return button
