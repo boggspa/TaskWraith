@@ -44,6 +44,56 @@ enum StudioCompanionStdioPump {
         let hydration: StudioCompanionSession.Hydration?
     }
 
+    /// Forwards startup hydration EXACTLY ONCE.
+    ///
+    /// WHY THIS EXISTS. `StudioCompanionSession.hydrated` is a RETAINED
+    /// snapshot of the getDocument response: it is never consumed and never
+    /// reset. The pump attached it to every subsequent Update, so every live
+    /// edit arrived paired with the document as it looked at startup. Because a
+    /// document whose `effectPreview` is null is an explicit CLEAR rather than
+    /// "leave alone", committing a LUT installed it and then immediately wiped
+    /// it. Measured in packaged run w2lut0816g: the operator's LUT was
+    /// journaled, persisted and acknowledged, and the picture stayed neutral.
+    /// The same shape could replay stale assets, proposals, transcripts and the
+    /// committed sequence over live state on every later edit.
+    ///
+    /// Hydration is a ONE-TIME RECOVERY EVENT, not perpetual state; this makes
+    /// the transport say so. It is a cursor at the pump boundary rather than a
+    /// mutation of the session because `hydrated` is also a durable reconnect
+    /// diagnostic — consuming it there would destroy a second reader's evidence
+    /// to fix a transport bug.
+    struct HydrationCursor {
+        private var forwarded = false
+
+        /// Returns the hydration the first time it exists, and nil forever after.
+        mutating func take(
+            _ hydrated: StudioCompanionSession.Hydration?
+        ) -> StudioCompanionSession.Hydration? {
+            guard let hydrated, !forwarded else { return nil }
+            forwarded = true
+            return hydrated
+        }
+    }
+
+    /// The envelope seam: one chunk in, one Update out.
+    ///
+    /// Named and extracted so a test can drive the REAL sequencing instead of
+    /// reassembling it. That distinction is the whole lesson of this file — the
+    /// stale-hydration defect survived because nothing under Tests/ executed
+    /// this join, exactly as proposals and the sequence did before it.
+    static func consume(
+        chunk: Data,
+        session: StudioCompanionSession,
+        hydration: inout HydrationCursor
+    ) -> Update {
+        let step = session.consume(chunk: chunk)
+        return Update(
+            step: step,
+            latestRevision: session.latestRevision,
+            hydration: hydration.take(session.hydrated)
+        )
+    }
+
     static func run(
         hydrateOnce: Bool,
         onUpdate: (@Sendable (Update) -> Void)? = nil
@@ -68,22 +118,22 @@ enum StudioCompanionStdioPump {
 
         writeLines(session.startLines())
 
+        var hydrationCursor = HydrationCursor()
+
         while true {
             let chunk = standardInput.availableData
             if chunk.isEmpty {
                 break // stdin EOF: the host closed us down.
             }
-            let step = session.consume(chunk: chunk)
-            reportProtocolErrors(step.protocolErrors)
-            writeLines(step.outboundLines)
-            onUpdate?(
-                Update(
-                    step: step,
-                    latestRevision: session.latestRevision,
-                    hydration: session.hydrated
-                )
+            let update = consume(
+                chunk: chunk,
+                session: session,
+                hydration: &hydrationCursor
             )
-            if let code = step.exitCode {
+            reportProtocolErrors(update.step.protocolErrors)
+            writeLines(update.step.outboundLines)
+            onUpdate?(update)
+            if let code = update.step.exitCode {
                 return code
             }
         }

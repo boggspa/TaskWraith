@@ -851,6 +851,257 @@ final class StudioPumpAdoptionTests: XCTestCase {
         )
     }
 
+    // MARK: - Startup hydration is a one-time recovery event
+
+    /// Every vertex pure red, so interpolation over a constant lattice maps
+    /// EVERY input colour to red. A delivered LUT cannot produce a subtle
+    /// change — it either grades or it does not.
+    private var constantRedCubeText: String {
+        """
+        LUT_3D_SIZE 2
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        1.0 0.0 0.0
+        """
+    }
+
+    private func jsonLine(_ object: [String: Any]) throws -> Data {
+        var data = try JSONSerialization.data(withJSONObject: object)
+        data.append(0x0A)
+        return data
+    }
+
+    private func constantRedPreview() throws -> StudioEffectPreview {
+        let cube = constantRedCubeText
+        return try StudioEffectPreview(
+            schemaVersion: 1,
+            effectId: StudioEffectPreview.effectId(forCubeText: cube),
+            cubeByteLength: cube.lengthOfBytes(using: .utf8),
+            cubeText: cube
+        )
+    }
+
+    /// CONTROL 1 — the transport defect behind packaged run w2lut0816g.
+    ///
+    /// `StudioCompanionSession.hydrated` is a RETAINED diagnostic snapshot of
+    /// the getDocument response: never consumed, never reset. The pump attached
+    /// it to every later Update, so each live edit arrived paired with the
+    /// document as it looked at startup. The operator's LUT was journaled,
+    /// persisted and acknowledged, and the picture stayed neutral.
+    ///
+    /// This drives the REAL handshake through the REAL envelope seam, because
+    /// the reason this survived is that nothing executed that join.
+    func testStartupHydrationReachesTheViewerExactlyOnce() throws {
+        let session = StudioCompanionSession()
+        var cursor = StudioCompanionStdioPump.HydrationCursor()
+        func pump(_ chunk: Data) -> StudioCompanionStdioPump.Update {
+            StudioCompanionStdioPump.consume(chunk: chunk, session: session, hydration: &cursor)
+        }
+
+        _ = pump(Data())
+        _ = pump(try jsonLine(["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": 1]]))
+
+        // The packaged run's actual startup shape: a durable NULL effectPreview,
+        // which the protocol defines as an explicit CLEAR rather than "leave
+        // alone". That is what made the stale replay destructive instead of
+        // merely redundant.
+        let restart = pump(
+            try jsonLine([
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": [
+                    "revision": 0,
+                    "document": [
+                        "formatVersion": 3,
+                        "assets": [
+                            ["assetId": "asset-1", "path": "/tmp/a.mov", "mediaKind": "video"]
+                        ],
+                        "proposals": [],
+                        "transcripts": [],
+                        "effectPreview": NSNull(),
+                        "tracks": [],
+                    ],
+                ],
+            ])
+        )
+
+        // RECONNECT/RESTART REPLAY IS PRESERVED. Making hydration one-shot must
+        // not make it zero-shot; a restarted viewer still recovers the document.
+        let hydration = try XCTUnwrap(
+            restart.hydration,
+            "a restarted viewer must still be rehydrated from the document"
+        )
+        XCTAssertEqual(hydration.effectPreview, .clear)
+        XCTAssertEqual(hydration.assets.map(\.assetId), ["asset-1"])
+        XCTAssertEqual(
+            restart.step.effectPreview,
+            .unchanged,
+            "the hydrating chunk carries no live delta — hydration is a different event"
+        )
+
+        // The operator's Load.
+        let load = pump(
+            try jsonLine([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": [
+                    "revision": 3,
+                    "op": [
+                        "type": "set_effect_preview",
+                        "effectPreview": [
+                            "schemaVersion": 1,
+                            "effectId": StudioEffectPreview.effectId(
+                                forCubeText: constantRedCubeText),
+                            "cubeByteLength": constantRedCubeText.lengthOfBytes(using: .utf8),
+                            "cubeText": constantRedCubeText,
+                        ],
+                    ],
+                ],
+            ])
+        )
+        guard case .set = load.step.effectPreview else {
+            return XCTFail("the live commit did not carry the preview: \(load.step.effectPreview)")
+        }
+        XCTAssertNil(
+            load.hydration,
+            "the startup document rode along with a live edit; adopt() then replayed its null "
+                + "effectPreview and cleared the LUT that had just been committed"
+        )
+
+        // An UNRELATED later edit must not replay it either. One assertion
+        // covers assets, proposals, transcripts, sequence and the durable clear,
+        // because every one of them travels inside this single value.
+        let unrelated = pump(
+            try jsonLine([
+                "jsonrpc": "2.0",
+                "method": "studio/editCommitted",
+                "params": ["revision": 4, "op": ["type": "insert_range"]],
+            ])
+        )
+        XCTAssertNil(
+            unrelated.hydration,
+            "every later edit re-delivered the whole startup document, so stale assets, "
+                + "proposals, transcripts and sequence could replay over live state too"
+        )
+
+        // The session's durable snapshot must SURVIVE. The cursor belongs at the
+        // pump boundary precisely so consuming the envelope does not destroy a
+        // reconnect diagnostic that is read elsewhere.
+        XCTAssertNotNil(
+            session.hydrated,
+            "only the ENVELOPE is one-shot; the session's durable snapshot must remain readable"
+        )
+    }
+
+    /// CONTROL 2 — chronology inside a single chunk.
+    ///
+    /// Hydration and a newer live step can legitimately arrive together. The
+    /// document describes the world at getDocument time; the step describes a
+    /// change that happened AFTER it. Applying the step first and the document
+    /// second inverts that, and a document whose effectPreview is a durable
+    /// clear then wipes the preview that was just installed.
+    ///
+    /// Nothing here assigns `grade`: the picture is read exactly as the product
+    /// left it, because an assertion that sets the mode it is verifying cannot
+    /// see the operator's actual failure.
+    func testAHydratingChunkCarryingANewerEditEndsGradedNotCleared() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let movie = try await makeMovie(lumaLevels: [128])
+        defer { try? FileManager.default.removeItem(at: movie) }
+
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        )
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source
+        )
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review
+        )
+        let state = StudioViewerAppState(
+            controller: sourceController,
+            renderer: sourceRenderer,
+            reviewController: reviewController,
+            presentSource: {}
+        )
+
+        let asset = StudioMediaAsset(assetId: "preview-asset", path: movie.path)
+        await state.adopt(
+            update: StudioCompanionStdioPump.Update(
+                step: StudioCompanionSession.Step(
+                    outboundLines: [],
+                    exitCode: nil,
+                    protocolErrors: [],
+                    effectPreview: .set(try constantRedPreview())
+                ),
+                latestRevision: 3,
+                hydration: StudioCompanionSession.Hydration(
+                    assets: [asset],
+                    proposals: [],
+                    transcripts: [],
+                    effectPreview: .clear,
+                    sequence: StudioTimelineSequence(items: [])
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            sourceRenderer.grade.mode,
+            .effect,
+            "the startup document's durable clear was applied after the live set, so Source "
+                + "ended up bypassing the LUT the operator had just loaded"
+        )
+        XCTAssertEqual(
+            reviewRenderer.grade.mode,
+            .effect,
+            "same inversion on the Review route"
+        )
+
+        var clock = StudioPlaybackClock(timebase: timebase, durationTicks: 300)
+        clock.seek(toTicks: 0, atHost: 0)
+        let snapshot = clock.snapshot(atHost: 0)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device, width: 128, height: 128
+        )
+        /// Reads what the product would put on screen. Deliberately does NOT
+        /// assign `grade`.
+        func productionPixel(_ renderer: StudioViewerRenderer) throws -> StudioPixel {
+            XCTAssertTrue(renderer.render(snapshot: snapshot, to: target).didDraw)
+            return try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64)
+        }
+
+        for (label, renderer) in [("Source", sourceRenderer), ("Review", reviewRenderer)] {
+            let graded = try productionPixel(renderer)
+            XCTAssertGreaterThan(
+                Int(graded.red),
+                Int(graded.green) + 60,
+                "\(label) is not showing the constant-red LUT: \(graded)"
+            )
+            XCTAssertGreaterThan(
+                Int(graded.red),
+                Int(graded.blue) + 60,
+                "\(label) is not showing the constant-red LUT: \(graded)"
+            )
+
+            // Compared against the ungraded picture only AFTER the production
+            // read above, so the comparison cannot manufacture the state.
+            renderer.grade = StudioGradeSettings(mode: .original)
+            XCTAssertTrue(renderer.render(snapshot: snapshot, to: target).didDraw)
+            let neutral = try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64)
+            XCTAssertNotEqual(graded, neutral, "\(label) graded output matched the bypass")
+        }
+    }
+
     private func makeMovie(lumaLevels: [UInt8] = [128, 128]) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("studio-pump-adoption-\(UUID().uuidString).mov")

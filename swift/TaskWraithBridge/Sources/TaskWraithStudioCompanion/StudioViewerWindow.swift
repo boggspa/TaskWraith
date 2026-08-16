@@ -1826,6 +1826,16 @@ final class StudioViewerAppState {
         if let revision = update.latestRevision {
             adopt(revision: revision)
         }
+        // HYDRATION FIRST, BECAUSE IT IS THE OLDER STATE. The document
+        // describes the world at getDocument time; the step describes a change
+        // that happened AFTER it. This list used to apply the step first and
+        // the document second, which inverted protocol chronology whenever both
+        // arrived in one chunk — and since a document with a null effectPreview
+        // is an explicit CLEAR, the recovered document wiped the preview that
+        // had just been committed. Recover, then apply what happened next.
+        if let hydration = update.hydration {
+            await adopt(hydration: hydration)
+        }
         if !update.step.openedAssets.isEmpty {
             await open(assets: update.step.openedAssets)
         }
@@ -1833,9 +1843,6 @@ final class StudioViewerAppState {
             adopt(transcripts: update.step.transcripts)
         }
         adopt(effectPreview: update.step.effectPreview)
-        if let hydration = update.hydration {
-            await adopt(hydration: hydration)
-        }
         if !update.step.proposals.isEmpty {
             await adopt(proposals: update.step.proposals)
         }
