@@ -158,9 +158,17 @@ describe('AgyBrainTranscriptMonitor', () => {
     expect(JSON.stringify(emitted)).not.toContain('Old reasoning')
   })
 
-  it('waits for a fresh project receipt and then projects its complete first turn', async () => {
+  it('requires a unique fresh TaskWraith brain and corroborating changed receipt', async () => {
     let receipt = '22222222-2222-4222-8222-222222222222'
-    const raw = step(1, 'PLANNER_RESPONSE', { thinking: 'Fresh project reasoning' })
+    const freshId = '33333333-3333-4333-8333-333333333333'
+    let conversationIds: string[] = []
+    const raw = [
+      taskWraithUserInput(),
+      step(1, 'PLANNER_RESPONSE', {
+        thinking: 'Fresh project reasoning',
+        tool_calls: [{ name: 'view_file', args: { AbsolutePath: '"/repo/src/main.ts"' } }]
+      })
+    ].join('\n')
     const emitted: AgyBrainTranscriptCompatEvent[] = []
     const monitor = new AgyBrainTranscriptMonitor({
       appRunId: 'fresh-run',
@@ -170,7 +178,7 @@ describe('AgyBrainTranscriptMonitor', () => {
       emit: (event) => emitted.push(event),
       deps: {
         readReceipt: async () => receipt,
-        listBrainConversationIds: async () => [],
+        listBrainConversationIds: async () => conversationIds,
         readFile: async () => raw,
         stat: async () => ({ size: raw.length, mtimeMs: raw.length })
       }
@@ -180,7 +188,8 @@ describe('AgyBrainTranscriptMonitor', () => {
     await monitor.pollNow()
     expect(emitted).toEqual([])
 
-    receipt = '33333333-3333-4333-8333-333333333333'
+    conversationIds = [freshId]
+    receipt = freshId
     await monitor.pollNow()
     expect(emitted).toHaveLength(2)
     expect(emitted[1]).toMatchObject({ output: 'Fresh project reasoning' })
@@ -266,8 +275,46 @@ describe('AgyBrainTranscriptMonitor', () => {
 
     receipt = secondId
     await monitor.pollNow()
-    expect(emitted).toHaveLength(2)
-    expect(emitted[1]).toMatchObject({ output: 'Second matching run' })
+    expect(emitted).toEqual([])
+    expect(await monitor.stopAndDrain()).toBeNull()
+  })
+
+  it('does not trust a changed receipt that points to a pre-launch conversation', async () => {
+    const priorId = '12121212-1212-4212-8212-121212121212'
+    const foreignId = '34343434-3434-4434-8434-343434343434'
+    let receipt = priorId
+    const foreignRaw = [
+      taskWraithUserInput(),
+      step(1, 'PLANNER_RESPONSE', {
+        thinking: 'Foreign pre-existing turn',
+        tool_calls: [{ name: 'view_file', args: { AbsolutePath: '"/repo/src/main.ts"' } }]
+      }),
+      step(2, 'PLANNER_RESPONSE', {
+        content: 'Foreign final response.',
+        tool_calls: null
+      })
+    ].join('\n')
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'pre-existing-receipt-run',
+      workspace: '/repo',
+      providerSessionId: null,
+      receiptBeforeFreshProject: priorId,
+      emit: (event) => emitted.push(event),
+      deps: {
+        readReceipt: async () => receipt,
+        listBrainConversationIds: async () => [priorId, foreignId],
+        readFile: async (path) => (path.includes(foreignId) ? foreignRaw : ''),
+        stat: async () => ({ size: foreignRaw.length, mtimeMs: foreignRaw.length })
+      }
+    })
+
+    await monitor.prime()
+    receipt = foreignId
+    await monitor.pollNow()
+
+    expect(emitted).toEqual([])
+    expect(await monitor.stopAndDrain()).toBeNull()
   })
 
   it('ignores a new brain without TaskWraith and workspace provenance', async () => {
@@ -305,7 +352,11 @@ describe('AgyBrainTranscriptMonitor', () => {
 
   it('forces one final transcript read while stopping even when stat evidence is unchanged', async () => {
     const oldLine = step(8, 'PLANNER_RESPONSE', { thinking: 'Already projected turn' })
-    const finalLine = step(9, 'PLANNER_RESPONSE', { thinking: 'Final planner trace' })
+    const finalLine = step(9, 'PLANNER_RESPONSE', {
+      thinking: 'Final planner trace',
+      content: 'Exact final answer.',
+      tool_calls: null
+    })
     let raw = oldLine
     const emitted: AgyBrainTranscriptCompatEvent[] = []
     const monitor = new AgyBrainTranscriptMonitor({
@@ -326,9 +377,66 @@ describe('AgyBrainTranscriptMonitor', () => {
     await monitor.pollNow()
     expect(emitted).toEqual([])
 
-    await monitor.stopAndDrain()
+    const [completedFinalResponse, repeatedDrain] = await Promise.all([
+      monitor.stopAndDrain(),
+      monitor.stopAndDrain()
+    ])
     expect(emitted).toHaveLength(2)
     expect(emitted[1]).toMatchObject({ output: 'Final planner trace' })
+    expect(completedFinalResponse).toEqual({
+      stepIndex: 9,
+      createdAt: '2026-08-15T19:30:00Z',
+      content: 'Exact final answer.'
+    })
+    expect(repeatedDrain).toEqual(completedFinalResponse)
+  })
+
+  it('never returns a prior-turn final from a resumed transcript baseline', async () => {
+    const priorFinal = step(14, 'PLANNER_RESPONSE', {
+      content: 'Prior turn final.',
+      tool_calls: null
+    })
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'resumed-final-baseline-run',
+      workspace: '/repo',
+      providerSessionId: 'agy-project-v1:dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      emit: () => undefined,
+      deps: {
+        readFile: async () => priorFinal,
+        stat: async () => ({ size: priorFinal.length, mtimeMs: priorFinal.length })
+      }
+    })
+
+    await monitor.prime()
+    expect(await monitor.stopAndDrain()).toBeNull()
+  })
+
+  it('fails closed when a resumed pre-turn transcript baseline cannot be read', async () => {
+    const priorFinal = step(22, 'PLANNER_RESPONSE', {
+      content: 'Prior turn final after a transient read failure.',
+      tool_calls: null
+    })
+    let readAttempts = 0
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'resumed-baseline-read-failure-run',
+      workspace: '/repo',
+      providerSessionId: 'agy-project-v1:56565656-5656-4656-8656-565656565656',
+      emit: (event) => emitted.push(event),
+      deps: {
+        readFile: async () => {
+          readAttempts += 1
+          if (readAttempts === 1) throw new Error('transient read failure')
+          return priorFinal
+        },
+        stat: async () => ({ size: priorFinal.length, mtimeMs: priorFinal.length })
+      }
+    })
+
+    await monitor.prime()
+    expect(await monitor.stopAndDrain()).toBeNull()
+    expect(emitted).toEqual([])
+    expect(readAttempts).toBe(1)
   })
 
   it('warns when a final native response remains stuck before process exit', async () => {
@@ -369,5 +477,10 @@ describe('AgyBrainTranscriptMonitor', () => {
       })
     ])
     expect(JSON.stringify(emitted)).not.toContain(finalContent)
+    expect(await monitor.stopAndDrain()).toEqual({
+      stepIndex: 11,
+      createdAt: '2026-08-15T19:30:00Z',
+      content: finalContent
+    })
   })
 })

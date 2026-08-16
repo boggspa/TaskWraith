@@ -7,14 +7,58 @@ export interface AgyFinalResponseLivenessWarning {
   message: string
 }
 
+export interface AgyCompletedFinalResponse {
+  stepIndex: number
+  createdAt: string
+  content: string
+}
+
 export function isAgyCompletedFinalResponseCandidate(step: AgyTranscriptStep): boolean {
   return (
     step.source === 'MODEL' &&
     step.type === 'PLANNER_RESPONSE' &&
     step.status.trim().toUpperCase() === 'DONE' &&
     step.content.trim().length > 0 &&
-    (!step.tool_calls || step.tool_calls.length === 0)
+    (!step.tool_calls || step.tool_calls.length === 0) &&
+    !(step.truncated_fields || []).some((field) => field.trim().toLowerCase() === 'content')
   )
+}
+
+function latestAgyTranscriptStep(lines: readonly string[]): AgyTranscriptStep | null {
+  let latest: AgyTranscriptStep | null = null
+  for (const line of lines) {
+    const step = parseAgyTranscriptLine(line)
+    if (step && (!latest || step.step_index > latest.step_index)) latest = step
+  }
+  return latest
+}
+
+export function latestAgyTranscriptStepIndex(lines: readonly string[]): number {
+  return latestAgyTranscriptStep(lines)?.step_index ?? -1
+}
+
+/**
+ * Returns only an exact terminal planner record that belongs after the caller's
+ * turn baseline. A later native step disarms the candidate, even if an earlier
+ * completed response remains in the transcript.
+ */
+export function latestAgyCompletedFinalResponse(
+  lines: readonly string[],
+  afterStepIndex = -1
+): AgyCompletedFinalResponse | null {
+  const latest = latestAgyTranscriptStep(lines)
+  if (
+    !latest ||
+    latest.step_index <= afterStepIndex ||
+    !isAgyCompletedFinalResponseCandidate(latest)
+  ) {
+    return null
+  }
+  return {
+    stepIndex: latest.step_index,
+    createdAt: latest.created_at,
+    content: latest.content.trim()
+  }
 }
 
 /**
@@ -35,17 +79,13 @@ export class AgyFinalResponseLiveness {
 
   observeTranscriptLines(lines: readonly string[]): void {
     if (this.closed) return
-    let latest: AgyTranscriptStep | null = null
-    for (const line of lines) {
-      const step = parseAgyTranscriptLine(line)
-      if (step && (!latest || step.step_index > latest.step_index)) latest = step
-    }
-    if (!latest || !isAgyCompletedFinalResponseCandidate(latest)) {
+    const latest = latestAgyCompletedFinalResponse(lines)
+    if (!latest) {
       this.clearCandidate()
       return
     }
-    if (latest.step_index === this.candidateStepIndex) return
-    this.candidateStepIndex = latest.step_index
+    if (latest.stepIndex === this.candidateStepIndex) return
+    this.candidateStepIndex = latest.stepIndex
     this.observedAtMs = this.now()
     this.warned = false
   }

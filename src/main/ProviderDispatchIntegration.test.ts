@@ -36,6 +36,45 @@ describe('provider dispatch integration', () => {
     expect(trailingContentAt).toBeGreaterThan(drainAt)
   })
 
+  it('attempts failed-exit content recovery after stdout and before the failed result', () => {
+    const runner = sourceBetween(
+      'async function runCliProviderProcess(',
+      'async function loadOptionalClaudeSdk()'
+    )
+    const trailingContentAt = runner.indexOf('const trailing = stdoutBuffer.trim()')
+    const recoveryAt = runner.indexOf('if (!state.completed && options.failedExitContentRecovery)')
+    const resultAt = runner.indexOf("type: 'result'", recoveryAt)
+
+    expect(recoveryAt).toBeGreaterThan(trailingContentAt)
+    expect(resultAt).toBeGreaterThan(recoveryAt)
+    expect(runner.slice(recoveryAt, resultAt)).toContain('assistantText: state.assistantText')
+    expect(runner.slice(recoveryAt, resultAt)).toContain(
+      'terminalClaimed: Boolean(runManager.getClaimedTerminalStatus(route.appRunId))'
+    )
+    expect(runner.slice(recoveryAt, resultAt)).toContain(
+      '!runManager.getClaimedTerminalStatus(route.appRunId)'
+    )
+    expect(runner.slice(resultAt, resultAt + 500)).toContain("? 'success'")
+    expect(runner.slice(resultAt, resultAt + 500)).toContain(": 'failed'")
+  })
+
+  it('accounts for plain stdout before deciding whether recovery would duplicate it', () => {
+    const runner = sourceBetween(
+      'async function runCliProviderProcess(',
+      'async function loadOptionalClaudeSdk()'
+    )
+    const helperStart = runner.indexOf('const emitPlainAssistantContent = (text: string): void =>')
+    const helperEnd = runner.indexOf("child.stdout?.on('data'", helperStart)
+    const helper = runner.slice(helperStart, helperEnd)
+
+    expect(helperStart).toBeGreaterThanOrEqual(0)
+    expect(helper.indexOf('state.assistantText += sanitized')).toBeLessThan(
+      helper.indexOf('sendAgentCompatLine(')
+    )
+    expect(runner).toContain("emitPlainAssistantContent(line + '\\n')")
+    expect(runner).toContain("emitPlainAssistantContent(trailing + '\\n')")
+  })
+
   it('strict-validates raw Gemini API function names before canonical dispatch', () => {
     const geminiDeps = sourceBetween(
       'function geminiApiProviderDeps()',

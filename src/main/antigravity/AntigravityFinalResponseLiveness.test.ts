@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   AgyFinalResponseLiveness,
-  isAgyCompletedFinalResponseCandidate
+  isAgyCompletedFinalResponseCandidate,
+  latestAgyCompletedFinalResponse,
+  latestAgyTranscriptStepIndex
 } from './AntigravityFinalResponseLiveness'
 import type { AgyTranscriptStep } from './AntigravityToolProjection'
 
@@ -27,11 +29,41 @@ describe('AntiGravity final-response liveness', () => {
     expect(isAgyCompletedFinalResponseCandidate(step({ source: 'SYSTEM' }))).toBe(false)
     expect(isAgyCompletedFinalResponseCandidate(step({ status: 'RUNNING' }))).toBe(false)
     expect(isAgyCompletedFinalResponseCandidate(step({ content: '  ' }))).toBe(false)
+    expect(isAgyCompletedFinalResponseCandidate(step({ truncated_fields: ['content'] }))).toBe(
+      false
+    )
     expect(
       isAgyCompletedFinalResponseCandidate(
         step({ tool_calls: [{ name: 'run_command', args: { CommandLine: 'pwd' } }] })
       )
     ).toBe(false)
+  })
+
+  it('returns the exact latest final only when it belongs after the turn baseline', () => {
+    const prior = step({ step_index: 12, content: 'Prior turn report.' })
+    const current = step({
+      step_index: 18,
+      created_at: '2026-08-16T10:40:00Z',
+      content: '  Current turn report.  '
+    })
+    const lines = [line(prior), '{malformed', line(current)]
+
+    expect(latestAgyTranscriptStepIndex(lines)).toBe(18)
+    expect(latestAgyCompletedFinalResponse(lines, 12)).toEqual({
+      stepIndex: 18,
+      createdAt: '2026-08-16T10:40:00Z',
+      content: 'Current turn report.'
+    })
+    expect(latestAgyCompletedFinalResponse(lines, 18)).toBeNull()
+  })
+
+  it('does not return an earlier final after a later native step', () => {
+    expect(
+      latestAgyCompletedFinalResponse([
+        line(step({ step_index: 18 })),
+        line(step({ step_index: 19, source: 'SYSTEM', type: 'CHECKPOINT', content: '' }))
+      ])
+    ).toBeNull()
   })
 
   it('warns once after grace while leaving final content out of the warning', () => {

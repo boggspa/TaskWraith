@@ -16,7 +16,12 @@ import {
   type CliProviderThinkingSegmentsState
 } from '../providers/CliProviderThinking'
 import { normalizeAgyConversationId } from './AntigravityCli'
-import { AgyFinalResponseLiveness } from './AntigravityFinalResponseLiveness'
+import {
+  AgyFinalResponseLiveness,
+  latestAgyCompletedFinalResponse,
+  latestAgyTranscriptStepIndex,
+  type AgyCompletedFinalResponse
+} from './AntigravityFinalResponseLiveness'
 import {
   agyCliRootPath,
   parseAgyProjectBoundSessionId,
@@ -288,9 +293,13 @@ export class AgyBrainTranscriptMonitor {
   private readonly finalResponseLiveness: AgyFinalResponseLiveness
   private conversationId: string | null
   private freshConversationBaseline: Set<string> | null = null
+  private baselineStepIndex = -1
+  private transcriptBaselineReady = false
+  private completedFinalResponse: AgyCompletedFinalResponse | null = null
   private lastSnapshotKey = ''
   private timer: NodeJS.Timeout | undefined
   private inFlight: Promise<void> = Promise.resolve()
+  private drain: Promise<AgyCompletedFinalResponse | null> | null = null
   private started = false
   private stopped = false
 
@@ -308,6 +317,7 @@ export class AgyBrainTranscriptMonitor {
     if (!this.conversationId) {
       try {
         this.freshConversationBaseline = new Set(await this.listBrainConversationIds())
+        this.transcriptBaselineReady = true
       } catch {
         this.freshConversationBaseline = null
       }
@@ -315,7 +325,10 @@ export class AgyBrainTranscriptMonitor {
     }
     const raw = await this.readTranscript(this.conversationId)
     if (raw === null) return
-    this.projector.markBaseline(raw.split(/\r?\n/))
+    const lines = raw.split(/\r?\n/)
+    this.projector.markBaseline(lines)
+    this.baselineStepIndex = latestAgyTranscriptStepIndex(lines)
+    this.transcriptBaselineReady = true
     await this.rememberSnapshot(this.conversationId)
   }
 
@@ -329,13 +342,17 @@ export class AgyBrainTranscriptMonitor {
     await this.poll(false)
   }
 
-  async stopAndDrain(): Promise<void> {
-    if (this.stopped) return this.inFlight
+  async stopAndDrain(): Promise<AgyCompletedFinalResponse | null> {
+    if (this.drain) return this.drain
     this.stopped = true
     this.finalResponseLiveness.close()
     if (this.timer) clearTimeout(this.timer)
-    await this.inFlight
-    await this.poll(true)
+    this.drain = (async () => {
+      await this.inFlight
+      await this.poll(true)
+      return this.completedFinalResponse
+    })()
+    return this.drain
   }
 
   private schedule(delayMs: number): void {
@@ -350,16 +367,25 @@ export class AgyBrainTranscriptMonitor {
 
   private async poll(force: boolean): Promise<void> {
     try {
+      if (!this.transcriptBaselineReady) return
       if (!this.conversationId) {
         const readReceipt =
           this.deps.readReceipt ||
           ((workspace: string | null | undefined) => readAgyConversationReceipt(workspace))
         const learned = await readReceipt(this.input.workspace)
-        const discovered =
-          learned && learned !== this.input.receiptBeforeFreshProject
-            ? learned
-            : await this.discoverFreshConversationId()
+        const discovered = await this.discoverFreshConversationId()
         if (!discovered) return
+        // The cwd receipt is shared by every agy process in this workspace, so
+        // it can corroborate a unique post-launch brain but can never select
+        // one by itself. A changed receipt that points elsewhere is a race;
+        // fail closed instead of projecting another run's transcript.
+        if (
+          learned &&
+          learned !== this.input.receiptBeforeFreshProject &&
+          normalizeAgyConversationId(learned) !== discovered
+        ) {
+          return
+        }
         this.conversationId = discovered
         this.lastSnapshotKey = ''
       }
@@ -371,6 +397,7 @@ export class AgyBrainTranscriptMonitor {
       const raw = await this.readTranscript(this.conversationId)
       if (raw === null) return
       const lines = raw.split(/\r?\n/)
+      this.completedFinalResponse = latestAgyCompletedFinalResponse(lines, this.baselineStepIndex)
       this.finalResponseLiveness.observeTranscriptLines(lines)
       const events = this.projector.consume(lines)
       for (const event of events) {

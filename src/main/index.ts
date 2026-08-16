@@ -1750,6 +1750,8 @@ import { runAntigravityAgySeatSummary } from './antigravity/AntigravityAgySeatCo
 import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import { emitAntigravityColdStartInit } from './antigravity/AntigravityColdStartLiveness'
 import { AgyBrainTranscriptMonitor } from './antigravity/AntigravityBrainTranscriptLiveProjection'
+import { planAntigravityFailedExitFinalRecovery } from './antigravity/AntigravityFailedExitFinalRecovery'
+import type { AgyCompletedFinalResponse } from './antigravity/AntigravityFinalResponseLiveness'
 import { createAntigravityQuotaClient } from './antigravity/AntigravityQuotaClient'
 import {
   fetchAuthenticatedAgyQuotaSnapshot,
@@ -19321,6 +19323,28 @@ async function runCliProviderProcess(
     /** Flush display-only side channels while this run is still projectable. */
     beforeTerminalProjection?: () => Promise<void> | void
     /**
+     * Recover provider-authored assistant content only after an unsuccessful
+     * numeric child exit and only when the exhausted stdout stream delivered
+     * no assistant text. The callback decides whether exact provider-native
+     * evidence is sufficient; settlement remains failed.
+     */
+    failedExitContentRecovery?: (input: {
+      exitCode: number | null
+      assistantText: string
+      terminalClaimed: boolean
+    }) =>
+      | Promise<{
+          text: string
+          warning: { title: string; message: string }
+          provenance: Record<string, unknown>
+        } | null>
+      | {
+          text: string
+          warning: { title: string; message: string }
+          provenance: Record<string, unknown>
+        }
+      | null
+    /**
      * RPC-style providers (pi) submit the prompt over stdin and terminate on
      * stdin EOF. Lines are written after spawn, stdin stays OPEN, and a closer
      * keyed by appRunId lets the terminal protocol event end the process
@@ -19699,6 +19723,22 @@ async function runCliProviderProcess(
   let stdinReadinessSettled = !stdinReadiness
   let stdinReadinessTimer: ReturnType<typeof setTimeout> | undefined
   let stdinReadinessStderrBuffer = ''
+  const emitPlainAssistantContent = (text: string): void => {
+    const sanitized = sanitizeCanvasEvalProviderText(text)
+    if (!sanitized) return
+    state.assistantText += sanitized
+    sendAgentCompatLine(
+      event.sender,
+      provider,
+      {
+        type: 'content',
+        text: sanitized,
+        provider,
+        fallback: options.fallback
+      },
+      state
+    )
+  }
   child.stdout?.on('data', (chunk) => {
     stdoutBuffer += chunk.toString()
     const lines = stdoutBuffer.split(/\r?\n/)
@@ -19709,17 +19749,7 @@ async function runCliProviderProcess(
       try {
         handleCliProviderJsonEvent(state, JSON.parse(trimmed))
       } catch {
-        sendAgentCompatLine(
-          event.sender,
-          provider,
-          {
-            type: 'content',
-            text: sanitizeCanvasEvalProviderText(line + '\n'),
-            provider,
-            fallback: options.fallback
-          },
-          state
-        )
+        emitPlainAssistantContent(line + '\n')
       }
     }
   })
@@ -19928,17 +19958,53 @@ async function runCliProviderProcess(
           try {
             handleCliProviderJsonEvent(state, JSON.parse(trailing))
           } catch {
-            sendAgentCompatLine(
-              event.sender,
-              provider,
-              {
-                type: 'content',
-                text: sanitizeCanvasEvalProviderText(trailing + '\n'),
+            emitPlainAssistantContent(trailing + '\n')
+          }
+        }
+        if (!state.completed && options.failedExitContentRecovery) {
+          try {
+            const recovery = await options.failedExitContentRecovery({
+              exitCode: effectiveExitCode,
+              assistantText: state.assistantText,
+              terminalClaimed: Boolean(runManager.getClaimedTerminalStatus(route.appRunId))
+            })
+            const recoveredText = recovery
+              ? sanitizeCanvasEvalProviderText(recovery.text).trim()
+              : ''
+            if (
+              recovery &&
+              recoveredText &&
+              !runManager.getClaimedTerminalStatus(route.appRunId)
+            ) {
+              sendAgentCompatLine(
+                event.sender,
                 provider,
-                fallback: options.fallback
-              },
-              state
-            )
+                {
+                  ...recovery.provenance,
+                  type: 'provider_warning',
+                  provider,
+                  severity: 'warning',
+                  title: recovery.warning.title,
+                  message: recovery.warning.message
+                },
+                state
+              )
+              state.assistantText = recoveredText
+              sendAgentCompatLine(
+                event.sender,
+                provider,
+                {
+                  ...recovery.provenance,
+                  type: 'content',
+                  text: recoveredText,
+                  provider,
+                  fallback: options.fallback
+                },
+                state
+              )
+            }
+          } catch {
+            // Recovery is additive projection only; native failure stays authoritative.
           }
         }
         // Grok reports no token usage; record a projected estimate so it appears in
@@ -34362,6 +34428,7 @@ async function runAntigravityAgyProvider(
   })
   await brainTranscriptMonitor.prime()
   brainTranscriptMonitor.start()
+  let completedFinalResponse: AgyCompletedFinalResponse | null = null
 
   try {
     await runCliProviderProcess(
@@ -34374,7 +34441,16 @@ async function runAntigravityAgyProvider(
         fallback: false,
         requireExistingRun: true,
         resolvedEnv: launch.env,
-        beforeTerminalProjection: () => brainTranscriptMonitor.stopAndDrain(),
+        beforeTerminalProjection: async () => {
+          completedFinalResponse = await brainTranscriptMonitor.stopAndDrain()
+        },
+        failedExitContentRecovery: ({ exitCode, assistantText, terminalClaimed }) =>
+          planAntigravityFailedExitFinalRecovery({
+            exitCode,
+            assistantText,
+            terminalClaimed,
+            finalResponse: completedFinalResponse
+          }),
         onComplete: releasePermissionLease,
         // Keyed by the run's own cwd, which is what agy records. The temporary
         // native permission overlay is separately serialized because official

@@ -51,6 +51,14 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(exitSessionResolver).toContain('readAgyConversationReceipt(payload.workspace)')
     expect(exitSessionResolver).toContain('learned === receiptBeforeFreshProject')
     expect(exitSessionResolver).toContain('formatAgyProjectBoundSessionId(learned)')
+    const terminalDrain = probe.propText(run[0], 5, 'beforeTerminalProjection')
+    expect(terminalDrain).toContain(
+      'completedFinalResponse = await brainTranscriptMonitor.stopAndDrain()'
+    )
+    const failedExitRecovery = probe.propText(run[0], 5, 'failedExitContentRecovery')
+    expect(failedExitRecovery).toContain('planAntigravityFailedExitFinalRecovery')
+    expect(failedExitRecovery).toContain('terminalClaimed')
+    expect(failedExitRecovery).toContain('finalResponse: completedFinalResponse')
 
     // The binary comes from the prepared launch, never re-resolved here.
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
