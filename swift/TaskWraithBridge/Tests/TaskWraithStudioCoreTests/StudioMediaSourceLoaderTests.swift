@@ -590,4 +590,249 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
             XCTFail("expected a bounded provider")
         }
     }
+
+    // MARK: - Reader work is bounded by the GOP, not by the frame index
+
+    /// `payloadReadCount` counts every `copyNextSampleBuffer()`, including the
+    /// non-payload stream/event buffers the provider discards to stay aligned
+    /// with the metadata pass. A few of those can precede the first real
+    /// payload, so these controls carry a small allowance.
+    ///
+    /// The allowance is a CONSTANT on purpose. The claim under test is not
+    /// "reads are few", it is "reads do not scale with the requested index" —
+    /// an allowance that grew with position would concede the whole point.
+    private var eventBufferAllowance: Int { 8 }
+
+    /// Nearest sync sample at or before `index`, derived from the metadata the
+    /// loader actually indexed rather than from an assumed keyframe cadence.
+    private func precedingSyncDecodeIndex(
+        _ provider: BoundedStudioSampleProvider,
+        for index: Int
+    ) -> Int {
+        var cursor = index
+        while cursor > 0 {
+            if provider.metadata(atDecodeIndex: cursor).isSyncSample { return cursor }
+            cursor -= 1
+        }
+        return 0
+    }
+
+    /// CONTROL 1 — the regression that shipped: `startReader` opened the asset
+    /// at time zero and discarded payloads one at a time until it reached the
+    /// chosen sync sample, while its own comment claimed the skip was "bounded
+    /// by the GOP". It was not; the walk started at 0. On this fixture a tail
+    /// request discarded ~3,999 samples on the calling actor, and on the
+    /// 18,000-frame acceptance asset that was a ~79 second main-thread stall.
+    ///
+    /// Wall-clock timing would catch that flakily and would not say WHY, so the
+    /// assertion is on reader work itself.
+    func testALateAllIntraRequestReadsOnlyTheSelectedPayload() async throws {
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Same 4,000-frame all-intra shape as the eager-fallback control above,
+        // so this measures the production bounded path and not a toy asset.
+        let frameCount = 4_000
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: (0..<frameCount).map { UInt8(32 + ($0 % 200)) },
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: true
+        )
+
+        let media = try await StudioMediaSourceLoader.loadBounded(asset: asset(at: url))
+        let bounded = try XCTUnwrap(
+            media.sampleProvider as? BoundedStudioSampleProvider,
+            "loadBounded must select the bounded provider"
+        )
+        XCTAssertEqual(bounded.sampleCount, frameCount)
+        XCTAssertTrue(
+            bounded.isAllIntra,
+            "every frame must be a sync sample or the selected payload is not reachable alone"
+        )
+        XCTAssertEqual(
+            bounded.payloadReadCount,
+            0,
+            "the eager metadata pass owns its own reader and must not charge the payload lane"
+        )
+
+        let lateIndex = frameCount - 1
+        _ = try bounded.sampleBuffer(atDecodeIndex: lateIndex)
+
+        // Every frame is an IDR, so the only legal decode start IS the selected
+        // sample: one payload.
+        XCTAssertLessThanOrEqual(
+            bounded.payloadReadCount,
+            1 + eventBufferAllowance,
+            "a late all-intra request must read the selected payload, not the "
+                + "\(lateIndex) payloads preceding it"
+        )
+    }
+
+    /// CONTROL 2 — inter-coded media cannot start anywhere, so the honest bound
+    /// is the distance back to the selected sync sample. That span is derived
+    /// from the loader's own metadata, not from an assumed keyframe interval,
+    /// so the control stays exact if the encoder changes its cadence.
+    ///
+    /// Cheapness is worthless if the picture is wrong, so the same test then
+    /// proves the bytes are unchanged by the restart.
+    func testAFarBackwardRestartReadsNoMoreThanItsGopAndKeepsPixels() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Moving content: a flat fixture hides reference corruption, because a
+        // stale reference still yields the same flat luma.
+        try await StudioTestMedia.writeMovingVFRMovie(
+            sections: [(frameRate: 30, frameCount: 240)],
+            to: url,
+            maxKeyFrameInterval: 16
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset(at: url),
+            device: device,
+            payloadCacheLimit: 24
+        )
+        defer { loaded.source.invalidate() }
+        XCTAssertFalse(
+            loaded.media.allSamplesAreSyncSamples,
+            "the fixture must be inter-coded or a GOP bound proves nothing"
+        )
+
+        let bounded = try XCTUnwrap(
+            loaded.media.sampleProvider as? BoundedStudioSampleProvider
+        )
+
+        // Land far forward first so the request below is a real backward
+        // restart across many GOPs rather than a cache hit.
+        let lateIndex = bounded.sampleCount - 1
+        _ = try bounded.sampleBuffer(atDecodeIndex: lateIndex)
+        let readsBeforeRestart = bounded.payloadReadCount
+
+        let restartIndex = 40
+        let syncIndex = precedingSyncDecodeIndex(bounded, for: restartIndex)
+        let gopSpan = restartIndex - syncIndex + 1
+        XCTAssertLessThan(
+            gopSpan,
+            restartIndex,
+            "the derived GOP must be shorter than the seek itself or the bound is vacuous"
+        )
+
+        _ = try bounded.sampleBuffer(atDecodeIndex: restartIndex)
+        let restartReads = bounded.payloadReadCount - readsBeforeRestart
+
+        XCTAssertLessThanOrEqual(
+            restartReads,
+            gopSpan + eventBufferAllowance,
+            "a backward restart must read its own GOP (\(gopSpan) payloads from sync "
+                + "sample \(syncIndex)), not \(restartIndex) payloads from the start"
+        )
+
+        // Bounded AND correct: the picture must not depend on the seek history
+        // that reached it.
+        let renderer = try StudioVideoFrameRenderer(device: device)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: size,
+            height: size
+        )
+        func renderedBytes(frame: Int64) throws -> [UInt8] {
+            let textures = try loaded.source.textures(forFrameIndex: frame)
+            try renderer.render(frame: textures, to: target)
+            var bytes = [UInt8](repeating: 0, count: size * size * 4)
+            target.getBytes(
+                &bytes,
+                bytesPerRow: size * 4,
+                from: MTLRegionMake2D(0, 0, size, size),
+                mipmapLevel: 0
+            )
+            return bytes
+        }
+
+        let firstPass = try renderedBytes(frame: 200)
+        _ = try renderedBytes(frame: 12)
+        _ = try renderedBytes(frame: 175)
+        let afterRestartStorm = try renderedBytes(frame: 200)
+
+        XCTAssertEqual(
+            firstPass,
+            afterRestartStorm,
+            "the scoped reader must return the same picture, not merely return sooner"
+        )
+    }
+
+    /// CONTROL 3 — a time-scoped reader is only as exact as the container's
+    /// edit list and rounding. If it hands back a different sample than the
+    /// metadata pass indexed, every later decode index is silently off by that
+    /// difference: wrong pictures at correct-looking timestamps, which is the
+    /// failure class this arc has been chasing since the IDR bug.
+    ///
+    /// So the guard is proven with a reader that deliberately ignores the
+    /// requested start — exactly what a dropped `timeRange`, an edit list, or a
+    /// rounding error would produce.
+    func testAMisScopedReaderFailsClosedInsteadOfIndexingTheWrongPayload() async throws {
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: (0..<200).map { UInt8(32 + ($0 % 200)) },
+            to: url,
+            width: 64,
+            height: 64,
+            forceKeyFrames: true
+        )
+
+        let media = try await StudioMediaSourceLoader.loadBounded(asset: asset(at: url))
+        let honest = try XCTUnwrap(media.sampleProvider as? BoundedStudioSampleProvider)
+        let metadata = (0..<honest.sampleCount).map { honest.metadata(atDecodeIndex: $0) }
+
+        let urlAsset = AVURLAsset(url: url)
+        let tracks = try await urlAsset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+
+        let misScoped = BoundedStudioSampleProvider(
+            metadata: metadata,
+            formatDescription: media.formatDescription,
+            makeReader: { _ in
+                // Ignores the requested start and opens at zero.
+                try AVAssetReader(asset: urlAsset)
+            },
+            makeOutput: { reader in
+                let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+                output.alwaysCopiesSampleData = false
+                guard reader.canAdd(output) else {
+                    throw StudioMediaLoadError.readerCreationFailed("track output rejected")
+                }
+                reader.add(output)
+                return output
+            }
+        )
+
+        let lateIndex = metadata.count - 1
+        XCTAssertThrowsError(
+            try misScoped.sampleBuffer(atDecodeIndex: lateIndex),
+            "a reader that lands on the wrong sample must fail, not index blindly"
+        ) { error in
+            guard
+                let loadError = error as? StudioMediaLoadError,
+                case .readFailed(let message) = loadError
+            else {
+                return XCTFail("expected StudioMediaLoadError.readFailed, got \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("scoped reader started at"),
+                "the failure must name the scoped-reader identity mismatch, got: \(message)"
+            )
+        }
+
+        // The wrong payload must not have been cached under the requested
+        // index; a silent substitution is the outcome the guard exists to stop.
+        XCTAssertEqual(
+            misScoped.cacheCount,
+            0,
+            "no payload may be retained once the reader start is untrustworthy"
+        )
+    }
 }
