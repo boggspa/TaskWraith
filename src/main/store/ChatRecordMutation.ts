@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
+import { buildChatTranscriptOps, type ChatTranscriptOp } from '../../shared/chatUpdateTransport'
 
 export const CHAT_RECORD_MUTATION_FORMAT = 'taskwraith-chat-mutation' as const
 export const CHAT_RECORD_MUTATION_VERSION = 1 as const
@@ -64,6 +65,14 @@ export interface ChatRecordMutationBatch {
   revision: number
   savedAt: string
   operations: ChatRecordMutationOperation[]
+}
+
+/** One producer derivation yields both the durable mutation and renderer operations. */
+export interface DerivedChatRecordMutation {
+  batch: ChatRecordMutationBatch
+  /** null means the edit needs a recovery snapshot on the renderer wire. */
+  transcriptOps: ChatTranscriptOp[] | null
+  changedMessageCount: number
 }
 
 interface ArrayStructureDelta<T> {
@@ -243,7 +252,8 @@ function deriveMessageOperations(
   before: ChatMessage,
   after: ChatMessage,
   operations: ChatRecordMutationOperation[]
-): void {
+): boolean {
+  const operationCount = operations.length
   const patch = objectPatch(
     before as unknown as Record<string, unknown>,
     after as unknown as Record<string, unknown>,
@@ -264,13 +274,14 @@ function deriveMessageOperations(
     operations.push({ type: 'message_patch', messageId: after.id, ...patch })
   }
   deriveToolOperations(before, after, operations)
+  return operations.length !== operationCount
 }
 
-export function deriveChatRecordMutation(
+export function deriveChatRecordMutationWithProjection(
   before: ChatRecord,
   after: ChatRecord,
   options: { savedAt?: string } = {}
-): ChatRecordMutationBatch {
+): DerivedChatRecordMutation {
   if (!before.appChatId || before.appChatId !== after.appChatId) {
     throw new Error('Chat mutation requires one stable appChatId')
   }
@@ -295,12 +306,22 @@ export function deriveChatRecordMutation(
     after.messages,
     (message) => message.id
   )
+  const transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
+  const changedMessageCount =
+    transcriptOps?.reduce((count, operation) => {
+      if (operation.op === 'append') return count + operation.messages.length
+      return count + 1
+    }, 0) ??
+    (messageStructure.splice
+      ? messageStructure.splice.deleteCount + messageStructure.splice.items.length
+      : after.messages.length)
   if (messageStructure.splice) {
+    const { index, deleteCount, items } = messageStructure.splice
     operations.push({
       type: 'messages_splice',
-      index: messageStructure.splice.index,
-      deleteCount: messageStructure.splice.deleteCount,
-      messages: messageStructure.splice.items
+      index,
+      deleteCount,
+      messages: items
     })
   }
   for (const pair of messageStructure.stablePairs) {
@@ -326,14 +347,26 @@ export function deriveChatRecordMutation(
   }
 
   return {
-    format: CHAT_RECORD_MUTATION_FORMAT,
-    version: CHAT_RECORD_MUTATION_VERSION,
-    chatId: after.appChatId,
-    baseRevision,
-    revision,
-    savedAt: options.savedAt ?? new Date().toISOString(),
-    operations
+    batch: {
+      format: CHAT_RECORD_MUTATION_FORMAT,
+      version: CHAT_RECORD_MUTATION_VERSION,
+      chatId: after.appChatId,
+      baseRevision,
+      revision,
+      savedAt: options.savedAt ?? new Date().toISOString(),
+      operations
+    },
+    transcriptOps,
+    changedMessageCount
   }
+}
+
+export function deriveChatRecordMutation(
+  before: ChatRecord,
+  after: ChatRecord,
+  options: { savedAt?: string } = {}
+): ChatRecordMutationBatch {
+  return deriveChatRecordMutationWithProjection(before, after, options).batch
 }
 
 function assertSpliceBounds(

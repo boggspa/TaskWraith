@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
 import {
   applyChatRecordMutation,
   deriveChatRecordMutation,
+  deriveChatRecordMutationWithProjection,
   estimateChatRecordMutationBytes
 } from './ChatRecordMutation'
 
@@ -138,6 +139,38 @@ describe('ChatRecordMutation', () => {
       expect.arrayContaining(['messages_splice', 'runs_splice', 'run_put'])
     )
     expect(applyChatRecordMutation(before, batch)).toEqual(after)
+  })
+
+  it('authors append/update/delete transport operations during the same mutation walk', () => {
+    const before = chat([message('m-1', 'one'), message('m-2', 'two'), message('m-3', 'three')])
+    const after = advance(before, (next) => {
+      next.messages.splice(1, 1)
+      next.messages[1].content = 'three updated'
+      next.messages.push(message('m-4', 'four'))
+    })
+
+    const derived = deriveChatRecordMutationWithProjection(before, after)
+
+    expect(derived.transcriptOps).toEqual([
+      { op: 'delete', id: 'm-2' },
+      { op: 'update', id: 'm-3', message: message('m-3', 'three updated') },
+      { op: 'append', messages: [message('m-4', 'four')] }
+    ])
+    expect(derived.changedMessageCount).toBe(3)
+    expect(applyChatRecordMutation(before, derived.batch)).toEqual(after)
+  })
+
+  it('marks an insert-before-survivor for snapshot recovery', () => {
+    const before = chat([message('m-1', 'one'), message('m-2', 'two')])
+    const after = advance(before, (next) => {
+      next.messages.splice(1, 0, message('m-new', 'inserted'))
+    })
+
+    const derived = deriveChatRecordMutationWithProjection(before, after)
+
+    expect(derived.transcriptOps).toBeNull()
+    expect(derived.changedMessageCount).toBe(1)
+    expect(applyChatRecordMutation(before, derived.batch)).toEqual(after)
   })
 
   it('patches and clears non-transcript record fields', () => {

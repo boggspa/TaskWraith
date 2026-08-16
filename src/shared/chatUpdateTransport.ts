@@ -37,6 +37,29 @@ export interface ChatUpdateSubRevisions {
   recordHash: string
 }
 
+export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
+  chatId: string
+  persistenceRevision: number
+  retainedBytes: number
+}
+
+/**
+ * Exact change metadata authored alongside the durable chat mutation.
+ *
+ * The transport may compose consecutive deltas, but it must never reconstruct
+ * one by walking the transcript. A missing/discontinuous delta is a recovery
+ * condition and therefore produces one full snapshot.
+ */
+export interface ChatUpdateProducerDelta extends ChatUpdateProducerState {
+  basePersistenceRevision: number
+  recordMask: string[]
+  recordDelta: Partial<ChatUpdateRecord>
+  recordCleared?: string[]
+  /** null means the producer observed an edit that append/update/delete cannot express. */
+  transcriptOps: ChatTranscriptOp[] | null
+  changedMessageCount: number
+}
+
 export interface ChatUpdateSnapshotDelivery {
   protocolVersion: ChatUpdateProtocolVersion
   kind: 'snapshot'
@@ -126,17 +149,81 @@ export interface CompactChatUpdateBaseline {
  * Cheap retained-byte estimate for delivery stats. Prefers message content
  * lengths over JSON.stringify so the hot ACK path stays O(messages).
  */
+export function estimateChatMessageBytes(message: ChatMessage): number {
+  let bytes = 64
+  if (typeof message.content === 'string') bytes += message.content.length
+  else if (message.content != null) bytes += 128
+  return bytes
+}
+
 export function estimateChatRecordBytes(chat: ChatRecord): number {
   let bytes = 256
   for (const message of chat.messages) {
-    bytes += 64
-    if (typeof message.content === 'string') bytes += message.content.length
-    else if (message.content != null) bytes += 128
+    bytes += estimateChatMessageBytes(message)
   }
   const runs = chat.runs
   if (Array.isArray(runs)) bytes += runs.length * 48
   if (chat.ensemble != null) bytes += 512
   return bytes
+}
+
+function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'>): number {
+  const revision = chat.persistenceRevision
+  return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? revision! : 0
+}
+
+/**
+ * Compose latest-wins producer deltas while an earlier delivery is awaiting
+ * its ACK. Transcript operations remain in producer order, so applying the
+ * result is identical to applying each durable mutation in sequence.
+ */
+export function composeChatUpdateProducerDeltas(
+  first: ChatUpdateProducerDelta,
+  second: ChatUpdateProducerDelta
+): ChatUpdateProducerDelta | null {
+  if (
+    first.chatId !== second.chatId ||
+    first.persistenceRevision !== second.basePersistenceRevision
+  ) {
+    return null
+  }
+
+  const recordMask = [...first.recordMask]
+  const touched = new Set(recordMask)
+  const recordDelta = { ...first.recordDelta } as Record<string, unknown>
+  const recordCleared = new Set(first.recordCleared ?? [])
+  for (const key of second.recordMask) {
+    if (!touched.has(key)) {
+      touched.add(key)
+      recordMask.push(key)
+    }
+  }
+  for (const key of second.recordCleared ?? []) {
+    delete recordDelta[key]
+    recordCleared.add(key)
+  }
+  for (const [key, value] of Object.entries(second.recordDelta)) {
+    recordDelta[key] = value
+    recordCleared.delete(key)
+  }
+
+  return {
+    chatId: first.chatId,
+    basePersistenceRevision: first.basePersistenceRevision,
+    persistenceRevision: second.persistenceRevision,
+    recordMask,
+    recordDelta: recordDelta as Partial<ChatUpdateRecord>,
+    ...(recordCleared.size > 0 ? { recordCleared: [...recordCleared] } : {}),
+    transcriptOps:
+      first.transcriptOps === null || second.transcriptOps === null
+        ? null
+        : [...first.transcriptOps, ...second.transcriptOps],
+    changedMessageCount: first.changedMessageCount + second.changedMessageCount,
+    ensembleRevision: second.ensembleRevision,
+    runsRevision: second.runsRevision,
+    recordHash: second.recordHash,
+    retainedBytes: second.retainedBytes
+  }
 }
 
 export type ApplyChatUpdateResult =
@@ -431,6 +518,8 @@ export function buildChatUpdateDelivery(input: {
   revision: number
   chat: ChatRecord
   baseline?: ChatUpdateBaseline
+  /** Exact producer-authored delta. Missing/discontinuous v2 input recovers by snapshot. */
+  producerDelta?: ChatUpdateProducerDelta
   /** Fall back to a snapshot when a splice replaces this fraction of the list. */
   snapshotReplacementRatio?: number
   /**
@@ -441,37 +530,36 @@ export function buildChatUpdateDelivery(input: {
 }): ChatUpdateDelivery {
   const { baseline, chat, deliveryId, revision } = input
   const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
-  const sub = computeChatSubRevisions(chat)
+  const producerDelta = input.producerDelta
+  const sub: ChatUpdateSubRevisions = producerDelta
+    ? {
+        ensembleRevision: producerDelta.ensembleRevision,
+        runsRevision: producerDelta.runsRevision,
+        recordHash: producerDelta.recordHash
+      }
+    : computeChatSubRevisions(chat)
+
+  const snapshot = (): ChatUpdateSnapshotDelivery => ({
+    protocolVersion,
+    kind: 'snapshot',
+    deliveryId,
+    chatId: chat.appChatId,
+    revision,
+    chat,
+    ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
+  })
 
   if (!baseline || baseline.chat.appChatId !== chat.appChatId) {
-    return {
-      protocolVersion,
-      kind: 'snapshot',
-      deliveryId,
-      chatId: chat.appChatId,
-      revision,
-      chat,
-      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
-    }
+    return snapshot()
   }
 
-  const messages = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
-  const replacedRows = messages.deleteCount + messages.items.length
   const ratio = Math.min(1, Math.max(0.1, input.snapshotReplacementRatio ?? 0.72))
   const replacementLimit = Math.max(48, Math.ceil(chat.messages.length * ratio))
-  if (replacedRows > replacementLimit) {
-    return {
-      protocolVersion,
-      kind: 'snapshot',
-      deliveryId,
-      chatId: chat.appChatId,
-      revision,
-      chat,
-      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
-    }
-  }
 
   if (protocolVersion === CHAT_UPDATE_PROTOCOL_V1) {
+    const messages = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
+    const replacedRows = messages.deleteCount + messages.items.length
+    if (replacedRows > replacementLimit) return snapshot()
     return {
       protocolVersion: CHAT_UPDATE_PROTOCOL_V1,
       kind: 'patch',
@@ -484,13 +572,21 @@ export function buildChatUpdateDelivery(input: {
     }
   }
 
-  const previousRecord = chatRecordWithoutMessages(baseline.chat)
-  const nextRecord = chatRecordWithoutMessages(chat)
-  const { recordMask, recordDelta, recordCleared } = buildChatRecordDelta(
-    previousRecord,
-    nextRecord
-  )
-  const transcriptOps = buildChatTranscriptOps(baseline.chat.messages, chat.messages)
+  // The v2 hot path is producer-only. If a caller skipped a mutation, revisions
+  // do not chain, or an insertion/reorder cannot be represented by the public
+  // append/update/delete vocabulary, one full snapshot repairs the baseline.
+  // Never rediscover the change by walking every historical message here.
+  if (
+    !producerDelta ||
+    producerDelta.chatId !== chat.appChatId ||
+    producerDelta.basePersistenceRevision !== persistenceRevision(baseline.chat) ||
+    producerDelta.persistenceRevision !== persistenceRevision(chat) ||
+    producerDelta.transcriptOps === null ||
+    producerDelta.changedMessageCount > replacementLimit
+  ) {
+    return snapshot()
+  }
+
   const patch: ChatUpdatePatchDeliveryV2 = {
     protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
     kind: 'patch',
@@ -498,13 +594,10 @@ export function buildChatUpdateDelivery(input: {
     chatId: chat.appChatId,
     baseRevision: baseline.revision,
     revision,
-    recordMask,
-    recordDelta,
-    ...(recordCleared.length > 0 ? { recordCleared } : {}),
-    // Dual-read: prefer ops when expressible; always keep splice as fallback
-    // so a v2-aware client that only implements splice still converges.
-    ...(transcriptOps ? { transcriptOps } : {}),
-    messages,
+    recordMask: producerDelta.recordMask,
+    recordDelta: producerDelta.recordDelta,
+    ...(producerDelta.recordCleared?.length ? { recordCleared: producerDelta.recordCleared } : {}),
+    transcriptOps: producerDelta.transcriptOps,
     ...sub
   }
   return patch
@@ -567,7 +660,7 @@ export function applyChatUpdateDelivery(
   }
 
   let messages: ChatMessage[] | null = null
-  if (delivery.transcriptOps && delivery.transcriptOps.length > 0) {
+  if (delivery.transcriptOps !== undefined) {
     messages = applyChatTranscriptOps(baseline.chat.messages, delivery.transcriptOps)
     if (!messages) return { ok: false, reason: 'Patch transcript ops are invalid.' }
   } else if (delivery.messages) {

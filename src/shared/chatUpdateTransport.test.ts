@@ -10,9 +10,11 @@ import {
   buildChatUpdateDelivery,
   buildChatUpdateMessageSplice,
   computeChatSubRevisions,
+  composeChatUpdateProducerDeltas,
   estimateChatRecordBytes,
   isChatUpdateDelivery,
-  normalizeChatUpdateAck
+  normalizeChatUpdateAck,
+  type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
 
 function message(id: string, content: string): ChatMessage {
@@ -37,6 +39,28 @@ function chat(
     persistenceRevision: revision,
     ...extras
   } as ChatRecord
+}
+
+function producerDelta(before: ChatRecord, after: ChatRecord): ChatUpdateProducerDelta {
+  const { messages: _beforeMessages, ...beforeRecord } = before
+  const { messages: _afterMessages, ...afterRecord } = after
+  const record = buildChatRecordDelta(beforeRecord, afterRecord)
+  const transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
+  const sub = computeChatSubRevisions(after)
+  return {
+    chatId: after.appChatId,
+    basePersistenceRevision: before.persistenceRevision ?? 0,
+    persistenceRevision: after.persistenceRevision ?? 0,
+    ...record,
+    transcriptOps,
+    changedMessageCount:
+      transcriptOps?.reduce((count, operation) => {
+        if (operation.op === 'append') return count + operation.messages.length
+        return count + 1
+      }, 0) ?? after.messages.length,
+    retainedBytes: estimateChatRecordBytes(after),
+    ...sub
+  }
 }
 
 describe('chat update transport', () => {
@@ -168,6 +192,7 @@ describe('chat update transport', () => {
       revision: 2,
       chat: next,
       baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
 
@@ -214,6 +239,7 @@ describe('chat update transport', () => {
       revision: 2,
       chat: next,
       baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
     expect(delivery.kind).toBe('patch')
@@ -221,7 +247,7 @@ describe('chat update transport', () => {
       throw new Error('expected v2 patch')
     }
     expect(delivery.transcriptOps).toEqual(ops)
-    expect(delivery.messages).toBeDefined()
+    expect(delivery.messages).toBeUndefined()
 
     const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
     expect(applied).toMatchObject({
@@ -239,6 +265,7 @@ describe('chat update transport', () => {
       revision: 2,
       chat: next,
       baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
 
@@ -247,7 +274,7 @@ describe('chat update transport', () => {
       throw new Error('expected v2 patch')
     }
     expect(delivery.transcriptOps).toEqual([])
-    expect(delivery.messages).toEqual({ start: messages.length, deleteCount: 0, items: [] })
+    expect(delivery.messages).toBeUndefined()
 
     const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
     expect(applied.ok).toBe(true)
@@ -260,7 +287,7 @@ describe('chat update transport', () => {
     expect(applyChatTranscriptOps(messages, [])).toBe(messages)
   })
 
-  it('falls back to splice on v2 when transcript ops cannot express a reorder', () => {
+  it('uses a recovery snapshot when producer ops cannot express a reorder', () => {
     const first = chat(1, [message('a', 'A'), message('b', 'B')])
     const next = chat(2, [message('b', 'B'), message('a', 'A')])
     expect(buildChatTranscriptOps(first.messages, next.messages)).toBeNull()
@@ -270,24 +297,81 @@ describe('chat update transport', () => {
       revision: 2,
       chat: next,
       baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
-    expect(delivery.kind).toBe('patch')
-    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
-      throw new Error('expected v2 patch')
-    }
-    expect(delivery.transcriptOps).toBeUndefined()
-    expect(delivery.messages).toEqual({ start: 0, deleteCount: 2, items: next.messages })
+    expect(delivery.kind).toBe('snapshot')
     expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toEqual({
       ok: true,
       baseline: {
         revision: 2,
         chat: next,
-        ensembleRevision: delivery.ensembleRevision,
-        runsRevision: delivery.runsRevision,
-        recordHash: delivery.recordHash
+        ensembleRevision: delivery.kind === 'snapshot' ? delivery.ensembleRevision : undefined,
+        runsRevision: delivery.kind === 'snapshot' ? delivery.runsRevision : undefined,
+        recordHash: delivery.kind === 'snapshot' ? delivery.recordHash : undefined
       }
     })
+  })
+
+  it('composes consecutive producer deltas without re-reading either transcript', () => {
+    const first = chat(1, [message('a', 'A')])
+    const second = chat(2, [message('a', 'A'), message('b', 'B')])
+    const third = chat(3, [message('a', 'A'), message('b', 'B2'), message('c', 'C')], {
+      title: 'Third'
+    })
+    const composed = composeChatUpdateProducerDeltas(
+      producerDelta(first, second),
+      producerDelta(second, third)
+    )
+
+    expect(composed).not.toBeNull()
+    expect(composed?.basePersistenceRevision).toBe(1)
+    expect(composed?.persistenceRevision).toBe(3)
+    expect(composed?.transcriptOps).toEqual([
+      { op: 'append', messages: [message('b', 'B')] },
+      { op: 'update', id: 'b', message: message('b', 'B2') },
+      { op: 'append', messages: [message('c', 'C')] }
+    ])
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'composed',
+      revision: 3,
+      chat: third,
+      baseline: { revision: 1, chat: first },
+      producerDelta: composed ?? undefined,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
+      ok: true,
+      baseline: { chat: third }
+    })
+  })
+
+  it('recovers with a snapshot when v2 producer evidence is missing or discontinuous', () => {
+    const first = chat(1, [message('a', 'A')])
+    const next = chat(2, [message('a', 'B')])
+    expect(
+      buildChatUpdateDelivery({
+        deliveryId: 'missing',
+        revision: 2,
+        chat: next,
+        baseline: { revision: 1, chat: first },
+        protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+      }).kind
+    ).toBe('snapshot')
+
+    const discontinuous = { ...producerDelta(first, next), basePersistenceRevision: 99 }
+    expect(
+      buildChatUpdateDelivery({
+        deliveryId: 'gap',
+        revision: 2,
+        chat: next,
+        baseline: { revision: 1, chat: first },
+        producerDelta: discontinuous,
+        protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+      }).kind
+    ).toBe('snapshot')
   })
 
   it('builds a top-level field mask without copying unchanged large fields', () => {
@@ -315,6 +399,7 @@ describe('chat update transport', () => {
       revision: 2,
       chat: next,
       baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
     expect(v2.kind).toBe('patch')
