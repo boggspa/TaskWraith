@@ -61,10 +61,11 @@ TaskWraith's authority is centered on the desktop app:
   These surfaces still expand the attack surface and should be enabled
   deliberately.
 
-The tagged v1.9.4 release is the current public baseline. This repository can
+The tagged v1.9.5 release is the current public baseline. This repository can
 also contain source-ahead work that is not a released guarantee until it is
-named in later release notes. See the changelog's **1.9.5** section for the
-current source-ahead boundary.
+named in later release notes. The changelog's **1.9.5** section is the newest
+released section; anything in this tree beyond it is source-ahead and carries
+no released guarantee.
 
 ## Safe First Run
 

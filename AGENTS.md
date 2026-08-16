@@ -839,7 +839,7 @@ hand-typed provider/role/model alias that matches multiple seats is rejected
 rather than selecting whichever participant happens to appear first. The
 renderer may send an advisory participant id for explicit UI gestures, but it
 cannot override a prompt routing signal. This main-authoritative change shipped
-in v1.9.0 and is part of the current v1.9.4 release baseline described under
+in v1.9.0 and is part of the current v1.9.5 release baseline described under
 **Versioning** below.
 
 ### Stage roles and background lanes
@@ -1277,9 +1277,10 @@ status, regression evidence, and release disposition.
 
 ## Versioning
 
-This document uses **v1.9.4** as its released baseline and also describes the
-current source-ahead checkout (1.9.5-pre). Treat behavior newer than the tagged
-baseline as unshipped until it appears in the next release notes:
+This document uses **v1.9.5** as its released baseline — tagged and pushed to
+public `master` on 2026-08-12 — and also describes the source-ahead checkout
+past that tag. Treat behavior newer than the tagged baseline as unshipped until
+it appears in the next release notes:
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
