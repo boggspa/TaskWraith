@@ -22,6 +22,7 @@ const fs = require('node:fs')
 const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 const { execFile, fork } = require('node:child_process')
+const { PNG } = require('pngjs')
 const {
   buildElectronSpawnPlan,
   assertExactChildOwnsDebugPorts
@@ -36,7 +37,19 @@ const {
   parseAvSyncCurrentExport,
   parseAvSyncPeakExport
 } = require('./studio-av-endurance-runner.cjs')
+const {
+  buildMuxCommand,
+  buildSayCommand,
+  describeFixturePlan,
+  verifyFixtureManifest
+} = require('./studio-generate-speech-fixture.cjs')
 
+const SHORT_SPEECH_FIXTURE_DURATION_SECONDS = 30
+const STUDIO_JOURNEY_OVERLAY_POINTS = 118
+const STUDIO_JOURNEY_PIXEL_DELTA = 16
+const STUDIO_JOURNEY_MIN_CHANGED_PIXELS = 32
+const STUDIO_JOURNEY_MIN_CHANGED_FRACTION = 0.00002
+const STUDIO_JOURNEY_CAPTURE_MAX_BYTES = 64 * 1024 * 1024
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
 const DETACHED_COORDINATOR_SCHEMA_VERSION = 1
@@ -256,6 +269,7 @@ function parseArgs(argv) {
     pretty: false,
     help: false,
     instanceId: null,
+    generateSpeechFixture: false,
     mediaPath: null,
     mimeType: null,
     remoteDebuggingPort: null,
@@ -275,6 +289,7 @@ function parseArgs(argv) {
     } else if (argument === '--pretty') parsed.pretty = true
     else if (argument === '--help' || argument === '-h') parsed.help = true
     else if (argument.startsWith('--instance-id=')) parsed.instanceId = argument.slice(14)
+    else if (argument === '--generate-speech-fixture') parsed.generateSpeechFixture = true
     else if (argument.startsWith('--media=')) parsed.mediaPath = argument.slice(8)
     else if (argument.startsWith('--mime=')) parsed.mimeType = argument.slice(7)
     else if (argument.startsWith('--remote-debugging-port=')) {
@@ -407,11 +422,20 @@ function assertLaunchAuthorized(args, plan) {
   if (plan.transcriptTimeoutMs > args.timeoutMs) {
     throw new Error('transcriptTimeoutMs cannot exceed the watchdog timeoutMs')
   }
-  if (!args.mediaPath || !path.isAbsolute(args.mediaPath)) {
-    throw new Error('Real launch requires --media=<absolute video path>')
+  const generatedMedia = args.generateSpeechFixture === true
+  const suppliedMedia =
+    typeof args.mediaPath === 'string' &&
+    path.isAbsolute(args.mediaPath) &&
+    ['video/mp4', 'video/quicktime'].includes(String(args.mimeType || '').toLowerCase())
+  if (generatedMedia === suppliedMedia) {
+    throw new Error(
+      'Real launch requires exactly one bounded media source: --generate-speech-fixture or absolute --media plus supported --mime'
+    )
   }
-  if (!['video/mp4', 'video/quicktime'].includes(String(args.mimeType || '').toLowerCase())) {
-    throw new Error('Real launch requires --mime=video/mp4 or --mime=video/quicktime')
+  if (generatedMedia && (args.mediaPath !== null || args.mimeType !== null)) {
+    throw new Error(
+      'Real launch requires exactly one bounded media source; generated speech cannot be combined with caller media'
+    )
   }
   if (!plan.spawnPlan.argv.includes('--use-mock-keychain')) {
     throw new Error('Refuse launch without disposable macOS mock keychain')
@@ -561,6 +585,7 @@ const DETACHED_REQUEST_ARG_KEYS = new Set([
   'pretty',
   'help',
   'instanceId',
+  'generateSpeechFixture',
   'mediaPath',
   'mimeType',
   'remoteDebuggingPort',
@@ -1495,6 +1520,103 @@ async function materializeOwnedMedia(options) {
   }
 }
 
+/**
+ * Materialize the short real-speech fixture inside this run's artifact root.
+ *
+ * The commands come from the separately tested deterministic generator. This
+ * function is deliberately the executor and sealer: a command plan alone is
+ * reproducible, but it is not evidence that the exact bytes later opened by
+ * Studio came from that plan.
+ */
+async function generateAcceptanceSpeechFixture(options, adapters = {}) {
+  const artifactRoot = path.resolve(String(options.artifactRoot || ''))
+  if (!path.isAbsolute(artifactRoot) || artifactRoot === path.parse(artifactRoot).root) {
+    throw new Error('generated speech fixture requires a bounded absolute artifact root')
+  }
+  const fixtureDirectory = path.join(artifactRoot, 'fixtures')
+  const speechPath = path.join(fixtureDirectory, 'acceptance-speech.aiff')
+  const outputPath = path.join(fixtureDirectory, 'acceptance-speech-30s.mp4')
+  const manifestPath = path.join(fixtureDirectory, 'speech-fixture-manifest.json')
+  await fsPromises.mkdir(fixtureDirectory, { recursive: true, mode: 0o700 })
+  for (const [label, candidate] of [
+    ['speech', speechPath],
+    ['muxed output', outputPath],
+    ['manifest', manifestPath]
+  ]) {
+    if (
+      await assertSafeRegularFile(candidate, `generated fixture ${label}`, { allowMissing: true })
+    ) {
+      throw new Error(`generated fixture ${label} already exists; require a fresh artifact root`)
+    }
+  }
+
+  const fixturePlan = describeFixturePlan({
+    durationSeconds: SHORT_SPEECH_FIXTURE_DURATION_SECONDS
+  })
+  const sayCommand = buildSayCommand({ outputPath: speechPath })
+  const muxCommand = buildMuxCommand({
+    speechPath,
+    outputPath,
+    durationSeconds: SHORT_SPEECH_FIXTURE_DURATION_SECONDS
+  })
+  const runExec = adapters.execFile || defaultExecFile
+  await runExec(sayCommand[0], sayCommand.slice(1), { timeoutMs: 120_000 })
+  const speechStat = await assertSafeRegularFile(speechPath, 'generated fixture speech')
+  if (speechStat.size < 1) throw new Error('generated fixture speech is empty')
+  await fsPromises.chmod(speechPath, 0o600)
+
+  await runExec(muxCommand[0], muxCommand.slice(1), { timeoutMs: 10 * 60 * 1_000 })
+  const outputStat = await assertSafeRegularFile(outputPath, 'generated fixture muxed output')
+  if (outputStat.size < 1) throw new Error('generated fixture muxed output is empty')
+  await fsPromises.chmod(outputPath, 0o600)
+
+  const manifest = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-generated-speech-fixture',
+    durationSeconds: fixturePlan.durationSeconds,
+    frameRate: fixturePlan.frameRate,
+    expectedFrameCount: fixturePlan.expectedFrameCount,
+    size: fixturePlan.size,
+    speechText: fixturePlan.speechText,
+    expectedPhrases: fixturePlan.expectedPhrases,
+    provenanceNote: fixturePlan.provenanceNote,
+    speechPath,
+    outputPath,
+    manifestPath,
+    mimeType: 'video/mp4',
+    speechSha256: await sha256Hex(speechPath),
+    outputSha256: await sha256Hex(outputPath),
+    speechByteLength: speechStat.size,
+    outputByteLength: outputStat.size,
+    sayCommand,
+    muxCommand,
+    sayExitCode: 0,
+    muxExitCode: 0
+  }
+  const verification = verifyFixtureManifest(manifest)
+  if (!verification.ok) {
+    throw new Error(
+      `generated speech fixture manifest is invalid: ${verification.failures.join('; ')}`
+    )
+  }
+
+  const tempPath = path.join(
+    fixtureDirectory,
+    `.${path.basename(manifestPath)}.${process.pid}.${crypto.randomUUID()}.tmp`
+  )
+  try {
+    await fsPromises.writeFile(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+    await fsPromises.rename(tempPath, manifestPath)
+  } finally {
+    await fsPromises.rm(tempPath, { force: true }).catch(() => undefined)
+  }
+  return manifest
+}
+
 const ISOLATED_GROK_GUARD = [
   '#!/bin/sh',
   '# TaskWraith Studio isolated acceptance: provider probe disabled',
@@ -2400,6 +2522,64 @@ async function readStudioJournalOperations(plan) {
   return entries
 }
 
+function normalizeRecognizedSpeech(value) {
+  return (
+    String(value || '')
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+      .match(/[\p{L}\p{N}]+/gu)
+      ?.join(' ') || ''
+  )
+}
+
+function adjudicateRecognizedTranscript(entry, expectedPhrases) {
+  if (
+    !Array.isArray(expectedPhrases) ||
+    expectedPhrases.length < 1 ||
+    expectedPhrases.length > 32 ||
+    expectedPhrases.some(
+      (phrase) => typeof phrase !== 'string' || !phrase.trim() || phrase.length > 256
+    )
+  ) {
+    throw new Error('expected transcript phrases must contain 1–32 bounded nonempty strings')
+  }
+  const normalizedPhrases = expectedPhrases.map(normalizeRecognizedSpeech)
+  if (
+    normalizedPhrases.some((phrase) => !phrase) ||
+    new Set(normalizedPhrases).size !== normalizedPhrases.length
+  ) {
+    throw new Error(
+      'expected transcript phrases must remain nonempty and unique after normalization'
+    )
+  }
+
+  const segments = entry?.op?.transcript?.segments
+  const texts = Array.isArray(segments)
+    ? segments
+        .filter((segment) => isRecord(segment) && typeof segment.text === 'string')
+        .map((segment) => segment.text.trim())
+        .filter(Boolean)
+    : []
+  const transcriptText = texts.join(' ')
+  const normalizedTranscript = normalizeRecognizedSpeech(transcriptText)
+  const matchedPhrases = []
+  const missingPhrases = []
+  for (const [index, normalizedPhrase] of normalizedPhrases.entries()) {
+    const destination = normalizedTranscript.includes(normalizedPhrase)
+      ? matchedPhrases
+      : missingPhrases
+    destination.push(expectedPhrases[index])
+  }
+  return {
+    ok: texts.length > 0 && missingPhrases.length === 0,
+    segmentCount: texts.length,
+    textByteLength: Buffer.byteLength(transcriptText),
+    transcriptSha256: crypto.createHash('sha256').update(transcriptText).digest('hex'),
+    matchedPhrases,
+    missingPhrases
+  }
+}
+
 function studioJournalOperationMatches(entry, expectation, afterRevision) {
   if (entry.revision <= afterRevision || entry.op.type !== expectation.type) return false
   if (
@@ -2833,9 +3013,211 @@ function screenshotPaths(receipt) {
     .map((action) => action.screenshotPath)
 }
 
+function readStudioJourneyCapture(capturePath) {
+  const stat = fs.lstatSync(capturePath)
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.size < 1 ||
+    stat.size > STUDIO_JOURNEY_CAPTURE_MAX_BYTES
+  ) {
+    throw new Error('Studio journey capture is not a bounded safe regular file')
+  }
+  const bytes = fs.readFileSync(capturePath)
+  return {
+    bytes,
+    image: PNG.sync.read(bytes)
+  }
+}
+
+function studioJourneyCaptureRegion(image, windowBounds, region) {
+  const logicalWidth = Number(windowBounds?.width)
+  const logicalHeight = Number(windowBounds?.height)
+  if (
+    !Number.isInteger(logicalWidth) ||
+    !Number.isInteger(logicalHeight) ||
+    logicalWidth <= 0 ||
+    logicalHeight <= 0
+  ) {
+    throw new Error('Studio journey capture window bounds are invalid')
+  }
+  const captureWidth = logicalWidth * 2
+  const captureHeight = logicalHeight * 2
+  if (image.width !== captureWidth || image.height !== captureHeight) {
+    throw new Error('Studio journey capture does not match the exact 2x window bounds')
+  }
+  const logicalVideoHeight = Math.round((logicalWidth * 9) / 16)
+  const logicalTitleBarHeight = logicalHeight - logicalVideoHeight
+  if (logicalTitleBarHeight < 20 || logicalTitleBarHeight > 40) {
+    throw new Error('Studio journey capture is outside the bounded Companion geometry')
+  }
+  const videoTop = logicalTitleBarHeight * 2
+  const videoBottom = videoTop + logicalVideoHeight * 2
+  const materialBottom = videoBottom - STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  if (materialBottom <= videoTop || videoBottom > image.height) {
+    throw new Error('Studio journey capture comparison region is invalid')
+  }
+  if (region === 'material') {
+    return { x: 0, y: videoTop, width: image.width, height: materialBottom - videoTop }
+  }
+  if (region === 'timeline') {
+    return { x: 0, y: materialBottom, width: image.width, height: videoBottom - materialBottom }
+  }
+  throw new Error('Studio journey capture comparison region is unsupported')
+}
+
+function compareStudioJourneyCaptures(beforePath, afterPath, windowBounds, region) {
+  const before = readStudioJourneyCapture(beforePath)
+  const after = readStudioJourneyCapture(afterPath)
+  if (before.image.width !== after.image.width || before.image.height !== after.image.height) {
+    throw new Error('Studio journey captures do not have identical dimensions')
+  }
+  const comparisonRegion = studioJourneyCaptureRegion(before.image, windowBounds, region)
+  const afterRegion = studioJourneyCaptureRegion(after.image, windowBounds, region)
+  if (JSON.stringify(comparisonRegion) !== JSON.stringify(afterRegion)) {
+    throw new Error('Studio journey capture comparison regions do not agree')
+  }
+
+  let changedPixelCount = 0
+  let maximumChannelDelta = 0
+  let channelDeltaSum = 0
+  for (let y = comparisonRegion.y; y < comparisonRegion.y + comparisonRegion.height; y += 1) {
+    for (let x = comparisonRegion.x; x < comparisonRegion.x + comparisonRegion.width; x += 1) {
+      const offset = (y * before.image.width + x) * 4
+      let pixelDelta = 0
+      for (let channel = 0; channel < 3; channel += 1) {
+        const delta = Math.abs(
+          before.image.data[offset + channel] - after.image.data[offset + channel]
+        )
+        pixelDelta = Math.max(pixelDelta, delta)
+        maximumChannelDelta = Math.max(maximumChannelDelta, delta)
+        channelDeltaSum += delta
+      }
+      if (pixelDelta > STUDIO_JOURNEY_PIXEL_DELTA) changedPixelCount += 1
+    }
+  }
+  const pixelCount = comparisonRegion.width * comparisonRegion.height
+  const changedPixelFraction = changedPixelCount / pixelCount
+  if (
+    changedPixelCount < STUDIO_JOURNEY_MIN_CHANGED_PIXELS ||
+    changedPixelFraction < STUDIO_JOURNEY_MIN_CHANGED_FRACTION
+  ) {
+    throw new Error(
+      `Studio journey ${region} region did not materially change: ${changedPixelCount}/${pixelCount} pixels`
+    )
+  }
+  return {
+    ok: true,
+    region,
+    beforeSha256: crypto.createHash('sha256').update(before.bytes).digest('hex'),
+    afterSha256: crypto.createHash('sha256').update(after.bytes).digest('hex'),
+    pixelCount,
+    changedPixelCount,
+    changedPixelFraction,
+    meanAbsoluteChannelDelta: channelDeltaSum / (pixelCount * 3),
+    maximumChannelDelta,
+    threshold: {
+      channelDelta: STUDIO_JOURNEY_PIXEL_DELTA,
+      minimumChangedPixels: STUDIO_JOURNEY_MIN_CHANGED_PIXELS,
+      minimumChangedFraction: STUDIO_JOURNEY_MIN_CHANGED_FRACTION
+    }
+  }
+}
+
+function studioProposalInsertionEvidence(entry) {
+  const proposal = entry?.op?.proposal
+  const edit = proposal?.op
+  const rationals = [edit?.sourceIn, edit?.sourceOut, edit?.at]
+  if (
+    !isRecord(proposal) ||
+    typeof proposal.proposalId !== 'string' ||
+    !proposal.proposalId ||
+    !isRecord(edit) ||
+    edit.type !== 'insert_range' ||
+    typeof edit.assetId !== 'string' ||
+    !edit.assetId ||
+    rationals.some(
+      (value) =>
+        !isRecord(value) ||
+        !Number.isSafeInteger(value.n) ||
+        !Number.isSafeInteger(value.d) ||
+        value.d <= 0
+    ) ||
+    edit.sourceIn.d !== edit.sourceOut.d ||
+    edit.sourceIn.d !== edit.at.d ||
+    edit.sourceIn.n < 0 ||
+    edit.sourceOut.n <= edit.sourceIn.n ||
+    edit.at.n < 0
+  ) {
+    throw new Error('Studio journey proposal does not contain one exact bounded insert_range')
+  }
+  return {
+    proposalId: proposal.proposalId,
+    assetId: edit.assetId,
+    insertionTicks: edit.at.n,
+    timebase: edit.at.d,
+    sourceInTicks: edit.sourceIn.n,
+    sourceOutTicks: edit.sourceOut.n
+  }
+}
+
+function exactDriverAction(receipt, type) {
+  const matches = Array.isArray(receipt?.actions)
+    ? receipt.actions.filter((action) => action?.type === type)
+    : []
+  if (matches.length !== 1) {
+    throw new Error(`Studio journey expected exactly one ${type} action receipt`)
+  }
+  return matches[0]
+}
+
+function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt) {
+  const source = exactDriverAction(sourceReceipt, 'step-playhead-frame')
+  const review = exactDriverAction(reviewReceipt, 'step-playhead-frame')
+  if (
+    source.playheadStepFrames !== 1 ||
+    review.playheadStepFrames !== -1 ||
+    review.playheadTicksBefore !== source.observedPlayheadTicks ||
+    review.observedPlayheadTicks !== source.playheadTicksBefore
+  ) {
+    throw new Error('Studio Source and Review playhead steps do not prove one shared clock')
+  }
+  return {
+    ok: true,
+    sourceBeforeTicks: source.playheadTicksBefore,
+    sourceAfterTicks: source.observedPlayheadTicks,
+    reviewBeforeTicks: review.playheadTicksBefore,
+    reviewAfterTicks: review.observedPlayheadTicks
+  }
+}
+
+function adjudicatePlaybackRoundTrip(receipt) {
+  const actions = Array.isArray(receipt?.actions)
+    ? receipt.actions.filter((action) => action?.type === 'press-playback')
+    : []
+  if (
+    actions.length !== 2 ||
+    actions[0].playbackValueBefore !== 'paused' ||
+    actions[0].playbackValueAfter !== 'playing' ||
+    actions[1].playbackValueBefore !== 'playing' ||
+    actions[1].playbackValueAfter !== 'paused'
+  ) {
+    throw new Error('Studio Playback actions do not prove one paused/playing round trip')
+  }
+  return {
+    ok: true,
+    accessibilityLabel: 'Playback',
+    accessibilityAction: 'AXPress',
+    initial: 'paused',
+    intermediate: 'playing',
+    final: 'paused'
+  }
+}
+
 async function driveStudioUiJourney(plan, target, adapters = {}) {
   const waitJournal = adapters.waitForJournalOperation || waitForStudioJournalOperation
   const runDriver = adapters.runUiDriver || runStudioUiDriver
+  const compareCaptures = adapters.compareCaptures || compareStudioJourneyCaptures
   const probeWindow = adapters.probeWindow || probeNativeWindow
   const sourceWindowTitle = target.window?.windows?.[0]?.title
   const sourceTarget = { ...target, expectedWindowTitle: sourceWindowTitle }
@@ -2855,6 +3237,35 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
           : null
       }
     })
+  const driverReceipts = []
+  const screenshots = []
+  const drive = async (actions, driverTarget = sourceTarget) => {
+    const normalizedActions = actions.map((action) =>
+      typeof action === 'string' ? { type: 'key', key: action } : action
+    )
+    const hasInteractiveActions = normalizedActions.some(
+      (action) => action.type === 'key' || action.type === 'click'
+    )
+    const receipt = await runDriver(plan, driverTarget, normalizedActions, {
+      ...(adapters.driverAdapters || {}),
+      inputDelivery: hasInteractiveActions
+        ? 'foreground-global-explicit'
+        : 'background-observation-only',
+      allowForegroundInput: hasInteractiveActions
+    })
+    driverReceipts.push(receipt)
+    screenshots.push(...screenshotPaths(receipt))
+    return receipt
+  }
+  const sourceBounds = assertSafeUiDriverTarget(sourceTarget).bounds
+  await drive([
+    {
+      type: 'press-playback',
+      playbackValueBefore: 'playing',
+      playbackValueAfter: 'paused'
+    }
+  ])
+
   const assetId = target.asset && target.asset.sha256
   const transcript = await waitJournal(
     plan,
@@ -2865,44 +3276,101 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     },
     { afterRevision: 0, timeoutMs: plan.transcriptTimeoutMs }
   )
+  let recognition = null
+  if (target.speechFixture) {
+    recognition = adjudicateRecognizedTranscript(transcript, target.speechFixture.expectedPhrases)
+    if (!recognition.ok) {
+      throw new Error(
+        `Studio recognized transcript is not the generated fixture passage; missing phrases: ${recognition.missingPhrases.join(', ')}`
+      )
+    }
+    recognition = {
+      ...recognition,
+      fixtureManifestPath: target.speechFixture.manifestPath,
+      fixtureOutputSha256: target.speechFixture.outputSha256,
+      provenanceNote: target.speechFixture.provenanceNote
+    }
+  }
   let afterRevision = transcript.revision
-  const driverReceipts = []
-  const screenshots = []
-
-  const drive = async (actions, driverTarget = sourceTarget) => {
-    const receipt = await runDriver(
-      plan,
-      driverTarget,
-      actions.map((action) => (typeof action === 'string' ? { type: 'key', key: action } : action)),
-      adapters.driverAdapters || {}
-    )
-    driverReceipts.push(receipt)
-    screenshots.push(...screenshotPaths(receipt))
-    return receipt
-  }
-
-  await drive([
-    { type: 'screenshot', name: 'transcript-band' },
-    'tab',
-    { type: 'screenshot', name: 'transcript-selected' },
-    'bracket-left',
-    { type: 'screenshot', name: 'trim-pending' },
-    'return',
-    { type: 'screenshot', name: 'proposal-sent' }
+  const transcriptBandCapture = await drive([{ type: 'screenshot', name: 'transcript-band' }])
+  await drive(['tab'])
+  const transcriptSelectedCapture = await drive([
+    { type: 'screenshot', name: 'transcript-selected' }
   ])
-  const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
-  const acceptedProposalId = acceptedProposal.op?.proposal?.proposalId
-  if (typeof acceptedProposalId !== 'string' || !acceptedProposalId) {
-    throw new Error('Studio accept journey did not journal a proposal identity')
+  await drive(['bracket-left'])
+  await drive([{ type: 'screenshot', name: 'trim-pending' }])
+  await drive(['return'])
+  await drive([{ type: 'screenshot', name: 'proposal-sent' }])
+  const transcriptBandScreenshots = screenshotPaths(transcriptBandCapture)
+  const transcriptSelectedScreenshots = screenshotPaths(transcriptSelectedCapture)
+  if (transcriptBandScreenshots.length !== 1 || transcriptSelectedScreenshots.length !== 1) {
+    throw new Error('Studio transcript journey did not capture both exact selection states')
   }
+  const transcriptPixels = compareCaptures(
+    transcriptBandScreenshots[0],
+    transcriptSelectedScreenshots[0],
+    sourceBounds,
+    'timeline'
+  )
+  const acceptedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
+  const acceptedProposalEvidence = studioProposalInsertionEvidence(acceptedProposal)
+  const acceptedProposalId = acceptedProposalEvidence.proposalId
   afterRevision = acceptedProposal.revision
   await drive([{ type: 'screenshot', name: 'ghost' }], sourceTarget)
   await drive(['w'], sourceTarget)
   const acceptedReviewTarget = await waitForReviewTarget()
+  const reviewBounds = assertSafeUiDriverTarget(acceptedReviewTarget).bounds
   await drive(
-    [{ type: 'screenshot', name: 'current' }, 'v', { type: 'screenshot', name: 'proposed' }],
+    [
+      {
+        type: 'set-playhead-ticks',
+        playheadTicks: acceptedProposalEvidence.insertionTicks,
+        playheadToleranceTicks: 0,
+        playheadMaximumForwardAdvanceTicks: 0
+      }
+    ],
     acceptedReviewTarget
   )
+  const currentCapture = await drive(
+    [{ type: 'screenshot', name: 'current' }],
+    acceptedReviewTarget
+  )
+  await drive(['v'], acceptedReviewTarget)
+  await drive(
+    [
+      {
+        type: 'set-playhead-ticks',
+        playheadTicks: acceptedProposalEvidence.insertionTicks,
+        playheadToleranceTicks: 0,
+        playheadMaximumForwardAdvanceTicks: 0
+      }
+    ],
+    acceptedReviewTarget
+  )
+  const proposedCapture = await drive(
+    [{ type: 'screenshot', name: 'proposed' }],
+    acceptedReviewTarget
+  )
+  const currentScreenshots = screenshotPaths(currentCapture)
+  const proposedScreenshots = screenshotPaths(proposedCapture)
+  if (currentScreenshots.length !== 1 || proposedScreenshots.length !== 1) {
+    throw new Error('Studio Current/Proposed journey did not capture both exact states')
+  }
+  const currentProposedPixels = compareCaptures(
+    currentScreenshots[0],
+    proposedScreenshots[0],
+    reviewBounds,
+    'material'
+  )
+  const sourceStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
+    sourceTarget
+  )
+  const reviewStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
+    acceptedReviewTarget
+  )
+  const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep)
   await drive(['a', { type: 'screenshot', name: 'accept-sent' }], acceptedReviewTarget)
   const acceptedResolution = await waitJournal(
     plan,
@@ -2936,29 +3404,34 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     { afterRevision }
   )
   afterRevision = rejectedResolution.revision
-  await drive([
-    'space',
-    'right',
-    'left',
-    'i',
-    'o',
-    'l',
-    'p',
-    'c',
-    'g',
-    's',
-    { type: 'screenshot', name: 'final' }
+  const playbackRoundTripReceipt = await drive([
+    {
+      type: 'press-playback',
+      playbackValueBefore: 'paused',
+      playbackValueAfter: 'playing'
+    },
+    {
+      type: 'press-playback',
+      playbackValueBefore: 'playing',
+      playbackValueAfter: 'paused'
+    }
   ])
+  const playbackRoundTrip = adjudicatePlaybackRoundTrip(playbackRoundTripReceipt)
+  await drive(['i', 'o', 'l', 'p', 'c', 'g', 's', { type: 'screenshot', name: 'final' }])
 
   return {
     schemaVersion: 1,
     kind: 'taskwraith-studio-ui-journey-receipt',
     ok: true,
-    transcript: { revision: transcript.revision },
+    transcript: {
+      revision: transcript.revision,
+      ...(recognition ? { recognition } : {})
+    },
     accepted: {
       proposalId: acceptedProposalId,
       proposalRevision: acceptedProposal.revision,
-      resolutionRevision: acceptedResolution.revision
+      resolutionRevision: acceptedResolution.revision,
+      proposal: acceptedProposalEvidence
     },
     rejected: {
       proposalId: rejectedProposalId,
@@ -2966,6 +3439,12 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       resolutionRevision: rejectedResolution.revision
     },
     finalRevision: afterRevision,
+    adjudication: {
+      transcriptPixels,
+      currentProposedPixels,
+      sharedClock,
+      playbackRoundTrip
+    },
     screenshots,
     driverReceipts
   }
@@ -3064,9 +3543,16 @@ async function runStudioAcceptance(args, adapters = {}) {
     adapters.materializeProviderGuards || materializeIsolatedProviderGuards
   )({ home: plan.home })
   plan.spawnPlan.env.TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE = providerGuards.grokBinaryPath
+  const speechFixture =
+    args.generateSpeechFixture === true
+      ? await (adapters.generateSpeechFixture || generateAcceptanceSpeechFixture)(
+          { artifactRoot: plan.artifactRoot },
+          adapters.speechFixtureAdapters || {}
+        )
+      : null
   const asset = await materializeOwnedMedia({
-    mediaPath: args.mediaPath,
-    mimeType: args.mimeType,
+    mediaPath: speechFixture ? speechFixture.outputPath : args.mediaPath,
+    mimeType: speechFixture ? speechFixture.mimeType : args.mimeType,
     userDataPath: plan.profile.userDataPath
   })
 
@@ -3128,7 +3614,8 @@ async function runStudioAcceptance(args, adapters = {}) {
         companion,
         electronPgid: session.pgid || null,
         window,
-        asset
+        asset,
+        speechFixture
       },
       adapters.journeyAdapters || {}
     )
@@ -3144,6 +3631,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       companion,
       window,
       asset,
+      speechFixture,
       providerGuards,
       openResult,
       durable,
@@ -3269,8 +3757,9 @@ Required for a real run:
   --launch
   --i-accept-studio-isolated-launch
   --owner-confirms-existing-orphans-cleared
-  --media=/absolute/path/to/clip.mov
-  --mime=video/mp4|video/quicktime
+  Exactly one media source:
+    --generate-speech-fixture
+    OR --media=/absolute/path/to/clip.mov --mime=video/mp4|video/quicktime
 
 Optional:
   --detach (requires --launch and an explicit unique --instance-id)
@@ -3338,6 +3827,7 @@ module.exports = {
   parseArgs,
   parseStudioTransportMutationText,
   buildStudioAcceptancePlan,
+  adjudicateRecognizedTranscript,
   buildDetachedCoordinatorPaths,
   buildDetachedCoordinatorIdentity,
   assertLaunchAuthorized,
@@ -3347,6 +3837,7 @@ module.exports = {
   readDetachedCoordinatorStatus,
   runDetachedCoordinatorProcess,
   materializeOwnedMedia,
+  generateAcceptanceSpeechFixture,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
   evaluateByValue,
@@ -3363,8 +3854,12 @@ module.exports = {
   readStudioJournalOperations,
   waitForStudioJournalOperation,
   runStudioUiDriver,
+  adjudicatePlaybackRoundTrip,
+  adjudicateSharedStudioClock,
   buildStudioAcceptanceJourney,
+  compareStudioJourneyCaptures,
   driveStudioUiJourney,
+  studioProposalInsertionEvidence,
   verifyDurableOpen,
   buildStubSpec,
   runAbandonOwnerSelfTest,

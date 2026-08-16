@@ -4,11 +4,15 @@ import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { PNG } from 'pngjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // The production harness is CommonJS because it is run directly by Node.
 /* eslint-disable @typescript-eslint/no-require-imports */
 const {
+  adjudicatePlaybackRoundTrip,
+  adjudicateRecognizedTranscript,
+  adjudicateSharedStudioClock,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
@@ -19,9 +23,11 @@ const {
   buildStudioAcceptancePlan,
   buildStudioUiDriverRequest,
   buildStubSpec,
+  compareStudioJourneyCaptures,
   descendantsOf,
   driveStudioUiJourney,
   findAcceptanceArtifactGroups,
+  generateAcceptanceSpeechFixture,
   launchDetachedCoordinator,
   launchUnderWatchdog,
   materializeIsolatedProviderGuards,
@@ -31,10 +37,20 @@ const {
   parseStudioTransportMutationText,
   readDetachedCoordinatorStatus,
   runStudioUiDriver,
+  studioProposalInsertionEvidence,
   validateDetachedCoordinatorRequest,
   waitForStudioJournalOperation,
   runStudioAcceptance
 } = require('./studio-acceptance-harness.cjs') as {
+  adjudicatePlaybackRoundTrip: (receipt: Record<string, any>) => Record<string, any>
+  adjudicateRecognizedTranscript: (
+    entry: Record<string, any>,
+    expectedPhrases: string[]
+  ) => Record<string, any>
+  adjudicateSharedStudioClock: (
+    sourceReceipt: Record<string, any>,
+    reviewReceipt: Record<string, any>
+  ) => Record<string, any>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
     args: Record<string, any>,
@@ -72,6 +88,12 @@ const {
     stubbornGrandchild?: boolean
     grandchildGracefulExitMs?: number
   }) => Record<string, any>
+  compareStudioJourneyCaptures: (
+    beforePath: string,
+    afterPath: string,
+    windowBounds: Record<string, number>,
+    region: 'material' | 'timeline'
+  ) => Record<string, any>
   descendantsOf: (
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>,
     rootPid: number
@@ -90,6 +112,10 @@ const {
     evidencePids: number[]
     members: Array<{ pid: number; ppid: number; pgid: number; command: string }>
   }>
+  generateAcceptanceSpeechFixture: (
+    options: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   launchDetachedCoordinator: (
     args: Record<string, any>,
     adapters?: Record<string, any>
@@ -132,6 +158,7 @@ const {
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
   parseStudioTransportMutationText: (text: string) => Record<string, unknown>
+  studioProposalInsertionEvidence: (entry: Record<string, any>) => Record<string, any>
   runStudioUiDriver: (
     plan: Record<string, any>,
     target: Record<string, any>,
@@ -147,6 +174,9 @@ const {
     args: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+}
+const { expectedTranscriptPhrases } = require('./studio-generate-speech-fixture.cjs') as {
+  expectedTranscriptPhrases: () => string[]
 }
 const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog.cjs') as {
   classifyDetachedArtifactGroups: (options: {
@@ -1234,6 +1264,41 @@ describe('Studio acceptance harness', () => {
     expect(plan.transcriptTimeoutMs).toBe(720_000)
   })
 
+  it('accepts only one bounded media source for a real launch', () => {
+    const plan = buildStudioAcceptancePlan({
+      instanceId: 'studioSpeech01',
+      repoRoot: '/virtual/repo',
+      home: '/virtual/repo/.local-only/studio/home',
+      platform: 'darwin',
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+    const generated = {
+      ...parseArgs([
+        '--launch',
+        '--i-accept-studio-isolated-launch',
+        '--owner-confirms-existing-orphans-cleared',
+        '--generate-speech-fixture'
+      ])
+    }
+
+    expect(generated.generateSpeechFixture).toBe(true)
+    expect(assertLaunchAuthorized(generated, plan)).toEqual({ launch: true })
+    expect(() =>
+      assertLaunchAuthorized({ ...generated, mediaPath: '/also.mp4', mimeType: 'video/mp4' }, plan)
+    ).toThrow(/exactly one.*media source/i)
+    expect(() =>
+      assertLaunchAuthorized(
+        {
+          ...generated,
+          generateSpeechFixture: false,
+          mediaPath: null,
+          mimeType: null
+        },
+        plan
+      )
+    ).toThrow(/media/i)
+  })
+
   it('refuses a real launch without both explicit consent and orphan clearance', () => {
     const plan = buildStudioAcceptancePlan({
       instanceId: 'studioGuard01',
@@ -1281,6 +1346,67 @@ describe('Studio acceptance harness', () => {
     expect(asset.assetPath.startsWith((await fsPromises.realpath(userDataPath)) + path.sep)).toBe(
       true
     )
+  })
+
+  it('generates and seals the bounded 30-second speech fixture inside its artifact root', async () => {
+    const artifactRoot = await temporaryRoot('studio-acceptance-speech-')
+    const calls: string[][] = []
+    const fixture = await generateAcceptanceSpeechFixture(
+      { artifactRoot },
+      {
+        execFile: async (file: string, args: string[]) => {
+          const argv = [file, ...args]
+          calls.push(argv)
+          const outputIndex = argv.indexOf('-o')
+          if (file === '/usr/bin/say') {
+            await fsPromises.writeFile(argv[outputIndex + 1], 'deterministic speech bytes')
+          } else {
+            await fsPromises.writeFile(argv.at(-1)!, 'deterministic mux bytes')
+          }
+          return { stdout: '', stderr: '' }
+        }
+      }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toContain('Samantha')
+    expect(calls[1][calls[1].indexOf('-t') + 1]).toBe('30')
+    expect(fixture).toMatchObject({
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-generated-speech-fixture',
+      durationSeconds: 30,
+      mimeType: 'video/mp4',
+      expectedPhrases: expectedTranscriptPhrases(),
+      sayExitCode: 0,
+      muxExitCode: 0
+    })
+    expect(fixture.outputPath.startsWith(artifactRoot + path.sep)).toBe(true)
+    expect(fixture.manifestPath.startsWith(artifactRoot + path.sep)).toBe(true)
+    expect(JSON.parse(await fsPromises.readFile(fixture.manifestPath, 'utf8'))).toEqual(fixture)
+  })
+
+  it('does not seal a successful fixture manifest after a generator failure', async () => {
+    const artifactRoot = await temporaryRoot('studio-acceptance-speech-red-')
+    let calls = 0
+    await expect(
+      generateAcceptanceSpeechFixture(
+        { artifactRoot },
+        {
+          execFile: async (file: string, args: string[]) => {
+            calls += 1
+            if (file === '/usr/bin/say') {
+              await fsPromises.writeFile(args[args.indexOf('-o') + 1], 'speech')
+              return { stdout: '', stderr: '' }
+            }
+            throw new Error('ffmpeg controlled failure')
+          }
+        }
+      )
+    ).rejects.toThrow(/ffmpeg controlled failure/)
+    expect(calls).toBe(2)
+    await expect(
+      fsPromises.access(path.join(artifactRoot, 'fixtures', 'speech-fixture-manifest.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('shadows the interactive Grok usage probe inside the disposable HOME', async () => {
@@ -2790,6 +2916,45 @@ describe('Studio acceptance harness', () => {
     ).resolves.toMatchObject({ revision: 2, op: { type: 'set_transcript' } })
   })
 
+  it('adjudicates the recognized passage instead of accepting any nonempty transcript', () => {
+    const phrases = expectedTranscriptPhrases()
+    const transcript = {
+      revision: 2,
+      op: {
+        type: 'set_transcript',
+        transcript: {
+          assetId: 'asset-a',
+          segments: [
+            {
+              segmentId: 'seg-a',
+              text: 'TaskWraith Studio ACCEPTANCE transcript; this verifies timed transcript delivery.'
+            },
+            {
+              segmentId: 'seg-b',
+              text: 'Proposal approval, proposal rejection, and durable restart recovery are checked.'
+            }
+          ]
+        }
+      }
+    }
+
+    expect(adjudicateRecognizedTranscript(transcript, phrases)).toMatchObject({
+      ok: true,
+      segmentCount: 2,
+      matchedPhrases: phrases,
+      transcriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    const wrong = structuredClone(transcript)
+    wrong.op.transcript.segments = [{ segmentId: 'seg-wrong', text: 'unrelated spoken words' }]
+    expect(adjudicateRecognizedTranscript(wrong, phrases)).toMatchObject({
+      ok: false,
+      missingPhrases: phrases
+    })
+    expect(() => adjudicateRecognizedTranscript(transcript, [])).toThrow(
+      /expected transcript phrases/i
+    )
+  })
+
   it('runs the Swift driver from a bounded request file and validates its receipt', async () => {
     const root = await temporaryRoot('studio-acceptance-driver-request-')
     const target = {
@@ -3546,6 +3711,129 @@ describe('Studio acceptance harness', () => {
     await expect(run(241_000, 999_999)).rejects.toThrow(/playhead receipt/)
   })
 
+  it('adjudicates journey captures only in the bounded material or timeline region', async () => {
+    const root = await temporaryRoot('studio-journey-captures-')
+    const bounds = { x: 10, y: 20, width: 640, height: 390 }
+    const makeCapture = async (
+      name: string,
+      mutate?: (image: InstanceType<typeof PNG>) => void
+    ) => {
+      const image = new PNG({ width: 1_280, height: 780 })
+      image.data.fill(255)
+      mutate?.(image)
+      const destination = path.join(root, name)
+      await fsPromises.writeFile(destination, PNG.sync.write(image))
+      return destination
+    }
+    const paint = (image: InstanceType<typeof PNG>, top: number) => {
+      for (let y = top; y < top + 24; y += 1) {
+        for (let x = 100; x < 124; x += 1) {
+          const offset = (y * image.width + x) * 4
+          image.data[offset] = 0
+          image.data[offset + 1] = 0
+          image.data[offset + 2] = 0
+          image.data[offset + 3] = 255
+        }
+      }
+    }
+    const baseline = await makeCapture('baseline.png')
+    const material = await makeCapture('material.png', (image) => paint(image, 200))
+    const timeline = await makeCapture('timeline.png', (image) => paint(image, 650))
+
+    expect(compareStudioJourneyCaptures(baseline, material, bounds, 'material')).toMatchObject({
+      ok: true,
+      region: 'material'
+    })
+    expect(compareStudioJourneyCaptures(baseline, timeline, bounds, 'timeline')).toMatchObject({
+      ok: true,
+      region: 'timeline'
+    })
+    expect(() => compareStudioJourneyCaptures(baseline, timeline, bounds, 'material')).toThrow(
+      /material region did not materially change/
+    )
+    expect(() => compareStudioJourneyCaptures(baseline, baseline, bounds, 'timeline')).toThrow(
+      /timeline region did not materially change/
+    )
+  })
+
+  it('rejects peak-shaped proposal, split-clock, and playback summaries that are not exact', () => {
+    const proposalEntry = {
+      op: {
+        proposal: {
+          proposalId: 'proposal-a',
+          op: {
+            type: 'insert_range',
+            assetId: 'asset-a',
+            sourceIn: { n: 500_000, d: 500_000 },
+            sourceOut: { n: 1_000_000, d: 500_000 },
+            at: { n: 1_500_000, d: 500_000 }
+          }
+        }
+      }
+    }
+    expect(studioProposalInsertionEvidence(proposalEntry)).toMatchObject({
+      proposalId: 'proposal-a',
+      insertionTicks: 1_500_000,
+      timebase: 500_000
+    })
+    const mismatchedTimebase = structuredClone(proposalEntry)
+    mismatchedTimebase.op.proposal.op.at.d = 30_000
+    expect(() => studioProposalInsertionEvidence(mismatchedTimebase)).toThrow(
+      /exact bounded insert_range/
+    )
+
+    const source = {
+      actions: [
+        {
+          type: 'step-playhead-frame',
+          playheadStepFrames: 1,
+          playheadTicksBefore: 1_500_000,
+          observedPlayheadTicks: 1_501_000
+        }
+      ]
+    }
+    const review = {
+      actions: [
+        {
+          type: 'step-playhead-frame',
+          playheadStepFrames: -1,
+          playheadTicksBefore: 1_501_000,
+          observedPlayheadTicks: 1_500_000
+        }
+      ]
+    }
+    expect(adjudicateSharedStudioClock(source, review)).toMatchObject({
+      ok: true,
+      reviewAfterTicks: 1_500_000
+    })
+    const splitClock = structuredClone(review)
+    splitClock.actions[0].playheadTicksBefore = 9_000_000
+    expect(() => adjudicateSharedStudioClock(source, splitClock)).toThrow(/one shared clock/)
+
+    const playback = {
+      actions: [
+        {
+          type: 'press-playback',
+          playbackValueBefore: 'paused',
+          playbackValueAfter: 'playing'
+        },
+        {
+          type: 'press-playback',
+          playbackValueBefore: 'playing',
+          playbackValueAfter: 'paused'
+        }
+      ]
+    }
+    expect(adjudicatePlaybackRoundTrip(playback)).toMatchObject({
+      ok: true,
+      initial: 'paused',
+      final: 'paused'
+    })
+    const oneWay = structuredClone(playback)
+    oneWay.actions.pop()
+    expect(() => adjudicatePlaybackRoundTrip(oneWay)).toThrow(/round trip/)
+  })
+
   it('defines and drives the host-authorized accept/reject journey in exact order', async () => {
     expect(buildStudioAcceptanceJourney().map((stage) => stage.id)).toEqual([
       'transcript-ready',
@@ -3558,7 +3846,9 @@ describe('Studio acceptance harness', () => {
     ])
 
     const calls: string[] = []
+    const deliveries: string[] = []
     let proposalNumber = 0
+    let sharedPlayheadTicks = 1_500_000
     const receipt = await driveStudioUiJourney(
       { artifactRoot: '/virtual/acceptance/studioJourney01', transcriptTimeoutMs: 720_000 },
       {
@@ -3574,6 +3864,12 @@ describe('Studio acceptance harness', () => {
               bounds: { x: 1, y: 2, width: 640, height: 360 }
             }
           ]
+        },
+        speechFixture: {
+          manifestPath: '/virtual/acceptance/studioJourney01/fixtures/speech-fixture-manifest.json',
+          outputSha256: 'b'.repeat(64),
+          expectedPhrases: expectedTranscriptPhrases(),
+          provenanceNote: 'generation alone does not prove recognition'
         }
       },
       {
@@ -3591,7 +3887,21 @@ describe('Studio acceptance harness', () => {
             )}`
           )
           if (expectation.type === 'set_transcript') {
-            return { revision: 2, op: { type: 'set_transcript' } }
+            return {
+              revision: 2,
+              op: {
+                type: 'set_transcript',
+                transcript: {
+                  assetId: 'asset-a',
+                  segments: [
+                    {
+                      segmentId: 'segment-a',
+                      text: expectedTranscriptPhrases().join('. ')
+                    }
+                  ]
+                }
+              }
+            }
           }
           if (expectation.type === 'propose_edit') {
             proposalNumber += 1
@@ -3599,7 +3909,16 @@ describe('Studio acceptance harness', () => {
               revision: 2 + proposalNumber * 2 - 1,
               op: {
                 type: 'propose_edit',
-                proposal: { proposalId: `proposal-${proposalNumber}` }
+                proposal: {
+                  proposalId: `proposal-${proposalNumber}`,
+                  op: {
+                    type: 'insert_range',
+                    assetId: 'asset-a',
+                    sourceIn: { n: 500_000, d: 500_000 },
+                    sourceOut: { n: 1_000_000, d: 500_000 },
+                    at: { n: 1_500_000, d: 500_000 }
+                  }
+                }
               }
             }
           }
@@ -3631,25 +3950,73 @@ describe('Studio acceptance harness', () => {
             ]
           }
         },
+        compareCaptures: (
+          beforePath: string,
+          afterPath: string,
+          _bounds: Record<string, number>,
+          region: string
+        ) => {
+          calls.push(`compare:${region}:${path.basename(beforePath)}:${path.basename(afterPath)}`)
+          return { ok: true, region, changedPixelCount: 512, changedPixelFraction: 0.01 }
+        },
         runUiDriver: async (
           _plan: unknown,
           _target: unknown,
-          actions: Array<Record<string, unknown>>
+          actions: Array<Record<string, any>>,
+          driverOptions: Record<string, any>
         ) => {
-          calls.push(`driver:${actions.map((action) => action.key ?? action.name).join(',')}`)
+          deliveries.push(driverOptions.inputDelivery)
+          const actionNames = actions.map((action) => {
+            if (action.type === 'key') return action.key
+            if (action.type === 'screenshot') return action.name
+            if (action.type === 'set-playhead-ticks') return `set:${action.playheadTicks}`
+            if (action.type === 'step-playhead-frame') return `step:${action.playheadStepFrames}`
+            return action.type
+          })
+          calls.push(`driver:${actionNames.join(',')}`)
           return {
             schemaVersion: 1,
             kind: 'taskwraith-studio-ui-driver-receipt',
             pid: 7002,
             pgid: 7001,
             windowId: 42,
-            actions: actions.map((action, index) => ({
-              index,
-              type: action.type,
-              key: action.key ?? null,
-              screenshotPath:
-                action.type === 'screenshot' ? `/virtual/${String(action.name)}.png` : null
-            }))
+            actions: actions.map((action, index) => {
+              const observed: Record<string, any> = {
+                index,
+                type: action.type,
+                key: action.key ?? null,
+                screenshotPath:
+                  action.type === 'screenshot' ? `/virtual/${String(action.name)}.png` : null
+              }
+              if (action.type === 'press-playback') {
+                Object.assign(observed, {
+                  accessibilityLabel: 'Playback',
+                  accessibilityAction: 'AXPress',
+                  playbackValueBefore: action.playbackValueBefore,
+                  playbackValueAfter: action.playbackValueAfter
+                })
+              }
+              if (action.type === 'set-playhead-ticks') {
+                sharedPlayheadTicks = action.playheadTicks
+                Object.assign(observed, {
+                  playheadTicks: action.playheadTicks,
+                  playheadToleranceTicks: action.playheadToleranceTicks ?? 0,
+                  playheadMaximumForwardAdvanceTicks:
+                    action.playheadMaximumForwardAdvanceTicks ?? 0,
+                  observedPlayheadTicks: sharedPlayheadTicks
+                })
+              }
+              if (action.type === 'step-playhead-frame') {
+                const before = sharedPlayheadTicks
+                sharedPlayheadTicks += action.playheadStepFrames * 1_000
+                Object.assign(observed, {
+                  playheadStepFrames: action.playheadStepFrames,
+                  playheadTicksBefore: before,
+                  observedPlayheadTicks: sharedPlayheadTicks
+                })
+              }
+              return observed
+            })
           }
         }
       }
@@ -3657,18 +4024,56 @@ describe('Studio acceptance harness', () => {
 
     expect(receipt).toMatchObject({
       ok: true,
-      transcript: { revision: 2 },
+      transcript: {
+        revision: 2,
+        recognition: {
+          ok: true,
+          matchedPhrases: expectedTranscriptPhrases(),
+          transcriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }
+      },
       accepted: { proposalId: 'proposal-1', resolutionRevision: 4 },
-      rejected: { proposalId: 'proposal-2', resolutionRevision: 6 }
+      rejected: { proposalId: 'proposal-2', resolutionRevision: 6 },
+      adjudication: {
+        transcriptPixels: { ok: true, region: 'timeline' },
+        currentProposedPixels: { ok: true, region: 'material' },
+        sharedClock: {
+          sourceBeforeTicks: 1_500_000,
+          sourceAfterTicks: 1_501_000,
+          reviewBeforeTicks: 1_501_000,
+          reviewAfterTicks: 1_500_000
+        },
+        playbackRoundTrip: {
+          ok: true,
+          initial: 'paused',
+          intermediate: 'playing',
+          final: 'paused'
+        }
+      }
     })
     expect(calls).toEqual([
+      'driver:press-playback',
       'journal:set_transcript:',
-      'driver:transcript-band,tab,transcript-selected,bracket-left,trim-pending,return,proposal-sent',
+      'driver:transcript-band',
+      'driver:tab',
+      'driver:transcript-selected',
+      'driver:bracket-left',
+      'driver:trim-pending',
+      'driver:return',
+      'driver:proposal-sent',
+      'compare:timeline:transcript-band.png:transcript-selected.png',
       'journal:propose_edit:',
       'driver:ghost',
       'driver:w',
       'window:review',
-      'driver:current,v,proposed',
+      'driver:set:1500000',
+      'driver:current',
+      'driver:v',
+      'driver:set:1500000',
+      'driver:proposed',
+      'compare:material:current.png:proposed.png',
+      'driver:step:1',
+      'driver:step:-1',
       'driver:a,accept-sent',
       'journal:resolve_proposal:accept',
       'driver:w,tab,bracket-right,return',
@@ -3678,7 +4083,34 @@ describe('Studio acceptance harness', () => {
       'driver:ghost-reject',
       'driver:r,reject-sent',
       'journal:resolve_proposal:reject',
-      'driver:space,right,left,i,o,l,p,c,g,s,final'
+      'driver:press-playback,press-playback',
+      'driver:i,o,l,p,c,g,s,final'
+    ])
+    expect(deliveries).toEqual([
+      'background-observation-only',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'foreground-global-explicit',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'foreground-global-explicit',
+      'background-observation-only',
+      'foreground-global-explicit'
     ])
     expect(receipt.screenshots).toEqual([
       '/virtual/transcript-band.png',
@@ -3703,7 +4135,17 @@ describe('Studio acceptance harness', () => {
         {
           companion: { pid: 7002, pgid: 7001, command: '/virtual/TaskWraithStudioCompanion' },
           electronPgid: 7001,
-          window: {}
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [
+              {
+                windowId: 41,
+                title: 'TaskWraith Studio — Source',
+                bounds: { x: 1, y: 2, width: 640, height: 390 }
+              }
+            ]
+          }
         },
         {
           waitForJournalOperation: async (_plan: unknown, expectation: Record<string, unknown>) => {
@@ -3757,14 +4199,23 @@ describe('Studio acceptance harness', () => {
       }
     }
 
+    const speechFixture = {
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-generated-speech-fixture',
+      outputPath: source,
+      mimeType: 'video/mp4',
+      outputSha256: 'b'.repeat(64),
+      manifestPath: path.join(root, 'speech-fixture-manifest.json'),
+      expectedPhrases: expectedTranscriptPhrases(),
+      provenanceNote: 'generation alone does not prove recognition'
+    }
     const args = {
       ...parseArgs([]),
       launch: true,
       acceptLaunch: true,
       ownerConfirmsOrphansCleared: true,
       instanceId: 'studioJoin01',
-      mediaPath: source,
-      mimeType: 'video/quicktime'
+      generateSpeechFixture: true
     }
     const adapters = {
       planOptions: {
@@ -3772,6 +4223,10 @@ describe('Studio acceptance harness', () => {
         home: path.join(root, 'isolated-home'),
         platform: 'darwin',
         adapters: { resolveElectronPath: () => '/virtual/Electron' }
+      },
+      generateSpeechFixture: async () => {
+        calls.push('fixture.generate')
+        return speechFixture
       },
       assertLaunchPortsFree: async () => {
         calls.push('ports.free')
@@ -3819,7 +4274,11 @@ describe('Studio acceptance harness', () => {
           ]
         }
       },
-      driveUiJourney: async () => {
+      driveUiJourney: async (
+        _plan: unknown,
+        target: { speechFixture: Record<string, unknown> }
+      ) => {
+        expect(target.speechFixture).toEqual(speechFixture)
         calls.push('journey.drive')
         if (journeyError) throw journeyError
         return { ok: true, screenshots: ['/virtual/final.png'] }
@@ -3838,12 +4297,14 @@ describe('Studio acceptance harness', () => {
         electron: { pid: 7001, pgid: 7001 },
         companion: { pid: 7002 },
         window: { visibleWindowCount: 1 },
+        speechFixture,
         durable: { revision: 1 },
         journey: { ok: true, screenshots: ['/virtual/final.png'] },
         watchdogTerminal
       }
     })
     expect(calls).toEqual([
+      'fixture.generate',
       'ports.free',
       'build',
       'watchdog.launch',
@@ -3863,6 +4324,7 @@ describe('Studio acceptance harness', () => {
     journeyError = new Error('mid-action failure')
     await expect(runStudioAcceptance(args, adapters)).rejects.toThrow(/mid-action failure/)
     expect(calls).toEqual([
+      'fixture.generate',
       'ports.free',
       'build',
       'watchdog.launch',
