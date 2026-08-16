@@ -1,4 +1,5 @@
 import type { CloseoutSummaryRequest, CloseoutSummarySnapshot } from './store/types'
+import { closeoutNarrativeHasAuthoredNumeral } from '../shared/closeoutReceipt'
 
 /** Sanitize/normalize seam for the `closeout:summarize` IPC channel. Pure and
  *  self-contained (no index.ts imports) so it stays unit-testable and out of
@@ -212,6 +213,12 @@ export function normalizeCloseoutSummaryResult(
     return buildCloseoutSummaryUnavailableSnapshot(
       request,
       'Foundation Models returned no close-out summary.'
+    )
+  }
+  if (closeoutNarrativeHasAuthoredNumeral(summary)) {
+    return buildCloseoutSummaryUnavailableSnapshot(
+      request,
+      'Foundation Models returned a quantitative claim reserved for the app-owned receipt.'
     )
   }
   return {

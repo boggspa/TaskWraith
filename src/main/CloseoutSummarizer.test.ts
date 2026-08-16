@@ -145,6 +145,22 @@ describe('CloseoutSummarizer', () => {
     expect(snapshot.error).toContain('no close-out summary')
   })
 
+  it.each([
+    'The run changed 91 files and produced 315 commits.',
+    'The run changed ninety files and produced three hundred commits.'
+  ])('rejects quantitative provider prose so receipt metrics stay authoritative: %s', (summary) => {
+    const request = sanitizeCloseoutSummaryRequest({ targetId: 'run-quantitative' })
+    const snapshot = normalizeCloseoutSummaryResult(
+      request,
+      { summary },
+      '2026-07-10T10:00:00.000Z'
+    )
+
+    expect(snapshot.status).toBe('unavailable')
+    expect(snapshot.summary).toBe('')
+    expect(snapshot.error).toContain('app-owned receipt')
+  })
+
   it('builds unavailable snapshots with the failure reason', () => {
     const request = sanitizeCloseoutSummaryRequest({ targetId: 'round-1', scope: 'ensembleRound' })
     const snapshot = buildCloseoutSummaryUnavailableSnapshot(request, 'daemon is not running')
