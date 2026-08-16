@@ -52,6 +52,7 @@ export function rendererSafeSettings(settings: AppSettings): AppSettings {
   const {
     claudeApiKey: _claudeApiKey,
     kimiApiKey: _kimiApiKey,
+    ollamaApiKey: _ollamaApiKey,
     geminiAuthProfiles,
     codexUsageCredential,
     userMcpServers,

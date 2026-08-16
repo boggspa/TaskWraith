@@ -1045,6 +1045,7 @@ describe('IpcValidation', () => {
   it('accepts read-only startup/status APIs used by the shell', () => {
     expect(() => validateIpcArgs('get-claude-auth-status', [])).not.toThrow()
     expect(() => validateIpcArgs('get-kimi-auth-status', [])).not.toThrow()
+    expect(() => validateIpcArgs('get-ollama-auth-status', [])).not.toThrow()
     expect(() => validateIpcArgs('agentic-yolo-get', [])).not.toThrow()
     expect(() => validateIpcArgs('agentic-yolo-set', [true])).not.toThrow()
     expect(() => validateIpcArgs('agentic-yolo-set', ['true'])).toThrow(/boolean/)

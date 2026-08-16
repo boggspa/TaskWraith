@@ -23,6 +23,7 @@ describe('RendererIpcPolicy', () => {
     'plugins:install',
     'plugins:set-secret',
     'store-claude-api-key',
+    'store-ollama-api-key',
     'save-gemini-auth-profile',
     'get-gemini-oauth-login-status',
     'provider:open-login-terminal',

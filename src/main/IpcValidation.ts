@@ -507,6 +507,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'trigger-claude-login': [],
   'store-kimi-api-key': ['optionalString'],
   'clear-kimi-api-key': [],
+  'store-ollama-api-key': ['optionalString'],
+  'clear-ollama-api-key': [],
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
@@ -660,6 +662,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'mistral-quota:refresh-admin': [],
   'get-claude-auth-status': [],
   'get-kimi-auth-status': [],
+  'get-ollama-auth-status': [],
   'get-gemini-auth-status': [],
   'list-gemini-auth-profiles': [],
   'save-gemini-auth-profile': ['object'],

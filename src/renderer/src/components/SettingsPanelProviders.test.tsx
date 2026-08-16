@@ -303,8 +303,11 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('settings-provider-auth-card-partial provider-ollama')
     expect(html).toContain('ollama signin')
     expect(html).toContain('ollama signout')
-    expect(html).toContain('Sign in to ollama.com to use Ollama Cloud')
+    expect(html).toContain('Sign in with the CLI or add an API key')
     expect(html).toContain('Open Terminal to sign in')
+    expect(html).toContain('Ollama Cloud API key')
+    expect(html).toContain('Cloud usage dashboard')
+    expect(html).toContain('TaskWraith does not import browser cookies')
   })
 
   it('separates authenticated Ollama Cloud models from installed local models', () => {

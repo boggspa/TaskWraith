@@ -160,6 +160,7 @@ import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
 import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
 import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
+import { OllamaApiKeyControls } from './OllamaApiKeyControls'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
@@ -7410,7 +7411,7 @@ export function SettingsPanel({
                     provider="ollama"
                     label="Ollama"
                     summary={ollamaAuthSummary}
-                    description="Local Ollama models run with no account. Sign in to ollama.com to use Ollama Cloud / Turbo and pull private models."
+                    description="Local Ollama models run with no account. Sign in with the CLI or add an API key to use the separate Ollama Cloud catalog."
                     optional
                   >
                     <div className="settings-provider-auth-command">
@@ -7440,9 +7441,12 @@ export function SettingsPanel({
                     </div>
                     <p className="settings-provider-auth-footnote">
                       Local models (configured in the Ollama section below) work without signing in
-                      — cloud sign-in only unlocks ollama.com-hosted models. TaskWraith stores no
-                      Ollama credential; auth stays inside the Ollama CLI.
+                      — CLI sign-in keeps auth inside Ollama, while the optional encrypted key uses
+                      Ollama&apos;s direct Cloud API.
                     </p>
+                    <OllamaApiKeyControls
+                      onChanged={() => onRefreshProviderMcpStatus?.('ollama')}
+                    />
                     {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
@@ -8347,7 +8351,8 @@ export function SettingsPanel({
                   placeholder="http://127.0.0.1:11434"
                 />
                 <p className="settings-hint">
-                  TaskWraith talks to the local Ollama HTTP service. No cloud API key is required.
+                  This endpoint is only for the local Ollama service. Cloud API-key requests go
+                  directly to ollama.com and the key is never added to local requests.
                 </p>
 
                 <label className="settings-label">Default Ollama model</label>

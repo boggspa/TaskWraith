@@ -151,6 +151,7 @@ describe('registerSettingsHandlers', () => {
       compactDensity: true,
       claudeApiKey: 'secret-claude',
       kimiApiKey: 'secret-kimi',
+      ollamaApiKey: 'secret-ollama',
       geminiAuthProfiles: [
         {
           id: 'gemini-1',
@@ -232,6 +233,7 @@ describe('registerSettingsHandlers', () => {
     })
     expect(result).not.toHaveProperty('claudeApiKey')
     expect(result).not.toHaveProperty('kimiApiKey')
+    expect(result).not.toHaveProperty('ollamaApiKey')
     expect(result.geminiAuthProfiles?.[0]).not.toHaveProperty('encryptedApiKey')
     expect(result.codexUsageCredential).not.toHaveProperty('encryptedAccessToken')
     expect(result.apnsConfig).not.toHaveProperty('encryptedAuthKey')

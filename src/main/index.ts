@@ -1900,6 +1900,7 @@ import {
 } from './ExternalPublishReceiptLedger'
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
+import { registerOllamaAuthHandlers } from './ipc/ollamaAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
@@ -55080,6 +55081,13 @@ if (isGeminiMcpBridgeProcess) {
       getManagedAuthState: () =>
         detectKimiManagedAuthState(join(os.homedir(), '.kimi-code'), kimiHomeFsAdapter),
       isMainRendererSender
+    })
+
+    registerOllamaAuthHandlers({
+      getSettings: () => AppStore.getSettings(),
+      updateSettings: (patch) => AppStore.updateSettings(patch),
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      encryptApiKey
     })
 
     registerGeminiAuthHandlers({

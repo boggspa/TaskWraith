@@ -289,6 +289,10 @@ export function getStoredKimiApiKey(): string | null {
   return decryptApiKey(AppStore.getSettings().kimiApiKey)
 }
 
+export function getStoredOllamaApiKey(): string | null {
+  return decryptApiKey(AppStore.getSettings().ollamaApiKey)
+}
+
 export function sanitizeGeminiAuthProfileKind(value: unknown): GeminiAuthProfileKind {
   return value === 'vertex-ai' ? value : 'api-key'
 }

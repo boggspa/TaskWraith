@@ -1125,6 +1125,16 @@ declare global {
       }>
       clearKimiApiKey: () => Promise<void>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
+      getOllamaAuthStatus: () => Promise<{
+        apiKeyConfigured: boolean
+        encryptionAvailable: boolean
+      }>
+      storeOllamaApiKey: (key: string) => Promise<{
+        stored: boolean
+        encryptionAvailable: boolean
+        error?: string
+      }>
+      clearOllamaApiKey: () => Promise<void>
       getGeminiAuthStatus: () => Promise<GeminiAuthStatus>
       listGeminiAuthProfiles: () => Promise<GeminiAuthProfileSummary[]>
       saveGeminiAuthProfile: (profile: {

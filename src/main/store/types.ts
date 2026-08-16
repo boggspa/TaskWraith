@@ -2440,6 +2440,8 @@ export interface AppSettings {
    * available when this is off.
    */
   simulatorControlEnabled?: boolean
+  /** Encrypted Ollama API key for direct requests to https://ollama.com/api. */
+  ollamaApiKey?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
   /**
