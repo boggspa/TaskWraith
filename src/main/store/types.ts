@@ -3710,6 +3710,8 @@ export interface PinnedMessageGroup {
 
 export interface ChatRun {
   runId: string
+  /** Persisted-chat compaction schema applied after this run became historical. */
+  historyCompactionGeneration?: number
   provider?: ProviderId
   providerReroute?: ProviderRunReroute
   providerRunId?: string
@@ -4035,6 +4037,8 @@ export interface ChatRecord {
    * a stale revision is never allowed to replace a newer canonical record.
    */
   persistenceRevision?: number
+  /** Compaction schema applied to legacy messages that predate run attribution. */
+  unattributedHistoryCompactionGeneration?: number
   archived: boolean
   /** When true the chat is rendered in the sidebar's "Pinned" section
    * and excluded from "Recents". Default false. Persisted via the

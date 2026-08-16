@@ -15,10 +15,12 @@
  *     parameters, resultSummary, diffSummary — already carry the transcript);
  *   - the legacy outputSummary/outputPreview duplicates of resultSummary go.
  *
- * Thumbnailing is amortized: at most `maxImagesPerPass` images are processed
- * per save, so a legacy 25MB chat migrates over a handful of saves instead of
- * blocking one save for seconds. Processed (or unprocessable) blocks are
- * marked `compacted: true` and never revisited.
+ * Historical work is incremental by generation. Each no-longer-latest
+ * terminal run is traversed until its bounded image backlog is exhausted, then
+ * stamped with `CHAT_HISTORY_COMPACTION_GENERATION`; steady-state saves inspect
+ * only the much smaller run list and never walk historical messages. Legacy
+ * unattributed messages carry one chat-level stamp. Thumbnailing remains
+ * amortized via `maxImagesPerPass`, and a run is not stamped while work remains.
  */
 
 import type { ChatMessage, ChatRecord, ToolActivity } from './types'
@@ -61,6 +63,7 @@ function nativeImageThumbnailer(dataB64: string, _mimeType: string) {
 
 const DEFAULT_MIN_IMAGE_CHARS = 64 * 1024
 const DEFAULT_MAX_IMAGES_PER_PASS = 8
+export const CHAT_HISTORY_COMPACTION_GENERATION = 1
 
 /** Runs whose activities keep FULL raw fidelity: the most recent run plus
  * anything not yet terminal. */
@@ -98,9 +101,10 @@ function compactContentArray(
   thumbnail: ImageThumbnailer,
   minImageChars: number,
   budget: PassBudget
-): { content: unknown[]; changed: boolean; sawImage: boolean } {
+): { content: unknown[]; changed: boolean; sawImage: boolean; pendingImage: boolean } {
   let changed = false
   let sawImage = false
+  let pendingImage = false
   const next = content.map((item) => {
     if (!isImageBlock(item)) return item
     sawImage = true
@@ -108,7 +112,10 @@ function compactContentArray(
     if (record.compacted === true) return item
     const data = record.data as string
     if (data.length < minImageChars) return item
-    if (budget.imagesLeft <= 0) return item
+    if (budget.imagesLeft <= 0) {
+      pendingImage = true
+      return item
+    }
     budget.imagesLeft -= 1
     const mime = String(record.mimeType ?? record.mime_type)
     const shrunk = thumbnail(data, mime)
@@ -119,7 +126,7 @@ function compactContentArray(
     }
     return { ...record, data: shrunk.data, mimeType: shrunk.mimeType, compacted: true }
   })
-  return { content: next, changed, sawImage }
+  return { content: next, changed, sawImage, pendingImage }
 }
 
 /** Compact one raw result event: thumbnail images where the envelope carries
@@ -131,7 +138,7 @@ function compactRawResultEvent(
   thumbnail: ImageThumbnailer,
   minImageChars: number,
   budget: PassBudget
-): { value: unknown; sawImage: boolean; changed: boolean } {
+): { value: unknown; sawImage: boolean; changed: boolean; pendingImage: boolean } {
   let parsed: unknown = raw
   let reparsed = false
   if (typeof raw === 'string') {
@@ -141,24 +148,26 @@ function compactRawResultEvent(
         parsed = JSON.parse(trimmed)
         reparsed = true
       } catch {
-        return { value: raw, sawImage: false, changed: false }
+        return { value: raw, sawImage: false, changed: false, pendingImage: false }
       }
     } else {
-      return { value: raw, sawImage: false, changed: false }
+      return { value: raw, sawImage: false, changed: false, pendingImage: false }
     }
   }
   if (!parsed || typeof parsed !== 'object') {
-    return { value: raw, sawImage: false, changed: false }
+    return { value: raw, sawImage: false, changed: false, pendingImage: false }
   }
 
   let sawImage = false
   let changed = reparsed
+  let pendingImage = false
 
   const visit = (node: unknown): unknown => {
     if (Array.isArray(node)) {
       const result = compactContentArray(node, thumbnail, minImageChars, budget)
       sawImage = sawImage || result.sawImage
       changed = changed || result.changed
+      pendingImage = pendingImage || result.pendingImage
       // Same node back when nothing changed — steady-state saves must
       // reach the identity no-op so the whole chat keeps its reference.
       return result.changed ? result.content : node
@@ -172,6 +181,7 @@ function compactRawResultEvent(
       if (typeof child === 'string' && (child.includes('"image"') || child.includes('image/'))) {
         const inner = compactRawResultEvent(child, thumbnail, minImageChars, budget)
         sawImage = sawImage || inner.sawImage
+        pendingImage = pendingImage || inner.pendingImage
         if (inner.changed || inner.sawImage) {
           out = out ?? { ...record }
           out[key] = inner.value
@@ -191,7 +201,7 @@ function compactRawResultEvent(
   }
 
   const value = visit(parsed)
-  return { value, sawImage, changed: changed || value !== parsed }
+  return { value, sawImage, changed: changed || value !== parsed, pendingImage }
 }
 
 function compactActivity(
@@ -199,20 +209,17 @@ function compactActivity(
   thumbnail: ImageThumbnailer,
   minImageChars: number,
   budget: PassBudget
-): ToolActivity {
+): { activity: ToolActivity; pendingImage: boolean } {
   let next: ToolActivity | null = null
+  let pendingImage = false
   const ensure = (): ToolActivity => {
     if (!next) next = { ...activity }
     return next
   }
 
   if (activity.rawResultEvent !== undefined) {
-    const result = compactRawResultEvent(
-      activity.rawResultEvent,
-      thumbnail,
-      minImageChars,
-      budget
-    )
+    const result = compactRawResultEvent(activity.rawResultEvent, thumbnail, minImageChars, budget)
+    pendingImage = result.pendingImage
     if (result.sawImage) {
       if (result.changed) ensure().rawResultEvent = result.value
     } else {
@@ -235,7 +242,7 @@ function compactActivity(
   if (activity.outputPreview !== undefined && activity.outputPreview === activity.resultSummary) {
     delete ensure().outputPreview
   }
-  return next ?? activity
+  return { activity: next ?? activity, pendingImage }
 }
 
 /** Compact a chat record for persistence. Returns the same reference when
@@ -245,7 +252,6 @@ export function compactChatForPersist(
   options: ChatCompactionOptions = {}
 ): ChatRecord {
   const messages = Array.isArray(chat.messages) ? chat.messages : []
-  if (messages.length === 0) return chat
   const runs = Array.isArray(chat.runs) ? chat.runs : []
   // No run bookkeeping at all (legacy/synthetic chats): nothing is safely
   // "historical", keep everything.
@@ -257,6 +263,24 @@ export function compactChatForPersist(
     imagesLeft: options.maxImagesPerPass ?? DEFAULT_MAX_IMAGES_PER_PASS
   }
   const protectedIds = protectedRunIds(chat)
+  const eligibleRunIds = new Set<string>()
+  for (const run of runs) {
+    if (
+      run?.runId &&
+      !protectedIds.has(run.runId) &&
+      run.historyCompactionGeneration !== CHAT_HISTORY_COMPACTION_GENERATION
+    ) {
+      eligibleRunIds.add(run.runId)
+    }
+  }
+  const compactUnattributed =
+    chat.unattributedHistoryCompactionGeneration !== CHAT_HISTORY_COMPACTION_GENERATION
+  // The decisive steady-state fast path: run bookkeeping is small, whereas
+  // messages can contain tens of thousands of rows. Once every historical run
+  // and the legacy unattributed tranche carry this generation, do not even
+  // iterate the transcript.
+  if (eligibleRunIds.size === 0 && !compactUnattributed) return chat
+
   // Legacy chats stamped no runId on tool messages (pre-T36), so run
   // membership can't protect them — but TIME can: anything older than the
   // latest run's start is definitively a previous session. Without run
@@ -267,28 +291,53 @@ export function compactChatForPersist(
     ? latestRunStart
     : now - 7 * 24 * 60 * 60 * 1000
 
-  const isProtected = (message: ChatMessage): boolean => {
-    if (message.runId) return protectedIds.has(message.runId)
+  const unattributedIsProtected = (message: ChatMessage): boolean => {
     const ts = Date.parse(String(message.timestamp ?? ''))
     if (!Number.isFinite(ts)) return true // unknowable → keep
     return ts >= unattributedCutoff
   }
 
   let changedAny = false
+  const incompleteRunIds = new Set<string>()
+  let unattributedIncomplete = false
   const nextMessages = messages.map((message: ChatMessage) => {
     const activities = message.toolActivities
     if (!Array.isArray(activities) || activities.length === 0) return message
-    if (isProtected(message)) return message
+    const attributedRunId = message.runId
+    if (attributedRunId) {
+      if (!eligibleRunIds.has(attributedRunId)) return message
+    } else if (!compactUnattributed || unattributedIsProtected(message)) {
+      return message
+    }
     let changed = false
     const nextActivities = activities.map((activity) => {
-      const compacted = compactActivity(activity, thumbnail, minImageChars, budget)
-      if (compacted !== activity) changed = true
-      return compacted
+      const result = compactActivity(activity, thumbnail, minImageChars, budget)
+      if (result.pendingImage) {
+        if (attributedRunId) incompleteRunIds.add(attributedRunId)
+        else unattributedIncomplete = true
+      }
+      if (result.activity !== activity) changed = true
+      return result.activity
     })
     if (!changed) return message
     changedAny = true
     return { ...message, toolActivities: nextActivities }
   })
 
-  return changedAny ? { ...chat, messages: nextMessages } : chat
+  let runsChanged = false
+  const nextRuns = runs.map((run) => {
+    if (!eligibleRunIds.has(run.runId) || incompleteRunIds.has(run.runId)) return run
+    runsChanged = true
+    return { ...run, historyCompactionGeneration: CHAT_HISTORY_COMPACTION_GENERATION }
+  })
+  const stampUnattributed = compactUnattributed && !unattributedIncomplete
+  if (!changedAny && !runsChanged && !stampUnattributed) return chat
+  return {
+    ...chat,
+    messages: changedAny ? nextMessages : messages,
+    runs: runsChanged ? nextRuns : runs,
+    ...(stampUnattributed
+      ? { unattributedHistoryCompactionGeneration: CHAT_HISTORY_COMPACTION_GENERATION }
+      : {})
+  }
 }

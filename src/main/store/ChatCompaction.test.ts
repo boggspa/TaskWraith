@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { compactChatForPersist, protectedRunIds } from './ChatCompaction'
+import {
+  CHAT_HISTORY_COMPACTION_GENERATION,
+  compactChatForPersist,
+  protectedRunIds
+} from './ChatCompaction'
 import type { ChatRecord, ChatMessage, ToolActivity } from './types'
 
 const BIG = 'A'.repeat(80_000) // > default 64K image threshold
@@ -35,7 +39,10 @@ function toolMessage(runId: string, activities: ToolActivity[]): ChatMessage {
   } as ChatMessage
 }
 
-function chat(messages: ChatMessage[], runs: Array<{ runId: string; status?: string }>): ChatRecord {
+function chat(
+  messages: ChatMessage[],
+  runs: Array<{ runId: string; status?: string }>
+): ChatRecord {
   return {
     appChatId: 'chat-1',
     scope: 'workspace',
@@ -64,7 +71,10 @@ describe('compactChatForPersist', () => {
     })
     const record = chat(
       [toolMessage('run-old', [old, textOnly]), toolMessage('run-new', [activity()])],
-      [{ runId: 'run-old', status: 'completed' }, { runId: 'run-new', status: 'completed' }]
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-new', status: 'completed' }
+      ]
     )
     const compacted = compactChatForPersist(record, { thumbnail: fakeThumbnail })
     const [oldMsg] = compacted.messages
@@ -84,10 +94,17 @@ describe('compactChatForPersist', () => {
     const running = activity({ rawResultEvent: { output: 'text' }, rawUseEvent: { keep: true } })
     const record = chat(
       [toolMessage('run-live', [running]), toolMessage('run-latest', [latest])],
-      [{ runId: 'run-live', status: 'running' }, { runId: 'run-latest', status: 'completed' }]
+      [
+        { runId: 'run-live', status: 'running' },
+        { runId: 'run-latest', status: 'completed' }
+      ]
     )
     const compacted = compactChatForPersist(record, { thumbnail: fakeThumbnail })
-    expect(compacted).toBe(record) // untouched → same reference
+    expect(compacted.messages).toBe(record.messages)
+    expect(compacted.unattributedHistoryCompactionGeneration).toBe(
+      CHAT_HISTORY_COMPACTION_GENERATION
+    )
+    expect(compactChatForPersist(compacted, { thumbnail: fakeThumbnail })).toBe(compacted)
   })
 
   it('keeps chats without runs[] untouched', () => {
@@ -130,28 +147,100 @@ describe('compactChatForPersist', () => {
     ]
     const record = chat(
       [toolMessage('run-old', acts), toolMessage('run-new', [activity()])],
-      [{ runId: 'run-old' , status: 'completed'}, { runId: 'run-new', status: 'completed' }]
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-new', status: 'completed' }
+      ]
     )
     const first = compactChatForPersist(record, { thumbnail: fakeThumbnail, maxImagesPerPass: 2 })
     const firstBlocks = first.messages[0].toolActivities!.map(
       (a) => (a.rawResultEvent as { content: Record<string, unknown>[] }).content[0]
     )
     expect(firstBlocks.filter((b) => b.compacted === true)).toHaveLength(2)
+    expect(first.runs[0].historyCompactionGeneration).toBeUndefined()
     const second = compactChatForPersist(first, { thumbnail: fakeThumbnail, maxImagesPerPass: 2 })
     const secondBlocks = second.messages[0].toolActivities!.map(
       (a) => (a.rawResultEvent as { content: Record<string, unknown>[] }).content[0]
     )
     expect(secondBlocks.filter((b) => b.compacted === true)).toHaveLength(3)
+    expect(second.runs[0].historyCompactionGeneration).toBe(CHAT_HISTORY_COMPACTION_GENERATION)
     // Third pass: everything marked → steady-state no-op, same reference.
     const third = compactChatForPersist(second, { thumbnail: fakeThumbnail, maxImagesPerPass: 2 })
     expect(third).toBe(second)
+  })
+
+  it('does not iterate the transcript after historical generations are stamped', () => {
+    const record = chat(
+      [
+        toolMessage('run-old', [activity({ rawUseEvent: { remove: true } })]),
+        toolMessage('run-latest', [activity()])
+      ],
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-latest', status: 'completed' }
+      ]
+    )
+    const compacted = compactChatForPersist(record, { thumbnail: fakeThumbnail })
+    expect(compacted.runs[0].historyCompactionGeneration).toBe(CHAT_HISTORY_COMPACTION_GENERATION)
+    const guardedMessages = new Proxy(compacted.messages, {
+      get(target, property, receiver) {
+        if (
+          property === Symbol.iterator ||
+          property === 'map' ||
+          (typeof property === 'string' && /^\d+$/.test(property))
+        ) {
+          throw new Error('steady-state compaction iterated the transcript')
+        }
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    const guarded = { ...compacted, messages: guardedMessages }
+
+    expect(compactChatForPersist(guarded, { thumbnail: fakeThumbnail })).toBe(guarded)
+  })
+
+  it('compacts and stamps only the run that newly became historical', () => {
+    const oldMessage = toolMessage('run-old', [activity({ rawUseEvent: { already: true } })])
+    const latestMessage = toolMessage('run-latest', [
+      activity({ rawUseEvent: { newlyHistorical: true } })
+    ])
+    const initial = compactChatForPersist(
+      chat(
+        [oldMessage, latestMessage],
+        [
+          { runId: 'run-old', status: 'completed' },
+          { runId: 'run-latest', status: 'completed' }
+        ]
+      ),
+      { thumbnail: fakeThumbnail }
+    )
+    const withNextRun = {
+      ...initial,
+      runs: [
+        ...initial.runs,
+        {
+          runId: 'run-next',
+          status: 'running',
+          startedAt: '2026-06-02T00:00:00.000Z'
+        }
+      ]
+    }
+    const compacted = compactChatForPersist(withNextRun, { thumbnail: fakeThumbnail })
+
+    expect(compacted.messages[0]).toBe(initial.messages[0])
+    expect(compacted.messages[1].toolActivities![0].rawUseEvent).toBeUndefined()
+    expect(compacted.runs[1].historyCompactionGeneration).toBe(CHAT_HISTORY_COMPACTION_GENERATION)
+    expect(compacted.runs[2].historyCompactionGeneration).toBeUndefined()
   })
 
   it('parses JSON-stringified raw results and processes their images', () => {
     const old = activity({ rawResultEvent: JSON.stringify(imageResult()) })
     const record = chat(
       [toolMessage('run-old', [old]), toolMessage('run-new', [activity()])],
-      [{ runId: 'run-old', status: 'completed' }, { runId: 'run-new', status: 'completed' }]
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-new', status: 'completed' }
+      ]
     )
     const compacted = compactChatForPersist(record, { thumbnail: fakeThumbnail })
     const raw = compacted.messages[0].toolActivities![0].rawResultEvent as {
@@ -164,12 +253,17 @@ describe('compactChatForPersist', () => {
     const old = activity({ rawResultEvent: imageResult() })
     const record = chat(
       [toolMessage('run-old', [old]), toolMessage('run-new', [activity()])],
-      [{ runId: 'run-old', status: 'completed' }, { runId: 'run-new', status: 'completed' }]
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-new', status: 'completed' }
+      ]
     )
     const compacted = compactChatForPersist(record, { thumbnail: () => null })
-    const block = (compacted.messages[0].toolActivities![0].rawResultEvent as {
-      content: Record<string, unknown>[]
-    }).content[0]
+    const block = (
+      compacted.messages[0].toolActivities![0].rawResultEvent as {
+        content: Record<string, unknown>[]
+      }
+    ).content[0]
     expect(block.compacted).toBe(true)
     expect(block.data).toBe(BIG) // original kept when conversion fails
   })
@@ -182,7 +276,10 @@ describe('compactChatForPersist', () => {
     })
     const record = chat(
       [toolMessage('run-old', [old]), toolMessage('run-new', [activity()])],
-      [{ runId: 'run-old', status: 'completed' }, { runId: 'run-new', status: 'completed' }]
+      [
+        { runId: 'run-old', status: 'completed' },
+        { runId: 'run-new', status: 'completed' }
+      ]
     )
     const compacted = compactChatForPersist(record, { thumbnail: fakeThumbnail })
     const act = compacted.messages[0].toolActivities![0]
@@ -194,12 +291,15 @@ describe('compactChatForPersist', () => {
 
 describe('protectedRunIds', () => {
   it('protects the last run and every non-terminal run', () => {
-    const record = chat([], [
-      { runId: 'a', status: 'completed' },
-      { runId: 'b', status: 'running' },
-      { runId: 'c', status: 'failed' },
-      { runId: 'd', status: 'completed' }
-    ])
+    const record = chat(
+      [],
+      [
+        { runId: 'a', status: 'completed' },
+        { runId: 'b', status: 'running' },
+        { runId: 'c', status: 'failed' },
+        { runId: 'd', status: 'completed' }
+      ]
+    )
     const ids = protectedRunIds(record)
     expect(ids.has('b')).toBe(true)
     expect(ids.has('d')).toBe(true)
