@@ -1651,30 +1651,22 @@ final class StudioViewerWindowController {
     let window: NSWindow
     private let view: StudioViewerView
     let route: StudioViewerRoute
+    private let presentationHost: NSView?
+    private let presentWindow: () -> Void
     /// This route's OWN renderer, so hiding the route can release its
     /// decoder/player resources without touching the other route's. The
     /// briefing requires exactly that, and one shared renderer could not
     /// deliver it.
     let renderer: StudioViewerRenderer
 
-    init(
+    convenience init(
         renderer: StudioViewerRenderer,
         authority: StudioPlaybackAuthority,
         route: StudioViewerRoute = .source,
         audioPlayer: StudioAudioPlayer? = nil,
         audioSchedulingAuthority: StudioAudioSchedulingAuthority? = nil
     ) {
-        self.route = route
-        self.renderer = renderer
-        view = StudioViewerView(
-            renderer: renderer,
-            authority: authority,
-            route: route,
-            audioPlayer: audioPlayer,
-            audioSchedulingAuthority: audioSchedulingAuthority
-        )
-
-        window = NSWindow(
+        let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -1682,13 +1674,74 @@ final class StudioViewerWindowController {
         )
         window.title = route.windowTitle
         window.center()
+        self.init(
+            renderer: renderer,
+            authority: authority,
+            route: route,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority,
+            window: window,
+            presentationHost: nil,
+            presentWindow: {
+                window.orderFrontRegardless()
+            }
+        )
+    }
+
+    convenience init(
+        renderer: StudioViewerRenderer,
+        authority: StudioPlaybackAuthority,
+        route: StudioViewerRoute,
+        audioPlayer: StudioAudioPlayer?,
+        audioSchedulingAuthority: StudioAudioSchedulingAuthority?,
+        window: NSWindow,
+        presentationHost: NSView,
+        presentWindow: @escaping () -> Void
+    ) {
+        self.init(
+            renderer: renderer,
+            authority: authority,
+            route: route,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority,
+            window: window,
+            presentationHost: Optional(presentationHost),
+            presentWindow: presentWindow
+        )
+    }
+
+    private init(
+        renderer: StudioViewerRenderer,
+        authority: StudioPlaybackAuthority,
+        route: StudioViewerRoute,
+        audioPlayer: StudioAudioPlayer?,
+        audioSchedulingAuthority: StudioAudioSchedulingAuthority?,
+        window: NSWindow,
+        presentationHost: NSView?,
+        presentWindow: @escaping () -> Void
+    ) {
+        self.route = route
+        self.renderer = renderer
+        self.window = window
+        self.presentationHost = presentationHost
+        self.presentWindow = presentWindow
+        view = StudioViewerView(
+            renderer: renderer,
+            authority: authority,
+            route: route,
+            audioPlayer: audioPlayer,
+            audioSchedulingAuthority: audioSchedulingAuthority
+        )
         view.onPresentationDetached = { [weak self] in
             self?.presentationDidDetach()
         }
     }
 
     var isPresentationAttached: Bool {
-        view.window === window
+        if let presentationHost {
+            return view.superview === presentationHost && view.window === window
+        }
+        return window.contentView === view && view.window === window
     }
 
     var onPresentationDetached: (() -> Void)?
@@ -1713,16 +1766,43 @@ final class StudioViewerWindowController {
 
     var activeReviewContext: StudioReviewContext? { view.activeReviewContext }
 
-    func show() {
+    var playbackAuthority: StudioPlaybackAuthority { view.authority }
+
+    func attachPresentation() {
         // Attaching the Metal view starts its display link. Keep it detached
         // until an explicit presentation so hidden startup does no rendering.
-        if !isPresentationAttached { window.contentView = view }
+        guard !isPresentationAttached else { return }
+        if let presentationHost {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            presentationHost.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: presentationHost.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: presentationHost.trailingAnchor),
+                view.topAnchor.constraint(equalTo: presentationHost.topAnchor),
+                view.bottomAnchor.constraint(equalTo: presentationHost.bottomAnchor),
+            ])
+        } else {
+            window.contentView = view
+        }
+    }
+
+    func detachPresentation() {
+        guard isPresentationAttached else { return }
+        if presentationHost != nil {
+            view.removeFromSuperview()
+        } else {
+            window.contentView = nil
+        }
+    }
+
+    func show() {
+        attachPresentation()
         // Visible and capturable, but not the operator's key/frontmost app.
         // makeKeyAndOrderFront + activate() stole focus from the owner on
         // every Source open; Work1 already proved WindowServer capture works
         // on an inactive companion. VoiceOver operates the settable playhead
         // without this process becoming key.
-        window.orderFrontRegardless()
+        presentWindow()
     }
 
     func adopt(timebase: StudioTimebase, durationTicks: Int64, label: String) {
@@ -1807,6 +1887,7 @@ final class StudioViewerAppState {
     /// Route visibility and the resource obligation that rides with it.
     private var routes = StudioRouteVisibility()
     private let reviewController: StudioViewerWindowController?
+    private let workspaceController: StudioWorkspaceWindowController?
 
     /// Everything one pump update means, applied.
     ///
@@ -1873,6 +1954,7 @@ final class StudioViewerAppState {
         controller: StudioViewerWindowController,
         renderer: StudioViewerRenderer,
         reviewController: StudioViewerWindowController? = nil,
+        workspaceController: StudioWorkspaceWindowController? = nil,
         presentSource: (() -> Void)? = nil
     ) {
         self.controller = controller
@@ -1880,6 +1962,7 @@ final class StudioViewerAppState {
         self.sourcePool = sourcePool
         self.attachment = StudioMediaAttachment(renderer: renderer, sourcePool: sourcePool)
         self.reviewController = reviewController
+        self.workspaceController = workspaceController
         self.reviewAttachment = reviewController.map {
             StudioMediaAttachment(renderer: $0.renderer, sourcePool: sourcePool)
         }
@@ -1888,7 +1971,11 @@ final class StudioViewerAppState {
             // made open_media steal the operator's foreground app before any
             // driver ran. Observation-only capture already works while this
             // process stays inactive.
-            controller.show()
+            if let workspaceController {
+                workspaceController.show()
+            } else {
+                controller.show()
+            }
         }
         reviewController?.configureSequenceAudio { [weak self] assetId in
             guard let self else { return nil }
@@ -1902,6 +1989,7 @@ final class StudioViewerAppState {
             self?.reviewAttachment?.detach()
             self?.reviewAttachment?.detachSequence()
         }
+        refreshWorkspacePresentation()
     }
 
     /// Shows or hides a route. Hiding releases that route's slots through the
@@ -1912,7 +2000,13 @@ final class StudioViewerAppState {
         switch transition {
         case .shown(let shown):
             controller.activateAudioScheduling(for: shown)
-            windowController(for: shown)?.show()
+            if let workspaceController {
+                workspaceController.setActiveRoute(shown)
+                refreshWorkspacePresentation()
+                workspaceController.show()
+            } else {
+                windowController(for: shown)?.show()
+            }
             if shown == .review, let activeSequence {
                 controller.setLocalAudioSuspendedForSequence(!activeSequence.isEmpty)
             }
@@ -1926,7 +2020,12 @@ final class StudioViewerAppState {
             Self.report("route \(shown.rawValue) shown")
         case .hidden(let hidden):
             guard let controller = windowController(for: hidden) else { break }
-            controller.window.orderOut(nil)
+            if let workspaceController {
+                workspaceController.setActiveRoute(hidden == .source ? .review : .source)
+                refreshWorkspacePresentation()
+            } else {
+                controller.window.orderOut(nil)
+            }
             if hidden == .source {
                 attachment.detach()
                 controller.activateAudioScheduling(for: .review)
@@ -1948,6 +2047,14 @@ final class StudioViewerAppState {
             Self.report("route toggle refused: \(reason.rawValue)")
         }
         return transition
+    }
+
+    private func refreshWorkspacePresentation() {
+        workspaceController?.update(
+            visibleRoutes: routes.visible,
+            sequence: activeSequence,
+            activeProposalId: openProposalId
+        )
     }
 
     private func windowController(
@@ -2170,6 +2277,7 @@ final class StudioViewerAppState {
         }
         openProposalId = proposal.proposalId
         activeReviewTimeline = timeline
+        refreshWorkspacePresentation()
         reviewTarget.adopt(reviewTimeline: timeline)
         Self.report(
             "proposal \(proposal.proposalId) shown — v to compare, a accept, r reject")
@@ -2180,6 +2288,7 @@ final class StudioViewerAppState {
         guard let openProposalId, ids.contains(openProposalId) else { return }
         self.openProposalId = nil
         activeReviewTimeline = nil
+        refreshWorkspacePresentation()
         (reviewAttachment ?? attachment).detachProposed()
         reviewTarget.adopt(reviewTimeline: nil)
         Self.report("proposal \(openProposalId) resolved — review cleared")
@@ -2201,6 +2310,7 @@ final class StudioViewerAppState {
         // plainly carried.
         for asset in knownAssets { proposalAssets[asset.assetId] = asset }
         activeSequence = sequence
+        refreshWorkspacePresentation()
         controller.setLocalAudioSuspendedForSequence(
             routes.isVisible(.review) && !sequence.isEmpty
         )
@@ -2300,6 +2410,8 @@ final class StudioViewerAppState {
 /// Entry point for `--viewer`. The AppKit process and stdio protocol hydrate in
 /// the background; the first host open_media request presents the viewer.
 enum StudioViewerApp {
+    @MainActor private static var retainedWorkspaceController:
+        StudioWorkspaceWindowController?
     @MainActor private static var retainedController: StudioViewerWindowController?
     @MainActor private static var retainedReviewController: StudioViewerWindowController?
 
@@ -2330,32 +2442,27 @@ enum StudioViewerApp {
             clock: StudioPlaybackClock(timebase: .ntsc2997, durationTicks: 0))
         let audioPlayer = StudioAudioPlayer()
         let audioSchedulingAuthority = StudioAudioSchedulingAuthority(owner: .source)
-        let controller = StudioViewerWindowController(
-            renderer: renderer,
+        // One primary AppKit window owns both route presentations. Each route
+        // retains its own renderer and media lease, while the authority and
+        // device player above remain shared by construction.
+        let workspaceController = StudioWorkspaceWindowController(
+            sourceRenderer: renderer,
+            reviewRenderer: try? StudioViewerRenderer.makeDefault(),
             authority: authority,
-            route: .source,
             audioPlayer: audioPlayer,
             audioSchedulingAuthority: audioSchedulingAuthority
         )
+        retainedWorkspaceController = workspaceController
+        let controller = workspaceController.sourceController
+        let reviewController = workspaceController.reviewController
         retainedController = controller
-
-        // Review gets its OWN renderer so hiding it can release that route's
-        // decoder/player resources without disturbing Source.
-        let reviewController = (try? StudioViewerRenderer.makeDefault()).map {
-            StudioViewerWindowController(
-                renderer: $0,
-                authority: authority,
-                route: .review,
-                audioPlayer: audioPlayer,
-                audioSchedulingAuthority: audioSchedulingAuthority
-            )
-        }
         retainedReviewController = reviewController
 
         let state = StudioViewerAppState(
             controller: controller,
             renderer: renderer,
-            reviewController: reviewController
+            reviewController: reviewController,
+            workspaceController: workspaceController
         )
         StudioViewerAppState.shared = state
 
