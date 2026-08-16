@@ -53,6 +53,14 @@ const MAX_IO_SURFACE_ID = 0xffffffff
  */
 const MILLISECOND_AGREEMENT = 0.0005 + 1e-9
 
+/**
+ * The two sample kinds are not interchangeable. `av1` carries the RETAINED
+ * PEAK; a current reading is a different measurement with a different contract,
+ * so the kind is required at every boundary rather than inferred from shape.
+ */
+const PEAK_SAMPLE_KIND = 'peak'
+const CURRENT_SAMPLE_KIND = 'current'
+
 const AV1_FIELDS = ['pf', 'ap', 'err', 'errms', 'win', 'winms', 'drawn', 'expl']
 const AV1_EXPLANATIONS = new Set(['explained', 'not_explained', 'unknown'])
 
@@ -436,6 +444,13 @@ function toleranceVerdict(errorMs) {
  * that was never measured, is Red.
  */
 function classifyAvPeakSample({ receipt, timebase }) {
+  if (!receipt || receipt.kind !== PEAK_SAMPLE_KIND) {
+    return {
+      kind: 'peak',
+      status: 'red',
+      reason: `peak slot requires a "${PEAK_SAMPLE_KIND}" receipt, got "${receipt && receipt.kind}"`
+    }
+  }
   const integrity = operandIntegrityFailure(receipt, timebase)
   if (integrity) {
     return { kind: 'peak', status: 'red', reason: `unusable peak receipt: ${integrity}` }
@@ -480,6 +495,19 @@ function classifyAvPeakSample({ receipt, timebase }) {
  * simultaneous reading. This is the only verdict the terminal summary accepts.
  */
 function classifyAvCurrentSample({ receipt, timebase }) {
+  // A RETAINED PEAK MUST NEVER SATISFY A CURRENT SLOT. The peak describes the
+  // worst moment since the last seek; substituting it here would prove sync
+  // held at an instant nobody measured. The kind is declared, not sniffed,
+  // because two receipts with identical fields can mean different things.
+  if (!receipt || receipt.kind !== CURRENT_SAMPLE_KIND) {
+    return {
+      kind: 'current',
+      status: 'red',
+      reason:
+        `current slot requires a "${CURRENT_SAMPLE_KIND}" receipt, got ` +
+        `"${receipt && receipt.kind}"; a retained peak cannot stand in for a live reading`
+    }
+  }
   const integrity = operandIntegrityFailure(receipt, timebase)
   if (integrity) {
     return { kind: 'current', status: 'red', reason: `unusable current receipt: ${integrity}` }
@@ -549,7 +577,14 @@ const POSITIVE_NON_SILENT_FRACTION_FLOOR = 0.5
  * Validates a full AudioProbeReceipt as the driver actually emits it
  * (studio-acceptance-ui-driver.swift:62-74), not three floating metrics.
  */
-function audioProbeFailure(receipt, label) {
+/**
+ * Coverage floor: the captured frames must actually account for the requested
+ * interval. A 600-second probe backed by one frame is not a quiet capture, it
+ * is an absent one.
+ */
+const AUDIO_COVERAGE_FLOOR = 0.99
+
+function audioProbeFailure(receipt, label, expectedRoute) {
   if (!receipt || typeof receipt !== 'object') return `${label} receipt is absent`
   for (const field of [
     'durationSeconds',
@@ -589,6 +624,49 @@ function audioProbeFailure(receipt, label) {
   // A peak below its own RMS is physically impossible and marks a fabricated
   // or mis-scaled receipt.
   if (receipt.peak < receipt.rms) return `${label} peak is below its own RMS`
+
+  // Sample-count algebra. Interleaved samples are frames x channels; a receipt
+  // that disagrees with its own arithmetic is not describing a real capture.
+  if (receipt.sampleValueCount !== receipt.frameCount * receipt.channelCount) {
+    return (
+      `${label} sampleValueCount ${receipt.sampleValueCount} is not ` +
+      `frameCount ${receipt.frameCount} x channelCount ${receipt.channelCount}`
+    )
+  }
+
+  // Captured-duration coverage. frameCount/sampleRate is how much audio was
+  // ACTUALLY captured, independent of how long the probe claims to have run.
+  const capturedSeconds = receipt.frameCount / receipt.sampleRate
+  if (capturedSeconds < receipt.durationSeconds * AUDIO_COVERAGE_FLOOR) {
+    return (
+      `${label} captured only ${capturedSeconds.toFixed(3)}s of audio for a ` +
+      `${receipt.durationSeconds}s request`
+    )
+  }
+  if (capturedSeconds > receipt.durationSeconds + 1) {
+    return (
+      `${label} captured ${capturedSeconds.toFixed(3)}s for a ` +
+      `${receipt.durationSeconds}s request, more than the interval can hold`
+    )
+  }
+
+  // The embedded device is part of the Swift receipt, and it is the only thing
+  // that ties this capture to the route whose health was checked. Without the
+  // link, a healthy route and a capture from somewhere else read the same.
+  const device = receipt.defaultOutputDevice
+  if (!device || typeof device !== 'object') {
+    return `${label} carries no embedded defaultOutputDevice receipt`
+  }
+  if (expectedRoute) {
+    if (
+      device.id !== expectedRoute.id ||
+      device.uid !== expectedRoute.uid ||
+      device.name !== expectedRoute.name ||
+      device.nominalSampleRate !== expectedRoute.nominalSampleRate
+    ) {
+      return `${label} was captured on a different output device than the checked route`
+    }
+  }
   return null
 }
 
@@ -632,7 +710,7 @@ function routeReceiptFailure(route, label) {
 function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorRouteHealth }) {
   const failures = []
 
-  const positiveFailure = audioProbeFailure(windowAudio, 'positive window')
+  const positiveFailure = audioProbeFailure(windowAudio, 'positive window', routeHealth)
   let windowEmission
   if (positiveFailure) {
     windowEmission = 'unknown'
@@ -647,7 +725,7 @@ function classifyAudioEvidence({ windowAudio, silenceWindow, routeHealth, priorR
     failures.push('positive window carried no measurable signal')
   }
 
-  const silenceFailure = audioProbeFailure(silenceWindow, 'intentional-silence window')
+  const silenceFailure = audioProbeFailure(silenceWindow, 'intentional-silence window', routeHealth)
   let intentionalSilence
   if (silenceFailure) {
     intentionalSilence = 'unknown'
@@ -839,54 +917,92 @@ function classifyResourceGrowth({ readings, droppedFrames, ioSurfaceCapacity }) 
   }
 }
 /**
+ * Cross-stream alignment.
+ *
+ * Length alone is not twenty-one observations: the same receipt repeated
+ * twenty-one times has the same length as a real run. Every entry must name the
+ * sample it belongs to AND carry the same observed monotonic instant as that
+ * sample, so the streams describe one run rather than one moment counted
+ * repeatedly.
+ */
+function alignmentFailure(entry, index, sample, label) {
+  if (!entry || typeof entry !== 'object') return `${label} ${index} is missing`
+  if (entry.sampleIndex !== index) {
+    return `${label} ${index} claims sampleIndex ${entry.sampleIndex}`
+  }
+  if (!sample) return `${label} ${index} has no matching validated sample`
+  if (entry.monotonicMs !== sample.monotonicMs) {
+    return (
+      `${label} ${index} was observed at ${entry.monotonicMs}ms but its sample ` +
+      `was taken at ${sample.monotonicMs}ms`
+    )
+  }
+  return null
+}
+
+/**
  * Terminal verdict, computed from RAW EVIDENCE.
  *
- * WHY THIS TAKES RECEIPTS RATHER THAN VERDICTS. The previous version accepted
+ * WHY THIS TAKES RECEIPTS RATHER THAN VERDICTS. An earlier version accepted
  * caller-supplied verdict objects, so a hand-shaped `{ status: 'green' }` and a
- * measured classification were indistinguishable to it — and the summary would
- * then report that every software gate had passed and only physical audibility
- * remained. That is the most expensive false statement this file could make,
- * because it is the one a promotion decision reads. It now re-runs every
- * validator itself; there is no shape a caller can pass that skips the work.
+ * measured classification were indistinguishable — and the summary would then
+ * report that every software gate had passed and only physical audibility
+ * remained. That is the most expensive false statement this file can make,
+ * because it is the one a promotion decision reads. It re-runs every validator
+ * itself; there is no shape a caller can pass that skips the work.
  *
- * THERE IS NO GREEN RETURN IN THIS REPOSITORY. Physical audibility cannot be
- * proven with any seam that exists here, so the best attainable outcome is
- * `blocked`, and evidence claiming otherwise is forged. `red` and `blocked`
- * stay distinct: blocked means the evidence is sound but insufficient; red
- * means something failed or is missing.
+ * PEAK EVIDENCE IS REQUIRED, NOT OPTIONAL. Outcome 5 asks for the retained
+ * worst sample as well as the live one. Omitting peaks entirely used to produce
+ * a clean `blocked`, which silently dropped half the question.
+ *
+ * THERE IS NO GREEN RETURN IN THIS REPOSITORY.
  */
-function summarizeOutcome5({ samples, currentSamples, audio, resources }) {
+function summarizeOutcome5({ samples, currentSamples, peakSamples, audio, resources }) {
   const failures = []
   const blockers = []
 
   const sequence = validateSampleSequence(samples)
   if (!sequence.ok) failures.push(...sequence.failures)
+  const sampleList = Array.isArray(samples) ? samples : []
 
-  const receipts = Array.isArray(currentSamples) ? currentSamples : null
-  const avVerdicts = []
-  if (receipts === null) {
-    failures.push('no raw current A/V receipts')
-  } else if (receipts.length !== SAMPLE_COUNT) {
-    failures.push(`${receipts.length} current A/V receipts, expected exactly ${SAMPLE_COUNT}`)
-  } else {
-    for (let i = 0; i < receipts.length; i += 1) {
-      const entry = receipts[i]
-      if (!entry || typeof entry !== 'object') {
-        failures.push(`current A/V receipt ${i} is missing`)
+  const classifyStream = (entries, label, classifier, accept) => {
+    const verdicts = []
+    if (!Array.isArray(entries)) {
+      failures.push(`no raw ${label} receipts`)
+      return verdicts
+    }
+    if (entries.length !== SAMPLE_COUNT) {
+      failures.push(`${entries.length} ${label} receipts, expected exactly ${SAMPLE_COUNT}`)
+      return verdicts
+    }
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      const misalignment = alignmentFailure(entry, i, sampleList[i], label)
+      if (misalignment) {
+        failures.push(misalignment)
         continue
       }
-      // Classified HERE, from the receipt and its timebase. A caller-supplied
-      // status is not consulted and cannot be.
-      const verdict = classifyAvCurrentSample({
-        receipt: entry.receipt,
-        timebase: entry.timebase
-      })
-      avVerdicts.push(verdict)
-      if (verdict.status !== 'green') {
-        failures.push(`A/V sample ${i}: ${verdict.reason}`)
-      }
+      const verdict = classifier({ receipt: entry.receipt, timebase: entry.timebase })
+      verdicts.push(verdict)
+      if (!accept(verdict)) failures.push(`${label} ${i}: ${verdict.reason}`)
     }
+    return verdicts
   }
+
+  const avVerdicts = classifyStream(
+    currentSamples,
+    'current A/V',
+    classifyAvCurrentSample,
+    (v) => v.status === 'green'
+  )
+  // An explained out-of-bound peak is retained as a diagnostic; an unexplained
+  // or unmeasured one is a failure.
+  const peakVerdicts = classifyStream(
+    peakSamples,
+    'peak A/V',
+    classifyAvPeakSample,
+    (v) => v.status === 'green' || v.status === 'explained-diagnostic'
+  )
 
   let audioVerdict = null
   if (!audio || typeof audio !== 'object') {
@@ -908,6 +1024,15 @@ function summarizeOutcome5({ samples, currentSamples, audio, resources }) {
   if (!resources || typeof resources !== 'object') {
     failures.push('no raw resource evidence')
   } else {
+    const readings = Array.isArray(resources.readings) ? resources.readings : []
+    if (readings.length !== SAMPLE_COUNT) {
+      failures.push(`${readings.length} resource readings, expected exactly ${SAMPLE_COUNT}`)
+    } else {
+      for (let i = 0; i < readings.length; i += 1) {
+        const misalignment = alignmentFailure(readings[i], i, sampleList[i], 'resource reading')
+        if (misalignment) failures.push(misalignment)
+      }
+    }
     resourceVerdict = classifyResourceGrowth({
       readings: resources.readings,
       droppedFrames: resources.droppedFrames,
@@ -922,13 +1047,21 @@ function summarizeOutcome5({ samples, currentSamples, audio, resources }) {
       ' — this outcome cannot reach Green in this repository'
   )
 
-  const evidence = { sequence, avVerdicts, audio: audioVerdict, resources: resourceVerdict }
+  const evidence = {
+    sequence,
+    avVerdicts,
+    peakVerdicts,
+    audio: audioVerdict,
+    resources: resourceVerdict
+  }
   if (failures.length > 0) return { status: 'red', failures, blockers, evidence }
   return { status: 'blocked', failures, blockers, evidence }
 }
 
 module.exports = {
   AUDIO_ADVANCED_TOLERANCE_MS,
+  CURRENT_SAMPLE_KIND,
+  PEAK_SAMPLE_KIND,
   AUDIO_ELAPSED_ALLOWANCE_SECONDS,
   AUDIO_DELAYED_TOLERANCE_MS,
   FOOTPRINT_GROWTH_BUDGET_MB,

@@ -31,17 +31,26 @@ function deriveExplanation(errTicks: number, winNs: number | null): string {
   return errMs < 0 && -errMs <= winNs / 1_000_000 + QUANTISATION_MS ? 'explained' : 'not_explained'
 }
 
-/** A SELF-CONSISTENT receipt object, so forging one has to be deliberate. */
+/**
+ * A SELF-CONSISTENT receipt object, so forging one has to be deliberate.
+ *
+ * The kind is EXPLICIT and defaults to current. The previous helper hard-coded
+ * kind:'peak' and was then used for every current fixture, so the suite itself
+ * encoded the forbidden peak-in-a-current-slot substitution it was meant to
+ * forbid. A default that quietly disagrees with the caller's intent is how a
+ * test file starts lying on the product's behalf.
+ */
 function receipt({
   errTicks = 0,
   winNs = 1_000_000 as number | null,
   drawn = true,
   expl = null as string | null,
-  pf = 600_000
+  pf = 600_000,
+  kind = 'current' as string
 } = {}) {
   return {
     ok: true,
-    kind: 'peak',
+    kind,
     presentedFrameTicks: pf,
     audioPositionTicks: pf - errTicks,
     errorTicks: errTicks,
@@ -52,9 +61,10 @@ function receipt({
     explanation: expl ?? deriveExplanation(errTicks, winNs)
   }
 }
+const peakReceipt = (o: Parameters<typeof receipt>[0] = {}) => receipt({ ...o, kind: 'peak' })
 
 function av1Text(options: Parameters<typeof receipt>[0] = {}): string {
-  const r = receipt(options)
+  const r = peakReceipt(options)
   const win = r.measurementWindowNanoseconds === null ? '-' : String(r.measurementWindowNanoseconds)
   const winms =
     r.measurementWindowMilliseconds === null ? '-' : r.measurementWindowMilliseconds.toFixed(3)
@@ -261,7 +271,7 @@ describe('classification recomputes and never trusts a supplied ok bit', () => {
   // claim rather than an implementation.
   const handcrafted = {
     ok: true,
-    kind: 'peak',
+    kind: 'current',
     presentedFrameTicks: 600_000,
     audioPositionTicks: 0,
     errorTicks: 0,
@@ -276,7 +286,9 @@ describe('classification recomputes and never trusts a supplied ok bit', () => {
     const current = classifyAvCurrentSample({ receipt: handcrafted, timebase: TIMEBASE })
     expect(current.status).toBe('red')
     expect(current.reason).toMatch(/disagrees with its own operands/i)
-    expect(classifyAvPeakSample({ receipt: handcrafted, timebase: TIMEBASE }).status).toBe('red')
+    expect(
+      classifyAvPeakSample({ receipt: { ...handcrafted, kind: 'peak' }, timebase: TIMEBASE }).status
+    ).toBe('red')
   })
 
   it('requires an exact timebase including the frame duration', () => {
@@ -325,7 +337,7 @@ describe('a PEAK is not a CURRENT sample', () => {
   // current reading. Conflating them would either fail the run or hide drift.
   it('retains a -1088.5ms explained peak as a diagnostic while current stays Green', () => {
     const peak = classifyAvPeakSample({
-      receipt: receipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
+      receipt: peakReceipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
       timebase: TIMEBASE
     })
     expect(peak.kind).toBe('peak')
@@ -341,16 +353,30 @@ describe('a PEAK is not a CURRENT sample', () => {
     expect(current.status).toBe('green')
   })
 
+  // A RETAINED PEAK MUST NEVER SATISFY A CURRENT SLOT.
+  it('refuses a peak-tagged receipt in a current slot and vice versa', () => {
+    const asCurrent = classifyAvCurrentSample({
+      receipt: peakReceipt({ errTicks: 0 }),
+      timebase: TIMEBASE
+    })
+    expect(asCurrent.status).toBe('red')
+    expect(asCurrent.reason).toMatch(/cannot stand in for a live reading/i)
+
+    const asPeak = classifyAvPeakSample({ receipt: receipt({ errTicks: 0 }), timebase: TIMEBASE })
+    expect(asPeak.status).toBe('red')
+    expect(asPeak.reason).toMatch(/requires a "peak" receipt/i)
+  })
+
   it('reds an out-of-bound peak that nothing explains', () => {
     expect(
       classifyAvPeakSample({
-        receipt: receipt({ errTicks: msToTicks(-1088.5), winNs: 1_000_000 }),
+        receipt: peakReceipt({ errTicks: msToTicks(-1088.5), winNs: 1_000_000 }),
         timebase: TIMEBASE
       }).status
     ).toBe('red')
     expect(
       classifyAvPeakSample({
-        receipt: receipt({ errTicks: msToTicks(-1088.5), winNs: null }),
+        receipt: peakReceipt({ errTicks: msToTicks(-1088.5), winNs: null }),
         timebase: TIMEBASE
       }).status
     ).toBe('red')
@@ -386,7 +412,7 @@ describe('a PEAK is not a CURRENT sample', () => {
   it('still allows a WIDE window on a peak, which is what explains a stall', () => {
     expect(
       classifyAvPeakSample({
-        receipt: receipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
+        receipt: peakReceipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
         timebase: TIMEBASE
       }).status
     ).toBe('explained-diagnostic')
@@ -422,6 +448,12 @@ describe('audibility evidence is never allowed to overclaim', () => {
     rms: 0.21,
     peak: 0.8,
     nonSilentFraction: 0.97,
+    defaultOutputDevice: {
+      id: 71,
+      name: 'MacBook Pro Speakers',
+      uid: 'uid-1',
+      nominalSampleRate: 48000
+    },
     ...overrides
   })
   const silenceProbe = (overrides = {}) =>
@@ -492,6 +524,50 @@ describe('audibility evidence is never allowed to overclaim', () => {
     expect(
       complete({ silenceWindow: silenceProbe({ nonSilentFraction: 0.6 }) }).intentionalSilence
     ).toBe('violated')
+  })
+
+  it('refuses a probe whose sample-count algebra is impossible', () => {
+    expect(complete({ windowAudio: probe({ sampleValueCount: 1 }) }).status).toBe('red')
+  })
+
+  // 600 seconds "captured" by a single frame is an absent capture, not a quiet one.
+  it('refuses a 600s request backed by one frame of audio', () => {
+    expect(
+      complete({
+        windowAudio: probe({
+          durationSeconds: 600,
+          elapsedSeconds: 600.1,
+          sampleBufferCount: 1,
+          frameCount: 1,
+          sampleValueCount: 2,
+          channelCount: 2
+        })
+      }).status
+    ).toBe('red')
+  })
+
+  it('requires the embedded device receipt and links it to the checked route', () => {
+    const { defaultOutputDevice, ...noDevice } = probe()
+    expect(complete({ windowAudio: noDevice }).status).toBe('red')
+    expect(
+      complete({
+        windowAudio: probe({
+          defaultOutputDevice: { id: 99, name: 'Other', uid: 'uid-9', nominalSampleRate: 48000 }
+        })
+      }).status
+    ).toBe('red')
+    expect(
+      complete({
+        silenceWindow: silenceProbe({
+          defaultOutputDevice: {
+            id: 71,
+            name: 'MacBook Pro Speakers',
+            uid: 'uid-1',
+            nominalSampleRate: 44100
+          }
+        })
+      }).status
+    ).toBe('red')
   })
 
   it('is red when the positive window carried no signal', () => {
@@ -648,11 +724,27 @@ describe('resource bounds derive from the accepted contract', () => {
 })
 
 describe('the terminal verdict reclassifies RAW evidence', () => {
+  const run = () => goodRun()
+  const aligned = (i: number, extra: Record<string, unknown>) => ({
+    sampleIndex: i,
+    monotonicMs: run()[i].monotonicMs,
+    ...extra
+  })
   const currentReceipts = () =>
-    Array.from({ length: SAMPLE_COUNT }, () => ({
-      receipt: receipt({ errTicks: msToTicks(-1.2), winNs: 1_000_000 }),
-      timebase: TIMEBASE
-    }))
+    Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        receipt: receipt({ errTicks: msToTicks(-1.2), winNs: 1_000_000 }),
+        timebase: TIMEBASE
+      })
+    )
+  const peakReceipts = () =>
+    Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        receipt: peakReceipt({ errTicks: msToTicks(-20), winNs: 1_000_000 }),
+        timebase: TIMEBASE
+      })
+    )
+  const device = { id: 71, name: 'Speakers', uid: 'uid-1', nominalSampleRate: 48000 }
   const audioProbe = (overrides = {}) => ({
     durationSeconds: 3,
     elapsedSeconds: 3.01,
@@ -664,13 +756,11 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     rms: 0.21,
     peak: 0.8,
     nonSilentFraction: 0.97,
+    defaultOutputDevice: device,
     ...overrides
   })
   const routeReceipt = (overrides = {}) => ({
-    id: 71,
-    name: 'Speakers',
-    uid: 'uid-1',
-    nominalSampleRate: 48000,
+    ...device,
     alive: true,
     running: true,
     hasOutputStream: true,
@@ -682,19 +772,22 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     ...overrides
   })
   const rawResources = () => ({
-    readings: Array.from({ length: SAMPLE_COUNT }, (_, i) => ({
-      footprintBytes: 400_000_000 + (i % 2) * 1_000_000,
-      mallocInUseBytes: 100_000_000 + (i % 2) * 500_000,
-      residentBytes: 500_000_000 + (i % 2) * 1_000_000,
-      residentDecoderCount: 1,
-      liveIoSurfaceIds: Array.from({ length: 12 }, (_, k) => 1000 + k)
-    })),
+    readings: Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        footprintBytes: 400_000_000 + (i % 2) * 1_000_000,
+        mallocInUseBytes: 100_000_000 + (i % 2) * 500_000,
+        residentBytes: 500_000_000 + (i % 2) * 1_000_000,
+        residentDecoderCount: 1,
+        liveIoSurfaceIds: Array.from({ length: 12 }, (_, k) => 1000 + k)
+      })
+    ),
     droppedFrames: 0,
     ioSurfaceCapacity: 24
   })
   const base = () => ({
-    samples: goodRun(),
+    samples: run(),
     currentSamples: currentReceipts(),
+    peakSamples: peakReceipts(),
     audio: {
       windowAudio: audioProbe(),
       silenceWindow: audioProbe({ rms: 0.0001, peak: 0.002, nonSilentFraction: 0 }),
@@ -709,59 +802,87 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     expect(verdict.status).toBe('blocked')
     expect(verdict.failures).toEqual([])
     expect(verdict.blockers.join(' ')).toMatch(/cannot reach Green/i)
-    // It reports what it computed, not what it was handed.
     expect(verdict.evidence.avVerdicts).toHaveLength(SAMPLE_COUNT)
+    expect(verdict.evidence.peakVerdicts).toHaveLength(SAMPLE_COUNT)
     expect(verdict.evidence.audio.physicalAudibility).toBe('blocked')
   })
 
-  // THE PLACEHOLDER FALSE-SOFT-BLOCK: hand-shaped verdict objects used to be
-  // indistinguishable from measured classifications, so the summary would claim
-  // every software gate had passed.
-  it('is red for hand-shaped placeholder verdicts instead of raw evidence', () => {
-    expect(
-      summarizeOutcome5({
-        samples: goodRun(),
-        currentSamples: Array.from({ length: SAMPLE_COUNT }, () => ({
-          kind: 'current',
-          status: 'green',
-          errorMilliseconds: 0
-        })),
-        audio: {
-          status: 'blocked',
-          physicalAudibility: 'blocked',
-          windowEmission: 'proven',
-          intentionalSilence: 'proven',
-          routeState: 'healthy',
-          failures: []
-        },
-        resources: { status: 'green', failures: [], footprintGrowthMb: 0 }
-      }).status
-    ).toBe('red')
+  // PEAK EVIDENCE IS REQUIRED. Omitting it used to produce a clean blocked,
+  // silently dropping half of what Outcome 5 asks for.
+  it('is red when peak evidence is absent, miscounted, or unexplained-bad', () => {
+    const { peakSamples, ...noPeaks } = base()
+    expect(summarizeOutcome5(noPeaks).status).toBe('red')
+    expect(summarizeOutcome5({ ...base(), peakSamples: peakReceipts().slice(0, 20) }).status).toBe(
+      'red'
+    )
+    const badPeaks = base()
+    badPeaks.peakSamples = Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        receipt: peakReceipt({ errTicks: msToTicks(300), winNs: 1_000_000 }),
+        timebase: TIMEBASE
+      })
+    )
+    const verdict = summarizeOutcome5(badPeaks)
+    expect(verdict.status).toBe('red')
+    expect(verdict.failures.join(' ')).toMatch(/peak A\/V/i)
   })
 
-  // ISOLATED: everything else is genuine raw evidence, so ONLY the A/V
-  // reclassification can catch these placeholders. Without this the control
-  // above reds via the audio/resource paths and the A/V path stays untested.
+  it('retains a large EXPLAINED peak without failing the run', () => {
+    const explained = base()
+    explained.peakSamples = Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        receipt: peakReceipt({ errTicks: msToTicks(-1088.5), winNs: 1_100_000_000 }),
+        timebase: TIMEBASE
+      })
+    )
+    const verdict = summarizeOutcome5(explained)
+    expect(verdict.status).toBe('blocked')
+    expect(verdict.evidence.peakVerdicts[0].status).toBe('explained-diagnostic')
+  })
+
+  // Length is not twenty-one observations.
+  it('is red when a stream is not cross-aligned to the sample plan', () => {
+    const dup = base()
+    dup.currentSamples = Array.from({ length: SAMPLE_COUNT }, () => currentReceipts()[0])
+    expect(summarizeOutcome5(dup).status).toBe('red')
+
+    const wrongTime = base()
+    wrongTime.peakSamples[9] = { ...wrongTime.peakSamples[9], monotonicMs: 12345 }
+    expect(summarizeOutcome5(wrongTime).failures.join(' ')).toMatch(/observed at/i)
+
+    const wrongIndex = base()
+    wrongIndex.resources.readings[4] = { ...wrongIndex.resources.readings[4], sampleIndex: 17 }
+    expect(summarizeOutcome5(wrongIndex).failures.join(' ')).toMatch(/sampleIndex/i)
+  })
+
   it('is red for placeholder A/V verdicts even when all other evidence is real', () => {
     const verdict = summarizeOutcome5({
       ...base(),
-      currentSamples: Array.from({ length: SAMPLE_COUNT }, () => ({
-        kind: 'current',
-        status: 'green',
-        errorMilliseconds: 0
-      }))
+      currentSamples: Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+        aligned(i, { kind: 'current', status: 'green', errorMilliseconds: 0 })
+      )
     })
     expect(verdict.status).toBe('red')
-    // and it must fail on the A/V receipts specifically
-    expect(verdict.failures.join(' ')).toMatch(/A\/V sample/i)
-    expect(verdict.failures.join(' ')).toMatch(/no receipt|unusable/i)
+    expect(verdict.failures.join(' ')).toMatch(/current A\/V/i)
+  })
+
+  it('refuses a peak-tagged receipt sitting in the current stream', () => {
+    const swapped = base()
+    swapped.currentSamples = Array.from({ length: SAMPLE_COUNT }, (_, i) =>
+      aligned(i, {
+        receipt: peakReceipt({ errTicks: msToTicks(-1.2), winNs: 1_000_000 }),
+        timebase: TIMEBASE
+      })
+    )
+    const verdict = summarizeOutcome5(swapped)
+    expect(verdict.status).toBe('red')
+    expect(verdict.failures.join(' ')).toMatch(/cannot stand in for a live reading/i)
   })
 
   it('cannot be unlocked by a forged physicalAudibility on the input', () => {
     const forged = base()
     ;(forged.audio as Record<string, unknown>).physicalAudibility = 'proven'
     const verdict = summarizeOutcome5(forged)
-    // The input field is simply not consulted; classification produces blocked.
     expect(verdict.status).toBe('blocked')
     expect(verdict.evidence.audio.physicalAudibility).toBe('blocked')
     expect(verdict.status).not.toBe('green')
@@ -769,20 +890,16 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
 
   it('reclassifies a bad current receipt even when it looks complete', () => {
     const bad = base()
-    bad.currentSamples[7] = {
+    bad.currentSamples[7] = aligned(7, {
       receipt: receipt({ errTicks: msToTicks(-300), winNs: 400_000_000 }),
       timebase: TIMEBASE
-    }
-    const verdict = summarizeOutcome5(bad)
-    expect(verdict.status).toBe('red')
+    })
+    expect(summarizeOutcome5(bad).status).toBe('red')
   })
 
   it('is red for missing, miscounted or absent raw evidence', () => {
     expect(summarizeOutcome5({ ...base(), currentSamples: [] }).status).toBe('red')
     expect(summarizeOutcome5({ ...base(), currentSamples: undefined }).status).toBe('red')
-    expect(
-      summarizeOutcome5({ ...base(), currentSamples: currentReceipts().slice(0, 20) }).status
-    ).toBe('red')
     expect(summarizeOutcome5({ ...base(), audio: undefined }).status).toBe('red')
     expect(summarizeOutcome5({ ...base(), resources: undefined }).status).toBe('red')
     expect(summarizeOutcome5({ ...base(), samples: goodRun().slice(0, 20) }).status).toBe('red')
