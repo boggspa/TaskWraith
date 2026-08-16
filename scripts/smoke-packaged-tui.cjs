@@ -586,7 +586,7 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
     }
     assertOwnerOnlyFile(discoveryPath, 'control discovery')
     assertOwnerOnlyFile(tokenPath, 'control token')
-    assertSmokeHostCommand(appPid, packageTarget)
+    assertSmokeHostCommand(appPid, userDataPath, packageTarget)
 
     const frame = `${snapshot.stdout || ''}${snapshot.stderr || ''}`
     if (!/TaskWraith|Threads|App/.test(frame)) {
@@ -598,6 +598,7 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
       )
     }
     await waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)
+    appPid = null
     console.log(
       `packaged TUI live control smoke ok (offline tw auto-start → windowless packaged Host → owner-only v2 discovery/token → authenticated snapshot, ${Buffer.byteLength(
         frame,
@@ -607,7 +608,9 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error))
   } finally {
-    if (appPid) await stopProcess(appPid)
+    if (appPid && smokeHostCommandMatches(appPid, userDataPath, packageTarget)) {
+      await stopProcess(appPid)
+    }
     removeSmokeTree(userDataPath)
     if (smokePackageRoot !== packageRoot) {
       removeSmokeTree(smokePackageRoot)
@@ -615,22 +618,45 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
   }
 }
 
-function assertSmokeHostCommand(pid, packageTarget) {
-  if (packageTarget.platform === 'win32') return
-  const result = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'command='], {
+function readSmokeHostCommand(pid, packageTarget) {
+  const command =
+    packageTarget.platform === 'win32'
+      ? {
+          executable: 'powershell.exe',
+          args: [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; ` +
+              'if ($null -eq $process) { exit 3 }; ' +
+              '[Console]::Out.Write($process.CommandLine)'
+          ]
+        }
+      : { executable: '/bin/ps', args: ['-p', String(pid), '-o', 'command='] }
+  const result = spawnSync(command.executable, command.args, {
     encoding: 'utf8',
     timeout: helpTimeoutMs
   })
-  if (result.error || result.status !== 0) {
-    throw new Error(`could not inspect packaged smoke Host pid ${pid}`)
-  }
-  const command = String(result.stdout || '')
+  if (result.error || result.status !== 0) return null
+  return String(result.stdout || '')
+}
+
+function smokeHostCommandMatches(pid, userDataPath, packageTarget) {
+  const command = readSmokeHostCommand(pid, packageTarget)
+  if (!command) return false
   if (
-    !command.includes('--taskwraith-headless-host') ||
-    !command.includes('--taskwraith-package-smoke')
+    command.includes('--taskwraith-headless-host') &&
+    command.includes('--taskwraith-package-smoke') &&
+    command.includes(`--taskwraith-package-smoke-user-data=${userDataPath}`)
   ) {
-    throw new Error(`packaged TUI launched pid ${pid} without the windowless smoke posture`)
+    return true
   }
+  return false
+}
+
+function assertSmokeHostCommand(pid, userDataPath, packageTarget) {
+  if (smokeHostCommandMatches(pid, userDataPath, packageTarget)) return
+  throw new Error(`packaged TUI launched pid ${pid} without the exact windowless smoke posture`)
 }
 
 async function waitForSmokeHostShutdown(pid, discoveryPath, timeoutMs) {

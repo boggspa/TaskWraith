@@ -60,9 +60,24 @@ describe('packaged TUI disposable macOS host launch', () => {
     expect(roundTrip).toContain('taskwraith-host-v2.json')
     expect(roundTrip).toContain("TASKWRAITH_TUI_PACKAGE_SMOKE: '1'")
     expect(roundTrip).toContain('TASKWRAITH_TUI_APP_EXECUTABLE: appExecutable')
-    expect(roundTrip).toContain('assertSmokeHostCommand(appPid, packageTarget)')
+    expect(roundTrip).toContain('assertSmokeHostCommand(appPid, userDataPath, packageTarget)')
     expect(roundTrip).toContain('waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)')
+    expect(roundTrip).toContain('appPid = null')
+    expect(roundTrip).toContain('smokeHostCommandMatches(appPid, userDataPath, packageTarget)')
     expect(roundTrip).not.toContain("'--no-start-host'")
     expect(roundTrip).not.toContain('app = spawn(')
+  })
+
+  it('verifies the exact windowless smoke command on Windows before cleanup', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("executable: 'powershell.exe'")
+    expect(source).toContain('Get-CimInstance Win32_Process')
+    expect(source).toContain(
+      'command.includes(`--taskwraith-package-smoke-user-data=${userDataPath}`)'
+    )
   })
 })
