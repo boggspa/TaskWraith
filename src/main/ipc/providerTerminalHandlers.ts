@@ -57,6 +57,9 @@ const MUSE_USER_OWNED_UPGRADE_NOTICE =
 const MUSE_USER_OWNED_INSTALL_NOTICE =
   'Muse was not found on PATH. This saves Meta’s official launcher to ~/.local/bin/muse, validates its shell syntax, and invokes the launcher’s explicit install mode.'
 
+const OLLAMA_USER_OWNED_SETUP_NOTICE =
+  'This invokes the resolved official Ollama CLI for account sign-in or sign-out. Ollama owns the browser flow and credentials; TaskWraith stores neither. The same local Ollama daemon then authenticates Ollama Cloud model requests.'
+
 export interface ProviderTerminalHandlersDeps {
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
   getUserDataPath: () => string
@@ -248,7 +251,9 @@ async function openProviderAuthTerminal(
       if (action === 'upgrade') {
         rawCommand = 'curl -fsSL https://ollama.com/install.sh | sh'
       } else {
+        setupNotice = OLLAMA_USER_OWNED_SETUP_NOTICE
         commandParts = [resolved.binaryPath || 'ollama', action === 'logout' ? 'signout' : 'signin']
+        postscript = `${actionLabel} finished (exit $status). Close this window, return to TaskWraith, and refresh Ollama models.`
       }
     } else if (provider === 'mistral') {
       label = 'Mistral Vibe'

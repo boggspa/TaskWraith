@@ -205,6 +205,38 @@ describe('registerProviderTerminalHandlers', () => {
     }
   )
 
+  it.each([
+    ['login', 'signin'],
+    ['logout', 'signout']
+  ] as const)(
+    'uses the resolved Ollama CLI for bounded %s account handoff',
+    async (action, subcommand) => {
+      const { deps, loginDir } = createDeps()
+      const binary = '/Applications/Ollama App/Contents/Resources/ollama'
+      deps.resolveCliProviderBinary.mockResolvedValueOnce(createResolved(binary))
+      registerProviderTerminalHandlers(deps)
+
+      await expect(
+        handlerFor(`provider:open-${action}-terminal`)({}, 'ollama')
+      ).resolves.toEqual({
+        ok: true,
+        scope: 'user-owned-provider-setup',
+        managedRunReady: false,
+        notice: expect.stringMatching(/resolved official Ollama CLI.*stores neither/i)
+      })
+
+      expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('ollama')
+      const commandFile = join(loginDir, `ollama-${action}.command`)
+      const script = String(
+        deps.writeFileSync.mock.calls.find(([path]) => path === commandFile)?.[1] || ''
+      )
+      expect(script).toContain(`'${binary}' '${subcommand}'`)
+      expect(script).toContain('same local Ollama daemon then authenticates Ollama Cloud')
+      expect(script).toContain('refresh Ollama models')
+      expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+    }
+  )
+
   it('opens a Cursor upgrade terminal via the official installer', async () => {
     const { deps } = createDeps()
     registerProviderTerminalHandlers(deps)
