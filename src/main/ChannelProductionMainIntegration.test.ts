@@ -197,18 +197,21 @@ describe('Channels production main integration', () => {
 
   it('projects remote isShared from the active-channel set, not the retired share store', () => {
     // The People→Channel migration DELETES legacy share records at
-    // finalization, so a task card whose isShared reads only
-    // getShareForChat goes permanently dark on iOS the moment migration
-    // commits — the phone's channel-membership section silently empties.
+    // finalization, so a task card whose isShared reads getShareForChat goes
+    // permanently dark on iOS the moment migration commits — the phone's
+    // channel-membership section silently empties.
     const card = between('const buildRemoteTaskCardForChat = (', 'const leanRemoteDiffSummary = (')
     expect(card).toContain('resolveActiveChannelChatIds()')
-    expect(card).toContain('isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||')
+    expect(card).toContain('isShared: activeChannelChatIds.has(canonicalChat.appChatId),')
     expect(card).toContain(
-      "sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel'"
+      "sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel' : undefined"
     )
-    // Legacy lookup stays as the pre-migration / P5 workspace-bootstrap
-    // fallback — union, never replacement.
-    expect(card).toContain('humanCollaborationStore.getShareForChat(canonicalChat.appChatId)')
+    // P5-X2-b retired the People arm: sharing is Channel-native, and P5-A
+    // sealed the contract that no automatic People share is ever created. The
+    // retired store must not come back as a fallback — a union here would
+    // resurrect a source that finalization deletes.
+    expect(card).not.toContain('humanCollaborationStore.getShareForChat')
+    expect(card).not.toContain('collaborationShare')
 
     // The resolver is wired AFTER the bootstrap try/catch (TDZ: the
     // projection closure is declared ~1500 lines above the `let` binding)

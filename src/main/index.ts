@@ -47619,14 +47619,14 @@ if (isGeminiMcpBridgeProcess) {
     ): { chat: ChatRecord; taskCard: RemoteTaskCard } => {
       const canonicalChat = canonicalizeRemoteWorkspaceRecord(chat)
       const capabilities = remoteTaskCapabilitiesForWorkspace(canonicalChat.workspaceId)
-      // Channel-backed since the People→Channel migration retired (DELETED)
-      // the legacy share records: reading only getShareForChat here turns the
-      // phone's channel-membership section permanently dark the moment
-      // migration finalizes. The legacy lookup remains as a union for the
-      // pre-migration boot window and the P5 workspace-bootstrap seam, which
-      // is People-share-shaped by contract.
+      // Sharing is Channel-native. The People→Channel migration DELETES the
+      // legacy share records at finalization, and P5-A sealed the contract:
+      // Channels arise only from explicit Channel action or migration, never
+      // an automatic People share. The retired store therefore cannot answer
+      // this question, and on a degraded launch every People write is
+      // quiesced — advertising a share the host cannot serve would be worse
+      // than reporting the chat unshared.
       const activeChannelChatIds = resolveActiveChannelChatIds()
-      const collaborationShare = humanCollaborationStore.getShareForChat(canonicalChat.appChatId)
       const queuedComposerJobs = AppStore.getRunQueueJobs({
         chatId: canonicalChat.appChatId,
         statuses: ['queued']
@@ -47680,10 +47680,8 @@ if (isGeminiMcpBridgeProcess) {
               ? executableExternalPathGrantsForRun(canonicalChat, session.runId).length
               : 0
           })(),
-          isShared: activeChannelChatIds.has(canonicalChat.appChatId) ||
-            Boolean(collaborationShare),
-          sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel'
-            : collaborationShare?.mode,
+          isShared: activeChannelChatIds.has(canonicalChat.appChatId),
+          sharedMode: activeChannelChatIds.has(canonicalChat.appChatId) ? 'channel' : undefined,
           runtimeProfileId: soloRuntimeProfileId
         })
       }
