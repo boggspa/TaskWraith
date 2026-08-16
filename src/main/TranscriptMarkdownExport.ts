@@ -17,6 +17,12 @@ export interface TranscriptMarkdownExportResult {
   omissions: string[]
 }
 
+export type TranscriptMarkdownStreamResult = Omit<TranscriptMarkdownExportResult, 'markdown'>
+
+export type TranscriptMarkdownChunkWriter = (
+  chunk: string
+) => void | Promise<void>
+
 /** A raw conversation export with no generated Markdown or transcript metadata. */
 export interface TranscriptMessageTextExportResult {
   text: string
@@ -28,6 +34,8 @@ export interface TranscriptMarkdownExportOptions {
   copiedAt?: string
   workspace?: WorkspaceRecord | null
   homeDir?: string
+  /** Human-readable export boundary, for example "Round 12 of 18". */
+  scopeLabel?: string
 }
 
 function exportableTranscriptMessages(chat: ChatRecord): ChatMessage[] {
@@ -381,10 +389,17 @@ function serializeMessage(
   return lines.join('\n')
 }
 
-export function buildChatMarkdownTranscript(
+interface TranscriptMarkdownSerialization {
+  header: string
+  messages: ChatMessage[]
+  omissions: Set<string>
+  replacements: Array<[string, string]>
+}
+
+function prepareChatMarkdownSerialization(
   chat: ChatRecord,
   options: TranscriptMarkdownExportOptions = {}
-): TranscriptMarkdownExportResult {
+): TranscriptMarkdownSerialization {
   const omissions = new Set<string>()
   const replacements = pathReplacements(chat, options)
   const rawMessages = chat.messages || []
@@ -403,6 +418,11 @@ export function buildChatMarkdownTranscript(
     `- Copied at: ${copiedAt}`,
     `- Messages: ${messages.length}`
   ]
+  if (options.scopeLabel) {
+    header.push(
+      `- Scope: ${markdownEscapeInline(scrubText(options.scopeLabel, replacements, omissions))}`
+    )
+  }
   if (chat.activeGoal?.objective) {
     header.push(
       `- Active goal (${chat.activeGoal.status}): ${scrubText(chat.activeGoal.objective, replacements, omissions)}`
@@ -414,14 +434,63 @@ export function buildChatMarkdownTranscript(
   }
   header.push('', '> Handoff export: raw provider events, hidden metadata, approval logs, image bytes, and absolute attachment paths are omitted by default.')
 
+  return {
+    header: header.join('\n'),
+    messages,
+    omissions,
+    replacements
+  }
+}
+
+export function buildChatMarkdownTranscript(
+  chat: ChatRecord,
+  options: TranscriptMarkdownExportOptions = {}
+): TranscriptMarkdownExportResult {
+  const { header, messages, omissions, replacements } = prepareChatMarkdownSerialization(
+    chat,
+    options
+  )
+
   const sections = messages.map((message, index) =>
     serializeMessage(chat, message, index, replacements, omissions)
   )
-  const markdown = [header.join('\n'), ...sections].join('\n\n')
+  const markdown = [header, ...sections].join('\n\n')
   return {
     markdown,
     messageCount: messages.length,
     charCount: markdown.length,
+    omissions: [...omissions].sort()
+  }
+}
+
+/**
+ * Serializes one Markdown section at a time. The complete transcript is never
+ * assembled into a single string, so callers can honor writable backpressure
+ * while exporting tasks far larger than the renderer/clipboard safety limit.
+ */
+export async function streamChatMarkdownTranscript(
+  chat: ChatRecord,
+  options: TranscriptMarkdownExportOptions,
+  writeChunk: TranscriptMarkdownChunkWriter
+): Promise<TranscriptMarkdownStreamResult> {
+  const { header, messages, omissions, replacements } = prepareChatMarkdownSerialization(
+    chat,
+    options
+  )
+  let charCount = 0
+  const write = async (chunk: string): Promise<void> => {
+    await writeChunk(chunk)
+    charCount += chunk.length
+  }
+
+  await write(header)
+  for (let index = 0; index < messages.length; index += 1) {
+    await write('\n\n')
+    await write(serializeMessage(chat, messages[index], index, replacements, omissions))
+  }
+  return {
+    messageCount: messages.length,
+    charCount,
     omissions: [...omissions].sort()
   }
 }

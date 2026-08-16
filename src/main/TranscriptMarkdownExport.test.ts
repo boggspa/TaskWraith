@@ -5,7 +5,8 @@ import {
   buildChatMessageTranscript,
   buildChatMarkdownTranscript,
   estimateChatMessageTranscriptChars,
-  estimateChatMarkdownTranscriptChars
+  estimateChatMarkdownTranscriptChars,
+  streamChatMarkdownTranscript
 } from './TranscriptMarkdownExport'
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
@@ -79,6 +80,33 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.markdown).toContain('- [ ] task')
     expect(result.markdown).toContain('## 0002 - Claude / Reviewer (claude-sonnet-4-7)')
     expect(result.markdown).toContain('### Findings')
+  })
+
+  it('streams byte-identical sections without assembling the complete markdown', async () => {
+    const source = chat([
+      message({ id: 'u1', role: 'user', content: 'First message' }),
+      message({ id: 'a1', role: 'assistant', content: 'Second message' })
+    ])
+    const options = {
+      copiedAt: '2026-06-16T12:00:00.000Z',
+      homeDir: '/Users/dev',
+      scopeLabel: 'Entire task'
+    }
+    const built = buildChatMarkdownTranscript(source, options)
+    const chunks: string[] = []
+
+    const streamed = await streamChatMarkdownTranscript(source, options, async (chunk) => {
+      chunks.push(chunk)
+    })
+
+    expect(chunks.length).toBeGreaterThan(3)
+    expect(chunks.join('')).toBe(built.markdown)
+    expect(streamed).toEqual({
+      messageCount: built.messageCount,
+      charCount: built.charCount,
+      omissions: built.omissions
+    })
+    expect(built.markdown).toContain('- Scope: Entire task')
   })
 
   it('exports inter-seat notes as participant-authored assistant messages', () => {
