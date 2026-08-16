@@ -5,6 +5,7 @@ import {
   normalizePiCerebrasMaxCompletionTokens
 } from '../../../shared/piCerebrasCompletionCap'
 import { PillButton } from './PillButton'
+import { notifyPiProviderModelCatalogMutation } from '../lib/providerModelCatalogEvents'
 
 /**
  * Settings card for the Pi seat's BYOK upstream keys. Mirrors the
@@ -304,6 +305,7 @@ export function PiProviderKeysCard({
         } else if (action === 'save') {
           setDrafts((prev) => ({ ...prev, [upstream]: '' }))
         }
+        if (result.ok) notifyPiProviderModelCatalogMutation()
         setStatus({
           encryptionAvailable: result.status.encryptionAvailable === true,
           configuredUpstreams: Array.isArray(result.status.configuredUpstreams)

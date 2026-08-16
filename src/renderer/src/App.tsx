@@ -14,6 +14,7 @@ import {
   scheduleProviderMetadataWarmup,
   type ProviderMetadataWarmupController
 } from './lib/providerMetadataWarmup'
+import { PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT } from './lib/providerModelCatalogEvents'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
@@ -6700,7 +6701,7 @@ function App(): React.JSX.Element {
   }
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
-  const refreshProviderModelCatalog = async (provider: ProviderId): Promise<void> => {
+  const refreshProviderModelCatalog = useCallback(async (provider: ProviderId): Promise<void> => {
     if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function') return
     try {
       const models = await window.api.getAgentModels(provider)
@@ -6738,7 +6739,16 @@ function App(): React.JSX.Element {
       if (provider === 'ollama')
         setAgentModelsByProvider((prev) => ({ ...prev, ollama: mergeOllamaModelCatalog([]) }))
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const refreshPiCatalog = (): void => {
+      void refreshProviderModelCatalog('pi')
+    }
+    window.addEventListener(PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT, refreshPiCatalog)
+    return () =>
+      window.removeEventListener(PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT, refreshPiCatalog)
+  }, [refreshProviderModelCatalog])
 
   const refreshProviderMetadata = async (
     provider: ProviderId,
@@ -6939,7 +6949,11 @@ function App(): React.JSX.Element {
     if (isChatPopoutWindow) return
     providerMetadataWarmupRef.current = scheduleProviderMetadataWarmup({
       providers: (LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]).filter(
-        (provider) => provider !== activeProvider
+        // Pi's key-filtered catalogue is an in-memory read in main, so it is
+        // warmed once immediately below. Keeping it out of the heavyweight
+        // idle metadata queue prevents a second request and avoids waiting
+        // behind repeated 20-second quiet windows before its models appear.
+        (provider) => provider !== activeProvider && provider !== 'pi'
       ),
       refresh: (provider) => refreshProviderMetadata(provider),
       eventTarget: window
@@ -7084,6 +7098,12 @@ function App(): React.JSX.Element {
     const initialProvider =
       s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
     void refreshProviderMetadata(initialProvider)
+    // Pi is the only live picker catalogue derived from stored upstream keys.
+    // Fetch that cheap cached projection once at startup instead of placing it
+    // seventh in the user-idle metadata queue, where normal interaction could
+    // defer it forever. The resulting rows stay in agentModelsByProvider until
+    // an explicit successful key mutation emits the invalidation event above.
+    if (initialProvider !== 'pi') void refreshProviderModelCatalog('pi')
     // The active composer still receives its status immediately. Non-active
     // providers are queued only after the initial route settles, then require
     // a fresh user-idle window one provider at a time. The picker and Settings
