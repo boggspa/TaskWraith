@@ -47,9 +47,41 @@ normal text on both backgrounds. They do not meet AAA's `7:1` normal-text thresh
 | Claude | `#D97706` | 3.19 / 6.59 | `#B16105` | `rgb(177, 97, 5)` | 4.58 / 4.58 | Same rust-orange field, darkened. |
 | Kimi | `#1A8CFF` | 3.37 / 6.24 | `#0073E6` | `rgb(0, 115, 230)` | 4.57 / 4.59 | Same saturated blue field, darkened. |
 | Grok | `var(--text-primary)` | Theme-dependent | `#757575` | `rgb(117, 117, 117)` | 4.61 / 4.56 | Static monochrome allocation; see the Grok note below. |
-| Cursor | `#E3B91E` | 1.87 / 11.22 | `#8D7312` | `rgb(141, 115, 18)` | 4.57 / 4.59 | Same mustard field, substantially darkened. |
+| Cursor | `#E3B91E` | 1.87 / 11.22 | `#8D7312` | `rgb(141, 115, 18)` | 4.57 / 4.59 | Same mustard field, substantially darkened. **Superseded 2026-08-16 — see the Cursor revision below.** |
 | Ollama | `#20A77A` | 3.06 / 6.87 | `#1A8562` | `rgb(26, 133, 98)` | 4.59 / 4.58 | Same local green-teal field, darkened. |
 | Ensemble | `#E8DDE3` | 1.32 / 15.88 | `#986781` | `rgb(152, 103, 129)` | 4.57 / 4.59 | Same soft pink-gray field, moved to a mid-tone mauve. |
+
+### Cursor revision — 2026-08-16 (`a52b510ae`)
+
+The allocation table above is the 2026-07-13 record and is left as recorded.
+Cursor has since been re-tuned by `a52b510ae` ("style(theme): brighten Cursor
+provider accent"):
+
+| Provider | Allocated 2026-07-13 | Current | RGB | White / black contrast | Note |
+| --- | --- | --- | --- | ---: | --- |
+| Cursor | `#8D7312` | **`#8C7508`** | `rgb(140, 117, 8)` | **4.50 / 4.66** | Same mustard field; slightly lighter and more saturated. |
+
+Contrast recomputed here by the same sRGB relative-luminance method the table
+above uses — that method reproduces the recorded `4.57 / 4.59` for `#8D7312`
+exactly, so these figures are directly comparable.
+
+Worth noting against this document's own equal-contrast principle: the revision
+trades a little white contrast for black. It lands at **4.5034:1** on white,
+which still clears the 4.5:1 AA threshold but with far less headroom than the
+`4.57` it replaced — a further brightening in the same direction would drop it
+below AA. The black side improves from 4.59 to 4.66, so the pair is no longer
+close to equal.
+
+Mirrors updated by the same commit: `src/renderer/src/styles/theme.css` and the
+manually-maintained iOS mirror `ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift`.
+`MODEL_CATALOGUE.md`'s provider rail was missed and has been corrected
+separately.
+
+**Still carrying the old `#8D7312`** (design assets, not corrected here because
+they are artwork rather than paperwork — flagging for a design pass):
+`design-assets/provider-glyphs/glyphs/ensemble.svg`,
+`design-assets/provider-glyphs/auditions/ensemble-confluence-loom.svg`,
+`design-assets/provider-glyphs/auditions/ensemble-confluence-loom-comparison.svg`.
 
 ### Grok exception
 

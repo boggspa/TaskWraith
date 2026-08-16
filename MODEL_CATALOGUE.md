@@ -103,7 +103,7 @@ not the monoline glyph set.
 
 <table>
   <tr>
-    <td width="10" bgcolor="#8D7312"></td>
+    <td width="10" bgcolor="#8C7508"></td>
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-cursor-on-light.png" alt="Cursor logo" width="34" />
     </td>
