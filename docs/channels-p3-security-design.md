@@ -4,9 +4,14 @@
 `b0f4d84e1fd84e2312f8375dcf7e6fc2d4ee63e4`. The explicit decision and residual
 risks are recorded in
 [`channels-p3-adversarial-review.md`](channels-p3-adversarial-review.md).
-Production agent participation remains blocked by the source-only gate in
+Production agent participation is **ENABLED** and has been since 2026-08-10.
+The enable slice `191e5e37d` landed ten minutes after the acceptance commit
+`92ad1e982`, and `e0d7d1be4` retained the review provenance in the package.
 [`ChannelAgentReviewGate.ts`](../src/shared/collaboration/ChannelAgentReviewGate.ts)
-until the separate enable slice names that tracked acceptance record.
+now reads `status: 'accepted'` with `participationEnabled: true`, and its
+`acceptanceRecord` names this review record. The capability shipped in 1.9.5.
+The enable slice's own proof lives in `scripts/channels-p3-enabled-proof.cjs`;
+there is no prose record of it beyond this note.
 
 **Implementation order:** identity and signed authority first; participation
 second. The complete production path may be built behind the gate, but the gate

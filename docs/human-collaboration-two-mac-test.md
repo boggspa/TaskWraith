@@ -1,5 +1,16 @@
 # Human collaboration — two-Mac test runbook
 
+> **SUPERSEDED UI, 2026-08-16 — do not run these steps as written.** Channels
+> replaced People across the app in 1.9.5 and the legacy People share surfaces
+> were retired (`c3001deac`). The gestures below no longer exist: `"Join a
+> People Chat"` has zero occurrences in `src/`, and `Settings → People` is now
+> `Settings → Integrations → Channels`. The `HumanCollaborationStore` data
+> layer survives as an internal fallback, so the transport reasoning here is
+> still broadly instructive, but every UI entry point needs rewriting against
+> the Channels join/share flow before this runbook is executable again. See
+> [`channels-p1-main-contract.md`](channels-p1-main-contract.md) and the
+> Channels how-to guides.
+
 **Status:** written 2026-07-26, ahead of the first real two-instance exercise.
 Most of it is derived from the code paths, **not** from a completed run — treat
 each "expected" line as a prediction to check, and correct this file as you go.
