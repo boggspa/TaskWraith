@@ -4,7 +4,7 @@ import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
 /*
- * At most two fan-outs may be in flight at once.
+ * At most three fan-outs may be in flight at once.
  *
  * Exercised through the real `fanoutForRun` rather than the pure module, because
  * what the cap is worth depends entirely on the join being right: the count comes
@@ -118,14 +118,15 @@ function openLaneCount(harness: Harness): number {
 
 describe('concurrent fan-out cap', () => {
   it(
-    'allows two waves, refuses the third, and frees a slot when one settles',
+    'allows three waves, refuses the fourth, and frees a slot when one settles',
     { timeout: 30_000 },
     async () => {
       const harness = makeHarness([
         participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
         participant('claude', 'claude', 'Reviewer', 2, 'workspace_write'),
         participant('grok', 'grok', 'Researcher', 3, 'workspace_write'),
-        participant('kimi', 'kimi', 'Auditor', 4, 'workspace_write')
+        participant('kimi', 'kimi', 'Auditor', 4, 'workspace_write'),
+        participant('cursor', 'cursor', 'Scribe', 5, 'workspace_write')
       ])
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
@@ -154,17 +155,25 @@ describe('concurrent fan-out cap', () => {
 
       const third = await harness.orchestrator.fanoutForRun(boss, {
         targets: ['Auditor'],
+        prompt: 'Audit lane.'
+      })
+      expect(third.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(openLaneCount(harness)).toBe(3)
+
+      const fourth = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Scribe'],
         prompt: 'One wave too many.'
       })
-      expect(third.ok).toBe(false)
-      expect(third.error).toBe('too_many_concurrent_fanouts')
+      expect(fourth.ok).toBe(false)
+      expect(fourth.error).toBe('too_many_concurrent_fanouts')
       // The caller has to be told what to do next, or it retries the same call.
-      expect(third.message).toContain('ensemble_await')
-      expect(third.message).toMatch(/not on participants/i)
-      // Refused means NOT SENT: a fourth provider run would be the accumulation
+      expect(fourth.message).toContain('ensemble_await')
+      expect(fourth.message).toMatch(/not on participants/i)
+      // Refused means NOT SENT: a fifth provider run would be the accumulation
       // this whole change exists to stop.
       await sleep(FLUSH_MS)
-      expect(harness.dispatched).toHaveLength(3)
+      expect(harness.dispatched).toHaveLength(4)
 
       // The user watching the transcript should see why a dispatch vanished.
       expect(
@@ -176,14 +185,14 @@ describe('concurrent fan-out cap', () => {
 
       // Settle the review lane; its wave is gone and the slot comes back.
       complete(harness, 1)
-      await vi.waitFor(() => expect(openLaneCount(harness)).toBe(1))
+      await vi.waitFor(() => expect(openLaneCount(harness)).toBe(2))
 
-      const fourth = await harness.orchestrator.fanoutForRun(boss, {
-        targets: ['Auditor'],
+      const fifth = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Scribe'],
         prompt: 'Now there is room.'
       })
-      expect(fourth.ok).toBe(true)
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(fifth.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
     }
   )
 

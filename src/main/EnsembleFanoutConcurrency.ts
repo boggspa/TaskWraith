@@ -8,9 +8,8 @@
  * the transcript becomes a pile of half-read lane cards nobody joins.
  *
  * The cap is on WAVES, not on participants. A twenty-seat review fan-out is
- * one wave and stays entirely legal; so is a second wave beside it (a review
- * lane and a work lane running together is the shape this is designed to
- * permit). The third concurrent call is refused and told to `ensemble_await`
+ * one wave and stays entirely legal; so are second and third waves beside it.
+ * The fourth concurrent call is refused and told to `ensemble_await`
  * until at least one of the open waves settles. That distinction is the whole
  * design — a refusal a Boss misreads as "too many seats" gets answered by
  * shrinking the roster, which costs breadth and fixes nothing.
@@ -28,11 +27,11 @@ import { isTerminalLaneStatus } from './EnsembleLanes'
 /**
  * Concurrent fan-out dispatch waves allowed per round.
  *
- * Two, so the common split — a review lane beside a work lane — runs without
- * argument, while an unbounded pile-up cannot form. Raising this re-opens the
- * accumulation it exists to stop; it is not a throughput knob.
+ * Three, so a bounded recon/work/review split can run together while an
+ * unbounded pile-up cannot form. Raising this re-opens the accumulation it
+ * exists to stop; it is not a throughput knob.
  */
-export const MAX_CONCURRENT_FANOUT_WAVES = 2
+export const MAX_CONCURRENT_FANOUT_WAVES = 3
 
 /**
  * Bucket for open lanes that carry no wave id.

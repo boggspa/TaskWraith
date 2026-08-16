@@ -82,9 +82,22 @@ describe('refuseForConcurrentFanouts', () => {
     ).toBeNull()
   })
 
-  it('refuses the third', () => {
+  it('allows a third concurrent fan-out', () => {
+    expect(
+      refuseForConcurrentFanouts(
+        [wave('w1', 'Reader fan-out', 3), wave('w2', 'Work fan-out', 1)],
+        'ensemble_fanout'
+      )
+    ).toBeNull()
+  })
+
+  it('refuses the fourth', () => {
     const refusal = refuseForConcurrentFanouts(
-      [wave('w1', 'Reader fan-out', 3), wave('w2', 'Work fan-out', 1)],
+      [
+        wave('w1', 'Reader fan-out', 3),
+        wave('w2', 'Work fan-out', 1),
+        wave('w3', 'Review fan-out', 2)
+      ],
       'ensemble_fanout'
     )
     expect(refusal).not.toBeNull()
@@ -94,7 +107,11 @@ describe('refuseForConcurrentFanouts', () => {
   it('names the open waves and points the caller at ensemble_await', () => {
     // What a Boss actually READS decides whether it awaits or thrashes.
     const refusal = refuseForConcurrentFanouts(
-      [wave('w1', 'Reader fan-out', 3), wave('w2', 'Work fan-out', 1)],
+      [
+        wave('w1', 'Reader fan-out', 3),
+        wave('w2', 'Work fan-out', 1),
+        wave('w3', 'Audit fan-out', 2)
+      ],
       'ensemble_fanout_all'
     )
     const message = refusal?.message ?? ''
@@ -109,11 +126,16 @@ describe('refuseForConcurrentFanouts', () => {
   })
 
   it('is the cap the owner asked for', () => {
-    expect(MAX_CONCURRENT_FANOUT_WAVES).toBe(2)
+    expect(MAX_CONCURRENT_FANOUT_WAVES).toBe(3)
   })
 
   it('refuses again at more than the cap, never silently allows an overshoot', () => {
-    const waves = [wave('w1', 'A', 1), wave('w2', 'B', 1), wave('w3', 'C', 1)]
+    const waves = [
+      wave('w1', 'A', 1),
+      wave('w2', 'B', 1),
+      wave('w3', 'C', 1),
+      wave('w4', 'D', 1)
+    ]
     expect(refuseForConcurrentFanouts(waves, 'ensemble_fanout')?.error).toBe(
       'too_many_concurrent_fanouts'
     )
