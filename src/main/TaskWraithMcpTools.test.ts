@@ -59,6 +59,21 @@ describe('TaskWraith MCP tool registry', () => {
     expect(yieldTool?.description).toContain('normal serial routing resumes')
   })
 
+  it('advertises explicit transcript-only User summaries without widening @All', () => {
+    const sendTool = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_send'
+    )
+    const inputSchema = sendTool?.inputSchema as {
+      properties?: { to?: { description?: string }; message?: { description?: string } }
+    }
+
+    expect(sendTool?.description).toContain('User delivery is transcript-only')
+    expect(sendTool?.description).toContain('`@All` remains roster-only')
+    expect(inputSchema.properties?.to?.description).toContain('User/Human/You')
+    expect(inputSchema.properties?.to?.description).toContain('@All targets roster participants only')
+    expect(inputSchema.properties?.message?.description).toContain('concise User summary')
+  })
+
   it('advertises first-class Canvas dock presentation for live web previews', () => {
     const definitions = createTaskWraithMcpToolDefinitions()
     for (const name of ['canvas_open', 'canvas_open_launch']) {

@@ -2447,7 +2447,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_send',
       description:
-        'In Ensemble Mode, send a visible participant-to-participant note into the main transcript. If an exact recipient run is active and its provider supports live steering, TaskWraith requests immediate live delivery of the peer-authored note; this is an attempt, not confirmation that the participant has processed it. Otherwise the durable note remains available at the recipient’s next prompt boundary. The message is not private or hidden from the user.',
+        'In Ensemble Mode, send one visible participant-authored note to enabled participant aliases and/or the human User. Explicit User aliases (`User`, `Human`, or `You`, with or without @) record a durable top-level transcript message attributed to the sending participant; User delivery is transcript-only and does not create a host turn, wait for input, acknowledge delivery, yield, or close the round. `@All` remains roster-only and never includes User. For participant recipients, TaskWraith requests immediate live delivery when an exact run is active and its provider supports steering; this is an attempt, not confirmation that the participant processed it. Otherwise the durable note remains available at the participant’s next prompt boundary. The message is never private.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2460,11 +2460,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           to: {
             oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
             description:
-              'Target participant role/provider/model alias, or an array of aliases. Use list_ensemble_participants if unsure.'
+              'Target enabled participant/group alias, an explicit User/Human/You alias, or an array mixing them. @All targets roster participants only. Use list_ensemble_participants if unsure.'
           },
           message: {
             type: 'string',
-            description: 'The note to show visibly in the transcript.'
+            description: 'The participant-authored note or concise User summary to preserve visibly.'
           },
           reason: {
             type: 'string',

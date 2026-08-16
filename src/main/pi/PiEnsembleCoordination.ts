@@ -356,7 +356,7 @@ function brokerCall(tool, args) {
 function descriptionFor(name) {
   const descriptions = {
     ensemble_yield: 'Pass this Ensemble turn to the next or named participant. Optional: target and reason.',
-    ensemble_send: 'Send a visible participant-to-participant note. Required: to (alias or aliases) and message; optional reason.',
+    ensemble_send: 'Send a visible participant-authored note to participant aliases and/or User (User, Human, or You, with or without @). User delivery is durable transcript-only; @All remains roster-only. Required: to and message; optional reason.',
     ensemble_fanout: 'Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation.',
     ensemble_poll_response: 'Vote on an active Ensemble poll. Required: pollId and choice; optional rationale.',
     scout_brief: 'Emit structured findings from a parallel scout lane. Required: findings and confidence; optional blockers, recommendations, tags.',

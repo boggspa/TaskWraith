@@ -57,6 +57,8 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain('function parametersFor(name)')
     expect(source).toContain('promptSnippet: descriptionFor(name)')
     expect(source).toContain("case 'ensemble_send'")
+    expect(source).toContain('User delivery is durable transcript-only')
+    expect(source).toContain('@All remains roster-only')
     expect(source).toContain("case 'blackboard_post'")
     expect(source).toContain('ttlMinutes: Type.Optional(Type.Number())')
     expect(source).toContain('throw new Error(resultText(result))')

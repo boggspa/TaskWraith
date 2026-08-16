@@ -778,21 +778,22 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('[System]')
   })
 
-  it('attributes inter-seat notes to the sending participant instead of System', () => {
+  it('attributes a User-directed summary to the sending participant instead of User or System', () => {
     const shared = chat()
     shared.messages = [
       ...shared.messages,
       {
         id: 'side-1',
         role: 'system',
-        content: '↪ Reviewer to Worker: Please check the write path.',
+        content: '↪ Reviewer to User: The write-path review is complete.',
         timestamp: '2026-05-24T00:00:02.000Z',
         metadata: {
           kind: 'ensembleSideMessage',
           ensembleParticipantId: 'claude',
           ensembleProvider: 'claude',
           ensembleRole: 'Reviewer',
-          toParticipantIds: ['codex']
+          toUser: true,
+          toParticipantIds: []
         }
       }
     ]
@@ -807,9 +808,10 @@ describe('Ensemble prompt composition', () => {
     })
 
     expect(prompt).toContain(
-      '[Claude / Reviewer #p1]\n↪ Reviewer to Worker: Please check the write path.'
+      '[Claude / Reviewer #p1]\n↪ Reviewer to User: The write-path review is complete.'
     )
-    expect(prompt).not.toContain('[System]\n↪ Reviewer to Worker')
+    expect(prompt).not.toContain('[System]\n↪ Reviewer to User')
+    expect(prompt).not.toContain('[User]\n↪ Reviewer to User')
   })
 
   it('attributes a yield handoff to the yielding participant instead of System', () => {
@@ -1605,6 +1607,23 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Codex runtime rule')
     expect(prompt).toContain('when `ensemble_yield` is listed on the `TaskWraith` MCP server')
     expect(prompt).toContain('Never substitute `run_shell_command`, `true`, `exit 0`')
+  })
+
+  it('distinguishes durable User summaries from visible mentions and a User yield', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Report the result clearly.',
+      roundId: 'round-user-summary'
+    })
+
+    expect(prompt).toContain('`ensemble_send(to: "user", ...)`')
+    expect(prompt).toContain('durable participant-attributed transcript message for the human')
+    expect(prompt).toContain('does not inject a host/user turn')
+    expect(prompt).toContain('Plain `@user`, `@human`, and `@you` mentions')
+    expect(prompt).toContain('do not create a separate durable summary')
+    expect(prompt).toContain('if the round must wait for human input, call `ensemble_yield`')
   })
 
   // 1.0.4-AJ — last-speaker awareness. The pre-fix failure mode
