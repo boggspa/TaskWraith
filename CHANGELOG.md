@@ -46,6 +46,7 @@ to answer.
 - **A posture override hatch in Settings.** Policy postures can be overridden from Settings behind a risk acknowledgement, and workspace edit-consent acknowledgements now persist correctly instead of being replaced wholesale.
 - **Failover keeps its posture.** Automatic provider failover preserves Accept Edits, verifies posture across reroutes, and binds retries to source proof.
 - **No impossible retries.** A lane blocked by a permission its seat can never obtain is no longer offered as a retry.
+- **Auto-approvals stop elevating when a seat cannot be identified.** Ensemble auto-approvals depend on knowing which authorities are external people, because an external never receives an approval prompt. When that list cannot be read — a degraded Channels launch, or a channel whose recovery has not completed — TaskWraith now asks you instead of approving on an authority it could not verify. You may see an approval prompt where a run previously proceeded unattended.
 
 ### Channels and collaboration
 
@@ -57,6 +58,7 @@ to answer.
 - **Host and member panels.** Channels ship a host panel and a primary member panel with durable member replicas, closed-member controls, host-shown admission codes, and readable history for members whose access was revoked.
 - **Erasable Channel history.** Deleting Channel history is replay-safe and settles globally after the runtime quiesces, so an erasure cannot be undone by a late write or a reconnecting member.
 - **A Channel fault no longer blocks launch.** A failed Channels bootstrap degrades to a reduced Channels experience instead of blocking the app, and expired invite checkpoints are recovered rather than stranding the invite.
+- **A shared chat is no longer treated as an abandoned draft.** Create-time cleanup protects chats it can see are shared, but that list was still read from the retired People records, so a chat shared to a Channel — with no messages yet, still on its default title, and nobody joined — could be swept away. Sharing is now read from the channels themselves, and when that cannot be read at all, cleanup protects everything rather than guessing.
 - **Blackboard images.** Ensemble blackboard entries can carry bounded image attachments — posted, inspected, and rendered in the panel — instead of text only.
 
 ### Ensemble and Orchestration
