@@ -91,6 +91,24 @@ than inferring one from chat ids or People content. P5 must replace that port
 with its exact retained ids before it introduces such a share; it is the only
 remaining People edge by design.
 
+> **Superseded 2026-08-16 — P5 removed the port instead of filling it.** The
+> paragraph above predicted *how* P5 would resolve this seam, and the prediction
+> was wrong in the more decisive direction. `25d676263` (P5-C) deleted the
+> `retainedWorkspaceBootstrapShareIds` callback from the production root
+> outright rather than supplying ids into it, on the frozen contract that
+> workspace bootstrap is Channel-native: **no automatic People share is ever
+> created for a workspace**, so this root owns no id to retain. `7a723b835`
+> then retired the composition shim that carried the option.
+>
+> The nuance that survives, and that a reader of the paragraph above would miss:
+> a **sealed P4 compatibility share stays readable** through the checkpoint and
+> explicitly cannot be retired (`PeopleToChannelMigrationLegacyWriteGate.ts`).
+> So the retention *port* is gone while the sealed *scope* remains — "the only
+> remaining People edge" is now a frozen artefact of P4, not a live seam P5 owns.
+>
+> The proof body above is left unedited; this note records only that its
+> forward reference aged out. See `channels-p5-proof.md` for the resolution.
+
 ## 2026-08-11 post-proof addendum — review fixes
 
 An adversarial review after the record above found three defects in the

@@ -6,6 +6,16 @@ the verified code boundary `8b699c9f0` on 2026-08-16 (darwin/arm64, Node
 v25.9.0). It supersedes the `7a723b835` and `1b3085f39` boundaries it described
 earlier; the text below is retained wherever it is still accurate.
 
+**Citation convention (2026-08-16):** source references name a **file and a
+symbol, not a line**. Several `:NNN` anchors were dropped rather than re-pinned
+because they had already drifted badly — `index.ts:56260` was out by 158 lines,
+the `EnsembleParticipantsAboveRow.tsx` cluster by a uniform 38 — and almost
+none of that motion was Channels work. `src/main/index.ts` alone took 20 commits
+on the day this record was written, mostly from perf, media, ollama, ensemble and
+Studio lanes. On shared hot files a line number is stale within hours, so the
+symbol name is the locator; grep for it. Anchors into Channels-owned files, which
+no other lane moves, are kept and remain exact.
+
 **"Complete" is scoped, and the scope belongs here rather than being discovered
 further down.** The P5 objective is met: workspace bootstrap is Channel-native,
 the external-seat authority is built, wired and sealed, every composition-root
@@ -185,8 +195,9 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   Channel-derived population is the X2-d adapter, which passes
   `collaboratorId: seat.seatId` into `EnsembleOrchestrator.deps.resolveExternalSeats`.
   That dependency is **main-private**: its production references are
-  `index.ts:56260`, the declaration at `EnsembleOrchestrator.ts:652` and the use
-  at `:20672`, and there is **nothing in `src/preload`**. The legacy id never
+  `index.ts` (the `resolveExternalSeats:` dependency literal), the declaration
+  and the use in `EnsembleOrchestrator.ts`, and there is **nothing in
+  `src/preload`**. The legacy id never
   crosses an IPC boundary.
 
   The public seat shape also carries no share id, relay room, token, policy
@@ -196,13 +207,13 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   **A dormant surface, named as a watch-item and explicitly NOT a current
   leak.** `ExternalSeatInput` (`src/shared/effectiveEnsembleRoster.ts:74`)
   carries both `shareId` and `collaboratorId`, and
-  `EnsembleParticipantsAboveRow.tsx:664` accepts
+  `EnsembleParticipantsAboveRow.tsx` accepts
   `externalSeats?: readonly ExternalSeatInput[]` as an **optional** prop — a
   renderer path structurally capable of carrying People identifiers to the DOM.
   It is unwired: all five non-test references to `externalSeats` are inside that
-  component itself (`:664` declaration, `:819` destructure, `:862` comment,
-  `:865` and `:867` memo), so **no caller anywhere supplies it**. The component
-  is live and rendered (`Composer.tsx:2664`); the prop is not filled. This is
+  component itself (declaration, destructure, comment, and two memo
+  references), so **no caller anywhere supplies it**. The component
+  is live and rendered from `Composer.tsx`; the prop is not filled. This is
   pre-existing architecture that P5 did not introduce and does not use. It is
   recorded so that whoever wires it later knows the prop can carry a legacy
   identity to the DOM, and must not feed it from the Channel path without
