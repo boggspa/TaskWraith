@@ -85,6 +85,7 @@ import {
   isTaskWraithHelperProcess,
   shouldSuppressMacAppPresentation
 } from './HelperProcessPresentation'
+import { TuiHeadlessHostSession } from './TuiHeadlessHostSession'
 import {
   normalizeChatPopoutRoundExpansion,
   normalizeChatPopoutScrollState
@@ -3130,7 +3131,20 @@ let appliedNativeGlassState: string | null = null
 // booting the FULL app, which would re-probe the bridge and self-spawn
 // exponentially — the root cause of the 1.0.74 "100s of dev apps" loop.
 const isGeminiMcpBridgeProcess = isTaskWraithHelperProcess(process.argv, process.env)
-if (shouldSuppressMacAppPresentation(process.argv, process.env)) {
+const tuiHeadlessHostSession = new TuiHeadlessHostSession()
+function restoreDesktopAppPresentation(): void {
+  if (process.platform !== 'darwin') return
+  try {
+    app.setActivationPolicy('regular')
+    void app.dock?.show()
+  } catch {
+    // Best-effort. A user-requested window can still be created and focused.
+  }
+}
+if (
+  shouldSuppressMacAppPresentation(process.argv, process.env) ||
+  tuiHeadlessHostSession.shouldSuppressMacPresentation
+) {
   try {
     app.setActivationPolicy('prohibited')
   } catch {
@@ -41213,6 +41227,10 @@ function scheduleExternalUsagePrewarmAfterFirstPaint(): void {
 }
 
 function createWindow(): void {
+  if (tuiHeadlessHostSession.isHeadless) {
+    tuiHeadlessHostSession.promoteToDesktop()
+    restoreDesktopAppPresentation()
+  }
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
   const useMaterialWindow =
@@ -41669,7 +41687,13 @@ if (isGeminiMcpBridgeProcess) {
   console.log('[remote-bridge] another TaskWraith instance holds the lock — exiting')
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    // A duplicate TUI launch only races for the already-owned Host socket; it
+    // must not surface the desktop. An ordinary app launch promotes this same
+    // process, preserving the one AppStore/Host/provider authority.
+    const restoreDesktopPresentation = tuiHeadlessHostSession.isHeadless
+    if (!tuiHeadlessHostSession.shouldPresentForSecondInstance(commandLine)) return
+    if (restoreDesktopPresentation) restoreDesktopAppPresentation()
     // A second launch attempted — surface the existing window (recreating
     // it if the app is running headless after window-all-closed).
     void startGeminiMcpBroker().catch((error) => {
@@ -50614,8 +50638,15 @@ if (isGeminiMcpBridgeProcess) {
         console.error('[host] production Host lifecycle failed unexpectedly', error)
       }
     )
+    tuiHeadlessHostSession.startMonitoring({
+      getConnectedClientCount: () => hostLifecycle.getConnectedClientCount(),
+      hasActiveWork: () =>
+        getActiveTaskWraithThreadCount() > 0 || hasActiveStreamingTaskWraithRun(),
+      quit: () => app.quit()
+    })
 
     app.on('will-quit', () => {
+      tuiHeadlessHostSession.dispose()
       void studioProductionLifecycleRef?.dispose()
       studioProductionLifecycleRef = null
       hostLifecycle.stopSync()
@@ -58329,10 +58360,11 @@ if (isGeminiMcpBridgeProcess) {
     // instance asked to show the app during startup, flush that request instead
     // of creating a duplicate window below.
     const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)
-    if (!openedForDeferredSecondInstance) createWindow()
+    if (!openedForDeferredSecondInstance && !tuiHeadlessHostSession.isHeadless) createWindow()
     scheduleNextTaskTimer()
 
     app.on('activate', function () {
+      if (tuiHeadlessHostSession.isHeadless) return
       // macOS keeps the process alive after the last window closes. That path
       // deliberately stops the MCP broker, so a Dock reopen must restore it
       // before a newly-created provider seat can advertise TaskWraith tools.
