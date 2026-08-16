@@ -31,6 +31,7 @@ export type ChannelExternalSeatPresence =
  * optimistically present. recovery_blocked refuses the whole projection.
  */
 export interface ChannelExternalSeatRuntimeAuthority {
+  channelAuthorityState(channelId: string): 'ready' | 'recovery_blocked'
   memberPresence(channelId: string, memberId: string): ChannelExternalSeatPresence
 }
 
@@ -155,6 +156,12 @@ export class ChannelExternalSeatAuthority {
     if (matchingChannels.length > 1) blocked()
     const matchedChannel = matchingChannels[0]
     const activeChannel = matchedChannel?.status === 'active' ? matchedChannel : undefined
+    if (
+      activeChannel &&
+      this.options.runtime.channelAuthorityState(activeChannel.channelId) !== 'ready'
+    ) {
+      blocked()
+    }
 
     const seats: ChannelExternalSeat[] = []
     const seenSeatIds = new Set<string>()
@@ -217,6 +224,7 @@ export class ChannelExternalSeatAuthority {
       legacyShare = this.options.legacy.shareStore.getShareForChat(chatId)
       if (legacyShare && (legacyShare.chatId !== chatId || legacyShare.enabled !== true)) blocked()
       if (legacyShare && matchedChannel?.status === 'closed') blocked()
+      if (legacyShare && !activeChannel) blocked()
 
       if (legacyShare) {
         const activeParticipants = legacyShare.participants

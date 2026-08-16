@@ -101,6 +101,7 @@ function harness(
     policies?: ChannelHumanPolicyRecord[]
     share?: HumanCollaborationShare | null
     channelPresence?: (channelId: string, memberId: string) => ChannelExternalSeatPresence
+    channelAuthorityState?: (channelId: string) => 'ready' | 'recovery_blocked'
     legacyPresence?: (
       collaboratorId: string
     ) => 'live' | 'grace' | 'expired' | 'unknown' | undefined
@@ -121,6 +122,7 @@ function harness(
       list: (channelId) => policies.filter((policy) => policy.channelId === channelId)
     },
     runtime: {
+      channelAuthorityState: input.channelAuthorityState ?? (() => 'ready'),
       memberPresence: input.channelPresence ?? (() => 'unknown')
     },
     legacy:
@@ -138,14 +140,31 @@ function harness(
 }
 
 describe('ChannelExternalSeatAuthority', () => {
-  it('treats an active Channel as shared even when it has no external seats', () => {
+  it('consults scoped recovery even when an active Channel has no external seats', () => {
     const channel = makeChannel()
-    const result = harness({
+    const consultedChannelIds: string[] = []
+    const input = {
       channels: [channel],
       members: [makeHumanMember({ memberId: channel.ownerMemberId })]
+    }
+
+    const blockedResult = harness({
+      ...input,
+      channelAuthorityState: (channelId) => {
+        consultedChannelIds.push(channelId)
+        return 'recovery_blocked'
+      }
     }).resolve(channel.chatId)
 
-    expect(result).toEqual({ state: 'ready', isShared: true, seats: [] })
+    expect(consultedChannelIds).toEqual([channel.channelId])
+    expect(blockedResult).toEqual({ state: 'recovery_blocked' })
+
+    expect(
+      harness({
+        ...input,
+        channelAuthorityState: () => 'ready'
+      }).resolve(channel.chatId)
+    ).toEqual({ state: 'ready', isShared: true, seats: [] })
   })
 
   it('distinguishes a ready unshared chat from recovery-blocked authority', () => {
@@ -271,7 +290,9 @@ describe('ChannelExternalSeatAuthority', () => {
             displayName: 'People fallback',
             publicKeyId: 'identity-2',
             seatOrder: 5
-          })
+          }),
+          participant({ collaboratorId: 'pending', status: 'pending' }),
+          participant({ collaboratorId: 'revoked', status: 'revoked', revokedAt: 2 })
         ]
       }),
       channelPresence: () => 'live',
@@ -300,37 +321,18 @@ describe('ChannelExternalSeatAuthority', () => {
     })
   })
 
-  it('preserves an exact People-only share during the transitional mode', () => {
+  it('blocks a People-only share until migration establishes recoverable Channel authority', () => {
     const result = harness({
       share: makeShare({
         participants: [
           participant({ collaboratorId: 'live', displayName: 'Live' }),
-          participant({ collaboratorId: 'away', displayName: 'Away' }),
-          participant({ collaboratorId: 'pending', status: 'pending' }),
-          participant({ collaboratorId: 'revoked', status: 'revoked', revokedAt: 2 })
+          participant({ collaboratorId: 'away', displayName: 'Away' })
         ]
       }),
       legacyPresence: (id) => (id === 'live' ? 'live' : 'unknown')
     }).resolve('chat-1')
 
-    expect(result).toEqual({
-      state: 'ready',
-      isShared: true,
-      seats: [
-        {
-          seatId: 'away',
-          displayName: 'Away',
-          enabled: true,
-          present: false
-        },
-        {
-          seatId: 'live',
-          displayName: 'Live',
-          enabled: true,
-          present: true
-        }
-      ]
-    })
+    expect(result).toEqual({ state: 'recovery_blocked' })
   })
 
   it('blocks contradictory closed-Channel fallback and malformed active ownership', () => {
