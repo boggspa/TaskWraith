@@ -8,7 +8,7 @@ TaskWraith supports General chats and workspace-scoped threads, either with one 
 ## Where to find it
 Use the sidebar's **Chat** surface for General chats, **Code** for workspace-scoped threads and workspace tools, and **Work** for the **Projects** organizer. Pinned, Recents, Ensembles, and Channels sections are scoped to the active Chat or Code surface. Use **+ New** from Chat or Code to start work in that scope.
 
-![Chat surface showing the Chat, Code, and Work switcher plus chat, shared, and Ensemble sections](../images/chats-and-threads__chat-types.png)
+![Chat surface showing the Chat, Code, and Work switcher plus chat, Channels, and Ensemble sections](../images/chats-and-threads__chat-types.png)
 
 ## How to use it
 1. Choose **Chat** for a General chat or **Code** for a workspace thread, then click **+ New**. Code also exposes workspace Workflows and Workspace Boards.

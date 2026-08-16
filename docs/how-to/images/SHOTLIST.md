@@ -41,7 +41,7 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `chats-and-threads__chat-types.png` | Electron | Chat surface with the Chat / Code / Work switcher and chat, Shared, and Ensemble sections | Use **Chat** for General chats, **Code** for workspace-scoped threads/workflows/boards, and **Work** for Projects; Pinned, Recents, Ensembles, and Shared are scoped to the active Chat or Code surface. |
+| `chats-and-threads__chat-types.png` | Electron | Chat surface with the Chat / Code / Work switcher and chat, Channels, and Ensemble sections. **The capture on disk is stale** — it predates the Channels rename and still shows a "Shared" sidebar section; recapture. | Use **Chat** for General chats, **Code** for workspace-scoped threads/workflows/boards, and **Work** for Projects; Pinned, Recents, Ensembles, and Channels are scoped to the active Chat or Code surface. |
 | `chats-and-threads__in-chat-search.png` | Electron | In-chat search bar with highlighted results in the transcript | In any chat, press **⌘F** on macOS or **Ctrl+F** on Windows/Linux to open the search bar above the transcript. |
 | `chats-and-threads__pinned-messages.png` | Electron | Pinned messages panel in the right dock | Pin a message from its hover action chip or right-click context menu in any transcript. |
 | `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Open the **linked chat menu** (the split-pane icon with a chevron, in the chat header next to the other corner buttons) and choose how to open it: - **Open isolated side split** — docks a sidecar pane beside the current chat with a copied parent snapshot. |

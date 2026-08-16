@@ -1,8 +1,24 @@
 # Shot list — remaining captures
 
-Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 current captures against 86 guide pages. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
+Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 62 top-level PNGs, one of which is not a current capture: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12. That leaves 61 captures against 86 guide pages — of which one
+(`chats-and-threads__chat-types`) is known stale rather than current, so 60 are
+trustworthy today. See "Captured but stale" below. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
+
+## Captured but stale — recapture without changing the pending count
+
+These pages **do** have an image, so they are not part of the 25 pending and
+must not be added to it — the pending set is defined as pages carrying a
+`screenshot-pending` marker, and it has to keep matching that marker set
+exactly. They are listed here because the capture on disk shows retired UI,
+which is worse than an honest gap: the page reads as done.
+
+- `chats-and-threads__chat-types` — captured 2026-07-18, three weeks before the
+  Channels rename (`c3001deac`, 2026-08-11). It still shows a **"Shared"**
+  sidebar section; `>Shared<` has zero occurrences in `Sidebar.tsx` today. The
+  page's prose and alt text have been corrected to "Channels", so the image is
+  now the only thing still asserting the old label.
 
 ## Needs investigation before recapture
 

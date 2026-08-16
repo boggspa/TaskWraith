@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-The Channels tab is the global overview of every channel this Mac hosts or has joined — and the revoke/close authority of last resort. Each channel shows its members and their live connection state, plus host controls to revoke a member, close the channel, or review its audit trail. Per-chat sharing controls (fresh invites, admissions, message review) live in each chat's own Channel panel; member messages are host-reviewed into Channel history — they never enter the chat transcript, and nothing reaches the AI unless you send it yourself.
+The Channels tab is the global overview of every channel this Mac hosts or has joined — and the revoke/close authority of last resort. Each channel shows its members and their membership status (pending, active, or revoked), plus host controls to revoke a member, close the channel, or review its audit trail. Per-chat sharing controls (fresh invites, admissions, message review) live in each chat's own Channel panel; member messages are host-reviewed into Channel history — they never enter the chat transcript, and nothing reaches the AI unless you send it yourself.
 
 ## Where to find it
 **Settings → Integrations → Channels**
@@ -12,10 +12,10 @@ The Channels tab is the global overview of every channel this Mac hosts or has j
 
 ## How to use it
 1. Open **Settings → Integrations → Channels** to see every channel you host or belong to.
-2. Each channel shows its chat, its members with live connection state, and any open admissions. The member ceiling (eight) counts humans and agent seats together.
+2. Each channel shows its chat and its members with their membership status — pending, active, or revoked. The member ceiling (eight) counts humans and agent seats together. This tab does not show open admissions; those live on each chat's own Channel panel, as the tab's own hint says.
 3. To share a chat or issue a fresh invite, open that chat's own **Channel panel** — invites and admissions are per-chat, not created from this tab.
 4. Review member messages from the host review queue in the chat's Channel panel: **Approve** releases the member's message into Channel history and fans it out to the channel's members; **Decline** drops it. Approved messages are never inserted into the chat transcript, and nothing reaches the AI unless you send it yourself.
-5. Use **Remove** next to a member to revoke just their access, or close the whole channel to revoke everyone at once.
+5. Use **Revoke** next to a member to cut just their access, or close the whole channel to revoke everyone at once. (The per-chat Channel panel labels its equivalent control **Remove** — this tab says **Revoke**.)
 6. A channel is reachable only while the host Mac is online.
 
 ## Tips & related
