@@ -575,6 +575,40 @@ describe('DesktopToolExecutors scoped attached-window access', () => {
     expect(notifications).toEqual([])
   })
 
+  it('marks chronological Appwatch batches as complete transcript Frame Sets', async () => {
+    const snapshot = attachedWindowSnapshot('chat-a')
+    const attachedWindow = createAttachedWindowState(snapshot)
+    const frames = Array.from({ length: 12 }, (_, index) => ({
+      index,
+      capturedAt: `2026-07-28T03:00:${String(index).padStart(2, '0')}.000Z`,
+      mimeType: index % 2 === 0 ? 'image/png' : 'image/jpeg',
+      imageBase64: index === 5 ? undefined : `frame-${index + 1}`,
+      byteLength: 10,
+      width: 320,
+      height: 180
+    }))
+    const { daemon } = createRunningDaemon((method) => {
+      if (method === 'appwatch.frames') {
+        return { ok: true, hasFrames: true, returned: frames.length, frames }
+      }
+      throw new Error(`Unexpected method ${method}`)
+    })
+    const { executor } = createExecutor({
+      chats: [],
+      daemon,
+      attachedWindow: attachedWindow.state
+    })
+
+    const result = await executor.executeAppwatchFrames({ count: 12 }, activeContext)
+
+    expect(result.content?.filter((block) => block.type === 'image')).toHaveLength(11)
+    expect(result.mediaRefHints).toEqual({
+      groupKind: 'appwatch_frames',
+      labels: Array.from({ length: 11 }, (_, index) => `frame-${index + 1}`),
+      maxRefs: 11
+    })
+  })
+
   it.each([-32001, -32004])(
     'clears the exact active attachment after a gone or revoked response (%s)',
     async (errorCode) => {

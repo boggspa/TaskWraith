@@ -1321,10 +1321,12 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
 
     const frames = Array.isArray(result.frames) ? result.frames : []
     const contentBlocks: McpToolContentBlock[] = []
+    const frameLabels: string[] = []
     const frameMetadata = frames.map((frame, index) => {
       const mimeType = frame.mimeType === 'image/png' ? 'image/png' : 'image/jpeg'
       if (frame.imageBase64) {
         contentBlocks.push({ type: 'image', mimeType, data: frame.imageBase64 })
+        frameLabels.push(`frame-${contentBlocks.length}`)
       }
       return {
         index: typeof frame.index === 'number' ? frame.index : index,
@@ -1338,7 +1340,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       }
     })
 
-    return mcpStructuredJsonResult(
+    const response = mcpStructuredJsonResult(
       {
         ok: true,
         tool: 'appwatch_frames',
@@ -1357,6 +1359,15 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       },
       contentBlocks
     )
+    if (contentBlocks.length === 0) return response
+    return {
+      ...response,
+      mediaRefHints: {
+        groupKind: 'appwatch_frames',
+        labels: frameLabels,
+        maxRefs: Math.max(contentBlocks.length, 8)
+      }
+    }
   }
 
   async function executeCreativeAppStatus(
