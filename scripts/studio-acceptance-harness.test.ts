@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { fork as forkChild, spawn, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
@@ -10,8 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const {
   assertCleanWatchdogTerminal,
+  assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
   assertNoPriorStudioOrphans,
+  buildDetachedCoordinatorIdentity,
+  buildDetachedCoordinatorPaths,
   buildStudioAcceptanceJourney,
   buildStudioAcceptancePlan,
   buildStudioUiDriverRequest,
@@ -19,17 +22,26 @@ const {
   descendantsOf,
   driveStudioUiJourney,
   findAcceptanceArtifactGroups,
+  launchDetachedCoordinator,
   launchUnderWatchdog,
   materializeIsolatedProviderGuards,
   materializeOwnedMedia,
   parseArgs,
   parseProcessTable,
   parseStudioTransportMutationText,
+  readDetachedCoordinatorStatus,
   runStudioUiDriver,
+  validateDetachedCoordinatorRequest,
   waitForStudioJournalOperation,
   runStudioAcceptance
 } = require('./studio-acceptance-harness.cjs') as {
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
+  assertDetachedLaunchAuthorized: (
+    args: Record<string, any>,
+    plan: Record<string, any>
+  ) => { launch: true; detached: true }
+  buildDetachedCoordinatorIdentity: () => Promise<Record<string, any>>
+  buildDetachedCoordinatorPaths: (plan: Record<string, any>) => Record<string, string>
   assertLaunchAuthorized: (
     args: Record<string, unknown>,
     plan: Record<string, any>
@@ -78,6 +90,10 @@ const {
     evidencePids: number[]
     members: Array<{ pid: number; ppid: number; pgid: number; command: string }>
   }>
+  launchDetachedCoordinator: (
+    args: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   launchUnderWatchdog: (
     spec: Record<string, unknown>,
     adapters?: Record<string, unknown>
@@ -88,6 +104,14 @@ const {
     receiptPath: string
     stop: () => Promise<Record<string, unknown>>
   }>
+  readDetachedCoordinatorStatus: (
+    options: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
+  validateDetachedCoordinatorRequest: (
+    request: Record<string, any>,
+    options?: Record<string, any>
+  ) => Record<string, any>
   materializeIsolatedProviderGuards: (options: { home: string }) => Promise<{
     grokBinaryPath: string
     sha256: string
@@ -207,7 +231,936 @@ function processGroupRows(
   return parseProcessTable(sample.stdout).filter((row) => row.pgid === pgid)
 }
 
+const DETACHED_TEST_TOKEN = 'A'.repeat(32)
+
+async function sha256HexFile(filePath: string): Promise<string> {
+  const hash = crypto.createHash('sha256')
+  const bytes = await fsPromises.readFile(filePath)
+  hash.update(bytes)
+  return hash.digest('hex')
+}
+
+async function writeDetachedCompletionFixture(
+  artifactRoot: string,
+  overrides: {
+    manifest?: Record<string, unknown>
+    evidence?: Record<string, unknown>
+    receipt?: Record<string, unknown>
+  } = {}
+): Promise<{
+  plan: Record<string, any>
+  paths: Record<string, string>
+  manifest: Record<string, any>
+  evidence: Record<string, any>
+  receipt: Record<string, any>
+}> {
+  const instanceId = 'studioDetach01'
+  const plan = buildStudioAcceptancePlan({
+    instanceId,
+    artifactRoot,
+    home: path.join(artifactRoot, 'home'),
+    platform: 'darwin',
+    adapters: { resolveElectronPath: () => '/virtual/Electron' }
+  })
+  const paths = buildDetachedCoordinatorPaths(plan)
+  await fsPromises.mkdir(artifactRoot, { recursive: true, mode: 0o700 })
+  await fsPromises.writeFile(paths.stdoutLogPath, '', { mode: 0o600 })
+  await fsPromises.writeFile(paths.stderrLogPath, '', { mode: 0o600 })
+
+  const receipt = {
+    schemaVersion: 2,
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    status: 'reaped',
+    reason: 'owner_requested',
+    controllerPid: 8801,
+    childPid: 8802,
+    childPgid: 8802,
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    detachedProcessGroups: [],
+    lostOwnershipGroups: [],
+    mixedOwnershipGroups: [],
+    protectedInstalledGroups: [],
+    survivors: [],
+    ...overrides.receipt
+  }
+  await fsPromises.writeFile(paths.watchdogReceiptPath, `${JSON.stringify(receipt)}\n`, 'utf8')
+
+  const evidence = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-in-product-acceptance',
+    recordedAt: '2026-08-16T04:00:03.000Z',
+    ok: true,
+    instanceId,
+    watchdogTerminal: {
+      status: receipt.status,
+      reason: receipt.reason,
+      groupExitVerified: receipt.groupExitVerified,
+      detachedGroupExitVerified: receipt.detachedGroupExitVerified,
+      detachedProcessGroups: receipt.detachedProcessGroups
+    },
+    ...overrides.evidence
+  }
+  await fsPromises.writeFile(paths.evidencePath, `${JSON.stringify(evidence)}\n`, 'utf8')
+
+  const manifest = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-acceptance-detached-coordinator',
+    state: 'succeeded',
+    revision: 3,
+    token: DETACHED_TEST_TOKEN,
+    instanceId,
+    coordinatorPid: 8800,
+    launcherPid: 8799,
+    identity: await buildDetachedCoordinatorIdentity(),
+    artifactRoot,
+    manifestPath: paths.manifestPath,
+    evidencePath: paths.evidencePath,
+    watchdogReceiptPath: paths.watchdogReceiptPath,
+    stdoutLogPath: paths.stdoutLogPath,
+    stderrLogPath: paths.stderrLogPath,
+    startedAt: '2026-08-16T04:00:00.000Z',
+    updatedAt: '2026-08-16T04:00:03.000Z',
+    heartbeatAt: '2026-08-16T04:00:02.000Z',
+    completedAt: '2026-08-16T04:00:03.000Z',
+    evidenceSha256: await sha256HexFile(paths.evidencePath),
+    watchdogReceiptSha256: await sha256HexFile(paths.watchdogReceiptPath),
+    error: null,
+    ...overrides.manifest
+  }
+  await fsPromises.writeFile(paths.manifestPath, `${JSON.stringify(manifest)}\n`, 'utf8')
+  return { plan, paths, manifest, evidence, receipt }
+}
+
 describe('Studio acceptance harness', () => {
+  it('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
+    const parsed = parseArgs([
+      '--launch',
+      '--detach',
+      '--i-accept-studio-isolated-launch',
+      '--owner-confirms-existing-orphans-cleared',
+      '--media=/tmp/fixture.mov',
+      '--mime=video/quicktime'
+    ])
+    const plan = buildStudioAcceptancePlan({
+      instanceId: 'studioDetach01',
+      repoRoot: '/virtual/repo',
+      home: '/virtual/repo/.local-only/studio/home',
+      platform: 'darwin',
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+
+    expect(parsed.detach).toBe(true)
+    expect(() => assertDetachedLaunchAuthorized(parsed, plan)).toThrow(/explicit.*instance/i)
+    parsed.instanceId = 'studioDetach01'
+    expect(assertDetachedLaunchAuthorized(parsed, plan)).toEqual({
+      launch: true,
+      detached: true
+    })
+    expect(() => assertDetachedLaunchAuthorized({ ...parsed, acceptLaunch: false }, plan)).toThrow(
+      /i-accept-studio-isolated-launch/
+    )
+    expect(() =>
+      assertDetachedLaunchAuthorized({ ...parsed, ownerConfirmsOrphansCleared: false }, plan)
+    ).toThrow(/owner-confirms-existing-orphans-cleared/)
+    expect(() =>
+      assertDetachedLaunchAuthorized({ ...parsed, detachedToken: DETACHED_TEST_TOKEN }, plan)
+    ).toThrow(/status-only/)
+  })
+
+  it('waits for coordinator readiness and never forks the watchdog directly', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-ready-')
+    const source = path.join(root, 'fixture.mov')
+    const artifactRoot = path.join(root, 'artifacts', 'studioReady01')
+    await fsPromises.writeFile(source, 'fixture')
+    const controller = Object.assign(new EventEmitter(), {
+      pid: 9911,
+      connected: true,
+      sent: null as Record<string, any> | null,
+      disconnected: false,
+      unrefed: false,
+      send(message: Record<string, any>, callback?: (error?: Error) => void) {
+        this.sent = message
+        callback?.()
+      },
+      disconnect() {
+        this.connected = false
+        this.disconnected = true
+      },
+      unref() {
+        this.unrefed = true
+      }
+    })
+    let forkedPath = ''
+    let forkedOptions: Record<string, any> | null = null
+    let resolved = false
+    const launch = launchDetachedCoordinator(
+      {
+        ...parseArgs([]),
+        launch: true,
+        detach: true,
+        acceptLaunch: true,
+        ownerConfirmsOrphansCleared: true,
+        instanceId: 'studioReady01',
+        mediaPath: source,
+        mimeType: 'video/quicktime'
+      },
+      {
+        planOptions: {
+          artifactRoot,
+          home: path.join(artifactRoot, 'home'),
+          platform: 'darwin',
+          adapters: { resolveElectronPath: () => '/virtual/Electron' }
+        },
+        fork: (modulePath: string, _args: string[], options: Record<string, any>) => {
+          forkedPath = modulePath
+          forkedOptions = options
+          return controller
+        },
+        verifyReadyManifest: async () => true
+      }
+    ).then((value: Record<string, any>) => {
+      resolved = true
+      return value
+    })
+
+    await waitFor(() => (forkedPath ? forkedPath : null), 'detached coordinator fork')
+    expect(resolved).toBe(false)
+    expect(forkedPath).toMatch(/studio-acceptance-detached-coordinator\.cjs$/)
+    expect(forkedPath).not.toMatch(/watchdog/)
+    expect(forkedOptions).toMatchObject({ execPath: process.execPath, detached: true })
+    expect(controller.sent).toMatchObject({
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-acceptance-detached-start',
+      type: 'start',
+      artifactRoot
+    })
+    controller.emit('message', {
+      type: 'ready',
+      token: controller.sent!.token,
+      coordinatorPid: controller.pid,
+      manifestPath: path.join(artifactRoot, 'detached-coordinator.json')
+    })
+
+    await expect(launch).resolves.toMatchObject({
+      kind: 'taskwraith-studio-acceptance-detached-token',
+      instanceId: 'studioReady01',
+      artifactRoot,
+      coordinatorPid: controller.pid
+    })
+    expect(controller.disconnected).toBe(true)
+    expect(controller.unrefed).toBe(true)
+    expect(controller.sent).toMatchObject({
+      type: 'ready-accepted',
+      coordinatorPid: controller.pid
+    })
+  })
+
+  it('does not acknowledge or detach when the ready manifest cannot be verified', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-ready-red-')
+    const source = path.join(root, 'fixture.mov')
+    const artifactRoot = path.join(root, 'artifacts', 'studioReady02')
+    await fsPromises.writeFile(source, 'fixture')
+    const sent: Array<Record<string, any>> = []
+    const controller = Object.assign(new EventEmitter(), {
+      pid: 9912,
+      connected: true,
+      send(message: Record<string, any>, callback?: (error?: Error) => void) {
+        sent.push(message)
+        callback?.()
+      },
+      disconnect() {
+        this.connected = false
+      },
+      unref: vi.fn()
+    })
+    const launch = launchDetachedCoordinator(
+      {
+        ...parseArgs([]),
+        launch: true,
+        detach: true,
+        acceptLaunch: true,
+        ownerConfirmsOrphansCleared: true,
+        instanceId: 'studioReady02',
+        mediaPath: source,
+        mimeType: 'video/quicktime'
+      },
+      {
+        planOptions: {
+          artifactRoot,
+          home: path.join(artifactRoot, 'home'),
+          platform: 'darwin',
+          adapters: { resolveElectronPath: () => '/virtual/Electron' }
+        },
+        fork: () => controller,
+        verifyReadyManifest: async () => {
+          throw new Error('ready manifest tampered')
+        }
+      }
+    )
+    await waitFor(() => (sent.length === 1 ? true : null), 'detached start request')
+    controller.emit('message', {
+      type: 'ready',
+      token: sent[0].token,
+      coordinatorPid: controller.pid,
+      manifestPath: path.join(artifactRoot, 'detached-coordinator.json')
+    })
+    await expect(launch).rejects.toThrow(/ready manifest tampered/)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].type).toBe('start')
+    expect(controller.unref).not.toHaveBeenCalled()
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses to start the workflow when the launcher disconnects before ready acceptance',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-detached-unacked-')
+      const artifactRoot = path.join(root, 'acceptance', 'studioNoAck01')
+      await fsPromises.mkdir(artifactRoot, { recursive: true, mode: 0o700 })
+      await fsPromises.writeFile(path.join(artifactRoot, 'detached-coordinator.stdout.log'), '', {
+        mode: 0o600
+      })
+      await fsPromises.writeFile(path.join(artifactRoot, 'detached-coordinator.stderr.log'), '', {
+        mode: 0o600
+      })
+      const coordinatorPath = path.resolve(
+        __dirname,
+        '..',
+        'scripts',
+        'studio-acceptance-detached-coordinator.cjs'
+      )
+      const coordinator = forkChild(coordinatorPath, [], {
+        detached: true,
+        env: { ...process.env, TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' },
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+      })
+      let running: Record<string, any> | null = null
+      try {
+        const readyPromise = new Promise<Record<string, any>>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('coordinator did not announce ready')),
+            5_000
+          )
+          coordinator.on('message', (message) => {
+            if (
+              message &&
+              typeof message === 'object' &&
+              (message as Record<string, any>).type === 'ready'
+            ) {
+              clearTimeout(timer)
+              resolve(message as Record<string, any>)
+            }
+          })
+        })
+        coordinator.send({
+          schemaVersion: 1,
+          kind: 'taskwraith-studio-acceptance-detached-start',
+          type: 'start',
+          token: DETACHED_TEST_TOKEN,
+          launcherPid: process.pid,
+          artifactRoot,
+          args: {
+            ...parseArgs([]),
+            launch: true,
+            detach: true,
+            acceptLaunch: true,
+            ownerConfirmsOrphansCleared: true,
+            instanceId: 'studioNoAck01',
+            mediaPath: '/test-only/unused.mov',
+            mimeType: 'video/quicktime'
+          },
+          selfTest: true
+        })
+        const ready = await readyPromise
+        expect(ready).toMatchObject({
+          type: 'ready',
+          token: DETACHED_TEST_TOKEN,
+          coordinatorPid: coordinator.pid
+        })
+        const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+          (resolve) => coordinator.once('exit', (code, signal) => resolve({ code, signal }))
+        )
+        coordinator.disconnect()
+        const exited = await Promise.race([
+          exitPromise,
+          new Promise<never>((_resolve, reject) =>
+            setTimeout(() => reject(new Error('unacknowledged coordinator kept running')), 2_000)
+          )
+        ])
+        expect(exited).toEqual({ code: 1, signal: null })
+        await expect(
+          fsPromises.access(path.join(artifactRoot, 'detached-stub-running.json'))
+        ).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(
+          fsPromises.access(path.join(artifactRoot, 'watchdog-receipt.json'))
+        ).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        if (coordinator.pid && processIsAlive(coordinator.pid)) {
+          try {
+            process.kill(coordinator.pid, 'SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+        try {
+          running = JSON.parse(
+            await fsPromises.readFile(path.join(artifactRoot, 'detached-stub-running.json'), 'utf8')
+          )
+        } catch {
+          running = null
+        }
+        if (running?.childPgid) {
+          try {
+            process.kill(-running.childPgid, 'SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    },
+    8_000
+  )
+
+  it('refuses arbitrary coordinator commands, scripts, tokens, and path overrides', () => {
+    const request = {
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-acceptance-detached-start',
+      type: 'start',
+      token: DETACHED_TEST_TOKEN,
+      launcherPid: 1234,
+      artifactRoot: '/tmp/studio-detached',
+      args: {
+        ...parseArgs([]),
+        launch: true,
+        detach: true,
+        acceptLaunch: true,
+        ownerConfirmsOrphansCleared: true,
+        instanceId: 'studioDetach01',
+        mediaPath: '/tmp/fixture.mov',
+        mimeType: 'video/quicktime'
+      }
+    }
+    expect(validateDetachedCoordinatorRequest(request)).toMatchObject({
+      token: DETACHED_TEST_TOKEN,
+      artifactRoot: '/tmp/studio-detached'
+    })
+    expect(() => validateDetachedCoordinatorRequest({ ...request, command: '/bin/sh' })).toThrow(
+      /unexpected.*command/i
+    )
+    expect(() =>
+      validateDetachedCoordinatorRequest({ ...request, script: '/tmp/other.cjs' })
+    ).toThrow(/unexpected.*script/i)
+    expect(() => validateDetachedCoordinatorRequest({ ...request, token: '../escape' })).toThrow(
+      /token/i
+    )
+    expect(() =>
+      validateDetachedCoordinatorRequest({
+        ...request,
+        artifactRoot: '/tmp/studio-detached',
+        manifestPath: '/tmp/elsewhere.json'
+      })
+    ).toThrow(/unexpected.*manifestPath/i)
+  })
+
+  it('adjudicates only a hash-matched v2 zero-survivor completion as Green', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-green-')
+    const fixture = await writeDetachedCompletionFixture(root)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'succeeded',
+      verdict: 'GREEN',
+      green: true,
+      evidenceSha256: fixture.manifest.evidenceSha256
+    })
+  })
+
+  it.each([
+    {
+      label: 'tampered evidence',
+      mutate: async (fixture: Awaited<ReturnType<typeof writeDetachedCompletionFixture>>) => {
+        await fsPromises.appendFile(fixture.paths.evidencePath, 'tamper')
+      },
+      reason: /evidence.*hash/i
+    },
+    {
+      label: 'unsuccessful evidence',
+      mutate: async (fixture: Awaited<ReturnType<typeof writeDetachedCompletionFixture>>) => {
+        fixture.evidence.ok = false
+        await fsPromises.writeFile(
+          fixture.paths.evidencePath,
+          `${JSON.stringify(fixture.evidence)}\n`,
+          'utf8'
+        )
+        fixture.manifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+        await fsPromises.writeFile(
+          fixture.paths.manifestPath,
+          `${JSON.stringify(fixture.manifest)}\n`,
+          'utf8'
+        )
+      },
+      reason: /not a successful exact-instance/i
+    },
+    {
+      label: 'unverified v1 watchdog',
+      mutate: async (fixture: Awaited<ReturnType<typeof writeDetachedCompletionFixture>>) => {
+        fixture.receipt.schemaVersion = 1
+        await fsPromises.writeFile(
+          fixture.paths.watchdogReceiptPath,
+          `${JSON.stringify(fixture.receipt)}\n`,
+          'utf8'
+        )
+        fixture.manifest.watchdogReceiptSha256 = await sha256HexFile(
+          fixture.paths.watchdogReceiptPath
+        )
+        await fsPromises.writeFile(
+          fixture.paths.manifestPath,
+          `${JSON.stringify(fixture.manifest)}\n`,
+          'utf8'
+        )
+      },
+      reason: /watchdog.*schema/i
+    },
+    {
+      label: 'reported survivor',
+      mutate: async (fixture: Awaited<ReturnType<typeof writeDetachedCompletionFixture>>) => {
+        fixture.receipt.survivors = [{ pid: 9919 }]
+        await fsPromises.writeFile(
+          fixture.paths.watchdogReceiptPath,
+          `${JSON.stringify(fixture.receipt)}\n`,
+          'utf8'
+        )
+        fixture.manifest.watchdogReceiptSha256 = await sha256HexFile(
+          fixture.paths.watchdogReceiptPath
+        )
+        await fsPromises.writeFile(
+          fixture.paths.manifestPath,
+          `${JSON.stringify(fixture.manifest)}\n`,
+          'utf8'
+        )
+      },
+      reason: /survivor/i
+    }
+  ])('keeps $label Red during detached adjudication', async ({ mutate, reason }) => {
+    const root = await temporaryRoot('studio-acceptance-detached-red-')
+    const fixture = await writeDetachedCompletionFixture(root)
+    await mutate(fixture)
+    const status = await readDetachedCoordinatorStatus({
+      instanceId: fixture.plan.instanceId,
+      artifactRoot: root,
+      token: DETACHED_TEST_TOKEN
+    })
+    expect(status).toMatchObject({ green: false, verdict: 'RED' })
+    expect(status.reason).toMatch(reason)
+  })
+
+  it('keeps missing, running, stale, failed, and unsupported states distinct and never Green', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-states-')
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: 'studioDetach01',
+        artifactRoot: path.join(root, 'missing'),
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'unknown',
+      verdict: 'UNKNOWN',
+      green: false,
+      reason: 'artifact root missing'
+    })
+    const fixture = await writeDetachedCompletionFixture(root)
+    const writeManifest = async (patch: Record<string, unknown>) => {
+      const manifest = { ...fixture.manifest, ...patch }
+      await fsPromises.writeFile(
+        fixture.paths.manifestPath,
+        `${JSON.stringify(manifest)}\n`,
+        'utf8'
+      )
+    }
+
+    await writeManifest({
+      state: 'running',
+      revision: 2,
+      updatedAt: '2026-08-16T04:00:02.000Z',
+      heartbeatAt: '2026-08-16T04:00:02.000Z',
+      completedAt: null,
+      evidenceSha256: null,
+      watchdogReceiptSha256: null
+    })
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN,
+        nowMs: Date.parse('2026-08-16T04:00:03.000Z'),
+        staleAfterMs: 5_000
+      })
+    ).resolves.toMatchObject({ state: 'running', verdict: 'UNKNOWN', green: false })
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN,
+        nowMs: Date.parse('2026-08-16T04:00:20.000Z'),
+        staleAfterMs: 5_000
+      })
+    ).resolves.toMatchObject({ state: 'stale', verdict: 'RED', green: false })
+
+    await writeManifest({
+      state: 'failed',
+      revision: 3,
+      updatedAt: '2026-08-16T04:00:03.000Z',
+      heartbeatAt: '2026-08-16T04:00:02.000Z',
+      completedAt: '2026-08-16T04:00:03.000Z',
+      error: 'bounded failure',
+      evidenceSha256: null,
+      watchdogReceiptSha256: null
+    })
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'bounded failure'
+    })
+
+    await writeManifest({ schemaVersion: 99, state: 'future' })
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({ state: 'unknown', verdict: 'UNKNOWN', green: false })
+  })
+
+  it('refuses token mismatch, escaped evidence paths, and symlink or nonregular manifests', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-paths-')
+    const fixture = await writeDetachedCompletionFixture(root)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: 'B'.repeat(32)
+      })
+    ).rejects.toThrow(/token/i)
+
+    fixture.manifest.evidencePath = path.join(path.dirname(root), 'escaped.json')
+    await fsPromises.writeFile(
+      fixture.paths.manifestPath,
+      `${JSON.stringify(fixture.manifest)}\n`,
+      'utf8'
+    )
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).rejects.toThrow(/path|escape/i)
+
+    await fsPromises.rm(fixture.paths.manifestPath)
+    await fsPromises.symlink('/tmp/does-not-matter', fixture.paths.manifestPath)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).rejects.toThrow(/symlink|regular/i)
+
+    await fsPromises.rm(fixture.paths.manifestPath)
+    await fsPromises.mkdir(fixture.paths.manifestPath)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).rejects.toThrow(/regular/i)
+
+    const evidenceRoot = path.join(root, 'evidence-symlink')
+    const evidenceFixture = await writeDetachedCompletionFixture(evidenceRoot)
+    const evidenceTarget = path.join(root, 'outside-evidence.json')
+    await fsPromises.rename(evidenceFixture.paths.evidencePath, evidenceTarget)
+    await fsPromises.symlink(evidenceTarget, evidenceFixture.paths.evidencePath)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: evidenceFixture.plan.instanceId,
+        artifactRoot: evidenceRoot,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).rejects.toThrow(/regular|symlink/i)
+  })
+
+  it('refuses a preexisting manifest and duplicate instance before any coordinator fork', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-duplicate-')
+    const fixture = await writeDetachedCompletionFixture(root)
+    const source = path.join(path.dirname(root), 'duplicate-fixture.mov')
+    await fsPromises.writeFile(source, 'fixture')
+    const forkProcess = vi.fn()
+    await expect(
+      launchDetachedCoordinator(
+        {
+          ...parseArgs([]),
+          launch: true,
+          detach: true,
+          acceptLaunch: true,
+          ownerConfirmsOrphansCleared: true,
+          instanceId: fixture.plan.instanceId,
+          mediaPath: source,
+          mimeType: 'video/quicktime'
+        },
+        {
+          planOptions: {
+            artifactRoot: root,
+            home: path.join(root, 'home'),
+            platform: 'darwin',
+            adapters: { resolveElectronPath: () => '/virtual/Electron' }
+          },
+          fork: forkProcess
+        }
+      )
+    ).rejects.toThrow(/fresh unique instance|manifest already exists/i)
+    expect(forkProcess).not.toHaveBeenCalled()
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'seals a real detached stub completion and later adjudicates it Green',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-detached-complete-')
+      const artifactRoot = path.join(root, 'acceptance', 'studioDetach03')
+      const previousTestMode = process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST
+      process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST = '1'
+      let token: Record<string, any> | null = null
+      try {
+        token = await launchDetachedCoordinator(
+          {
+            ...parseArgs([]),
+            launch: true,
+            detach: true,
+            acceptLaunch: true,
+            ownerConfirmsOrphansCleared: true,
+            instanceId: 'studioDetach03',
+            mediaPath: '/test-only/unused.mov',
+            mimeType: 'video/quicktime'
+          },
+          {
+            selfTest: true,
+            planOptions: {
+              artifactRoot,
+              home: path.join(artifactRoot, 'home'),
+              platform: 'darwin',
+              adapters: { resolveElectronPath: () => '/virtual/Electron' }
+            }
+          }
+        )
+        await waitFor(async () => {
+          try {
+            return JSON.parse(
+              await fsPromises.readFile(
+                path.join(artifactRoot, 'detached-stub-running.json'),
+                'utf8'
+              )
+            )
+          } catch {
+            return null
+          }
+        }, 'detached stub running before completion')
+        await fsPromises.writeFile(path.join(artifactRoot, 'detached-stub-stop'), 'stop\n', {
+          mode: 0o600
+        })
+        const completedManifest = await waitFor(async () => {
+          try {
+            const manifest = JSON.parse(
+              await fsPromises.readFile(
+                path.join(artifactRoot, 'detached-coordinator.json'),
+                'utf8'
+              )
+            )
+            return manifest.state === 'succeeded' ? manifest : null
+          } catch {
+            return null
+          }
+        }, 'detached stub success manifest')
+        expect(completedManifest).toMatchObject({
+          state: 'succeeded',
+          error: null,
+          evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          watchdogReceiptSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+        })
+        expect(completedManifest.revision).toBeGreaterThanOrEqual(3)
+        expect(Date.parse(completedManifest.updatedAt)).toBeGreaterThanOrEqual(
+          Date.parse(completedManifest.startedAt)
+        )
+        await expect(
+          readDetachedCoordinatorStatus({
+            instanceId: token.instanceId,
+            artifactRoot: token.artifactRoot,
+            token: token.token
+          })
+        ).resolves.toMatchObject({
+          state: 'succeeded',
+          verdict: 'GREEN',
+          green: true
+        })
+        await waitFor(
+          () => (processIsAlive(token!.coordinatorPid) ? null : true),
+          'detached coordinator exit after success'
+        )
+      } finally {
+        if (previousTestMode === undefined) {
+          delete process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST
+        } else {
+          process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST = previousTestMode
+        }
+        if (token?.coordinatorPid && processIsAlive(token.coordinatorPid)) {
+          try {
+            process.kill(token.coordinatorPid, 'SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps the coordinator-owned stub alive after launcher death and reaps it on coordinator death',
+    async () => {
+      const root = await temporaryRoot('studio-acceptance-detached-lifecycle-')
+      const harnessPath = path.resolve(__dirname, '..', 'scripts', 'studio-acceptance-harness.cjs')
+      const launcher = spawn(
+        process.execPath,
+        [harnessPath, '--self-test-detached-launcher', root, 'studioDetach02'],
+        {
+          cwd: path.resolve(__dirname, '..'),
+          env: { ...process.env, TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+      let launcherKilled = false
+      let ready: Record<string, any> | null = null
+      let running: Record<string, any> | null = null
+      try {
+        ready = await waitFor(async () => {
+          try {
+            return JSON.parse(
+              await fsPromises.readFile(path.join(root, 'launcher-ready.json'), 'utf8')
+            )
+          } catch {
+            return null
+          }
+        }, 'detached launcher readiness')
+        running = await waitFor(async () => {
+          try {
+            return JSON.parse(
+              await fsPromises.readFile(
+                path.join(ready!.artifactRoot, 'detached-stub-running.json'),
+                'utf8'
+              )
+            )
+          } catch {
+            return null
+          }
+        }, 'detached coordinator stub readiness')
+
+        expect(processIsAlive(ready.coordinatorPid)).toBe(true)
+        expect(processIsAlive(running.watchdogControllerPid)).toBe(true)
+        expect(processIsAlive(running.childPid)).toBe(true)
+        const runningManifest = JSON.parse(
+          await fsPromises.readFile(
+            path.join(ready.artifactRoot, 'detached-coordinator.json'),
+            'utf8'
+          )
+        )
+        expect(runningManifest).toMatchObject({
+          state: 'running',
+          coordinatorPid: ready.coordinatorPid,
+          token: ready.token,
+          completedAt: null
+        })
+        expect(runningManifest.revision).toBeGreaterThanOrEqual(2)
+        expect(Date.parse(runningManifest.heartbeatAt)).toBeGreaterThanOrEqual(
+          Date.parse(runningManifest.startedAt)
+        )
+
+        launcherKilled = launcher.kill('SIGKILL')
+        expect(launcherKilled).toBe(true)
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('launcher did not exit')), 5_000)
+          launcher.once('exit', (_code, signal) => {
+            clearTimeout(timer)
+            expect(signal).toBe('SIGKILL')
+            resolve()
+          })
+        })
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        expect(processIsAlive(ready.coordinatorPid)).toBe(true)
+        expect(processIsAlive(running.childPid)).toBe(true)
+
+        process.kill(ready.coordinatorPid, 'SIGKILL')
+        const terminal = await waitFor(async () => {
+          try {
+            const parsed = JSON.parse(
+              await fsPromises.readFile(
+                path.join(ready!.artifactRoot, 'watchdog-receipt.json'),
+                'utf8'
+              )
+            )
+            return parsed.status === 'reaped' ? parsed : null
+          } catch {
+            return null
+          }
+        }, 'coordinator-death watchdog reap')
+        expect(terminal).toMatchObject({
+          schemaVersion: 2,
+          status: 'reaped',
+          reason: 'owner_disconnected',
+          groupExitVerified: true,
+          detachedGroupExitVerified: true
+        })
+        await waitFor(
+          () =>
+            processGroupRows(running!.childPgid).length === 0 &&
+            !processIsAlive(running!.watchdogControllerPid)
+              ? true
+              : null,
+          'coordinator-owned group cleanup'
+        )
+      } finally {
+        if (!launcherKilled && launcher.pid && processIsAlive(launcher.pid)) {
+          launcher.kill('SIGKILL')
+        }
+        if (ready?.coordinatorPid && processIsAlive(ready.coordinatorPid)) {
+          try {
+            process.kill(ready.coordinatorPid, 'SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+        if (running?.childPgid) {
+          try {
+            process.kill(-running.childPgid, 'SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    },
+    15_000
+  )
+
   it('is plan-only by default and uses the sanctioned isolated profile posture', () => {
     const plan = buildStudioAcceptancePlan({
       instanceId: 'studioPlan01',

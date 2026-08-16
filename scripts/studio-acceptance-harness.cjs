@@ -34,6 +34,19 @@ const { assertLaunchPortsFree } = require('./perf/portGuard.cjs')
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
 
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
+const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
+const DETACHED_COORDINATOR_SCHEMA_VERSION = 1
+const DETACHED_COORDINATOR_KIND = 'taskwraith-studio-acceptance-detached-coordinator'
+const DETACHED_START_KIND = 'taskwraith-studio-acceptance-detached-start'
+const DETACHED_TOKEN_KIND = 'taskwraith-studio-acceptance-detached-token'
+const DETACHED_MANIFEST_NAME = 'detached-coordinator.json'
+const DETACHED_STDOUT_LOG_NAME = 'detached-coordinator.stdout.log'
+const DETACHED_STDERR_LOG_NAME = 'detached-coordinator.stderr.log'
+const DETACHED_READY_TIMEOUT_MS = 10_000
+const DETACHED_STALE_AFTER_MS = 15_000
+const DETACHED_HEARTBEAT_MS = 1_000
+const DETACHED_ERROR_MAX_CHARS = 4_096
+const DETACHED_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/
 const WINDOW_PROBE_PATH = path.join(__dirname, 'studio-acceptance-window-probe.swift')
 const UI_DRIVER_PATH = path.join(__dirname, 'studio-acceptance-ui-driver.swift')
 const TRANSCRIPT_MEDIA_DIR = 'transcript-media'
@@ -231,6 +244,9 @@ function sleep(ms) {
 function parseArgs(argv) {
   const parsed = {
     launch: false,
+    detach: false,
+    detachedStatus: false,
+    detachedToken: null,
     acceptLaunch: false,
     ownerConfirmsOrphansCleared: false,
     pretty: false,
@@ -245,7 +261,11 @@ function parseArgs(argv) {
   }
   for (const argument of argv) {
     if (argument === '--launch') parsed.launch = true
-    else if (argument === '--i-accept-studio-isolated-launch') parsed.acceptLaunch = true
+    else if (argument === '--detach') parsed.detach = true
+    else if (argument === '--detached-status') parsed.detachedStatus = true
+    else if (argument.startsWith('--detached-token=')) {
+      parsed.detachedToken = argument.slice(17)
+    } else if (argument === '--i-accept-studio-isolated-launch') parsed.acceptLaunch = true
     else if (argument === '--owner-confirms-existing-orphans-cleared') {
       parsed.ownerConfirmsOrphansCleared = true
     } else if (argument === '--pretty') parsed.pretty = true
@@ -393,6 +413,1024 @@ function assertLaunchAuthorized(args, plan) {
     throw new Error('Refuse launch without disposable macOS mock keychain')
   }
   return { launch: true }
+}
+
+function assertDetachedToken(raw) {
+  if (typeof raw !== 'string' || !DETACHED_TOKEN_PATTERN.test(raw)) {
+    throw new Error('detached coordinator token must be exactly 32 base64url characters')
+  }
+  return raw
+}
+
+function buildDetachedCoordinatorPaths(plan) {
+  const artifactRoot = path.resolve(String(plan.artifactRoot || ''))
+  if (!path.isAbsolute(artifactRoot) || artifactRoot === path.parse(artifactRoot).root) {
+    throw new Error('detached coordinator artifact root must be a bounded absolute directory')
+  }
+  const paths = {
+    artifactRoot,
+    manifestPath: path.join(artifactRoot, DETACHED_MANIFEST_NAME),
+    evidencePath: path.resolve(String(plan.evidencePath || '')),
+    watchdogReceiptPath: path.resolve(String(plan.receiptPath || '')),
+    stdoutLogPath: path.join(artifactRoot, DETACHED_STDOUT_LOG_NAME),
+    stderrLogPath: path.join(artifactRoot, DETACHED_STDERR_LOG_NAME)
+  }
+  for (const [label, candidate] of Object.entries(paths)) {
+    if (label === 'artifactRoot') continue
+    if (path.dirname(candidate) !== artifactRoot) {
+      throw new Error(`detached coordinator ${label} escaped the artifact root`)
+    }
+  }
+  return paths
+}
+
+function assertDetachedLaunchAuthorized(args, plan) {
+  if (!args.detach) throw new Error('Detached launch requires --detach')
+  if (args.detachedStatus) {
+    throw new Error('Detached launch and detached status are mutually exclusive')
+  }
+  if (args.detachedToken !== null && args.detachedToken !== undefined) {
+    throw new Error(
+      'Detached launch tokens are coordinator-generated; --detached-token is status-only'
+    )
+  }
+  if (typeof args.instanceId !== 'string' || args.instanceId.length === 0) {
+    throw new Error('Detached launch requires an explicit --instance-id')
+  }
+  assertStudioInstanceId(args.instanceId)
+  const authorization = assertLaunchAuthorized(args, plan)
+  if (!authorization.launch) throw new Error('Detached coordinator cannot run in plan-only mode')
+  return { launch: true, detached: true }
+}
+
+async function sha256Hex(filePath) {
+  const hash = crypto.createHash('sha256')
+  const stream = fs.createReadStream(filePath)
+  for await (const chunk of stream) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+async function assertSafeRegularFile(filePath, label, options = {}) {
+  let stat
+  try {
+    stat = await fsPromises.lstat(filePath)
+  } catch (error) {
+    if (options.allowMissing && error && error.code === 'ENOENT') return null
+    throw error
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`${label} must be a regular file, not a symlink or directory`)
+  }
+  if (options.maxBytes && stat.size > options.maxBytes) {
+    throw new Error(`${label} exceeds the ${options.maxBytes}-byte bound`)
+  }
+  return stat
+}
+
+async function readBoundedJsonFile(filePath, label, maxBytes = ACCEPTANCE_RECEIPT_MAX_BYTES) {
+  await assertSafeRegularFile(filePath, label, { maxBytes })
+  let parsed
+  try {
+    parsed = JSON.parse(await fsPromises.readFile(filePath, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (!isRecord(parsed)) throw new Error(`${label} must contain a JSON object`)
+  return parsed
+}
+
+async function atomicWriteDetachedManifest(manifestPath, manifest, options = {}) {
+  const existing = await assertSafeRegularFile(manifestPath, 'detached coordinator manifest', {
+    allowMissing: true,
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  if (options.initial === true && existing) {
+    throw new Error('detached coordinator manifest already exists; refuse duplicate launch')
+  }
+  if (options.initial !== true && !existing) {
+    throw new Error('detached coordinator manifest disappeared during an active run')
+  }
+  const tempPath = path.join(
+    path.dirname(manifestPath),
+    `.${path.basename(manifestPath)}.${process.pid}.${crypto.randomUUID()}.tmp`
+  )
+  try {
+    await fsPromises.writeFile(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+    await fsPromises.rename(tempPath, manifestPath)
+  } finally {
+    await fsPromises.rm(tempPath, { force: true }).catch(() => undefined)
+  }
+}
+
+let detachedIdentityPromise = null
+function buildDetachedCoordinatorIdentity() {
+  if (detachedIdentityPromise) return detachedIdentityPromise
+  detachedIdentityPromise = (async () => {
+    const entries = {
+      node: await fsPromises.realpath(process.execPath),
+      harness: await fsPromises.realpath(__filename),
+      coordinator: await fsPromises.realpath(DETACHED_COORDINATOR_PATH)
+    }
+    const identity = {}
+    for (const [label, filePath] of Object.entries(entries)) {
+      await assertSafeRegularFile(filePath, `detached coordinator ${label} identity`)
+      identity[label] = { path: filePath, sha256: await sha256Hex(filePath) }
+    }
+    return identity
+  })()
+  return detachedIdentityPromise
+}
+
+const DETACHED_REQUEST_ARG_KEYS = new Set([
+  'launch',
+  'detach',
+  'detachedStatus',
+  'detachedToken',
+  'acceptLaunch',
+  'ownerConfirmsOrphansCleared',
+  'pretty',
+  'help',
+  'instanceId',
+  'mediaPath',
+  'mimeType',
+  'remoteDebuggingPort',
+  'mainInspectorPort',
+  'timeoutMs',
+  'transcriptTimeoutMs'
+])
+
+function validateDetachedCoordinatorRequest(request, options = {}) {
+  if (!isRecord(request)) throw new Error('detached coordinator request must be an object')
+  const allowed = new Set([
+    'schemaVersion',
+    'kind',
+    'type',
+    'token',
+    'launcherPid',
+    'artifactRoot',
+    'args',
+    ...(options.allowSelfTest === true ? ['selfTest'] : [])
+  ])
+  for (const key of Object.keys(request)) {
+    if (!allowed.has(key)) throw new Error(`unexpected detached coordinator field ${key}`)
+  }
+  if (
+    request.schemaVersion !== DETACHED_COORDINATOR_SCHEMA_VERSION ||
+    request.kind !== DETACHED_START_KIND ||
+    request.type !== 'start'
+  ) {
+    throw new Error('detached coordinator request schema/kind/type is unsupported')
+  }
+  const token = assertDetachedToken(request.token)
+  if (!Number.isInteger(request.launcherPid) || request.launcherPid <= 0) {
+    throw new Error('detached coordinator launcherPid must be a positive integer')
+  }
+  if (typeof request.artifactRoot !== 'string' || !path.isAbsolute(request.artifactRoot)) {
+    throw new Error('detached coordinator artifactRoot must be absolute')
+  }
+  const artifactRoot = path.resolve(request.artifactRoot)
+  if (!isRecord(request.args)) throw new Error('detached coordinator args must be an object')
+  for (const key of Object.keys(request.args)) {
+    if (!DETACHED_REQUEST_ARG_KEYS.has(key)) {
+      throw new Error(`unexpected detached coordinator args field ${key}`)
+    }
+  }
+  if (request.args.detach !== true || request.args.launch !== true) {
+    throw new Error('detached coordinator request must carry launch=true and detach=true')
+  }
+  if (typeof request.args.instanceId !== 'string') {
+    throw new Error('detached coordinator request requires an explicit instance id')
+  }
+  assertStudioInstanceId(request.args.instanceId)
+  if (options.allowSelfTest !== true && request.selfTest !== undefined) {
+    throw new Error('detached coordinator self-test mode is unavailable')
+  }
+  if (request.selfTest !== undefined && request.selfTest !== true) {
+    throw new Error('detached coordinator selfTest must be true when present')
+  }
+  return { ...request, token, artifactRoot, args: { ...request.args } }
+}
+
+async function prepareDetachedCoordinatorArtifactRoot(plan) {
+  const paths = buildDetachedCoordinatorPaths(plan)
+  const parent = path.dirname(paths.artifactRoot)
+  await fsPromises.mkdir(parent, { recursive: true, mode: 0o700 })
+  const parentStat = await fsPromises.lstat(parent)
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new Error('detached coordinator artifact parent must be a real directory')
+  }
+  try {
+    await fsPromises.mkdir(paths.artifactRoot, { mode: 0o700 })
+  } catch (error) {
+    if (error && error.code === 'EEXIST') {
+      let detail = 'artifact root already exists'
+      try {
+        const rootStat = await fsPromises.lstat(paths.artifactRoot)
+        if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+          detail = 'artifact root is a symlink or non-directory'
+        } else {
+          const manifest = await assertSafeRegularFile(
+            paths.manifestPath,
+            'preexisting detached coordinator manifest',
+            { allowMissing: true }
+          )
+          if (manifest) detail = 'detached coordinator manifest already exists'
+        }
+      } catch (inspectionError) {
+        detail =
+          inspectionError instanceof Error ? inspectionError.message : String(inspectionError)
+      }
+      throw new Error(`Detached launch requires a fresh unique instance: ${detail}`)
+    }
+    throw error
+  }
+  const realRoot = await fsPromises.realpath(paths.artifactRoot)
+  const expectedRealRoot = path.join(
+    await fsPromises.realpath(parent),
+    path.basename(paths.artifactRoot)
+  )
+  if (realRoot !== expectedRealRoot) {
+    throw new Error('detached coordinator artifact root changed after creation')
+  }
+  const stdoutFd = fs.openSync(paths.stdoutLogPath, 'wx', 0o600)
+  let stderrFd
+  try {
+    stderrFd = fs.openSync(paths.stderrLogPath, 'wx', 0o600)
+  } catch (error) {
+    fs.closeSync(stdoutFd)
+    throw error
+  }
+  return { paths, stdoutFd, stderrFd }
+}
+
+async function verifyDetachedReadyManifest(paths, token, coordinatorPid) {
+  const manifest = await readBoundedJsonFile(
+    paths.manifestPath,
+    'detached coordinator ready manifest'
+  )
+  if (
+    manifest.schemaVersion !== DETACHED_COORDINATOR_SCHEMA_VERSION ||
+    manifest.kind !== DETACHED_COORDINATOR_KIND ||
+    (manifest.state !== 'ready' && manifest.state !== 'running') ||
+    manifest.token !== token ||
+    manifest.coordinatorPid !== coordinatorPid ||
+    manifest.manifestPath !== paths.manifestPath
+  ) {
+    throw new Error('detached coordinator ready manifest does not match the launched coordinator')
+  }
+  return manifest
+}
+
+function launchDetachedCoordinator(args, adapters = {}) {
+  const selfTest = adapters.selfTest === true
+  if (selfTest && process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST !== '1') {
+    return Promise.reject(new Error('detached coordinator stub workflow is test-only'))
+  }
+  const plan = buildStudioAcceptancePlan({
+    instanceId: args.instanceId || undefined,
+    transcriptTimeoutMs: args.transcriptTimeoutMs,
+    remoteDebuggingPort: args.remoteDebuggingPort,
+    mainInspectorPort: args.mainInspectorPort,
+    ...(adapters.planOptions || {})
+  })
+  try {
+    if (!selfTest) {
+      assertDetachedLaunchAuthorized(args, plan)
+    } else {
+      if (args.detach !== true || args.launch !== true || typeof args.instanceId !== 'string') {
+        throw new Error('detached coordinator self-test requires explicit launch/detach/instance')
+      }
+      assertStudioInstanceId(args.instanceId)
+    }
+  } catch (error) {
+    return Promise.reject(error)
+  }
+
+  return (async () => {
+    const prepared = await prepareDetachedCoordinatorArtifactRoot(plan)
+    const token = adapters.token || crypto.randomBytes(24).toString('base64url')
+    assertDetachedToken(token)
+    const forkProcess =
+      adapters.fork ||
+      ((modulePath, childArgs, options) => {
+        return fork(modulePath, childArgs, options)
+      })
+    let controller
+    try {
+      controller = forkProcess(DETACHED_COORDINATOR_PATH, [], {
+        detached: process.platform !== 'win32',
+        execPath: process.execPath,
+        stdio: ['ignore', prepared.stdoutFd, prepared.stderrFd, 'ipc'],
+        env: {
+          ...process.env,
+          ...(selfTest ? { TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' } : {}),
+          ...(adapters.coordinatorEnv || {})
+        }
+      })
+    } finally {
+      fs.closeSync(prepared.stdoutFd)
+      fs.closeSync(prepared.stderrFd)
+    }
+    if (!controller || !Number.isInteger(controller.pid) || controller.pid <= 0) {
+      throw new Error('detached Studio acceptance coordinator returned no pid')
+    }
+
+    const request = validateDetachedCoordinatorRequest(
+      {
+        schemaVersion: DETACHED_COORDINATOR_SCHEMA_VERSION,
+        kind: DETACHED_START_KIND,
+        type: 'start',
+        token,
+        launcherPid: process.pid,
+        artifactRoot: prepared.paths.artifactRoot,
+        args: { ...args },
+        ...(selfTest ? { selfTest: true } : {})
+      },
+      { allowSelfTest: selfTest }
+    )
+    const readyTimeoutMs = adapters.readyTimeoutMs || DETACHED_READY_TIMEOUT_MS
+    const verifyReadyManifest = adapters.verifyReadyManifest || verifyDetachedReadyManifest
+
+    return await new Promise((resolve, reject) => {
+      let settled = false
+      const disconnect = () => {
+        if (!controller.connected) return
+        try {
+          controller.disconnect()
+        } catch {
+          // The child may have exited between the connected check and disconnect.
+        }
+      }
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        disconnect()
+        reject(error)
+      }
+      const timer = setTimeout(
+        () =>
+          fail(
+            new Error(
+              `detached Studio acceptance coordinator readiness timed out after ${readyTimeoutMs}ms`
+            )
+          ),
+        readyTimeoutMs
+      )
+
+      controller.on('message', async (message) => {
+        if (!isRecord(message) || message.type !== 'ready' || settled) return
+        try {
+          if (
+            message.token !== token ||
+            message.coordinatorPid !== controller.pid ||
+            message.manifestPath !== prepared.paths.manifestPath
+          ) {
+            throw new Error('detached coordinator ready acknowledgement identity mismatch')
+          }
+          await verifyReadyManifest(prepared.paths, token, controller.pid)
+          await new Promise((accept, deny) => {
+            controller.send(
+              {
+                type: 'ready-accepted',
+                token,
+                coordinatorPid: controller.pid
+              },
+              (error) => (error ? deny(error) : accept())
+            )
+          })
+          settled = true
+          clearTimeout(timer)
+          disconnect()
+          if (typeof controller.unref === 'function') controller.unref()
+          resolve({
+            schemaVersion: DETACHED_COORDINATOR_SCHEMA_VERSION,
+            kind: DETACHED_TOKEN_KIND,
+            token,
+            instanceId: plan.instanceId,
+            artifactRoot: prepared.paths.artifactRoot,
+            manifestPath: prepared.paths.manifestPath,
+            evidencePath: prepared.paths.evidencePath,
+            watchdogReceiptPath: prepared.paths.watchdogReceiptPath,
+            coordinatorPid: controller.pid,
+            readyAt:
+              typeof message.readyAt === 'string' ? message.readyAt : new Date().toISOString()
+          })
+        } catch (error) {
+          fail(error)
+        }
+      })
+      controller.once('error', fail)
+      controller.once('exit', (code, signal) => {
+        if (!settled) {
+          fail(
+            new Error(
+              `detached Studio acceptance coordinator exited before ready code=${code} signal=${signal}`
+            )
+          )
+        }
+      })
+      try {
+        controller.send(request, (error) => {
+          if (error) fail(error)
+        })
+      } catch (error) {
+        fail(error)
+      }
+    })
+  })()
+}
+
+function boundedDetachedError(error) {
+  const message = error instanceof Error ? error.stack || error.message : String(error)
+  return message.slice(0, DETACHED_ERROR_MAX_CHARS)
+}
+
+function validateDetachedManifestPaths(manifest, paths) {
+  for (const key of [
+    'artifactRoot',
+    'manifestPath',
+    'evidencePath',
+    'watchdogReceiptPath',
+    'stdoutLogPath',
+    'stderrLogPath'
+  ]) {
+    if (manifest[key] !== paths[key]) {
+      throw new Error(`detached coordinator ${key} path escaped or changed`)
+    }
+  }
+}
+
+function validateDetachedManifestEnvelope(manifest, options) {
+  if (
+    manifest.schemaVersion !== DETACHED_COORDINATOR_SCHEMA_VERSION ||
+    manifest.kind !== DETACHED_COORDINATOR_KIND
+  ) {
+    return { supported: false }
+  }
+  if (manifest.token !== options.token) throw new Error('detached coordinator token mismatch')
+  if (manifest.instanceId !== options.instanceId) {
+    throw new Error('detached coordinator instance id mismatch')
+  }
+  if (!Number.isInteger(manifest.coordinatorPid) || manifest.coordinatorPid <= 0) {
+    throw new Error('detached coordinator manifest pid is invalid')
+  }
+  if (!Number.isInteger(manifest.launcherPid) || manifest.launcherPid <= 0) {
+    throw new Error('detached coordinator launcher pid is invalid')
+  }
+  if (!['ready', 'running', 'succeeded', 'failed'].includes(manifest.state)) {
+    return { supported: false }
+  }
+  if (!Number.isSafeInteger(manifest.revision) || manifest.revision < 1) {
+    throw new Error('detached coordinator manifest revision is invalid')
+  }
+  validateDetachedManifestPaths(manifest, options.paths)
+  for (const key of ['startedAt', 'updatedAt', 'heartbeatAt']) {
+    if (typeof manifest[key] !== 'string' || !Number.isFinite(Date.parse(manifest[key]))) {
+      throw new Error(`detached coordinator ${key} is invalid`)
+    }
+  }
+  const startedMs = Date.parse(manifest.startedAt)
+  const updatedMs = Date.parse(manifest.updatedAt)
+  const heartbeatMs = Date.parse(manifest.heartbeatAt)
+  if (updatedMs < startedMs || heartbeatMs < startedMs || heartbeatMs > updatedMs) {
+    throw new Error('detached coordinator timestamps moved backwards')
+  }
+  const terminal = manifest.state === 'succeeded' || manifest.state === 'failed'
+  if (terminal) {
+    if (
+      typeof manifest.completedAt !== 'string' ||
+      !Number.isFinite(Date.parse(manifest.completedAt)) ||
+      Date.parse(manifest.completedAt) < startedMs
+    ) {
+      throw new Error('detached coordinator completion timestamp is invalid')
+    }
+  } else if (manifest.completedAt !== null) {
+    throw new Error('running detached coordinator cannot carry a completion timestamp')
+  }
+  if (
+    manifest.error !== null &&
+    (typeof manifest.error !== 'string' || manifest.error.length > DETACHED_ERROR_MAX_CHARS)
+  ) {
+    throw new Error('detached coordinator error is not bounded')
+  }
+  return { supported: true }
+}
+
+function equalIdentity(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function detachedRed(state, reason, extra = {}) {
+  return { state, verdict: 'RED', green: false, reason, ...extra }
+}
+
+async function validateDetachedCompletion(paths, manifest) {
+  await assertSafeRegularFile(paths.evidencePath, 'detached acceptance evidence', {
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  await assertSafeRegularFile(paths.watchdogReceiptPath, 'detached watchdog receipt', {
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  const actualEvidenceSha256 = await sha256Hex(paths.evidencePath)
+  if (manifest.evidenceSha256 !== actualEvidenceSha256) {
+    return detachedRed('succeeded', 'detached evidence hash mismatch', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  const actualWatchdogSha256 = await sha256Hex(paths.watchdogReceiptPath)
+  if (manifest.watchdogReceiptSha256 !== actualWatchdogSha256) {
+    return detachedRed('succeeded', 'detached watchdog receipt hash mismatch', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  const evidence = await readBoundedJsonFile(paths.evidencePath, 'detached acceptance evidence')
+  const receipt = await readBoundedJsonFile(paths.watchdogReceiptPath, 'detached watchdog receipt')
+  if (
+    evidence.schemaVersion !== ACCEPTANCE_SCHEMA_VERSION ||
+    evidence.kind !== 'taskwraith-studio-in-product-acceptance' ||
+    evidence.ok !== true ||
+    evidence.instanceId !== manifest.instanceId
+  ) {
+    return detachedRed(
+      'succeeded',
+      'detached acceptance evidence is not a successful exact-instance receipt',
+      {
+        evidenceSha256: actualEvidenceSha256
+      }
+    )
+  }
+  if (
+    receipt.schemaVersion !== TRUSTED_RECEIPT_SCHEMA_VERSION ||
+    receipt.kind !== WATCHDOG_RECEIPT_KIND
+  ) {
+    return detachedRed('succeeded', 'detached watchdog schema is not trusted v2', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  if (
+    !VERIFIED_TERMINAL_RECEIPT_STATUSES.has(receipt.status) ||
+    receipt.status !== 'reaped' ||
+    receipt.reason !== 'owner_requested' ||
+    !Number.isInteger(receipt.childPgid) ||
+    receipt.childPgid <= 0 ||
+    receipt.groupExitVerified !== true ||
+    receipt.detachedGroupExitVerified !== true ||
+    !Array.isArray(receipt.detachedProcessGroups) ||
+    receipt.artifactScanError !== undefined
+  ) {
+    return detachedRed('succeeded', 'detached watchdog did not verify every process group exited', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  for (const key of ['lostOwnershipGroups', 'mixedOwnershipGroups', 'protectedInstalledGroups']) {
+    if (!Array.isArray(receipt[key]) || receipt[key].length !== 0) {
+      return detachedRed('succeeded', `detached watchdog reported unsafe ${key}`, {
+        evidenceSha256: actualEvidenceSha256
+      })
+    }
+  }
+  if (receipt.survivors !== undefined) {
+    if (!Array.isArray(receipt.survivors) || receipt.survivors.length !== 0) {
+      return detachedRed('succeeded', 'detached watchdog reported a survivor', {
+        evidenceSha256: actualEvidenceSha256
+      })
+    }
+  }
+  if (!isRecord(evidence.watchdogTerminal)) {
+    return detachedRed('succeeded', 'detached evidence is missing the terminal watchdog join', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  for (const key of ['status', 'reason', 'groupExitVerified', 'detachedGroupExitVerified']) {
+    if (evidence.watchdogTerminal[key] !== receipt[key]) {
+      return detachedRed('succeeded', `detached evidence/watchdog ${key} mismatch`, {
+        evidenceSha256: actualEvidenceSha256
+      })
+    }
+  }
+  if (
+    JSON.stringify(evidence.watchdogTerminal.detachedProcessGroups) !==
+    JSON.stringify(receipt.detachedProcessGroups)
+  ) {
+    return detachedRed('succeeded', 'detached evidence/watchdog process-group mismatch', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  return {
+    state: 'succeeded',
+    verdict: 'GREEN',
+    green: true,
+    reason: null,
+    evidenceSha256: actualEvidenceSha256,
+    watchdogReceiptSha256: actualWatchdogSha256
+  }
+}
+
+async function readDetachedCoordinatorStatus(options, adapters = {}) {
+  const instanceId = assertStudioInstanceId(options.instanceId)
+  const token = assertDetachedToken(options.token)
+  if (typeof options.artifactRoot !== 'string' || !path.isAbsolute(options.artifactRoot)) {
+    throw new Error('detached coordinator status requires an absolute artifact root')
+  }
+  const artifactRoot = path.resolve(options.artifactRoot)
+  const plan = {
+    artifactRoot,
+    evidencePath: path.join(artifactRoot, 'studio-acceptance-evidence.json'),
+    receiptPath: path.join(artifactRoot, 'watchdog-receipt.json')
+  }
+  const paths = buildDetachedCoordinatorPaths(plan)
+  let rootStat
+  try {
+    rootStat = await fsPromises.lstat(paths.artifactRoot)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return {
+        state: 'unknown',
+        verdict: 'UNKNOWN',
+        green: false,
+        reason: 'artifact root missing'
+      }
+    }
+    throw error
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('detached coordinator artifact root must be a real directory')
+  }
+  let manifest
+  try {
+    manifest = await readBoundedJsonFile(paths.manifestPath, 'detached coordinator manifest')
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return { state: 'unknown', verdict: 'UNKNOWN', green: false, reason: 'manifest missing' }
+    }
+    throw error
+  }
+  const envelope = validateDetachedManifestEnvelope(manifest, {
+    instanceId,
+    token,
+    paths
+  })
+  if (!envelope.supported) {
+    return {
+      state: 'unknown',
+      verdict: 'UNKNOWN',
+      green: false,
+      reason: 'unsupported detached coordinator manifest'
+    }
+  }
+  const expectedIdentity = await (adapters.buildIdentity || buildDetachedCoordinatorIdentity)()
+  if (!equalIdentity(manifest.identity, expectedIdentity)) {
+    return detachedRed('failed', 'detached coordinator executable identity mismatch')
+  }
+  if (manifest.state === 'ready' || manifest.state === 'running') {
+    if (manifest.revision < (manifest.state === 'ready' ? 1 : 2)) {
+      return detachedRed('failed', 'detached coordinator state revision is not monotonic')
+    }
+    const nowMs = options.nowMs === undefined ? Date.now() : Number(options.nowMs)
+    const staleAfterMs =
+      options.staleAfterMs === undefined ? DETACHED_STALE_AFTER_MS : Number(options.staleAfterMs)
+    const heartbeatMs = Date.parse(manifest.heartbeatAt || manifest.updatedAt)
+    if (
+      !Number.isFinite(nowMs) ||
+      !Number.isSafeInteger(staleAfterMs) ||
+      staleAfterMs < 1 ||
+      !Number.isFinite(heartbeatMs)
+    ) {
+      return detachedRed('failed', 'detached coordinator heartbeat fields are invalid')
+    }
+    if (nowMs - heartbeatMs > staleAfterMs) {
+      return detachedRed('stale', 'detached coordinator heartbeat is stale')
+    }
+    return {
+      state: 'running',
+      verdict: 'UNKNOWN',
+      green: false,
+      reason: 'detached coordinator is still running',
+      revision: manifest.revision,
+      updatedAt: manifest.updatedAt
+    }
+  }
+  if (manifest.state === 'failed') {
+    if (manifest.revision < 3) {
+      return detachedRed('failed', 'detached coordinator failure revision is not monotonic')
+    }
+    const reason =
+      typeof manifest.error === 'string' && manifest.error.length > 0
+        ? manifest.error.slice(0, DETACHED_ERROR_MAX_CHARS)
+        : 'detached coordinator failed without a bounded error'
+    return detachedRed('failed', reason)
+  }
+  if (manifest.state !== 'succeeded') {
+    return {
+      state: 'unknown',
+      verdict: 'UNKNOWN',
+      green: false,
+      reason: 'unsupported detached coordinator state'
+    }
+  }
+  if (manifest.revision < 3) {
+    return detachedRed('failed', 'detached coordinator success revision is not monotonic')
+  }
+  return validateDetachedCompletion(paths, manifest)
+}
+
+function createDetachedManifestWriter(paths, initialManifest) {
+  let current = initialManifest
+  let tail = Promise.resolve()
+  const stateRank = { ready: 1, running: 2, succeeded: 3, failed: 3 }
+  const update = (patch) => {
+    tail = tail.then(async () => {
+      const nextState = patch.state || current.state
+      if (!stateRank[nextState] || stateRank[nextState] < stateRank[current.state]) {
+        throw new Error('detached coordinator state cannot move backwards')
+      }
+      const now = new Date().toISOString()
+      const next = {
+        ...current,
+        ...patch,
+        state: nextState,
+        revision: current.revision + 1,
+        updatedAt: now
+      }
+      await atomicWriteDetachedManifest(paths.manifestPath, next)
+      current = next
+      return current
+    })
+    return tail
+  }
+  return {
+    update,
+    drain: () => tail,
+    current: () => current
+  }
+}
+
+async function runDetachedCoordinatorStub(plan) {
+  const spec = buildStubSpec({
+    directory: plan.artifactRoot,
+    timeoutMs: 30_000,
+    forceAfterMs: 250
+  })
+  const session = await launchUnderWatchdog(spec, {
+    controllerEnv: { TASKWRAITH_STUDIO_ACCEPTANCE_TEST: '1' }
+  })
+  await fsPromises.writeFile(
+    path.join(plan.artifactRoot, 'detached-stub-running.json'),
+    `${JSON.stringify({
+      coordinatorPid: process.pid,
+      watchdogControllerPid: session.controllerPid,
+      childPid: session.pid,
+      childPgid: session.pgid || session.pid
+    })}\n`,
+    { encoding: 'utf8', mode: 0o600 }
+  )
+  const stopPath = path.join(plan.artifactRoot, 'detached-stub-stop')
+  while (true) {
+    try {
+      const stat = await fsPromises.lstat(stopPath)
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new Error('detached stub stop sentinel must be a regular file')
+      }
+      break
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') throw error
+    }
+    await sleep(25)
+  }
+  const watchdogTerminal = assertCleanWatchdogTerminal(await session.stop())
+  const evidence = {
+    ok: true,
+    instanceId: plan.instanceId,
+    selfTest: true,
+    watchdogTerminal
+  }
+  await writeEvidence(plan, evidence)
+  return { launched: true, plan, evidence }
+}
+
+async function sendCoordinatorReady(message) {
+  if (typeof process.send !== 'function' || !process.connected) {
+    throw new Error('detached coordinator lost launcher IPC before readiness')
+  }
+  await new Promise((resolve, reject) => {
+    process.send(message, (error) => (error ? reject(error) : resolve()))
+  })
+}
+
+async function waitForCoordinatorReadyAcceptance(token, timeoutMs = DETACHED_READY_TIMEOUT_MS) {
+  await new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      process.removeListener('message', onMessage)
+      process.removeListener('disconnect', onDisconnect)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onMessage = (message) => {
+      if (
+        !isRecord(message) ||
+        message.type !== 'ready-accepted' ||
+        message.token !== token ||
+        message.coordinatorPid !== process.pid
+      ) {
+        finish(new Error('detached coordinator received an invalid ready acceptance'))
+        return
+      }
+      finish()
+    }
+    const onDisconnect = () => {
+      finish(new Error('detached coordinator launcher disconnected before accepting readiness'))
+    }
+    const timer = setTimeout(
+      () =>
+        finish(new Error(`detached coordinator ready acceptance timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    )
+    process.once('message', onMessage)
+    process.once('disconnect', onDisconnect)
+  })
+}
+
+async function runDetachedCoordinatorProcess() {
+  const allowSelfTest = process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST === '1'
+  const request = await new Promise((resolve, reject) => {
+    let accepted = false
+    const onDisconnect = () => {
+      if (!accepted) reject(new Error('detached coordinator launcher disconnected before request'))
+    }
+    process.once('disconnect', onDisconnect)
+    process.once('message', (message) => {
+      try {
+        const validated = validateDetachedCoordinatorRequest(message, { allowSelfTest })
+        accepted = true
+        process.removeListener('disconnect', onDisconnect)
+        resolve(validated)
+      } catch (error) {
+        process.removeListener('disconnect', onDisconnect)
+        reject(error)
+      }
+    })
+  })
+
+  let plan
+  if (request.selfTest === true) {
+    plan = buildStudioAcceptancePlan({
+      instanceId: request.args.instanceId,
+      artifactRoot: request.artifactRoot,
+      home: path.join(request.artifactRoot, 'home'),
+      platform: 'darwin',
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+  } else {
+    plan = buildStudioAcceptancePlan({
+      instanceId: request.args.instanceId,
+      transcriptTimeoutMs: request.args.transcriptTimeoutMs,
+      remoteDebuggingPort: request.args.remoteDebuggingPort,
+      mainInspectorPort: request.args.mainInspectorPort
+    })
+    assertDetachedLaunchAuthorized(request.args, plan)
+  }
+  const paths = buildDetachedCoordinatorPaths(plan)
+  if (paths.artifactRoot !== request.artifactRoot) {
+    throw new Error('detached coordinator request escaped the derived artifact root')
+  }
+  const rootStat = await fsPromises.lstat(paths.artifactRoot)
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('detached coordinator artifact root is not a real directory')
+  }
+  await assertSafeRegularFile(paths.stdoutLogPath, 'detached coordinator stdout log')
+  await assertSafeRegularFile(paths.stderrLogPath, 'detached coordinator stderr log')
+  const startedAt = new Date().toISOString()
+  const initialManifest = {
+    schemaVersion: DETACHED_COORDINATOR_SCHEMA_VERSION,
+    kind: DETACHED_COORDINATOR_KIND,
+    state: 'ready',
+    revision: 1,
+    token: request.token,
+    instanceId: plan.instanceId,
+    coordinatorPid: process.pid,
+    launcherPid: request.launcherPid,
+    identity: await buildDetachedCoordinatorIdentity(),
+    artifactRoot: paths.artifactRoot,
+    manifestPath: paths.manifestPath,
+    evidencePath: paths.evidencePath,
+    watchdogReceiptPath: paths.watchdogReceiptPath,
+    stdoutLogPath: paths.stdoutLogPath,
+    stderrLogPath: paths.stderrLogPath,
+    startedAt,
+    updatedAt: startedAt,
+    heartbeatAt: startedAt,
+    completedAt: null,
+    evidenceSha256: null,
+    watchdogReceiptSha256: null,
+    error: null
+  }
+  await atomicWriteDetachedManifest(paths.manifestPath, initialManifest, { initial: true })
+  await sendCoordinatorReady({
+    type: 'ready',
+    token: request.token,
+    coordinatorPid: process.pid,
+    manifestPath: paths.manifestPath,
+    readyAt: startedAt
+  })
+  await waitForCoordinatorReadyAcceptance(request.token)
+
+  const writer = createDetachedManifestWriter(paths, initialManifest)
+  await writer.update({ state: 'running', heartbeatAt: new Date().toISOString() })
+  let heartbeatStopped = false
+  const heartbeat = setInterval(() => {
+    if (heartbeatStopped) return
+    writer
+      .update({ state: 'running', heartbeatAt: new Date().toISOString() })
+      .catch(() => undefined)
+  }, DETACHED_HEARTBEAT_MS)
+
+  try {
+    const result =
+      request.selfTest === true
+        ? await runDetachedCoordinatorStub(plan)
+        : await runStudioAcceptance(request.args)
+    heartbeatStopped = true
+    clearInterval(heartbeat)
+    await writer.drain()
+    const evidenceSha256 = await sha256Hex(paths.evidencePath)
+    const watchdogReceiptSha256 = await sha256Hex(paths.watchdogReceiptPath)
+    const provisional = {
+      ...writer.current(),
+      state: 'succeeded',
+      evidenceSha256,
+      watchdogReceiptSha256
+    }
+    const completion = await validateDetachedCompletion(paths, provisional)
+    if (!completion.green) throw new Error(completion.reason)
+    await writer.update({
+      state: 'succeeded',
+      heartbeatAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      evidenceSha256,
+      watchdogReceiptSha256,
+      error: null
+    })
+    return result
+  } catch (error) {
+    heartbeatStopped = true
+    clearInterval(heartbeat)
+    await writer.drain().catch(() => undefined)
+    await writer.update({
+      state: 'failed',
+      heartbeatAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      evidenceSha256: null,
+      watchdogReceiptSha256: null,
+      error: boundedDetachedError(error)
+    })
+    throw error
+  }
+}
+
+async function runDetachedLauncherSelfTest(controlRoot, instanceId) {
+  if (process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST !== '1') {
+    throw new Error('detached launcher self-test is test-only')
+  }
+  const root = path.resolve(controlRoot)
+  await fsPromises.mkdir(root, { recursive: true, mode: 0o700 })
+  const artifactRoot = path.join(root, 'acceptance', assertStudioInstanceId(instanceId))
+  const token = await launchDetachedCoordinator(
+    {
+      ...parseArgs([]),
+      launch: true,
+      detach: true,
+      acceptLaunch: true,
+      ownerConfirmsOrphansCleared: true,
+      instanceId,
+      mediaPath: '/test-only/unused.mov',
+      mimeType: 'video/quicktime'
+    },
+    {
+      selfTest: true,
+      planOptions: {
+        artifactRoot,
+        home: path.join(artifactRoot, 'home'),
+        platform: 'darwin',
+        adapters: { resolveElectronPath: () => '/virtual/Electron' }
+      }
+    }
+  )
+  await fsPromises.writeFile(path.join(root, 'launcher-ready.json'), `${JSON.stringify(token)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+  setInterval(() => {}, 1_000)
 }
 
 function mediaExtension(mimeType) {
@@ -2155,6 +3193,8 @@ Required for a real run:
   --mime=video/mp4|video/quicktime
 
 Optional:
+  --detach (requires --launch and an explicit unique --instance-id)
+  --detached-status --instance-id=<id> --detached-token=<token>
   --instance-id=<unique 2-16 char id>
   --remote-debugging-port=<port>
   --main-inspector-port=<port>
@@ -2169,12 +3209,37 @@ async function main(argv = process.argv.slice(2)) {
     await runAbandonOwnerSelfTest(argv[1])
     return
   }
+  if (argv.length === 3 && argv[0] === '--self-test-detached-launcher') {
+    await runDetachedLauncherSelfTest(argv[1], argv[2])
+    return
+  }
   const args = parseArgs(argv)
   if (args.help) {
     process.stdout.write(helpText())
     return
   }
-  const result = await runStudioAcceptance(args)
+  let result
+  if (args.detachedStatus) {
+    if (args.launch || args.detach) {
+      throw new Error('--detached-status cannot be combined with --launch or --detach')
+    }
+    if (typeof args.instanceId !== 'string' || typeof args.detachedToken !== 'string') {
+      throw new Error('--detached-status requires --instance-id and --detached-token')
+    }
+    const plan = buildStudioAcceptancePlan({ instanceId: args.instanceId })
+    result = await readDetachedCoordinatorStatus({
+      instanceId: plan.instanceId,
+      artifactRoot: plan.artifactRoot,
+      token: args.detachedToken
+    })
+  } else if (args.detach) {
+    result = await launchDetachedCoordinator(args)
+  } else {
+    if (args.detachedToken !== null) {
+      throw new Error('--detached-token is valid only with --detached-status')
+    }
+    result = await runStudioAcceptance(args)
+  }
   process.stdout.write(`${JSON.stringify(result, null, args.pretty ? 2 : 0)}\n`)
 }
 
@@ -2193,7 +3258,14 @@ module.exports = {
   parseArgs,
   parseStudioTransportMutationText,
   buildStudioAcceptancePlan,
+  buildDetachedCoordinatorPaths,
+  buildDetachedCoordinatorIdentity,
   assertLaunchAuthorized,
+  assertDetachedLaunchAuthorized,
+  validateDetachedCoordinatorRequest,
+  launchDetachedCoordinator,
+  readDetachedCoordinatorStatus,
+  runDetachedCoordinatorProcess,
   materializeOwnedMedia,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
