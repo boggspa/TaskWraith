@@ -117,6 +117,7 @@ import type {
   NativeWindowCoordinatorRendererEvent,
   NativeWindowCoordinatorRendererStatus
 } from '../main/nativeWindow/NativeWindowCoordinator'
+import type { AppDrivePreviewFrameResult } from '../main/nativeWindow/AppDrivePreviewFrame'
 import {
   CHAT_UPDATE_ACK_CHANNEL,
   type ChatUpdateAck,
@@ -1877,6 +1878,11 @@ const api = {
       'attach-window:status',
       chatId
     ) as Promise<NativeWindowCoordinatorRendererStatus>,
+  // Dock preview of the window the user attached. Main validates the payload
+  // and builds the data URL; the generation stamp lets the renderer drop a
+  // frame that no longer describes the live attachment.
+  attachWindowPreviewFrame: (chatId: string) =>
+    ipcRenderer.invoke('attach-window:preview-frame', chatId) as Promise<AppDrivePreviewFrameResult>,
   // Sticky AppWatch is a resume hint only. This preload reconstructs an
   // allowlisted display projection and never forwards window IDs, process data,
   // handles, scopes, consent epochs, or lease material.

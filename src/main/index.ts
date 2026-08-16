@@ -589,6 +589,12 @@ import {
 import { createNativeProcessStartedAtResolver } from './nativeWindow/NativeProcessIdentityResolver'
 import { createNativeWindowProcessAncestryResolver } from './nativeWindow/NativeWindowProcessAncestryClient'
 import { resolveAppDriveEnsembleAuthority } from './appDrive/AppDriveEnsembleAuthority'
+import {
+  appDrivePreviewFrameFromDaemon,
+  shouldRequestPreviewFrame,
+  type AppDrivePreviewFrameResult,
+  type AppDrivePreviewFrameSource
+} from './nativeWindow/AppDrivePreviewFrame'
 import { createNativeWindowClickAuditClaim } from './nativeWindow/NativeWindowClickAudit'
 import { AuditService } from './services/AuditService'
 import {
@@ -52429,6 +52435,52 @@ if (isGeminiMcpBridgeProcess) {
       if (!coordinator) throw new Error('Native-window coordination is not ready.')
       return coordinator.statusForChat(canonicalChatId)
     })
+
+    // App Drive dock preview. The user's own view of the window they attached,
+    // rendered locally — this mints no lease, admits no action, consumes no
+    // step budget, and sends nothing to a provider. It is NOT secret-redacted;
+    // see AppDrivePreviewFrame before putting any redaction claim on this
+    // surface. Refusals are returned, never thrown: an absent frame is the
+    // ordinary state while a stream warms up.
+    ipcMain.handle(
+      'attach-window:preview-frame',
+      async (event, chatId: string): Promise<AppDrivePreviewFrameResult> => {
+        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+        assertRendererChatScope(event, canonicalChatId)
+        const coordinator = nativeWindowCoordinatorRef
+        if (!coordinator) return { ok: false, reason: 'no_attachment' }
+        // getForChat applies the live protected-host check and can revoke the
+        // attachment, so read it before the access envelope: if it cleared,
+        // observationAccessForChat returns null and this fails closed.
+        const attachment = coordinator.getForChat(canonicalChatId)
+        const access = attachment ? coordinator.observationAccessForChat(canonicalChatId) : null
+        if (!attachment || !access) return { ok: false, reason: 'no_attachment' }
+        if (!shouldRequestPreviewFrame({ observation: attachment })) {
+          return { ok: false, reason: 'no_frame' }
+        }
+        const daemon = bridgeDaemonRef
+        if (!daemon?.status().running) return { ok: false, reason: 'no_frame' }
+        let source: AppDrivePreviewFrameSource
+        try {
+          source = await daemon.request<AppDrivePreviewFrameSource>(
+            'appwatch.latestFrame',
+            access,
+            { timeoutMs: 10_000 }
+          )
+        } catch {
+          // A dock preview never surfaces daemon errors as a failed IPC — the
+          // panel just keeps showing its placeholder.
+          return { ok: false, reason: 'no_frame' }
+        }
+        // Re-read the attachment after the await: a frame captured under a
+        // superseded generation must not be projected under the new target.
+        const current = coordinator.getForChat(canonicalChatId)
+        if (!current || current.generation !== attachment.generation) {
+          return { ok: false, reason: 'no_attachment' }
+        }
+        return appDrivePreviewFrameFromDaemon({ source, generation: current.generation })
+      }
+    )
 
     // M11 (1.0.7) — sticky AppWatch. The renderer stashes a chat's attachment
     // metadata on auto-detach and asks for it back when the user returns to the

@@ -764,6 +764,7 @@ import {
 } from './lib/rightDockState'
 import {
   appDriveDockStatusFromNative,
+  type AppDriveDockPreviewFrame,
   type AppDriveDockStatus
 } from './lib/appDriveDockState'
 import {
@@ -1097,6 +1098,12 @@ function summarizeAuditBundleVerification(result: ProductAuditBundleVerification
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
+/**
+ * App Drive dock preview cadence. Deliberately unhurried: the preview is
+ * orientation ("which window am I driving"), not a video feed, and each pull
+ * carries a full PNG across the IPC boundary.
+ */
+const APP_DRIVE_PREVIEW_POLL_MS = 1_500
 const BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS = 1_000
 const CONTEXT_COMPACTION_PROGRESS_STALE_MS = 5 * 60 * 1000
 
@@ -2943,6 +2950,14 @@ function App(): React.JSX.Element {
   // switch) can be remembered for the owning chat's resume affordance.
   const liveAttachedWindowRef = useRef<AttachedWindowSnapshot | null>(null)
   const appDriveControlChatIdRef = useRef<string | null>(null)
+  // Latest dock preview frame plus the native status it should be projected
+  // against. Both go through appDriveDockStatusFromNative so the generation
+  // guard there stays the single place that decides whether a frame is live.
+  const appDrivePreviewFrameRef = useRef<AppDriveDockPreviewFrame | null>(null)
+  const appDriveNativeStatusRef = useRef<{
+    chatId: string
+    status: NativeWindowCoordinatorRendererStatus
+  } | null>(null)
   const stickyAppWatchQueueRef = useRef(new Map<string, Promise<void>>())
   const stickyAppWatchRevisionRef = useRef(new Map<string, number>())
   // Keep the primary composer synchronously scoped while the authoritative
@@ -3026,7 +3041,12 @@ function App(): React.JSX.Element {
       const next = attachedWindowFromStatus(status)
       const previous = liveAttachedWindowRef.current
       if (currentChatIdRef.current === chatId) {
-        const dockStatus = appDriveDockStatusFromNative(chatId, status)
+        appDriveNativeStatusRef.current = { chatId, status }
+        const dockStatus = appDriveDockStatusFromNative(
+          chatId,
+          status,
+          appDrivePreviewFrameRef.current
+        )
         setAppDriveDockStatus(dockStatus)
         if (status.control && appDriveControlChatIdRef.current !== chatId) {
           appDriveControlChatIdRef.current = chatId
@@ -3060,6 +3080,48 @@ function App(): React.JSX.Element {
     },
     [stashLiveAttachedWindow]
   )
+  // App Drive dock preview. Polls only while the panel is actually open with an
+  // attachment, so a closed dock costs nothing. Main decides whether a frame
+  // exists (and refuses without a live Screen Watch stream); this only projects
+  // what it returns.
+  //
+  // The deps are PRIMITIVES on purpose. appDriveDockStatusFromNative returns a
+  // fresh frozen object every call, so depending on `appDriveDockStatus` or its
+  // `.observation` would re-arm this effect on the very state write it performs
+  // — an unbounded pull loop against the daemon rather than one every 1.5s.
+  const appDriveDockChatId = appDriveDockStatus?.chatId ?? null
+  const appDriveDockHasObservation = Boolean(appDriveDockStatus?.observation)
+  useEffect(() => {
+    const applyPreviewFrame = (frame: AppDriveDockPreviewFrame | null): void => {
+      appDrivePreviewFrameRef.current = frame
+      const live = appDriveNativeStatusRef.current
+      if (!live || live.chatId !== currentChatIdRef.current) return
+      setAppDriveDockStatus(appDriveDockStatusFromNative(live.chatId, live.status, frame))
+    }
+    if (!isAppDriveDockPanelOpen || !appDriveDockHasObservation || !appDriveDockChatId) {
+      if (appDrivePreviewFrameRef.current) applyPreviewFrame(null)
+      return
+    }
+    let cancelled = false
+    const chatId = appDriveDockChatId
+    const pull = async (): Promise<void> => {
+      try {
+        const result = await window.api.attachWindowPreviewFrame(chatId)
+        if (cancelled || currentChatIdRef.current !== chatId) return
+        applyPreviewFrame(result.ok ? result.frame : null)
+      } catch {
+        // A preview is decoration: a failed pull leaves the placeholder up
+        // rather than surfacing an error the user cannot act on.
+        if (!cancelled) applyPreviewFrame(null)
+      }
+    }
+    void pull()
+    const timer = window.setInterval(() => void pull(), APP_DRIVE_PREVIEW_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [isAppDriveDockPanelOpen, appDriveDockHasObservation, appDriveDockChatId])
   useEffect(() => {
     const chatId = currentChat?.appChatId
     setDiffActionMenuOpenByChatId((current) => {

@@ -201,6 +201,7 @@ import type {
   NativeWindowCoordinatorRendererEvent,
   NativeWindowCoordinatorRendererStatus
 } from '../main/nativeWindow/NativeWindowCoordinator'
+import type { AppDrivePreviewFrameResult } from '../main/nativeWindow/AppDrivePreviewFrame'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { MistralQuotaSnapshot } from '../main/mistral/MistralQuotaStore'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -1860,6 +1861,8 @@ declare global {
         action: 'pause' | 'resume' | 'takeover' | 'stop'
       ) => Promise<NativeWindowCoordinatorRendererStatus>
       attachWindowStatus: (chatId: string) => Promise<NativeWindowCoordinatorRendererStatus>
+      /** Local dock preview of the attached window. Not secret-redacted. */
+      attachWindowPreviewFrame: (chatId: string) => Promise<AppDrivePreviewFrameResult>
       /** Resume-only, chat-scoped display metadata; no native identity fields. */
       stickyAppWatchGet: (chatId: string) => Promise<{ snapshot: StickyAppWatchSnapshot | null }>
       stickyAppWatchStash: (input: StickyAppWatchStashInput) => Promise<{ ok: boolean }>

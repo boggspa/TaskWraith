@@ -26,6 +26,7 @@ import {
   type AppDriveDockControlView,
   type AppDriveDockTarget
 } from './appDriveDockState'
+import type { NativeWindowCoordinatorRendererStatus } from '../../../main/nativeWindow/NativeWindowCoordinator'
 
 const target: AppDriveDockTarget = {
   applicationName: 'Notes',
@@ -212,5 +213,53 @@ describe('appDriveDockState', () => {
     expect(isAppDriveControlVerb('type')).toBe(false)
     expect(sanitizeControlVerbs(['observe', 'type', 'fill', 12])).toEqual(['observe', 'fill'])
     expect(sanitizeControlVerbs(null)).toEqual([])
+  })
+
+  describe('preview frame', () => {
+    const nativeStatus = (generation: number): NativeWindowCoordinatorRendererStatus => ({
+      pickerPending: false,
+      observation: {
+        chatId: 'chat-1',
+        generation,
+        attachedAt: '2026-08-03T20:00:00.000Z',
+        window: {
+          title: 'Shopping',
+          bundleID: 'com.apple.Notes',
+          applicationName: 'Notes',
+          identityQuality: 'exact'
+        }
+      },
+      control: null
+    })
+
+    const frame = {
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+      width: 800,
+      height: 600,
+      capturedAt: '2026-08-03T20:00:01.000Z',
+      byteLength: 11,
+      generation: 2
+    }
+
+    it('carries a preview frame whose generation matches the live attachment', () => {
+      const dock = appDriveDockStatusFromNative('chat-1', nativeStatus(2), frame)
+      expect(dock.previewFrameUrl).toBe('data:image/png;base64,iVBORw0KGgo=')
+    })
+
+    it('drops a frame captured against a superseded attachment', () => {
+      // The user re-picked a different window: generation moved on. Showing the
+      // previous target's pixels under the new target's label is the bug.
+      const dock = appDriveDockStatusFromNative('chat-1', nativeStatus(3), frame)
+      expect(dock.previewFrameUrl ?? null).toBeNull()
+    })
+
+    it('drops a frame once the attachment is gone', () => {
+      const dock = appDriveDockStatusFromNative(
+        'chat-1',
+        { pickerPending: false, observation: null, control: null },
+        frame
+      )
+      expect(dock.previewFrameUrl ?? null).toBeNull()
+    })
   })
 })

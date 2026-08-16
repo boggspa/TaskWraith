@@ -162,4 +162,23 @@ describe('AppDriveDockPanel', () => {
     expect(html).toContain('not an approval key')
     expect(html).toContain('data-testid="appdrive-bundle-honesty"')
   })
+
+  it('shows the placeholder until a preview frame arrives, then the frame', () => {
+    const placeholder = renderToStaticMarkup(
+      <AppDriveDockPanel status={status({ previewFrameUrl: null })} onStop={vi.fn()} />
+    )
+    expect(placeholder).toContain('Preview appears when Screen Watch is streaming.')
+    expect(placeholder).not.toContain('<img')
+
+    const framed = renderToStaticMarkup(
+      <AppDriveDockPanel
+        status={status({ previewFrameUrl: 'data:image/png;base64,iVBORw0KGgo=' })}
+        onStop={vi.fn()}
+      />
+    )
+    expect(framed).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(framed).not.toContain('Preview appears when Screen Watch is streaming.')
+    // The cursor rides the frame and stays display-only.
+    expect(framed).toContain('Agent cursor is display-only. It does not move the Mac pointer.')
+  })
 })

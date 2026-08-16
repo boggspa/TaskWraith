@@ -652,6 +652,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'attach-window:detach',
   'attach-window:control-session',
   'attach-window:status',
+  'attach-window:preview-frame',
   'sticky-appwatch:get',
   'sticky-appwatch:stash',
   'sticky-appwatch:clear',

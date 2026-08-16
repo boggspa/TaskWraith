@@ -96,9 +96,20 @@ export const PERMISSION_HONESTY_DESCRIPTION =
 export const PAUSE_VS_TAKEOVER_HELP =
   'Pause holds agent click/fill until Resume. Take Over marks you as driving; Resume returns agent control. Neither is target-scoped HID arbitration — native idle remains machine-wide.'
 
+/**
+ * A preview frame as validated by main (`AppDrivePreviewFrame`). Carried as
+ * plain data — the renderer re-checks only that it still describes the live
+ * attachment.
+ */
+export interface AppDriveDockPreviewFrame {
+  readonly dataUrl: string
+  readonly generation: number
+}
+
 export function appDriveDockStatusFromNative(
   chatId: string,
-  status: NativeWindowCoordinatorRendererStatus
+  status: NativeWindowCoordinatorRendererStatus,
+  previewFrame?: AppDriveDockPreviewFrame | null
 ): AppDriveDockStatus {
   const observation = status.observation
     ? {
@@ -119,6 +130,13 @@ export function appDriveDockStatusFromNative(
         trustState: status.control.trustState
       }
     : null
+  // A frame is only shown while it still describes the attachment on screen.
+  // Generation moves when the user re-picks, so a frame from the previous
+  // target would otherwise be painted under the new target's label.
+  const livePreviewFrame =
+    previewFrame && status.observation && previewFrame.generation === status.observation.generation
+      ? previewFrame
+      : null
   return Object.freeze({
     chatId,
     observation,
@@ -126,6 +144,7 @@ export function appDriveDockStatusFromNative(
     lifecycle: status.control?.lifecycle ?? (observation ? 'active' : 'idle'),
     mode: APP_DRIVE_MODE,
     ...(status.warning ? { warning: status.warning } : {}),
+    ...(livePreviewFrame ? { previewFrameUrl: livePreviewFrame.dataUrl } : {}),
     ...(status.control?.virtualCursor
       ? {
           virtualCursor: {

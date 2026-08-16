@@ -766,6 +766,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'attach-window:detach': ['chatId', 'positiveInteger'],
   'attach-window:control-session': ['chatId', 'nonEmptyString'],
   'attach-window:status': ['chatId'],
+  'attach-window:preview-frame': ['chatId'],
   // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots.
   'sticky-appwatch:get': ['chatId'],
   'sticky-appwatch:stash': ['stickyAppWatchStash'],
