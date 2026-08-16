@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildEnsemblePromptAttribution,
   summarizeEnsemblePromptCost,
   type EnsemblePromptAttribution,
   type EnsemblePromptCostUsageRecord
@@ -160,5 +161,58 @@ describe('summarizeEnsemblePromptCost', () => {
       replayShareOfTranscript: null,
       replayToFreshRatio: null
     })
+  })
+})
+
+describe('buildEnsemblePromptAttribution', () => {
+  it('describes a requested resume with an adapter fallback without claiming which ran', () => {
+    expect(
+      buildEnsemblePromptAttribution({
+        promptKind: 'slim',
+        providerSessionId: 'session-1',
+        primaryPromptChars: 320,
+        fallbackPromptChars: 1_200,
+        transcript: {
+          sourceRequestChars: 40,
+          transcriptMessageChars: 100,
+          transcriptMessageCount: 1,
+          replayedTranscriptMessageChars: 0,
+          replayedTranscriptMessageCount: 0,
+          freshTranscriptMessageChars: 100,
+          freshTranscriptMessageCount: 1,
+          omittedTranscriptMessageCount: 2,
+          transcriptTruncated: true
+        }
+      })
+    ).toMatchObject({
+      schemaVersion: 1,
+      promptKind: 'slim',
+      sessionContext: 'resume-requested-with-fallback',
+      primaryPromptChars: 320,
+      fallbackPromptChars: 1_200
+    })
+  })
+
+  it('does not retain a fallback candidate when no resume was requested', () => {
+    const receipt = buildEnsemblePromptAttribution({
+      promptKind: 'full',
+      providerSessionId: null,
+      primaryPromptChars: 900,
+      fallbackPromptChars: 1_100,
+      transcript: {
+        sourceRequestChars: 20,
+        transcriptMessageChars: 0,
+        transcriptMessageCount: 0,
+        replayedTranscriptMessageChars: 0,
+        replayedTranscriptMessageCount: 0,
+        freshTranscriptMessageChars: 0,
+        freshTranscriptMessageCount: 0,
+        omittedTranscriptMessageCount: 0,
+        transcriptTruncated: false
+      }
+    })
+
+    expect(receipt.sessionContext).toBe('new')
+    expect(receipt).not.toHaveProperty('fallbackPromptChars')
   })
 })

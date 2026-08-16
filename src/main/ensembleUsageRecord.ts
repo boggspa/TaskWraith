@@ -41,6 +41,7 @@ export interface EnsembleUsageInput {
   /** Wall-clock fallback when stats carry no duration (start→end ms). */
   fallbackDurationMs?: number
   ensemblePromptKind?: UsageRecord['ensemblePromptKind']
+  ensemblePromptAttribution?: UsageRecord['ensemblePromptAttribution']
   ensembleDynamicStateBlockChars?: number
   ensembleDynamicStateSent?: boolean
   ensembleDynamicStateReceiptState?: UsageRecord['ensembleDynamicStateReceiptState']
@@ -103,6 +104,9 @@ export function buildEnsembleUsageRecord(
     ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
     ...(input.ensemblePromptKind ? { ensemblePromptKind: input.ensemblePromptKind } : {}),
+    ...(input.ensemblePromptAttribution
+      ? { ensemblePromptAttribution: input.ensemblePromptAttribution }
+      : {}),
     ...(input.ensembleDynamicStateBlockChars !== undefined
       ? { ensembleDynamicStateBlockChars: input.ensembleDynamicStateBlockChars }
       : {}),

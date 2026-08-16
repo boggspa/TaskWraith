@@ -12,6 +12,7 @@ import { resolveEnsembleFanoutIsolationPolicy } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
+import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -216,6 +217,7 @@ export interface BuildEnsemblePromptInput {
 export interface EnsembleParticipantPromptProjection {
   prompt: string
   suppliedMessageIds: string[]
+  transcriptAttribution: EnsemblePromptTranscriptAttribution
 }
 
 // v6 (Boss-allocation posture repair 2026-08): explicit workers and scoped
@@ -1347,7 +1349,7 @@ export function buildEnsembleParticipantPromptProjection(
         ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
-    return buildOllamaEnsemblePromptCapsuleProjection(
+    const capsuleProjection = buildOllamaEnsemblePromptCapsuleProjection(
       {
         participantLabel,
         modelLabel: input.participant.model || selfModelLabel,
@@ -1382,6 +1384,12 @@ export function buildEnsembleParticipantPromptProjection(
         transcriptRows: transcriptProjection.suppliedRows
       }
     )
+    return participantPromptProjection(
+      capsuleProjection.prompt,
+      transcriptProjection,
+      input,
+      capsuleProjection.suppliedMessageIds
+    )
   }
 
   if (promptTransportProfile === 'antigravity-official-agy') {
@@ -1404,7 +1412,7 @@ export function buildEnsembleParticipantPromptProjection(
         ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
-    return buildAntigravityOfficialAgyPromptCapsuleProjection(
+    const capsuleProjection = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
         participantLabel,
         roundId: input.roundId,
@@ -1436,6 +1444,12 @@ export function buildEnsembleParticipantPromptProjection(
           : {}),
         transcriptRows: transcriptProjection.suppliedRows
       }
+    )
+    return participantPromptProjection(
+      capsuleProjection.prompt,
+      transcriptProjection,
+      input,
+      capsuleProjection.suppliedMessageIds
     )
   }
 
@@ -2082,10 +2096,16 @@ export function buildParticipantTokenMap(
 
 interface TaggedTranscriptProjection {
   text: string
+  truncated: boolean
   eligibleMessageIds: string[]
   suppliedMessageIds: string[]
   omittedMessageIds: string[]
-  suppliedRows: Array<{ messageId: string; start: number; end: number }>
+  suppliedRows: Array<{
+    messageId: string
+    start: number
+    end: number
+    freshness: 'replayed' | 'fresh'
+  }>
 }
 
 function projectTaggedTranscript(
@@ -2172,11 +2192,16 @@ function projectTaggedTranscript(
   // normal (widened) window when the seat has no prior turn on record.
   const relevant =
     options?.deltaOnly && deltaStart >= 0 ? filtered.slice(deltaStart) : filtered.slice(-windowSize)
+  const replayedMessages = new Set(deltaStart >= 0 ? filtered.slice(0, deltaStart) : [])
   // Fill from the MOST RECENT message backward so the budget keeps recent
   // context and truncation drops the OLDEST, not the newest. Output stays
   // chronological (unshift). For a non-truncated window this is identical to the
   // previous forward fill.
-  const lines: Array<{ text: string; messageId?: string }> = []
+  const lines: Array<{
+    text: string
+    messageId?: string
+    freshness?: 'replayed' | 'fresh'
+  }> = []
   const suppliedMessages: ChatMessage[] = []
   let used = 0
   let truncated = false
@@ -2262,7 +2287,11 @@ function projectTaggedTranscript(
       break
     }
     used += line.length
-    lines.unshift({ text: line, messageId: message.id })
+    lines.unshift({
+      text: line,
+      messageId: message.id,
+      freshness: replayedMessages.has(message) ? 'replayed' : 'fresh'
+    })
     suppliedMessages.unshift(message)
   }
   if (externalDropped > 0) {
@@ -2278,21 +2307,29 @@ function projectTaggedTranscript(
     lines.unshift({ text: '[Transcript truncated to fit Ensemble V1 context budget.]' })
   }
   let rowOffset = 0
-  const suppliedRows: Array<{ messageId: string; start: number; end: number }> = []
+  const suppliedRows: TaggedTranscriptProjection['suppliedRows'] = []
   for (const [index, line] of lines.entries()) {
-    if (line.messageId) {
+    if (line.messageId && line.freshness) {
       suppliedRows.push({
         messageId: line.messageId,
         start: rowOffset,
-        end: rowOffset + line.text.length
+        end: rowOffset + line.text.length,
+        freshness: line.freshness
       })
     }
     rowOffset += line.text.length
     if (index < lines.length - 1) rowOffset += 2
   }
   const suppliedSet = new Set(suppliedMessages)
+  const relevantSet = new Set(relevant)
+  const windowDroppedMessage = filtered.some(
+    (message) =>
+      !relevantSet.has(message) &&
+      !(options?.deltaOnly && deltaStart >= 0 && replayedMessages.has(message))
+  )
   return {
     text: lines.map((line) => line.text).join('\n\n'),
+    truncated: truncated || externalDropped > 0 || windowDroppedMessage,
     eligibleMessageIds: filtered.map((message) => message.id),
     suppliedMessageIds: suppliedMessages.map((message) => message.id),
     omittedMessageIds: filtered
@@ -2305,13 +2342,43 @@ function projectTaggedTranscript(
 function participantPromptProjection(
   prompt: string,
   transcript: TaggedTranscriptProjection,
-  input: BuildEnsemblePromptInput
+  input: BuildEnsemblePromptInput,
+  exactSuppliedMessageIds?: readonly string[]
 ): EnsembleParticipantPromptProjection {
-  const suppliedMessageIds = [...transcript.suppliedMessageIds]
-  if (input.currentPromptMessageId && sanitizeText(input.currentPrompt)) {
+  const suppliedMessageIds = exactSuppliedMessageIds
+    ? [...exactSuppliedMessageIds]
+    : [...transcript.suppliedMessageIds]
+  if (
+    !exactSuppliedMessageIds &&
+    input.currentPromptMessageId &&
+    sanitizeText(input.currentPrompt)
+  ) {
     suppliedMessageIds.push(input.currentPromptMessageId)
   }
-  return { prompt, suppliedMessageIds }
+  const suppliedSet = new Set(suppliedMessageIds)
+  const suppliedRows = transcript.suppliedRows.filter((row) => suppliedSet.has(row.messageId))
+  const replayedRows = suppliedRows.filter((row) => row.freshness === 'replayed')
+  const freshRows = suppliedRows.filter((row) => row.freshness === 'fresh')
+  const rowChars = (rows: typeof suppliedRows): number =>
+    rows.reduce((total, row) => total + Math.max(0, row.end - row.start), 0)
+  return {
+    prompt,
+    suppliedMessageIds,
+    transcriptAttribution: {
+      sourceRequestChars: sanitizeText(input.currentPrompt).length,
+      transcriptMessageChars: rowChars(suppliedRows),
+      transcriptMessageCount: suppliedRows.length,
+      replayedTranscriptMessageChars: rowChars(replayedRows),
+      replayedTranscriptMessageCount: replayedRows.length,
+      freshTranscriptMessageChars: rowChars(freshRows),
+      freshTranscriptMessageCount: freshRows.length,
+      omittedTranscriptMessageCount: transcript.eligibleMessageIds.filter(
+        (messageId) => !suppliedSet.has(messageId)
+      ).length,
+      transcriptTruncated:
+        transcript.truncated || suppliedRows.length < transcript.suppliedRows.length
+    }
+  }
 }
 
 function buildSeatCompactionSummaryBlock(participant: EnsembleParticipant): string {

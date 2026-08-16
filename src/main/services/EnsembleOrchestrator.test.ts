@@ -2907,6 +2907,13 @@ describe('EnsembleOrchestrator', () => {
       totalTokens: 120,
       durationMs: 4200,
       ensemblePromptKind: 'full',
+      ensemblePromptAttribution: expect.objectContaining({
+        schemaVersion: 1,
+        promptKind: 'full',
+        sessionContext: 'new',
+        primaryPromptChars: harness.dispatched[0].prompt.length,
+        sourceRequestChars: 'Do the work.'.length
+      }),
       ensembleDynamicStateSent: true,
       ensembleDynamicStateReceiptState: 'missing'
     })
@@ -2977,6 +2984,15 @@ describe('EnsembleOrchestrator', () => {
       await vi.waitFor(() => expect(recorded).toHaveLength(1))
       expect(recorded[0]).toMatchObject({
         ensemblePromptKind: 'slim',
+        ensemblePromptAttribution: expect.objectContaining({
+          schemaVersion: 1,
+          promptKind: 'slim',
+          sessionContext: 'resume-requested',
+          primaryPromptChars: harness.dispatched[0].prompt.length,
+          sourceRequestChars: 'Continue from the existing session.'.length,
+          replayedTranscriptMessageChars: 0,
+          replayedTranscriptMessageCount: 0
+        }),
         ensembleDynamicStateBlockChars: snapshot.block.length,
         ensembleDynamicStateSent: false,
         ensembleDynamicStateReceiptState: 'matched'
@@ -3127,6 +3143,12 @@ describe('EnsembleOrchestrator', () => {
     expect(recorded[0]).toMatchObject({
       provider: 'claude',
       ensemblePromptKind: 'full',
+      ensemblePromptAttribution: expect.objectContaining({
+        schemaVersion: 1,
+        promptKind: 'full',
+        sessionContext: 'new',
+        primaryPromptChars: lane.prompt.length
+      }),
       ensembleDynamicStateBlockChars: snapshot.block.length,
       ensembleDynamicStateSent: true,
       ensembleDynamicStateReceiptState: 'matched'

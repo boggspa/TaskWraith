@@ -148,6 +148,22 @@ describe('buildEnsembleUsageRecord', () => {
     const rec = buildEnsembleUsageRecord({
       ...base({ total_tokens: 12, duration_ms: 10 }),
       ensemblePromptKind: 'slim',
+      ensemblePromptAttribution: {
+        schemaVersion: 1,
+        promptKind: 'slim',
+        sessionContext: 'resume-requested-with-fallback',
+        primaryPromptChars: 720,
+        fallbackPromptChars: 2_400,
+        sourceRequestChars: 30,
+        transcriptMessageChars: 220,
+        transcriptMessageCount: 2,
+        replayedTranscriptMessageChars: 0,
+        replayedTranscriptMessageCount: 0,
+        freshTranscriptMessageChars: 220,
+        freshTranscriptMessageCount: 2,
+        omittedTranscriptMessageCount: 4,
+        transcriptTruncated: false
+      },
       ensembleDynamicStateBlockChars: 742,
       ensembleDynamicStateSent: false,
       ensembleDynamicStateReceiptState: 'matched'
@@ -155,6 +171,13 @@ describe('buildEnsembleUsageRecord', () => {
 
     expect(rec).toMatchObject({
       ensemblePromptKind: 'slim',
+      ensemblePromptAttribution: expect.objectContaining({
+        schemaVersion: 1,
+        sessionContext: 'resume-requested-with-fallback',
+        primaryPromptChars: 720,
+        fallbackPromptChars: 2_400,
+        transcriptMessageChars: 220
+      }),
       ensembleDynamicStateBlockChars: 742,
       ensembleDynamicStateSent: false,
       ensembleDynamicStateReceiptState: 'matched'
@@ -165,6 +188,7 @@ describe('buildEnsembleUsageRecord', () => {
     const rec = buildEnsembleUsageRecord(base({ total_tokens: 12, duration_ms: 10 }))
 
     expect(rec).not.toHaveProperty('ensemblePromptKind')
+    expect(rec).not.toHaveProperty('ensemblePromptAttribution')
     expect(rec).not.toHaveProperty('ensembleDynamicStateBlockChars')
     expect(rec).not.toHaveProperty('ensembleDynamicStateSent')
     expect(rec).not.toHaveProperty('ensembleDynamicStateReceiptState')

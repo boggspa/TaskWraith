@@ -798,7 +798,7 @@ describe('Ensemble prompt composition', () => {
       }
     ]
 
-    const prompt = buildEnsembleParticipantPrompt({
+    const projection = buildEnsembleParticipantPromptProjection({
       chat: shared,
       config: ensemble,
       participant: ensemble.participants[1],
@@ -806,12 +806,15 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       chatContextTurns: 4
     })
+    const prompt = projection.prompt
 
     expect(prompt).toContain(
       '[Claude / Reviewer #p1]\n↪ Reviewer to User: The write-path review is complete.'
     )
     expect(prompt).not.toContain('[System]\n↪ Reviewer to User')
     expect(prompt).not.toContain('[User]\n↪ Reviewer to User')
+    expect(projection.suppliedMessageIds).toContain('side-1')
+    expect(projection.transcriptAttribution.transcriptMessageCount).toBeGreaterThan(0)
   })
 
   it('attributes a yield handoff to the yielding participant instead of System', () => {
@@ -3671,7 +3674,7 @@ describe('slim resumed-turn prompt shape', () => {
         metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
       }
     ]
-    const prompt = buildEnsembleParticipantPrompt({
+    const projection = buildEnsembleParticipantPromptProjection({
       chat: base,
       config: ensemble,
       participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
@@ -3680,6 +3683,7 @@ describe('slim resumed-turn prompt shape', () => {
       chatContextTurns: 6,
       slimTurn: true
     })
+    const prompt = projection.prompt
     expect(prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
     expect(prompt).toContain('New since your previous turn')
     expect(prompt).toContain('NEW-PEER-WORK')
@@ -3693,6 +3697,59 @@ describe('slim resumed-turn prompt shape', () => {
       prompt.lastIndexOf('Current user request:')
     )
     expect(prompt).toContain('Respond now as')
+    expect(projection.transcriptAttribution).toMatchObject({
+      sourceRequestChars: 'Continue.'.length,
+      transcriptMessageCount: 1,
+      replayedTranscriptMessageChars: 0,
+      replayedTranscriptMessageCount: 0,
+      freshTranscriptMessageCount: 1,
+      omittedTranscriptMessageCount: 1,
+      transcriptTruncated: false
+    })
+    expect(projection.transcriptAttribution.freshTranscriptMessageChars).toBeGreaterThan(0)
+  })
+
+  it('separates replayed rows from new-to-seat rows in a full briefing', () => {
+    const base = chat()
+    base.messages = [
+      {
+        id: 'own-1',
+        role: 'assistant',
+        content: 'My earlier turn.',
+        timestamp: '2026-05-24T00:00:01.000Z',
+        metadata: { ensembleProvider: 'claude', ensembleParticipantId: 'claude' }
+      },
+      {
+        id: 'peer-1',
+        role: 'assistant',
+        content: 'New peer work.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      }
+    ]
+
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: base,
+      config: ensemble,
+      participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-full-attribution',
+      chatContextTurns: 6
+    })
+
+    expect(projection.transcriptAttribution).toMatchObject({
+      transcriptMessageCount: 2,
+      replayedTranscriptMessageCount: 1,
+      freshTranscriptMessageCount: 1,
+      omittedTranscriptMessageCount: 0,
+      transcriptTruncated: false
+    })
+    expect(projection.transcriptAttribution.replayedTranscriptMessageChars).toBeGreaterThan(0)
+    expect(projection.transcriptAttribution.freshTranscriptMessageChars).toBeGreaterThan(0)
+    expect(
+      projection.transcriptAttribution.replayedTranscriptMessageChars +
+        projection.transcriptAttribution.freshTranscriptMessageChars
+    ).toBe(projection.transcriptAttribution.transcriptMessageChars)
   })
 
   it('injects only unseen blackboard entries and points to blackboard_read for omitted ones', () => {

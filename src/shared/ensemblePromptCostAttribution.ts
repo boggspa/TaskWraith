@@ -4,18 +4,10 @@
  * The receipt deliberately records lengths and counts only. Transcript text,
  * prompt text, participant prose, and message ids never enter usage.json.
  */
-export interface EnsemblePromptAttribution {
-  schemaVersion: 1
-  promptKind: 'full' | 'slim'
-  /** What the host asked the provider transport to do; not a claim that resume succeeded. */
-  sessionContext: 'new' | 'resume-requested' | 'resume-requested-with-fallback'
-  /** Exact accepted primary payload length after host routing appendices. */
-  primaryPromptChars: number
-  /** Exact cold-session candidate length when the adapter may fall back. */
-  fallbackPromptChars?: number
+export interface EnsemblePromptTranscriptAttribution {
   /** Sanitized source request length before any provider-specific capsule bound. */
   sourceRequestChars: number
-  /** Message-row characters actually retained in the accepted primary prompt projection. */
+  /** Message-row characters actually retained in this prompt projection. */
   transcriptMessageChars: number
   transcriptMessageCount: number
   /** Retained rows at or before this seat's preceding transcript turn. */
@@ -24,10 +16,44 @@ export interface EnsemblePromptAttribution {
   /** Retained rows after this seat's preceding turn, or all rows on its first turn. */
   freshTranscriptMessageChars: number
   freshTranscriptMessageCount: number
-  /** Eligible rows absent from the accepted primary projection. */
+  /** Eligible rows absent from this prompt projection. */
   omittedTranscriptMessageCount: number
   /** True when either the transcript budget or a provider capsule dropped rows. */
   transcriptTruncated: boolean
+}
+
+export interface EnsemblePromptAttribution extends EnsemblePromptTranscriptAttribution {
+  schemaVersion: 1
+  promptKind: 'full' | 'slim'
+  /** What the host asked the provider transport to do; not a claim that resume succeeded. */
+  sessionContext: 'new' | 'resume-requested' | 'resume-requested-with-fallback'
+  /** Exact accepted primary payload length after host routing appendices. */
+  primaryPromptChars: number
+  /** Exact cold-session candidate length when the adapter may fall back. */
+  fallbackPromptChars?: number
+}
+
+export function buildEnsemblePromptAttribution(input: {
+  promptKind: 'full' | 'slim'
+  providerSessionId?: string | null
+  primaryPromptChars: number
+  fallbackPromptChars?: number
+  transcript: EnsemblePromptTranscriptAttribution
+}): EnsemblePromptAttribution {
+  const resumeRequested = Boolean(input.providerSessionId?.trim())
+  const fallbackPromptChars = resumeRequested ? count(input.fallbackPromptChars) : 0
+  return {
+    schemaVersion: 1,
+    promptKind: input.promptKind,
+    sessionContext: !resumeRequested
+      ? 'new'
+      : fallbackPromptChars > 0
+        ? 'resume-requested-with-fallback'
+        : 'resume-requested',
+    primaryPromptChars: count(input.primaryPromptChars),
+    ...(fallbackPromptChars > 0 ? { fallbackPromptChars } : {}),
+    ...input.transcript
+  }
 }
 
 /** Structural subset accepted from UsageRecord without coupling this shared fold to the store. */

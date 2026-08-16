@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
+import { buildEnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
 import { BOSS_APPROVAL_REVIEW_TIMEOUT_MS } from '../../shared/interactionTimeouts'
 import {
   clearEnsembleRoundFailureForSeatChange,
@@ -824,6 +825,7 @@ type EnsemblePromptUsageTelemetry = Required<
   Pick<
     UsageRecord,
     | 'ensemblePromptKind'
+    | 'ensemblePromptAttribution'
     | 'ensembleDynamicStateBlockChars'
     | 'ensembleDynamicStateSent'
     | 'ensembleDynamicStateReceiptState'
@@ -832,6 +834,7 @@ type EnsemblePromptUsageTelemetry = Required<
 
 function buildEnsemblePromptUsageTelemetry(input: {
   slimTurn: boolean
+  promptAttribution: NonNullable<UsageRecord['ensemblePromptAttribution']>
   dynamicStateBlockChars: number
   dynamicStateVersion: string
   priorDynamicStateReceipt?: string
@@ -843,6 +846,7 @@ function buildEnsemblePromptUsageTelemetry(input: {
     : 'missing'
   return {
     ensemblePromptKind: input.slimTurn ? 'slim' : 'full',
+    ensemblePromptAttribution: input.promptAttribution,
     ensembleDynamicStateBlockChars: input.dynamicStateBlockChars,
     ensembleDynamicStateSent:
       !input.slimTurn || input.priorDynamicStateReceipt !== input.dynamicStateVersion,
@@ -16056,12 +16060,6 @@ export class EnsembleOrchestrator {
             ))) &&
         !resumeWakeup &&
         participant.promptShellVersion === promptShellStamp
-      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
-        slimTurn,
-        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
-        dynamicStateVersion: dynamicStateSnapshot.version,
-        priorDynamicStateReceipt: participant.promptDynamicStateVersion
-      })
       // Blackboard delta bookkeeping: same selection the prompt builder makes
       // (full board on a full briefing, unseen-only on a slim turn). Captured
       // BEFORE dispatch so entries posted mid-run stay unseen; stamped onto
@@ -16155,6 +16153,21 @@ export class EnsembleOrchestrator {
             runtime.discordContextSnapshots
           )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
         : undefined
+      const providerSessionId =
+        run.providerSessionId || participant.linkedProviderSessionId || null
+      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
+        slimTurn,
+        promptAttribution: buildEnsemblePromptAttribution({
+          promptKind: slimTurn ? 'slim' : 'full',
+          providerSessionId,
+          primaryPromptChars: promptWithDiscordContext.length,
+          ...(resumeFallbackPrompt ? { fallbackPromptChars: resumeFallbackPrompt.length } : {}),
+          transcript: promptProjection.transcriptAttribution
+        }),
+        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
+        dynamicStateVersion: dynamicStateSnapshot.version,
+        priorDynamicStateReceipt: participant.promptDynamicStateVersion
+      })
       // The adapter may use either the slim prompt or its cold-session
       // fallback. Receipt only rows present in BOTH possible prompts; that is
       // the exact evidence guaranteed to have reached the accepted dispatch.
@@ -16217,7 +16230,7 @@ export class EnsembleOrchestrator {
         runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
-        providerSessionId: run.providerSessionId || participant.linkedProviderSessionId || null,
+        providerSessionId,
         externalPathGrants: permissions.externalPathGrants,
         effectivePermissions: permissions,
         ...(this.deps.signRunPermissionPosture
@@ -18529,12 +18542,6 @@ export class EnsembleOrchestrator {
         dispatchChat,
         dispatchChat.ensemble!
       )
-      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
-        slimTurn: false,
-        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
-        dynamicStateVersion: dynamicStateSnapshot.version,
-        priorDynamicStateReceipt: participant.promptDynamicStateVersion
-      })
       const promptProjection = buildEnsembleParticipantPromptProjection({
         // The same durable user row is presented as the current request below;
         // exclude only that exact row from this lane's history so the provider
@@ -18581,6 +18588,19 @@ export class EnsembleOrchestrator {
       const promptWithDiscordContext = `${shellRoutingPrompt}${fileRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}${projectReferenceAppendix}`
+      const providerSessionId = participant.linkedProviderSessionId || null
+      const promptUsageTelemetry = buildEnsemblePromptUsageTelemetry({
+        slimTurn: false,
+        promptAttribution: buildEnsemblePromptAttribution({
+          promptKind: 'full',
+          providerSessionId,
+          primaryPromptChars: promptWithDiscordContext.length,
+          transcript: promptProjection.transcriptAttribution
+        }),
+        dynamicStateBlockChars: dynamicStateSnapshot.block.length,
+        dynamicStateVersion: dynamicStateSnapshot.version,
+        priorDynamicStateReceipt: participant.promptDynamicStateVersion
+      })
       // Mirror the serial path: thread per-participant reasoning/thinking into
       // the fan-out payload too, else a concurrent round silently runs every
       // participant at provider-default reasoning regardless of its config.
@@ -18629,7 +18649,7 @@ export class EnsembleOrchestrator {
         runtimeProfileId,
         geminiAuthProfileId:
           participant.provider === 'gemini' ? participant.geminiAuthProfileId || null : null,
-        providerSessionId: participant.linkedProviderSessionId || null,
+        providerSessionId,
         externalPathGrants: permissions.externalPathGrants,
         effectivePermissions: permissions,
         ...(this.deps.signRunPermissionPosture

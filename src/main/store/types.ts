@@ -31,6 +31,7 @@ import type { ProjectReferenceContextSelection } from '../../shared/projectRefer
 import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteeringQueue'
 import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import type { CloseoutReceipt } from '../../shared/closeoutReceipt'
+import type { EnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
 export type {
   EnsembleFanoutIsolation,
   EnsembleFanoutIsolationPolicy
@@ -4670,6 +4671,8 @@ export interface UsageRecord {
   runCount?: number
   /** Ensemble prompt shell selected for this participant dispatch. */
   ensemblePromptKind?: 'full' | 'slim'
+  /** Content-free accepted-payload and transcript replay receipt. */
+  ensemblePromptAttribution?: EnsemblePromptAttribution
   /** Character count of the canonical dynamic-state replacement block. */
   ensembleDynamicStateBlockChars?: number
   /** Whether that block was included in the accepted provider payload. */
