@@ -156,6 +156,29 @@ future change could break, recorded so the person making that change knows.
   Note that the scan which found those classes unreferenced was renderer-side
   while the degraded projection path originates in main, so a class name crossing
   that boundary as data would be invisible to it.
+- **`humanCollaborationInviteHealth` is fully wired end to end, with zero
+  renderer callers — not D1 residue.** This is the exact collision D1's own
+  commit message named and set aside: the renderer module
+  `humanCollaborationInviteHealth.ts` (deleted by D1) and the preload method
+  `humanCollaborationInviteHealth` (still live) are two different identifiers
+  that share a spelling. A name-based grep conflates them and misreads the
+  live handler as D1 leftover — it is not; D1 touched exactly four files under
+  `src/renderer/src/lib/`, none of them preload, IPC, or main. Verified at
+  source: `src/preload/index.ts:2329` exposes it, `index.d.ts:2421` types it,
+  `humanCollaborationHandlers.ts:330` implements a real handler returning
+  chat/share/bridge/tailscale status (not a stub), and `IpcValidation.ts:178`
+  plus `RendererIpcPolicy.ts:192` both register the channel — but
+  `src/renderer` has zero references to it. **Disposition: open, not urgent,
+  not a defect.** It sits inside the People IPC surface the Keep decision
+  deliberately retains, so removing it would be D2-class work, not cleanup —
+  D1's own commit message says so verbatim ("the IPC method is untouched and
+  belongs to D2, which is blocked") — and `src/preload/index.ts` was
+  foreign-claimed for P5's duration (a live marker blocked exactly this
+  preload retirement mid-round), so it was never openable within P5 regardless
+  of D2's status. Open, not answered: the handler itself never calls
+  `validateParticipantSession` and nothing currently calls the handler, so
+  whether invite-health should participate in the degraded-launch reconnect
+  path is undetermined, not settled either way.
 
 ## How to close an item
 
