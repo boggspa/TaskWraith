@@ -355,7 +355,7 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         let durationTicks = live.media.durationTicks
         // Stay inside the asset and leave headroom for the 1s steps. Packaged
         // storm started near 20s/241s; 20s is enough to miss the first GOP.
-        let startSeconds: Int64 = usedAcceptance ? 20 : 8
+        let startSeconds: Int64 = usedAcceptance ? 20 : 9
         let stepCount = usedAcceptance ? 36 : 16
         var ticks = min(durationTicks, startSeconds * timescale)
         XCTAssertGreaterThan(
@@ -496,8 +496,11 @@ final class StudioLivePreBindIntegrityTests: XCTestCase {
         }
         let url = StudioTestMedia.makeTemporaryMovieURL()
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        // Keep the clean-checkout fallback long enough to drive the minimum
+        // nine backwards seeks required by the live storm above. The private
+        // acceptance fixture is deliberately absent from release worktrees.
         try await StudioTestMedia.writeMovingVFRMovie(
-            sections: [(24, 96)],
+            sections: [(24, 240)],
             to: url,
             width: 256,
             height: 144,
