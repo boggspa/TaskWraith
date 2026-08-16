@@ -11,6 +11,7 @@ import {
   isEnsembleFanoutResultMessage,
   readEnsembleFanoutTranscriptParts
 } from '../components/EnsembleFanoutResultCardModel'
+import { summarizeCollapsedActivityStack } from './collapsedActivityStack'
 
 function activity(
   id: string,
@@ -186,6 +187,173 @@ describe('groupAdjacentToolMessages', () => {
     ])
 
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_images'])
+  })
+
+  it('coalesces Kimi empty ACP wrappers into their enriched host MCP activities', () => {
+    const resultSummary = 'Edited src/main/collaboration/ChannelRuntime.test.ts.'
+    const providerActivity = activity('2:tool_54ALIIglrx40d9io3WGyvDYa', 'write', {
+      toolName: 'mcp__taskwraith__replace',
+      displayName: 'Edited file',
+      startedAt: '2026-08-16T00:26:40.528Z',
+      endedAt: '2026-08-16T00:27:06.476Z',
+      durationMs: 25_948,
+      parameters: {},
+      resultSummary,
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+    const hostActivity = activity('kimi-mcp-replace-1786840009148-m3wxiboq3yl', 'write', {
+      toolName: 'replace',
+      displayName: 'Edited src/main/collaboration/ChannelRuntime.test.ts',
+      startedAt: '2026-08-16T00:26:49.149Z',
+      endedAt: '2026-08-16T00:27:06.447Z',
+      durationMs: 17_298,
+      parameters: {
+        path: 'src/main/collaboration/ChannelRuntime.test.ts',
+        old_string: 'before',
+        new_string: 'after',
+        cwd: '/workspace'
+      },
+      filePath: 'src/main/collaboration/ChannelRuntime.test.ts',
+      diffSummary: {
+        additions: 33,
+        deletions: 14,
+        source: 'string_replace',
+        confidence: 'exact',
+        files: [
+          {
+            path: 'src/main/collaboration/ChannelRuntime.test.ts',
+            status: 'modified',
+            additions: 33,
+            deletions: 14
+          }
+        ]
+      },
+      resultSummary,
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+    const shellResult = 'Exit code: 1\n\nAssertionError: expected expired to be live'
+    const providerShellActivity = activity('2:tool_ui2qd9IvTPWSs4rRvHVZcuIH', 'shell', {
+      toolName: 'mcp__taskwraith__run_shell_command',
+      displayName: 'Shell command',
+      status: 'error',
+      startedAt: '2026-08-16T00:27:13.878Z',
+      endedAt: '2026-08-16T00:27:19.971Z',
+      durationMs: 6_093,
+      parameters: {},
+      resultSummary: shellResult,
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+    const hostShellActivity = activity(
+      'kimi-mcp-run_shell_command-1786840034930-hk4hdpu3xop',
+      'shell',
+      {
+        toolName: 'run_shell_command',
+        displayName: 'Shell command',
+        status: 'error',
+        startedAt: '2026-08-16T00:27:14.935Z',
+        endedAt: '2026-08-16T00:27:19.946Z',
+        durationMs: 5_011,
+        parameters: { command: 'npm test -- ChannelRuntime.test.ts', cwd: '/workspace' },
+        resultSummary: shellResult,
+        metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+      }
+    )
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity]),
+      toolMessage('provider-shell-row', [providerShellActivity]),
+      toolMessage('host-shell-row', [hostShellActivity])
+    ])
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual([
+      hostActivity.id,
+      hostShellActivity.id
+    ])
+    expect(grouped[0].toolActivities?.[0]).toMatchObject({
+      filePath: 'src/main/collaboration/ChannelRuntime.test.ts',
+      diffSummary: { additions: 33, deletions: 14 },
+      durationMs: 25_948
+    })
+    expect(summarizeCollapsedActivityStack(grouped[0].toolActivities || [])).toMatchObject({
+      label: 'Edited 1 file · Ran 1 command · 1 error',
+      activityCount: 2,
+      errorCount: 1
+    })
+    expect(grouped[0].metadata?.groupedToolMessageIds).toEqual([
+      'provider-row',
+      'host-row',
+      'provider-shell-row',
+      'host-shell-row'
+    ])
+  })
+
+  it('keeps a Kimi ACP wrapper when no nested matching host receipt proves a mirror', () => {
+    const providerActivity = activity('2:tool_unmatched', 'write', {
+      toolName: 'mcp__taskwraith__replace',
+      startedAt: '2026-08-16T00:26:40.528Z',
+      endedAt: '2026-08-16T00:27:06.476Z',
+      parameters: {},
+      resultSummary: 'Edited src/a.ts.',
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+    const laterHostActivity = activity('kimi-mcp-replace-later', 'write', {
+      toolName: 'replace',
+      startedAt: '2026-08-16T00:27:07.000Z',
+      endedAt: '2026-08-16T00:27:08.000Z',
+      parameters: { path: 'src/a.ts' },
+      resultSummary: 'Edited src/a.ts.',
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [laterHostActivity])
+    ])
+
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual([
+      providerActivity.id,
+      laterHostActivity.id
+    ])
+  })
+
+  it('coalesces a running Kimi wrapper as soon as its scoped host activity appears', () => {
+    const providerActivity = activity('2:tool_live', 'write', {
+      toolName: 'mcp__taskwraith__replace',
+      displayName: 'Edited file',
+      status: 'running',
+      startedAt: '2026-08-16T00:29:40.000Z',
+      parameters: {},
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+    const hostActivity = activity('kimi-mcp-replace-live', 'write', {
+      toolName: 'replace',
+      displayName: 'Edited src/main/collaboration/ChannelRuntime.ts',
+      status: 'running',
+      startedAt: '2026-08-16T00:29:48.000Z',
+      parameters: { path: 'src/main/collaboration/ChannelRuntime.ts', cwd: '/workspace' },
+      filePath: 'src/main/collaboration/ChannelRuntime.ts',
+      metadata: { provider: 'kimi', ensembleProvider: 'kimi' }
+    })
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity])
+    ])
+
+    expect(grouped[0].toolActivities).toMatchObject([
+      {
+        id: hostActivity.id,
+        displayName: 'Edited src/main/collaboration/ChannelRuntime.ts',
+        filePath: 'src/main/collaboration/ChannelRuntime.ts',
+        startedAt: providerActivity.startedAt
+      }
+    ])
+    expect(summarizeCollapsedActivityStack(grouped[0].toolActivities || [])).toMatchObject({
+      label: 'Edited 1 file',
+      activityCount: 1
+    })
   })
 
   it('keeps similar Claude MCP calls when mirror proof does not match', () => {

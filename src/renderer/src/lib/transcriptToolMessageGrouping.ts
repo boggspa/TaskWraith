@@ -98,20 +98,27 @@ function parsedActivityTime(value?: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function isLiveActivityStatus(status: ToolActivity['status']): boolean {
+  return status === 'running' || status === 'pending'
+}
+
+function taskWraithWrapperCanonicalToolName(activity: ToolActivity): string | null {
+  // Canonical activity projection can replace a provider wrapper name (for
+  // example mcp__TaskWraith__image_view -> image_view). Mirror proof still
+  // needs the exact wrapper, so recover it from the retained raw event.
+  const wrapperName = /^mcp__(?:taskwraith|taskwraith-broker)__/i.test(activity.toolName)
+    ? activity.toolName
+    : rawActivityToolName(activity)
+  const match = wrapperName.match(/^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i)
+  return match ? resolveCanonicalToolName(match[1]) : null
+}
+
 function isMirroredClaudeTaskWraithActivity(
   providerActivity: ToolActivity,
   hostActivity: ToolActivity
 ): boolean {
-  // Canonical activity projection can replace a provider wrapper name (for
-  // example mcp__TaskWraith__image_view -> image_view). Mirror proof still
-  // needs the exact wrapper, so recover it from the retained raw event.
-  const providerWrapperName = /^mcp__(?:taskwraith|taskwraith-broker)__/i.test(
-    providerActivity.toolName
-  )
-    ? providerActivity.toolName
-    : rawActivityToolName(providerActivity)
-  const wrapperMatch = providerWrapperName.match(/^mcp__(?:taskwraith|taskwraith-broker)__(.+)$/i)
-  if (!wrapperMatch || !providerActivity.id.startsWith('toolu_')) return false
+  const canonicalToolName = taskWraithWrapperCanonicalToolName(providerActivity)
+  if (!canonicalToolName || !providerActivity.id.startsWith('toolu_')) return false
   if (
     activityProvider(providerActivity) !== 'claude' ||
     activityProvider(hostActivity) !== 'claude'
@@ -119,7 +126,6 @@ function isMirroredClaudeTaskWraithActivity(
     return false
   }
 
-  const canonicalToolName = resolveCanonicalToolName(wrapperMatch[1])
   if (resolveCanonicalToolName(hostActivity.toolName) !== canonicalToolName) return false
   if (!hostActivity.id.toLowerCase().startsWith(`claude-mcp-${canonicalToolName}-`)) {
     return false
@@ -153,19 +159,110 @@ function isMirroredClaudeTaskWraithActivity(
   )
 }
 
+function isMirroredKimiTaskWraithActivity(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): boolean {
+  const canonicalToolName = taskWraithWrapperCanonicalToolName(providerActivity)
+  if (!canonicalToolName || !/^\d+:tool_/i.test(providerActivity.id)) return false
+  if (activityProvider(providerActivity) !== 'kimi' || activityProvider(hostActivity) !== 'kimi') {
+    return false
+  }
+  if (resolveCanonicalToolName(hostActivity.toolName) !== canonicalToolName) return false
+  if (!hostActivity.id.toLowerCase().startsWith(`kimi-mcp-${canonicalToolName}-`)) return false
+  const providerLive = isLiveActivityStatus(providerActivity.status)
+  const hostLive = isLiveActivityStatus(hostActivity.status)
+  if (!providerLive && !hostLive) {
+    if (providerActivity.status !== hostActivity.status) return false
+    if (
+      !providerActivity.resultSummary ||
+      providerActivity.resultSummary !== hostActivity.resultSummary
+    ) {
+      return false
+    }
+  } else if (
+    providerActivity.resultSummary &&
+    hostActivity.resultSummary &&
+    providerActivity.resultSummary !== hostActivity.resultSummary
+  ) {
+    return false
+  }
+
+  const providerParameters = { ...(providerActivity.parameters || {}) }
+  delete providerParameters.cwd
+  if (
+    Object.keys(providerParameters).length > 0 &&
+    mirroredParameterSignature(providerActivity.parameters) !==
+      mirroredParameterSignature(hostActivity.parameters)
+  ) {
+    return false
+  }
+
+  const providerStart = parsedActivityTime(providerActivity.startedAt)
+  const providerEnd = parsedActivityTime(providerActivity.endedAt)
+  const hostStart = parsedActivityTime(hostActivity.startedAt)
+  const hostEnd = parsedActivityTime(hostActivity.endedAt)
+  if (providerStart === null || hostStart === null || hostStart < providerStart) return false
+  if (providerEnd !== null && hostStart > providerEnd + 250) return false
+  if (hostEnd !== null && hostEnd < hostStart) return false
+  return providerEnd === null || hostEnd === null || hostEnd <= providerEnd + 250
+}
+
+function mergeKimiMirrorTiming(
+  providerActivity: ToolActivity,
+  hostActivity: ToolActivity
+): ToolActivity {
+  const startedAt = providerActivity.startedAt || hostActivity.startedAt
+  const endedAt = providerActivity.endedAt || hostActivity.endedAt
+  const parsedStart = parsedActivityTime(startedAt)
+  const parsedEnd = parsedActivityTime(endedAt)
+  const durationMs =
+    providerActivity.durationMs ??
+    (parsedStart !== null && parsedEnd !== null
+      ? Math.max(0, parsedEnd - parsedStart)
+      : hostActivity.durationMs)
+  return {
+    ...hostActivity,
+    ...(startedAt ? { startedAt } : {}),
+    ...(endedAt ? { endedAt } : {}),
+    ...(durationMs === undefined ? {} : { durationMs })
+  }
+}
+
 /**
  * Claude reports TaskWraith MCP execution twice: its provider-native `toolu_`
  * wrapper and the host's `claude-mcp-*` execution receipt. Keep the provider
  * activity (the real round-trip duration) only when identity, payload, result,
  * attribution, and nested timing all prove that the following row is a mirror.
+ *
+ * Kimi ACP now has the same dual projection, but its outer `N:tool_*` row has
+ * no arguments while the host receipt owns the path/command and exact diff.
+ * Keep that enriched host activity and copy the outer round-trip timing onto
+ * it. A Kimi wrapper is removed only when canonical identity, attribution,
+ * compatible lifecycle evidence, and nested timing prove a matching host
+ * receipt; an unbrokered or denied wrapper therefore remains visible.
  */
-export function coalesceMirroredClaudeTaskWraithActivities(
+export function coalesceMirroredTaskWraithActivities(
   activities: readonly ToolActivity[]
 ): ToolActivity[] {
   const coalesced: ToolActivity[] = []
   for (const activity of activities) {
     const previous = coalesced[coalesced.length - 1]
     if (previous && isMirroredClaudeTaskWraithActivity(previous, activity)) continue
+
+    let kimiProviderIndex = -1
+    for (let index = coalesced.length - 1; index >= 0; index -= 1) {
+      if (isMirroredKimiTaskWraithActivity(coalesced[index], activity)) {
+        kimiProviderIndex = index
+        break
+      }
+    }
+    if (kimiProviderIndex >= 0) {
+      const providerActivity = coalesced[kimiProviderIndex]
+      coalesced.splice(kimiProviderIndex, 1)
+      coalesced.push(mergeKimiMirrorTiming(providerActivity, activity))
+      continue
+    }
     coalesced.push(activity)
   }
   return coalesced
@@ -178,7 +275,7 @@ export function shouldGroupAdjacentToolMessages(a: ChatMessage, b: ChatMessage):
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
   if (run.length === 1) return run[0]
   const first = run[0]
-  const toolActivities = coalesceMirroredClaudeTaskWraithActivities(
+  const toolActivities = coalesceMirroredTaskWraithActivities(
     run.flatMap((message) => message.toolActivities || [])
   )
   return {
