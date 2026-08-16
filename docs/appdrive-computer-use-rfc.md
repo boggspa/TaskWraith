@@ -10,7 +10,7 @@
 | Layer                                                                                             | Status                                          | Meaning                                                                                          |
 | ------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | §12b Foreground AX authority (exact run/window lease, secret refuse, audit, host-global HID idle) | **Shipped production**                          | Already in main; do not re-derive or weaken                                                      |
-| UI/session vertical slice (dock, enforced pause/takeover, display-only cursor, status binding)    | **Integrated on the mission branch**            | Main-owned admission gate, lifecycle IPC, persistent Drive tab, and normalized cursor projection |
+| UI/session vertical slice (dock, enforced pause/takeover, display-only cursor, status binding)    | **Merged to `master`**                          | Main-owned admission gate, lifecycle IPC, persistent Drive tab, and normalized cursor projection |
 | Background Drive / interference harness                                                           | **Prototype only** (`prototypes/` + `scripts/`) | Never productize until per-app harness proves non-interference                                   |
 | Isolated Drive (VM guest HID)                                                                     | **RFC only**                                    | Not profile `--taskwraith-isolated-instance`                                                     |
 | This RFC + shared contract + `AppDriveSliceAcceptance.test.ts`                                    | **Decision lock / acceptance evidence**         | Documentary + invariant tests; no actuation authority                                            |
@@ -25,7 +25,7 @@ Productize **Foreground Drive** chrome on the existing exact-run/window AX lease
 
 | Mode                 | Meaning                                                                                                          | This run                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Integrated UI/session slice** on shipped §12b authority    |
+| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Shipped** on `master`: §12b authority + UI/session slice   |
 | **Background Drive** | Non-disruptive control: no host cursor, focus, keyboard, clipboard, or activation theft                          | **Prototype only** until interference harness passes per app |
 | **Isolated Drive**   | Independent guest mouse/keyboard inside a VM                                                                     | **RFC only**; Windows AppDrive remains off in v1             |
 
@@ -117,9 +117,9 @@ Default harness posture: dry-run / observe-only; any PostToPid prototype is fixt
 
 ## 5. Ordered follow-up slices (file ownership)
 
-1. **Merge clearance (Boss)** — rebase onto current `master`, rerun all gates, and promote only when the shared checkout has no conflicting live claim.
-2. **Live dock preview (Renderer/AppWatch owner)** — feed a sanitized Screen Watch frame into `AppDriveDockPanel`; keep privileged geometry main-owned.
-3. **Renderer binder extraction (Renderer architecture owner)** — move AppDrive reconciliation out of `App.tsx` and import the shared lifecycle/mode contract.
+1. ~~**Merge clearance (Boss)**~~ — **DONE.** The slice is on `master`.
+2. ~~**Live dock preview (Renderer/AppWatch owner)**~~ — **DONE 2026-08-16** (`AppDrivePreviewFrame` + `attach-window:preview-frame`). Main validates `appwatch.latestFrame` into a bounded, generation-stamped `data:image/png` URL and the renderer drops any frame whose generation no longer matches the live attachment. Privileged geometry stayed main-owned. NOT secret-redacted — see the module header before putting any redaction claim on that surface.
+3. **Renderer binder extraction (Renderer architecture owner)** — move AppDrive reconciliation out of `App.tsx` and import the shared lifecycle/mode contract. **Still open**; the preview poll added to `App.tsx` moves with it when it goes.
 4. **Permission surface (Authority + UX owners)** — show the current-launch lease and revoke path; durable app-keyed approvals remain a separately consented RFC.
 5. **Harness iteration (GrokWork2 → security review)** — fixture apps; publish per-app results; still no product claim.
 6. **Target-scoped native arbitration RFC (Native/security owners)** — explicit consent required because event taps / Input Monitoring widen desktop authority.

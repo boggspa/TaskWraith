@@ -1,7 +1,71 @@
 # AppDrive — agent actuation over TaskWraith-owned surfaces
 
-**Status:** design for Tiers 0–2 and 5; a deliberately narrow Tier 4 managed-window QA path is implemented source-ahead. Written 2026-07-26; implementation status updated 2026-07-28.
-**Scope of this document:** Tiers 0–2 remain the web-actuation hardening/design plan. Tier 3 is cancelled, Tier 4 is shipped only within the exact contract in §12b, and Tier 5 remains out of scope.
+**Status:** Written 2026-07-26. Implementation status re-verified against the tree **2026-08-16** — see §0a, which supersedes the per-slice status in §11 wherever they disagree.
+**Scope of this document:** Tiers 0, 1, 3 and 4 have shipped. Tier 2 (any-origin web) shipped in 1.9.5 **ahead of its stated gate**; §0a records what that means and what is still owed. Tier 5 remains out of scope, and Tier 3-as-designed (XCUITest/idb) was overtaken by the Simulator Canvas that shipped instead.
+
+---
+
+## 0a. Reality pass, 2026-08-16 — what actually shipped
+
+This document was written as a plan, and the plan was overtaken. Most of it
+shipped; one part shipped **out of order**, which is the only thing here that
+needs a decision rather than a correction. Read this section before treating any
+"design/plan" language below as current.
+
+### Landed — do not schedule as construction work
+
+| Slice | State | Where it lives now |
+|---|---|---|
+| **S1** D1 target identity + preconditions | Landed | `CanvasWebDriver` refuses on `isConnected`, recomputed identity, and centre hit-test, with `refusalReason` on `CanvasActResult` |
+| **S2** D2 audit-before-execute + serialization | Landed | `CanvasService.serializeInteraction`; intent audit precedes dispatch |
+| **S3** D3 user takeover | Landed | `inputEpoch` / `userActiveUntil`, `expectedInputEpoch` pinning |
+| **S4** D4 sketch stroke protection | Landed | `expectedUpdatedAt` → `stale_document`, `user_busy` mid-stroke |
+| **S5** D5 grant surface-binding | Landed `bbfa9ec7c` | §3.2 |
+| **S6** Credential protection | Landed | `secret_field` refusal, `secretsRedacted` capture painting, sketch driver permission/download/WebRTC guards |
+| **S7** `instanceEpoch` | Landed | `McpBridgeRuntime`, verified by the executor |
+| **S12** Consequential confirmation | Landed 2026-08-16 (web) | `CanvasConsequentialTarget` + `CanvasService.gateConsequentialAction`; native already confirmed every click (§12b) |
+| **Tier 3** | Shipped, but not as designed | Simulator Canvas (`simulatorCanvas` service, own lease + human/agent actuation gating) replaced the XCUITest/idb adapter sketched in §9 |
+| **Tier 4** | Shipped narrow + productized | §12b, plus the Foreground Drive dock/session/virtual-cursor slice and `AppDriveEnsembleAuthority` |
+
+### Shipped ahead of its gate — the one open decision
+
+**Tier 2 (any-origin web) shipped in 1.9.5.** The first-class Canvas Browser
+navigates any origin and carries a durable TaskWraith profile
+(`persist:taskwraith-canvas-browser-v1`), so cookies and sign-ins survive
+restarts. §9 gated Tier 2 on **S6 and S12 both being live**. S6 was live; S12
+was not, and shipped only on 2026-08-16.
+
+Two consequences the rest of this document does not yet reflect:
+
+1. **The "no cookies" softener is gone.** §1 and §10 were written when
+   agent-opened canvases used ephemeral partitions, so "the agent cannot reach
+   an authenticated session" was structurally true. It is now false by design:
+   an authenticated surface is the normal case, which promotes residual risk
+   §10.1 from an edge case to the default one.
+2. **The loopback fence (§9) was never built.** `isLoopbackHost` exists in
+   `canvasTypes.ts` but no actuation path calls it — only tests do. Tier 1's
+   "most important scoping decision" was skipped rather than lifted, so §13 Q3
+   (origin-based vs Run-attempt-based fencing) is moot as asked; it was decided
+   by shipping. If a fence is still wanted it needs re-proposing against the
+   any-origin product, not restoring as designed.
+
+### Still open
+
+- **S9 `AppDriveLease` for web/simulator.** Native has a real lease (expiry,
+  step budget, revocation). Web actuation still rides an ordinary
+  `canvasInteraction` / `webBrowsing` session grant with no expiry or budget.
+  The `appDrive` **service id** remains correctly rejected (§3.2); it is the
+  *lease* that is absent, and the two were bundled in the original S9.
+- **S11 new verbs.** `CanvasActionInput.kind` is still `click | fill`. No
+  keyboard, scroll, hover, select or `wait_for`.
+- **S8 authority-role union.** Still hand-declared in at least
+  `BossApprovalReview.ts` and `EnsembleOrchestrator.ts`.
+- **S13 drive-session reporting.** The observe-act-verify *contract* is stated
+  in the tool catalogue, but there is no drive-session report or actor/verifier
+  split.
+- **An "AppDrive V1" contract document.** The roadmap made defining one the
+  gating item before claiming V1. The product shipped without it, so this is now
+  retrospective: write down what the shipped contract *is*.
 
 ---
 
@@ -20,7 +84,9 @@ The *product* built on AppDrive is **QA lanes** — agents driving your own buil
 
 ## 1. The premise, and the one place it currently fails
 
-The v1 instinct is right: restrict actuation to surfaces TaskWraith owns, and the catastrophic wrong-window / wrong-tab failure class disappears. Agent-opened canvases are additionally near-harmless because partitions are per-session ephemeral (`canvas-${sessionId}`, no `persist:` prefix, [CanvasWebDriver.ts:328](../src/main/canvas/CanvasWebDriver.ts:328)) — a freshly agent-opened canvas has no cookies and cannot act as the user anywhere.
+The v1 instinct is right: restrict actuation to surfaces TaskWraith owns, and the catastrophic wrong-window / wrong-tab failure class disappears.
+
+> **NO LONGER TRUE as of 1.9.5 — the paragraph this replaces claimed agent-opened canvases were "additionally near-harmless" because their partitions were per-session ephemeral (`canvas-${sessionId}`, no `persist:` prefix), so a fresh canvas had no cookies and could not act as the user anywhere.** The first-class Canvas Browser now shares one durable profile (`persist:taskwraith-canvas-browser-v1`, [CanvasBrowserProfile.ts](../src/main/canvas/CanvasBrowserProfile.ts)); cookies and sign-ins persist across restarts and across canvases. **An authenticated surface is the normal case now, not the exception.** Directly constructed drivers still get a one-canvas in-memory profile, but the app injects the shared persistent one. Do not reason from the old softener anywhere in this document — it is why residual risk §10.1 is now the default case and why the consequential check in §7 had to ship.
 
 **But the containment is not enforced today, because `canvasInteraction` grants are per-service, never per-surface.** The session-grant key is `provider:service:workspacePath` ([PermissionService.ts:263](../src/main/PermissionService.ts:263)) — no `canvasId`, no `chatId`. So:
 
@@ -31,7 +97,7 @@ The v1 instinct is right: restrict actuation to surfaces TaskWraith owns, and th
 
 The single exception is the `plan` preset, where `canvasInteraction` is grant-immune and re-prompts per call (`PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`, [EffectiveRunPermissions.ts:246](../src/main/EffectiveRunPermissions.ts:246)). That is the mechanism we need, just not the default.
 
-**Fixing the grant key is the gating item for the web tiers.** Until a grant names a surface, "the user chose this window" is a UX story, not an invariant. The source-ahead Tier 4 path does not reuse that broad grant: it has its own exact run/window lease and independent user-consent flow (§12b).
+**Fixing the grant key was the gating item for the web tiers — it shipped in `bbfa9ec7c` (§3.2).** Until a grant names a surface, "the user chose this window" is a UX story, not an invariant. The source-ahead Tier 4 path does not reuse that broad grant: it has its own exact run/window lease and independent user-consent flow (§12b).
 
 ### What the sandbox does and does not buy
 
@@ -317,7 +383,7 @@ The threat is the **product** of the two capabilities. An agent that can both re
 
 Concretely, for each tier:
 
-- **Tier 0–2 (canvas):** already satisfied structurally, not by policy. Each canvas is its own `WebContents` on an isolated ephemeral partition, and the driver only ever scripts *that* `webContents`. There is no path from a canvas verb to the host renderer, and `canvasEval` is confined the same way. The one thing that must never change: do not add a driver that resolves TaskWraith's own `webContents` as a target.
+- **Tier 0–2 (canvas):** already satisfied structurally, not by policy. Each canvas is its own `WebContents` on a partition separate from the host renderer's, and the driver only ever scripts *that* `webContents`. (The partition is no longer *ephemeral* — see §1 — but the §6a invariant never depended on that: what makes it structural is that no canvas driver can resolve TaskWraith's own `webContents`, not that the canvas has no cookies.) There is no path from a canvas verb to the host renderer, and `canvasEval` is confined the same way. The one thing that must never change: do not add a driver that resolves TaskWraith's own `webContents` as a target.
 - **Tier 4 (`window` driver):** this is where the invariant becomes load-bearing rather than free. A PID-bound window driver must **refuse TaskWraith's own process and windows**, by pid identity, not by title or bundle heuristics — titles are attacker-controlled. Fail closed on an unresolvable pid.
 - **Tier 5 (general desktop):** the invariant is the reason Tier 5 needs its own risk acceptance rather than inheriting Tier 4's. A general screen-and-input capability can reach our own chrome by construction, so it would need a positive exclusion enforced at the executor, and that exclusion is only as good as its window-identity check.
 
@@ -346,7 +412,16 @@ The lease answers "may you touch this surface". It cannot answer "should this pa
 
 The destructive-keyword list (delete, remove, send, publish, transfer, pay, confirm, submit, and similar labels) is an advisory UI hint only; labels can be localized, icon-only, or misleading. It never authorizes a click: **every** native click independently prompts. TaskWraith revalidates the main-owned lease after the dialog and before dispatch. The accepted-confirmation/send boundary is the linearization point, so an accepted in-flight exact click may finish if detach races immediately afterward; the dialog discloses that result before the user accepts.
 
-For the broader future web/general AppDrive routes, evaluate a **destructive predicate** against the *resolved structured target* — accessible name, ARIA role, element type, enclosing form's method. Matches (delete / remove / send / publish / transfer / pay / confirm / submit-to-non-idempotent, plus `type=submit` inside a form with a payment or destructive intent hint) require the durable **per-call human confirmation** design below. That planned receipt/ledger mechanism is distinct from the shipped native one-click dialog.
+**Web status — SHIPPED 2026-08-16, in a narrower form than planned below.** `CanvasService` probes the resolved target read-only before dispatch (`CanvasDriver.describeTarget`) and a destructive or financial label takes one main-owned confirmation; absent hook, throw, and decline all fail closed with `consequential_confirmation_required`. The confirmed dispatch pins the probe's trusted input epoch, so a human who takes time to decide cannot have the action land on a page they touched meanwhile.
+
+Two deliberate narrowings from the plan below, both worth keeping unless evidence says otherwise:
+
+- **No receipt/ledger.** The confirmation is transient and in-band, not a content-bound durable receipt. The receipt machinery below is worth revisiting only if web actuation gains a lease (S9) for a receipt to bind *to*; a receipt that binds to nothing durable is ceremony.
+- **A tighter predicate.** The list below (delete / remove / send / publish / transfer / pay / confirm / submit) includes verbs that fire on nearly every page. `CanvasConsequentialTarget` ships irreversible and financial verbs only, and omits `send` / `post` / `submit` / `confirm` on purpose: a confirmation the user meets constantly is one they learn to click through, which is worse than none. See §13 Q5.
+
+The predicate matches **page-authored labels**, so it is a judgment-error speed bump and never a containment boundary — the same honesty the native path states above. The page's own text never reaches the dialog: the summary is built from the matched term, so a label cannot author the prose the human reads.
+
+The original plan, for reference — evaluate a **destructive predicate** against the *resolved structured target* — accessible name, ARIA role, element type, enclosing form's method. Matches (delete / remove / send / publish / transfer / pay / confirm / submit-to-non-idempotent, plus `type=submit` inside a form with a payment or destructive intent hint) require a durable **per-call human confirmation**:
 
 - mint a content-bound receipt at prompt-creation time from the exact resolved target the human is shown ([ApprovalOrchestration.ts:592](../src/main/run/ApprovalOrchestration.ts:592)), self-verify it immediately, fail closed on mint failure;
 - digest over UTF-16LE code units, not UTF-8 — unpaired surrogates alias to U+FFFD under UTF-8 and would let one receipt verify a different target ([CanvasEvalAudit.ts:29](../src/main/canvas/CanvasEvalAudit.ts:29));
@@ -406,11 +481,11 @@ When it does land, the governing rules are: one writer per surface (many observe
 
 | Tier | Scope | Notes |
 |---|---|---|
-| **0** | Harden what ships: D1–D5 | No new capability. Do regardless. |
-| **1** | AppDrive Web, **loopback origins only** | Lease + verbs + observe-act-verify. The QA-lane product. |
-| **2** | AppDrive Web, any origin | Louder consent, credential protections, consequential-action confirmation mandatory. |
-| **3** | AppDrive Simulator | XCUITest/idb adapter behind `CanvasDeviceDriver`, which is `simctl`-only today with 11 verbs throwing ([CanvasDeviceDriver.ts:559](../src/main/canvas/CanvasDeviceDriver.ts:559)). Disposable (`simctl erase` is a real undo). |
-| **4** | AppDrive Native (managed window) | **Source-ahead, narrow QA contract:** exact live Run-owned launch PID plus kernel process-birth receipt, user picker, separate View & Control consent, macOS 15.2+, action-time Accessibility trust, solo lease, and AX-first observe/inspect/click/fill only. It is not general desktop control; §12b is authoritative. |
+| **0** | Harden what ships: D1–D5 | **SHIPPED.** All five landed; see §0a. |
+| **1** | AppDrive Web, **loopback origins only** | **SKIPPED, not shipped.** The loopback fence was never built and the product went straight to any-origin (§0a). The lease and the new verbs remain absent. |
+| **2** | AppDrive Web, any origin | **SHIPPED 1.9.5, ahead of its gate.** Credential protection shipped with it; consequential confirmation only followed on 2026-08-16 (§0a, §7). |
+| **3** | AppDrive Simulator | **SHIPPED as Simulator Canvas, not as designed here.** The XCUITest/idb adapter was overtaken by the `simulatorCanvas` service with its own lease and human/agent actuation gating. Disposable (`simctl erase` is a real undo). |
+| **4** | AppDrive Native (managed window) | **SHIPPED — narrow QA contract, plus the Foreground Drive dock/session slice:** exact live Run-owned launch PID plus kernel process-birth receipt, user picker, separate View & Control consent, macOS 15.2+, action-time Accessibility trust, solo lease, and AX-first observe/inspect/click/fill only. It is not general desktop control; §12b is authoritative. |
 | **5** | General attached-window desktop control | Out of scope. Separate decision with its own risk acceptance. |
 
 **Xcode SwiftUI Preview is not a target** — no public control API, needs a running Xcode GUI + XPC, version churn. Already the recorded design conclusion; do not relitigate. For macOS QA, launch a dedicated build/test host and attach a PID-bound window driver.
@@ -425,10 +500,10 @@ When it does land, the governing rules are: one writer per surface (many observe
 
 Accepted for Tier 1–2:
 
-1. **In-origin destructive actions remain possible** on an authenticated surface. Mitigated by §7, not eliminated.
+1. **In-origin destructive actions remain possible** on an authenticated surface. Mitigated by §7, not eliminated. **Since 1.9.5 this is the DEFAULT case, not an edge one** — the durable Canvas Browser profile means the agent is usually driving a signed-in page (see §1). The §7 web check raises the floor for honestly-labelled controls; it does not close this.
 2. **The dev server / native build under test is not sandboxed.** Displaying it in a Canvas does not contain it.
 3. **Screenshots leave the Mac when a hosted provider drives.** Disclosed in the lease consent; the local-model path is the eventual answer.
-4. **DNS rebinding** needs connect-time IP pinning (pre-existing, documented).
+4. **DNS rebinding** — partly closed since this was written. `CanvasDnsGuard` resolves the host before opening and refuses a public-looking name that lands on loopback, private LAN or link-local. It is a resolve-time check, not connect-time IP pinning, so a name that re-resolves between the check and the connection is still a gap.
 5. **The page-world ref map is ultimately page-controllable** — `Object.freeze` is partial. `targetIdentity` recomputation (§5.1) narrows this but does not close it.
 6. **Uses-ledger growth is unbounded by design.**
 7. **Judgment errors are the dominant residual.** The sandbox does not address them; the actor/verifier split and consequential confirmation are mitigations, not proofs.
@@ -436,6 +511,12 @@ Accepted for Tier 1–2:
 ---
 
 ## 11. Slice plan
+
+> **Historical.** This was the delivery order as planned on 2026-07-26. **§0a is
+> the current status** and supersedes the per-row notes below wherever they
+> disagree — most of these shipped, and Tier 2 shipped ahead of S12. The table
+> is kept because the sequencing rationale is still the record of why each slice
+> gated the next.
 
 Each slice is independently shippable with gates green. Stage by explicit path and commit in slices — no `stash`, no bulk `git add` (concurrent sessions share the index).
 
@@ -590,7 +671,7 @@ Product language for “Computer Use” must not collapse into Tier 5 or into pr
 
 | Mode | Contract | Status |
 |---|---|---|
-| **Foreground Drive** | The **shipped** §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | §12b authority and the first-class dock/session/display-cursor slice are integrated on the mission branch. |
+| **Foreground Drive** | The **shipped** §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | §12b authority and the first-class dock/session/display-cursor slice are on `master`. The dock preview frame landed 2026-08-16; it is a local mirror of the user's own picked window and is **not** secret-redacted. |
 | **Background Drive** | Non-disruptive control with zero host cursor, focus, keyboard, clipboard, or activation theft. | **Prototype only** until a per-app automated interference harness proves non-theft. No CGEvent productization in the safe slice. |
 | **Isolated Drive** | Real independent guest mouse/keyboard through a VM. | **RFC only**. **Not** `--taskwraith-isolated-instance` (that flag is TaskWraith state-profile isolation on the host). |
 
@@ -609,5 +690,6 @@ Rules that override marketing copy:
    - `PLAN_INSTRUMENT_ADVERTISE_TOOLS` ([McpAutoAllowedTools.ts:246](../src/main/mcp/McpAutoAllowedTools.ts:246)) is **bridge visibility only**. Plan-tier safety comes from the main-side service gate (`canvasInteraction: 'ask'`), backed by the `SAFETY INVARIANT` test at [McpAutoAllowedTools.test.ts:287](../src/main/mcp/McpAutoAllowedTools.test.ts:287) asserting no plan instrument is also in `MCP_AUTO_ALLOWED_TOOLS`.
 
    Being `workspace_write` therefore neither adds nor removes anything under `plan`. **Trap for new verbs:** `PLAN_INSTRUMENT_ADVERTISE_TOOLS` is a `.filter()` over three hard-coded literals plus `MEDIA_EDITING_TOOLS`, so a new verb is not picked up automatically and must be added by name. It fails safe (forget it → invisible to plan seats, not silently permitted), but the invariant test only iterates that derived list, so a new verb inherits the not-auto-allowed guarantee **only once added** — add to both or neither.
-3. Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based (only URLs `detectedUrls` produced)? Run-attempt-based is tighter and ties the lease to a build under test, which is the QA framing — but it forbids driving a hand-typed `localhost` URL.
+3. ~~Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based?~~ **MOOT — decided by shipping (see §0a).** The fence was never built and 1.9.5 shipped any-origin browsing over a durable signed-in profile. `isLoopbackHost` remains exported but is called only by its own tests. Re-propose against the any-origin product if a fence is still wanted; do not "restore" this one.
 4. Sandbox posture for the process under test — real seatbelt profile, or documented non-containment?
+5. **New.** Should the consequential predicate (§7, `CanvasConsequentialTarget`) widen beyond irreversible/financial verbs? It deliberately omits generic form verbs (`submit`/`continue`/`OK`) and comms verbs (`send`/`post`) because they fire on nearly every page and a constant confirmation is one users learn to click through. Widening wants evidence about firing frequency, not intuition.
