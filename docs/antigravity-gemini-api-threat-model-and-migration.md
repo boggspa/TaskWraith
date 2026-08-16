@@ -1,9 +1,12 @@
 # AntiGravity combined-mode threat model and migration contract
 
 This contract applies to the existing `antigravity` provider and its two
-separately governed lanes. It describes the source-ahead implementation at
-`d5dbf7919`; it is a certification contract, not a new provider or a request to
-remove or disable an existing user capability.
+separately governed lanes. It certifies the implementation at `d5dbf7919`,
+which was source-ahead when this was written and **has since shipped**: the
+bring-your-own-Gemini-API-key lane went GA in v1.8.8 (2026-07-24) and was
+extended through v1.9.5. `d5dbf7919` is an ancestor of both tags. This is a
+certification contract, not a new provider or a request to remove or disable
+an existing user capability.
 
 ## Scope and assets
 
@@ -98,7 +101,7 @@ Electron owns the key, discovery, admission, and catalog generation. Renderer
 state receives only allowlisted status, fixed errors, disclosure state, and
 nonsecret model rows. Paired iOS receives the dynamic `antigravity` catalog
 through the existing provider-models broadcast. A valid row such as
-`gemini-api:gemini-2.5-flash` decodes as an AntiGravity catalog row and may
+`gemini-api:gemini-3.5-flash` decodes as an AntiGravity catalog row and may
 admit AntiGravity dynamically, while `TWTheme.liveSelectableProviderIds`
 remains unchanged and `gemini` remains retired/unavailable for new runs.
 
