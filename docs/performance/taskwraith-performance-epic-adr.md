@@ -207,7 +207,7 @@ scheduled-orchestration → workflow-run-history → run-queue → run-recovery
 | `chat-store-manifests` | Manifests + hot snapshots |
 | `session-checkpoint-hot` | Hot per-chat/round checkpoint files |
 | `session-checkpoint-archive` | Archived superseded checkpoint shards |
-| `chat-list-index-shards` | Per-chat list shards (see §5.5) — lean ensemble landed (flag-discriminated, ~5.3 KB); full per-chat shards remain T3c |
+| `chat-list-index-shards` | Per-chat list shards (see §5.5) — lean ensemble landed (flag-discriminated, ~5.3 KB); **full per-chat shards landed `b63c71880` as `src/main/store/ChatListIndexStore.ts`**, whose own header names it T3c |
 
 Contract unchanged: fsynced prepare → acquire holds → quiesce → commit steps → release; incomplete is resumable; startup fail-closed blocks recovery until erasure resumes cleanly.
 
@@ -539,10 +539,10 @@ T2  HEAD baseline capture (30/50/dual/soak) under isolated userData   │
      │                                                                │
      ├─► T3b Checkpoint hot/archive + upsert throttle  [@GrokWork1]   │
      │                                                                │
-     ├─► T3c Minimal ChatListItem + per-chat index shards [@GrokWork1]│
+     ├─► T3c Minimal ChatListItem + per-chat index shards [@GrokWork1]│ — landed `b63c71880` (`ChatListIndexStore.ts`, JSONL append index + per-chat summaries)
      │                                                                │
      ▼                                                                │
-T4  Chat journal/segments dual-read (S1→S2 dark-write) + deletion     │
+T4  Chat journal/segments dual-read (S1→S2 dark-write) + deletion     │ — substantially landed 2026-08-16, `3bd11b12a`..`d61a63a47`, unflagged (see amendment)
      │                                              [@GrokWork1]      │
      ▼                                                                │
 T5  Tool-detail content-addressed blobs + hot projection-only         │
@@ -574,6 +574,35 @@ T10 Cutover S3 + soak + rollback drill → S5                          │
 - Live unrelated claims on composition-root / export / iOS projection paths block workers until cleared or Captain assigns disjoint scopes.
 
 **Quick wins allowed in T3a** (coalesce + batch seed) because they do not change format authority — still require before/after metrics and D2/D3 barrier tests.
+
+**Amendment (2026-08-16, T3c + T4 landed):** two tranches this document still
+describes as forward work have landed on `master`.
+
+- **T3c** landed as `b63c71880` — `src/main/store/ChatListIndexStore.ts`, whose
+  file header reads "T3c — Chat-list-index split + incremental store". It
+  replaces the monolithic `chat-list-index.json` with a JSONL append index plus
+  per-chat summary files, which is the work §5.5 and the tranche ladder both
+  describe as outstanding. It predates this ADR's own last edit.
+- **T4** landed as an eight-commit series on 2026-08-16, `3bd11b12a`
+  (`ChatRecordMutation.ts`) → `a8dcce2ed`/`2d2fca2af` (`IncrementalChatJournal.ts`)
+  → `77dd304cc`/`493fe421a`/`c60c38367` (`IncrementalChatPersistence.ts` + store
+  wiring) → `865afd6ca`/`d61a63a47`. Normal streaming saves now complete once
+  their mutation append is fsynced, with whole-record writes kept only at
+  compatibility barriers, and `incrementalChatPersistence` is wired into
+  `src/main/store/index.ts` for persist, purge, clear and idle checkpointing.
+
+**Two things about that landing are worth recording rather than smoothing over.**
+First, it is **unflagged**: none of the three new modules reads an env var or
+feature flag, so unlike item 6's dark `TASKWRAITH_UTILITY_WRITE` landing this is
+live on the default path. Second, it landed **directly on the shared `master`
+checkout**, which sits against invariant 6 above ("No epic source work in the
+shared dirty checkout — writer lanes use isolated worktrees only") and against
+the closing line of §2 ("Production source tranches remain locked until Boss
+authorizes them after T1/T2 artifacts exist") — the more so because the T1/T2
+artifacts that precondition names are themselves now missing from disk (see
+`t2-baseline-artifact-index.md`). Whether that authorization was given out of
+band is not recorded anywhere in this repo. This note states the position; it
+does not adjudicate it.
 
 **Item 6 (utility-process durable write) — committed, outside this ADR's core tranches:** `b745115a1` landed the worker (`src/main/store/PersistenceWriteWorker.ts` + `.test.ts`, `src/main/workers/persistenceWriteWorker.ts`), seam (`src/main/store/index.ts`), durability tests (`src/main/store/persistenceDurability.test.ts`, 14/14), Phase-0 baseline (`src/main/store/persistenceWriteBaseline.bench.test.ts`), and build entry (`electron.vite.config.ts`). Flag dark (`TASKWRAITH_UTILITY_WRITE=1`), no composition-root wiring. ~40 ms (57%) of the ~70 ms large-save block moves off main; serialize (~30 ms) stays. This narrows the freeze window until T4 — it does not replace v2 append-oriented persistence.
 

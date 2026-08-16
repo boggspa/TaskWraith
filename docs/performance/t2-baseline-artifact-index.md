@@ -4,6 +4,36 @@
 > **Epic:** TaskWraith Performance Fix Epic — 455-turn mission
 > **Phase:** T2 — Authoritative 30-seat baseline capture
 
+> ### ⚠ ARTIFACTS ABSENT — verified 2026-08-16
+>
+> **The ~140 MB of profile evidence this index exists to point at is no longer
+> on disk.** The measurements, digests and gate results below are unchanged and
+> remain the record of what was captured; what is gone is the ability to
+> re-verify them against the files.
+>
+> What was checked on 2026-08-16:
+>
+> - The frozen worktree `fanout-CursorWork1-299397f7ef` still exists but
+>   contains only `perf-homes/` (three run dirs, each holding an empty
+>   `Downloads/`). There is **no `perf-artifacts/` directory in it at all**.
+> - Zero `.cpuprofile` and zero `.heapsnapshot` files exist anywhere under
+>   `/Users/chrisizatt` (excluding `node_modules`).
+> - The only `perf-t2-report.json` files on disk are transient fixtures under
+>   `AGBench/.tmp_vitest/`, not this run's report.
+> - `perf-artifacts/t2-cursorwork-host-retry/` at the repo root retains only a
+>   `LANE-RECEIPT.md` from the earlier failed, non-authoritative retry.
+>
+> Consequences, stated plainly: the SHA-256 digests in "Profile Artifacts"
+> below are now the **only** surviving evidence of these files, and nothing can
+> be re-checked against them. Any T3+ gate whose precondition is "T1/T2
+> authoritative artifacts exist" is **not currently satisfiable by
+> re-verification** — it can only be satisfied by accepting this record on its
+> face, or by re-running the T2 capture to produce a fresh authoritative
+> baseline. Deciding which is a Boss/owner call, not a documentation fix.
+>
+> Neither the removal date nor the authority for it is recorded anywhere found.
+> "Frozen, read-only forever" describes the intent, not what happened.
+
 ---
 
 ## Overview
@@ -23,7 +53,7 @@ This artifact establishes the **measured denominator** for all subsequent perfor
 |-------|-------|
 | **Run ID** | `perf-t2-30seat-42-9977a712b741` |
 | **Commit SHA** | `06778017e5ec898e1c4e30ceee96c28ab4259bb0` |
-| **Worktree** | `fanout-CursorWork1-299397f7ef` (frozen, read-only forever) |
+| **Worktree** | `fanout-CursorWork1-299397f7ef` (intended frozen/read-only; **artifacts absent as of 2026-08-16** — see the banner above) |
 | **Blackboard Entry** | #49 (49-entry capsule) |
 
 ---
@@ -74,7 +104,8 @@ All profiles are **digest-verified** (SHA-256) and **non-empty**.
 | `renderer.heapsnapshot` | 34,076,993 B (~32.5 MB) | `118c5bd7...a7db` | Boss, DSeekScout, K3Review |
 | **Total** | **146,772,127 B (~140 MB)** | | |
 
-> **Path:** `fanout-CursorWork1-299397f7ef/perf-artifacts/t2g30-d613-0804-host/profiles/`
+> **Path (as captured):** `fanout-CursorWork1-299397f7ef/perf-artifacts/t2g30-d613-0804-host/profiles/`
+> — this directory no longer exists; the digests above are the surviving record.
 
 ---
 
@@ -181,7 +212,7 @@ Read-only analysis by GrokWork of both `.cpuprofile` artifacts:
 
 ## Reference
 
-- **Frozen worktree:** `/Users/chrisizatt/Documents/.taskwraith-worktrees/AGBench/fanout-CursorWork1-299397f7ef`
-- **Report:** `fanout-CursorWork1-299397f7ef/perf-artifacts/t2g30-d613-0804-host/perf-t2-report.json`
+- **Frozen worktree:** `/Users/chrisizatt/Documents/.taskwraith-worktrees/AGBench/fanout-CursorWork1-299397f7ef` — still present, but only `perf-homes/` survives inside it
+- **Report:** `fanout-CursorWork1-299397f7ef/perf-artifacts/t2g30-d613-0804-host/perf-t2-report.json` — **absent as of 2026-08-16**
 - **Land tip (post T2):** `3fdcce856b4508f219f2a5ba7cb13891ebad4b53`
 - **Epic ADR:** `docs/performance/taskwraith-performance-epic-adr.md`
