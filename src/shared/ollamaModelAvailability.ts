@@ -32,8 +32,26 @@ export function ollamaCloudModelId(modelId?: string | null): string {
 }
 
 const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  'deepseek-v4-flash:0731': 'DeepSeek V4 Flash (0731)',
+  'deepseek-v4-flash:preview': 'DeepSeek V4 Flash (Preview)',
+  'deepseek-v4-pro:0813': 'DeepSeek V4 Pro (0813)',
+  'deepseek-v4-pro:preview': 'DeepSeek V4 Pro (Preview)',
+  'gemma4:31b': 'Gemma 4 (31B Param)',
   'glm-5.2': 'GLM 5.2',
-  'minimax-m3': 'MiniMax M3'
+  'glm-5.1': 'GLM 5.1',
+  'gpt-oss:20b': 'GPT OSS (20B Param)',
+  'gpt-oss:120b': 'GPT OSS (120B Param)',
+  'kimi-k2.5': 'Kimi K2.5',
+  'kimi-k2.6': 'Kimi K2.6',
+  'kimi-k2.7-code': 'Kimi K2.7 Code',
+  'kimi-k3': 'Kimi K3',
+  'minimax-m2.7': 'MiniMax M2.7',
+  'minimax-m3': 'MiniMax M3',
+  'mistral-large-3:675b': 'Mistral Large 3 (675B Param)',
+  'nemotron-3-nano:30b': 'Nemotron 3 Nano (30B Param)',
+  'nemotron-3-super': 'Nemotron 3 Super',
+  'nemotron-3-ultra': 'Nemotron 3 Ultra',
+  'qwen3.5:397b': 'Qwen 3.5 (397B Param)'
 }
 
 /**

@@ -81,6 +81,21 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('rnj-1')?.providerLabel).toBe('Essential AI')
     expect(resolveOllamaDisplayBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
     expect(resolveOllamaDisplayBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
+    expect(resolveOllamaDisplayBrand('glm-5.2:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai',
+      modelLabel: 'GLM 5.2'
+    })
+    expect(resolveOllamaDisplayBrand('minimax-m3:cloud')).toMatchObject({
+      providerLabel: 'MiniMax',
+      providerClass: 'minimax',
+      modelLabel: 'MiniMax M3'
+    })
+    expect(resolveOllamaDisplayBrand('kimi-k2.7-code:cloud')).toMatchObject({
+      providerLabel: 'Kimi',
+      providerClass: 'kimi',
+      modelLabel: 'Kimi K2.7 Code'
+    })
   })
 
   it('matches the local Mistral tags from the bare id, with no label to help', () => {
@@ -114,8 +129,10 @@ describe('resolveOllamaDisplayBrand', () => {
       'essential',
       'google',
       'ibm',
+      'kimi',
       'liquid',
       'meta',
+      'minimax',
       'mistral',
       'nvidia',
       'openai',
@@ -140,6 +157,9 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe('nvidia')
     expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
     expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
+    expect(resolveProviderHueClass('ollama', 'glm-5.2:cloud')).toBe('zai')
+    expect(resolveProviderHueClass('ollama', 'minimax-m3:cloud')).toBe('minimax')
+    expect(resolveProviderHueClass('ollama', 'kimi-k3:cloud')).toBe('kimi')
   })
 
   it('returns the runtime provider for non-brand models', () => {

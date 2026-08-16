@@ -3,10 +3,9 @@ import Foundation
 /// Swift twin of the desktop renderer's
 /// `src/renderer/src/lib/ollamaDisplayBrand.ts`.
 ///
-/// Curated local Ollama models are still `provider == "ollama"` at runtime;
-/// this presentation layer "spoofs" the upstream brand NAME + accent HUE so a
-/// Qwen / Gemma / Nemotron model reads as Alibaba / Google / NVIDIA in the
-/// transcript header, model picker, and usage dashboard — exactly like the Mac.
+/// Local and Cloud Ollama models are still `provider == "ollama"` at runtime;
+/// this presentation layer "spoofs" the upstream brand NAME + accent HUE while
+/// the Cloud badge remains the source classifier — exactly like the Mac.
 ///
 /// Pure, side-effect-free module — no UIKit, no SwiftUI. Keep the brand table
 /// in lockstep with the desktop file when brands change.
@@ -38,6 +37,26 @@ public enum OllamaDisplayBrands {
     /// differently named family. Brand-wide fallbacks cannot distinguish these
     /// newer families when callers only have the raw Ollama tag.
     private static let exactModelLabels = [
+        "deepseek-v4-flash:0731": "DeepSeek V4 Flash (0731)",
+        "deepseek-v4-flash:preview": "DeepSeek V4 Flash (Preview)",
+        "deepseek-v4-pro:0813": "DeepSeek V4 Pro (0813)",
+        "deepseek-v4-pro:preview": "DeepSeek V4 Pro (Preview)",
+        "gemma4:31b": "Gemma 4 (31B Param)",
+        "glm-5.1": "GLM 5.1",
+        "glm-5.2": "GLM 5.2",
+        "gpt-oss:20b": "GPT OSS (20B Param)",
+        "gpt-oss:120b": "GPT OSS (120B Param)",
+        "kimi-k2.5": "Kimi K2.5",
+        "kimi-k2.6": "Kimi K2.6",
+        "kimi-k2.7-code": "Kimi K2.7 Code",
+        "kimi-k3": "Kimi K3",
+        "minimax-m2.7": "MiniMax M2.7",
+        "minimax-m3": "MiniMax M3",
+        "mistral-large-3:675b": "Mistral Large 3 (675B Param)",
+        "nemotron-3-nano:30b": "Nemotron 3 Nano (30B Param)",
+        "nemotron-3-super": "Nemotron 3 Super",
+        "nemotron-3-ultra": "Nemotron 3 Ultra",
+        "qwen3.5:397b": "Qwen 3.5 (397B Param)",
         "qwen3.8:27b-mlx": "Qwen 3.8 (27B-MLX)",
         "nemotron-3.5-lightning:30b-mlx": "Nemotron 3.5 Lightning (30B-MLX)",
         "muse-glimmer:30b-mlx": "Muse Glimmer (30B-MLX)",
@@ -88,6 +107,12 @@ public enum OllamaDisplayBrands {
             needles: ["granite4.1", "granite 4.1", "granite"],
             fallbackModelLabel: "Granite 4.1 (3B Param)"),
         OllamaDisplayBrandDefinition(
+            id: "kimi",
+            providerLabel: "Kimi",
+            providerClass: "kimi",
+            needles: ["kimi-"],
+            fallbackModelLabel: "Kimi K3"),
+        OllamaDisplayBrandDefinition(
             id: "liquid",
             providerLabel: "Liquid",
             providerClass: "liquid",
@@ -102,6 +127,12 @@ public enum OllamaDisplayBrands {
                 "llama 3.2",
             ],
             fallbackModelLabel: "Llama 3.1 (8B Param)"),
+        OllamaDisplayBrandDefinition(
+            id: "minimax",
+            providerLabel: "MiniMax",
+            providerClass: "minimax",
+            needles: ["minimax-", "minimax "],
+            fallbackModelLabel: "MiniMax M3"),
         // The `mistral` hue class + label already exist for the first-class
         // Mistral Vibe seat, so a local Devstral / Ministral tag reuses them
         // rather than introducing a tenth brand colour. `ministral` needs its
@@ -140,7 +171,7 @@ public enum OllamaDisplayBrands {
             id: "zai",
             providerLabel: "Z.ai",
             providerClass: "zai",
-            needles: ["glm-4.7-flash", "glm 4.7 flash"],
+            needles: ["glm-", "glm "],
             fallbackModelLabel: "GLM-4.7-Flash (30B-A3B Q4)"),
     ]
 
@@ -156,11 +187,14 @@ public enum OllamaDisplayBrands {
             def.needles.contains(where: { key.contains($0) })
         }) else { return nil }
 
+        let exactModelId = id.lowercased()
+            .replacingOccurrences(of: ":cloud", with: "", options: [.anchored, .backwards])
+            .replacingOccurrences(of: "-cloud", with: "", options: [.anchored, .backwards])
         return OllamaDisplayBrand(
             providerLabel: definition.providerLabel,
             providerClass: definition.providerClass,
             modelLabel: label.isEmpty
-                ? (exactModelLabels[id.lowercased()] ?? definition.fallbackModelLabel) : label)
+                ? (exactModelLabels[exactModelId] ?? definition.fallbackModelLabel) : label)
     }
 
     /// CSS/theme hue class for a provider + model. Returns the runtime

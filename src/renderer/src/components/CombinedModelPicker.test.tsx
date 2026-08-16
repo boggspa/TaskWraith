@@ -274,7 +274,9 @@ describe('CombinedModelPicker', () => {
       'qwen3.5:9b',
       'granite4.1:3b'
     ])
-    expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('ollama')
+    expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('zai')
+    expect(modelPickerHueClass('ollama', 'minimax-m3:cloud', 'MiniMax M3')).toBe('minimax')
+    expect(modelPickerHueClass('ollama', 'kimi-k3:cloud', 'Kimi K3')).toBe('kimi')
   })
 
   it('renders a current-color SVG classifier for Ollama Cloud', () => {
@@ -309,6 +311,8 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('composer-combined-picker-trigger-primary">MiniMax M3</span>')
     expect(html).toContain('composer-combined-picker-trigger-cloud-indicator')
     expect(html).toContain('aria-label="Ollama Cloud model"')
+    expect(html).toContain('data-provider-hue="minimax"')
+    expect(html).toContain('--chip-accent:var(--provider-minimax-color, var(--accent))')
   })
 
   it('derives the AntiGravity reasoning hue hook from the concrete model id', () => {

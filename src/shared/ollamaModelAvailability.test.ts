@@ -77,6 +77,33 @@ describe('ollama model availability helpers', () => {
     expect(ollamaCloudModelDisplayName('future-model:cloud')).toBeUndefined()
   })
 
+  it('humanizes every model in the current direct Cloud catalog', () => {
+    const expected = new Map([
+      ['minimax-m2.7:cloud', 'MiniMax M2.7'],
+      ['mistral-large-3:675b:cloud', 'Mistral Large 3 (675B Param)'],
+      ['nemotron-3-super:cloud', 'Nemotron 3 Super'],
+      ['deepseek-v4-flash:0731:cloud', 'DeepSeek V4 Flash (0731)'],
+      ['nemotron-3-ultra:cloud', 'Nemotron 3 Ultra'],
+      ['glm-5.1:cloud', 'GLM 5.1'],
+      ['deepseek-v4-pro:0813:cloud', 'DeepSeek V4 Pro (0813)'],
+      ['gpt-oss:20b:cloud', 'GPT OSS (20B Param)'],
+      ['gpt-oss:120b:cloud', 'GPT OSS (120B Param)'],
+      ['qwen3.5:397b:cloud', 'Qwen 3.5 (397B Param)'],
+      ['deepseek-v4-pro:preview:cloud', 'DeepSeek V4 Pro (Preview)'],
+      ['nemotron-3-nano:30b:cloud', 'Nemotron 3 Nano (30B Param)'],
+      ['gemma4:31b:cloud', 'Gemma 4 (31B Param)'],
+      ['kimi-k2.6:cloud', 'Kimi K2.6'],
+      ['minimax-m3:cloud', 'MiniMax M3'],
+      ['glm-5.2:cloud', 'GLM 5.2'],
+      ['kimi-k2.7-code:cloud', 'Kimi K2.7 Code'],
+      ['deepseek-v4-flash:preview:cloud', 'DeepSeek V4 Flash (Preview)'],
+      ['kimi-k3:cloud', 'Kimi K3']
+    ])
+    for (const [modelId, label] of expected) {
+      expect(ollamaCloudModelDisplayName(modelId)).toBe(label)
+    }
+  })
+
   it('never offers a local pull command for a cloud source model', () => {
     expect(buildOllamaPullCommand('kimi-k2.5:cloud')).toBeNull()
     expect(buildOllamaPullCommand('gpt-oss:120b-cloud')).toBeNull()

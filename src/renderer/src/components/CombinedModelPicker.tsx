@@ -63,7 +63,6 @@ export function modelPickerHueClass(
   modelId?: string | null,
   modelLabel?: string | null
 ): string {
-  if (provider === 'ollama' && isOllamaCloudModelId(modelId)) return 'ollama'
   return resolveProviderHueClass(provider, modelId, modelLabel)
 }
 

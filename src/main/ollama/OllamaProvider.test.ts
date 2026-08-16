@@ -3414,6 +3414,9 @@ describe('normalizeOllamaModels', () => {
   it('maps common local model ids to human-readable labels', () => {
     expect(humanizeOllamaModelId('glm-5.2')).toBe('GLM 5.2')
     expect(humanizeOllamaModelId('minimax-m3')).toBe('MiniMax M3')
+    expect(humanizeOllamaModelId('kimi-k2.7-code:cloud')).toBe('Kimi K2.7 Code')
+    expect(humanizeOllamaModelId('mistral-large-3:675b:cloud')).toBe('Mistral Large 3 (675B Param)')
+    expect(humanizeOllamaModelId('deepseek-v4-pro:preview:cloud')).toBe('DeepSeek V4 Pro (Preview)')
     expect(humanizeOllamaModelId('qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')

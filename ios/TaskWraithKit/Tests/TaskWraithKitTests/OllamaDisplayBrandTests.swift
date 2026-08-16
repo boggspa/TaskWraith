@@ -63,6 +63,18 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.resolve(modelId: "north-mini-code-1.0:q4_K_M")?.providerClass
                 == "cohere")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "glm-5.2:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "Z.ai", providerClass: "zai", modelLabel: "GLM 5.2"))
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "minimax-m3:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "MiniMax", providerClass: "minimax", modelLabel: "MiniMax M3"))
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "kimi-k2.7-code:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "Kimi", providerClass: "kimi", modelLabel: "Kimi K2.7 Code"))
     }
 
     @Test("reuses existing upstream hues for the lightweight catalog")
@@ -98,7 +110,8 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.all.map(\.id) == [
                 "alibaba", "cohere", "deepseek", "deep-reinforce", "essential", "google", "ibm",
-                "liquid", "meta", "mistral", "nvidia", "openai", "openbmb", "poolside", "zai",
+                "kimi", "liquid", "meta", "minimax", "mistral", "nvidia", "openai", "openbmb",
+                "poolside", "zai",
             ])
     }
 
@@ -123,6 +136,15 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "nemotron-3.5-lightning:30b-mlx") == "nvidia")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "glm-5.2:cloud")
+                == "zai")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "minimax-m3:cloud")
+                == "minimax")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "kimi-k3:cloud")
+                == "kimi")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(

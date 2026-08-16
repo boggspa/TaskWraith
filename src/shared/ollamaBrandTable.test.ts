@@ -119,4 +119,19 @@ describe('matchOllamaBrand', () => {
     expect(matchOllamaBrand('lfm2.5-thinking:1.2b')?.providerClass).toBe('liquid')
     expect(matchOllamaBrand('gemma3:4b')?.providerClass).toBe('google')
   })
+
+  it('applies maker accents to Ollama Cloud model ids', () => {
+    expect(matchOllamaBrand('glm-5.2:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai'
+    })
+    expect(matchOllamaBrand('minimax-m3:cloud')).toMatchObject({
+      providerLabel: 'MiniMax',
+      providerClass: 'minimax'
+    })
+    expect(matchOllamaBrand('kimi-k2.7-code:cloud')).toMatchObject({
+      providerLabel: 'Kimi',
+      providerClass: 'kimi'
+    })
+  })
 })

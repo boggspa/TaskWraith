@@ -1,9 +1,10 @@
 /**
  * Shared Ollama display-brand table — the single source of truth for the
  * "brand spoof" presentation used across renderer, main, and (mirrored in)
- * iOS. Curated local Ollama models stay `provider: 'ollama'` at runtime; this
- * table maps a model id to its upstream brand NAME + hue CLASS so a Qwen /
- * Gemma / Nemotron model reads as Alibaba / Google / NVIDIA.
+ * iOS. Local and Cloud Ollama models stay `provider: 'ollama'` at runtime;
+ * this table maps a model id to its upstream brand NAME + hue CLASS so a Qwen /
+ * GLM / MiniMax / Kimi model keeps its maker accent without losing the Ollama
+ * Cloud source classifier.
  *
  * Renderer adds humanised-label fallback on top (see
  * src/renderer/src/lib/ollamaDisplayBrand.ts); main uses the raw matcher for
@@ -72,6 +73,13 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     fallbackModelLabel: 'Granite 4.1 (3B Param)'
   },
   {
+    id: 'kimi',
+    providerLabel: 'Kimi',
+    providerClass: 'kimi',
+    needles: ['kimi-'],
+    fallbackModelLabel: 'Kimi K3'
+  },
+  {
     id: 'liquid',
     providerLabel: 'Liquid',
     providerClass: 'liquid',
@@ -84,6 +92,13 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerClass: 'meta',
     needles: ['muse-glimmer', 'muse glimmer', 'llama3.1', 'llama 3.1', 'llama3.2', 'llama 3.2'],
     fallbackModelLabel: 'Llama 3.1 (8B Param)'
+  },
+  {
+    id: 'minimax',
+    providerLabel: 'MiniMax',
+    providerClass: 'minimax',
+    needles: ['minimax-', 'minimax '],
+    fallbackModelLabel: 'MiniMax M3'
   },
   {
     // The `mistral` hue class + label already exist for the first-class Mistral
@@ -128,7 +143,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     id: 'zai',
     providerLabel: 'Z.ai',
     providerClass: 'zai',
-    needles: ['glm-4.7-flash', 'glm 4.7 flash'],
+    needles: ['glm-', 'glm '],
     fallbackModelLabel: 'GLM-4.7-Flash (30B-A3B Q4)'
   }
 ]
