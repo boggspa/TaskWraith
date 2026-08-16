@@ -41,6 +41,7 @@ import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
+import { formatEnsembleYieldContentForDisplay } from '../lib/EnsembleYieldPresentation'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
@@ -5643,6 +5644,11 @@ export const TranscriptPanel = memo(
                     ) : (
                       (() => {
                         const mediaRefs = collectMessageMediaRefs(msg)
+                        const displayContent =
+                          agentQuestionHeaderOverride ??
+                          (isYieldMessage
+                            ? formatEnsembleYieldContentForDisplay(msg.content)
+                            : msg.content)
                         const messageStreamRunId =
                           typeof msg.runId === 'string' && msg.runId
                             ? msg.runId
@@ -5696,7 +5702,7 @@ export const TranscriptPanel = memo(
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
                               usesRevealLifecycle ? (
                                 <RevealingMarkdownMessage
-                                  content={agentQuestionHeaderOverride ?? msg.content}
+                                  content={displayContent}
                                   chat={currentChat || undefined}
                                   isLive={isLiveRevealRow}
                                   messageId={rowKey}
@@ -5715,7 +5721,7 @@ export const TranscriptPanel = memo(
                                 />
                               ) : (
                                 <MarkdownMessage
-                                  content={agentQuestionHeaderOverride ?? msg.content}
+                                  content={displayContent}
                                   chat={currentChat || undefined}
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}

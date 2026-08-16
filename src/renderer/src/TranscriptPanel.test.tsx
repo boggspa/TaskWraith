@@ -3254,6 +3254,64 @@ describe('participant yield transcript rows', () => {
     expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
   })
 
+  it('presents long plain-prose yield handoffs as readable derived paragraphs', () => {
+    const participant = ensembleParticipant({
+      id: 'claude-orchestrator',
+      provider: 'claude',
+      role: 'Orchestrator',
+      model: 'claude-opus-5'
+    })
+    const rawContent = [
+      'Orchestrator yielded.',
+      'WRITE UP P6 SO THE RESIDUALS CANNOT BE BURIED — the user asked for this explicitly.',
+      'Docs only.',
+      "P5's goal is complete and stays complete; this creates no new active goal and reopens nothing.",
+      'P6-01 REAL-PROFILE CRASH RECOVERY: prove durable-boundary recovery end to end through a genuinely migrated profile, with a real crash during an active write path and multiple relaunches.',
+      'Acceptance: state convergence after relaunch, no queue loss, delivery still exactly-once.',
+      'P6-02 INTERRUPTED-START MATRIX: cover the startup-gate permutations that can diverge across relaunch paths and keep assertions strict.',
+      'NON-NEGOTIABLE FRAMING: the Keep decision is product state, not implementation debt.'
+    ].join(' ')
+    const yieldMessage: ChatMessage = {
+      id: 'yield-long',
+      role: 'system',
+      content: rawContent,
+      timestamp: '2026-01-01T00:00:01.000Z',
+      metadata: {
+        kind: 'ensembleParticipantStatus',
+        ensembleParticipantId: participant.id,
+        ensembleProvider: participant.provider,
+        ensembleRole: participant.role,
+        ensembleModel: participant.model,
+        ensembleStatus: 'yielded'
+      }
+    }
+    const messages: ChatMessage[] = [
+      yieldMessage,
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      }
+    ]
+    const currentChat = activeEnsembleChat(participant)
+    currentChat.messages = messages
+    if (currentChat.ensemble) currentChat.ensemble.activeRound = undefined
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, currentChat, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="yield-long"')
+    const next = html.indexOf('data-message-id="final"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect((yieldBlock.match(/<p>/g) || []).length).toBeGreaterThanOrEqual(5)
+    expect(yieldBlock).toContain('P6-01 REAL-PROFILE CRASH RECOVERY')
+    expect(yieldBlock).toContain('P6-02 INTERRUPTED-START MATRIX')
+    expect(yieldBlock).toContain('NON-NEGOTIABLE FRAMING')
+    expect(yieldMessage.content).toBe(rawContent)
+  })
+
   it('leaves non-yield participant status codas in system-notice folds', () => {
     const messages: ChatMessage[] = [
       {
