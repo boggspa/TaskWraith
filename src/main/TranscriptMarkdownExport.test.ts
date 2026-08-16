@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord, ToolActivity } from './store/types'
 import { makeDeliveredExternalContribution } from './collaboration/HumanCollaboratorMessages'
+import { externalizeTerminalToolActivityDetails } from './store/ChatToolDetailExternalization'
 import {
   buildChatMessageTranscript,
   buildChatMarkdownTranscript,
@@ -329,6 +330,58 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.omissions).toContain('raw tool details omitted')
     expect(result.omissions).toContain('raw tool outputs omitted')
     expect(result.omissions).toContain('tool file paths omitted')
+  })
+
+  it('still discloses omitted tool details after they are externalized behind a detail ref', () => {
+    // Terminal runs have their heavy tool fields deleted and replaced by a
+    // `detailRef` before a transcript is ever exported, so the fixture above no
+    // longer resembles what reaches this code in production. Round-trip through
+    // the real externalizer rather than hand-writing the compacted shape: that
+    // keeps this honest if the compaction ever moves more fields.
+    const source = chat(
+      [
+        message({
+          id: 'msg-tool',
+          role: 'tool',
+          content: '',
+          runId: 'run-1',
+          toolActivities: [activity()]
+        })
+      ],
+      {
+        runs: [
+          {
+            runId: 'run-1',
+            startedAt: '2026-06-16T10:00:00.000Z',
+            endedAt: '2026-06-16T10:01:00.000Z',
+            status: 'success'
+          }
+        ]
+      } as Partial<ChatRecord>
+    )
+    const externalized = externalizeTerminalToolActivityDetails(source, (runId, act) => ({
+      schemaVersion: 1,
+      storage: 'run_event_artifact',
+      runId,
+      activityId: act.id,
+      offset: 0,
+      byteLength: 32,
+      sha256: 'b'.repeat(64)
+    }))
+    const compacted = externalized.chat.messages[0].toolActivities![0]
+    // Guard the premise: if this ever stops being the compacted shape, the
+    // assertions below would pass for the wrong reason.
+    expect(externalized.externalizedActivityCount).toBe(1)
+    expect(compacted.detailRef).toBeDefined()
+    expect(compacted.parameters).toBeUndefined()
+    expect(compacted.resultSummary).toBeUndefined()
+
+    const result = buildChatMarkdownTranscript(externalized.chat, { homeDir: '/Users/dev' })
+
+    expect(result.markdown).not.toContain('rawpreviewsecret')
+    expect(result.markdown).not.toContain('cat /Users/dev/project/.env')
+    expect(result.omissions).toContain('raw tool details omitted')
+    expect(result.omissions).toContain('raw tool outputs omitted')
   })
 
   it('scrubs absolute paths, attachment paths, and common secrets by default', () => {

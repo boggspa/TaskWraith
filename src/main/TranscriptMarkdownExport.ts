@@ -326,10 +326,27 @@ function toolSummary(activity: ToolActivity, replacements: Array<[string, string
       ? `  - Diff: ${activity.diffSummary.files?.length || 0} file(s), +${activity.diffSummary.additions || 0}/-${activity.diffSummary.deletions || 0}`
       : ''
   ].filter(Boolean)
-  if (activity.parameters || activity.rawUseEvent || activity.rawResultEvent || activity.rawEventRefs) {
+  // A terminal run's heavy fields are deleted and replaced by `detailRef`
+  // before export, so testing the fields alone silently stops disclosing an
+  // omission this function still makes. `detailRef` stands in for all of them:
+  // it is attached only when at least one heavy field was cleared, and those
+  // fields span both categories below, so flagging both can over-disclose an
+  // empty category but can never under-disclose a dropped one.
+  if (
+    activity.detailRef ||
+    activity.parameters ||
+    activity.rawUseEvent ||
+    activity.rawResultEvent ||
+    activity.rawEventRefs
+  ) {
     omissions.add('raw tool details omitted')
   }
-  if (activity.resultSummary || activity.outputSummary || activity.outputPreview) {
+  if (
+    activity.detailRef ||
+    activity.resultSummary ||
+    activity.outputSummary ||
+    activity.outputPreview
+  ) {
     omissions.add('raw tool outputs omitted')
   }
   if (activity.filePath || activity.affectedFilePath) {
