@@ -83,6 +83,26 @@ const REQUIRED_VISIBLE_COUNTERS = [
  */
 const DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES = 1_048_576
 
+/**
+ * Permitted visible player count. Stated here and asserted literally in a control
+ * so the band cannot be widened without a test noticing.
+ */
+const DIAGNOSTICS_PLAYER_COUNT_BOUNDS = { minimum: 1, maximum: 2 }
+
+/**
+ * Every resource-sample field serialized into the verdict's resourceDelta. Listed
+ * explicitly so a field cannot be reported as evidence without also being
+ * required to be a finite reading.
+ */
+const REQUIRED_RESOURCE_FIELDS = [
+  'physicalFootprintBytes',
+  'peakPhysicalFootprintBytes',
+  'mallocAllocatedBytes',
+  'iosurfaceVirtualBytes',
+  'iosurfaceResidentBytes',
+  'iosurfaceRegionCount'
+]
+
 /** Tolerance when matching a rounded HUD timecode back to an exact source PTS. */
 const PTS_SELECTION_TOLERANCE_SECONDS = 0.000_501
 
@@ -382,6 +402,55 @@ function assertDiagnostics(samples, firstResources, lastResources) {
           JSON.stringify({ value: sample.players.count })
       )
     }
+    // THE PLAYHEAD. A string playhead coerces perfectly: '20' - '10' is 10 and
+    // 300/10 is 30, so ptsAdvanced and presentedRate both read correct while
+    // nothing numeric was ever measured. null/NaN/Infinity previously rejected
+    // only as a side effect of downstream arithmetic, not by validation.
+    //
+    // Number.isFinite is the load-bearing guard here and does NOT coerce, so it
+    // rejects '10' on its own - a mutation removing the typeof clause stays green,
+    // measured. The typeof clause is kept as belt-and-braces against a future
+    // refactor to the GLOBAL isFinite, which does coerce and would reopen this.
+    const pts = sample.contentPtsSeconds
+    if (
+      typeof pts !== 'number' ||
+      !Number.isFinite(pts) ||
+      pts < 0 ||
+      pts > describeFixtureContract().durationSeconds
+    ) {
+      throw new Error(
+        'visible playhead is unreadable or out of range at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({ value: pts, maximumSeconds: describeFixtureContract().durationSeconds })
+      )
+    }
+
+    // ASSET IDENTITY. Nothing in this claim previously checked it, so the whole
+    // of Outcome 9 could have been satisfied by screenshots of entirely different
+    // media whose counters happened to advance. isPlayableSample checked it, but
+    // no tracked composition enforced that join.
+    if (sample.assetMatch?.matched !== true) {
+      throw new Error(
+        'sample does not show the opened asset at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({ assetMatch: sample.assetMatch ?? null })
+      )
+    }
+
+    // OBSERVATION IDENTITY. The verdict now serializes these digests, so a reader
+    // can re-derive which OCR output each reading came from. Requiring it keeps
+    // that field from being silently absent on the evidence it rests on.
+    if (typeof sample.rawOcrSha256 !== 'string' || sample.rawOcrSha256.length < 1) {
+      throw new Error(
+        'observation identity (raw OCR digest) is missing at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({ value: sample.rawOcrSha256 ?? null })
+      )
+    }
+
     if (
       !Number.isFinite(sample.players.rssMegabytes) ||
       sample.players.rssMegabytes < 0 ||
@@ -421,6 +490,53 @@ function assertDiagnostics(samples, firstResources, lastResources) {
         'visible diagnostics did not advance monotonically: ' +
           JSON.stringify({ index, prior, current })
       )
+    }
+  }
+
+  // PLAYER-COUNT STABILITY. The claim is named playerCountStable, but only the
+  // FIRST and LAST samples were compared - so a 1 -> 2 -> 1 excursion reported
+  // stable:true while a second player existed mid-run, which is precisely the
+  // shared-decoder violation the claim exists to detect.
+  const expectedPlayerCount = parsed[0].players.count
+  for (const [index, sample] of parsed.entries()) {
+    if (
+      sample.players.count !== expectedPlayerCount ||
+      sample.players.count < DIAGNOSTICS_PLAYER_COUNT_BOUNDS.minimum ||
+      sample.players.count > DIAGNOSTICS_PLAYER_COUNT_BOUNDS.maximum
+    ) {
+      throw new Error(
+        'visible player count is unstable or out of bounds at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({
+            value: sample.players.count,
+            expected: expectedPlayerCount,
+            bounds: DIAGNOSTICS_PLAYER_COUNT_BOUNDS
+          })
+      )
+    }
+  }
+
+  // RESOURCE SAMPLES. Every field below is serialized into resourceDelta as
+  // evidence; a non-numeric or absent reading previously produced a coerced or
+  // NaN delta while the verdict still returned ok.
+  for (const [label, resource] of [
+    ['first', firstResources],
+    ['last', lastResources]
+  ]) {
+    if (!resource || !Number.isFinite(resource.ps?.rssKilobytes)) {
+      throw new Error(
+        'resource sample process RSS is unreadable: ' +
+          JSON.stringify({ phase: label, value: resource?.ps?.rssKilobytes ?? null })
+      )
+    }
+    for (const field of REQUIRED_RESOURCE_FIELDS) {
+      if (!Number.isFinite(resource[field])) {
+        throw new Error(
+          'resource sample field is unreadable: ' +
+            JSON.stringify({ phase: label, field, value: resource[field] ?? null })
+        )
+      }
     }
   }
 
@@ -468,6 +584,12 @@ function assertDiagnostics(samples, firstResources, lastResources) {
     ptsDeltaSeconds,
     shownDelta,
     presentedRate,
+    observationIdentities: parsed.map((sample, index) => ({
+      index,
+      rawOcrSha256: sample.rawOcrSha256,
+      assetMatched: sample.assetMatch.matched,
+      contentPtsSeconds: sample.contentPtsSeconds
+    })),
     rssAgreement: {
       visibleRssMegabytes,
       processRssMegabytes,
@@ -518,8 +640,10 @@ async function runBoundedDiagnostics() {
 }
 
 module.exports = {
+  DIAGNOSTICS_PLAYER_COUNT_BOUNDS,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
+  REQUIRED_RESOURCE_FIELDS,
   REQUIRED_VISIBLE_COUNTERS,
   PTS_SELECTION_TOLERANCE_SECONDS,
   UNPROMOTED_SESSION_DEPENDENCIES,

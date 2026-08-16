@@ -14,6 +14,7 @@ const {
   parseFramePtsCensus,
   parseOcrInteger,
   parseVisibleHud,
+  REQUIRED_RESOURCE_FIELDS,
   REQUIRED_VISIBLE_COUNTERS,
   resolveMediaTool,
   runBoundedDiagnostics
@@ -490,6 +491,194 @@ describe('assertDiagnostics validates every counter it claims to have read', () 
     const verdict = assertDiagnostics(series(), resources(500_000), resources(520_000))
     expect(verdict.presentedRate).toBeCloseTo(30, 5)
     expect(verdict.droppedFramesStayedZero).toBe(true)
+  })
+})
+
+describe('assertDiagnostics validates every truth its verdict reports, not only the counters', () => {
+  // SECOND GENERALIZATION, AND THE LESSON IS MINE. The previous pass hardened the
+  // seven visible counters and stopped there - so the playhead, the player-count
+  // stability claim, the asset identity and the serialized resource deltas were
+  // still unvalidated. "Probe the whole class" has to mean the class of things the
+  // VERDICT ASSERTS, not the class of fields that happened to be in the last loop.
+  //
+  // The severe one is asset identity: assertDiagnostics never checked assetMatch,
+  // so the entire Outcome 9 claim could have been satisfied by samples of
+  // completely different media while every counter advanced beautifully.
+  const at = (pts: unknown, shown: number, cache: number, over: Record<string, unknown> = {}) => ({
+    observed: {
+      contentPtsText: 'x',
+      contentPtsSeconds: pts,
+      state: 'PLAY',
+      assetMatch: { matched: true },
+      rawOcrSha256: 'a'.repeat(64),
+      diagnostics: {
+        droppedFrames: 0,
+        heldFrames: 2,
+        shownFrames: shown,
+        cacheHits: cache,
+        textures: 8
+      },
+      players: { count: 1, rssMegabytes: 512 },
+      ...over
+    }
+  })
+  const pair = (over: Record<string, unknown> = {}) => [
+    at(10, 300, 120, over),
+    at(20, 600, 240, over)
+  ]
+  const R = (over: Record<string, unknown> = {}) => ({ ...resources(520_000), ...over })
+
+  describe('the playhead', () => {
+    it('rejects a playhead OCR returned as text, which coerces into a truthful-looking rate', () => {
+      // '20' - '10' is 10 and 300/10 is 30, so every arithmetic claim downstream
+      // reads correct while nothing numeric was ever measured.
+      expect(() => assertDiagnostics([at('10', 300, 120), at('20', 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+    })
+
+    it('rejects a negative playhead, which no transport position can be', () => {
+      expect(() => assertDiagnostics([at(-20, 300, 120), at(-10, 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+    })
+
+    it('rejects an unreadable playhead by validation rather than by coercion', () => {
+      expect(() => assertDiagnostics([at(null, 300, 120), at(null, 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+    })
+
+    it('rejects a non-finite playhead', () => {
+      expect(() => assertDiagnostics([at(10, 300, 120), at(Infinity, 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+      expect(() => assertDiagnostics([at(NaN, 300, 120), at(NaN, 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+    })
+
+    it('rejects a playhead beyond the generated fixture duration', () => {
+      expect(() => assertDiagnostics([at(10, 300, 120), at(601, 600, 240)], R(), R())).toThrow(
+        /playhead/i
+      )
+    })
+  })
+
+  describe('the playerCountStable claim', () => {
+    it('rejects an intermediate player-count drift the first/last comparison misses', () => {
+      // 1 -> 2 -> 1 leaves first === last, so the verdict reported
+      // playerCountStable:true while a second player existed mid-run - exactly the
+      // shared-decoder violation this claim is supposed to detect.
+      const samples = [
+        at(10, 300, 120),
+        at(20, 600, 240, { players: { count: 2, rssMegabytes: 512 } }),
+        at(30, 900, 360)
+      ]
+      expect(() => assertDiagnostics(samples, R(), R())).toThrow(/player count/i)
+    })
+
+    it('rejects an intermediate player count outside the permitted bound', () => {
+      const samples = [
+        at(10, 300, 120),
+        at(20, 600, 240, { players: { count: 7, rssMegabytes: 512 } }),
+        at(30, 900, 360)
+      ]
+      expect(() => assertDiagnostics(samples, R(), R())).toThrow(/player count/i)
+    })
+
+    it('accepts a genuinely stable three-sample series', () => {
+      const verdict = assertDiagnostics(
+        [at(10, 300, 120), at(20, 600, 240), at(30, 900, 360)],
+        R(),
+        R()
+      )
+      expect(verdict.playerCountStable).toBe(true)
+    })
+  })
+
+  describe('asset identity - the claim must be about the opened media', () => {
+    it('rejects samples that do not show the opened asset', () => {
+      // THE SEVERE ONE. Without this, Outcome 9 could be satisfied by screenshots
+      // of entirely different media with perfectly advancing counters.
+      expect(() => assertDiagnostics(pair({ assetMatch: { matched: false } }), R(), R())).toThrow(
+        /opened asset/i
+      )
+    })
+
+    it('rejects a sample with no asset determination at all', () => {
+      expect(() => assertDiagnostics(pair({ assetMatch: undefined }), R(), R())).toThrow(
+        /opened asset/i
+      )
+    })
+  })
+
+  describe('observation identity', () => {
+    it('rejects a sample carrying no raw OCR digest, and reports the digests it relied on', () => {
+      expect(() => assertDiagnostics(pair({ rawOcrSha256: null }), R(), R())).toThrow(
+        /observation identity/i
+      )
+      const verdict = assertDiagnostics(pair(), R(), R())
+      expect(verdict.observationIdentities).toHaveLength(2)
+      expect(verdict.observationIdentities[0].rawOcrSha256).toBe('a'.repeat(64))
+    })
+  })
+
+  describe('the serialized resource deltas', () => {
+    for (const field of [
+      'physicalFootprintBytes',
+      'peakPhysicalFootprintBytes',
+      'mallocAllocatedBytes',
+      'iosurfaceVirtualBytes',
+      'iosurfaceResidentBytes',
+      'iosurfaceRegionCount'
+    ]) {
+      it('rejects a non-numeric ' + field + ' rather than serializing a coerced delta', () => {
+        expect(() =>
+          assertDiagnostics(pair(), R({ [field]: 'abc' }), R({ [field]: 'abc' }))
+        ).toThrow(/resource sample/i)
+      })
+    }
+
+    it('rejects a null resource field', () => {
+      expect(() =>
+        assertDiagnostics(
+          pair(),
+          R({ physicalFootprintBytes: null }),
+          R({ physicalFootprintBytes: null })
+        )
+      ).toThrow(/resource sample/i)
+    })
+
+    it('rejects a non-numeric process RSS reading', () => {
+      expect(() =>
+        assertDiagnostics(
+          pair(),
+          R({ ps: { rssKilobytes: 'x' } }),
+          R({ ps: { rssKilobytes: 'x' } })
+        )
+      ).toThrow(/resource sample/i)
+    })
+
+    it('requires exactly the resource fields the verdict serializes', () => {
+      // Literal list here, equality asserted separately - so shrinking the
+      // implementation constant cannot silently shrink this coverage.
+      expect(REQUIRED_RESOURCE_FIELDS).toEqual([
+        'physicalFootprintBytes',
+        'peakPhysicalFootprintBytes',
+        'mallocAllocatedBytes',
+        'iosurfaceVirtualBytes',
+        'iosurfaceResidentBytes',
+        'iosurfaceRegionCount'
+      ])
+    })
+  })
+
+  it('still accepts a fully truthful series, so none of the above is refusing everything', () => {
+    const verdict = assertDiagnostics(pair(), R(), R())
+    expect(verdict.ptsAdvanced).toBe(true)
+    expect(verdict.presentedRate).toBeCloseTo(30, 5)
+    expect(verdict.resourceDelta.physicalFootprintBytes).toBe(0)
   })
 })
 
