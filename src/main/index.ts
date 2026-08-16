@@ -50299,12 +50299,15 @@ if (isGeminiMcpBridgeProcess) {
           channelStore: service.externalSeatChannelStore(),
           humanPolicyStore: service.externalSeatHumanPolicyStore(),
           runtime: service.externalSeatRuntimeAuthority(),
-          legacy: {
-            mode: 'transitional',
-            shareStore: humanCollaborationStore,
-            resolvePresence: (collaboratorId) =>
-              humanCollaborationPresence.collaboratorState(collaboratorId)
-          }
+          // X4 SEAL. The transitional People fallback is retired because it is
+          // provably unreachable, not because it is unwanted: terminal
+          // migration DELETES an ordinary pre-Channels share before either
+          // runtime serves, and a sealed P4 compatibility share is disabled
+          // while getShareForChat returns only `enabled` shares — so the
+          // fallback's own lookup can never yield one. Structurally, the
+          // authority already blocks whenever a legacy share exists without an
+          // active Channel, so isShared was identical under both modes anyway.
+          legacy: { mode: 'channel_only' }
         }).resolve(chatId)
         return resolution.state === 'ready' ? resolution.seats : null
       } catch {

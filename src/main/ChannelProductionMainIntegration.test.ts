@@ -212,13 +212,18 @@ describe('Channels production main integration', () => {
     expect(resolver).toContain('humanPolicyStore: service.externalSeatHumanPolicyStore()')
     expect(resolver).toContain('runtime: service.externalSeatRuntimeAuthority()')
 
-    // TRANSITIONAL until X4 proves the Channel-only seal. The People fallback
-    // is still attached, and dropping it must be a decision rather than an
-    // omission — `channel_only` here would be a silent early cutover.
-    expect(resolver).toContain("mode: 'transitional'")
-    expect(resolver).toContain('shareStore: humanCollaborationStore')
-    expect(resolver).toContain('resolvePresence:')
-    expect(resolver).not.toContain("mode: 'channel_only'")
+    // X4 TOOK THE SEAL. This previously required `mode: 'transitional'` with a
+    // People fallback attached, and forbade `channel_only` so an early cutover
+    // could not happen by omission. That guard did its job: the cutover is now
+    // a decision backed by proof that the fallback is UNREACHABLE — terminal
+    // migration deletes an ordinary pre-Channels share before serving, and a
+    // sealed P4 compatibility share is disabled while getShareForChat returns
+    // only enabled shares. The assertion is inverted so the fallback cannot
+    // return by omission either.
+    expect(resolver).toContain("legacy: { mode: 'channel_only' }")
+    expect(resolver).not.toContain("mode: 'transitional'")
+    expect(resolver).not.toContain('shareStore:')
+    expect(resolver).not.toContain('resolvePresence:')
 
     // Unknown must never arrive as an empty array: `[]` reads as "no externals
     // exist" and silently elevates every approval gate that consumes this,
