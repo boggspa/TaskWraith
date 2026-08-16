@@ -37,8 +37,8 @@ import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
 import {
   useConfiguredProviderSnapshot,
   isDispatchableProviderForRun,
+  isAntigravityRendererAdmitted,
   useAntigravityGeminiApiSecretRefreshIdentity,
-  antigravityGeminiApiSecretIdentityIsConfigured,
   type ConfiguredProviderSnapshot
 } from './hooks/useConfiguredProviderSnapshot'
 import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
@@ -1785,13 +1785,21 @@ function App(): React.JSX.Element {
   const antigravityOptInActive =
     settings?.antigravityEnabled === true && Boolean(settings?.antigravityOptInAcceptedAt)
   const antigravityGeminiApiSecretIdentity = useAntigravityGeminiApiSecretRefreshIdentity()
+  const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
+    `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}:` +
+      `${settings?.antigravityGeminiApiDisclosureAcceptedAt || ''}:` +
+      antigravityGeminiApiSecretIdentity
+  )
   // AntiGravity has two independently consented lanes, so admission is a union:
-  // the ban-risk agy CLI opt-in, OR a configured Gemini API key. Checking only
-  // the opt-in stripped the whole provider — models included — out of every
-  // renderer surface for key-only users, no matter what discovery had admitted.
-  const antigravityAdmissible =
-    antigravityOptInActive ||
-    antigravityGeminiApiSecretIdentityIsConfigured(antigravityGeminiApiSecretIdentity)
+  // the ban-risk agy CLI opt-in, a configured Gemini API key, OR Host's current
+  // admitted row. The Host arm matters when the one-shot nonsecret key-status
+  // read is temporarily unavailable: an authoritative cached model catalogue
+  // must not be deleted by a weaker renderer-side observation.
+  const antigravityAdmissible = isAntigravityRendererAdmitted({
+    optInActive: antigravityOptInActive,
+    secretIdentity: antigravityGeminiApiSecretIdentity,
+    configuredProviderIds: rawConfiguredProviderSnapshot.providerIds
+  })
   const antigravityAdmissibleRef = useRef(antigravityAdmissible)
   antigravityAdmissibleRef.current = antigravityAdmissible
   // Dispatch-lane admission for the send/run/grant handlers below. The snapshot
@@ -1802,11 +1810,6 @@ function App(): React.JSX.Element {
   // fresh across admission changes.
   const isRunnableProvider = (provider: string | null | undefined): boolean =>
     isDispatchableProviderForRun(provider, antigravityAdmissibleRef.current)
-  const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
-    `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}:` +
-      `${settings?.antigravityGeminiApiDisclosureAcceptedAt || ''}:` +
-      antigravityGeminiApiSecretIdentity
-  )
   // The main process starts a fresh cache generation after a settings change,
   // but do not render a prior successful AntiGravity snapshot for even one
   // renderer frame after BOTH lanes' consent is withdrawn.

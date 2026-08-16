@@ -37,13 +37,25 @@ export function antigravityGeminiApiSecretRefreshIdentity(value: unknown): strin
 
 /**
  * Reads the configured/unconfigured half of the refresh identity above. The
- * identity is already polled for cache-busting, so this reuses it rather than
- * adding a second poll of the same status channel. Anything unrecognised —
- * including the empty pre-first-poll value and the `'unavailable'` error
- * sentinel — reads as not configured, so admission fails closed.
+ * identity is read once per mutation generation, so this reuses it rather
+ * than adding a second status read. Anything unrecognised — including the
+ * empty pre-first-read value and the `'unavailable'` error sentinel — reads as
+ * not configured, so admission fails closed.
  */
 export function antigravityGeminiApiSecretIdentityIsConfigured(identity: string): boolean {
   return typeof identity === 'string' && identity.startsWith('configured:')
+}
+
+export function isAntigravityRendererAdmitted(input: {
+  optInActive: boolean
+  secretIdentity: string
+  configuredProviderIds: readonly ProviderId[]
+}): boolean {
+  return (
+    input.optInActive === true ||
+    antigravityGeminiApiSecretIdentityIsConfigured(input.secretIdentity) ||
+    input.configuredProviderIds.includes(ANTIGRAVITY_PROVIDER_ID)
+  )
 }
 
 /**
@@ -78,22 +90,19 @@ export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
 
   useEffect(() => {
     let cancelled = false
-    let timer: number | null = null
-    const poll = async (): Promise<void> => {
+    const refresh = async (): Promise<void> => {
       try {
         const status = await window.api.getAntigravityGeminiApiSecretStatus()
         if (!cancelled) setIdentity(antigravityGeminiApiSecretRefreshIdentity(status))
       } catch {
         if (!cancelled) setIdentity('unavailable')
       }
-      if (!cancelled) timer = window.setTimeout(() => void poll(), 500)
     }
-    void poll()
+    void refresh()
     return () => {
       cancelled = true
-      if (timer !== null) window.clearTimeout(timer)
     }
-  }, [])
+  }, [mutationGeneration])
 
   return `${identity}:mutation-${mutationGeneration}`
 }
@@ -137,10 +146,6 @@ const PENDING_CONFIGURED_PROVIDER_SNAPSHOT: ConfiguredProviderSnapshot = {
   ready: false,
   providerIds: []
 }
-
-/** Pre-Wave-5c envelope: poll Host until discovery settles or the budget ends. */
-export const CONFIGURED_PROVIDER_SETTLE_ATTEMPTS = 40
-export const CONFIGURED_PROVIDER_SETTLE_INTERVAL_MS = 250
 
 /**
  * Host Arc Wave 5c Phase 1 — pure map from Desktop Host projection state to
@@ -226,12 +231,10 @@ export function configuredProviderSnapshotFromHostProjection(
  * snapshots. AntiGravity secret mutations still force a pending empty until
  * the next Host refresh settles, so stale models never flash.
  *
- * Wave 5c replaced the old IPC settle poll with a one-shot Host refresh. Live
- * providers still paint from `LIVE_SELECTABLE_PROVIDER_IDS`, but AntiGravity
- * only appears once Host admits it with models. If the first pull lands while
- * discovery reports `provider_source_not_ready`, a missing follow-up ask freezes
- * AG out for the session. Restore the pre-5c bounded settle envelope against
- * Host so discovery completion can surface without a secret-mutation refreshKey.
+ * The renderer-lifetime Host store owns continuity and caches the last coherent
+ * projection. This hook never adds another polling loop: a credential mutation
+ * causes one explicit refresh, while normal discovery completion arrives on
+ * the store's existing sync cadence.
  */
 export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProviderSnapshot {
   const store = useHostProjectionStore()
@@ -266,42 +269,7 @@ export function useConfiguredProviderSnapshot(refreshKey = ''): ConfiguredProvid
     }
   }, [store, blockedForRefreshKey, refreshKey])
 
-  const mapped = blockedForRefreshKey
+  return blockedForRefreshKey
     ? PENDING_CONFIGURED_PROVIDER_SNAPSHOT
     : configuredProviderSnapshotFromHostProjection(state)
-
-  // Bounded settle while Host (or provider discovery) is not ready. Concurrent
-  // with the mount refresh is fine: HostProjectionStore coalesces in-flight
-  // pulls, and later attempts re-ask after discovery can complete.
-  useEffect(() => {
-    if (!store || blockedForRefreshKey || mapped.ready) return
-    let cancelled = false
-    let retryTimer: number | null = null
-    let attemptsRemaining = CONFIGURED_PROVIDER_SETTLE_ATTEMPTS
-
-    const settle = async (): Promise<void> => {
-      try {
-        await store.refresh()
-      } catch {
-        // Store records the failure; keep asking until the budget ends.
-      }
-      if (cancelled) return
-      attemptsRemaining -= 1
-      // Read the store directly: React may not have re-rendered yet, and we
-      // must not schedule another timer once discovery has already settled.
-      const next = configuredProviderSnapshotFromHostProjection(store.getState())
-      if (next.ready || attemptsRemaining <= 0) return
-      retryTimer = window.setTimeout(() => {
-        if (!cancelled) void settle()
-      }, CONFIGURED_PROVIDER_SETTLE_INTERVAL_MS)
-    }
-
-    void settle()
-    return () => {
-      cancelled = true
-      if (retryTimer !== null) window.clearTimeout(retryTimer)
-    }
-  }, [store, blockedForRefreshKey, mapped.ready, refreshKey])
-
-  return mapped
 }

@@ -14,6 +14,7 @@ import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
   configuredProviderSnapshotFromHostProjection,
+  isAntigravityRendererAdmitted,
   isDispatchableProviderForRun,
   ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT,
   notifyAntigravityGeminiApiSecretMutation,
@@ -164,10 +165,11 @@ describe('successful Gemini API mutation refresh signal', () => {
       renderedIdentity = useAntigravityGeminiApiSecretRefreshIdentity()
       return null
     }
+    const getAntigravityGeminiApiSecretStatus = vi.fn(() => new Promise(() => undefined))
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        getAntigravityGeminiApiSecretStatus: () => new Promise(() => undefined)
+        getAntigravityGeminiApiSecretStatus
       }
     })
     await act(async () => {
@@ -175,10 +177,13 @@ describe('successful Gemini API mutation refresh signal', () => {
       mountedRoot.render(createElement(Harness))
     })
     expect(renderedIdentity).toBe(':mutation-0')
+    expect(getAntigravityGeminiApiSecretStatus).toHaveBeenCalledTimes(1)
     act(() => notifyAntigravityGeminiApiSecretMutation())
     expect(renderedIdentity).toBe(':mutation-1')
+    expect(getAntigravityGeminiApiSecretStatus).toHaveBeenCalledTimes(2)
     act(() => notifyAntigravityGeminiApiSecretMutation())
     expect(renderedIdentity).toBe(':mutation-2')
+    expect(getAntigravityGeminiApiSecretStatus).toHaveBeenCalledTimes(3)
   })
 
   it('withdraws and reloads mounted provider rows from Host on both mutations', async () => {
@@ -253,12 +258,11 @@ describe('successful Gemini API mutation refresh signal', () => {
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
   })
 
-  it('settles provider_source_not_ready into AntiGravity without a secret mutation', async () => {
-    // Wave 5c replaced the IPC settle poll with a one-shot Host refresh. If
-    // discovery is still not ready on that first pull, AntiGravity stays
-    // missing for the session unless we ask Host again — live providers still
-    // paint from LIVE_SELECTABLE_PROVIDER_IDS, so only the conditional lane
-    // disappears. This must recover without an AG secret mutation.
+  it('settles provider_source_not_ready through the existing Host sync loop', async () => {
+    // Discovery can still be pending on the first Host pull. The app-scope
+    // HostProjectionProvider already owns one continuity loop, so this hook
+    // must recover from that cached source without creating a faster duplicate
+    // poller of its own.
     vi.useFakeTimers()
     const container = installMinimalRendererDom()
     let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
@@ -314,7 +318,7 @@ describe('successful Gemini API mutation refresh signal', () => {
     expect(snapshotCalls).toBeGreaterThanOrEqual(1)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(250)
+      await vi.advanceTimersByTimeAsync(1_000)
       await Promise.resolve()
     })
     expect(snapshotCalls).toBeGreaterThanOrEqual(2)
@@ -433,7 +437,7 @@ describe('antigravityGeminiApiSecretRefreshIdentity', () => {
   // App.tsx admits AntiGravity when EITHER lane is consented; reading only the
   // agy opt-in used to strip the provider out of every renderer surface for
   // key-only users.
-  it('reports key-lane admission from the polled identity, failing closed', () => {
+  it('reports key-lane admission from the cached identity, failing closed', () => {
     expect(
       antigravityGeminiApiSecretIdentityIsConfigured(
         'configured:2026-07-23T15:00:00.000Z:mutation-0'
@@ -448,6 +452,42 @@ describe('antigravityGeminiApiSecretRefreshIdentity', () => {
     ]) {
       expect(antigravityGeminiApiSecretIdentityIsConfigured(identity)).toBe(false)
     }
+  })
+})
+
+describe('isAntigravityRendererAdmitted', () => {
+  it('accepts either consented lane or Host current admission', () => {
+    expect(
+      isAntigravityRendererAdmitted({
+        optInActive: true,
+        secretIdentity: '',
+        configuredProviderIds: []
+      })
+    ).toBe(true)
+    expect(
+      isAntigravityRendererAdmitted({
+        optInActive: false,
+        secretIdentity: 'configured:2026-08-16T10:00:00.000Z:mutation-0',
+        configuredProviderIds: []
+      })
+    ).toBe(true)
+    expect(
+      isAntigravityRendererAdmitted({
+        optInActive: false,
+        secretIdentity: 'unavailable:mutation-0',
+        configuredProviderIds: ['antigravity']
+      })
+    ).toBe(true)
+  })
+
+  it('fails closed when no lane or Host catalogue admits AntiGravity', () => {
+    expect(
+      isAntigravityRendererAdmitted({
+        optInActive: false,
+        secretIdentity: 'unavailable:mutation-0',
+        configuredProviderIds: ['codex']
+      })
+    ).toBe(false)
   })
 })
 
