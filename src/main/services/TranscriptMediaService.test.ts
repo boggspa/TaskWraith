@@ -8,6 +8,7 @@ import {
   extractMarkdownImagePathCandidates,
   extractMcpImageBlocksFromRawResult,
   extractProviderImageBlocksFromRawEvent,
+  mergeTranscriptMediaRefs,
   setWorkspaceMediaSnapshotTestHookForTests,
   snapshotRasterOrPdfAttachment,
   sniffImageMime,
@@ -92,6 +93,10 @@ describe('TranscriptMediaService', () => {
     expect(refs[1].caption).toBe('0:03')
     // groupKind is stamped on every produced ref so the renderer can group the run.
     expect(refs.every((ref) => ref.groupKind === 'video_frames')).toBe(true)
+    // Identical pixels are distinct observations in a temporal sequence.
+    expect(new Set(refs.map((ref) => ref.id)).size).toBe(2)
+    expect(refs[0].sha256).toBe(refs[1].sha256)
+    expect(mergeTranscriptMediaRefs(undefined, refs)).toHaveLength(2)
   })
 
   it('omits caption when a label is missing/empty and omits groupKind when no hints', () => {

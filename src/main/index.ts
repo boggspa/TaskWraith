@@ -367,6 +367,7 @@ import {
 import { isAuthenticatedAntigravityConfiguredProvider } from './antigravity/AntigravityConfiguredProvider'
 import type { NormalizedProviderUsageSnapshot } from './ProviderQuotaSnapshots'
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
+import { transcriptMediaRefDedupKey } from '../shared/transcriptMediaGrouping'
 import {
   isClaudeWorkflowSystemEvent,
   normalizeClaudeWorkflowEvent,
@@ -12745,7 +12746,7 @@ function mergeTranscriptMediaRefs(
   const refs: TranscriptMediaRef[] = []
   const seen = new Set<string>()
   for (const ref of [...(existing || []), ...incoming]) {
-    const key = ref.sha256 || ref.assetId || ref.id
+    const key = transcriptMediaRefDedupKey(ref)
     if (!key || seen.has(key)) continue
     seen.add(key)
     refs.push(ref)

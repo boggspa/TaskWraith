@@ -47,6 +47,15 @@ describe('mergeTranscriptMediaRefs', () => {
     ).toEqual(['image-1', 'image-2'])
   })
 
+  it('preserves identical temporal frames by occurrence id', () => {
+    const merged = mergeTranscriptMediaRefs(
+      [mediaRef('frame-1', { sha256: 'same-content', groupKind: 'appshots' })],
+      [mediaRef('frame-2', { sha256: 'same-content', groupKind: 'appshots' })]
+    )
+
+    expect(merged.map((ref) => ref.id)).toEqual(['frame-1', 'frame-2'])
+  })
+
   it('drops refs without an identity key', () => {
     const anonymousRef = mediaRef('', { sha256: undefined, assetId: undefined })
 

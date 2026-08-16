@@ -4,6 +4,10 @@ import type {
   TranscriptMediaStatus,
   TranscriptMediaThumbnail
 } from '../main/store/types'
+import {
+  isTranscriptMediaGroupKind,
+  transcriptMediaRefDedupKey
+} from './transcriptMediaGrouping'
 
 /**
  * Shared, node-free sanitizer for `media_refs` arriving on the RAW provider
@@ -49,8 +53,6 @@ const RAW_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
  * group kinds must be added here explicitly. House security posture: allowlist, not
  * length-cap.
  */
-const SAFE_GROUP_KINDS = new Set<string>(['video_frames', 'audio_segment'])
-
 /**
  * Sources for which a provider-supplied `path` is retained. Everything else
  * (notably `generated` / `tool_result` — the only sources that legitimately
@@ -245,7 +247,7 @@ export function sanitizeRawProviderMediaRef(raw: unknown): TranscriptMediaRef | 
   // (including a present-but-unknown value) is silently dropped → the ref renders
   // ungrouped. This is the forgery boundary for the filmstrip grouping.
   const groupKind =
-    typeof record.groupKind === 'string' && SAFE_GROUP_KINDS.has(record.groupKind)
+    typeof record.groupKind === 'string' && isTranscriptMediaGroupKind(record.groupKind)
       ? record.groupKind
       : undefined
   if (alt) ref.alt = alt
@@ -266,8 +268,9 @@ export function sanitizeRawProviderMediaRef(raw: unknown): TranscriptMediaRef | 
 
 /**
  * Validate an array of RAW-lane media refs. Drops anything that cannot be made
- * safe, de-dupes by content identity (`sha256` → `assetId` → `id`), and caps
- * the count at `RAW_MEDIA_MAX_REFS`. Returns `[]` for any non-array input.
+ * safe, de-dupes ordinary refs by content identity and temporal frames by
+ * occurrence id, and caps the count at `RAW_MEDIA_MAX_REFS`. Returns `[]` for
+ * any non-array input.
  */
 export function sanitizeRawProviderMediaRefs(raw: unknown): TranscriptMediaRef[] {
   if (!Array.isArray(raw)) return []
@@ -277,7 +280,7 @@ export function sanitizeRawProviderMediaRefs(raw: unknown): TranscriptMediaRef[]
     if (refs.length >= RAW_MEDIA_MAX_REFS) break
     const ref = sanitizeRawProviderMediaRef(entry)
     if (!ref) continue
-    const key = ref.sha256 || ref.assetId || ref.id
+    const key = transcriptMediaRefDedupKey(ref)
     if (seen.has(key)) continue
     seen.add(key)
     refs.push(ref)

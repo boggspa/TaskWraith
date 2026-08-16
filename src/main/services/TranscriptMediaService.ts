@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import {
+  isTemporalFrameGroupKind,
+  transcriptMediaRefDedupKey
+} from '../../shared/transcriptMediaGrouping'
 import type {
   ExternalPathGrant,
   TranscriptMediaRef,
@@ -140,10 +144,9 @@ export function sha256Base64Url(buffer: Buffer): string {
 }
 
 /**
- * Merge two media-ref lists, de-duplicating by content/identity key
- * (sha256 → assetId → id). Used to accumulate refs onto a message both in the
- * single-chat path (index.ts) and the ensemble path (EnsembleOrchestrator), so
- * a re-emitted/re-flushed ref never doubles up.
+ * Merge two media-ref lists. Ordinary media de-duplicates by content identity;
+ * temporal frames de-duplicate by occurrence id so two unchanged checkpoints
+ * remain visible while still sharing one content-addressed asset.
  */
 export function mergeTranscriptMediaRefs(
   existing: readonly TranscriptMediaRef[] | undefined,
@@ -152,7 +155,7 @@ export function mergeTranscriptMediaRefs(
   const refs: TranscriptMediaRef[] = []
   const seen = new Set<string>()
   for (const ref of [...(existing || []), ...incoming]) {
-    const key = ref.sha256 || ref.assetId || ref.id
+    const key = transcriptMediaRefDedupKey(ref)
     if (!key || seen.has(key)) continue
     seen.add(key)
     refs.push(ref)
@@ -490,6 +493,7 @@ export function createToolResultMediaRefs({
   // a ref. A non-string / empty label is simply omitted (no caption).
   const groupKind =
     typeof hints?.groupKind === 'string' && hints.groupKind ? hints.groupKind : undefined
+  const temporalGroupOccurrenceId = isTemporalFrameGroupKind(groupKind) ? randomUUID() : ''
   const labelAt = (i: number): string | undefined => {
     const label = hints?.labels?.[i]
     return typeof label === 'string' && label.length > 0 ? label : undefined
@@ -505,7 +509,9 @@ export function createToolResultMediaRefs({
     const index = refs.length + 1
     if ('error' in decoded) {
       refs.push({
-        id: `${messageId}:${sourceSegment}:${index}`,
+        id: temporalGroupOccurrenceId
+          ? `${messageId}:${sourceSegment}:${temporalGroupOccurrenceId}:${index}`
+          : `${messageId}:${sourceSegment}:${index}`,
         kind: 'image',
         format: isTranscriptSvgMime(block.mimeType) ? 'svg' : 'raster',
         source,
@@ -545,7 +551,9 @@ export function createToolResultMediaRefs({
       // Full-size persistence is best-effort; bounded thumbnails remain safe.
     }
     refs.push({
-      id: `${messageId}:${sourceSegment}:${hash.slice(0, 16)}`,
+      id: temporalGroupOccurrenceId
+        ? `${messageId}:${sourceSegment}:${temporalGroupOccurrenceId}:${index}`
+        : `${messageId}:${sourceSegment}:${hash.slice(0, 16)}`,
       kind: 'image',
       format: 'raster',
       source,

@@ -57,6 +57,14 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(ref?.caption).toBe('1:05–1:20')
   })
 
+  it.each(['appshots', 'appwatch_frames'])('keeps the whitelisted %s groupKind', (groupKind) => {
+    const ref = sanitizeRawProviderMediaRef(
+      legitRef({ groupKind, caption: 'frame-1' })
+    )
+    expect(ref?.groupKind).toBe(groupKind)
+    expect(ref?.caption).toBe('frame-1')
+  })
+
   it('DROPS an unknown groupKind (forgery boundary) but keeps the ref ungrouped', () => {
     const ref = sanitizeRawProviderMediaRef(
       legitRef({ groupKind: 'evil_arbitrary_group', caption: '0:03' })
@@ -288,6 +296,15 @@ describe('sanitizeRawProviderMediaRefs', () => {
       legitRef({ id: 'x2', sha256: VALID_SHA })
     ])
     expect(refs).toHaveLength(1)
+  })
+
+  it('preserves identical temporal frame occurrences while sharing their content hash', () => {
+    const refs = sanitizeRawProviderMediaRefs([
+      legitRef({ id: 'frame-1', sha256: VALID_SHA, groupKind: 'appwatch_frames' }),
+      legitRef({ id: 'frame-2', sha256: VALID_SHA, groupKind: 'appwatch_frames' })
+    ])
+    expect(refs.map((ref) => ref.id)).toEqual(['frame-1', 'frame-2'])
+    expect(refs.every((ref) => ref.sha256 === VALID_SHA)).toBe(true)
   })
 
   it('caps the batch at RAW_MEDIA_MAX_REFS', () => {

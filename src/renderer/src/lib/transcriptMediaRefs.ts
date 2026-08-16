@@ -1,9 +1,10 @@
 import type { TranscriptMediaRef } from '../../../main/store/types'
+import { transcriptMediaRefDedupKey } from '../../../shared/transcriptMediaGrouping'
 
 /**
- * Merge two media-ref lists, de-duplicating by content/identity key
- * (sha256 -> assetId -> id). This mirrors the main-process merge behavior so
- * renderer-side streamed refs do not double up before persistence catches up.
+ * Merge two media-ref lists. Ordinary refs de-duplicate by content identity;
+ * temporal frames use occurrence identity so unchanged checkpoints survive.
+ * This mirrors main-process behavior before persistence catches up.
  */
 export function mergeTranscriptMediaRefs(
   existing: readonly TranscriptMediaRef[] | undefined,
@@ -12,7 +13,7 @@ export function mergeTranscriptMediaRefs(
   const refs: TranscriptMediaRef[] = []
   const seen = new Set<string>()
   for (const ref of [...(existing || []), ...incoming]) {
-    const key = ref.sha256 || ref.assetId || ref.id
+    const key = transcriptMediaRefDedupKey(ref)
     if (!key || seen.has(key)) continue
     seen.add(key)
     refs.push(ref)
