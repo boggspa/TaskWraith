@@ -6,6 +6,30 @@ import TaskWraithStudioCore
 /// The controls are projections of host-owned route and review state. They do not
 /// keep a second route, proposal, or playback authority locally: every action is
 /// handed to the owner and the next refresh reads the resulting state back.
+private final class StudioHostProjectedButtonCell: NSButtonCell {
+  private var preservesProjectedState = false
+
+  override func setButtonType(_ type: NSButton.ButtonType) {
+    super.setButtonType(type)
+    preservesProjectedState = type == .momentaryPushIn
+  }
+
+  override func setNextState() {
+    if !preservesProjectedState {
+      super.setNextState()
+    }
+  }
+
+  override func performClick(_ sender: Any?) {
+    guard preservesProjectedState else {
+      super.performClick(sender)
+      return
+    }
+    guard let control = controlView as? NSControl else { return }
+    _ = control.sendAction(control.action, to: control.target)
+  }
+}
+
 @MainActor
 final class StudioViewerDeckChrome: NSStackView {
   static let identifier = "studio.workspace.viewer-deck.chrome"
@@ -112,11 +136,12 @@ final class StudioViewerDeckChrome: NSStackView {
     role: NSAccessibility.Role
   ) -> NSButton {
     let button = NSButton(title: label, target: nil, action: nil)
+    button.cell = StudioHostProjectedButtonCell(textCell: label)
     button.identifier = NSUserInterfaceItemIdentifier(identifier)
     button.setAccessibilityElement(true)
+    button.setButtonType(.momentaryPushIn)
     button.setAccessibilityRole(role)
     button.setAccessibilityLabel(label)
-    button.setButtonType(role == .checkBox ? .switch : .radio)
     button.isBordered = false
     button.state = .off
     return button

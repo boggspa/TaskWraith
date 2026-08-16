@@ -335,6 +335,47 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     XCTAssertLessThanOrEqual(state.sharedResidentDecoderCount, 1)
   }
 
+  func testMomentaryControlsCannotClaimSelectionWithoutOwnerConfirmation() throws {
+    let chrome = StudioViewerDeckChrome(frame: .zero)
+    chrome.update(visibleRoutes: [.source], reviewContext: nil)
+
+    let source = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.route.source")
+    )
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(source.accessibilityValue() as? String, "selected")
+
+    // No owner callback is installed. A route control must remain exactly as
+    // projected rather than optimistically changing its local state.
+    source.performClick(nil)
+    XCTAssertEqual(source.state, .on)
+    XCTAssertEqual(source.accessibilityValue() as? String, "selected")
+
+    let timebase = try XCTUnwrap(
+      StudioTimebase(timescale: 600, frameDurationTicks: 20)
+    )
+    chrome.update(
+      visibleRoutes: [.source],
+      reviewContext: StudioReviewContext(
+        version: .current,
+        timeline: makeReviewTimeline(),
+        timebase: timebase
+      )
+    )
+
+    let proposed = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.review-version.proposed")
+    )
+    XCTAssertEqual(proposed.state, .off)
+    XCTAssertEqual(proposed.accessibilityValue() as? String, "not selected")
+
+    // The A/B control also has no owner callback. Pressing it must not claim
+    // Proposed until the host sends a new review-context projection.
+    proposed.performClick(nil)
+    XCTAssertEqual(proposed.state, .off)
+    XCTAssertEqual(proposed.accessibilityValue() as? String, "not selected")
+  }
+
   func testKeyboardReviewShortcutRefreshesTheSameChromeState() throws {
     let workspace = try makeWorkspace()
     let review = try XCTUnwrap(workspace.reviewController)
