@@ -3,6 +3,7 @@ import {
   findAllMentions,
   isGroupMention,
   isParticipantMention,
+  isUserMentionToken,
   resolvePhraseToParticipant,
   type GroupMentionMatch,
   type ParticipantMentionMatch
@@ -191,6 +192,43 @@ export function resolveEnsembleCommunicationTargets(input: {
   }
 
   return recipients
+}
+
+export interface EnsembleCommunicationAudience {
+  participants: EnsembleParticipant[]
+  toUser: boolean
+}
+
+function isUserCommunicationSelector(selector: string): boolean {
+  return isUserMentionToken(selector.trim().replace(/^@+/, '').trim())
+}
+
+/**
+ * Resolve the explicit `ensemble_send.to` audience. Only the canonical User
+ * aliases cross the participant boundary; unknown selectors still resolve to
+ * nothing, message prose is never scanned, and `@All` remains roster-only.
+ */
+export function resolveEnsembleCommunicationAudience(input: {
+  selectors: readonly string[]
+  participants: readonly EnsembleParticipant[]
+  senderParticipantId: string
+}): EnsembleCommunicationAudience {
+  const participantSelectors: string[] = []
+  let toUser = false
+  for (const selector of input.selectors) {
+    if (isUserCommunicationSelector(selector)) {
+      toUser = true
+    } else {
+      participantSelectors.push(selector)
+    }
+  }
+  return {
+    participants: resolveEnsembleCommunicationTargets({
+      ...input,
+      selectors: participantSelectors
+    }),
+    toUser
+  }
 }
 
 /**

@@ -3529,8 +3529,16 @@ export interface ChatMessage {
     returnResultToParent?: boolean
     /** Concurrent Ensemble lane id for lane-aware transcript rows. */
     ensembleLaneId?: string
+    /** Origin lane for a top-level participant-authored side message. Unlike
+     * `ensembleLaneId`, this is provenance only and must not opt the row into
+     * lane-card grouping or collapse. */
+    ensembleSourceLaneId?: string
     /** Concurrent Ensemble lane intent for reader/writer fan-out presentation. */
     ensembleLaneIntent?: ConcurrentLaneIntent
+    /** This participant-authored `ensembleSideMessage` explicitly addresses
+     * the human transcript reader. It remains a system carrier and never
+     * becomes a host-authored message or provider turn. */
+    toUser?: true
     /** Agent Pool identity frozen at dispatch/materialization time. */
     pooledAgentId?: string
     pooledAgentIdentity?: PooledAgentIdentitySnapshot

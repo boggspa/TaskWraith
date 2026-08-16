@@ -4,6 +4,7 @@ import {
   formatAssistantGroupMentionRoutingNotice,
   resolveBackgroundMentionRouting,
   resolveAssistantMentionRoutingPlan,
+  resolveEnsembleCommunicationAudience,
   resolveEnsembleCommunicationTargets
 } from './EnsembleGroupMentionRouting'
 
@@ -150,6 +151,57 @@ describe('resolveEnsembleCommunicationTargets', () => {
         senderParticipantId: 'boss'
       })
     ).toEqual([])
+  })
+})
+
+describe('resolveEnsembleCommunicationAudience', () => {
+  it.each(['@User', 'user', '@HUMAN', 'You'])('recognizes the deliberate User alias %s', (alias) => {
+    expect(
+      resolveEnsembleCommunicationAudience({
+        selectors: [alias],
+        participants: ROSTER,
+        senderParticipantId: 'worker-1'
+      })
+    ).toEqual({ participants: [], toUser: true })
+  })
+
+  it('keeps @All roster-only and never adds the User implicitly', () => {
+    const audience = resolveEnsembleCommunicationAudience({
+      selectors: ['@All'],
+      participants: ROSTER,
+      senderParticipantId: 'worker-1'
+    })
+
+    expect(audience.toUser).toBe(false)
+    expect(audience.participants.map((participant) => participant.id)).toEqual([
+      'boss',
+      'captain',
+      'scout-1',
+      'worker-2',
+      'grok-bg',
+      'any-seat'
+    ])
+  })
+
+  it('dedupes mixed User aliases while preserving valid participant recipients', () => {
+    const audience = resolveEnsembleCommunicationAudience({
+      selectors: ['@User', '@worker-2', '@You', '@Unknown', '@claude-disabled'],
+      participants: ROSTER,
+      senderParticipantId: 'boss'
+    })
+
+    expect(audience.toUser).toBe(true)
+    expect(audience.participants.map((participant) => participant.id)).toEqual(['worker-2'])
+  })
+
+  it('keeps an unknown-only audience unresolved for the caller to reject', () => {
+    expect(
+      resolveEnsembleCommunicationAudience({
+        selectors: ['@SomeoneElse'],
+        participants: ROSTER,
+        senderParticipantId: 'boss'
+      })
+    ).toEqual({ participants: [], toUser: false })
   })
 })
 
