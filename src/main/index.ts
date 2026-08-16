@@ -47114,6 +47114,7 @@ if (isGeminiMcpBridgeProcess) {
           // dispatch proceeds async and failures surface exactly like a
           // desktop-initiated run (run events / transcript) plus a fresh
           // projection snapshot for the phone either way.
+          const releaseTuiHeadlessHostWork = tuiHeadlessHostSession.retainActiveWork()
           void dispatchAgentRun(payload, fakeEvent)
             .then((result) => {
               if (!result.dispatched) {
@@ -47178,6 +47179,7 @@ if (isGeminiMcpBridgeProcess) {
                 err
               )
             })
+            .finally(releaseTuiHeadlessHostWork)
           return { dispatched: true, appRunId: runId }
         },
         composerQueuePromptFn: queueRemoteComposerPrompt,
@@ -50656,7 +50658,9 @@ if (isGeminiMcpBridgeProcess) {
     tuiHeadlessHostSession.startMonitoring({
       getConnectedClientCount: () => hostLifecycle.getConnectedClientCount(),
       hasActiveWork: () =>
-        getActiveTaskWraithThreadCount() > 0 || hasActiveStreamingTaskWraithRun(),
+        getActiveTaskWraithThreadCount() > 0 ||
+        hasActiveStreamingTaskWraithRun() ||
+        [...bridgeRunTranscripts.keys()].some((runId) => isChatRunLive(runId)),
       quit: () => app.quit()
     })
 

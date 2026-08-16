@@ -11,6 +11,8 @@ export const TUI_HEADLESS_HOST_PARENT_ARG = '--taskwraith-headless-parent='
 
 const DEFAULT_PARENT_POLL_MS = 1_000
 const DEFAULT_ORPHAN_GRACE_MS = 3_000
+const DEFAULT_SHUTDOWN_RECHECK_MS = 250
+const TUI_HEADLESS_HOST_ARGUMENT_PREFIX = '--taskwraith-headless-'
 
 export type TuiHeadlessHostLaunchPosture =
   | { kind: 'desktop' }
@@ -24,8 +26,11 @@ export interface TuiHeadlessHostSessionOptions {
   readonly isProcessAlive?: (pid: number) => boolean
   readonly setInterval?: typeof globalThis.setInterval
   readonly clearInterval?: typeof globalThis.clearInterval
+  readonly setTimeout?: typeof globalThis.setTimeout
+  readonly clearTimeout?: typeof globalThis.clearTimeout
   readonly parentPollMs?: number
   readonly orphanGraceMs?: number
+  readonly shutdownRecheckMs?: number
 }
 
 export interface TuiHeadlessHostMonitor {
@@ -43,7 +48,19 @@ function positiveInteger(value: string): number | null {
 export function resolveTuiHeadlessHostLaunchPosture(
   argv: readonly string[] = process.argv
 ): TuiHeadlessHostLaunchPosture {
-  if (!argv.includes(TUI_HEADLESS_HOST_ARG)) return { kind: 'desktop' }
+  const controlArgs = argv.filter((value) => value.startsWith(TUI_HEADLESS_HOST_ARGUMENT_PREFIX))
+  if (controlArgs.length === 0) return { kind: 'desktop' }
+  const hostArgs = controlArgs.filter((value) => value === TUI_HEADLESS_HOST_ARG)
+  if (hostArgs.length !== 1) {
+    return { kind: 'invalid', error: 'Headless Host requires one exact launch flag.' }
+  }
+  if (
+    controlArgs.some(
+      (value) => value !== TUI_HEADLESS_HOST_ARG && !value.startsWith(TUI_HEADLESS_HOST_PARENT_ARG)
+    )
+  ) {
+    return { kind: 'invalid', error: 'Headless Host launch arguments are malformed.' }
+  }
   const parentArgs = argv.filter((value) => value.startsWith(TUI_HEADLESS_HOST_PARENT_ARG))
   if (parentArgs.length !== 1) {
     return { kind: 'invalid', error: 'Headless Host requires one parent process identity.' }
@@ -57,7 +74,7 @@ export function resolveTuiHeadlessHostLaunchPosture(
 
 /** A second headless launch request must never surface the primary app window. */
 export function isTuiHeadlessHostLaunchRequest(argv: readonly string[]): boolean {
-  return argv.includes(TUI_HEADLESS_HOST_ARG)
+  return argv.some((value) => value.startsWith(TUI_HEADLESS_HOST_ARGUMENT_PREFIX))
 }
 
 function processIsAlive(pid: number): boolean {
@@ -95,10 +112,15 @@ export class TuiHeadlessHostSession {
   private readonly isProcessAlive: (pid: number) => boolean
   private readonly scheduleInterval: typeof globalThis.setInterval
   private readonly cancelInterval: typeof globalThis.clearInterval
+  private readonly scheduleTimeout: typeof globalThis.setTimeout
+  private readonly cancelTimeout: typeof globalThis.clearTimeout
   private readonly parentPollMs: number
   private readonly orphanGraceMs: number
+  private readonly shutdownRecheckMs: number
   private timer: ReturnType<typeof globalThis.setInterval> | null = null
+  private shutdownTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   private parentMissingSince: number | null = null
+  private retainedActiveWork = 0
   private promoted = false
   private quitRequested = false
 
@@ -109,8 +131,11 @@ export class TuiHeadlessHostSession {
     this.isProcessAlive = options.isProcessAlive ?? processIsAlive
     this.scheduleInterval = options.setInterval ?? globalThis.setInterval
     this.cancelInterval = options.clearInterval ?? globalThis.clearInterval
+    this.scheduleTimeout = options.setTimeout ?? globalThis.setTimeout
+    this.cancelTimeout = options.clearTimeout ?? globalThis.clearTimeout
     this.parentPollMs = options.parentPollMs ?? DEFAULT_PARENT_POLL_MS
     this.orphanGraceMs = options.orphanGraceMs ?? DEFAULT_ORPHAN_GRACE_MS
+    this.shutdownRecheckMs = options.shutdownRecheckMs ?? DEFAULT_SHUTDOWN_RECHECK_MS
     if (this.posture.kind === 'invalid') throw new Error(this.posture.error)
   }
 
@@ -138,23 +163,64 @@ export class TuiHeadlessHostSession {
     this.dispose()
   }
 
+  /**
+   * Retain the windowless Host across work accepted before RunManager has a
+   * session to report. The returned release is idempotent so every promise
+   * settlement path can safely share it.
+   */
+  retainActiveWork(): () => void {
+    this.retainedActiveWork += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.retainedActiveWork = Math.max(0, this.retainedActiveWork - 1)
+    }
+  }
+
   startMonitoring(monitor: TuiHeadlessHostMonitor): void {
     if (!this.isHeadless || this.timer || this.posture.kind !== 'headless') return
     const parentPid = this.posture.parentPid
+    const stillOccupied = (): boolean =>
+      boundedNonNegativeCount(monitor.getConnectedClientCount) > 0 ||
+      this.retainedActiveWork > 0 ||
+      activeWork(monitor.hasActiveWork)
+    const cancelPendingShutdown = (): void => {
+      if (!this.shutdownTimer) return
+      this.cancelTimeout(this.shutdownTimer)
+      this.shutdownTimer = null
+    }
+    const requestShutdown = (): void => {
+      if (this.shutdownTimer || this.quitRequested) return
+      this.shutdownTimer = this.scheduleTimeout(() => {
+        this.shutdownTimer = null
+        if (!this.isHeadless || this.quitRequested) return
+        if (this.isProcessAlive(parentPid)) {
+          this.parentMissingSince = null
+          return
+        }
+        if (stillOccupied()) return
+        this.quitRequested = true
+        this.dispose()
+        monitor.quit()
+      }, this.shutdownRecheckMs)
+      this.shutdownTimer.unref?.()
+    }
     const tick = (): void => {
       if (!this.isHeadless || this.quitRequested) return
       if (this.isProcessAlive(parentPid)) {
         this.parentMissingSince = null
+        cancelPendingShutdown()
         return
       }
       const now = this.now()
       this.parentMissingSince ??= now
       if (now - this.parentMissingSince < this.orphanGraceMs) return
-      if (boundedNonNegativeCount(monitor.getConnectedClientCount) > 0) return
-      if (activeWork(monitor.hasActiveWork)) return
-      this.quitRequested = true
-      this.dispose()
-      monitor.quit()
+      if (stillOccupied()) {
+        cancelPendingShutdown()
+        return
+      }
+      requestShutdown()
     }
     this.timer = this.scheduleInterval(tick, this.parentPollMs)
     this.timer.unref?.()
@@ -162,8 +228,13 @@ export class TuiHeadlessHostSession {
   }
 
   dispose(): void {
-    if (!this.timer) return
-    this.cancelInterval(this.timer)
-    this.timer = null
+    if (this.timer) {
+      this.cancelInterval(this.timer)
+      this.timer = null
+    }
+    if (this.shutdownTimer) {
+      this.cancelTimeout(this.shutdownTimer)
+      this.shutdownTimer = null
+    }
   }
 }

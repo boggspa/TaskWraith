@@ -31,6 +31,14 @@ describe('TaskWraith TUI CLI options', () => {
       startHost: true,
       hostLaunchProfile: 'custom'
     })
+    expect(
+      parseTaskWraithTuiArgs(['--user-data', '/tmp/taskwraith-tui-package-smoke-cli'], {
+        TASKWRAITH_TUI_PACKAGE_SMOKE: '1'
+      })
+    ).toMatchObject({
+      startHost: true,
+      hostLaunchProfile: 'package-smoke'
+    })
   })
 
   it('rejects ambiguous or state-mutating replay combinations', () => {

@@ -518,15 +518,13 @@ function isTaskWraithAlreadyRunning() {
 }
 
 /**
- * Disposable windowless packaged Host → owner-only v2 discovery/token → authenticated snapshot.
- * Stops only the smoke App process; never touches a human's production host.
+ * Packaged `tw` auto-start → disposable windowless packaged Host → authenticated snapshot.
+ * Stops only the exact package-smoke process/profile; never touches a human's production host.
  */
 async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-'))
   const discoveryPath = path.join(userDataPath, 'taskwraith-host-v2.json')
   const tokenPath = path.join(userDataPath, 'taskwraith-host-v2.token')
-  const outputChunks = []
-  let app
   let appPid
   let smokePackageRoot = packageRoot
 
@@ -535,32 +533,52 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
       smokePackageRoot = prepareDarwinSmokeBundle(packageRoot, userDataPath)
     }
     const relayPort = await findAvailableLoopbackPort()
-    const smokeUserDataArgument = `--taskwraith-package-smoke-user-data=${userDataPath}`
-    const appArguments = [
-      '--taskwraith-package-smoke',
-      smokeUserDataArgument,
-      '--taskwraith-headless-host',
-      `--taskwraith-headless-parent=${process.pid}`,
-      ...(packageTarget.platform === 'darwin' ? ['--use-mock-keychain'] : []),
-      ...(packageTarget.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [])
-    ]
-    const appLaunch = resolvePackagedAppLaunch(smokePackageRoot, packageTarget, appArguments)
-    app = spawn(appLaunch.command, appLaunch.arguments, {
-      cwd: packageRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: {
-        ...process.env,
-        TASKWRAITH_PACKAGE_SMOKE: '1',
-        TASKWRAITH_AUTO_UPDATE: 'off',
-        TASKWRAITH_RELAY_PORT: String(relayPort),
-        ELECTRON_RUN_AS_NODE: ''
+    const appExecutable = resolvePackagedAppExecutable(smokePackageRoot, packageTarget)
+    const snapshot = spawnPackagedLauncherSync(
+      launcher,
+      [
+        '--snapshot',
+        '--user-data',
+        userDataPath,
+        '--no-color',
+        '--ascii',
+        '--width',
+        '80',
+        '--height',
+        '24'
+      ],
+      packageTarget,
+      {
+        cwd: packageRoot,
+        encoding: 'utf8',
+        timeout: liveTimeoutMs,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          TASKWRAITH_TUI_PACKAGE_SMOKE: '1',
+          TASKWRAITH_PACKAGE_SMOKE: '1',
+          TASKWRAITH_TUI_APP_EXECUTABLE: appExecutable,
+          TASKWRAITH_USER_DATA: '',
+          TASKWRAITH_AUTO_UPDATE: 'off',
+          TASKWRAITH_RELAY_PORT: String(relayPort),
+          ELECTRON_RUN_AS_NODE: ''
+        }
       }
-    })
-    app.stdout?.on('data', (chunk) => appendBoundedOutput(outputChunks, chunk))
-    app.stderr?.on('data', (chunk) => appendBoundedOutput(outputChunks, chunk))
-
-    await waitForControlFiles(app, discoveryPath, tokenPath, liveTimeoutMs, outputChunks)
+    )
+    if (snapshot.error) {
+      throw new Error(`packaged TUI auto-start failed to spawn: ${snapshot.error.message}`)
+    }
+    if (snapshot.status !== 0) {
+      const detail = [snapshot.stdout, snapshot.stderr].filter(Boolean).join('\n').trim()
+      throw new Error(
+        `packaged TUI auto-start exited ${snapshot.status ?? 'null'}${
+          detail ? `:\n${detail.slice(0, 16000)}` : ''
+        }`
+      )
+    }
+    if (!fs.existsSync(discoveryPath) || !fs.existsSync(tokenPath)) {
+      throw new Error('packaged TUI auto-start returned without Host-v2 discovery and token')
+    }
     const discovery = JSON.parse(fs.readFileSync(discoveryPath, 'utf8'))
     appPid = Number(discovery.pid)
     if (!Number.isInteger(appPid) || appPid <= 0 || appPid === process.pid) {
@@ -568,15 +586,8 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
     }
     assertOwnerOnlyFile(discoveryPath, 'control discovery')
     assertOwnerOnlyFile(tokenPath, 'control token')
+    assertSmokeHostCommand(appPid, packageTarget)
 
-    const snapshot = await runLiveSnapshotWithRetry(
-      launcher,
-      userDataPath,
-      packageRoot,
-      packageTarget,
-      app,
-      outputChunks
-    )
     const frame = `${snapshot.stdout || ''}${snapshot.stderr || ''}`
     if (!/TaskWraith|Threads|App/.test(frame)) {
       throw new Error(
@@ -586,25 +597,55 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
         )} bytes)`
       )
     }
+    await waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)
     console.log(
-      `packaged TUI live control smoke ok (windowless packaged Host → owner-only v2 discovery/token → authenticated launcher snapshot, ${Buffer.byteLength(
+      `packaged TUI live control smoke ok (offline tw auto-start → windowless packaged Host → owner-only v2 discovery/token → authenticated snapshot, ${Buffer.byteLength(
         frame,
         'utf8'
       )} bytes)`
     )
   } catch (error) {
-    // Re-throw as Error with child output attached when available.
-    const base = error instanceof Error ? error.message : String(error)
-    const detail = formatChildOutput(outputChunks)
-    throw new Error(detail && !base.includes(detail.trim()) ? `${base}${detail}` : base)
+    throw new Error(error instanceof Error ? error.message : String(error))
   } finally {
     if (appPid) await stopProcess(appPid)
-    if (app) await stopChild(app)
     removeSmokeTree(userDataPath)
     if (smokePackageRoot !== packageRoot) {
       removeSmokeTree(smokePackageRoot)
     }
   }
+}
+
+function assertSmokeHostCommand(pid, packageTarget) {
+  if (packageTarget.platform === 'win32') return
+  const result = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'command='], {
+    encoding: 'utf8',
+    timeout: helpTimeoutMs
+  })
+  if (result.error || result.status !== 0) {
+    throw new Error(`could not inspect packaged smoke Host pid ${pid}`)
+  }
+  const command = String(result.stdout || '')
+  if (
+    !command.includes('--taskwraith-headless-host') ||
+    !command.includes('--taskwraith-package-smoke')
+  ) {
+    throw new Error(`packaged TUI launched pid ${pid} without the windowless smoke posture`)
+  }
+}
+
+async function waitForSmokeHostShutdown(pid, discoveryPath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    let alive = true
+    try {
+      process.kill(pid, 0)
+    } catch {
+      alive = false
+    }
+    if (!alive && !fs.existsSync(discoveryPath)) return
+    await delay(50)
+  }
+  throw new Error(`packaged smoke Host pid ${pid} did not exit after its TUI disconnected`)
 }
 
 function removeSmokeTree(targetPath) {
@@ -957,13 +998,6 @@ async function runLiveSnapshotWithRetry(
   )
 }
 
-function resolvePackagedAppLaunch(packageRoot, packageTarget, appArguments) {
-  return {
-    command: resolvePackagedAppExecutable(packageRoot, packageTarget),
-    arguments: appArguments
-  }
-}
-
 function resolvePackagedAppExecutable(packageRoot, packageTarget) {
   if (packageTarget.platform === 'darwin') {
     const macosDir = path.join(packageRoot, 'Contents', 'MacOS')
@@ -994,22 +1028,6 @@ function resolvePackagedAppExecutable(packageRoot, packageTarget) {
   fail(`packaged App executable not found for live smoke: ${packageRoot}`)
 }
 
-async function waitForControlFiles(app, discoveryPath, tokenPath, timeoutMs, outputChunks) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (fs.existsSync(discoveryPath) && fs.existsSync(tokenPath)) return
-    if (app.exitCode !== null || app.signalCode !== null) {
-      fail(
-        `packaged App exited before local control became ready (exit=${
-          app.exitCode ?? app.signalCode
-        })${formatChildOutput(outputChunks)}`
-      )
-    }
-    await delay(100)
-  }
-  fail(`timed out waiting for packaged App local control${formatChildOutput(outputChunks)}`)
-}
-
 function assertOwnerOnlyFile(filePath, label) {
   const stat = fs.statSync(filePath)
   if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
@@ -1024,25 +1042,9 @@ function assertOwnerOnlyFile(filePath, label) {
   }
 }
 
-function appendBoundedOutput(chunks, chunk) {
-  if (Buffer.byteLength(chunks.join(''), 'utf8') >= 16000) return
-  chunks.push(String(chunk))
-}
-
 function formatChildOutput(chunks) {
   const detail = chunks.join('').trim()
   return detail ? `:\n${detail.slice(0, 16000)}` : ''
-}
-
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
-  const deadline = Date.now() + 5000
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) return
-    await delay(50)
-  }
-  child.kill('SIGKILL')
 }
 
 async function stopProcess(pid) {

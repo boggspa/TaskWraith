@@ -11,7 +11,9 @@ describe('packaged TUI disposable macOS host launch', () => {
 
     expect(source).toContain("const macosDir = path.join(packageRoot, 'Contents', 'MacOS')")
     expect(source).toContain("assertExecutable(found, 'packaged macOS App executable')")
-    expect(source).toContain('command: resolvePackagedAppExecutable(packageRoot, packageTarget)')
+    expect(source).toContain(
+      'const appExecutable = resolvePackagedAppExecutable(smokePackageRoot, packageTarget)'
+    )
     expect(source).not.toContain("command: '/usr/bin/open'")
   })
 
@@ -46,15 +48,21 @@ describe('packaged TUI disposable macOS host launch', () => {
     expect(source).toContain('retryDelay: 100')
   })
 
-  it('boots a windowless Host-v2 process and connects without recursive startup', () => {
+  it('makes packaged tw auto-start and authenticate its disposable windowless Host', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
       'utf8'
     )
+    const start = source.indexOf('async function runPackagedHostLiveRoundTrip')
+    const end = source.indexOf('\nfunction removeSmokeTree', start)
+    const roundTrip = source.slice(start, end)
 
-    expect(source).toContain('taskwraith-host-v2.json')
-    expect(source).toContain("'--taskwraith-headless-host'")
-    expect(source).toContain('`--taskwraith-headless-parent=${process.pid}`')
-    expect(source).toContain("'--no-start-host'")
+    expect(roundTrip).toContain('taskwraith-host-v2.json')
+    expect(roundTrip).toContain("TASKWRAITH_TUI_PACKAGE_SMOKE: '1'")
+    expect(roundTrip).toContain('TASKWRAITH_TUI_APP_EXECUTABLE: appExecutable')
+    expect(roundTrip).toContain('assertSmokeHostCommand(appPid, packageTarget)')
+    expect(roundTrip).toContain('waitForSmokeHostShutdown(appPid, discoveryPath, 10_000)')
+    expect(roundTrip).not.toContain("'--no-start-host'")
+    expect(roundTrip).not.toContain('app = spawn(')
   })
 })

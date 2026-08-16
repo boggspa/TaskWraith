@@ -86,7 +86,10 @@ function takeValue(args: string[], index: number, flag: string): [string, number
   return [value, index + 1]
 }
 
-export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions {
+export function parseTaskWraithTuiArgs(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env
+): TaskWraithTuiCliOptions {
   const options: TaskWraithTuiCliOptions = {
     demo: false,
     dev: false,
@@ -103,7 +106,7 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
     help: false,
     version: false
   }
-  let explicitUserData = Boolean(String(process.env.TASKWRAITH_USER_DATA || '').trim())
+  let explicitUserData = Boolean(String(env.TASKWRAITH_USER_DATA || '').trim())
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     const [flag, inline] = argument.includes('=')
@@ -148,14 +151,19 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
   }
 
   if (options.dev && !options.userDataPath) {
-    options.userDataPath = defaultTaskWraithDevUserDataPath()
+    options.userDataPath = defaultTaskWraithDevUserDataPath(process.platform, env)
   }
-  if (!options.userDataPath) options.userDataPath = defaultTaskWraithUserDataPath()
-  options.hostLaunchProfile = explicitUserData
-    ? 'custom'
-    : options.dev
-      ? 'development'
-      : 'production'
+  if (!options.userDataPath)
+    options.userDataPath = defaultTaskWraithUserDataPath(process.platform, env)
+  const packageSmoke = env.TASKWRAITH_TUI_PACKAGE_SMOKE === '1'
+  options.hostLaunchProfile =
+    packageSmoke && explicitUserData
+      ? 'package-smoke'
+      : explicitUserData
+        ? 'custom'
+        : options.dev
+          ? 'development'
+          : 'production'
   if (options.json && options.snapshot) {
     throw new Error('--json and --snapshot select different output formats.')
   }

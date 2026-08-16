@@ -31,17 +31,31 @@ describe('TUI headless Host main integration', () => {
     expect(windowRequest).toBeGreaterThan(postureCheck)
   })
 
-  it('keeps a no-window Host alive for clients or work and disposes on quit', () => {
+  it('keeps a no-window Host alive for clients, accepted dispatch, or work and disposes on quit', () => {
     const monitor = indexSource.indexOf('tuiHeadlessHostSession.startMonitoring({')
     const clientCount = indexSource.indexOf('hostLifecycle.getConnectedClientCount()', monitor)
     const activeThreads = indexSource.indexOf('getActiveTaskWraithThreadCount() > 0', monitor)
     const activeStreams = indexSource.indexOf('hasActiveStreamingTaskWraithRun()', monitor)
+    const activeBridge = indexSource.indexOf(
+      '[...bridgeRunTranscripts.keys()].some((runId) => isChatRunLive(runId))',
+      monitor
+    )
     const dispose = indexSource.indexOf('tuiHeadlessHostSession.dispose()', monitor)
+    const retainedDispatch = indexSource.indexOf(
+      'const releaseTuiHeadlessHostWork = tuiHeadlessHostSession.retainActiveWork()'
+    )
+    const releasedDispatch = indexSource.indexOf(
+      '.finally(releaseTuiHeadlessHostWork)',
+      retainedDispatch
+    )
 
     expect(monitor).toBeGreaterThanOrEqual(0)
     expect(clientCount).toBeGreaterThan(monitor)
     expect(activeThreads).toBeGreaterThan(clientCount)
     expect(activeStreams).toBeGreaterThan(activeThreads)
-    expect(dispose).toBeGreaterThan(activeStreams)
+    expect(activeBridge).toBeGreaterThan(activeStreams)
+    expect(dispose).toBeGreaterThan(activeBridge)
+    expect(retainedDispatch).toBeGreaterThanOrEqual(0)
+    expect(releasedDispatch).toBeGreaterThan(retainedDispatch)
   })
 })

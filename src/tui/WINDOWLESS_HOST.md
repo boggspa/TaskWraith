@@ -40,8 +40,10 @@ flowchart LR
   promotes the existing process and preserves the one persistence/provider
   authority.
 - After the launching TUI exits, the Host remains alive while another local
-  client is connected or provider work is active. It quits only after the
-  parent-loss grace and both occupancy checks reach zero.
+  client is connected, accepted provider dispatch is still entering
+  `RunManager`, or provider work is active. It quits only after the parent-loss
+  grace, every occupancy check reaches zero, and a final cancellable quiescence
+  recheck gives an ordinary desktop launch priority over shutdown.
 - There is no installed daemon, login item, silent crash-restart loop, or token
   on argv. `ELECTRON_RUN_AS_NODE` is stripped from child launch environment.
 
@@ -80,9 +82,11 @@ Every closeout/release build must retain:
 1. focused lifecycle, main-wiring, launcher-race, profile, approval, and question
    tests;
 2. the full `src/tui` suite and TUI TypeScript build;
-3. a disposable packaged external-process smoke using package-smoke userData,
-   windowless Host flags, owner-only Host-v2 discovery/token, and an
-   authenticated packaged `tw --snapshot`; and
+3. a disposable packaged external-process smoke that starts offline, invokes
+   packaged `tw --snapshot` without a connect-only bypass, resolves and launches
+   the packaged App itself, verifies its windowless command posture and
+   owner-only Host-v2 discovery/token, authenticates, then proves the Host exits
+   after the TUI disconnects; and
 4. a normal-launch promotion check plus stale/incompatible Host refusal.
 
 The source commits that established this boundary are `cffd69560`,

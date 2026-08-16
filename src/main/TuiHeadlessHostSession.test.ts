@@ -33,10 +33,33 @@ describe('TuiHeadlessHostSession', () => {
       kind: 'invalid',
       error: 'Headless Host parent process identity is invalid.'
     })
+    expect(resolveTuiHeadlessHostLaunchPosture([...headlessArgs(), TUI_HEADLESS_HOST_ARG])).toEqual(
+      {
+        kind: 'invalid',
+        error: 'Headless Host requires one exact launch flag.'
+      }
+    )
+    expect(
+      resolveTuiHeadlessHostLaunchPosture([
+        'TaskWraith',
+        `${TUI_HEADLESS_HOST_ARG}=yes`,
+        `${TUI_HEADLESS_HOST_PARENT_ARG}42`
+      ])
+    ).toEqual({ kind: 'invalid', error: 'Headless Host requires one exact launch flag.' })
+    expect(
+      resolveTuiHeadlessHostLaunchPosture([
+        'TaskWraith',
+        TUI_HEADLESS_HOST_ARG,
+        '--taskwraith-headless-parent',
+        '42'
+      ])
+    ).toEqual({ kind: 'invalid', error: 'Headless Host launch arguments are malformed.' })
   })
 
-  it('recognizes duplicate headless requests without trusting their parent argument', () => {
+  it('classifies every reserved headless-control request without trusting its shape', () => {
     expect(isTuiHeadlessHostLaunchRequest([TUI_HEADLESS_HOST_ARG])).toBe(true)
+    expect(isTuiHeadlessHostLaunchRequest([`${TUI_HEADLESS_HOST_ARG}=yes`])).toBe(true)
+    expect(isTuiHeadlessHostLaunchRequest(['--taskwraith-headless-parent'])).toBe(true)
     expect(isTuiHeadlessHostLaunchRequest(['--ordinary-launch'])).toBe(false)
   })
 
@@ -56,6 +79,7 @@ describe('TuiHeadlessHostSession', () => {
     let now = 1_000
     let clients = 1
     let active = true
+    let commitQuit: (() => void) | undefined
     const quit = vi.fn()
     const session = new TuiHeadlessHostSession({
       argv: headlessArgs(),
@@ -66,7 +90,12 @@ describe('TuiHeadlessHostSession', () => {
         tick = callback
         return { unref: vi.fn() } as unknown as ReturnType<typeof setInterval>
       }) as typeof setInterval,
-      clearInterval: vi.fn() as unknown as typeof clearInterval
+      clearInterval: vi.fn() as unknown as typeof clearInterval,
+      setTimeout: ((callback: () => void) => {
+        commitQuit = callback
+        return { unref: vi.fn() } as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: vi.fn() as unknown as typeof clearTimeout
     })
     session.startMonitoring({
       getConnectedClientCount: () => clients,
@@ -83,9 +112,78 @@ describe('TuiHeadlessHostSession', () => {
     expect(quit).not.toHaveBeenCalled()
     active = false
     tick?.()
+    expect(quit).not.toHaveBeenCalled()
+    commitQuit?.()
     expect(quit).toHaveBeenCalledTimes(1)
     tick?.()
     expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains accepted pre-RunManager work until its idempotent release', () => {
+    let tick: (() => void) | undefined
+    let commitQuit: (() => void) | undefined
+    const quit = vi.fn()
+    const session = new TuiHeadlessHostSession({
+      argv: headlessArgs(),
+      isProcessAlive: () => false,
+      orphanGraceMs: 0,
+      setInterval: ((callback: () => void) => {
+        tick = callback
+        return { unref: vi.fn() } as unknown as ReturnType<typeof setInterval>
+      }) as typeof setInterval,
+      clearInterval: vi.fn() as unknown as typeof clearInterval,
+      setTimeout: ((callback: () => void) => {
+        commitQuit = callback
+        return { unref: vi.fn() } as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: vi.fn() as unknown as typeof clearTimeout
+    })
+    const release = session.retainActiveWork()
+    session.startMonitoring({
+      getConnectedClientCount: () => 0,
+      hasActiveWork: () => false,
+      quit
+    })
+
+    tick?.()
+    expect(commitQuit).toBeUndefined()
+    release()
+    release()
+    tick?.()
+    commitQuit?.()
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a desktop promotion cancel a queued orphan shutdown', () => {
+    let commitQuit: (() => void) | undefined
+    const clearTimeout = vi.fn()
+    const quit = vi.fn()
+    const session = new TuiHeadlessHostSession({
+      argv: headlessArgs(),
+      isProcessAlive: () => false,
+      orphanGraceMs: 0,
+      setInterval: ((callback: () => void) => {
+        callback()
+        return { unref: vi.fn() } as unknown as ReturnType<typeof setInterval>
+      }) as typeof setInterval,
+      clearInterval: vi.fn() as unknown as typeof clearInterval,
+      setTimeout: ((callback: () => void) => {
+        commitQuit = callback
+        return { unref: vi.fn() } as unknown as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout,
+      clearTimeout: clearTimeout as unknown as typeof globalThis.clearTimeout
+    })
+    session.startMonitoring({
+      getConnectedClientCount: () => 0,
+      hasActiveWork: () => false,
+      quit
+    })
+    expect(commitQuit).toBeTypeOf('function')
+
+    expect(session.shouldPresentForSecondInstance(['TaskWraith'])).toBe(true)
+    commitQuit?.()
+    expect(clearTimeout).toHaveBeenCalledTimes(1)
+    expect(quit).not.toHaveBeenCalled()
   })
 
   it('fails safe when client or run occupancy cannot be read', () => {

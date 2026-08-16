@@ -2,20 +2,25 @@ import { randomUUID } from 'node:crypto'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn as spawnChild } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { posix, resolve, win32, type PlatformPath } from 'node:path'
 
 import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError
 } from '../main/host/HostProjectionClient'
+import {
+  PACKAGE_SMOKE_ARG,
+  PACKAGE_SMOKE_USER_DATA_ARG,
+  resolveInstanceLaunchPosture
+} from '../main/InstanceLaunchPosture'
 import { TUI_HEADLESS_HOST_ARG, TUI_HEADLESS_HOST_PARENT_ARG } from '../main/TuiHeadlessHostSession'
 
 const DEFAULT_START_TIMEOUT_MS = 120_000
 const DEFAULT_POLL_MS = 250
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500
 
-export type TuiHostLaunchProfile = 'production' | 'development' | 'custom'
+export type TuiHostLaunchProfile = 'production' | 'development' | 'package-smoke' | 'custom'
 
 export interface TuiHostLaunchCommand {
   readonly executable: string
@@ -36,6 +41,7 @@ export interface ResolveTuiHostLaunchCommandInput {
   readonly platform?: NodeJS.Platform
   readonly env?: NodeJS.ProcessEnv
   readonly homeDirectory?: string
+  readonly userDataPath?: string
   readonly pathExists?: (path: string) => Promise<boolean>
 }
 
@@ -63,6 +69,32 @@ export type EnsureTuiHostAvailableResult =
 
 function headlessArgs(parentPid: number): string[] {
   return [TUI_HEADLESS_HOST_ARG, `${TUI_HEADLESS_HOST_PARENT_ARG}${parentPid}`]
+}
+
+function launchArgs(input: {
+  profile: TuiHostLaunchProfile
+  parentPid: number
+  platform: NodeJS.Platform
+  userDataPath?: string
+}): string[] {
+  const args = headlessArgs(input.parentPid)
+  if (input.profile !== 'package-smoke') return args
+  const userDataPath = String(input.userDataPath || '').trim()
+  const smokeArgs = [PACKAGE_SMOKE_ARG, `${PACKAGE_SMOKE_USER_DATA_ARG}${userDataPath}`]
+  const posture = resolveInstanceLaunchPosture({
+    isPackaged: true,
+    argv: smokeArgs,
+    temporaryDirectory: tmpdir()
+  })
+  if (posture.kind !== 'package-smoke' || posture.userDataPath !== resolve(userDataPath)) {
+    throw new Error('TUI package smoke requires its exact disposable temp profile.')
+  }
+  return [
+    ...smokeArgs,
+    ...args,
+    ...(input.platform === 'darwin' ? ['--use-mock-keychain'] : []),
+    ...(input.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [])
+  ]
 }
 
 function pathApi(platform: NodeJS.Platform): PlatformPath {
@@ -203,7 +235,12 @@ export async function resolveTuiHostLaunchCommand(
   const env = input.env ?? process.env
   const homeDirectory = input.homeDirectory ?? homedir()
   const pathExists = input.pathExists ?? defaultPathExists
-  const args = headlessArgs(parentPid)
+  const args = launchArgs({
+    profile: input.profile,
+    parentPid,
+    platform,
+    userDataPath: input.userDataPath
+  })
   const resourcesDir = pathApi(platform).resolve(moduleDir, '..', '..')
   const candidates =
     input.profile === 'development'

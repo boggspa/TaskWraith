@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { HostProjectionIncompatibleProtocolError } from '../main/host/HostProjectionClient'
@@ -87,6 +89,31 @@ describe('TUI Host process manager', () => {
       executable,
       cwd: 'C:\\Apps\\TaskWraith',
       args: ['--taskwraith-headless-host', '--taskwraith-headless-parent=99']
+    })
+  })
+
+  it('uses the real packaged launch resolver for an isolated package smoke profile', async () => {
+    const executable = '/tmp/TaskWraith-smoke.app/Contents/MacOS/TaskWraith'
+    const userDataPath = join(tmpdir(), 'taskwraith-tui-package-smoke-resolver')
+    const result = await resolveTuiHostLaunchCommand({
+      profile: 'package-smoke',
+      userDataPath,
+      parentPid: 101,
+      platform: 'darwin',
+      moduleDir: '/tmp/TaskWraith-smoke.app/Contents/Resources/tui/tui',
+      env: { TASKWRAITH_TUI_APP_EXECUTABLE: executable },
+      pathExists: async (path) => path === executable
+    })
+
+    expect(result).toMatchObject({
+      executable,
+      args: [
+        '--taskwraith-package-smoke',
+        `--taskwraith-package-smoke-user-data=${userDataPath}`,
+        '--taskwraith-headless-host',
+        '--taskwraith-headless-parent=101',
+        '--use-mock-keychain'
+      ]
     })
   })
 
