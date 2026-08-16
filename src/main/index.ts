@@ -619,6 +619,7 @@ import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPr
 import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
 import {
   externalSeatsForShare,
+  hasNonExternalApprovalAuthority as evaluateNonExternalApprovalAuthority,
   resolveChatEffectiveRoster
 } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
@@ -5542,12 +5543,12 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
  * purposes. If every configured authority is external, consent recorded on the
  * ensemble must stop elevating anything.
  *
- * Fails OPEN when the collaboration store is unreachable, matching the
- * behaviour before externals existed: the gate is only reachable during a live
- * run, and an external id cannot satisfy any live-roster check anyway, so a
- * missing answer here cannot manufacture an external authority. If that ever
- * stops being true this must be revisited — it is the one place in this pair
- * that is not fail-closed, and it is deliberate.
+ * Wiring only: the decision is `hasNonExternalApprovalAuthority` in
+ * ExternalSeatResolution, where it is unit-tested. This gate FAILS CLOSED when
+ * externals cannot be enumerated — an unknown set is not an empty one. It used
+ * to fail open on the premise that an external id cannot satisfy a live-roster
+ * check; that premise defends the id rather than the decision, and the
+ * Channel-native seat authority can legitimately answer "recovery blocked".
  */
 function hasNonExternalApprovalAuthority(
   chatId: string | undefined,
@@ -5559,18 +5560,14 @@ function hasNonExternalApprovalAuthority(
     }
   } | null
 ): boolean {
-  const boss = chat?.ensemble?.bossmanParticipantId
-  if (!boss) return false
-  const captains = Array.isArray(chat?.ensemble?.captainParticipantIds)
-    ? chat.ensemble.captainParticipantIds
-    : chat?.ensemble?.secondInCommandParticipantId
-      ? [chat.ensemble.secondInCommandParticipantId]
-      : []
-  const assigned = [boss, ...captains].filter((id): id is string => Boolean(id))
-  if (assigned.length === 0) return false
-  if (!chatId || !resolveExternalCollaboratorSeatIds) return true
-  const externals = new Set(resolveExternalCollaboratorSeatIds(chatId))
-  return assigned.some((id) => !externals.has(id))
+  return evaluateNonExternalApprovalAuthority({
+    ensemble: chat?.ensemble ?? null,
+    // null means "cannot enumerate externals", which the evaluator refuses.
+    externalSeatIds:
+      chatId && resolveExternalCollaboratorSeatIds
+        ? resolveExternalCollaboratorSeatIds(chatId)
+        : null
+  })
 }
 
 /**

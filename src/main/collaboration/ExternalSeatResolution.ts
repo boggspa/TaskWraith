@@ -57,6 +57,53 @@ export function externalSeatsForShare(
 }
 
 /**
+ * Does this chat have an approval authority that is NOT an external human?
+ *
+ * A configured Boss is mandatory; configured Captains are fallback seats. An
+ * authority held by an external is no authority at all for permission
+ * purposes: externals never receive approval prompts, so consent recorded
+ * against one would auto-allow other seats on the strength of somebody who is
+ * never asked.
+ *
+ * FAILS CLOSED on an unknown external set (`externalSeatIds: null`). Both
+ * callers use `true` to PERMIT — an unattended auto-approval, and the enable
+ * door for auto-approvals — so answering `true` while unable to enumerate
+ * externals elevates on an authority nobody verified. This deliberately
+ * replaces the previous fail-OPEN behaviour, whose premise was that the gate
+ * is only reachable during a live run where an external id cannot satisfy a
+ * roster check. That premise defends the id, not the decision, and the
+ * Channel-native seat authority can legitimately answer "recovery blocked" —
+ * a real unknown that must not read as "no externals exist".
+ *
+ * Structural input, not `ChatRecord`: permission gates run on hot paths and
+ * some callers hold only a summary.
+ */
+export function hasNonExternalApprovalAuthority(input: {
+  ensemble?: {
+    bossmanParticipantId?: string
+    captainParticipantIds?: string[]
+    secondInCommandParticipantId?: string
+  } | null
+  /** `null` means "cannot enumerate externals" — never "there are none". */
+  externalSeatIds: readonly string[] | null
+}): boolean {
+  const ensemble = input.ensemble ?? null
+  if (!ensemble) return false
+  const boss = ensemble.bossmanParticipantId
+  if (!boss) return false
+  const captains = Array.isArray(ensemble.captainParticipantIds)
+    ? ensemble.captainParticipantIds
+    : ensemble.secondInCommandParticipantId
+      ? [ensemble.secondInCommandParticipantId]
+      : []
+  const assigned = [boss, ...captains].filter((id): id is string => Boolean(id))
+  if (assigned.length === 0) return false
+  if (input.externalSeatIds === null) return false
+  const externals = new Set(input.externalSeatIds)
+  return assigned.some((id) => !externals.has(id))
+}
+
+/**
  * The effective roster for one chat: its model seats plus its share's externals.
  *
  * The chat argument is intentionally a narrow structural type rather than

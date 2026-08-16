@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../store/types'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
-import { externalSeatsForShare, resolveChatEffectiveRoster } from './ExternalSeatResolution'
+import {
+  externalSeatsForShare,
+  hasNonExternalApprovalAuthority,
+  resolveChatEffectiveRoster
+} from './ExternalSeatResolution'
 
 function share(overrides: Partial<HumanCollaborationShare> = {}): HumanCollaborationShare {
   return {
@@ -184,5 +188,60 @@ describe('resolveChatEffectiveRoster', () => {
     // A panel with an external and no model has no seat that can actually run —
     // callers must read enabledModelSeatCount, not totalSeatCount, for the floor.
     expect(roster.enabledModelSeatCount).toBe(0)
+  })
+})
+
+describe('hasNonExternalApprovalAuthority', () => {
+  const ensemble = (overrides: Record<string, unknown> = {}) => ({
+    bossmanParticipantId: 'boss',
+    ...overrides
+  })
+
+  it('REFUSES when the external seat set is unknown', () => {
+    // The whole point of the gate is to stop recorded consent elevating when
+    // every configured authority is an external human. If we cannot enumerate
+    // externals we cannot prove any authority is NOT one, so the only honest
+    // answer is "no non-external authority" — both callers use `true` to PERMIT
+    // (an unattended auto-approval, and the enable door for auto-approvals), so
+    // answering `true` here auto-approves on the strength of an authority
+    // nobody verified.
+    expect(hasNonExternalApprovalAuthority({ ensemble: ensemble(), externalSeatIds: null })).toBe(
+      false
+    )
+  })
+
+  it('allows a real non-external Boss once the external set is known', () => {
+    expect(hasNonExternalApprovalAuthority({ ensemble: ensemble(), externalSeatIds: [] })).toBe(
+      true
+    )
+  })
+
+  it('refuses when every configured authority is external', () => {
+    expect(
+      hasNonExternalApprovalAuthority({ ensemble: ensemble(), externalSeatIds: ['boss'] })
+    ).toBe(false)
+  })
+
+  it('allows when a Captain is non-external even though the Boss is external', () => {
+    expect(
+      hasNonExternalApprovalAuthority({
+        ensemble: ensemble({ captainParticipantIds: ['captain'] }),
+        externalSeatIds: ['boss']
+      })
+    ).toBe(true)
+  })
+
+  it('accepts secondInCommand as the captain fallback seat', () => {
+    expect(
+      hasNonExternalApprovalAuthority({
+        ensemble: ensemble({ secondInCommandParticipantId: 'second' }),
+        externalSeatIds: ['boss']
+      })
+    ).toBe(true)
+  })
+
+  it('refuses without a configured Boss, and refuses a missing ensemble', () => {
+    expect(hasNonExternalApprovalAuthority({ ensemble: {}, externalSeatIds: [] })).toBe(false)
+    expect(hasNonExternalApprovalAuthority({ ensemble: null, externalSeatIds: [] })).toBe(false)
   })
 })
