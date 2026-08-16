@@ -1004,6 +1004,7 @@ import {
 import { completeRegenerableHistoryByteOperation } from './services/RegenerableHistoryByteCompletion'
 import { sanitizeTranscriptMediaOwnershipClaims } from './services/TranscriptMediaOwnershipClaims'
 import { persistAuthorizedProviderMedia } from './services/ProviderMediaPersistenceGate'
+import { deliverTrustedRunMediaRefs } from './services/TrustedRunMediaDelivery'
 import { persistAuthorizedProviderSessionMetadata } from './services/ProviderSessionMetadataPersistenceGate'
 import {
   projectAndCommitToolMediaPersistence,
@@ -11034,13 +11035,14 @@ function broadcastParticipantWorkingTelemetry(event: ParticipantWorkingTelemetry
 
 /**
  * Deliver a TRUSTED (main-constructed) run media ref to the renderer over a
- * DEDICATED main→renderer channel. Used only for a foreground Codex SOLO run,
+ * DEDICATED main→renderer channel. Used for a foreground SOLO run,
  * whose transcript is persisted renderer-side and which no main-side run-state
  * map owns (so injectTrustedMediaRefs cannot reach it). Un-forgeable: the ref is
- * only ever built by main-side executor code (buildAvMediaRef) and pushed on
+ * only ever built by main-side executor code and pushed on
  * this main-only `webContents.send` channel — a provider writing
  * `{type:'media_refs'}` to stdout can only reach the sanitized `agent-output`
- * lane (which strips AV), never this channel. `context.sender` is a WebContents,
+ * lane (which caps images and strips AV), never this channel. `context.sender`
+ * is a WebContents,
  * so this sends directly rather than via safeSendToWebContents (BrowserWindow).
  */
 function sendTrustedRunMediaRefs(
@@ -12840,16 +12842,15 @@ function appendBridgeRunMediaRefs(
 }
 
 /**
- * S1b-3 — TRUSTED media-ref injection. ffmpeg producer tools (audio_extract /
- * transcode_audio / transcode_video) run in MAIN; their `trustedMediaRefs` are
- * already verified (content-addressed asset written by the executor) and must
- * NOT pass through sanitizeRawProviderMediaRefs — that sanitizer is image-only
- * and treats every ref as provider-controlled, so it would hard-drop audio/
- * video. We fan out IN-PROCESS (never a wire event a hostile provider could
- * forge as `{type:'media_refs'}` on stdout) to whichever run-state owner holds
- * this run. A given appRunId is live in exactly one of the three maps, so the
- * first match wins and returns. Mirrors the existing media_refs flush cadence
- * (immediate before first flush, else debounced) MINUS the sanitizer.
+ * S1b-3 — TRUSTED media-ref injection. Main-built tool-result images and AV
+ * producer refs are already verified and must NOT pass through
+ * sanitizeRawProviderMediaRefs: its fixed provider-event cap would truncate a
+ * temporal image batch, and its image-only policy would hard-drop audio/video.
+ * We fan out IN-PROCESS (never a wire event a hostile provider could forge as
+ * `{type:'media_refs'}` on stdout) to whichever run-state owner holds this run.
+ * A given appRunId is live in exactly one of the three maps, so the first match
+ * wins and returns. Mirrors the existing media_refs flush cadence (immediate
+ * before first flush, else debounced) MINUS the sanitizer.
  */
 function injectTrustedMediaRefs(
   appRunId: string | undefined,
@@ -40675,16 +40676,15 @@ async function executeGeminiMcpTool(
       })
       // PR1 (keystone): surface any image the tool returned as a VISIBLE
       // transcript attachment. The `content` image blocks above go to the MODEL
-      // only — without this `media_refs` line even canvas_screenshot is invisible
-      // in the transcript. createToolResultMediaRefs magic-byte-sniffs and rejects
-      // SVG, so the visible lane stays raster-only.
+      // only. createToolResultMediaRefs magic-byte-sniffs and rejects SVG, so the
+      // visible lane stays raster-only.
       //
       // Emitted for EVERY provider, codex included. A codex MCP-tool image has NO
       // other path to the transcript: codex's notification-stream emitter
       // (emitCodexProviderMediaRefs) fires ONLY for `agentMessage` items, whereas
       // its MCP tool RESULTS arrive as `mcpToolCall` items routed through
       // codexToolResultFromItem — which never reaches that emitter and never
-      // produces a media_refs line (the image only survives there JSON-stringified
+      // produces a media attachment (the image only survives there JSON-stringified
       // into the tool_result text). So this is the keystone, not a double-emit:
       // the two lanes are disjoint by codex item type, and even a same-bytes
       // coincidence collapses on the renderer's sha256 dedup
@@ -40695,9 +40695,10 @@ async function executeGeminiMcpTool(
       const resultImageBlocks = (publicFinalRichResult?.content ?? []).filter(
         (block) => block.type === 'image'
       )
-      if (resultImageBlocks.length > 0 && context.sender) {
+      let toolResultImageRefs: TranscriptMediaRef[] = []
+      if (resultImageBlocks.length > 0) {
         const mediaStore = getTranscriptMediaAssetStore()
-        const mediaRefs = persistAuthorizedProviderMedia({
+        toolResultImageRefs = persistAuthorizedProviderMedia({
           isAuthorized: () => canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority),
           persist: () =>
             createOwnedToolResultMediaRefs({
@@ -40723,19 +40724,13 @@ async function executeGeminiMcpTool(
             )
           }
         })
-        if (mediaRefs.length > 0) {
-          sendAgentCompatLine(context.sender, parentProvider, {
-            type: 'media_refs',
-            mediaRefs,
-            provider: parentProvider
-          })
-        }
       }
-      // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg/VideoToolbox
-      // producer tool are delivered DIRECTLY into the owning run's transcript,
-      // bypassing the image-only provider sanitizer (which would hard-drop AV).
-      // Un-forgeable: a McpToolExecutionResult is only ever constructed by main-side
-      // executor code, never provider stdout.
+      // S1b-3: main-built media refs are delivered DIRECTLY into the owning
+      // run's transcript. Tool-result images have already crossed the sniffed,
+      // size-capped raster spine above; AV refs came from the main-side producer.
+      // Neither should re-enter the forgeable provider `media_refs` lane, whose
+      // fixed cap would truncate temporal batches and whose image-only sanitizer
+      // would hard-drop AV. A provider cannot forge this in-process/IPC lane.
       //
       // injectTrustedMediaRefs fans to the 3 MAIN-SIDE maps (bridge / sub-thread /
       // ensemble) and RETURNS whether one owned the run — those cover the phone,
@@ -40752,27 +40747,27 @@ async function executeGeminiMcpTool(
       // the headless/windowless dispatch case (sender = null-object headlessRunSender;
       // that case is map-owned anyway). Renderer-side it applies RAW + persists via
       // saveChat, so the inline Electron transcript shows it and it syncs to iOS.
-      if (
-        publicFinalRichResult?.trustedMediaRefs &&
-        publicFinalRichResult.trustedMediaRefs.length > 0
-      ) {
-        const ownedMediaRefs = canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
-          ? grantTranscriptMediaRefsToChat(
-              context.appChatId,
-              publicFinalRichResult.trustedMediaRefs
-            )
-          : []
-        if (ownedMediaRefs.length > 0) {
-          const delivered = injectTrustedMediaRefs(context.appRunId, ownedMediaRefs)
-          if (!delivered && context.sender && context.appRunId && context.appChatId) {
-            sendTrustedRunMediaRefs(context.sender, {
-              appChatId: context.appChatId,
-              appRunId: context.appRunId,
-              mediaRefs: ownedMediaRefs
-            })
-          }
-        }
-      }
+      const ownedProducerMediaRefs = canvasMcpExecutionAuthorityStillLive(
+        providerMcpExecutionAuthority
+      )
+        ? grantTranscriptMediaRefsToChat(
+            context.appChatId,
+            publicFinalRichResult?.trustedMediaRefs ?? []
+          )
+        : []
+      const visibleMediaRefs = mergeTranscriptMediaRefs(
+        toolResultImageRefs,
+        ownedProducerMediaRefs
+      )
+      deliverTrustedRunMediaRefs({
+        appChatId: context.appChatId,
+        appRunId: context.appRunId,
+        mediaRefs: visibleMediaRefs,
+        inject: injectTrustedMediaRefs,
+        sendForeground: context.sender
+          ? (payload) => sendTrustedRunMediaRefs(context.sender, payload)
+          : undefined
+      })
       if (publicFinalRichResult) {
         return {
           ...publicFinalRichResult,

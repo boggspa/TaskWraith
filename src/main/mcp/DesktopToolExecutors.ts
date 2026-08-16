@@ -98,6 +98,7 @@ export type McpToolExecutionResult = {
   isError?: boolean
   structuredContent?: Record<string, unknown>
   content?: McpToolContentBlock[]
+  mediaRefHints?: { groupKind?: string; labels?: string[]; maxRefs?: number }
 }
 
 export interface DesktopToolContext {

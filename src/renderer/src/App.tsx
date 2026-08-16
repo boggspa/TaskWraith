@@ -5834,8 +5834,9 @@ function App(): React.JSX.Element {
   //      FIRST via sanitizeRawProviderMediaRefs (image-only), then calls this.
   //   2. TRUSTED main-only lane (`run-trusted-media-refs` IPC) — refs are
   //      constructed main-side on a channel a provider's stdout cannot forge,
-  //      so the caller passes them RAW (audio/video survive — the sanitizer
-  //      would hard-drop them). This helper NEVER sanitizes; that policy stays
+  //      so the caller passes them RAW (large temporal image batches and AV
+  //      survive the provider cap/image-only sanitizer). This helper NEVER
+  //      sanitizes; that policy stays
   //      at each call site. Do NOT route the forgeable provider lane through
   //      here un-sanitized.
   // Finds the trailing assistant message and merges (mergeTranscriptMediaRefs
@@ -12568,10 +12569,10 @@ function App(): React.JSX.Element {
       )
     }
 
-    // Trusted audio/video media refs for a foreground solo run. Main constructs
-    // these refs and pushes them on this dedicated main-only channel, so unlike
-    // the forgeable provider `assistant_media_refs` lane (which sanitizes —
-    // image-only — above) we attach them RAW: the image-only sanitizer would
+    // Trusted tool-result image and audio/video refs for a foreground solo run.
+    // Main constructs these refs and pushes them on this dedicated main-only
+    // channel, so unlike the forgeable provider `assistant_media_refs` lane we
+    // attach them RAW: the sanitizer would cap temporal image batches and
     // hard-drop audio/video, and a provider's stdout cannot forge this IPC.
     // Keyed by appChatId (streamed assistant messages carry no runId); the
     // shared helper's append-new-assistant fallback covers the no-trailing-
