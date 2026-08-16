@@ -172,6 +172,12 @@ function fakeService(channels = [channel('channel-a', 'chat-a'), channel('channe
       stop,
       status: start,
       hostIdentityPublicKey: vi.fn(() => 'public-key'),
+      // Fail-closed stub: this bootstrap suite does not exercise seats, and a
+      // double that reported 'ready' would be asserting recovery it never did.
+      externalSeatRuntimeAuthority: vi.fn(() => ({
+        channelAuthorityState: () => 'recovery_blocked' as const,
+        memberPresence: () => 'recovery_blocked' as const
+      })),
       refreshRelayRooms: vi.fn(() => 0),
       listChannels: vi.fn(() => channels as never),
       inspectChannel: vi.fn(),

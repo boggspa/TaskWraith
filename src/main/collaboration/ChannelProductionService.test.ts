@@ -1840,6 +1840,68 @@ describe('ChannelProductionService', () => {
     expect(restarted.service.listAudit()).toEqual([])
   })
 
+  it('certifies per-channel seat recovery to the runtime barrier on restart', async () => {
+    // The seat barrier defaults to 'recovery_blocked' for any channel the
+    // service has not certified (ChannelRuntime.channelAuthorityState). Nothing
+    // certifies a channel recovered from disk, so without an explicit
+    // publication every channel stays blocked for the whole session after a
+    // restart and external seats resolve for nobody.
+    const userDataPath = temporaryUserData()
+    const identity = generateIdentityKeyPair()
+    const first = createService({ userDataPath, identity })
+    first.service.start()
+    const blocked = first.service.createChannel({
+      chatId: 'chat-barrier-blocked',
+      title: 'Blocked',
+      ownerDisplayName: 'Host'
+    })
+    await first.service.appendHost({
+      channelId: blocked.channelId,
+      clientMessageId: 'barrier-blocked-1',
+      content: 'first'
+    })
+    const healthy = first.service.createChannel({
+      chatId: 'chat-barrier-healthy',
+      title: 'Healthy',
+      ownerDisplayName: 'Host'
+    })
+    await first.service.appendHost({
+      channelId: healthy.channelId,
+      clientMessageId: 'barrier-healthy-1',
+      content: 'healthy'
+    })
+    await first.service.stop()
+
+    const paths = channelProductionDataPaths(userDataPath)
+    const blockedLogPath = join(paths.logs, `${blocked.channelId}.jsonl`)
+    const lines = readFileSync(blockedLogPath, 'utf8').trimEnd().split('\n')
+    const tampered = JSON.parse(lines[0]) as { content: string }
+    tampered.content = 'tampered interior record'
+    lines[0] = JSON.stringify(tampered)
+    writeFileSync(blockedLogPath, `${lines.join('\n')}\n`, 'utf8')
+
+    const restarted = createService({ userDataPath, identity })
+    expect(restarted.service.start()).toMatchObject({
+      state: 'running',
+      channelCount: 2,
+      recoveryBlockedChannelCount: 1
+    })
+    const authority = restarted.service.externalSeatRuntimeAuthority()
+
+    // A channel whose recovery succeeded is certified ready.
+    expect(authority.channelAuthorityState(healthy.channelId)).toBe('ready')
+    // Interrupted/failed recovery must LEAVE the channel blocked. A loop that
+    // certified every channel unconditionally would pass the assertion above
+    // and fail this one.
+    expect(authority.channelAuthorityState(blocked.channelId)).toBe('recovery_blocked')
+    // Never certified, never ready.
+    expect(authority.channelAuthorityState('channel-that-was-never-certified')).toBe(
+      'recovery_blocked'
+    )
+
+    await restarted.service.stop()
+  })
+
   it('isolates corrupt history and restores healthy Channels only', async () => {
     const userDataPath = temporaryUserData()
     const identity = generateIdentityKeyPair()

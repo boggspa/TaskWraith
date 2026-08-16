@@ -10,6 +10,7 @@ import {
   type ChannelAuditInput,
   type ChannelAuditLike
 } from './ChannelAuditLog'
+import type { ChannelExternalSeatRuntimeAuthority } from './ChannelExternalSeatAuthority'
 import { ChannelAgentAuthorityStore } from './ChannelAgentAuthorityStore'
 import { validateChannelAgentDispatchJournalSnapshot } from './ChannelAgentDispatchJournalAuthority'
 import { ChannelAgentDispatchJournalStore } from './ChannelAgentDispatchJournalStore'
@@ -217,6 +218,13 @@ export interface ChannelProductionService {
   stop(): Promise<void>
   status(): ChannelProductionStatus
   hostIdentityPublicKey(): string
+  /**
+   * The read-only seat-authority seam: per-channel recovery state and member
+   * presence. Deliberately narrowed to `ChannelExternalSeatRuntimeAuthority`
+   * so consumers get the barrier and the presence read, never the runtime's
+   * mutators.
+   */
+  externalSeatRuntimeAuthority(): ChannelExternalSeatRuntimeAuthority
   refreshRelayRooms(): number
   listChannels(): ChannelProductionChannelView[]
   inspectChannel(channelId: string): ChannelProductionChannelInspection
@@ -723,6 +731,19 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
       if (agentProduction) this.scheduleAcceptedAgentAppend(agentProduction, result)
       else this.recordAcceptedAgentMentionAdmission(result, store, auditSink)
     }
+    // Certify per-channel recovery to the seat-authority barrier before this
+    // service reports running. `recoveryBlockedChannelIds` is final here: the
+    // per-channel validation loop and the human-review recovery pass have both
+    // completed. This publishes the recovery OUTCOME, never a blanket 'ready' —
+    // a channel whose recovery failed stays blocked. A channel this loop does
+    // not certify defaults to 'recovery_blocked' in the runtime, so an omission
+    // fails closed instead of serving seats for an unrecovered channel.
+    for (const channel of store.listChannels()) {
+      runtime.setChannelAuthorityState(
+        channel.channelId,
+        recoveryBlockedChannelIds.has(channel.channelId) ? 'recovery_blocked' : 'ready'
+      )
+    }
     this.state = {
       store,
       log,
@@ -797,6 +818,10 @@ class ChannelProductionServiceImpl implements ChannelProductionService {
 
   hostIdentityPublicKey(): string {
     return this.requireRunning().runtime.hostIdentityPublicKey()
+  }
+
+  externalSeatRuntimeAuthority(): ChannelExternalSeatRuntimeAuthority {
+    return this.requireRunning().runtime
   }
 
   refreshRelayRooms(): number {
