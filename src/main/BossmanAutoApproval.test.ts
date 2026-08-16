@@ -179,6 +179,24 @@ describe('evaluateBossmanAutoApproval', () => {
     ).toBeNull()
   })
 
+  it('refuses when the external set cannot be enumerated (null), not just when it is malformed', () => {
+    // Regression pin, and it passes on the runtime guard that predates this
+    // slice — the `!Array.isArray` refusal was already correct. What changed is
+    // that the DECLARED type forbade null, so the production caller omitted the
+    // key instead, and an omitted key skips the external check entirely. This
+    // pins that a Channel authority answering `recovery_blocked` can be handed
+    // straight through and is refused rather than read as "no externals".
+    expect(
+      evaluateBossmanAutoApproval(
+        makeContext({
+          bossmanParticipantId: 'olly',
+          participantIds: ['olly', 'worker'],
+          externalParticipantIds: null
+        })
+      )
+    ).toBeNull()
+  })
+
   it('refuses an external Captain on the Boss-unavailable fallback path', () => {
     // Sanity: with no external marking, this exact context DOES auto-approve —
     // so the refusal below is attributable to the external marking alone.

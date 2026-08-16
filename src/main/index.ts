@@ -611,6 +611,7 @@ import {
   type HistoryClearDispatchReservation,
   type HistoryClearRunPersistenceAuthority
 } from './HistoryClearAdmissionGate'
+import { ChannelExternalSeatAuthority } from './collaboration/ChannelExternalSeatAuthority'
 import {
   HumanCollaborationStore,
   type HumanCollaborationShare
@@ -10981,7 +10982,8 @@ let drainPendingExternalJoinConversion: ((chatId: string) => void) | null = null
  * would assert "there are no externals", which is a different and unearned
  * claim.
  */
-let resolveExternalCollaboratorSeatIds: ((chatId: string) => readonly string[]) | null = null
+/** Returns `null` when externals cannot be enumerated — never an empty array. */
+let resolveExternalCollaboratorSeatIds: ((chatId: string) => readonly string[] | null) | null = null
 
 function broadcastChatUpdated(chat: ChatRecord): void {
   enqueueChatUpdated(mainWindow, chat)
@@ -14153,6 +14155,9 @@ function bossmanAutoApprovalMetadata(input: {
     // explicitly rather than relying on externals being absent from
     // `participantIds` — that is safety by representation, and this gate must
     // hold as a rule once a caller ever passes an effective roster.
+    // An unknown answer is passed THROUGH rather than omitted: an omitted key
+    // skips the external check entirely, while evaluateBossmanAutoApproval
+    // refuses unusable evidence. "Not enumerable" is not "there are none".
     ...(chatId && resolveExternalCollaboratorSeatIds
       ? { externalParticipantIds: resolveExternalCollaboratorSeatIds(chatId) }
       : {}),
@@ -50272,13 +50277,31 @@ if (isGeminiMcpBridgeProcess) {
     }
     // Active externals only. A revoked participant holds no seat, and a pending
     // one has not completed SAS — neither may carry an authority.
-    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] => {
+    // Channel-native, with the People fallback still attached. TRANSITIONAL is
+    // explicit so omitting the fallback can never accidentally become the X4
+    // Channel-only seal. A blocked recovery answers null (cannot enumerate),
+    // never [] — an empty array here would read as "no externals exist" and
+    // silently elevate every approval gate that consumes this.
+    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] | null => {
       if (!chatId) return []
-      const share = humanCollaborationStore.getShareForChat(chatId)
-      if (!share) return []
-      return share.participants
-        .filter((participant) => participant.status === 'active')
-        .map((participant) => participant.collaboratorId)
+      const service = channelProductionBootstrap?.service
+      if (!service || service.status().state !== 'running') return null
+      try {
+        const resolution = new ChannelExternalSeatAuthority({
+          channelStore: service.externalSeatChannelStore(),
+          humanPolicyStore: service.externalSeatHumanPolicyStore(),
+          runtime: service.externalSeatRuntimeAuthority(),
+          legacy: {
+            mode: 'transitional',
+            shareStore: humanCollaborationStore,
+            resolvePresence: (collaboratorId) =>
+              humanCollaborationPresence.collaboratorState(collaboratorId)
+          }
+        }).resolve(chatId)
+        return resolution.state === 'ready' ? resolution.seats.map((seat) => seat.seatId) : null
+      } catch {
+        return null
+      }
     }
     // P2a — bounded, durable audit of host-visible collaboration events
     // (rules changes, invites, admission, contributions, drafts, revocations).

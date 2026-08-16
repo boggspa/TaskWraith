@@ -195,6 +195,35 @@ describe('Channels production main integration', () => {
     expect(shutdown).toContain('channelProductionBootstrap?.stop().catch((error) => {')
   })
 
+  it('resolves external collaborator seats through the Channel authority, transitionally', () => {
+    const resolver = between(
+      'resolveExternalCollaboratorSeatIds = (chatId: string)',
+      'const humanCollaborationAuditLog = new HumanCollaborationAuditLog('
+    )
+    // Channel-native, built from the service seam rather than reopening stores.
+    expect(resolver).toContain('new ChannelExternalSeatAuthority({')
+    expect(resolver).toContain('channelStore: service.externalSeatChannelStore()')
+    expect(resolver).toContain('humanPolicyStore: service.externalSeatHumanPolicyStore()')
+    expect(resolver).toContain('runtime: service.externalSeatRuntimeAuthority()')
+
+    // TRANSITIONAL until X4 proves the Channel-only seal. The People fallback
+    // is still attached, and dropping it must be a decision rather than an
+    // omission — `channel_only` here would be a silent early cutover.
+    expect(resolver).toContain("mode: 'transitional'")
+    expect(resolver).toContain('shareStore: humanCollaborationStore')
+    expect(resolver).toContain('resolvePresence:')
+    expect(resolver).not.toContain("mode: 'channel_only'")
+
+    // Unknown must never arrive as an empty array: `[]` reads as "no externals
+    // exist" and silently elevates every approval gate that consumes this,
+    // which is the exact defect X2-c closed one layer up.
+    expect(resolver).toContain("if (!service || service.status().state !== 'running') return null")
+    expect(resolver).toContain("resolution.state === 'ready'")
+    expect(resolver).toContain(': null')
+    // The retired People read is gone from this resolver entirely.
+    expect(resolver).not.toContain('humanCollaborationStore.getShareForChat')
+  })
+
   it('projects remote isShared from the active-channel set, not the retired share store', () => {
     // The People→Channel migration DELETES legacy share records at
     // finalization, so a task card whose isShared reads getShareForChat goes

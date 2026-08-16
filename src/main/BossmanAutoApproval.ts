@@ -70,7 +70,7 @@ export interface BossmanAutoApprovalContext {
    * property: every caller that can seat an external MUST populate this, and a
    * present-but-non-array value is refused rather than ignored.
    */
-  externalParticipantIds?: readonly string[]
+  externalParticipantIds?: readonly string[] | null
   /** The requesting (target) participant — must be a live roster member. */
   targetParticipantId: string | undefined
   targetProvider: string | undefined
