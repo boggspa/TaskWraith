@@ -100,7 +100,7 @@ describe('parseDeepSeekBalanceResponse', () => {
     })
   })
 
-  it('fails closed for malformed, negative, and unbounded values', () => {
+  it('fails closed for malformed and unbounded values', () => {
     expect(parseDeepSeekBalanceResponse({})).toBeNull()
     expect(
       parseDeepSeekBalanceResponse({
@@ -108,7 +108,7 @@ describe('parseDeepSeekBalanceResponse', () => {
         balance_infos: [
           {
             currency: 'USD',
-            total_balance: '-1',
+            total_balance: '1e100',
             granted_balance: '0',
             topped_up_balance: '0'
           }
@@ -123,6 +123,42 @@ describe('parseDeepSeekBalanceResponse', () => {
             currency: 'USD',
             total_balance: '1e100',
             granted_balance: '0',
+            topped_up_balance: '0'
+          }
+        ]
+      })
+    ).toBeNull()
+  })
+
+  it('preserves a bounded negative total balance for an overdrawn account', () => {
+    expect(
+      parseDeepSeekBalanceResponse({
+        is_available: false,
+        balance_infos: [
+          {
+            currency: 'USD',
+            total_balance: '-0.03',
+            granted_balance: '0',
+            topped_up_balance: '0'
+          }
+        ]
+      })
+    ).toEqual({
+      isAvailable: false,
+      currency: 'USD',
+      totalBalance: -0.03,
+      grantedBalance: 0,
+      toppedUpBalance: 0
+    })
+
+    expect(
+      parseDeepSeekBalanceResponse({
+        is_available: false,
+        balance_infos: [
+          {
+            currency: 'USD',
+            total_balance: '-0.03',
+            granted_balance: '-0.01',
             topped_up_balance: '0'
           }
         ]
@@ -354,6 +390,49 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     )
     expect(deepseek?.balances).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ label: 'Total topped up' })])
+    )
+  })
+
+  it('keeps a bounded DeepSeek overage visible while capping the meter at 100%', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => ({ deepseek: { totalTopUp: 10 } }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () =>
+        response({
+          is_available: false,
+          balance_infos: [
+            {
+              currency: 'USD',
+              total_balance: '-0.03',
+              granted_balance: '0',
+              topped_up_balance: '0'
+            }
+          ]
+        })
+      ),
+      now: () => NOW
+    })
+
+    const [deepseek] = await read()
+    const [creditWindow] = deepseek?.windows ?? []
+
+    expect(deepseek).toEqual(expect.objectContaining({ planType: 'Balance unavailable' }))
+    expect(creditWindow).toEqual(
+      expect.objectContaining({
+        label: 'Credit used',
+        valueText: '$10.03',
+        limitLabel: expect.stringContaining('$10.03 of $10.00'),
+        usedPercent: 100,
+        remainingPercent: 0
+      })
+    )
+    expect(deepseek?.balances).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: 'Total available', amount: -0.03 })])
     )
   })
 

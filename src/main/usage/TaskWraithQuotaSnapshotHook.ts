@@ -78,6 +78,13 @@ function finiteNonNegative(value: unknown, maximum = MAX_MONEY_VALUE): number | 
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null
 }
 
+function finiteMoney(value: unknown, maximum = MAX_MONEY_VALUE): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (typeof value === 'string' && !value.trim()) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= -maximum && parsed <= maximum ? parsed : null
+}
+
 function positive(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
@@ -92,7 +99,10 @@ export function parseDeepSeekBalanceResponse(value: unknown): DeepSeekBalanceObs
     if (!row || typeof row.currency !== 'string') return []
     const currency = row.currency.trim().toUpperCase()
     if (!/^[A-Z]{3,8}$/.test(currency)) return []
-    const totalBalance = finiteNonNegative(row.total_balance)
+    // DeepSeek reports a bounded negative total when an account is a few cents
+    // overdrawn. Preserve that vendor reading so the UI can show the overage;
+    // only the visual usage fraction is clamped to the meter's 100% ceiling.
+    const totalBalance = finiteMoney(row.total_balance)
     const grantedBalance = finiteNonNegative(row.granted_balance)
     const toppedUpBalance = finiteNonNegative(row.topped_up_balance)
     if (totalBalance === null || grantedBalance === null || toppedUpBalance === null) return []
@@ -373,7 +383,10 @@ function deepSeekSnapshot(
       financialWindow({
         id: 'deepseek-credit-used',
         label: 'Credit used',
-        amount: Math.max(0, Math.min(creditCeiling, creditCeiling - observation.totalBalance)),
+        // Keep an over-budget amount (for example $10.03 of a $10.00
+        // top-up) in the text/tooltip. `financialWindow` clamps only the
+        // derived percentage, so the progress bar remains capped at 100%.
+        amount: Math.max(0, creditCeiling - observation.totalBalance),
         total: creditCeiling,
         currency: observation.currency,
         subtitle: totalTopUp
