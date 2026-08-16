@@ -744,13 +744,15 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     })
 
     const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
-      to: 'Work3',
+      to: ['@User', 'Work3'],
       message: 'Hold the commit until the two safety controls are present.',
       reason: 'Advisor requested a publication hold.'
     })
 
     expect(result).toMatchObject({
       ok: true,
+      toUser: true,
+      toParticipantIds: ['work-3'],
       liveSteerRequestedParticipantIds: ['work-3']
     })
     expect(result.boundaryDeliveryParticipantIds).toBeUndefined()
@@ -762,6 +764,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       fromLabel: 'Work1',
       toParticipantIds: ['work-3'],
       toLabels: ['Work3'],
+      toUser: true,
       message: 'Hold the commit until the two safety controls are present.',
       targets: [
         {
@@ -775,8 +778,74 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.chat.messages.find((message) => message.metadata?.kind === 'ensembleSideMessage')
         ?.content
     ).toBe(
-      '↪ Work1 to Work3: Hold the commit until the two safety controls are present.\nReason: Advisor requested a publication hold.'
+      '↪ Work1 to User, Work3: Hold the commit until the two safety controls are present.\nReason: Advisor requested a publication hold.'
     )
+  })
+
+  it('keeps a fan-out lane summary for User as a top-level durable participant message', async () => {
+    const roster = [
+      participant('work-1', 'codex', 1, { role: 'Work1' }),
+      participant('work-3', 'kimi', 2, { role: 'Work3' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Work1 owns the serial task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: '@Work3 inspect the parallel safety controls.',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      }).status
+    ).toBe('steered')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const laneRunId = harness.dispatched[1].appRunId
+    const result = harness.orchestrator.sendSideMessageForRun(laneRunId, {
+      to: '@Human',
+      message: 'The parallel safety review is complete and the hold remains necessary.'
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      tool: 'ensemble_send',
+      toUser: true,
+      toParticipantIds: [],
+      message: 'ensemble_send: durable transcript message recorded for User.'
+    })
+    expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
+
+    const sideMessage = harness.chat.messages.find(
+      (entry) => entry.metadata?.kind === 'ensembleSideMessage'
+    )
+    expect(sideMessage).toMatchObject({
+      role: 'system',
+      runId: laneRunId,
+      content:
+        '↪ Work3 to User: The parallel safety review is complete and the hold remains necessary.',
+      metadata: {
+        kind: 'ensembleSideMessage',
+        toUser: true,
+        toParticipantIds: [],
+        fromParticipantId: 'work-3',
+        ensembleParticipantId: 'work-3',
+        ensembleRoundId: started.roundId,
+        ensembleFanoutCategory: 'user',
+        ensembleFanoutLabel: 'User Fan-Out'
+      }
+    })
+    expect(sideMessage?.metadata?.ensembleSourceLaneId).toBeTruthy()
+    expect(sideMessage?.metadata?.ensembleLaneId).toBeUndefined()
+
+    complete(harness, 1)
+    expect(harness.chat.messages.some((entry) => entry.id === sideMessage?.id)).toBe(true)
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
 
   it('keeps an idle recipient on the durable next-prompt path without a false live receipt', async () => {
@@ -806,6 +875,33 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
   })
 
+  it('keeps an unknown-only side-message audience fail-closed', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Start the round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+        to: '@SomeoneElse',
+        message: 'This must not fall back to User or any participant.'
+      })
+    ).toEqual({
+      ok: false,
+      tool: 'ensemble_send',
+      message:
+        'ensemble_send: target did not resolve to an enabled participant. Use list_ensemble_participants first.',
+      error: 'invalid_target'
+    })
+    expect(
+      harness.chat.messages.some((message) => message.metadata?.kind === 'ensembleSideMessage')
+    ).toBe(false)
+    expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
+  })
+
   it('expands explicit side-message groups without treating message-body tags as recipients', async () => {
     const roster = [
       participant('work-1', 'codex', 1, { role: 'Work1', stageRole: 'worker' }),
@@ -826,7 +922,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
 
     const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
       to: ['@Workers', '@BG'],
-      message: '@All is quoted context, not an extra recipient selector.'
+      message: '@User and @All are quoted context, not extra recipient selectors.'
     })
 
     expect(result).toMatchObject({
@@ -835,11 +931,13 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       boundaryDeliveryParticipantIds: ['work-2', 'background-shell']
     })
     expect(result.toParticipantIds).not.toContain('review-1')
+    expect(result.toUser).toBeUndefined()
     expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
-    expect(
-      harness.chat.messages.find((message) => message.metadata?.kind === 'ensembleSideMessage')
-        ?.metadata?.toParticipantIds
-    ).toEqual(['work-2', 'background-shell'])
+    const sideMessage = harness.chat.messages.find(
+      (message) => message.metadata?.kind === 'ensembleSideMessage'
+    )
+    expect(sideMessage?.metadata?.toParticipantIds).toEqual(['work-2', 'background-shell'])
+    expect(sideMessage?.metadata?.toUser).toBeUndefined()
   })
 
   it('lets the Boss route an assistant-authored stage group in roster order', async () => {

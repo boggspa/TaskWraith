@@ -29,6 +29,8 @@ export interface EnsembleSideMessageSteeringInput {
   fromLabel: string
   toParticipantIds: string[]
   toLabels: string[]
+  /** The same persisted note also addresses the human transcript reader. */
+  toUser?: true
   message: string
   reason?: string
   targets: EnsembleSideMessageSteeringTarget[]
@@ -97,6 +99,7 @@ export function deliverPersistedEnsembleSideMessage(input: {
   fromLabel: string
   toParticipantIds: string[]
   toLabels: string[]
+  toUser?: true
   message: string
   reason?: string
   activeRuns: Iterable<EnsembleSideMessageActiveRunCandidate>
@@ -119,6 +122,7 @@ export function deliverPersistedEnsembleSideMessage(input: {
         fromLabel: input.fromLabel,
         toParticipantIds: input.toParticipantIds,
         toLabels: input.toLabels,
+        ...(input.toUser ? { toUser: true as const } : {}),
         message: input.message,
         ...(input.reason ? { reason: input.reason } : {}),
         targets
@@ -180,6 +184,7 @@ export function formatEnsembleSideMessageSteer(
       participantId,
       label: input.toLabels[index] || participantId
     })),
+    ...(input.toUser ? { toUser: true } : {}),
     message: input.message,
     ...(input.reason ? { reason: input.reason } : {})
   }

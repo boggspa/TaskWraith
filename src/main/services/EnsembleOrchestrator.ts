@@ -115,6 +115,7 @@ import {
 import type { SeatRosterSeat } from '../../shared/seatChange'
 import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
 import { yieldTargetDisplayLabel } from '../../shared/ensembleYieldTarget'
+import { sideMessageLaneMetadataForAudience } from '../../shared/ensembleSideMessage'
 import {
   canonicalImageViewToolName,
   IMAGE_VIEW_DISPLAY_NAME,
@@ -214,7 +215,7 @@ import {
   formatAssistantGroupMentionRoutingNotice,
   resolveAssistantMentionRoutingPlan,
   resolveBackgroundMentionRouting,
-  resolveEnsembleCommunicationTargets
+  resolveEnsembleCommunicationAudience
 } from './EnsembleGroupMentionRouting'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
@@ -1538,6 +1539,8 @@ export interface EnsembleSideMessageResult {
   ok: boolean
   tool: 'ensemble_send'
   message: string
+  /** The durable participant-authored row explicitly addresses the human reader. */
+  toUser?: true
   toParticipantIds?: string[]
   /** Active target seats whose provider accepted an immediate steer attempt. */
   liveSteerRequestedParticipantIds?: string[]
@@ -12764,12 +12767,13 @@ export class EnsembleOrchestrator {
     }
     const targets = normalizeTargetList(input.to)
     const participants = chat.ensemble.participants || []
-    const recipients = resolveEnsembleCommunicationTargets({
+    const audience = resolveEnsembleCommunicationAudience({
       selectors: targets,
       participants,
       senderParticipantId: run.participant.id
     })
-    if (recipients.length === 0) {
+    const recipients = audience.participants
+    if (recipients.length === 0 && !audience.toUser) {
       return {
         ok: false,
         tool: 'ensemble_send',
@@ -12780,9 +12784,10 @@ export class EnsembleOrchestrator {
     }
     const timestamp = this.deps.nowIso()
     const senderLabel = run.participant.role || providerLabel(run.participant.provider)
-    const recipientLabels = recipients.map(
+    const participantRecipientLabels = recipients.map(
       (participant) => participant.role || providerLabel(participant.provider)
     )
+    const recipientLabels = [...(audience.toUser ? ['User'] : []), ...participantRecipientLabels]
     const recipientParticipantIds = recipients.map((participant) => participant.id)
     const content = `↪ ${senderLabel} to ${recipientLabels.join(', ')}: ${message}${
       input.reason ? `\nReason: ${input.reason}` : ''
@@ -12805,10 +12810,11 @@ export class EnsembleOrchestrator {
         fromParticipantId: run.participant.id,
         fromProvider: run.participant.provider,
         fromRole: run.participant.role,
+        ...(audience.toUser ? { toUser: true as const } : {}),
         toParticipantIds: recipientParticipantIds,
         toProviders: recipients.map((participant) => participant.provider),
         toRoles: recipients.map((participant) => participant.role),
-        ...laneTranscriptMetadata(run),
+        ...sideMessageLaneMetadataForAudience(laneTranscriptMetadata(run), audience.toUser),
         ...(input.reason ? { reason: input.reason } : {})
       }
     }
@@ -12828,7 +12834,8 @@ export class EnsembleOrchestrator {
       fromParticipantId: run.participant.id,
       fromLabel: senderLabel,
       toParticipantIds: recipientParticipantIds,
-      toLabels: recipientLabels,
+      toLabels: participantRecipientLabels,
+      ...(audience.toUser ? { toUser: true as const } : {}),
       message,
       ...(input.reason ? { reason: input.reason } : {}),
       activeRuns: this.runsByRunId.values(),
@@ -12837,6 +12844,7 @@ export class EnsembleOrchestrator {
     return {
       ok: true,
       tool: 'ensemble_send',
+      ...(audience.toUser ? { toUser: true as const } : {}),
       toParticipantIds: recipientParticipantIds,
       ...(delivery.liveSteerRequestedParticipantIds.length > 0
         ? { liveSteerRequestedParticipantIds: delivery.liveSteerRequestedParticipantIds }
@@ -12844,7 +12852,13 @@ export class EnsembleOrchestrator {
       ...(delivery.boundaryDeliveryParticipantIds.length > 0
         ? { boundaryDeliveryParticipantIds: delivery.boundaryDeliveryParticipantIds }
         : {}),
-      message: `ensemble_send: recorded visible side message to ${recipientLabels.join(', ')}.${delivery.summaryText}`
+      message: `${
+        audience.toUser
+          ? recipients.length > 0
+            ? `ensemble_send: durable transcript message recorded for User and visible side message recorded to ${participantRecipientLabels.join(', ')}.`
+            : 'ensemble_send: durable transcript message recorded for User.'
+          : `ensemble_send: recorded visible side message to ${participantRecipientLabels.join(', ')}.`
+      }${delivery.summaryText}`
     }
   }
 

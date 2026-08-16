@@ -671,6 +671,39 @@ describe('groupFanoutLaneMessages', () => {
     expect(grouped[2].metadata?.groupedFanoutMessageIds).toEqual(['other-c1', 'other-t1'])
   })
 
+  it('keeps a lane-authored User summary outside the collapsible fan-out result card', () => {
+    const userSummary: ChatMessage = {
+      id: 'side-to-user',
+      role: 'system',
+      content: '↪ Reader to User: The review is complete.',
+      timestamp: '2026-06-13T00:00:01.000Z',
+      runId: 'run-fanout',
+      metadata: {
+        kind: 'ensembleSideMessage',
+        ensembleRoundId: 'round-1',
+        ensembleParticipantId: 'participant-reader',
+        ensembleSourceLaneId: 'lane-round-1-reader-1',
+        ensembleProvider: 'codex',
+        ensembleRole: 'Reader',
+        toUser: true,
+        toParticipantIds: []
+      }
+    }
+
+    const grouped = groupFanoutLaneMessages([
+      fanoutContentMessage('c1', 'First note.'),
+      fanoutToolMessage('t1'),
+      userSummary,
+      fanoutContentMessage('c2', 'Final lane note.')
+    ])
+
+    expect(grouped).toHaveLength(2)
+    expect(isEnsembleFanoutResultMessage(grouped[0])).toBe(true)
+    expect(grouped[0].metadata?.groupedFanoutMessageIds).toEqual(['c1', 't1', 'c2'])
+    expect(grouped[1]).toBe(userSummary)
+    expect(groupedTranscriptMessageIds(grouped[0])).not.toContain('side-to-user')
+  })
+
   it('materializes tool-only fan-out lane activity as a fan-out result card row', () => {
     const grouped = groupFanoutLaneMessages([fanoutToolMessage('t-only')])
 

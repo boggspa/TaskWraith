@@ -3136,7 +3136,7 @@ describe('settled ask_user_question tombstone', () => {
 })
 
 describe('inter-seat transcript rows', () => {
-  it('keeps an ensemble_send note at assistant hierarchy and out of system-notice folds', () => {
+  it('keeps a lane-authored User summary at assistant hierarchy outside its fan-out card', () => {
     const participant = ensembleParticipant({
       id: 'claude-reviewer',
       provider: 'claude',
@@ -3146,18 +3146,39 @@ describe('inter-seat transcript rows', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
       {
+        id: 'lane-result-1',
+        role: 'assistant',
+        content: 'FANOUT_CARD_MARKER detailed lane output.',
+        timestamp: '2026-01-01T00:00:00.500Z',
+        runId: 'run-reviewer-lane',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: 'round-1',
+          ensembleParticipantId: participant.id,
+          ensembleLaneId: 'lane-reviewer-1',
+          ensembleLaneIntent: 'read',
+          ensembleProvider: participant.provider,
+          ensembleRole: participant.role,
+          ensembleModel: participant.model,
+          ensembleOrder: 2
+        }
+      },
+      {
         id: 'side-1',
         role: 'system',
-        content: '↪ Reviewer to Worker: SIDE_MESSAGE_MARKER check `kimi` first.\nReason: handoff',
+        content: '↪ Reviewer to User: SIDE_MESSAGE_MARKER check `kimi` first.\nReason: summary',
         timestamp: '2026-01-01T00:00:01.000Z',
+        runId: 'run-reviewer-lane',
         metadata: {
           kind: 'ensembleSideMessage',
           ensembleRoundId: 'round-1',
           ensembleParticipantId: participant.id,
+          ensembleSourceLaneId: 'lane-reviewer-1',
           ensembleProvider: participant.provider,
           ensembleRole: participant.role,
           ensembleModel: participant.model,
-          toParticipantIds: ['codex-worker']
+          toUser: true,
+          toParticipantIds: []
         }
       },
       {
@@ -3187,10 +3208,13 @@ describe('inter-seat transcript rows', () => {
 
     expect(start).toBeGreaterThan(-1)
     expect(next).toBeGreaterThan(start)
+    expect(html).toContain('ensemble-fanout-result-card')
+    expect(html).toContain('FANOUT_CARD_MARKER')
     expect(sideBlock).toContain('Claude / Reviewer')
     expect(sideBlock).toContain('message-bubble assistant ensemble-side-message')
     expect(sideBlock).toContain('SIDE_MESSAGE_MARKER')
     expect(sideBlock).toContain('<code>kimi</code>')
+    expect(sideBlock).not.toContain('ensemble-fanout-result-card')
     expect(sideBlock).not.toContain('collapsed-activity-stack-summary')
     expect(html).not.toContain('2 system notices')
   })
