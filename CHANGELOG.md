@@ -59,6 +59,7 @@ to answer.
 - **Erasable Channel history.** Deleting Channel history is replay-safe and settles globally after the runtime quiesces, so an erasure cannot be undone by a late write or a reconnecting member.
 - **A Channel fault no longer blocks launch.** A failed Channels bootstrap degrades to a reduced Channels experience instead of blocking the app, and expired invite checkpoints are recovered rather than stranding the invite.
 - **A shared chat is no longer treated as an abandoned draft.** Create-time cleanup protects chats it can see are shared, but that list was still read from the retired People records, so a chat shared to a Channel — with no messages yet, still on its default title, and nobody joined — could be swept away. Sharing is now read from the channels themselves, and when that cannot be read at all, cleanup protects everything rather than guessing.
+- **Your collaboration history survives a failed Channels start.** Sharing is now Channel-native throughout, but the previous collaboration layer is deliberately kept as a fallback rather than deleted. If Channels cannot start on a launch — an unreadable pinned identity key after a keychain reset, for instance — collaborators can still reconnect and history still reads, even though no new sharing changes are accepted until Channels come back. A transient failure clears itself on the next launch.
 - **Blackboard images.** Ensemble blackboard entries can carry bounded image attachments — posted, inspected, and rendered in the panel — instead of text only.
 
 ### Ensemble and Orchestration

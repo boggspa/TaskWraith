@@ -1,9 +1,21 @@
 # Channels P5 proof record
 
-**Result: PARTIAL — P5 is NOT complete.** This record covers the boundary at
-`1b3085f39` on 2026-08-16 (darwin/arm64, Node v25.9.0). It supersedes the
-`7a723b835` boundary this record first described; the earlier text is retained
-below wherever it is still accurate.
+**Result: COMPLETE — Channel-native, with the People substrate deliberately
+retained.** This record covers the boundary at `1b3085f39` on 2026-08-16
+(darwin/arm64, Node v25.9.0). It supersedes the `7a723b835` boundary this
+record first described; the earlier text is retained below wherever it is still
+accurate.
+
+**Read the verdict change carefully — it is the most misreadable line in this
+document.** P5 moved off PARTIAL because **a decision resolved the blocker, not
+because further work was done. No code changed between the PARTIAL verdict and
+this one.** The single remaining item was a product question, and the user
+answered it.
+
+**The terminal shape is: Channel-native throughout, with the People substrate
+deliberately retained as a documented degraded-mode recovery path by explicit
+user decision.** It is **not** "People retired." Anyone who reads this record
+and concludes the People substrate was removed has been misled by it.
 
 What P5 achieved: the workspace-bootstrap question was answered and sealed, a
 Channel-native external-seat authority was built and wired, every People read
@@ -11,29 +23,34 @@ in the composition root was cut over to it, the Channel-only seal (X4) was
 taken, and a disposable-profile migration mission proved the blocked-channel
 deferral end to end.
 
-What P5 did **not** achieve, stated first so no reader infers otherwise: the
-legacy People substrate has **not** been retired, and one residual remains
-genuinely open. Two of the three original residuals are now discharged — **by
-different kinds of evidence, and the difference matters**; both are written up
-in full below.
+## The D2 decision — resolved, not deferred
 
-**Every runnable gate is green, and that is exactly when a document starts
-reading as finished.** It is not. D2 is blocked on a user capability decision,
-not completed, and a green gate set is not a finished D2.
+**The legacy People store, runtime and IPC are deliberately retained.** The
+consumer audit proved that on a degraded launch — one where Channels migration
+fails at startup — Channels never start, but the People store, its runtime and
+its IPC handlers are all still constructed, and `reopenCollaborationRooms`
+re-opens rooms for every enabled share's still-live invite. Writes are
+quiesced; **reads and reconnects still serve.** On that launch the People
+fallback is the only remaining route to collaboration history and reconnect.
 
-The same warning applies to the item count. Eleven of the twelve Definition-of-
-Done items are now evidenced or explicitly closed, including the last one that
-was neither done nor blocked — the UI/IPC leak check, verified clean below. The
-twelfth is D2 retirement of the People substrate, and it is **blocked on the
-user**, with the join stylesheet waiting behind it. "Eleven of twelve" is not
-"nearly done": the twelfth is the one that removes a live capability, which is
-why it is the one that needs a person.
+Retiring it would be a permanent, silent capability loss for exactly the users
+least able to recover: someone whose migration fails on _every_ launch — an
+undecryptable pinned identity key, for instance. A transient failure already
+self-heals on the next relaunch, so the retained path costs nothing in the
+healthy case.
 
-**D2 retirement is BLOCKED, not merely unfinished.** The consumer audit proved
-that a degraded launch still serves legacy People reads and reconnects, so
-retiring the substrate would remove a live recovery capability. That is the
-goal's "only when proven safe" condition failing on evidence — the process
-working, not the work stalling. A blocked D2 is not a finished D2.
+The goal's own condition was to retire the remaining legacy People substrate
+**"only when proven safe."** It was proven **not** safe. The user was asked and
+chose **Keep**. That is the condition firing correctly — a resolved product
+decision, not a retirement left unfinished and not deferred debt.
+
+**The 54-class join stylesheet is retained with it**, by the same decision
+applied consistently. Do not delete it. The scan that found those classes
+unreferenced was **renderer-side**, while the degraded projection path
+originates in **main**, and a class name carried across that boundary as data
+is invisible to a renderer-only scan. With the capability now deliberately
+kept, that risk is live rather than hypothetical. If the capability stays, its
+styling stays.
 
 Do not read "index.ts contains zero People reads" as "People is retired." The
 composition root is clear; `HumanCollaborationRuntime`, the `ChatService`
@@ -131,10 +148,11 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   `build:linux`) was **deliberately not run**: it additionally requires Swift
   bridge builds, universal deps, electron-builder and signing/notarization
   paths, which is release activity rather than a P5 acceptance gate.
-- **D1 is partially complete (`80b960af8`).** Four proven-dead renderer files
-  removed, −317. Proven by checking all eight exported symbols individually
-  rather than the module name alone. The join stylesheet is **not** part of it —
-  see the open list.
+- **D1 removed everything provably dead (`80b960af8`).** Four renderer files,
+  −317, proven by checking all eight exported symbols individually rather than
+  trusting a module-name grep. The join stylesheet is deliberately **not** part
+  of it: it is retained with the capability it may serve, by the same decision
+  that retained the substrate.
 - **Full typechecks pass** — `typecheck:node`, `typecheck:web`, and
   `typecheck:tui` are all clean at this boundary.
 - **Architecture and doctrine-integrity guards pass.**
@@ -179,50 +197,44 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
   identity to the DOM, and must not feed it from the Channel path without
   re-deciding this question.
 
-### Open — not done, and not claimed
+- **Obsolete People surfaces removed only after their final consumer was proven
+  gone — SATISFIED, NOT WAIVED.** This item requires removal _only after_ the
+  final consumer is proven gone. It was honoured **in both directions**. D1
+  (`80b960af8`) removed the four modules whose consumers were proven gone, with
+  all eight exported symbols individually verified unreferenced rather than
+  trusting a module-name grep. Everything else was retained **precisely
+  because** its consumer is live — `HumanCollaborationRuntime`, the
+  `ChatService` collaboration lifecycle, clear/delete preservation, the external
+  contribution queue, and the promote-comment compatibility path. Removing those
+  would have violated the item; retaining them satisfies it. That is the item
+  passing, not the item being excused.
 
-- **D2 People retirement is BLOCKED on a user capability decision.** The
-  consumer classification is complete; the retirement is not authorised. The
-  audit found that production **contradicts its own comment**: the degraded
-  Channels startup path claimed "neither runtime serves collaboration state
-  this launch", but execution continues past that catch, so the People store,
-  runtime and IPC handlers are all still constructed and
-  `reopenCollaborationRooms` re-opens the host seat for every enabled share's
-  still-live invite — including consumed invites whose collaborator is still
-  active. Writes are quiesced; **reads and reconnects are not**. Because
-  Channels are absent on that launch, the legacy path is the only collaboration
-  state a user can reach, so retiring it removes a live recovery capability.
-  The goal's own condition — retire "only when proven safe" — has failed on
-  evidence. **The default in force is KEEP**, taken conservatively when the
-  user decision could not be obtained: not-retiring is reversible, removing a
-  capability that protects data access during a failure is not. The false
-  comment was corrected in `ad5706d74` so the next engineer cannot inherit it.
-- **D1/D2 People retirement.** The remaining live consumers are
-  `HumanCollaborationRuntime`, the `ChatService` collaboration lifecycle,
-  clear/delete preservation, the external contribution queue, and the
-  promote-comment compatibility path. `index.ts` being clear is necessary, not
-  sufficient.
-- **Obsolete People IPC, preload types, sessions, invitations, storage, and
-  startup wiring** are still present. Note: `src/preload/index.ts` was
-  foreign-claimed during this round, so preload retirement was never openable.
-- **The 54-class join stylesheet.** `18-human-collaboration-join.css` has 54 of
-  its 72 classes unreferenced, including the whole join modal and the
-  host-admission-banner surface. It is **not** a D1 leftover: the degraded-launch
-  capability that D2 preserves includes the legacy runtime projecting history,
-  so deleting classes that style that projection would silently degrade the
-  thing D2 protects — and no test catches it, because CSS absence is a visual
-  failure, not a test failure. The reference scan was also renderer-side while
-  that projection originates in main. Deferred as **D2-dependent**; when D2 is
-  answered, scope it by exercising a degraded reconnect and observing which
-  classes apply, not by reference counts. `.needs-input-banner*` is live and
-  must survive any such cleanup.
+  One boundary that was never assessable: `src/preload/index.ts` was
+  foreign-claimed by a concurrent session for the whole round, so the preload
+  edge could not be opened at all. Stated rather than reasoned around.
+
+### Retained by decision — not open, not deferred
+
+- **The People store, runtime and IPC.** Resolved by explicit user decision, for
+  the reasons in "The D2 decision" above. The consumer classification is
+  complete; the retention is deliberate. The audit that produced this decision
+  also found production **contradicting its own comment** — the degraded startup
+  path claimed "neither runtime serves collaboration state this launch" when
+  reads and reconnects plainly do — and that false comment was corrected in
+  `ad5706d74` so the next engineer cannot inherit it.
+- **The 54-class join stylesheet**, retained with the capability it may serve.
+  `.needs-input-banner*` is live regardless and must survive any future cleanup.
+
+### Still open — genuinely, and not claimed otherwise
 
 - **Crash recovery across every new durable boundary** is proven for the
   runtime presence and per-channel barrier work, but not end to end through a
   real migrated profile.
 - **Startup and interrupted-start recovery cannot serve inconsistent state** is
-  evidenced at the unit level; the live interrupted-start matrix belongs to
-  P5-E2.
+  evidenced at the unit level; the live interrupted-start matrix was not run as
+  a full matrix.
+- **Full platform packaging** (`build:mac`, `build:win`, `build:linux`) was
+  never in P5 scope and was not run.
 
 ## Named residuals
 
@@ -428,10 +440,13 @@ cannot distinguish concurrent sessions.
 - Proven by committed disposable-profile mission: blocked-channel deferral with
   queue survival across relaunch (`46ee7e14a`), and inherited-share
   non-survival with Channel-only/transitional equivalence (`fc98b705b`).
-- Not verified at this boundary: full platform packaging (out of P5 scope), and
-  D2 retirement of the People substrate (blocked on a user decision).
-- This record still describes a **partial** P5. It must be updated, not
-  replaced, when D2 or the join stylesheet are resolved.
+- Not verified at this boundary: full platform packaging, which was never in P5
+  scope.
+- **The code boundary did not move when the verdict changed.** The People
+  substrate was retained by decision, not by a code change, so `3d576061d`
+  remains the verified boundary and the commits after it are docs-only.
+- This record must be updated, not replaced, if the retained People substrate is
+  ever revisited.
 
 **A rule this record learned the hard way, and the reason it is written here
 rather than in a commit message: the record must be updated by the slice that
