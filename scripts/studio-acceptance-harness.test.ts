@@ -14,6 +14,9 @@ const {
   adjudicateRecognizedTranscript,
   adjudicateSharedStudioClock,
   assertGeneratedSpeechFixtureCustody,
+  assertStudioAcceptanceCustody,
+  classifyStudioAcceptanceDirt,
+  measureStudioAcceptanceCustody,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
@@ -56,6 +59,18 @@ const {
     fixture: Record<string, any>,
     asset: Record<string, any>,
     artifactRoot: string
+  ) => Promise<Record<string, any>>
+  assertStudioAcceptanceCustody: (
+    actual: Record<string, any>,
+    options: Record<string, any>
+  ) => Record<string, any>
+  classifyStudioAcceptanceDirt: (
+    status: string,
+    digestPath: (relativePath: string) => Promise<string | null> | string | null
+  ) => Promise<Record<string, any>>
+  measureStudioAcceptanceCustody: (
+    options: Record<string, any>,
+    adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
@@ -4257,6 +4272,234 @@ describe('Studio acceptance harness', () => {
     expect(() => assertCleanWatchdogTerminal(terminal)).toThrow(/did not confirm clean/)
   })
 
+  it('fails live-build custody for tracked and untracked product inputs while hashing foreign dirt', async () => {
+    const digests: Record<string, string> = {
+      'src/main/store/index.ts': 'a'.repeat(64),
+      'src/main/store/NewModule.ts': 'b'.repeat(64),
+      'docs/acceptance-note.md': 'c'.repeat(64),
+      '.local-only.patch': 'd'.repeat(64)
+    }
+    const digestPath = async (relativePath: string) => digests[relativePath] ?? null
+    const dirt = await classifyStudioAcceptanceDirt(
+      [
+        ' M src/main/store/index.ts',
+        '?? src/main/store/NewModule.ts',
+        ' M docs/acceptance-note.md',
+        '?? .local-only.patch',
+        ''
+      ].join('\0'),
+      digestPath
+    )
+
+    expect(dirt).toMatchObject({
+      wholeTrackedTreeClean: false,
+      wholeWorkspaceClean: false,
+      studioPathsClean: false,
+      studioTrackedDirt: [
+        {
+          status: ' M',
+          path: 'src/main/store/index.ts',
+          worktreeSha256: 'a'.repeat(64)
+        }
+      ],
+      studioUntrackedDirt: [
+        {
+          status: '??',
+          path: 'src/main/store/NewModule.ts',
+          worktreeSha256: 'b'.repeat(64)
+        }
+      ],
+      foreignTrackedDirt: [
+        {
+          status: ' M',
+          path: 'docs/acceptance-note.md',
+          worktreeSha256: 'c'.repeat(64)
+        }
+      ],
+      foreignUntrackedDirt: [
+        {
+          status: '??',
+          path: '.local-only.patch',
+          worktreeSha256: 'd'.repeat(64)
+        }
+      ]
+    })
+
+    const foreignOnly = await classifyStudioAcceptanceDirt(
+      [' M docs/acceptance-note.md', '?? .local-only.patch', ''].join('\0'),
+      digestPath
+    )
+    expect(foreignOnly).toMatchObject({
+      wholeTrackedTreeClean: false,
+      wholeWorkspaceClean: false,
+      studioPathsClean: true,
+      studioTrackedDirt: [],
+      studioUntrackedDirt: [],
+      foreignTrackedDirt: expect.any(Array),
+      foreignUntrackedDirt: expect.any(Array)
+    })
+  })
+
+  it('measures the pinned live-build source and support custody from the workspace', async () => {
+    const receipt = await measureStudioAcceptanceCustody({
+      repoRoot: path.resolve(__dirname, '..'),
+      env: {},
+      buildReady: false
+    })
+
+    expect(receipt).toMatchObject({
+      requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
+      productAncestorPresent: true,
+      sourceDigest: '05f33d9c0366fa4ed8c2956f920d81f65e5c54a01cc315ba8125d6c67ffaa8dc',
+      sourceCount: 2232,
+      buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+      buildEnvironmentCount: 0,
+      supportMatches: true,
+      artifactDigest: null,
+      artifactCount: null,
+      outDigest: null,
+      outCount: null,
+      companionSha256: null,
+      bridgeDaemonSha256: null
+    })
+    expect(receipt.supportHashes).toEqual(receipt.expectedSupportHashes)
+    expect(receipt.runnerSha256).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('requires one source, built-artifact, fixture, and support custody conjunction before and after', () => {
+    const sourceCustody = {
+      head: '1'.repeat(40),
+      requiredProductAncestor: '2'.repeat(40),
+      productAncestorPresent: true,
+      wholeTrackedTreeClean: false,
+      wholeWorkspaceClean: false,
+      studioPathsClean: true,
+      studioTrackedDirt: [],
+      studioUntrackedDirt: [],
+      foreignTrackedDirt: [
+        {
+          status: ' M',
+          path: 'docs/acceptance-note.md',
+          worktreeSha256: '3'.repeat(64)
+        }
+      ],
+      foreignUntrackedDirt: [],
+      sourceDigest: '4'.repeat(64),
+      sourceCount: 42,
+      buildEnvironmentDigest: '5'.repeat(64),
+      buildEnvironmentCount: 0,
+      supportHashes: { 'scripts/studio-acceptance-watchdog.cjs': '6'.repeat(64) },
+      supportMatches: true,
+      runnerSha256: '7'.repeat(64),
+      artifactDigest: null,
+      artifactCount: null,
+      outDigest: null,
+      outCount: null,
+      companionSha256: null,
+      bridgeDaemonSha256: null,
+      fixtureSha256: null,
+      fixtureByteLength: null
+    }
+    const fixture = { sha256: '8'.repeat(64), byteLength: 123 }
+    const custodyBefore = {
+      ...sourceCustody,
+      artifactDigest: '9'.repeat(64),
+      artifactCount: 105,
+      outDigest: 'a'.repeat(64),
+      outCount: 102,
+      companionPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
+      companionSha256: 'b'.repeat(64),
+      bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+      bridgeDaemonSha256: 'c'.repeat(64),
+      fixtureSha256: fixture.sha256,
+      fixtureByteLength: fixture.byteLength
+    }
+    const expected = {
+      sourceDigest: sourceCustody.sourceDigest,
+      sourceCount: sourceCustody.sourceCount,
+      buildEnvironmentDigest: sourceCustody.buildEnvironmentDigest,
+      buildEnvironmentCount: sourceCustody.buildEnvironmentCount,
+      companionSha256: custodyBefore.companionSha256,
+      bridgeDaemonSha256: custodyBefore.bridgeDaemonSha256
+    }
+
+    expect(assertStudioAcceptanceCustody(sourceCustody, { phase: 'source', expected })).toBe(
+      sourceCustody
+    )
+    expect(
+      assertStudioAcceptanceCustody(custodyBefore, {
+        phase: 'before-run',
+        sourceCustody,
+        fixture,
+        expected
+      })
+    ).toBe(custodyBefore)
+    expect(
+      assertStudioAcceptanceCustody(
+        {
+          ...custodyBefore,
+          foreignTrackedDirt: [
+            {
+              status: ' M',
+              path: 'docs/later-note.md',
+              worktreeSha256: 'd'.repeat(64)
+            }
+          ]
+        },
+        {
+          phase: 'after-run',
+          sourceCustody,
+          custodyBefore,
+          fixture,
+          expected
+        }
+      )
+    ).toMatchObject({ artifactDigest: custodyBefore.artifactDigest })
+
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...sourceCustody, studioPathsClean: false },
+        { phase: 'source', expected }
+      )
+    ).toThrow(/build-input dirt/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...sourceCustody, sourceDigest: 'e'.repeat(64) },
+        { phase: 'source', expected }
+      )
+    ).toThrow(/source custody pins/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...sourceCustody, buildEnvironmentDigest: 'f'.repeat(64) },
+        { phase: 'source', expected }
+      )
+    ).toThrow(/source custody pins/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...custodyBefore, supportMatches: false },
+        { phase: 'before-run', sourceCustody, fixture, expected }
+      )
+    ).toThrow(/support/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...custodyBefore, companionSha256: 'f'.repeat(64) },
+        { phase: 'before-run', sourceCustody, fixture, expected }
+      )
+    ).toThrow(/built artifact custody pins/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...custodyBefore, fixtureSha256: 'f'.repeat(64) },
+        { phase: 'before-run', sourceCustody, fixture, expected }
+      )
+    ).toThrow(/fixture/)
+    expect(() =>
+      assertStudioAcceptanceCustody(
+        { ...custodyBefore, outDigest: '0'.repeat(64) },
+        { phase: 'after-run', sourceCustody, custodyBefore, fixture, expected }
+      )
+    ).toThrow(/built artifact/)
+  })
+
   it('binds the persisted generated fixture to the exact bytes opened by Studio', async () => {
     const root = await temporaryRoot('studio-speech-fixture-custody-')
     const artifactRoot = path.join(root, 'artifacts')
@@ -4339,6 +4582,7 @@ describe('Studio acceptance harness', () => {
     }
     let journeyError: Error | null = null
     let forgeFixtureDigest = false
+    let dirtySourceCustody = false
     const session = {
       pid: 7001,
       pgid: 7001,
@@ -4351,6 +4595,56 @@ describe('Studio acceptance harness', () => {
     }
 
     let speechFixture: Record<string, any> | null = null
+    const custodySource = {
+      head: '1'.repeat(40),
+      requiredProductAncestor: '2'.repeat(40),
+      productAncestorPresent: true,
+      wholeTrackedTreeClean: true,
+      wholeWorkspaceClean: true,
+      studioPathsClean: true,
+      studioTrackedDirt: [],
+      studioUntrackedDirt: [],
+      foreignTrackedDirt: [],
+      foreignUntrackedDirt: [],
+      sourceDigest: '3'.repeat(64),
+      sourceCount: 42,
+      buildEnvironmentDigest: '4'.repeat(64),
+      buildEnvironmentCount: 0,
+      supportHashes: { 'scripts/studio-acceptance-watchdog.cjs': '5'.repeat(64) },
+      supportMatches: true,
+      runnerSha256: '6'.repeat(64),
+      artifactDigest: null,
+      artifactCount: null,
+      outDigest: null,
+      outCount: null,
+      companionPath: null,
+      companionSha256: null,
+      bridgeDaemonPath: null,
+      bridgeDaemonSha256: null,
+      fixtureSha256: null,
+      fixtureByteLength: null
+    }
+    const builtCustody = () => ({
+      ...custodySource,
+      artifactDigest: '7'.repeat(64),
+      artifactCount: 105,
+      outDigest: '8'.repeat(64),
+      outCount: 103,
+      companionPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
+      companionSha256: '9'.repeat(64),
+      bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+      bridgeDaemonSha256: 'a'.repeat(64),
+      fixtureSha256: speechFixture?.outputSha256,
+      fixtureByteLength: speechFixture?.outputByteLength
+    })
+    const custodyExpected = {
+      sourceDigest: custodySource.sourceDigest,
+      sourceCount: custodySource.sourceCount,
+      buildEnvironmentDigest: custodySource.buildEnvironmentDigest,
+      buildEnvironmentCount: custodySource.buildEnvironmentCount,
+      companionSha256: '9'.repeat(64),
+      bridgeDaemonSha256: 'a'.repeat(64)
+    }
     const args = {
       ...parseArgs([]),
       launch: true,
@@ -4360,6 +4654,24 @@ describe('Studio acceptance harness', () => {
       generateSpeechFixture: true
     }
     const adapters = {
+      custodyExpected,
+      measureCustody: async ({ phase }: { phase: string }) => {
+        calls.push(`custody.${phase}`)
+        if (phase !== 'source') return builtCustody()
+        return dirtySourceCustody
+          ? {
+              ...custodySource,
+              studioPathsClean: false,
+              studioTrackedDirt: [
+                {
+                  status: ' M',
+                  path: 'src/main/store/ConcurrentProductEdit.ts',
+                  worktreeSha256: 'f'.repeat(64)
+                }
+              ]
+            }
+          : custodySource
+      },
       planOptions: {
         repoRoot: root,
         home: path.join(root, 'isolated-home'),
@@ -4434,7 +4746,15 @@ describe('Studio acceptance harness', () => {
       },
       findCompanion: async () => {
         calls.push('companion.find')
-        return { pid: 7002, ppid: 7001, pgid: 7001, command: 'TaskWraithStudioCompanion' }
+        return {
+          pid: 7002,
+          ppid: 7001,
+          pgid: 7001,
+          command: `${path.join(
+            root,
+            'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion'
+          )} --viewer`
+        }
       },
       probeWindow: async () => {
         calls.push('window.probe')
@@ -4480,15 +4800,33 @@ describe('Studio acceptance harness', () => {
           outputByteLength: speechFixture?.outputByteLength,
           manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
         },
+        custodyFixture: {
+          sha256: speechFixture?.outputSha256,
+          byteLength: speechFixture?.outputByteLength,
+          provenance: 'generated-speech-fixture'
+        },
+        custodySource,
+        custodyBefore: expect.objectContaining({ artifactDigest: '7'.repeat(64) }),
+        custodyAfter: expect.objectContaining({ artifactDigest: '7'.repeat(64) }),
+        companionCustody: {
+          ok: true,
+          sha256: '9'.repeat(64),
+          expectedPath: path.join(
+            root,
+            'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion'
+          )
+        },
         durable: { revision: 1 },
         journey: { ok: true, screenshots: ['/virtual/final.png'] },
         watchdogTerminal
       }
     })
     expect(calls).toEqual([
+      'custody.source',
       'fixture.generate',
       'ports.free',
       'build',
+      'custody.before-run',
       'watchdog.launch',
       'ports.owned',
       'renderer.attach',
@@ -4499,6 +4837,7 @@ describe('Studio acceptance harness', () => {
       'journey.drive',
       'renderer.close',
       'watchdog.stop',
+      'custody.after-run',
       'evidence.write'
     ])
 
@@ -4506,9 +4845,11 @@ describe('Studio acceptance harness', () => {
     journeyError = new Error('mid-action failure')
     await expect(runStudioAcceptance(args, adapters)).rejects.toThrow(/mid-action failure/)
     expect(calls).toEqual([
+      'custody.source',
       'fixture.generate',
       'ports.free',
       'build',
+      'custody.before-run',
       'watchdog.launch',
       'ports.owned',
       'renderer.attach',
@@ -4518,7 +4859,8 @@ describe('Studio acceptance harness', () => {
       'window.probe',
       'journey.drive',
       'renderer.close',
-      'watchdog.stop'
+      'watchdog.stop',
+      'custody.after-run'
     ])
 
     calls.length = 0
@@ -4527,6 +4869,14 @@ describe('Studio acceptance harness', () => {
     await expect(
       runStudioAcceptance({ ...args, instanceId: 'studioForge01' }, adapters)
     ).rejects.toThrow(/output digest/)
-    expect(calls).toEqual(['fixture.generate'])
+    expect(calls).toEqual(['custody.source', 'fixture.generate'])
+
+    calls.length = 0
+    forgeFixtureDigest = false
+    dirtySourceCustody = true
+    await expect(
+      runStudioAcceptance({ ...args, instanceId: 'studioDirty01' }, adapters)
+    ).rejects.toThrow(/build-input dirt/)
+    expect(calls).toEqual(['custody.source'])
   })
 })

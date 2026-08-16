@@ -116,6 +116,64 @@ const TRUSTED_RECEIPT_SCHEMA_VERSION = 2
 const INSTALLED_TASKWRAITH_EXECUTABLE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
 const INSTALLED_STUDIO_EXECUTABLE =
   '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
+const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
+  'scripts/studio-acceptance-ui-driver.swift':
+    'aac32f2e839acb79830ef56f8ab1fceee98f43fdc914a4596e855d74c62221b9',
+  'scripts/studio-acceptance-window-probe.swift':
+    'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
+  'scripts/studio-acceptance-watchdog.cjs':
+    'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
+  'scripts/studio-acceptance-detached-coordinator.cjs':
+    'ef316fe25a3c8f57e5963cede12e7b8f3d9f7005865f36545aceadf900a93bd2',
+  'scripts/studio-generate-speech-fixture.cjs':
+    '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
+  'scripts/studio-av-endurance-runner.cjs':
+    '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
+  'scripts/perf/electronChildSession.cjs':
+    '49de84f79099488808cc7575c6169aa380d4fdfbb638df7518e6b5c5993f901c',
+  'scripts/perf/devUserDataPath.cjs':
+    'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
+  'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
+  'scripts/perf/cdpWebSocketSession.cjs':
+    '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01'
+})
+const STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS = Object.freeze([
+  'build/icon.icns',
+  'electron.vite.config.ts',
+  'package-lock.json',
+  'package.json',
+  'scripts/build-bridge-daemon.cjs',
+  'scripts/build-studio-companion.cjs',
+  'swift/TaskWraithBridge/Package.swift',
+  'tsconfig.json',
+  'tsconfig.node.json',
+  'tsconfig.web.json'
+])
+const STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS = Object.freeze([
+  '.env',
+  '.env.local',
+  '.env.production',
+  '.env.production.local'
+])
+const STUDIO_ACCEPTANCE_RUNNER_PATH = 'scripts/studio-acceptance-harness.cjs'
+const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
+  'IOS_REMOTE_TRUE',
+  'MACOSX_DEPLOYMENT_TARGET',
+  'NODE_ENV',
+  'TASKWRAITH_ACTIVITY_ENDPOINT',
+  'TASKWRAITH_BRIDGE_ARCH',
+  'TASKWRAITH_STUDIO_APP_OUTPUT',
+  'TASKWRAITH_STUDIO_ARCH'
+])
+const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
+  sourceDigest: '05f33d9c0366fa4ed8c2956f920d81f65e5c54a01cc315ba8125d6c67ffaa8dc',
+  sourceCount: 2232,
+  buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+  buildEnvironmentCount: 0,
+  companionSha256: '21f70055169e10b1bf05f9b235459635a41e458a9d0b230a32d7d823086d1104',
+  bridgeDaemonSha256: 'ba3cd5ce8630b143eb64f4c8d726b1c22afea02a10133807039ba485617961cb'
+})
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -517,6 +575,491 @@ async function sha256Hex(filePath) {
   const stream = fs.createReadStream(filePath)
   for await (const chunk of stream) hash.update(chunk)
   return hash.digest('hex')
+}
+
+function sha256Text(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex')
+}
+
+function normalizeStudioAcceptanceCustodyPath(relativePath) {
+  if (
+    typeof relativePath !== 'string' ||
+    relativePath.length === 0 ||
+    path.isAbsolute(relativePath) ||
+    relativePath.split('/').includes('..') ||
+    relativePath.includes('\\')
+  ) {
+    throw new Error('Studio acceptance custody path is not a bounded workspace-relative path')
+  }
+  return relativePath
+}
+
+function isStudioAcceptanceTestSource(relativePath) {
+  return /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relativePath)
+}
+
+function isStudioAcceptanceBuildInputPath(relativePath) {
+  const candidate = normalizeStudioAcceptanceCustodyPath(relativePath)
+  return (
+    candidate === STUDIO_ACCEPTANCE_RUNNER_PATH ||
+    Object.prototype.hasOwnProperty.call(STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES, candidate) ||
+    STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS.includes(candidate) ||
+    STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS.includes(candidate) ||
+    (candidate.startsWith('src/') && !isStudioAcceptanceTestSource(candidate)) ||
+    candidate.startsWith('swift/TaskWraithBridge/Sources/')
+  )
+}
+
+function parseStudioAcceptanceStatus(statusText) {
+  if (typeof statusText !== 'string') {
+    throw new Error('Studio acceptance Git status receipt must be a string')
+  }
+  if (statusText.length > 0 && !statusText.endsWith('\0')) {
+    throw new Error('Studio acceptance Git status receipt is not NUL terminated')
+  }
+  const fields = statusText.split('\0')
+  fields.pop()
+  const entries = []
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]
+    if (field.length < 4 || field[2] !== ' ') {
+      throw new Error('Studio acceptance Git status receipt has an invalid entry')
+    }
+    const status = field.slice(0, 2)
+    const relativePath = normalizeStudioAcceptanceCustodyPath(field.slice(3))
+    let originalPath = null
+    if (/[RC]/.test(status)) {
+      index += 1
+      if (index >= fields.length || fields[index].length === 0) {
+        throw new Error('Studio acceptance Git rename receipt is incomplete')
+      }
+      originalPath = normalizeStudioAcceptanceCustodyPath(fields[index])
+    }
+    entries.push({ status, path: relativePath, originalPath })
+  }
+  return entries
+}
+
+async function classifyStudioAcceptanceDirt(statusText, digestPath) {
+  if (typeof digestPath !== 'function') {
+    throw new Error('Studio acceptance dirty-path digester is missing')
+  }
+  const entries = []
+  for (const entry of parseStudioAcceptanceStatus(statusText)) {
+    const worktreeSha256 = await digestPath(entry.path)
+    if (worktreeSha256 !== null && !/^[a-f0-9]{64}$/.test(worktreeSha256)) {
+      throw new Error('Studio acceptance dirty-path hash is invalid')
+    }
+    entries.push({ ...entry, worktreeSha256 })
+  }
+
+  const studioTrackedDirt = []
+  const studioUntrackedDirt = []
+  const foreignTrackedDirt = []
+  const foreignUntrackedDirt = []
+  for (const entry of entries) {
+    const studioPath =
+      isStudioAcceptanceBuildInputPath(entry.path) ||
+      (entry.originalPath !== null && isStudioAcceptanceBuildInputPath(entry.originalPath))
+    const untracked = entry.status === '??'
+    if (studioPath && untracked) studioUntrackedDirt.push(entry)
+    else if (studioPath) studioTrackedDirt.push(entry)
+    else if (untracked) foreignUntrackedDirt.push(entry)
+    else foreignTrackedDirt.push(entry)
+  }
+  return {
+    wholeTrackedTreeClean: entries.every((entry) => entry.status === '??'),
+    wholeWorkspaceClean: entries.length === 0,
+    studioPathsClean: studioTrackedDirt.length === 0 && studioUntrackedDirt.length === 0,
+    studioTrackedDirt,
+    studioUntrackedDirt,
+    foreignTrackedDirt,
+    foreignUntrackedDirt
+  }
+}
+
+async function hashStudioAcceptanceWorkspacePath(repoRoot, relativePath) {
+  const candidate = normalizeStudioAcceptanceCustodyPath(relativePath)
+  const absolutePath = path.resolve(repoRoot, candidate)
+  if (!absolutePath.startsWith(path.resolve(repoRoot) + path.sep)) {
+    throw new Error('Studio acceptance dirty path escaped the workspace')
+  }
+  let stat
+  try {
+    stat = await fsPromises.lstat(absolutePath)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return null
+    throw error
+  }
+  if (stat.isSymbolicLink()) {
+    return sha256Text(await fsPromises.readlink(absolutePath))
+  }
+  if (!stat.isFile()) {
+    throw new Error('Studio acceptance dirty path is not a regular file')
+  }
+  return sha256Hex(absolutePath)
+}
+
+async function collectStudioAcceptanceCustodyEntries(repoRoot, relativePath, includeFile) {
+  const root = path.resolve(repoRoot)
+  const startRelative = normalizeStudioAcceptanceCustodyPath(relativePath)
+  const start = path.resolve(root, startRelative)
+  if (!start.startsWith(root + path.sep)) {
+    throw new Error('Studio acceptance custody source escaped the workspace')
+  }
+  const entries = []
+  const pending = [start]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    const stat = await fsPromises.lstat(current)
+    if (stat.isSymbolicLink()) {
+      throw new Error('Studio acceptance custody source contains a symlink')
+    }
+    if (stat.isDirectory()) {
+      const children = await fsPromises.readdir(current, { withFileTypes: true })
+      for (const child of children.sort((left, right) => right.name.localeCompare(left.name))) {
+        pending.push(path.join(current, child.name))
+      }
+      continue
+    }
+    if (!stat.isFile()) {
+      throw new Error('Studio acceptance custody source is not regular')
+    }
+    const entryPath = path.relative(root, current).split(path.sep).join('/')
+    if (!includeFile || includeFile(entryPath)) {
+      entries.push({ path: entryPath, sha256: await sha256Hex(current) })
+    }
+  }
+  return entries
+}
+
+function digestStudioAcceptanceEntries(entries) {
+  const ordered = [...entries].sort((left, right) => left.path.localeCompare(right.path))
+  return {
+    fileCount: ordered.length,
+    digest: sha256Text(JSON.stringify(ordered))
+  }
+}
+
+async function measureStudioAcceptanceSource(repoRoot) {
+  const entries = [
+    ...(await collectStudioAcceptanceCustodyEntries(
+      repoRoot,
+      'src',
+      (relativePath) => !isStudioAcceptanceTestSource(relativePath)
+    )),
+    ...(await collectStudioAcceptanceCustodyEntries(repoRoot, 'swift/TaskWraithBridge/Sources'))
+  ]
+  for (const relativePath of STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS) {
+    entries.push(...(await collectStudioAcceptanceCustodyEntries(repoRoot, relativePath)))
+  }
+  for (const relativePath of STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS) {
+    try {
+      entries.push(...(await collectStudioAcceptanceCustodyEntries(repoRoot, relativePath)))
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') throw error
+    }
+  }
+  return digestStudioAcceptanceEntries(entries)
+}
+
+async function resolveStudioAcceptanceBuiltFile(repoRoot, candidates, label) {
+  for (const relativePath of candidates) {
+    const absolutePath = path.resolve(repoRoot, relativePath)
+    const stat = await assertSafeRegularFile(absolutePath, label, { allowMissing: true })
+    if (stat) return { relativePath, absolutePath, stat }
+  }
+  throw new Error(`Studio acceptance ${label} is missing after build`)
+}
+
+async function measureStudioAcceptanceArtifacts(repoRoot) {
+  const outEntries = await collectStudioAcceptanceCustodyEntries(repoRoot, 'out')
+  const companion = await resolveStudioAcceptanceBuiltFile(
+    repoRoot,
+    [
+      'swift/TaskWraithBridge/.build/debug/TaskWraithStudioCompanion',
+      'swift/TaskWraithBridge/.build/release/TaskWraithStudioCompanion'
+    ],
+    'selected companion binary'
+  )
+  const bridge = await resolveStudioAcceptanceBuiltFile(
+    repoRoot,
+    [
+      'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
+      'swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon'
+    ],
+    'selected bridge daemon'
+  )
+  const companionEntry = {
+    path: companion.relativePath,
+    sha256: await sha256Hex(companion.absolutePath)
+  }
+  const bridgeEntry = {
+    path: bridge.relativePath,
+    sha256: await sha256Hex(bridge.absolutePath)
+  }
+  const out = digestStudioAcceptanceEntries(outEntries)
+  const artifact = digestStudioAcceptanceEntries([...outEntries, companionEntry, bridgeEntry])
+  return {
+    artifactDigest: artifact.digest,
+    artifactCount: artifact.fileCount,
+    outDigest: out.digest,
+    outCount: out.fileCount,
+    companionPath: companion.relativePath,
+    companionSha256: companionEntry.sha256,
+    bridgeDaemonPath: bridge.relativePath,
+    bridgeDaemonSha256: bridgeEntry.sha256
+  }
+}
+
+function studioAcceptanceBuildEnvironment(env = process.env) {
+  const names = [
+    ...new Set([
+      ...STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES,
+      ...Object.keys(env).filter((name) => name.startsWith('VITE_'))
+    ])
+  ].sort()
+  const entries = names
+    .filter((name) => Object.prototype.hasOwnProperty.call(env, name))
+    .map((name) => ({ name, valueSha256: sha256Text(env[name]) }))
+  return {
+    buildEnvironmentCount: entries.length,
+    buildEnvironmentDigest: sha256Text(JSON.stringify(entries)),
+    buildEnvironmentVariables: entries
+  }
+}
+
+async function measureStudioAcceptanceCustody(options = {}, adapters = {}) {
+  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '..'))
+  const runExec = adapters.execFile || defaultExecFile
+  const head = (await runExec('git', ['rev-parse', 'HEAD'], { cwd: repoRoot })).stdout.trim()
+  let productAncestorPresent = false
+  try {
+    await runExec(
+      'git',
+      ['merge-base', '--is-ancestor', STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR, head],
+      { cwd: repoRoot }
+    )
+    productAncestorPresent = true
+  } catch {
+    productAncestorPresent = false
+  }
+  const status = await runExec('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+    cwd: repoRoot
+  })
+  const dirt = await classifyStudioAcceptanceDirt(status.stdout, (relativePath) =>
+    hashStudioAcceptanceWorkspacePath(repoRoot, relativePath)
+  )
+  const source = await measureStudioAcceptanceSource(repoRoot)
+  const supportHashes = {}
+  for (const relativePath of Object.keys(STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES)) {
+    supportHashes[relativePath] = await sha256Hex(path.join(repoRoot, relativePath))
+  }
+  const supportMatches = Object.entries(STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES).every(
+    ([relativePath, expected]) => supportHashes[relativePath] === expected
+  )
+  const buildEnvironment = studioAcceptanceBuildEnvironment(options.env || process.env)
+  const built =
+    options.buildReady === true
+      ? await measureStudioAcceptanceArtifacts(repoRoot)
+      : {
+          artifactDigest: null,
+          artifactCount: null,
+          outDigest: null,
+          outCount: null,
+          companionPath: null,
+          companionSha256: null,
+          bridgeDaemonPath: null,
+          bridgeDaemonSha256: null
+        }
+  let fixtureSha256 = null
+  let fixtureByteLength = null
+  if (options.buildReady === true) {
+    const fixtureStat = await assertSafeRegularFile(
+      path.resolve(String(options.fixturePath || '')),
+      'Studio acceptance generated fixture'
+    )
+    fixtureSha256 = await sha256Hex(path.resolve(options.fixturePath))
+    fixtureByteLength = fixtureStat.size
+  }
+  return {
+    head,
+    requiredProductAncestor: STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR,
+    productAncestorPresent,
+    protectedPathScope: {
+      runnerPath: STUDIO_ACCEPTANCE_RUNNER_PATH,
+      supportPaths: Object.keys(STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES),
+      buildInputExactPaths: STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS,
+      optionalEnvironmentPaths: STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS,
+      sourcePrefix: 'src/',
+      swiftSourcePrefix: 'swift/TaskWraithBridge/Sources/',
+      sourceTestsExcluded: true
+    },
+    ...dirt,
+    sourceDigest: source.digest,
+    sourceCount: source.fileCount,
+    ...buildEnvironment,
+    expectedSupportHashes: STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES,
+    supportHashes,
+    supportMatches,
+    runnerSha256: await sha256Hex(path.join(repoRoot, STUDIO_ACCEPTANCE_RUNNER_PATH)),
+    ...built,
+    fixtureSha256,
+    fixtureByteLength
+  }
+}
+
+function custodyValuesMatch(left, right, fields) {
+  return fields.every((field) => left[field] === right[field])
+}
+
+function assertStudioAcceptanceCustody(actual, options = {}) {
+  const phase = options.phase
+  const expected = options.expected || STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS
+  if (!isRecord(actual)) throw new Error('Studio acceptance custody receipt is missing')
+  if (!['source', 'before-run', 'after-run'].includes(phase)) {
+    throw new Error('Studio acceptance custody phase is invalid')
+  }
+  if (
+    actual.productAncestorPresent !== true ||
+    typeof actual.head !== 'string' ||
+    !/^[a-f0-9]{40,64}$/.test(actual.head)
+  ) {
+    throw new Error('Studio acceptance required product ancestor is absent')
+  }
+  if (actual.studioPathsClean !== true) {
+    throw new Error(
+      `Studio acceptance build-input dirt is present: ${JSON.stringify({
+        studioTrackedDirt: actual.studioTrackedDirt,
+        studioUntrackedDirt: actual.studioUntrackedDirt
+      }).slice(0, 4000)}`
+    )
+  }
+  if (
+    typeof actual.sourceDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.sourceDigest) ||
+    !Number.isSafeInteger(actual.sourceCount) ||
+    actual.sourceCount < 1
+  ) {
+    throw new Error('Studio acceptance source custody is invalid')
+  }
+  if (
+    typeof actual.buildEnvironmentDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.buildEnvironmentDigest) ||
+    !Number.isSafeInteger(actual.buildEnvironmentCount) ||
+    actual.buildEnvironmentCount < 0
+  ) {
+    throw new Error('Studio acceptance source build environment custody is invalid')
+  }
+  if (
+    actual.sourceDigest !== expected.sourceDigest ||
+    actual.sourceCount !== expected.sourceCount ||
+    actual.buildEnvironmentDigest !== expected.buildEnvironmentDigest ||
+    actual.buildEnvironmentCount !== expected.buildEnvironmentCount
+  ) {
+    throw new Error('Studio acceptance source custody pins do not match')
+  }
+  if (
+    actual.supportMatches !== true ||
+    !isRecord(actual.supportHashes) ||
+    typeof actual.runnerSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.runnerSha256)
+  ) {
+    throw new Error('Studio acceptance support custody is invalid')
+  }
+  if (phase === 'source') return actual
+
+  const sourceCustody = options.sourceCustody
+  if (
+    !isRecord(sourceCustody) ||
+    !custodyValuesMatch(actual, sourceCustody, [
+      'head',
+      'sourceDigest',
+      'sourceCount',
+      'buildEnvironmentDigest',
+      'buildEnvironmentCount',
+      'runnerSha256'
+    ]) ||
+    JSON.stringify(actual.supportHashes) !== JSON.stringify(sourceCustody.supportHashes)
+  ) {
+    throw new Error('Studio acceptance source custody changed before or during the run')
+  }
+  if (
+    typeof actual.artifactDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.artifactDigest) ||
+    !Number.isSafeInteger(actual.artifactCount) ||
+    actual.artifactCount < 3 ||
+    typeof actual.outDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.outDigest) ||
+    !Number.isSafeInteger(actual.outCount) ||
+    actual.outCount < 1 ||
+    typeof actual.companionPath !== 'string' ||
+    actual.companionPath.length === 0 ||
+    typeof actual.companionSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.companionSha256) ||
+    typeof actual.bridgeDaemonPath !== 'string' ||
+    actual.bridgeDaemonPath.length === 0 ||
+    typeof actual.bridgeDaemonSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(actual.bridgeDaemonSha256)
+  ) {
+    throw new Error('Studio acceptance built artifact custody is invalid')
+  }
+  if (
+    actual.companionSha256 !== expected.companionSha256 ||
+    actual.bridgeDaemonSha256 !== expected.bridgeDaemonSha256
+  ) {
+    throw new Error('Studio acceptance built artifact custody pins do not match')
+  }
+  const fixture = options.fixture
+  if (
+    !isRecord(fixture) ||
+    actual.fixtureSha256 !== fixture.sha256 ||
+    actual.fixtureByteLength !== fixture.byteLength
+  ) {
+    throw new Error('Studio acceptance generated fixture custody changed')
+  }
+  if (phase === 'before-run') return actual
+
+  const custodyBefore = options.custodyBefore
+  if (
+    !isRecord(custodyBefore) ||
+    !custodyValuesMatch(actual, custodyBefore, [
+      'artifactDigest',
+      'artifactCount',
+      'outDigest',
+      'outCount',
+      'companionPath',
+      'companionSha256',
+      'bridgeDaemonPath',
+      'bridgeDaemonSha256',
+      'fixtureSha256',
+      'fixtureByteLength'
+    ])
+  ) {
+    throw new Error('Studio acceptance built artifact custody changed during the run')
+  }
+  return actual
+}
+
+function assertStudioCompanionMatchesCustody(companion, custody, repoRoot) {
+  if (
+    !isRecord(companion) ||
+    typeof companion.command !== 'string' ||
+    !isRecord(custody) ||
+    typeof custody.companionPath !== 'string'
+  ) {
+    throw new Error('Studio acceptance companion custody receipt is incomplete')
+  }
+  const expected = path.resolve(repoRoot, custody.companionPath)
+  if (companion.command !== expected && !companion.command.startsWith(expected + ' ')) {
+    throw new Error(
+      `Studio acceptance companion does not match the custodied binary: ${JSON.stringify({
+        expected,
+        command: companion.command
+      }).slice(0, 2000)}`
+    )
+  }
+  return { ok: true, expectedPath: expected, sha256: custody.companionSha256 }
 }
 
 async function assertSafeRegularFile(filePath, label, options = {}) {
@@ -3804,6 +4347,20 @@ async function runStudioAcceptance(args, adapters = {}) {
     plan,
     adapters.orphanAdapters || {}
   )
+  const measureCustody = adapters.measureCustody || measureStudioAcceptanceCustody
+  const custodyExpected = adapters.custodyExpected || STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS
+  const custodySource = assertStudioAcceptanceCustody(
+    await measureCustody(
+      {
+        phase: 'source',
+        repoRoot: plan.repoRoot,
+        env: process.env,
+        buildReady: false
+      },
+      adapters.custodyAdapters || {}
+    ),
+    { phase: 'source', expected: custodyExpected }
+  )
 
   await fsPromises.mkdir(plan.home, { recursive: true, mode: 0o700 })
   await fsPromises.mkdir(plan.artifactRoot, { recursive: true, mode: 0o700 })
@@ -3826,6 +4383,12 @@ async function runStudioAcceptance(args, adapters = {}) {
   const speechFixtureCustody = speechFixture
     ? await assertGeneratedSpeechFixtureCustody(speechFixture, asset, plan.artifactRoot)
     : null
+  const custodyFixture = {
+    sha256:
+      speechFixtureCustody?.outputSha256 ?? Buffer.from(asset.sha256, 'base64url').toString('hex'),
+    byteLength: asset.byteLength,
+    provenance: speechFixtureCustody ? 'generated-speech-fixture' : 'owner-supplied-media'
+  }
 
   await (adapters.assertLaunchPortsFree || assertLaunchPortsFree)(
     {
@@ -3839,6 +4402,24 @@ async function runStudioAcceptance(args, adapters = {}) {
     repoRoot: plan.repoRoot,
     ...(adapters.buildAdapters || {})
   })
+  const custodyBefore = assertStudioAcceptanceCustody(
+    await measureCustody(
+      {
+        phase: 'before-run',
+        repoRoot: plan.repoRoot,
+        env: process.env,
+        buildReady: true,
+        fixturePath: asset.assetPath
+      },
+      adapters.custodyAdapters || {}
+    ),
+    {
+      phase: 'before-run',
+      sourceCustody: custodySource,
+      fixture: custodyFixture,
+      expected: custodyExpected
+    }
+  )
 
   const spec = {
     kind: 'electron',
@@ -3875,6 +4456,11 @@ async function runStudioAcceptance(args, adapters = {}) {
       session.pid,
       adapters.processAdapters || {}
     )
+    const companionCustody = assertStudioCompanionMatchesCustody(
+      companion,
+      custodyBefore,
+      plan.repoRoot
+    )
     const window = await (adapters.probeWindow || probeNativeWindow)(
       companion.pid,
       adapters.windowAdapters || {}
@@ -3904,6 +4490,10 @@ async function runStudioAcceptance(args, adapters = {}) {
       asset,
       speechFixture,
       speechFixtureCustody,
+      custodyFixture,
+      custodySource,
+      custodyBefore,
+      companionCustody,
       providerGuards,
       openResult,
       durable,
@@ -3931,13 +4521,41 @@ async function runStudioAcceptance(args, adapters = {}) {
     watchdogError = error
   }
 
-  const failures = [acceptanceError, rendererCloseError, watchdogError].filter(Boolean)
+  let custodyAfter = null
+  let custodyError = null
+  try {
+    custodyAfter = assertStudioAcceptanceCustody(
+      await measureCustody(
+        {
+          phase: 'after-run',
+          repoRoot: plan.repoRoot,
+          env: process.env,
+          buildReady: true,
+          fixturePath: asset.assetPath
+        },
+        adapters.custodyAdapters || {}
+      ),
+      {
+        phase: 'after-run',
+        sourceCustody: custodySource,
+        custodyBefore,
+        fixture: custodyFixture,
+        expected: custodyExpected
+      }
+    )
+  } catch (error) {
+    custodyError = error
+  }
+
+  const failures = [acceptanceError, rendererCloseError, watchdogError, custodyError].filter(
+    Boolean
+  )
   if (failures.length === 1) throw failures[0]
   if (failures.length > 1) {
     throw new AggregateError(failures, 'Studio acceptance and cleanup both failed')
   }
 
-  const completedEvidence = { ...evidence, watchdogTerminal }
+  const completedEvidence = { ...evidence, watchdogTerminal, custodyAfter }
   await (adapters.writeEvidence || writeEvidence)(plan, completedEvidence)
   return { launched: true, plan, evidence: completedEvidence }
 }
@@ -4111,6 +4729,9 @@ module.exports = {
   materializeOwnedMedia,
   generateAcceptanceSpeechFixture,
   assertGeneratedSpeechFixtureCustody,
+  classifyStudioAcceptanceDirt,
+  measureStudioAcceptanceCustody,
+  assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
   evaluateByValue,
