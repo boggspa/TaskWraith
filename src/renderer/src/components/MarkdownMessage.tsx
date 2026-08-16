@@ -2,6 +2,10 @@ import { memo, useMemo, useRef } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { MarkdownMediaContext, type MarkdownMediaContextValue } from './MarkdownMediaContext'
 import {
+  MarkdownCommitReferenceContext,
+  useMarkdownCommitReferenceValue
+} from './MarkdownCommitReferenceContext'
+import {
   PROJECT_REFERENCE_CITATION_LINK_PREFIX,
   ProjectReferenceCitationContext
 } from './ProjectReferenceCitationContext'
@@ -284,37 +288,43 @@ function MarkdownMessageImpl({
   // relevant slice of the refs (or the preview-handler presence) actually
   // changes, so a streaming re-render leaves the inline images put.
   const mediaCtx = useStableMarkdownMediaValue(mediaRefs, workspacePath, onPreviewImage)
+  const commitReferenceCtx = useMarkdownCommitReferenceValue({
+    workspacePath,
+    chatId: chat?.appChatId
+  })
   return (
     <AgentIdentityContext.Provider value={ctxRef.current}>
       <MarkdownMediaContext.Provider value={mediaCtx}>
         <ProjectReferenceCitationContext.Provider value={citationContext}>
-          <div className="message-markdown message-markdown-pro">
-            {allowSafeHtml ? (
-              <StableMarkdownBlock
-                key="safe-html"
-                raw={content}
-                streamRunId={streamRunId}
-                allowSafeHtml
-              />
-            ) : (
-              <>
-                {stable.map((block, index) => (
-                  <StableMarkdownBlock
-                    key={`${index}-${block.id}`}
-                    raw={block.raw}
-                    streamRunId={streamRunId}
-                  />
-                ))}
-                {tail ? (
-                  <StableMarkdownBlock
-                    key={`tail-${stable.length}`}
-                    raw={tail.raw}
-                    streamRunId={streamRunId}
-                  />
-                ) : null}
-              </>
-            )}
-          </div>
+          <MarkdownCommitReferenceContext.Provider value={commitReferenceCtx}>
+            <div className="message-markdown message-markdown-pro">
+              {allowSafeHtml ? (
+                <StableMarkdownBlock
+                  key="safe-html"
+                  raw={content}
+                  streamRunId={streamRunId}
+                  allowSafeHtml
+                />
+              ) : (
+                <>
+                  {stable.map((block, index) => (
+                    <StableMarkdownBlock
+                      key={`${index}-${block.id}`}
+                      raw={block.raw}
+                      streamRunId={streamRunId}
+                    />
+                  ))}
+                  {tail ? (
+                    <StableMarkdownBlock
+                      key={`tail-${stable.length}`}
+                      raw={tail.raw}
+                      streamRunId={streamRunId}
+                    />
+                  ) : null}
+                </>
+              )}
+            </div>
+          </MarkdownCommitReferenceContext.Provider>
         </ProjectReferenceCitationContext.Provider>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>

@@ -300,11 +300,7 @@ export function CommitsInspector({
 
   useEffect(() => {
     void refresh()
-    if (!workspacePath) return
-    return window.api.gitSubscribeSnapshot({ workspacePath, chatId }, () => {
-      void refresh()
-    })
-  }, [chatId, refresh, workspacePath])
+  }, [refresh])
 
   useEffect(() => {
     if (!stack) return

@@ -3,6 +3,7 @@ import type {
   GitUnpushedCommit,
   GitUnpushedCommitStack
 } from '../../../main/services/GitCommitStack'
+import type { GitSnapshotChangedPayload } from '../../../main/services/GitSnapshotPublisher'
 import {
   WorkspaceUnpushedCommitStore,
   mergeUnpushedCommitPages,
@@ -115,6 +116,60 @@ describe('WorkspaceUnpushedCommitStore', () => {
 
     expect(store.get('/repo').stack?.commits).toEqual([newest])
     expect(store.get('/repo').loadingMore).toBe(false)
+  })
+
+  it('refreshes for commit-catalogue snapshot changes but ignores working-tree-only churn', async () => {
+    const readPage = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: stack([]) })
+      .mockResolvedValueOnce({ ok: true, data: stack([], { head: 'head-b' }) })
+    let publishSnapshot: ((payload: GitSnapshotChangedPayload) => void) | undefined
+    const store = new WorkspaceUnpushedCommitStore(
+      readPage,
+      (callback) => {
+        callback()
+        return () => undefined
+      },
+      (_target, callback) => {
+        publishSnapshot = callback
+        return () => undefined
+      }
+    )
+    store.subscribe('/repo', vi.fn())
+    await store.refresh({ workspacePath: '/repo' })
+
+    const snapshot = {
+      requestedPath: '/repo',
+      repoRoot: '/repo',
+      branch: 'master',
+      commit: 'head-a',
+      detached: false,
+      upstream: 'origin/master',
+      ahead: 0,
+      behind: 0,
+      remoteName: 'origin',
+      remoteUrl: 'https://example.test/repo.git',
+      files: [],
+      counts: { changed: 0, staged: 0, unstaged: 0, untracked: 0 },
+      clean: true,
+      mergeState: null,
+      conflicts: 0,
+      lineStats: { additions: 0, deletions: 0 }
+    }
+    const payload = (nextSnapshot: typeof snapshot): GitSnapshotChangedPayload => ({
+      subscriptionId: 'sub-1',
+      requestedPath: '/repo',
+      repoRoot: '/repo',
+      snapshot: nextSnapshot,
+      generation: 1,
+      reason: 'filesystem'
+    })
+    publishSnapshot?.(payload(snapshot))
+    publishSnapshot?.(payload({ ...snapshot, clean: false }))
+    expect(readPage).toHaveBeenCalledOnce()
+
+    publishSnapshot?.(payload({ ...snapshot, commit: 'head-b', ahead: 1 }))
+    await vi.waitFor(() => expect(readPage).toHaveBeenCalledTimes(2))
   })
 })
 

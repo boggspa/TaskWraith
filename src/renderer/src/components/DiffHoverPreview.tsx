@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
 
-export type DiffHoverPreviewSource = 'run-summary' | 'tool-call'
+export type DiffHoverPreviewSource = 'commit-reference' | 'run-summary' | 'tool-call'
 
 export interface DiffHoverPreviewFile {
   path: string
@@ -58,6 +58,7 @@ export const DIFF_HOVER_PREVIEW_FILE_MAX_VISIBLE = 30
 type DiffHoverPreviewRect = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top' | 'width'>
 
 export function diffHoverPreviewSourceLabel(source?: DiffHoverPreviewSource): string {
+  if (source === 'commit-reference') return 'Commit'
   if (source === 'run-summary') return 'Task complete'
   if (source === 'tool-call') return 'Tool edit'
   return 'Diff preview'

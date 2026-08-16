@@ -3,6 +3,10 @@ import type { CSSProperties } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import {
+  MarkdownCommitReferenceContext,
+  useMarkdownCommitReferenceValue
+} from './MarkdownCommitReferenceContext'
+import {
   embedProjectReferenceCitationLinks,
   identityContextEqual,
   useStableMarkdownMediaValue
@@ -720,6 +724,10 @@ function RevealingMarkdownMessageImpl({
   }
 
   const mediaCtx = useStableMarkdownMediaValue(mediaRefs, workspacePath, onPreviewImage)
+  const commitReferenceCtx = useMarkdownCommitReferenceValue({
+    workspacePath,
+    chatId: chat?.appChatId
+  })
   const identityCtxRef = useRef(chat)
   if (!identityContextEqual(identityCtxRef.current, chat)) {
     identityCtxRef.current = chat
@@ -729,30 +737,32 @@ function RevealingMarkdownMessageImpl({
     <AgentIdentityContext.Provider value={identityCtxRef.current}>
       <MarkdownMediaContext.Provider value={mediaCtx}>
         <ProjectReferenceCitationContext.Provider value={citationContext}>
-          <div
-            className={`message-markdown message-markdown-pro stream-reveal-message speed-${presentation.band}`}
-            data-reveal-speed={presentation.band}
-            data-reveal-active={revealing ? 'true' : 'false'}
-            aria-busy={isLive || revealing ? 'true' : undefined}
-            style={revealStyle}
-          >
-            {displayBlocks.map((block, index) => (
-              <StableMarkdownBlock
-                key={`block-${index}`}
-                raw={block.raw}
-                streamRunId={streamRunId}
-                revealTokens={
-                  tokenFadeEnabled &&
-                  !reduced &&
-                  revealLifecycleActive &&
-                  index >= displayBlocks.length - 1 &&
-                  (block.type === 'paragraph' || block.type === 'heading')
-                }
-                animatedWordWindow={presentation.animatedWordWindow}
-                revealDurationMs={presentation.fadeDurationMs}
-              />
-            ))}
-          </div>
+          <MarkdownCommitReferenceContext.Provider value={commitReferenceCtx}>
+            <div
+              className={`message-markdown message-markdown-pro stream-reveal-message speed-${presentation.band}`}
+              data-reveal-speed={presentation.band}
+              data-reveal-active={revealing ? 'true' : 'false'}
+              aria-busy={isLive || revealing ? 'true' : undefined}
+              style={revealStyle}
+            >
+              {displayBlocks.map((block, index) => (
+                <StableMarkdownBlock
+                  key={`block-${index}`}
+                  raw={block.raw}
+                  streamRunId={streamRunId}
+                  revealTokens={
+                    tokenFadeEnabled &&
+                    !reduced &&
+                    revealLifecycleActive &&
+                    index >= displayBlocks.length - 1 &&
+                    (block.type === 'paragraph' || block.type === 'heading')
+                  }
+                  animatedWordWindow={presentation.animatedWordWindow}
+                  revealDurationMs={presentation.fadeDurationMs}
+                />
+              ))}
+            </div>
+          </MarkdownCommitReferenceContext.Provider>
         </ProjectReferenceCitationContext.Provider>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>

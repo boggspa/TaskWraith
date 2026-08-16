@@ -1,0 +1,33 @@
+/* Only hashes resolved against the current unpushed-commit catalogue receive
+ * this affordance. The source text stays intact for copy and screen readers. */
+.message-markdown-pro .markdown-commit-reference {
+  padding: 0 0.16em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
+  box-decoration-break: clone;
+  cursor: help;
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted color-mix(in srgb, var(--warning) 38%, transparent);
+  text-underline-offset: 0.18em;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.message-markdown-pro .markdown-commit-reference > code {
+  color: inherit;
+}
+
+.message-markdown-pro .markdown-commit-reference:hover,
+.message-markdown-pro .markdown-commit-reference:focus-visible {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: color-mix(in srgb, var(--warning) 88%, var(--text-primary));
+}
+
+.message-markdown-pro .markdown-commit-reference:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--warning) 58%, transparent);
+  outline-offset: 2px;
+}

@@ -104,6 +104,7 @@ describe('DiffHoverPreview file-list bounds', () => {
 
 describe('DiffHoverPreview source labels', () => {
   it('labels Task Complete and tool-call hover contexts distinctly', () => {
+    expect(diffHoverPreviewSourceLabel('commit-reference')).toBe('Commit')
     expect(diffHoverPreviewSourceLabel('run-summary')).toBe('Task complete')
     expect(diffHoverPreviewSourceLabel('tool-call')).toBe('Tool edit')
     expect(diffHoverPreviewSourceLabel()).toBe('Diff preview')

@@ -5,6 +5,7 @@ import {
   type GitUnpushedCommitStack
 } from '../../../main/services/GitCommitStack'
 import type { GitResult } from '../../../main/services/GitService'
+import type { GitSnapshotChangedPayload } from '../../../main/services/GitSnapshotPublisher'
 import { normalizeWorkspacePath } from './composerWorktreeSelection'
 
 export interface WorkspaceUnpushedCommitTarget {
@@ -26,6 +27,10 @@ type WorkspaceUnpushedCommitReader = (
   page: GitUnpushedCommitPageRequest
 ) => Promise<GitResult<GitUnpushedCommitStack>>
 type IdleScheduler = (callback: () => void) => () => void
+type SnapshotSubscriber = (
+  target: WorkspaceUnpushedCommitTarget,
+  callback: (payload: GitSnapshotChangedPayload) => void
+) => () => void
 
 interface WorkspaceUnpushedCommitEntry {
   target: WorkspaceUnpushedCommitTarget
@@ -33,6 +38,9 @@ interface WorkspaceUnpushedCommitEntry {
   listeners: Set<WorkspaceUnpushedCommitListener>
   generation: number
   cancelIdle?: () => void
+  unsubscribeSnapshot?: () => void
+  snapshotKey?: string
+  subscriptionTargetKey?: string
 }
 
 const EMPTY_WORKSPACE_UNPUSHED_COMMIT_STATE: WorkspaceUnpushedCommitState = Object.freeze({
@@ -69,6 +77,50 @@ function defaultIdleScheduler(callback: () => void): () => void {
   }
   const handle = window.setTimeout(callback, 32)
   return () => window.clearTimeout(handle)
+}
+
+function defaultSnapshotSubscriber(
+  target: WorkspaceUnpushedCommitTarget,
+  callback: (payload: GitSnapshotChangedPayload) => void
+): () => void {
+  if (typeof window === 'undefined' || typeof window.api?.gitSubscribeSnapshot !== 'function') {
+    return () => undefined
+  }
+  return window.api.gitSubscribeSnapshot(
+    { workspacePath: target.workspacePath, chatId: target.chatId },
+    callback
+  )
+}
+
+function snapshotCatalogueKey(payload: GitSnapshotChangedPayload): string {
+  const snapshot = payload.snapshot
+  return [
+    snapshot.repoRoot,
+    snapshot.branch || '',
+    snapshot.commit || '',
+    snapshot.upstream || '',
+    snapshot.ahead,
+    snapshot.remoteName || '',
+    snapshot.remoteUrl || ''
+  ].join('\u0000')
+}
+
+function snapshotMatchesLoadedStack(
+  payload: GitSnapshotChangedPayload,
+  state: WorkspaceUnpushedCommitState
+): boolean {
+  const stack = state.stack
+  if (!stack || !state.complete) return true
+  const snapshot = payload.snapshot
+  if (
+    stack.repoRoot !== snapshot.repoRoot ||
+    stack.branch !== snapshot.branch ||
+    stack.head !== snapshot.commit ||
+    stack.upstream !== snapshot.upstream
+  ) {
+    return false
+  }
+  return stack.comparison !== 'upstream' || stack.commits.length === snapshot.ahead
 }
 
 export function sameUnpushedCommitStackGeneration(
@@ -114,7 +166,8 @@ export class WorkspaceUnpushedCommitStore {
 
   constructor(
     private readonly readPage: WorkspaceUnpushedCommitReader = defaultReadPage,
-    private readonly scheduleIdle: IdleScheduler = defaultIdleScheduler
+    private readonly scheduleIdle: IdleScheduler = defaultIdleScheduler,
+    private readonly subscribeSnapshot: SnapshotSubscriber = defaultSnapshotSubscriber
   ) {}
 
   get(path: string | null | undefined): WorkspaceUnpushedCommitState {
@@ -132,12 +185,20 @@ export class WorkspaceUnpushedCommitStore {
     if (!key) return () => undefined
     const entry = this.entryFor({ workspacePath: key })
     entry.listeners.add(listener)
-    return () => entry.listeners.delete(listener)
+    return () => {
+      entry.listeners.delete(listener)
+      if (entry.listeners.size > 0) return
+      entry.unsubscribeSnapshot?.()
+      entry.unsubscribeSnapshot = undefined
+      entry.subscriptionTargetKey = undefined
+      entry.snapshotKey = undefined
+    }
   }
 
   ensure(target: WorkspaceUnpushedCommitTarget): Promise<void> {
     const entry = this.entryFor(target)
     entry.target = target
+    this.ensureSnapshotSubscription(entry)
     if (entry.state.stack || entry.state.loading) return Promise.resolve()
     return this.refresh(target)
   }
@@ -145,6 +206,7 @@ export class WorkspaceUnpushedCommitStore {
   refresh(target: WorkspaceUnpushedCommitTarget): Promise<void> {
     const entry = this.entryFor(target)
     entry.target = target
+    this.ensureSnapshotSubscription(entry)
     entry.cancelIdle?.()
     entry.cancelIdle = undefined
     const generation = entry.generation + 1
@@ -220,6 +282,26 @@ export class WorkspaceUnpushedCommitStore {
     entry.cancelIdle = this.scheduleIdle(() => {
       entry.cancelIdle = undefined
       void this.loadPage(entry, generation, nextOffset)
+    })
+  }
+
+  private ensureSnapshotSubscription(entry: WorkspaceUnpushedCommitEntry): void {
+    if (entry.listeners.size === 0) return
+    const targetKey = `${entry.target.workspacePath}\u0000${entry.target.chatId || ''}`
+    if (entry.unsubscribeSnapshot && entry.subscriptionTargetKey === targetKey) return
+    entry.unsubscribeSnapshot?.()
+    entry.subscriptionTargetKey = targetKey
+    entry.snapshotKey = undefined
+    entry.unsubscribeSnapshot = this.subscribeSnapshot(entry.target, (payload) => {
+      const nextKey = snapshotCatalogueKey(payload)
+      const previousKey = entry.snapshotKey
+      entry.snapshotKey = nextKey
+      if (!previousKey) {
+        if (!snapshotMatchesLoadedStack(payload, entry.state)) void this.refresh(entry.target)
+        return
+      }
+      if (previousKey === nextKey) return
+      void this.refresh(entry.target)
     })
   }
 

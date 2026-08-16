@@ -33,10 +33,15 @@ import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/seatChange'
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
+import { MarkdownCommitReference } from './MarkdownCommitReference'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import { rehypeInlineMarkdownDiffStats } from '../lib/inlineMarkdownDiffStats'
+import {
+  isInlineMarkdownCommitHash,
+  rehypeInlineMarkdownCommitReferences
+} from '../lib/inlineMarkdownCommitReferences'
 import {
   recordStreamMarkdownRenderMetric,
   recordStreamReactCommitMetric
@@ -544,6 +549,13 @@ const MARKDOWN_COMPONENTS: Components = {
       />
     )
   },
+  span({ node, children, ...props }) {
+    const hash = node?.properties?.dataCommitReference
+    if (typeof hash === 'string') {
+      return <MarkdownCommitReference hash={hash}>{children}</MarkdownCommitReference>
+    }
+    return <span {...props}>{children}</span>
+  },
   pre({ children }) {
     return <>{children}</>
   },
@@ -564,6 +576,13 @@ const MARKDOWN_COMPONENTS: Components = {
     const languageMatch = /language-([\w-]+)/.exec(className || '')
     const isBlock = Boolean(languageMatch) || rawContent.includes('\n')
     if (!isBlock) {
+      if (isInlineMarkdownCommitHash(rawContent)) {
+        return (
+          <MarkdownCommitReference hash={rawContent}>
+            <code className={className}>{children}</code>
+          </MarkdownCommitReference>
+        )
+      }
       return <code className={className}>{children}</code>
     }
     const language = languageMatch?.[1]
@@ -628,7 +647,10 @@ const MARKDOWN_COMPONENTS: Components = {
 }
 
 const REMARK_PLUGINS = [remarkGfm]
-const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [rehypeInlineMarkdownDiffStats]
+const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
+  rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCommitReferences
+]
 // Raw HTML is opt-in for bounded, non-streaming surfaces such as the
 // Blackboard. Parse it, then immediately apply the conservative GitHub-style
 // sanitiser before React ever sees an element. Transcript messages retain the
@@ -650,7 +672,8 @@ const SAFE_HTML_SCHEMA = {
 const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   rehypeRaw,
   [rehypeSanitize, SAFE_HTML_SCHEMA],
-  rehypeInlineMarkdownDiffStats
+  rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCommitReferences
 ]
 
 // react-markdown's default urlTransform only allows http(s)/irc(s)/mailto/xmpp
