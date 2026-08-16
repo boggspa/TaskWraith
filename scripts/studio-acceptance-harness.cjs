@@ -32,6 +32,10 @@ const {
 } = require('./perf/devUserDataPath.cjs')
 const { assertLaunchPortsFree } = require('./perf/portGuard.cjs')
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
+const {
+  parseAvSyncCurrentExport,
+  parseAvSyncPeakExport
+} = require('./studio-av-endurance-runner.cjs')
 
 const WATCHDOG_PATH = path.join(__dirname, 'studio-acceptance-watchdog.cjs')
 const DETACHED_COORDINATOR_PATH = path.join(__dirname, 'studio-acceptance-detached-coordinator.cjs')
@@ -2298,6 +2302,9 @@ function buildStudioUiDriverRequest(options) {
         accessibilityLabel: 'Transport mutation detail'
       }
     }
+    if (action.type === 'read-av-sync' || action.type === 'coreaudio-route-health') {
+      return { type: action.type }
+    }
     if (action.type === 'screenshot' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(action.name)) {
       const screenshotPath = path.resolve(artifactRoot, 'screenshots', `${String(action.name)}.png`)
       if (!screenshotPath.startsWith(`${artifactRoot}${path.sep}`)) {
@@ -2490,6 +2497,57 @@ function attachStudioUiDriverFailureEvidence(error, evidence) {
   return failure
 }
 
+function coreAudioRouteHealthReceiptFailure(route) {
+  if (!isRecord(route)) return 'routeHealth is absent'
+  if (!Number.isSafeInteger(route.id) || route.id <= 0 || route.id > 0xffffffff) {
+    return 'id is not a positive UInt32'
+  }
+  if (typeof route.name !== 'string' || !route.name.trim()) return 'name is empty'
+  if (typeof route.uid !== 'string' || !route.uid.trim()) return 'uid is empty'
+  if (
+    typeof route.nominalSampleRate !== 'number' ||
+    !Number.isFinite(route.nominalSampleRate) ||
+    route.nominalSampleRate <= 0
+  ) {
+    return 'nominalSampleRate is not positive'
+  }
+  if (typeof route.alive !== 'boolean') return 'alive is not a boolean'
+  if (typeof route.running !== 'boolean') return 'running is not a boolean'
+  if (typeof route.hasOutputStream !== 'boolean') {
+    return 'hasOutputStream is not a boolean'
+  }
+  if (!Number.isSafeInteger(route.outputStreamCount) || route.outputStreamCount < 0) {
+    return 'outputStreamCount is not a non-negative exact integer'
+  }
+  if (!Number.isSafeInteger(route.outputChannelCount) || route.outputChannelCount < 0) {
+    return 'outputChannelCount is not a non-negative exact integer'
+  }
+  const countsHaveOutput = route.outputStreamCount > 0 && route.outputChannelCount > 0
+  if (route.hasOutputStream !== countsHaveOutput) {
+    return 'hasOutputStream is inconsistent with raw output counts'
+  }
+  if (typeof route.muteSupported !== 'boolean') return 'muteSupported is not a boolean'
+  if (route.muteSupported) {
+    if (typeof route.muted !== 'boolean') return 'muted is absent for a supported property'
+  } else if (route.muted !== undefined && route.muted !== null) {
+    return 'muted is present for an unsupported property'
+  }
+  if (typeof route.volumeSupported !== 'boolean') return 'volumeSupported is not a boolean'
+  if (route.volumeSupported) {
+    if (
+      typeof route.volume !== 'number' ||
+      !Number.isFinite(route.volume) ||
+      route.volume < 0 ||
+      route.volume > 1
+    ) {
+      return 'volume is absent or outside the normalized range'
+    }
+  } else if (route.volume !== undefined && route.volume !== null) {
+    return 'volume is present for an unsupported property'
+  }
+  return null
+}
+
 async function runStudioUiDriver(plan, target, actions, adapters = {}) {
   const request = buildStudioUiDriverRequest({
     ...target,
@@ -2635,6 +2693,28 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         } catch (error) {
           throw new Error(
             `Studio UI driver transport-mutation receipt is invalid: ${error.message}`
+          )
+        }
+      }
+      if (action.type === 'read-av-sync') {
+        failureEvidence.failureStage = 'av-sync-validation'
+        const peak = parseAvSyncPeakExport(observed.avSyncPeakValue)
+        if (!peak.ok) {
+          throw new Error(
+            `Studio UI driver A/V sync peak receipt is invalid (expected av1): ${peak.reason}`
+          )
+        }
+        const current = parseAvSyncCurrentExport(observed.avSyncCurrentValue)
+        if (!current.ok) {
+          throw new Error(`Studio UI driver A/V sync current receipt is invalid: ${current.reason}`)
+        }
+      }
+      if (action.type === 'coreaudio-route-health') {
+        failureEvidence.failureStage = 'coreaudio-route-health-validation'
+        const routeFailure = coreAudioRouteHealthReceiptFailure(observed.routeHealth)
+        if (routeFailure) {
+          throw new Error(
+            `Studio UI driver CoreAudio route-health receipt is invalid: ${routeFailure}`
           )
         }
       }

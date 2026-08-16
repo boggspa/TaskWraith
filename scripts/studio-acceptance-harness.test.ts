@@ -177,6 +177,27 @@ const validTransportMutationText =
   'postAnchorT=2062500 postAnchorH=4.125000 postPos=2062500 postDur=300000000 ' +
   'postPlay=1 postRate=1.000 crossedDomain=0 clamped=0'
 
+const validAvSyncPeakText =
+  'av1 pf=1000 ap=1100 err=-100 errms=-3.333 win=1000000 winms=1.000 ' + 'drawn=1 expl=explained'
+const validAvSyncCurrentText =
+  'avc1 ts=30000 fd=1000 pf=1000 ap=1100 err=-100 errms=-3.333 ' +
+  'win=1000000 winms=1.000 drawn=1 expl=explained'
+const validCoreAudioRouteHealthReceipt = {
+  id: 42,
+  name: 'Acceptance Output',
+  uid: 'acceptance-output',
+  nominalSampleRate: 48_000,
+  alive: true,
+  running: true,
+  hasOutputStream: true,
+  outputStreamCount: 1,
+  outputChannelCount: 2,
+  muteSupported: true,
+  muted: false,
+  volumeSupported: true,
+  volume: 0.75
+}
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fsPromises.rm(root, { recursive: true, force: true }))
@@ -2495,6 +2516,19 @@ describe('Studio acceptance harness', () => {
       buildStudioUiDriverRequest({
         ...target,
         actions: [
+          { type: 'read-av-sync', callerControlledValue: 'must-be-ignored' },
+          { type: 'coreaudio-route-health', callerControlledValue: 'must-be-ignored' }
+        ]
+      })
+    ).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [{ type: 'read-av-sync' }, { type: 'coreaudio-route-health' }]
+    })
+    expect(
+      buildStudioUiDriverRequest({
+        ...target,
+        actions: [
           {
             type: 'read-transport-mutation',
             accessibilityLabel: 'caller-must-not-control-this',
@@ -2812,6 +2846,10 @@ describe('Studio acceptance harness', () => {
             accessibilityMatchCount: action.type === 'read-transport-mutation' ? 1 : null,
             accessibilityValue:
               action.type === 'read-transport-mutation' ? validTransportMutationText : null,
+            avSyncPeakValue: action.type === 'read-av-sync' ? validAvSyncPeakText : null,
+            avSyncCurrentValue: action.type === 'read-av-sync' ? validAvSyncCurrentText : null,
+            routeHealth:
+              action.type === 'coreaudio-route-health' ? validCoreAudioRouteHealthReceipt : null,
             accessibilityAction: action.accessibilityAction ?? null,
             playbackValueBefore: action.playbackValueBefore ?? null,
             playbackValueAfter: action.playbackValueAfter ?? null,
@@ -2920,6 +2958,40 @@ describe('Studio acceptance harness', () => {
         }
       ]
     })
+    const measurementReceipt = await runStudioUiDriver(
+      { artifactRoot: root },
+      target,
+      [{ type: 'read-av-sync' }, { type: 'coreaudio-route-health' }],
+      { execFile }
+    )
+    expect(measurementReceipt).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      actions: [
+        {
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText
+        },
+        {
+          type: 'coreaudio-route-health',
+          routeHealth: {
+            id: 42,
+            name: 'Acceptance Output',
+            uid: 'acceptance-output',
+            nominalSampleRate: 48_000,
+            alive: true,
+            running: true,
+            hasOutputStream: true,
+            outputStreamCount: 1,
+            outputChannelCount: 2,
+            muteSupported: true,
+            muted: false,
+            volumeSupported: true,
+            volume: 0.75
+          }
+        }
+      ]
+    })
     const playbackReceipt = await runStudioUiDriver(
       { artifactRoot: root },
       target,
@@ -2986,7 +3058,8 @@ describe('Studio acceptance harness', () => {
         }
       ]
     })
-    expect(execFile).toHaveBeenCalledTimes(7)
+    expect(execFile).toHaveBeenCalledTimes(8)
+
     // @portability-ok: the Swift/AppKit Studio UI driver is a macOS-only
     // acceptance surface, and this assertion pins its system interpreter.
     expect(execFile.mock.calls[0][0]).toBe('/usr/bin/swift')
@@ -3007,6 +3080,167 @@ describe('Studio acceptance harness', () => {
       pid: 7002,
       pgid: 7001,
       windowId: 42
+    })
+  })
+
+  it('rejects malformed A/V and CoreAudio measurement receipts with raw evidence', async () => {
+    const root = await temporaryRoot('studio-acceptance-measurement-receipt-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: { x: 1, y: 2, width: 640, height: 360 }
+          }
+        ]
+      }
+    }
+    const run = (
+      requestedAction: Record<string, unknown>,
+      observedAction: Record<string, unknown>
+    ) =>
+      runStudioUiDriver({ artifactRoot: root }, target, [requestedAction], {
+        execFile: vi.fn(async (_file: string, args: string[]) => {
+          const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+          return {
+            stdout: `${JSON.stringify({
+              schemaVersion: 1,
+              kind: 'taskwraith-studio-ui-driver-receipt',
+              inputDelivery: request.inputDelivery,
+              pid: request.expectedPid,
+              pgid: request.expectedPgid,
+              windowId: request.windowId,
+              actions: [observedAction]
+            })}\n`,
+            stderr: ''
+          }
+        })
+      })
+    const captureFailure = async (operation: Promise<Record<string, unknown>>) => {
+      try {
+        await operation
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        return error as Error & {
+          studioUiDriverEvidence: {
+            rawReceiptPath: string | null
+            rawStdoutSha256: string | null
+            rawStdoutByteLength: number | null
+            validatedReceiptPath: string | null
+            failureStage: string
+          }
+        }
+      }
+      throw new Error('expected Studio measurement receipt failure')
+    }
+
+    const peakInCurrentFailure = await captureFailure(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncPeakText
+        }
+      )
+    )
+    expect(peakInCurrentFailure.message).toMatch(/A\/V sync current receipt is invalid.*avc1/i)
+    expect(peakInCurrentFailure.studioUiDriverEvidence).toMatchObject({
+      failureStage: 'av-sync-validation',
+      validatedReceiptPath: null
+    })
+    expect(peakInCurrentFailure.studioUiDriverEvidence.rawReceiptPath).toMatch(
+      /ui-driver-raw-receipts\/.*\.json\.stdout$/
+    )
+    expect(peakInCurrentFailure.studioUiDriverEvidence.rawStdoutSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(peakInCurrentFailure.studioUiDriverEvidence.rawStdoutByteLength).toBeGreaterThan(0)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncCurrentText,
+          avSyncCurrentValue: validAvSyncCurrentText
+        }
+      )
+    ).rejects.toThrow(/A\/V sync peak receipt is invalid.*av1/i)
+
+    const inconsistentRouteFailure = await captureFailure(
+      run(
+        { type: 'coreaudio-route-health' },
+        {
+          index: 0,
+          type: 'coreaudio-route-health',
+          routeHealth: {
+            ...validCoreAudioRouteHealthReceipt,
+            outputStreamCount: 0
+          }
+        }
+      )
+    )
+    expect(inconsistentRouteFailure.message).toMatch(
+      /CoreAudio route-health receipt is invalid.*hasOutputStream.*counts/i
+    )
+    expect(inconsistentRouteFailure.studioUiDriverEvidence).toMatchObject({
+      failureStage: 'coreaudio-route-health-validation',
+      validatedReceiptPath: null
+    })
+    expect(inconsistentRouteFailure.studioUiDriverEvidence.rawReceiptPath).toMatch(
+      /ui-driver-raw-receipts\/.*\.json\.stdout$/
+    )
+
+    await expect(
+      run(
+        { type: 'coreaudio-route-health' },
+        {
+          index: 0,
+          type: 'coreaudio-route-health',
+          routeHealth: {
+            ...validCoreAudioRouteHealthReceipt,
+            muted: undefined
+          }
+        }
+      )
+    ).rejects.toThrow(/CoreAudio route-health receipt is invalid.*muted/i)
+
+    await expect(
+      run(
+        { type: 'coreaudio-route-health' },
+        {
+          index: 0,
+          type: 'coreaudio-route-health',
+          routeHealth: {
+            ...validCoreAudioRouteHealthReceipt,
+            muteSupported: false,
+            muted: undefined,
+            volumeSupported: false,
+            volume: undefined
+          }
+        }
+      )
+    ).resolves.toMatchObject({
+      actions: [
+        {
+          type: 'coreaudio-route-health',
+          routeHealth: {
+            muteSupported: false,
+            volumeSupported: false
+          }
+        }
+      ]
     })
   })
 
