@@ -247,7 +247,11 @@ import type {
   GitPullRequestLifecycleResult,
   GitPullRequestWorkspaceSnapshot
 } from '../main/services/GitPullRequestWorkflow'
-import type { CommitFilePreviewResult } from '../main/DiffService'
+import type {
+  CommitFilePreviewResult,
+  GitRevisionDiffResult,
+  GitRevisionDiffTarget
+} from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
   SimulatorCapabilityStatus,
@@ -884,6 +888,12 @@ declare global {
         chatId?: string
         commitHash: string
       }) => Promise<CommitFilePreviewResult>
+      getGitRevisionDiff: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        chatId?: string
+        revision: GitRevisionDiffTarget
+      }) => Promise<GitRevisionDiffResult>
       gitWorkProvenance: (payload: {
         workspacePath?: string
         repoPath?: string

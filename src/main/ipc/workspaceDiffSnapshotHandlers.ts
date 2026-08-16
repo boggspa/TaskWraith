@@ -2,14 +2,17 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
   captureWorkspaceSnapshot,
   getCommitFilePreview,
+  getGitRevisionDiff,
   getWorkspaceDiff
 } from '../DiffService'
+import type { GitRevisionDiffTarget } from '../DiffService'
 
 export type WorkspaceDiffRequest = {
   workspacePath?: string
   repoPath?: string
   chatId?: string
   commitHash?: string
+  revision?: GitRevisionDiffTarget
 }
 
 export interface WorkspaceDiffSnapshotHandlerDeps {
@@ -47,6 +50,9 @@ export function registerWorkspaceDiffSnapshotHandlers(
       })
       if (typeof workspace !== 'string' && typeof workspace.commitHash === 'string') {
         return getCommitFilePreview(resolved, workspace.commitHash)
+      }
+      if (typeof workspace !== 'string' && workspace.revision) {
+        return getGitRevisionDiff(resolved, workspace.revision)
       }
       return getWorkspaceDiff(resolved)
     }

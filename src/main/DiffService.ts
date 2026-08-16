@@ -5,6 +5,7 @@ import {
   gitCommandEnvironment,
   hardenedGitCommandArgs,
   LOCAL_GIT_FILTER_CONFIG_QUERY_ARGS,
+  isSafeGitRemoteName,
   repositoryLocalGitFilterError,
   repositoryLocalGitFilterKeys
 } from './services/GitCommandSecurity'
@@ -27,6 +28,7 @@ const MAX_GIT_DIFF_PREVIEW_LINE_CHARS = 1200
 const GIT_DIFF_PREVIEW_CONTEXT_LINES = 8
 const GIT_DIFF_PREVIEW_MAX_BUFFER = MAX_GIT_DIFF_PREVIEW_BYTES + 64 * 1024
 const COMMIT_FILE_PREVIEW_MAX_FILES = 30
+const REVISION_DIFF_MAX_FILES = 120
 
 function isNoiseFile(filePath: string): boolean {
   const basename = path.basename(filePath)
@@ -200,6 +202,25 @@ export type CommitFilePreviewResult =
   | { ok: true; files: CommitFilePreviewEntry[]; totalFiles: number }
   | { ok: false; error: string }
 
+export type GitRevisionDiffTarget =
+  | { kind: 'commit'; commitHash: string }
+  | {
+      kind: 'pull-request'
+      headHash: string
+      baseRefName: string
+      remoteName?: string
+    }
+
+export interface GitRevisionDiffResult {
+  type: 'changes' | 'no_changes' | 'not_repo' | 'error'
+  text?: string
+  summaries?: DiffFileSummary[]
+  totalFiles?: number
+  truncated?: boolean
+  resolvedHeadHash?: string
+  resolvedBaseHash?: string
+}
+
 /**
  * Resolve a bounded, read-only file list for a historical commit. Task Complete
  * tombstones created before per-file receipt capture only retain the hash, so
@@ -260,6 +281,258 @@ export async function getCommitFilePreview(
     return { ok: true, files, totalFiles }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function validGitObjectId(value: string): boolean {
+  return /^[0-9a-f]{7,64}$/i.test(value)
+}
+
+function validGitBranchName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 244 &&
+    !value.startsWith('-') &&
+    !value.startsWith('.') &&
+    !value.endsWith('.') &&
+    !value.endsWith('/') &&
+    !value.includes('..') &&
+    !value.includes('//') &&
+    !value.includes('@{') &&
+    !/[\0-\x20\x7f~^:?*[\\]/.test(value) &&
+    value
+      .split('/')
+      .every((part) => Boolean(part) && !part.startsWith('.') && !part.endsWith('.lock'))
+  )
+}
+
+async function resolveCommitObject(repoRoot: string, value: string): Promise<string | null> {
+  const candidate = value.trim()
+  if (!validGitObjectId(candidate)) return null
+  const result = await spawnGit(repoRoot, ['rev-parse', '--verify', `${candidate}^{commit}`])
+  const resolved = result.stdout.trim()
+  return result.code === 0 && /^[0-9a-f]{40,64}$/i.test(resolved) ? resolved : null
+}
+
+async function resolvePullRequestBase(
+  repoRoot: string,
+  baseRefName: string,
+  remoteName?: string
+): Promise<string | null> {
+  const branch = baseRefName.trim()
+  if (!validGitBranchName(branch)) return null
+  const remote = remoteName?.trim()
+  if (remote && !isSafeGitRemoteName(remote)) return null
+  const candidates = [
+    `refs/remotes/${remote || 'origin'}/${branch}`,
+    `refs/heads/${branch}`
+  ]
+  for (const candidate of candidates) {
+    const result = await spawnGit(repoRoot, ['rev-parse', '--verify', `${candidate}^{commit}`])
+    const resolved = result.stdout.trim()
+    if (result.code === 0 && /^[0-9a-f]{40,64}$/i.test(resolved)) return resolved
+  }
+  return null
+}
+
+function parseGitNameStatusZ(
+  output: string
+): Array<{ statusCode: string; repoPath: string }> {
+  const parts = output.split('\0')
+  const files: Array<{ statusCode: string; repoPath: string }> = []
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index]
+    if (!record) continue
+    const tab = record.indexOf('\t')
+    if (tab >= 0) {
+      const statusCode = record.slice(0, tab)
+      const repoPath = record.slice(tab + 1)
+      if (statusCode && repoPath) files.push({ statusCode, repoPath })
+      continue
+    }
+    const repoPath = parts[index + 1]
+    if (repoPath) {
+      files.push({ statusCode: record, repoPath })
+      index += 1
+    }
+  }
+  return files
+}
+
+function buildRevisionFileSummary(
+  repoRoot: string,
+  repoPath: string,
+  displayPath: string,
+  statusCode: string,
+  diffArgs: string[]
+): DiffFileSummary {
+  const status = classifyStatus(statusCode)
+  const baseSummary: DiffFileSummary = {
+    path: displayPath,
+    status,
+    previewKind: 'none',
+    isNoise: isNoiseFile(displayPath),
+    isSensitive: isSensitiveFile(displayPath)
+  }
+  if (baseSummary.isSensitive) return { ...baseSummary, previewKind: 'hidden' }
+
+  const preview = readGitDiffPreview(repoRoot, [...diffArgs, '--', repoPath])
+  if (!preview.text.trim()) return baseSummary
+  if (/^Binary files /m.test(preview.text) || /^GIT binary patch$/m.test(preview.text)) {
+    return { ...baseSummary, previewKind: 'binary', isBinary: true }
+  }
+  const counts = countDiffLines(preview.text)
+  return {
+    ...baseSummary,
+    ...counts,
+    previewKind: 'git_diff',
+    diffText: preview.text,
+    diffTextTruncated: preview.truncated || undefined,
+    diffTextOmittedLines: preview.omittedLines,
+    ...(!preview.truncated
+      ? { diffTextOriginalBytes: Buffer.byteLength(preview.text, 'utf8') }
+      : {})
+  }
+}
+
+/**
+ * Load a bounded, read-only historical diff for Diff Studio. Commit reviews
+ * compare against the first parent (or the empty tree for a root commit). PR
+ * reviews prefer the named remote base over the local branch, because the
+ * checkout branch commonly contains the very commits being proposed.
+ */
+export async function getGitRevisionDiff(
+  workspace: string,
+  target: GitRevisionDiffTarget
+): Promise<GitRevisionDiffResult> {
+  if (target.kind === 'commit' && !validGitObjectId(target.commitHash.trim())) {
+    return { type: 'error', text: 'Commit hash must be a hexadecimal object id.' }
+  }
+  if (
+    target.kind === 'pull-request' &&
+    (!validGitObjectId(target.headHash.trim()) ||
+      !validGitBranchName(target.baseRefName.trim()) ||
+      (target.remoteName !== undefined && !isSafeGitRemoteName(target.remoteName.trim())))
+  ) {
+    return { type: 'error', text: 'Pull request revision identifiers are invalid.' }
+  }
+
+  try {
+    const scope = await resolveGitWorkspaceScope(workspace)
+    if (!scope) {
+      return {
+        type: 'not_repo',
+        text: 'This folder is not a git repository. Run git init if you want diff tracking.'
+      }
+    }
+
+    const requestedHead = target.kind === 'commit' ? target.commitHash : target.headHash
+    const headHash = await resolveCommitObject(scope.repoRoot, requestedHead)
+    if (!headHash) return { type: 'error', text: 'The selected revision is not available locally.' }
+
+    let baseHash: string | undefined
+    let rootCommit = false
+    if (target.kind === 'commit') {
+      const parents = await spawnGit(scope.repoRoot, ['rev-list', '--parents', '-n', '1', headHash])
+      if (parents.code !== 0) {
+        return { type: 'error', text: parents.stderr.trim() || 'The commit parent could not be read.' }
+      }
+      baseHash = parents.stdout.trim().split(/\s+/)[1]
+      rootCommit = !baseHash
+    } else {
+      const branchBase = await resolvePullRequestBase(
+        scope.repoRoot,
+        target.baseRefName,
+        target.remoteName
+      )
+      if (!branchBase) {
+        return { type: 'error', text: 'The pull request base branch is not available locally.' }
+      }
+      const mergeBase = await spawnGit(scope.repoRoot, ['merge-base', branchBase, headHash])
+      const resolved = mergeBase.stdout.trim()
+      if (mergeBase.code !== 0 || !/^[0-9a-f]{40,64}$/i.test(resolved)) {
+        return { type: 'error', text: 'The pull request merge base could not be resolved.' }
+      }
+      baseHash = resolved
+    }
+
+    const pathspec = workspacePathspec(scope.workspacePrefix)
+    const listArgs = rootCommit
+      ? [
+          'diff-tree',
+          '--root',
+          '--no-commit-id',
+          '--name-status',
+          '--no-renames',
+          '-r',
+          '-z',
+          headHash,
+          ...pathspec
+        ]
+      : ['diff', '--name-status', '--no-renames', '-z', baseHash!, headHash, ...pathspec]
+    const listed = await spawnGit(scope.repoRoot, listArgs)
+    if (listed.code !== 0) {
+      return {
+        type: 'error',
+        text: listed.stderr.trim() || listed.stdout.trim() || 'The revision diff could not be read.'
+      }
+    }
+
+    const files = parseGitNameStatusZ(listed.stdout).flatMap((file) => {
+      const displayPath = repoPathToWorkspacePath(file.repoPath, scope.workspacePrefix)
+      return displayPath ? [{ ...file, displayPath }] : []
+    })
+    if (files.length === 0) {
+      return {
+        type: 'no_changes',
+        text: 'The selected revision has no changes in this workspace.',
+        totalFiles: 0,
+        resolvedHeadHash: headHash,
+        ...(baseHash ? { resolvedBaseHash: baseHash } : {})
+      }
+    }
+
+    const diffArgs = rootCommit
+      ? [
+          'show',
+          '--format=',
+          '--first-parent',
+          '--no-renames',
+          '--no-ext-diff',
+          '--no-textconv',
+          `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
+          headHash
+        ]
+      : [
+          'diff',
+          '--no-renames',
+          '--no-ext-diff',
+          '--no-textconv',
+          `--unified=${GIT_DIFF_PREVIEW_CONTEXT_LINES}`,
+          baseHash!,
+          headHash
+        ]
+    const summaries = files
+      .slice(0, REVISION_DIFF_MAX_FILES)
+      .map((file) =>
+        buildRevisionFileSummary(
+          scope.repoRoot,
+          file.repoPath,
+          file.displayPath,
+          file.statusCode,
+          diffArgs
+        )
+      )
+    return {
+      type: 'changes',
+      summaries,
+      totalFiles: files.length,
+      truncated: files.length > summaries.length || undefined,
+      resolvedHeadHash: headHash,
+      ...(baseHash ? { resolvedBaseHash: baseHash } : {})
+    }
+  } catch (error) {
+    return { type: 'error', text: error instanceof Error ? error.message : String(error) }
   }
 }
 

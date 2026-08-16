@@ -8,6 +8,7 @@ import {
   classifyStatus,
   generateSyntheticNewFileDiff,
   getCommitFilePreview,
+  getGitRevisionDiff,
   getWorkspaceDiff,
   captureWorkspaceSnapshot,
   buildBoundedWorkspaceDiff,
@@ -36,6 +37,88 @@ function makeGitRepo(): { baseDir: string; repoDir: string } {
 }
 
 describe('DiffService', () => {
+  describe('getGitRevisionDiff', () => {
+    it('loads a scoped historical commit diff while hiding sensitive contents', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      const workspaceDir = path.join(repoDir, 'workspace')
+      fs.mkdirSync(workspaceDir)
+      fs.writeFileSync(path.join(workspaceDir, 'tracked.txt'), 'before\n')
+      fs.writeFileSync(path.join(repoDir, 'outside.txt'), 'before outside\n')
+      runGit(repoDir, ['add', '--', 'workspace', 'outside.txt'])
+      runGit(repoDir, ['commit', '-m', 'base'])
+      fs.writeFileSync(path.join(workspaceDir, 'tracked.txt'), 'after\n')
+      fs.writeFileSync(path.join(workspaceDir, '.env'), 'SECRET=value\n')
+      fs.writeFileSync(path.join(repoDir, 'outside.txt'), 'after outside\n')
+      runGit(repoDir, ['add', '--', 'workspace', 'outside.txt'])
+      runGit(repoDir, ['commit', '-m', 'review me'])
+      const hash = gitOutput(repoDir, ['rev-parse', 'HEAD'])
+
+      try {
+        const result = await getGitRevisionDiff(workspaceDir, {
+          kind: 'commit',
+          commitHash: hash
+        })
+
+        expect(result.type).toBe('changes')
+        expect(result.totalFiles).toBe(2)
+        expect(result.summaries?.some((file) => file.path === 'outside.txt')).toBe(false)
+        expect(result.summaries?.find((file) => file.path === 'tracked.txt')).toMatchObject({
+          status: 'modified',
+          previewKind: 'git_diff',
+          additions: 1,
+          deletions: 1
+        })
+        expect(result.summaries?.find((file) => file.path === 'tracked.txt')?.diffText).toContain(
+          '+after'
+        )
+        expect(result.summaries?.find((file) => file.path === '.env')).toMatchObject({
+          status: 'created',
+          previewKind: 'hidden',
+          isSensitive: true
+        })
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('reviews a PR head from its remote base even when the local base branch has advanced', async () => {
+      const { baseDir, repoDir } = makeGitRepo()
+      fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'base\n')
+      runGit(repoDir, ['add', 'tracked.txt'])
+      runGit(repoDir, ['commit', '-m', 'base'])
+      runGit(repoDir, ['update-ref', 'refs/remotes/upstream/master', 'HEAD'])
+      fs.writeFileSync(path.join(repoDir, 'tracked.txt'), 'pull request\n')
+      runGit(repoDir, ['add', 'tracked.txt'])
+      runGit(repoDir, ['commit', '-m', 'feature'])
+      const headHash = gitOutput(repoDir, ['rev-parse', 'HEAD'])
+
+      try {
+        const result = await getGitRevisionDiff(repoDir, {
+          kind: 'pull-request',
+          headHash,
+          baseRefName: 'master',
+          remoteName: 'upstream'
+        })
+
+        expect(result.type).toBe('changes')
+        expect(result.summaries).toHaveLength(1)
+        expect(result.summaries?.[0].diffText).toContain('+pull request')
+      } finally {
+        fs.rmSync(baseDir, { recursive: true, force: true })
+      }
+    })
+
+    it('rejects option-like PR refs before invoking a revision diff', async () => {
+      await expect(
+        getGitRevisionDiff('/repo', {
+          kind: 'pull-request',
+          headHash: 'a'.repeat(40),
+          baseRefName: '--output=/tmp/pwn'
+        })
+      ).resolves.toMatchObject({ type: 'error' })
+    })
+  })
+
   describe('getCommitFilePreview', () => {
     it('loads historical commit files lazily, scopes paths, and caps the payload at thirty', async () => {
       const { baseDir, repoDir } = makeGitRepo()

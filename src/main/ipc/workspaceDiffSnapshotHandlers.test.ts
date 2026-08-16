@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { captureWorkspaceSnapshot, getCommitFilePreview, getWorkspaceDiff } from '../DiffService'
+import {
+  captureWorkspaceSnapshot,
+  getCommitFilePreview,
+  getGitRevisionDiff,
+  getWorkspaceDiff
+} from '../DiffService'
 import { registerWorkspaceDiffSnapshotHandlers } from './workspaceDiffSnapshotHandlers'
 
 vi.mock('electron', () => ({
@@ -12,18 +17,21 @@ vi.mock('electron', () => ({
 vi.mock('../DiffService', () => ({
   getWorkspaceDiff: vi.fn(),
   getCommitFilePreview: vi.fn(),
+  getGitRevisionDiff: vi.fn(),
   captureWorkspaceSnapshot: vi.fn()
 }))
 
 const mockedHandle = vi.mocked(ipcMain.handle)
 const mockedGetWorkspaceDiff = vi.mocked(getWorkspaceDiff)
 const mockedGetCommitFilePreview = vi.mocked(getCommitFilePreview)
+const mockedGetGitRevisionDiff = vi.mocked(getGitRevisionDiff)
 const mockedCaptureWorkspaceSnapshot = vi.mocked(captureWorkspaceSnapshot)
 
 beforeEach(() => {
   mockedHandle.mockReset()
   mockedGetWorkspaceDiff.mockReset()
   mockedGetCommitFilePreview.mockReset()
+  mockedGetGitRevisionDiff.mockReset()
   mockedCaptureWorkspaceSnapshot.mockReset()
 })
 
@@ -104,6 +112,26 @@ describe('registerWorkspaceDiffSnapshotHandlers', () => {
       workspacePath: '/repo/real'
     })
     expect(mockedGetCommitFilePreview).toHaveBeenCalledWith('/repo/real', 'abc1234')
+    expect(mockedGetWorkspaceDiff).not.toHaveBeenCalled()
+  })
+
+  it('loads a historical revision diff through the same read-scoped workspace boundary', async () => {
+    const diff = { type: 'changes', summaries: [{ path: 'src/app.ts' }] }
+    mockedGetGitRevisionDiff.mockResolvedValue(diff as any)
+    const requireRegisteredWorkspace = vi.fn(() => '/repo/real')
+    const assertSenderScope = vi.fn()
+
+    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace, assertSenderScope })
+
+    const revision = { kind: 'commit' as const, commitHash: 'abc1234' }
+    const input = { workspacePath: '/repo', chatId: 'chat-1', revision }
+    await expect(handlerFor('get-diff')({} as any, input)).resolves.toBe(diff)
+    expect(assertSenderScope).toHaveBeenCalledWith(expect.anything(), {
+      capability: 'workspace-diff',
+      chatId: 'chat-1',
+      workspacePath: '/repo/real'
+    })
+    expect(mockedGetGitRevisionDiff).toHaveBeenCalledWith('/repo/real', revision)
     expect(mockedGetWorkspaceDiff).not.toHaveBeenCalled()
   })
 
