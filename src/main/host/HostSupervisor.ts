@@ -87,6 +87,8 @@ export interface HostSupervisor {
    * auto-respawn.  Only cleared by an explicit start().
    */
   readonly isStopped: boolean
+  /** Current local-socket occupancy, or zero before start / after teardown. */
+  readonly connectedClientCount?: number
   /**
    * Honest supervised-health provider — conforms to
    * AppStoreHostAuthorityHealthProvider so it can be injected directly into
@@ -300,6 +302,9 @@ export function createHostSupervisor(input: HostSupervisorInput): HostSupervisor
     },
     get isStopped(): boolean {
       return stopped
+    },
+    get connectedClientCount(): number {
+      return server?.clientCount() ?? 0
     },
     healthProvider
   }

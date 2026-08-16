@@ -56,6 +56,7 @@ interface MockServer {
   start: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
   stopSync: ReturnType<typeof vi.fn>
+  clientCount: ReturnType<typeof vi.fn>
   isStarted: boolean
 }
 
@@ -76,6 +77,7 @@ function mockServer(): MockServer & HostLocalServer {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     stopSync: vi.fn(),
+    clientCount: vi.fn().mockReturnValue(2),
     isStarted: false
   }
   // start() sets isStarted
@@ -652,6 +654,16 @@ describe('HostSupervisor', () => {
   // -----------------------------------------------------------------------
   // Health provider
   // -----------------------------------------------------------------------
+
+  it('reports the live server client count only while running', async () => {
+    const { supervisor } = makeSupervisor()
+
+    expect(supervisor.connectedClientCount).toBe(0)
+    await supervisor.start()
+    expect(supervisor.connectedClientCount).toBe(2)
+    await supervisor.stop()
+    expect(supervisor.connectedClientCount).toBe(0)
+  })
 
   describe('healthProvider', () => {
     it('reports supervised=false, offline before start', async () => {

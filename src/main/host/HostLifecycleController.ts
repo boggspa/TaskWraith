@@ -64,6 +64,11 @@ export class HostLifecycleController {
     return cloneHostLifecycleSnapshot(this.state)
   }
 
+  getConnectedClientCount(): number {
+    const count = this.supervisor?.connectedClientCount
+    return typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
+  }
+
   subscribe(listener: HostLifecycleListener): () => void {
     this.listeners.add(listener)
     return () => {

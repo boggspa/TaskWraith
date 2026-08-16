@@ -6,6 +6,7 @@ import { HostLifecycleController } from './HostLifecycleController'
 function supervisor(overrides: Partial<HostSupervisor> = {}): HostSupervisor {
   let running = false
   let stopped = false
+  let connectedClientCount = 0
   const value: HostSupervisor = {
     start: vi.fn(async () => {
       running = true
@@ -24,6 +25,9 @@ function supervisor(overrides: Partial<HostSupervisor> = {}): HostSupervisor {
     },
     get isStopped() {
       return stopped
+    },
+    get connectedClientCount() {
+      return connectedClientCount
     },
     healthProvider: () => ({
       hostStatus: running ? 'ok' : 'offline',
@@ -81,6 +85,16 @@ describe('HostLifecycleController', () => {
     await controller.start()
     expect(createSupervisor).toHaveBeenCalledTimes(2)
     expect(second.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('projects bounded client occupancy from only the active supervisor', async () => {
+    const active = supervisor({ connectedClientCount: 3 })
+    const controller = new HostLifecycleController({ createSupervisor: () => active })
+    expect(controller.getConnectedClientCount()).toBe(0)
+    await controller.start()
+    expect(controller.getConnectedClientCount()).toBe(3)
+    await controller.stop()
+    expect(controller.getConnectedClientCount()).toBe(0)
   })
 
   it('serializes a stop requested while startup is still in flight', async () => {

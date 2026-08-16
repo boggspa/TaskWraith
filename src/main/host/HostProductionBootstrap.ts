@@ -585,6 +585,9 @@ export function createHostProductionBootstrap(
     get isStopped(): boolean {
       return supervisor.isStopped
     },
+    get connectedClientCount(): number {
+      return supervisor.connectedClientCount ?? 0
+    },
     healthProvider: supervisor.healthProvider
   }
 
