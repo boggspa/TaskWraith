@@ -14,6 +14,8 @@ Open a parent chat while one of its sub-threads is running. The ticker renders
 above the transcript in the main chat view, in the side-chat pane, and inside
 Multiview panes.
 
+<!-- screenshot-pending: SubThreadStatusTicker showing running/completed sub-thread states -->
+
 ## How to use it
 1. Delegate work from a parent chat; the child appears nested beneath it in the
    sidebar and, while it runs, as a ticker entry above the parent transcript.

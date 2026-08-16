@@ -1,6 +1,6 @@
 # Shot list — remaining captures
 
-Inventory after the 2026-07-18 latest-source capture pass: **63 of 85 captured; 22 pending**. The count comes from 63 top-level PNGs in this folder plus 22 guide pages marked `screenshot-pending`. Two bonus composer variations in `composer-variations/` are not part of the 85-shot baseline.
+Inventory reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 of 86 captured; 25 pending**. The folder holds 63 top-level PNGs, but two do not count as current captures: `footer-control-row__shares-popover.png` is an orphan left behind by a shot retired on 2026-08-12, and `settings-and-configuration__shares-tab.png` predates the Channels cutover. That leaves 61 current captures against 86 guide pages. Two bonus composer variations in `composer-variations/` are not part of the 86-shot baseline.
 
 Capture replacements are being made against latest-source development apps. Use only the authorized `Test 1` through `Test 4` workspaces for live state, keep full private paths and unrelated content out of frame, and treat pairing QR codes and secrets as non-publishable. Personal agent/task metrics, usage telemetry, and demo transcripts are acceptable.
 
@@ -12,6 +12,7 @@ Capture replacements are being made against latest-source development apps. Use 
 
 - `settings-and-configuration__devices-tab` — use a demo or redacted pairing state; never publish a live QR code or device credential.
 - `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile (41 direct tools plus capability search/invoke) without exposing local endpoints or paths.
+- `settings-and-configuration__shares-tab` — the page was rewritten for the Channels cutover, so the PNG on disk shows the retired Shares tab and must be replaced. Capture **Settings → Integrations → Channels** with a demo or redacted membership state; never publish a live invite code or member credential. The `shares-tab` slug is legacy and still matches the page filename.
 
 ## Needs live or transient desktop state
 
@@ -28,6 +29,7 @@ Capture replacements are being made against latest-source development apps. Use 
 
 ## Needs Canvas or media content
 
+- `canvas-and-previews__canvas-browser` — added after the capture pass and never registered; keep private paths, vault URLs, and signed-in site content out of frame.
 - `canvas-and-previews__canvas-multiview-pane`
 - `canvas-and-previews__mesh-canvas` — capture a redacted exported scene; do not show local source paths or vault URLs.
 - `media-audio-and-video__chat-media-dock`

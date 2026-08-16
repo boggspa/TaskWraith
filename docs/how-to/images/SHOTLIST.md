@@ -1,8 +1,8 @@
 # How-To Manual — Screenshot Shot List
 
-85 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+86 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory after the 2026-07-18 latest-source capture pass: **63 captured, 22 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set.
+Current inventory, reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 captured, 25 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 86 guide pages minus the 24 with no capture on disk, minus `settings-and-configuration__shares-tab`, whose PNG predates the Channels cutover and needs replacing.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
@@ -31,6 +31,7 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
+| `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with the address bar and a loaded page | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
 | `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) from the composer's Plus Tools menu. |
 | `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
@@ -131,7 +132,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `settings-and-configuration__provider-tools-tab.png` | Electron | Provider tools tab showing MCP bridge audit and tool catalog | **Settings → Integrations → Provider Tools**. |
 | `settings-and-configuration__providers-tab.png` | Electron | Providers tab showing provider sign-in cards and agentic policy matrix | Open **Settings → AI & Providers → Providers**. |
 | `settings-and-configuration__safety-and-privacy-tab.png` | Electron | Safety and privacy tab showing risk posture overview and deep-links | Open **Settings → Data → Safety & Privacy**. |
-| `settings-and-configuration__shares-tab.png` | Electron | Shares tab showing collaborator list and access controls | **Settings → Integrations → Shares** |
+| `settings-and-configuration__shares-tab.png` | Electron | Channels tab showing the hosted/joined channel list with member and revoke controls. The PNG on disk is a pre-Channels-cutover Shares capture and must be replaced; use a demo or redacted membership state. The `shares-tab` slug is legacy — the page is `settings-and-configuration/shares-tab.md`, titled "Channels tab". | **Settings → Integrations → Channels** |
 | `settings-and-configuration__workspaces-tab.png` | Electron | Workspaces tab showing loaded workspace list with pin/remove controls | **Settings → Workspaces → Workspaces**. |
 
 ### sidebar-navigation

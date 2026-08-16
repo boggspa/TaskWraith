@@ -14,6 +14,8 @@ Open the right dock and select **Canvas**, or ask the agent to browse. A navigat
 
 The empty Canvas starts with a quiet **New tab** view. Use **+** to switch between Browser, Sketch Canvas, Mesh Canvas, and Simulator Canvas. Use **…** for browser profile and privacy controls.
 
+<!-- screenshot-pending: Canvas Browser in the right dock with the address bar and a loaded page -->
+
 ## Browse with an agent
 
 1. Choose **Accept Edits**, **Full WS Access**, or **Full Access** in the composer.
