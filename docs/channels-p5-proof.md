@@ -21,6 +21,14 @@ in full below.
 reading as finished.** It is not. D2 is blocked on a user capability decision,
 not completed, and a green gate set is not a finished D2.
 
+The same warning applies to the item count. Eleven of the twelve Definition-of-
+Done items are now evidenced or explicitly closed, including the last one that
+was neither done nor blocked — the UI/IPC leak check, verified clean below. The
+twelfth is D2 retirement of the People substrate, and it is **blocked on the
+user**, with the join stylesheet waiting behind it. "Eleven of twelve" is not
+"nearly done": the twelfth is the one that removes a live capability, which is
+why it is the one that needs a person.
+
 **D2 retirement is BLOCKED, not merely unfinished.** The consumer audit proved
 that a degraded launch still serves legacy People reads and reconnects, so
 retiring the substrate would remove a live recovery capability. That is the
@@ -130,10 +138,46 @@ E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
 - **Full typechecks pass** — `typecheck:node`, `typecheck:web`, and
   `typecheck:tui` are all clean at this boundary.
 - **Architecture and doctrine-integrity guards pass.**
-- **No People ids leak through the seat projection.** The public seat shape
-  carries no share id, relay room, token, or policy rule. A legacy
-  `collaboratorId` surfaces only for a member whose migration policy explicitly
-  binds it — verified at source by `@Challenge2`.
+- **No People ids, source policies or legacy tokens reach UI or IPC.** Verified
+  twice from different angles, and the answer needs stating rather than
+  implying, because the safe behaviour here looks identical to an oversight.
+
+  **A seat id is sometimes a People collaborator id, and that is deliberate.**
+  `ChannelExternalSeatAuthority` derives it as
+  `policy?.sourceCollaboratorId ?? member.memberId` (`:180`), so a member bound
+  by an exact migration policy keeps its **legacy** identity. That is intended
+  identity **continuity** — the same human keeps the same seat across migration,
+  which is what stops approved contribution queues and stored authority from
+  stranding — not a leak. The type header (`:5-11`) states the rule it must obey:
+  _"X2 may consume it inside main but must not expose the compatibility identity
+  through UI or IPC."_
+
+  **That rule was checked, not taken on trust.** The only consumer of the
+  Channel-derived population is the X2-d adapter, which passes
+  `collaboratorId: seat.seatId` into `EnsembleOrchestrator.deps.resolveExternalSeats`.
+  That dependency is **main-private**: its production references are
+  `index.ts:56260`, the declaration at `EnsembleOrchestrator.ts:652` and the use
+  at `:20672`, and there is **nothing in `src/preload`**. The legacy id never
+  crosses an IPC boundary.
+
+  The public seat shape also carries no share id, relay room, token, policy
+  rule or migration digest — `sourceShareId` is excluded by construction, and
+  the X2-d adapter passes `shareId: ''` rather than inventing one.
+
+  **A dormant surface, named as a watch-item and explicitly NOT a current
+  leak.** `ExternalSeatInput` (`src/shared/effectiveEnsembleRoster.ts:74`)
+  carries both `shareId` and `collaboratorId`, and
+  `EnsembleParticipantsAboveRow.tsx:664` accepts
+  `externalSeats?: readonly ExternalSeatInput[]` as an **optional** prop — a
+  renderer path structurally capable of carrying People identifiers to the DOM.
+  It is unwired: all five non-test references to `externalSeats` are inside that
+  component itself (`:664` declaration, `:819` destructure, `:862` comment,
+  `:865` and `:867` memo), so **no caller anywhere supplies it**. The component
+  is live and rendered (`Composer.tsx:2664`); the prop is not filled. This is
+  pre-existing architecture that P5 did not introduce and does not use. It is
+  recorded so that whoever wires it later knows the prop can carry a legacy
+  identity to the DOM, and must not feed it from the Channel path without
+  re-deciding this question.
 
 ### Open — not done, and not claimed
 
