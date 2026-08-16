@@ -18,6 +18,21 @@ topic branches, whatever any earlier handoff said.
 | Full WS Access (`workspace_write`) | Everything auto in-workspace incl. shell; `rm -rf` always githook-blocked+ask; Computer Use/AppDrive, Canvas (all kinds), media tools auto; reads OUTSIDE workspace auto-approved; writes outside workspace ASK; read processes auto, system-process changes ask once; creative apps auto on user request; remote/SSH ASK; remote network ASK; native provider tools auto (Edit/Shell/Bash/Search/Write/Create). externalPublish: **AUTO** (owner ruling below). |
 | Full Access (`full_access`) | Everything auto, no prompts, EXCEPT: remote/SSH ASK; remote network ASK; `rm -rf` OUTSIDE workspace githook-blocked+ask (inside workspace always approve). Native provider tools unrestricted. externalPublish: **AUTO**. |
 
+> **Divergence note, 2026-08-16 — the Plan row above no longer matches the
+> code.** The table records the 2026-08-04 directive verbatim and is left
+> unedited as a decision record. But `77d2ef5e4` ("feat(permissions): flatten
+> standard tool ladder", 2026-08-09) rewrote `PLAN_AGENTIC_SERVICES`: Plan now
+> **asks** for shellCommands, fileChanges, externalPublish, mcpTools,
+> subThreadDelegation, canvasInteraction, sketchCanvas, meshCanvas,
+> simulatorCanvas, mediaEditing and webBrowsing, keeping `deny` only for
+> crossThreadRead, threadMessage, mediaRecording and canvasEval
+> (`src/main/EffectiveRunPermissions.ts`, `PLAN_AGENTIC_SERVICES`). That commit
+> deleted the source comment naming this doc's slice C and replaced it with
+> "Plan shares Ask's attended policy for the standard ladder". So "NO mid-run
+> permission asks" is no longer the live Plan behaviour, and slice C below
+> describes a superseded position. Anyone reasoning about Plan-tier
+> containment must read the code, not this table.
+
 Boss/Captain retain their ensemble authority over ensemble tool calls at every
 tier.
 
