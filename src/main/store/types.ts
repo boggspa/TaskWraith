@@ -30,11 +30,17 @@ import type {
 import type { ProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteeringQueue'
 import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
+import type { CloseoutReceipt } from '../../shared/closeoutReceipt'
 export type {
   EnsembleFanoutIsolation,
   EnsembleFanoutIsolationPolicy
 } from '../../shared/ensembleFanoutIsolation'
 export { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
+export type {
+  CloseoutReceipt,
+  CloseoutReceiptParticipantOutcome,
+  CloseoutValidationKind
+} from '../../shared/closeoutReceipt'
 import type { ProviderHarnessPostureMap } from '../../shared/providerHarnessPosture'
 import type { ComposerAttachmentKind } from '../../shared/composerAttachment'
 import type { ApiUsageBillingSettings } from '../../shared/apiUsageBilling'
@@ -3559,6 +3565,8 @@ export interface ChatMessage {
     closeoutDurationMs?: number
     closeoutGoalId?: string
     closeoutGoalStatus?: ActiveGoalStatus
+    /** App-derived quantitative facts. Provider prose is qualitative only. */
+    closeoutReceipt?: CloseoutReceipt
     /**
      * Structured Participants table for the Task-complete epic stack.
      * Tombstoned at close-out time; plain objects (SeatChangeLink-shaped).

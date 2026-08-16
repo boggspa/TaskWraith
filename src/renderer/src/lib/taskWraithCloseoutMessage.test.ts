@@ -102,6 +102,7 @@ describe('taskWraithCloseoutMessage', () => {
       'Close-out:\n\nThe run was completed.\n\nImplemented the feature.'
     )
     expect(closeout.content).toContain('The run used about 3k tokens in total.')
+    expect(closeout.content).toContain('Receipt recorded 1 commit.')
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
     expect(closeout.content).not.toContain('Changed:')
     expect(closeout.content).not.toContain('**Commits**')
@@ -112,6 +113,16 @@ describe('taskWraithCloseoutMessage', () => {
         stats: '21 files'
       }
     ])
+    expect(closeout.metadata?.closeoutReceipt).toMatchObject({
+      version: 1,
+      targetId: 'run-1',
+      scope: 'run',
+      status: 'success',
+      durationMs: 39_000,
+      totalTokens: 3000,
+      observedCommitCount: 1,
+      observedChangedFileCount: 0
+    })
     expect(closeout.content).not.toContain('- Commits:')
   })
 
@@ -395,7 +406,7 @@ describe('taskWraithCloseoutMessage', () => {
       status: 'success'
     }
     const expectedSummary =
-      'Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with one day to plan around. Here’s the full seven-day outlook, including the warmer and cooler turns that matter for planning, without dropping the ending of this deliberately long summary.'
+      'Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with a rainy spell to plan around. Here’s the full weekly outlook, including the warmer and cooler turns that matter for planning, without dropping the ending of this deliberately long summary.'
     const closeout = buildTaskWraithRunCloseoutMessage({
       chat: chat({
         messages: [
@@ -403,7 +414,7 @@ describe('taskWraithCloseoutMessage', () => {
             ...message(
               'a-long',
               'assistant',
-              `## Summary\n\nBirmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a **fine** summer spell overall, with one day to plan around. Here’s the [full seven-day outlook](https://example.com/weather), including the warmer and cooler turns that matter for planning, without dropping the ending of this deliberately long summary.`
+              `## Summary\n\nBirmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a **fine** summer spell overall, with a rainy spell to plan around. Here’s the [full weekly outlook](https://example.com/weather), including the warmer and cooler turns that matter for planning, without dropping the ending of this deliberately long summary.`
             ),
             runId: run.runId
           }
@@ -575,6 +586,10 @@ describe('taskWraithCloseoutMessage', () => {
     expect(closeout.content).toContain(
       'Validation passed for the tests, typechecking, the build, and diagnostics.'
     )
+    expect(closeout.metadata?.closeoutReceipt?.validations).toEqual({
+      passed: ['tests', 'typecheck', 'build', 'diagnostics'],
+      failed: []
+    })
   })
 
   it('does not treat assistant claims or unproven successful activities as validation', () => {
@@ -704,7 +719,7 @@ describe('taskWraithCloseoutMessage', () => {
         shellAttempt('passed-first', 'success', 0),
         shellAttempt('failed-second', 'error', 1)
       ]).content
-    ).not.toContain('Validation passed')
+    ).toContain('Validation failures were recorded for the tests.')
   })
 
   it('formats escaped git commit output into a markdown table', () => {
@@ -1262,7 +1277,7 @@ describe('taskWraithCloseoutMessage', () => {
       stats: { input_tokens: 700, output_tokens: 300 }
     }
     const summary = `Round summary:
-Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with one day to plan around.
+Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with a rainy spell to plan around.
 Here’s the outlook across the full week without losing the final sentence.
 
 Decisions:
@@ -1317,7 +1332,7 @@ Next action:
 
     expect(closeout.content).toContain('The round was completed.')
     expect(closeout.content).toContain(
-      'Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with one day to plan around. Here’s the outlook across the full week without losing the final sentence.'
+      'Birmingham sits a little cooler and slightly less settled than Cambridge or Paris this week — still a fine summer spell overall, with a rainy spell to plan around. Here’s the outlook across the full week without losing the final sentence.'
     )
     expect(closeout.content).toContain('Decisions: Keep the outdoor plans flexible.')
     expect(closeout.content).toContain(
@@ -1783,6 +1798,58 @@ Next action:
     )
   })
 
+  it('rejects numeral-bearing provider prose and renders only receipt-backed counts', () => {
+    const run: ChatRun = {
+      runId: 'run-ai-counts',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('a-counts', 'assistant', 'Changed 91 files and made 315 commits.'),
+            runId: run.runId
+          },
+          {
+            ...message('t-counts', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'git_commit',
+                outputPreview: '[master abc1234de] Fix the closeout\n 1 file changed'
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0,
+      fileChanges: [{ path: 'src/closeout.ts', status: 'modified' }],
+      aiSummary: {
+        text: 'The run made 315 commits across ninety files.',
+        model: 'Apple Foundation Models'
+      }
+    })
+
+    expect(closeout.content).toContain('The run completed without a final written summary.')
+    expect(closeout.content).toContain('Receipt recorded 1 commit and 1 changed file.')
+    expect(closeout.content).not.toContain('315')
+    expect(closeout.content).not.toContain('91')
+    expect(closeout.content).not.toContain('ninety')
+    expect(closeout.metadata?.closeoutSource).toBe('deterministicFallback')
+    expect(closeout.metadata?.closeoutAiSummary).toBeUndefined()
+    expect(closeout.metadata?.closeoutReceipt).toMatchObject({
+      observedCommitCount: 1,
+      observedChangedFileCount: 1
+    })
+  })
+
   it('neutralises markdown, links, and code fences in AI summary prose', () => {
     const run: ChatRun = {
       runId: 'run-ai-md',
@@ -1977,19 +2044,19 @@ Next action:
       round,
       completedAt: round.endedAt!,
       aiSummary: {
-        text: 'Two participants compared approaches and converged on the simpler fix.',
+        text: 'The participants compared approaches and converged on the simpler fix.',
         model: 'Apple Foundation Models'
       }
     })
 
     expect(closeout.content).toContain(
-      'Two participants compared approaches and converged on the simpler fix.'
+      'The participants compared approaches and converged on the simpler fix.'
     )
     expect(closeout.content).not.toContain('Structured block.')
     expect(closeout.metadata?.closeoutSource).toBe('summaryProvider')
     expect(closeout.metadata?.closeoutScope).toBe('ensembleRound')
     expect(closeout.metadata?.closeoutAiSummary).toBe(
-      'Two participants compared approaches and converged on the simpler fix.'
+      'The participants compared approaches and converged on the simpler fix.'
     )
   })
 

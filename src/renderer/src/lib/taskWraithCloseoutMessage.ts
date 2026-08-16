@@ -22,6 +22,15 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../../shared/taskWraithCloseout'
+import {
+  buildCloseoutReceipt,
+  CLOSEOUT_VALIDATION_KINDS,
+  closeoutNarrativeHasAuthoredNumeral,
+  closeoutReceiptSentence,
+  mergeCloseoutReceipts,
+  type CloseoutReceipt,
+  type CloseoutValidationKind
+} from '../../../shared/closeoutReceipt'
 import { resolveCatalogToolName } from '../../../shared/canonicalToolCoalesce'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
 import { formatContextTokens } from './contextWindows'
@@ -91,29 +100,8 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   now?: Date
 }): ChatMessage {
   const { chat, run, completedAt, exitCode } = input
-  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
-  const aiSummaryProse = aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
   const durationMs = durationBetween(run.startedAt, completedAt)
   const runIds = new Set([run.runId])
-  const lines = [
-    formatWorkedFor(durationMs),
-    '',
-    'Close-out:',
-    '',
-    formatRunStatus(run.status, exitCode)
-  ]
-  appendCloseoutProse(
-    lines,
-    aiSummaryProse ||
-      latestAssistantSummary(chat.messages, run.runId) ||
-      missingRunSummary(run.status, exitCode)
-  )
-  appendCloseoutProse(lines, tokenUsageSentence('run', [run]))
-  appendCloseoutProse(lines, validationSummarySentence(chat.messages, runIds))
-  appendCloseoutProse(
-    lines,
-    goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
-  )
   const includeRunMessage = (message: ChatMessage): boolean =>
     message.runId === run.runId || isMessageInRunWindow(message, run)
   const closeoutCommits = collectCloseoutCommits(chat.messages, includeRunMessage, { chat })
@@ -127,6 +115,41 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     window: { startedAt: run.startedAt, completedAt },
     childChats: input.childChats
   })
+  const validationReceipt = collectCloseoutValidationReceipt(chat.messages, runIds)
+  const closeoutReceipt = buildCloseoutReceipt({
+    targetId: run.runId,
+    scope: 'run',
+    status: run.status || (exitCode === 0 ? 'success' : 'failed'),
+    durationMs,
+    totalTokens: totalTokensForRuns([run]),
+    commits: closeoutCommits,
+    fileChanges: closeoutFileChanges,
+    validations: validationReceipt
+  })
+  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
+  const aiSummaryProse = qualitativeCloseoutProse(
+    aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
+  )
+  const lines = [
+    formatWorkedFor(durationMs),
+    '',
+    'Close-out:',
+    '',
+    formatRunStatus(run.status, exitCode)
+  ]
+  appendCloseoutProse(
+    lines,
+    aiSummaryProse ||
+      qualitativeCloseoutProse(latestAssistantSummary(chat.messages, run.runId)) ||
+      missingRunSummary(run.status, exitCode)
+  )
+  appendCloseoutProse(lines, closeoutReceiptSentence(closeoutReceipt))
+  appendCloseoutProse(lines, tokenUsageSentence('run', [run]))
+  appendCloseoutProse(lines, validationSummarySentence(chat.messages, runIds))
+  appendCloseoutProse(
+    lines,
+    goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
+  )
   // Commits + File Changes + Sub-threads render in the Task-complete epic stack
   // from metadata — keep the close-out bubble to Worked-for + prose.
 
@@ -145,6 +168,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       ...(durationMs > 0 ? { closeoutDurationMs: durationMs } : {}),
       ...(run.activeGoalId ? { closeoutGoalId: run.activeGoalId } : {}),
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
+      closeoutReceipt,
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
       ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
@@ -163,22 +187,10 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   now?: Date
 }): ChatMessage {
   const { chat, round, completedAt } = input
-  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
-  const aiSummaryProse = aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
   const roundRuns = (chat.runs || []).filter((run) => run.ensembleRoundId === round.roundId)
   const roundRunIds = new Set(roundRuns.map((run) => run.runId))
   const closeoutParticipants = resolveCloseoutParticipants(chat, round, roundRuns)
   const durationMs = durationBetween(round.startedAt, completedAt)
-  const lines = [formatWorkedFor(durationMs), '', 'Close-out:', '', formatRoundStatus(round.status)]
-  appendCloseoutProse(
-    lines,
-    aiSummaryProse ||
-      roundSummaryProse(chat, round, roundRunIds) ||
-      missingRoundSummary(round.status, closeoutParticipants)
-  )
-  appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
-  appendCloseoutProse(lines, validationSummarySentence(chat.messages, roundRunIds))
-  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now))
   const participantTable = buildCloseoutParticipantTable(chat, closeoutParticipants, roundRuns)
   const closeoutCommits = collectCloseoutCommits(
     chat.messages,
@@ -198,6 +210,33 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     window: { startedAt: round.startedAt, completedAt },
     childChats: input.childChats
   })
+  const validationReceipt = collectCloseoutValidationReceipt(chat.messages, roundRunIds)
+  const closeoutReceipt = buildCloseoutReceipt({
+    targetId: round.roundId,
+    scope: 'ensembleRound',
+    status: round.status,
+    durationMs,
+    totalTokens: totalTokensForRuns(roundRuns),
+    commits: closeoutCommits,
+    fileChanges: closeoutFileChanges,
+    participants: closeoutParticipants,
+    validations: validationReceipt
+  })
+  const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
+  const aiSummaryProse = qualitativeCloseoutProse(
+    aiSummary ? aiCloseoutSummaryProse(aiSummary.text) : null
+  )
+  const lines = [formatWorkedFor(durationMs), '', 'Close-out:', '', formatRoundStatus(round.status)]
+  appendCloseoutProse(
+    lines,
+    aiSummaryProse ||
+      qualitativeCloseoutProse(roundSummaryProse(chat, round, roundRunIds)) ||
+      missingRoundSummary(round.status, closeoutParticipants)
+  )
+  appendCloseoutProse(lines, closeoutReceiptSentence(closeoutReceipt))
+  appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
+  appendCloseoutProse(lines, validationSummarySentence(chat.messages, roundRunIds))
+  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now))
   // Participants + Sub-threads + Commits + File Changes render in the
   // Task-complete epic stack. The close-out bubble keeps Worked-for + prose.
 
@@ -215,6 +254,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(durationMs > 0 ? { closeoutDurationMs: durationMs } : {}),
       ...(chat.activeGoal?.id ? { closeoutGoalId: chat.activeGoal.id } : {}),
       ...(chat.activeGoal?.status ? { closeoutGoalStatus: chat.activeGoal.status } : {}),
+      closeoutReceipt,
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
@@ -279,6 +319,7 @@ export function isSameTaskWraithCloseout(existing: ChatMessage, next: ChatMessag
   const b = next.metadata
   return (
     a?.closeoutAiSummary === b?.closeoutAiSummary &&
+    JSON.stringify(a?.closeoutReceipt ?? null) === JSON.stringify(b?.closeoutReceipt ?? null) &&
     JSON.stringify(a?.closeoutParticipantTable ?? null) ===
       JSON.stringify(b?.closeoutParticipantTable ?? null) &&
     sameCloseoutTombstoneList(a?.closeoutCommits, b?.closeoutCommits) &&
@@ -322,6 +363,14 @@ export function upsertTaskWraithCloseoutMessage(
     }
     if (!nextMeta.closeoutParticipantTable && previous.metadata?.closeoutParticipantTable) {
       nextMeta.closeoutParticipantTable = previous.metadata.closeoutParticipantTable
+    }
+    if (nextMeta.closeoutReceipt) {
+      nextMeta.closeoutReceipt = mergeCloseoutReceipts(
+        previous.metadata?.closeoutReceipt,
+        nextMeta.closeoutReceipt
+      )
+    } else if (previous.metadata?.closeoutReceipt) {
+      nextMeta.closeoutReceipt = previous.metadata.closeoutReceipt
     }
     if (
       (!Array.isArray(nextMeta.closeoutSubagentDelegations) ||
@@ -435,11 +484,12 @@ function roundSummaryProse(
 }
 
 function tokenUsageSentence(scope: 'run' | 'round', runs: ChatRun[]): string | null {
-  const total = runs.reduce(
-    (sum, run) => sum + extractUsageCountsFromCandidate(run.stats).totalTokens,
-    0
-  )
+  const total = totalTokensForRuns(runs)
   return total > 0 ? `The ${scope} used about ${formatContextTokens(total)} tokens in total.` : null
+}
+
+function totalTokensForRuns(runs: ChatRun[]): number {
+  return runs.reduce((sum, run) => sum + extractUsageCountsFromCandidate(run.stats).totalTokens, 0)
 }
 
 function missingRunSummary(status: string | undefined, exitCode?: number): string {
@@ -501,6 +551,11 @@ function aiCloseoutSummaryProse(text: string): string | null {
     .filter(Boolean)
   if (lines.length === 0) return null
   return finalizeSummaryProse([lines.join(' ')])
+}
+
+/** Quantitative claims belong exclusively to the app-derived receipt. */
+function qualitativeCloseoutProse(prose: string | null): string | null {
+  return prose && !closeoutNarrativeHasAuthoredNumeral(prose) ? prose : null
 }
 
 function closeoutSummaryProvenance(
@@ -721,7 +776,6 @@ function escapeMarkdownProse(value: string): string {
     .replace(/\]/g, '\\]')
 }
 
-type CloseoutValidationKind = 'tests' | 'typecheck' | 'lint' | 'build' | 'diagnostics'
 type CloseoutValidationAttempt = {
   kind: CloseoutValidationKind
   key: string
@@ -732,14 +786,6 @@ type CanonicalValidationTool = {
   name: 'run_task' | 'run_shell_command' | 'get_diagnostics'
   allowStructuredText: boolean
 }
-
-const CLOSEOUT_VALIDATION_ORDER: CloseoutValidationKind[] = [
-  'tests',
-  'typecheck',
-  'lint',
-  'build',
-  'diagnostics'
-]
 
 const CLOSEOUT_VALIDATION_LABELS: Record<CloseoutValidationKind, string> = {
   tests: 'the tests',
@@ -753,6 +799,29 @@ export function validationSummarySentence(
   messages: ChatMessage[],
   runIds: ReadonlySet<string>
 ): string | null {
+  const receipt = collectCloseoutValidationReceipt(messages, runIds)
+  const sentences: string[] = []
+  if (receipt.passed.length > 0) {
+    sentences.push(
+      `Validation passed for ${formatNaturalList(
+        receipt.passed.map((kind) => CLOSEOUT_VALIDATION_LABELS[kind])
+      )}.`
+    )
+  }
+  if (receipt.failed.length > 0) {
+    sentences.push(
+      `Validation failures were recorded for ${formatNaturalList(
+        receipt.failed.map((kind) => CLOSEOUT_VALIDATION_LABELS[kind])
+      )}.`
+    )
+  }
+  return sentences.length > 0 ? sentences.join(' ') : null
+}
+
+export function collectCloseoutValidationReceipt(
+  messages: ChatMessage[],
+  runIds: ReadonlySet<string>
+): NonNullable<CloseoutReceipt['validations']> {
   const latestByAttempt = new Map<string, CloseoutValidationAttempt>()
   for (const message of messages) {
     if (!message.runId || !runIds.has(message.runId)) continue
@@ -763,14 +832,15 @@ export function validationSummarySentence(
     }
   }
 
-  const passedKinds = CLOSEOUT_VALIDATION_ORDER.filter((kind) => {
+  const passed = CLOSEOUT_VALIDATION_KINDS.filter((kind) => {
     const attempts = Array.from(latestByAttempt.values()).filter((attempt) => attempt.kind === kind)
     return attempts.length > 0 && attempts.every((attempt) => attempt.passed)
   })
-  if (passedKinds.length === 0) return null
-  return `Validation passed for ${formatNaturalList(
-    passedKinds.map((kind) => CLOSEOUT_VALIDATION_LABELS[kind])
-  )}.`
+  const failed = CLOSEOUT_VALIDATION_KINDS.filter((kind) => {
+    const attempts = Array.from(latestByAttempt.values()).filter((attempt) => attempt.kind === kind)
+    return attempts.length > 0 && attempts.some((attempt) => !attempt.passed)
+  })
+  return { passed, failed }
 }
 
 function validationAttemptsForActivity(activity: ToolActivity): CloseoutValidationAttempt[] {
