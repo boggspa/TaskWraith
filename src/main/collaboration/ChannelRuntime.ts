@@ -222,7 +222,7 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
   private readonly handshakeRates = new Map<string, number[]>()
   private readonly appendRates = new Map<string, number[]>()
   private readonly memberPresenceByChannel = new Map<string, Map<string, MemberPresenceRecord>>()
-  private authorityReady = false
+  private readonly authorityStateByChannel = new Map<string, 'ready' | 'recovery_blocked'>()
   private disposed = false
 
   constructor(options: ChannelRuntimeOptions) {
@@ -242,18 +242,26 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
   }
 
   /**
-   * Global recovery signal for the external-seat authority. The runtime starts
-   * NOT ready so that X1's projection fails closed until startup recovery has
-   * completed; a caller that serves the authority before this returns true can
-   * otherwise mistake a policy record lost mid-migration for a legitimate
-   * People fallback.
+   * Per-channel recovery signal for the external-seat authority. A channel that
+   * has never been marked is BLOCKED, never ready: the serving side must
+   * explicitly certify each channel after startup recovery, and a channel whose
+   * recovery failed (or was never reconciled) fails closed instead of being
+   * mistaken for a legitimate People fallback.
    */
-  markRecovered(): void {
-    this.authorityReady = true
+  setChannelAuthorityState(channelId: string, state: 'ready' | 'recovery_blocked'): void {
+    this.authorityStateByChannel.set(channelId, state)
+  }
+
+  channelAuthorityState(channelId: string): 'ready' | 'recovery_blocked' {
+    return this.authorityStateByChannel.get(channelId) ?? 'recovery_blocked'
   }
 
   memberPresence(channelId: string, memberId: string): ChannelExternalSeatPresence {
-    if (!this.authorityReady || this.disposed || this.quiescingChannels.has(channelId)) {
+    if (
+      this.disposed ||
+      this.quiescingChannels.has(channelId) ||
+      this.channelAuthorityState(channelId) !== 'ready'
+    ) {
       return 'recovery_blocked'
     }
     const record = this.memberPresenceByChannel.get(channelId)?.get(memberId)
@@ -290,12 +298,9 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
 
   private observeMemberPresence(channelId: string, memberId: string, now = this.now()): void {
     const forChannel = this.ensureMemberPresenceChannel(channelId)
-    const record = forChannel.get(memberId)
-    if (record && record.state === 'expired') {
-      // Expiry is terminal for this record. A returning member arrives on a new
-      // session and must not be resurrected by a late frame on the dead one.
-      return
-    }
+    // A validated new handshake always wins, including over an expired record:
+    // late-frame safety is provided by session lookup/deletion, not by keeping
+    // the member expired forever.
     forChannel.set(memberId, {
       state: 'live',
       since: now,
@@ -316,6 +321,34 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
     forChannel.set(memberId, { state: 'expired', since: now })
   }
 
+  /**
+   * Transient session loss (transport send failure, sequence desync). The
+   * member may reconnect and resync, so presence enters grace — not expiry.
+   */
+  private handleSessionTransportFailure(session: {
+    channelId: string
+    memberId: string
+    sessionId: string
+    live: boolean
+  }): void {
+    this.noteMemberTransportClose(session.channelId, session.memberId)
+    this.sessions.delete(session.sessionId)
+    session.live = false
+  }
+
+  /**
+   * Trust-bearing session failure (a frame that fails crypto verification).
+   * No grace window: presence expires immediately.
+   */
+  private handleSessionTrustFailure(session: {
+    channelId: string
+    memberId: string
+    sessionId: string
+  }): void {
+    this.expireMemberPresence(session.channelId, session.memberId)
+    this.sessions.delete(session.sessionId)
+  }
+
   createChannel(args: {
     chatId: string
     title: string
@@ -333,6 +366,9 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
       ...(args.reference ? { reference: args.reference } : {}),
       ...(args.now === undefined ? {} : { now: args.now })
     })
+    // A freshly created channel has no recovery history; mark it ready. Channels
+    // recovered from disk start BLOCKED and must be certified by the service.
+    this.setChannelAuthorityState(created.channel.channelId, 'ready')
     this.audit({
       kind: 'channel.created',
       channelId: created.channel.channelId,
@@ -680,10 +716,10 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
 
   dispose(): void {
     this.disposed = true
-    this.authorityReady = false
     this.pending.clear()
     this.sessions.clear()
     this.memberPresenceByChannel.clear()
+    this.authorityStateByChannel.clear()
     this.quiescingChannels.clear()
     this.transport = null
   }
@@ -980,7 +1016,7 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
         memberId: session.memberId,
         code: 'resync_required'
       })
-      this.sessions.delete(session.sessionId)
+      this.handleSessionTransportFailure(session)
       return
     }
     let message
@@ -997,7 +1033,7 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
         memberId: session.memberId,
         code: 'identity_mismatch'
       })
-      this.sessions.delete(session.sessionId)
+      this.handleSessionTrustFailure(session)
       return
     }
     session.lastInboundSeq = frame.seq
@@ -1315,8 +1351,7 @@ export class ChannelRuntime implements ChannelExternalSeatRuntimeAuthority {
     session.nextOutboundSeq += 1
     const sent = this.sendRaw(session.roomId, payload)
     if (!sent) {
-      this.sessions.delete(session.sessionId)
-      session.live = false
+      this.handleSessionTransportFailure(session)
     }
     return sent
   }
