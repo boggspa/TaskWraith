@@ -22,6 +22,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
+import { chatUpdateProducerEnvelopeFor } from '../../shared/chatUpdateTransport'
 import { AppStore } from './index'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import type { ChatRecord, ChatRun } from './types'
@@ -138,7 +139,7 @@ describe('T4a chat journal integration', () => {
     it('fsyncs a mutation immediately while the legacy whole record is still deferred', async () => {
       const chat = saveChat('chat-v2-streaming', [runningRun('run-live')])
       chat.title = 'mutation is already durable'
-      AppStore.saveChat(chat)
+      const saved = AppStore.saveChat(chat)
 
       expect(fs.existsSync(incrementalMutationPath('chat-v2-streaming'))).toBe(true)
       const mutationLine = fs.readFileSync(incrementalMutationPath('chat-v2-streaming'), 'utf8')
@@ -146,6 +147,17 @@ describe('T4a chat journal integration', () => {
       const replayed =
         createIncrementalChatJournal(incrementalJournalDir()).replay('chat-v2-streaming')
       expect(replayed.record?.title).toBe('mutation is already durable')
+      expect(chatUpdateProducerEnvelopeFor(saved)).toMatchObject({
+        state: {
+          chatId: 'chat-v2-streaming',
+          persistenceRevision: saved.persistenceRevision
+        },
+        delta: {
+          basePersistenceRevision: chat.persistenceRevision! - 1,
+          persistenceRevision: saved.persistenceRevision,
+          transcriptOps: []
+        }
+      })
 
       const legacyDuringDeferral = JSON.parse(
         fs.readFileSync(chatFilePath('chat-v2-streaming'), 'utf8')

@@ -4,6 +4,7 @@ import * as path from 'path'
 import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -45,8 +46,13 @@ import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import {
   createIncrementalChatPersistence,
   type IncrementalChatPersistenceBoundary,
+  type IncrementalChatPersistResult,
   type IncrementalChatPersistenceStats
 } from './IncrementalChatPersistence'
+import {
+  ChatUpdateProjectionTracker,
+  type ChatUpdateProjectionObservation
+} from './ChatUpdateProjectionTracker'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
 export type {
   UsageHistoryMutationHold,
@@ -582,6 +588,7 @@ const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
 const incrementalChatPersistence = createIncrementalChatPersistence({
   journal: createIncrementalChatJournal(path.join(userDataPath, 'chat-journal-v2'))
 })
+const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
   incrementalChatPersistence.checkpointIdle()
 }, 5_000)
@@ -804,6 +811,7 @@ function purgeChatJournalArtifacts(chatId: string): void {
   // cleanup below, failure must stop the deletion transaction so transcript
   // mutations cannot survive a reported successful delete.
   incrementalChatPersistence.purge(chatId)
+  chatUpdateProjectionTracker.drop(chatId)
   try {
     chatJournal.delete(chatId)
   } catch (e) {
@@ -868,14 +876,17 @@ function persistIncrementalChat(
   previous: ChatRecord | null,
   next: ChatRecord,
   reason: FlushReason
-): boolean {
+): IncrementalChatPersistResult | null {
   try {
-    incrementalChatPersistence.persist(previous, next, incrementalPersistenceBoundary(reason))
-    return true
+    return incrementalChatPersistence.persist(
+      previous,
+      next,
+      incrementalPersistenceBoundary(reason)
+    )
   } catch {
     // Coordinator already records and logs the failure. The caller must take
     // the synchronous compatibility-checkpoint fallback for this exact save.
-    return false
+    return null
   }
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
@@ -4719,6 +4730,7 @@ export class AppStore {
     this.chatRecordCache.clear()
     chatListIndexStore.clearCache()
     incrementalChatPersistence.clear()
+    chatUpdateProjectionTracker.clear()
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
@@ -6871,6 +6883,7 @@ export class AppStore {
     // session is then fully re-parsed on the next cold launch (measured
     // 2026-08-05: 136 MB re-parsed every launch, ~100% main CPU for 1-2 min).
     let indexSourceStat: { mtimeMs: number; size: number } | undefined
+    let chatUpdateProjection: ChatUpdateProjectionObservation
     const chatFileExists = fs.existsSync(chatPath)
     const flushReason = deriveSaveFlushReason(normalizedChat)
     if (!chatFileExists) {
@@ -6879,6 +6892,10 @@ export class AppStore {
       // every legacy write, including the synchronous first save.
       appendChatJournalEntry(normalizedChat.appChatId, normalizedChat)
       persistIncrementalChat(null, normalizedChat, flushReason)
+      chatUpdateProjection = {
+        state: chatUpdateProjectionTracker.seed(normalizedChat),
+        delta: null
+      }
       let postStat: fs.Stats | null = null
       try {
         postStat = fs.statSync(chatPath)
@@ -6908,12 +6925,22 @@ export class AppStore {
         record: normalizedChat
       })
       const chatId = normalizedChat.appChatId
-      const incrementalPersisted = persistIncrementalChat(
+      const incrementalResult = persistIncrementalChat(
         previousChatForFeedback,
         normalizedChat,
         flushReason
       )
-      const legacyWriteReason: FlushReason = incrementalPersisted ? flushReason : 'terminal'
+      chatUpdateProjection = incrementalResult?.derived
+        ? chatUpdateProjectionTracker.observe(
+            previousChatForFeedback!,
+            normalizedChat,
+            incrementalResult.derived
+          )
+        : {
+            state: chatUpdateProjectionTracker.seed(normalizedChat),
+            delta: null
+          }
+      const legacyWriteReason: FlushReason = incrementalResult ? flushReason : 'terminal'
       // Normal streaming saves are now complete once their mutation append is
       // fsynced. Keep whole-record writes only at compatibility barriers.
       if (legacyWriteReason !== 'normal') {
@@ -7027,6 +7054,7 @@ export class AppStore {
     // broadcast the object they passed in. Stamp only the server-owned token
     // back onto that object so those existing broadcasts still hand renderers
     // the exact revision that was persisted.
+    attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
     chat.persistenceRevision = normalizedChat.persistenceRevision
     return normalizedChat
   }
@@ -7804,6 +7832,7 @@ export class AppStore {
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
         incrementalChatPersistence.clear()
+        chatUpdateProjectionTracker.clear()
         removePathStrict(chatsDir, 'chat history directory')
         // T4a: the journal is a second durable copy of chat history. Deleting
         // the legacy files while leaving the journal intact would leave the

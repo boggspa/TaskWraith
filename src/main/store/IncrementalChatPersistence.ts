@@ -1,5 +1,9 @@
 import { isDeepStrictEqual } from 'node:util'
-import { deriveChatRecordMutation, estimateChatRecordMutationBytes } from './ChatRecordMutation'
+import {
+  deriveChatRecordMutationWithProjection,
+  estimateChatRecordMutationBytes,
+  type DerivedChatRecordMutation
+} from './ChatRecordMutation'
 import type {
   IncrementalChatJournal,
   IncrementalChatJournalStats,
@@ -31,6 +35,8 @@ export interface IncrementalChatPersistResult {
   mutationBytes: number
   checkpointed: boolean
   parityVerified: boolean | null
+  /** Exact durable mutation plus renderer ops, derived once at the producer seam. */
+  derived: DerivedChatRecordMutation | null
 }
 
 export interface IncrementalChatPersistence {
@@ -141,11 +147,18 @@ export function createIncrementalChatPersistence(
         baselineVerifiedChatIds.add(next.appChatId)
         seeds += 1
         const parityVerified = boundary === 'normal' ? null : verify(next.appChatId, next, true)
-        return { seeded: true, mutationBytes: 0, checkpointed: false, parityVerified }
+        return {
+          seeded: true,
+          mutationBytes: 0,
+          checkpointed: false,
+          parityVerified,
+          derived: null
+        }
       }
 
       ensureBaseline(previous)
-      const batch = deriveChatRecordMutation(previous, next)
+      const derived = deriveChatRecordMutationWithProjection(previous, next)
+      const { batch } = derived
       const mutationBytes = estimateChatRecordMutationBytes(batch)
       journal.append(batch)
       mutationBatchesAppended += 1
@@ -163,7 +176,7 @@ export function createIncrementalChatPersistence(
         // checkpoint into every subsequent save while the card remains open.
         parityVerified = verify(next.appChatId, next, true)
       }
-      return { seeded: false, mutationBytes, checkpointed, parityVerified }
+      return { seeded: false, mutationBytes, checkpointed, parityVerified, derived }
     } catch (error) {
       failures += 1
       // The legacy path may still advance after this side-band failure. Force

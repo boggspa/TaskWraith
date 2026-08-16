@@ -374,6 +374,36 @@ describe('chat update transport', () => {
     ).toBe('snapshot')
   })
 
+  it('builds a producer-backed patch without iterating either transcript', () => {
+    const first = chat(1, [message('a', 'A')])
+    const next = chat(2, [message('a', 'A'), message('b', 'B')])
+    const delta = producerDelta(first, next)
+    const guard = (messages: ChatMessage[]): ChatMessage[] =>
+      new Proxy(messages, {
+        get(target, property, receiver) {
+          if (
+            property === Symbol.iterator ||
+            (typeof property === 'string' && /^\d+$/.test(property))
+          ) {
+            throw new Error('transport iterated the transcript')
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      })
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'no-transcript-scan',
+      revision: 2,
+      chat: { ...next, messages: guard(next.messages) },
+      baseline: { revision: 1, chat: { ...first, messages: guard(first.messages) } },
+      producerState: delta,
+      producerDelta: delta,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+  })
+
   it('builds a top-level field mask without copying unchanged large fields', () => {
     const bulkyRuns = Array.from({ length: 40 }, (_, index) => ({
       id: `run-${index}`,

@@ -60,6 +60,28 @@ export interface ChatUpdateProducerDelta extends ChatUpdateProducerState {
   changedMessageCount: number
 }
 
+export interface ChatUpdateProducerEnvelope {
+  state: ChatUpdateProducerState
+  delta: ChatUpdateProducerDelta | null
+}
+
+const producerEnvelopeByChat = new WeakMap<ChatRecord, ChatUpdateProducerEnvelope>()
+
+/** Main-process side channel. Weak/non-enumerable by construction: no hint is persisted or cloned. */
+export function attachChatUpdateProducerEnvelope(
+  chat: ChatRecord,
+  envelope: ChatUpdateProducerEnvelope
+): ChatRecord {
+  producerEnvelopeByChat.set(chat, envelope)
+  return chat
+}
+
+export function chatUpdateProducerEnvelopeFor(
+  chat: ChatRecord
+): ChatUpdateProducerEnvelope | undefined {
+  return producerEnvelopeByChat.get(chat)
+}
+
 export interface ChatUpdateSnapshotDelivery {
   protocolVersion: ChatUpdateProtocolVersion
   kind: 'snapshot'
@@ -518,6 +540,8 @@ export function buildChatUpdateDelivery(input: {
   revision: number
   chat: ChatRecord
   baseline?: ChatUpdateBaseline
+  /** Current producer projection, also lets recovery snapshots avoid re-metering the chat. */
+  producerState?: ChatUpdateProducerState
   /** Exact producer-authored delta. Missing/discontinuous v2 input recovers by snapshot. */
   producerDelta?: ChatUpdateProducerDelta
   /** Fall back to a snapshot when a splice replaces this fraction of the list. */
@@ -531,11 +555,17 @@ export function buildChatUpdateDelivery(input: {
   const { baseline, chat, deliveryId, revision } = input
   const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
   const producerDelta = input.producerDelta
-  const sub: ChatUpdateSubRevisions = producerDelta
+  const candidateState = producerDelta ?? input.producerState
+  const producerState =
+    candidateState?.chatId === chat.appChatId &&
+    candidateState.persistenceRevision === persistenceRevision(chat)
+      ? candidateState
+      : undefined
+  const sub: ChatUpdateSubRevisions = producerState
     ? {
-        ensembleRevision: producerDelta.ensembleRevision,
-        runsRevision: producerDelta.runsRevision,
-        recordHash: producerDelta.recordHash
+        ensembleRevision: producerState.ensembleRevision,
+        runsRevision: producerState.runsRevision,
+        recordHash: producerState.recordHash
       }
     : computeChatSubRevisions(chat)
 

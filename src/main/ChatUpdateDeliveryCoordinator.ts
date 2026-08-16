@@ -4,11 +4,14 @@ import {
   CHAT_UPDATE_PROTOCOL_V1,
   CHAT_UPDATE_PROTOCOL_V2,
   buildChatUpdateDelivery,
+  chatUpdateProducerEnvelopeFor,
+  composeChatUpdateProducerDeltas,
   computeChatSubRevisions,
   estimateChatRecordBytes,
   type ChatUpdateAck,
   type ChatUpdateBaseline,
   type ChatUpdateDelivery,
+  type ChatUpdateProducerEnvelope,
   type ChatUpdateProtocolVersion,
   type CompactChatUpdateBaseline
 } from '../shared/chatUpdateTransport'
@@ -22,6 +25,8 @@ export interface ChatUpdateDeliveryTarget {
 interface PendingChatUpdate {
   revision: number
   chat: ChatRecord
+  producer?: ChatUpdateProducerEnvelope
+  retainedBytes: number
 }
 
 interface InFlightChatUpdate extends PendingChatUpdate {
@@ -198,7 +203,27 @@ export class ChatUpdateDeliveryCoordinator {
     state.target = target
     state.lastTouchedAt = this.now()
     state.nextRevision += 1
-    state.pending = { revision: state.nextRevision, chat }
+    const producer = chatUpdateProducerEnvelopeFor(chat)
+    const retainedBytes = producer?.state.retainedBytes ?? estimateChatRecordBytes(chat)
+    if (state.pending) {
+      const composedDelta =
+        state.pending.producer?.delta && producer?.delta
+          ? composeChatUpdateProducerDeltas(state.pending.producer.delta, producer.delta)
+          : null
+      state.pending = {
+        revision: state.nextRevision,
+        chat,
+        retainedBytes,
+        ...(producer ? { producer: { state: producer.state, delta: composedDelta } } : {})
+      }
+    } else {
+      state.pending = {
+        revision: state.nextRevision,
+        chat,
+        retainedBytes,
+        ...(producer ? { producer } : {})
+      }
+    }
     this.maybeSend(state)
     this.pruneTarget(target.id)
   }
@@ -247,7 +272,12 @@ export class ChatUpdateDeliveryCoordinator {
       // If that snapshot is also rejected, wait for a future producer update
       // instead of creating a deterministic 10 Hz retry loop.
       if (state.consecutiveRejects === 1 && !state.pending) {
-        state.pending = { revision: inFlight.revision, chat: inFlight.chat }
+        state.pending = {
+          revision: inFlight.revision,
+          chat: inFlight.chat,
+          producer: inFlight.producer,
+          retainedBytes: inFlight.retainedBytes
+        }
       }
     }
     this.maybeSend(state)
@@ -292,11 +322,11 @@ export class ChatUpdateDeliveryCoordinator {
       if (state.pending) {
         pending += 1
         retainedMessages += state.pending.chat.messages.length
-        retainedBaselineBytes += estimateChatRecordBytes(state.pending.chat)
+        retainedBaselineBytes += state.pending.retainedBytes
       }
       if (state.baselineChat) {
         retainedMessages += state.baselineChat.messages.length
-        retainedBaselineBytes += estimateChatRecordBytes(state.baselineChat)
+        retainedBaselineBytes += state.acknowledged?.retainedBytes ?? 0
       } else if (state.acknowledged) {
         // Compact fingerprint only — charge a small constant, not the prior
         // full-chat estimate (that chat is no longer retained on main).
@@ -342,6 +372,8 @@ export class ChatUpdateDeliveryCoordinator {
       revision: next.revision,
       chat: next.chat,
       baseline,
+      producerState: next.producer?.state,
+      producerDelta: next.producer?.delta ?? undefined,
       protocolVersion: this.emitProtocolVersion
     })
     const deliveryRecordHash = 'recordHash' in delivery ? delivery.recordHash : undefined
@@ -361,7 +393,7 @@ export class ChatUpdateDeliveryCoordinator {
       recordHash,
       ensembleRevision: deliveryEnsembleRevision ?? fallbackSubRevisions!.ensembleRevision,
       runsRevision: deliveryRunsRevision ?? fallbackSubRevisions!.runsRevision,
-      retainedBytes: estimateChatRecordBytes(next.chat)
+      retainedBytes: next.retainedBytes
     }
     if (delivery.kind === 'snapshot') this.counters.snapshots += 1
     else this.counters.patches += 1

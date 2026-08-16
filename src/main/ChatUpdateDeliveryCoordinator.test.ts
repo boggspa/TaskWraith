@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
-import { applyChatUpdateDelivery, type ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import {
+  applyChatUpdateDelivery,
+  attachChatUpdateProducerEnvelope,
+  type ChatUpdateDelivery
+} from '../shared/chatUpdateTransport'
+import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
+import { ChatUpdateProjectionTracker } from './store/ChatUpdateProjectionTracker'
 import {
   ChatUpdateDeliveryCoordinator,
   resolveEmitProtocolVersionForTest,
@@ -21,8 +27,27 @@ function chat(updatedAt: number, contents: string[]): ChatRecord {
     messages: contents.map((content, index) => message(`message-${index}`, content)),
     runs: [],
     createdAt: 1,
-    updatedAt
+    updatedAt,
+    persistenceRevision: updatedAt
   } as ChatRecord
+}
+
+function projectSequence(...records: ChatRecord[]): ChatRecord[] {
+  if (records.length === 0) return records
+  const tracker = new ChatUpdateProjectionTracker()
+  attachChatUpdateProducerEnvelope(records[0], {
+    state: tracker.seed(records[0]),
+    delta: null
+  })
+  for (let index = 1; index < records.length; index += 1) {
+    const before = records[index - 1]
+    const after = records[index]
+    attachChatUpdateProducerEnvelope(
+      after,
+      tracker.observe(before, after, deriveChatRecordMutationWithProjection(before, after))
+    )
+  }
+  return records
 }
 
 function target(id = 7): ChatUpdateDeliveryTarget & { deliveries: ChatUpdateDelivery[] } {
@@ -187,6 +212,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
       ...chat(3, ['one', 'stable', 'tail']),
       title: 'Updated'
     }
+    projectSequence(first, latest)
     coordinator.enqueue(sink, first)
     coordinator.acknowledge(sink.id, {
       deliveryId: sink.deliveries[0].deliveryId,

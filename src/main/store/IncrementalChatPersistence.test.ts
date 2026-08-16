@@ -64,7 +64,11 @@ describe('IncrementalChatPersistence', () => {
     expect(persistence.persist(first, second, 'normal')).toMatchObject({
       seeded: false,
       checkpointed: false,
-      parityVerified: null
+      parityVerified: null,
+      derived: {
+        transcriptOps: [{ op: 'update', id: 'message-1', message: second.messages[0] }],
+        changedMessageCount: 1
+      }
     })
 
     expect(persistence.replay('chat-1').record).toEqual(second)
