@@ -7,7 +7,8 @@ import {
 } from './AppDrivePreviewFrame'
 
 /** Minimal well-formed payload: the PNG signature, base64-encoded. */
-const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAGXveEwAAAABJRU5ErkJggg=='
+const PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAGXveEwAAAABJRU5ErkJggg=='
 
 const source = {
   hasFrame: true,

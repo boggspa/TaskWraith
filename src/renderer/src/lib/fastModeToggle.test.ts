@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  CURSOR_GROK_46_BASE_MODEL_ID,
-  GROK_46_MODEL_ID
-} from '../../../shared/grok45Models'
+import { CURSOR_GROK_46_BASE_MODEL_ID, GROK_46_MODEL_ID } from '../../../shared/grok45Models'
 import {
   fastModeCapableModelIds,
   fastModeEnabledFor,
@@ -43,10 +40,7 @@ describe('fastModeToggle', () => {
   describe('fastModeToggleAvailable', () => {
     it('is true only when the SELECTED model declares the fast tier', () => {
       expect(
-        fastModeToggleAvailable(
-          { provider: 'codex', selectedModel: 'gpt-5.6-codex' },
-          FAST_CAPABLE
-        )
+        fastModeToggleAvailable({ provider: 'codex', selectedModel: 'gpt-5.6-codex' }, FAST_CAPABLE)
       ).toBe(true)
       expect(
         fastModeToggleAvailable(
@@ -57,24 +51,22 @@ describe('fastModeToggle', () => {
     })
 
     it('is false for grok even on a fast-capable model id', () => {
-      expect(
-        fastModeToggleAvailable({ provider: 'grok', selectedModel: GROK_46_MODEL_ID })
-      ).toBe(false)
+      expect(fastModeToggleAvailable({ provider: 'grok', selectedModel: GROK_46_MODEL_ID })).toBe(
+        false
+      )
     })
 
     it('recognises cursor’s fixed catalogue without model options', () => {
-      expect(
-        fastModeToggleAvailable({ provider: 'cursor', selectedModel: 'composer-2.5' })
-      ).toBe(true)
+      expect(fastModeToggleAvailable({ provider: 'cursor', selectedModel: 'composer-2.5' })).toBe(
+        true
+      )
       expect(
         fastModeToggleAvailable({
           provider: 'cursor',
           selectedModel: CURSOR_GROK_46_BASE_MODEL_ID
         })
       ).toBe(true)
-      expect(
-        fastModeToggleAvailable({ provider: 'cursor', selectedModel: 'gpt-5.6' })
-      ).toBe(false)
+      expect(fastModeToggleAvailable({ provider: 'cursor', selectedModel: 'gpt-5.6' })).toBe(false)
     })
   })
 
@@ -118,9 +110,9 @@ describe('fastModeToggle', () => {
           cursorFastMode: true
         })
       ).toBe(false)
-      expect(
-        fastModeEnabledFor({ provider: 'cursor', selectedModel: 'composer-2.5-fast' })
-      ).toBe(true)
+      expect(fastModeEnabledFor({ provider: 'cursor', selectedModel: 'composer-2.5-fast' })).toBe(
+        true
+      )
     })
   })
 
@@ -157,9 +149,10 @@ describe('fastModeToggle', () => {
           cursorFastMode: false
         })
       ).toEqual({ kind: 'flag', provider: 'cursor', fastModeEnabled: true })
-      expect(
-        nextFastModeToggle({ provider: 'cursor', selectedModel: 'composer-2.5' })
-      ).toEqual({ kind: 'model', model: 'composer-2.5-fast' })
+      expect(nextFastModeToggle({ provider: 'cursor', selectedModel: 'composer-2.5' })).toEqual({
+        kind: 'model',
+        model: 'composer-2.5-fast'
+      })
       expect(
         nextFastModeToggle({ provider: 'cursor', selectedModel: 'composer-2.5-fast' })
       ).toEqual({ kind: 'model', model: 'composer-2.5' })

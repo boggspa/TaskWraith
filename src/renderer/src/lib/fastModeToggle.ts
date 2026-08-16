@@ -78,7 +78,9 @@ export function fastModeCapableModelIds(
 ): Set<string> {
   if (provider === 'codex' || provider === 'claude' || provider === 'kimi') {
     return new Set(
-      models.filter((model) => model.additionalSpeedTiers?.includes('fast')).map((model) => model.id)
+      models
+        .filter((model) => model.additionalSpeedTiers?.includes('fast'))
+        .map((model) => model.id)
     )
   }
   if (provider === 'cursor') {
@@ -133,9 +135,7 @@ export function fastModeEnabledFor(selection: FastModeSelection): boolean {
  * care whether the SELECTED MODEL supports it — this function only encodes the
  * per-provider mechanics.
  */
-export function nextFastModeToggle(
-  selection: FastModeSelection
-): FastModeToggleDescriptor | null {
+export function nextFastModeToggle(selection: FastModeSelection): FastModeToggleDescriptor | null {
   const enabled = fastModeEnabledFor(selection)
   switch (selection.provider) {
     case 'codex': {
@@ -157,7 +157,8 @@ export function nextFastModeToggle(
       }
       return {
         kind: 'model',
-        model: selection.selectedModel === 'composer-2.5-fast' ? 'composer-2.5' : 'composer-2.5-fast'
+        model:
+          selection.selectedModel === 'composer-2.5-fast' ? 'composer-2.5' : 'composer-2.5-fast'
       }
     default:
       return null

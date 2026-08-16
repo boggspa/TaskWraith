@@ -130,12 +130,7 @@ describe('refuseForConcurrentFanouts', () => {
   })
 
   it('refuses again at more than the cap, never silently allows an overshoot', () => {
-    const waves = [
-      wave('w1', 'A', 1),
-      wave('w2', 'B', 1),
-      wave('w3', 'C', 1),
-      wave('w4', 'D', 1)
-    ]
+    const waves = [wave('w1', 'A', 1), wave('w2', 'B', 1), wave('w3', 'C', 1), wave('w4', 'D', 1)]
     expect(refuseForConcurrentFanouts(waves, 'ensemble_fanout')?.error).toBe(
       'too_many_concurrent_fanouts'
     )
