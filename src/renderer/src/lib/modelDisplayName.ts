@@ -9,6 +9,7 @@ import {
   GROK_46_MODEL_ID,
   cursorGrokBaseModelId
 } from '../../../shared/grok45Models'
+import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailability'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 
 /**
@@ -365,6 +366,10 @@ export function humaniseModelId(
   const canonical = canonicalModelIdForProvider(provider, modelId)
   if (!canonical) return ''
   const key = canonical.trim().toLowerCase()
+  if (provider === 'ollama') {
+    const cloudDisplayName = ollamaCloudModelDisplayName(canonical)
+    if (cloudDisplayName) return cloudDisplayName
+  }
   if (provider === 'ollama' && key.startsWith('qwen3.5:9b-')) {
     return 'Qwen 3.5 (9B Param)'
   }

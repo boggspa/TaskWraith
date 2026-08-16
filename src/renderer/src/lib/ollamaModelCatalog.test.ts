@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest'
 import { mergeOllamaModelCatalog, ollamaModelCatalogKey } from './ollamaModelCatalog'
 
 describe('mergeOllamaModelCatalog', () => {
+  it('humanises Cloud recommendations while preserving their exact wire ids', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'glm-5.2:cloud', label: 'glm-5.2' },
+      { id: 'minimax-m3:cloud', label: 'minimax-m3' }
+    ])
+
+    expect(models.find((model) => model.id === 'glm-5.2:cloud')).toMatchObject({
+      id: 'glm-5.2:cloud',
+      label: 'GLM 5.2'
+    })
+    expect(models.find((model) => model.id === 'minimax-m3:cloud')).toMatchObject({
+      id: 'minimax-m3:cloud',
+      label: 'MiniMax M3'
+    })
+  })
+
   it('keeps curated human labels when live Ollama returns raw model tags', () => {
     const models = mergeOllamaModelCatalog([{ id: 'lfm2.5:8b', label: 'lfm2.5:8b' }])
 

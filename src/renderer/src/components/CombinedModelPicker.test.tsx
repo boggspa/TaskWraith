@@ -21,6 +21,7 @@ import {
 } from './icons/OllamaCloudIcon'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
+import { mergeOllamaModelCatalog } from '../lib/ollamaModelCatalog'
 
 describe('CombinedModelPicker', () => {
   it('uses shared compact primary chrome for confirmation actions', () => {
@@ -286,7 +287,11 @@ describe('CombinedModelPicker', () => {
   })
 
   it('labels a selected Cloud model distinctly in the trigger', () => {
-    const model = { id: 'glm-5.2:cloud', label: 'GLM 5.2' }
+    const catalogModel = mergeOllamaModelCatalog([
+      { id: 'minimax-m3:cloud', label: 'minimax-m3' }
+    ]).find((option) => option.id === 'minimax-m3:cloud')!
+    expect(catalogModel.label).toBe('MiniMax M3')
+    const model = { id: catalogModel.id, label: catalogModel.label! }
     const html = renderToStaticMarkup(
       <CombinedModelPicker
         provider="ollama"
@@ -301,6 +306,7 @@ describe('CombinedModelPicker', () => {
     )
 
     expect(html).toContain('>Ollama Cloud<')
+    expect(html).toContain('composer-combined-picker-trigger-primary">MiniMax M3</span>')
     expect(html).toContain('composer-combined-picker-trigger-cloud-indicator')
     expect(html).toContain('aria-label="Ollama Cloud model"')
   })
