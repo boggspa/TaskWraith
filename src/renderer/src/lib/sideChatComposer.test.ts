@@ -271,8 +271,8 @@ describe('sideChatComposer', () => {
     expect(appSource).toContain(
       'useChatSurfaceHydration<ChatRecord>(sideChatId ? [sideChatId] : [], {'
     )
-    expect(appSource).toContain("byteLru.pin(chatId, 'side')")
-    expect(appSource).toContain("byteLru.unpin(chatId, 'side')")
+    expect(appSource).toContain("retention.pin(chatId, 'side')")
+    expect(appSource).toContain("retention.unpin(chatId, 'side')")
     expect(appSource).toContain('const hydratePresentedSideChat = useCallback(')
     expect(appSource).toMatch(
       /chat\.parentChatRelation === 'sideChat' && !isChatSummaryRecord\(chat\)/

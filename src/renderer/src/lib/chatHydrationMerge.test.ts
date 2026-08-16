@@ -126,8 +126,8 @@ describe('resolveChatHydration', () => {
   it('owns focused residency for exactly the focused chat lifecycle', () => {
     const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 
-    expect(source).toContain("byteLru.pin(chatId, 'focused')")
-    expect(source).toContain("return () => byteLru.unpin(chatId, 'focused')")
+    expect(source).toContain("retention.pin(chatId, 'focused')")
+    expect(source).toContain("return () => retention.unpin(chatId, 'focused')")
     expect(source).toContain('}, [currentChat?.appChatId])')
   })
 
