@@ -45,6 +45,28 @@ function terminalLabel(value: unknown): string {
   return sanitizeTerminalText(String(value ?? '')).replace(/\n+/g, ' ')
 }
 
+function selectedPendingApproval(state: TaskWraithTuiState) {
+  const threadId = state.selectedThreadId
+  if (!threadId) return undefined
+  return [...(state.hostProjection?.approvals ?? [])]
+    .filter((approval) => approval.status === 'pending' && approval.threadId === threadId)
+    .sort(
+      (left, right) =>
+        left.createdAt - right.createdAt || left.approvalId.localeCompare(right.approvalId)
+    )[0]
+}
+
+function selectedOpenQuestion(state: TaskWraithTuiState) {
+  const threadId = state.selectedThreadId
+  if (!threadId) return undefined
+  return [...(state.hostProjection?.questions ?? [])]
+    .filter((question) => question.status === 'open' && question.threadId === threadId)
+    .sort(
+      (left, right) =>
+        left.askedAt - right.askedAt || left.questionId.localeCompare(right.questionId)
+    )[0]
+}
+
 function compactLabel(value: string | undefined, fallback = '—'): string {
   const cleaned = terminalLabel(value).trim()
   return cleaned || fallback
@@ -1131,14 +1153,19 @@ function renderHud(
       } ${reasoning}`
     : ''
   const elapsed = formatTuiDuration(currentWallTime(thread))
-  const status =
-    thread.status === 'needs-input'
-      ? tone(ansi, 'Open TaskWraith to answer', 'warning')
-      : thread.status === 'failed'
-        ? tone(ansi, 'FAILED', 'error')
-        : thread.status === 'queued'
-          ? ansi.dim('QUEUED')
-          : ''
+  const pendingApproval = selectedPendingApproval(state)
+  const openQuestion = selectedOpenQuestion(state)
+  const status = pendingApproval
+    ? tone(ansi, 'APPROVAL · y/n', 'warning')
+    : openQuestion
+      ? tone(ansi, 'QUESTION · answer below', 'warning')
+      : thread.status === 'needs-input'
+        ? tone(ansi, 'Open TaskWraith to answer', 'warning')
+        : thread.status === 'failed'
+          ? tone(ansi, 'FAILED', 'error')
+          : thread.status === 'queued'
+            ? ansi.dim('QUEUED')
+            : ''
   // A staged model/reasoning choice rides the next send; wear the provider
   // accent because it names the identity the next turn will run as.
   const pending =
@@ -1178,20 +1205,33 @@ function renderComposer(
   const accent = state.thread?.thread.provider.accent ?? TUI_TONE.ensemble
   const prompt = ansi.provider(glyphs.promptCaret, accent)
   const density = resolveTuiDensity(width)
+  const pendingApproval = selectedPendingApproval(state)
+  const openQuestion = selectedOpenQuestion(state)
   // Glyph-set aware: ↵/· on Unicode, \/. on ASCII so chrome never mojibakes.
   const sep = ` ${glyphs.separator} `
-  const right =
-    density.composerHints === 'full'
-      ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
-      : density.composerHints === 'short'
-        ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
-        : ansi.dim(`${glyphs.newline} send`)
+  const right = pendingApproval
+    ? ansi.dim(`y accept${sep}n decline`)
+    : openQuestion
+      ? density.composerHints === 'none'
+        ? ansi.dim(`${glyphs.newline} answer`)
+        : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
+      : density.composerHints === 'full'
+        ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
+        : density.composerHints === 'short'
+          ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
+          : ansi.dim(`${glyphs.newline} send`)
   const leftAvailable = Math.max(1, width - visibleWidth(right) - 1)
   const inputAvailable = Math.max(1, leftAvailable - visibleWidth(prompt) - 1)
   const input = state.input
     ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
     : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
-        state.connection === 'offline' ? 'Start TaskWraith to compose' : 'Ask TaskWraith…'
+        state.connection === 'offline'
+          ? 'Start TaskWraith to compose'
+          : pendingApproval
+            ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
+            : openQuestion
+              ? `Answer · ${terminalLabel(openQuestion.promptPreview)}`
+              : 'Ask TaskWraith…'
       )}`
   return joinLeftRight(`${prompt} ${input}`, right, width)
 }

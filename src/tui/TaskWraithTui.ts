@@ -6,12 +6,15 @@ import {
   HostProjectionIncompatibleProtocolError
 } from '../main/host/HostProjectionClient'
 import {
+  HOST_QUESTION_ANSWER_MAX_CHARS,
   type HostDeltasFrame,
   type HostActorIdentity,
+  type HostApprovalProjection,
   type HostApprovalDecideDecision,
   type HostCommand,
   type HostCommandName,
   type HostCommandReceipt,
+  type HostQuestionProjection,
   type HostSnapshot
 } from '../shared/hostProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
@@ -551,6 +554,22 @@ export class TaskWraithTui {
         return
       }
     }
+    // A projected provider approval is independently actionable when the
+    // composer is empty. Never steal y/n from an in-progress user message.
+    if (
+      !this.state.pendingHostMutation &&
+      this.state.overlay === 'none' &&
+      !this.state.input &&
+      !key.ctrl &&
+      !key.meta
+    ) {
+      const approval = this.selectedPendingApproval()
+      const answer = (input || key.name || '').toLowerCase()
+      if (approval && (answer === 'y' || answer === 'n')) {
+        void this.decideProjectedApproval(approval, answer === 'y' ? 'accept' : 'decline')
+        return
+      }
+    }
     if (key.ctrl && key.name === 'l') {
       this.options.output.write('\u001b[2J')
       this.render()
@@ -991,10 +1010,36 @@ export class TaskWraithTui {
     const original = this.state.input
     const text = original.trim()
     if (!text) return
+    const question = this.selectedOpenQuestion()
+    if (question && (this.sendingPrompt || this.mutationInFlight)) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
     if (text.startsWith('/')) {
       this.state.input = ''
       this.state.inputCursor = 0
+      if (question && text.toLowerCase() === '/dismiss') {
+        await this.answerProjectedQuestion(question, original, 'dismiss')
+        return
+      }
       await this.runCommand(text)
+      return
+    }
+    if (question) {
+      if (Array.from(text).length > HOST_QUESTION_ANSWER_MAX_CHARS) {
+        this.setNotice(
+          `Question answer exceeds ${HOST_QUESTION_ANSWER_MAX_CHARS.toLocaleString()} characters.`,
+          'warning',
+          3_000
+        )
+        this.render()
+        return
+      }
+      this.state.input = ''
+      this.state.inputCursor = 0
+      this.state.scrollOffset = 0
+      await this.answerProjectedQuestion(question, original, 'answer', text)
       return
     }
     const threadId = this.state.selectedThreadId
@@ -1205,6 +1250,71 @@ export class TaskWraithTui {
     const approvals = this.hostSnapshot?.approvals ?? []
     return approvals.find((row) => row.status === 'pending' && row.commandId === commandId)
       ?.approvalId
+  }
+
+  private selectedPendingApproval(): HostApprovalProjection | undefined {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) return undefined
+    return [...(this.hostSnapshot?.approvals ?? [])]
+      .filter((row) => row.status === 'pending' && row.threadId === threadId)
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left.approvalId.localeCompare(right.approvalId)
+      )[0]
+  }
+
+  private selectedOpenQuestion(): HostQuestionProjection | undefined {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) return undefined
+    return [...(this.hostSnapshot?.questions ?? [])]
+      .filter((row) => row.status === 'open' && row.threadId === threadId)
+      .sort(
+        (left, right) =>
+          left.askedAt - right.askedAt || left.questionId.localeCompare(right.questionId)
+      )[0]
+  }
+
+  private async decideProjectedApproval(
+    approval: HostApprovalProjection,
+    decision: Extract<HostApprovalDecideDecision, 'accept' | 'decline'>
+  ): Promise<void> {
+    const command = this.buildMutation(
+      'approval.decide',
+      { approvalId: approval.approvalId },
+      { decision }
+    )
+    if (!command) return
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (this.state.selectedThreadId) this.applyLocalThread(this.state.selectedThreadId)
+      }
+    })
+  }
+
+  private async answerProjectedQuestion(
+    question: HostQuestionProjection,
+    composerRestore: string,
+    decision: 'answer' | 'dismiss',
+    answer?: string
+  ): Promise<void> {
+    const command = this.buildMutation(
+      'question.answer',
+      { questionId: question.questionId },
+      decision === 'answer' ? { decision, answer: answer ?? '', isCustom: true } : { decision }
+    )
+    if (!command) {
+      this.restoreComposerText(composerRestore)
+      this.render()
+      return
+    }
+    await this.runHostMutation(command, {
+      composerRestore,
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (this.state.selectedThreadId) this.applyLocalThread(this.state.selectedThreadId)
+      }
+    })
   }
 
   private async decidePendingApproval(decision: HostApprovalDecideDecision): Promise<void> {

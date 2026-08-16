@@ -152,6 +152,58 @@ describe('TaskWraith TUI renderer', () => {
     expect(stripAnsi(output)).toContain('→ Fable 5 high')
   })
 
+  it('turns selected-thread approvals and questions into actionable footer states', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.notice = undefined
+    state.hostProjection!.approvals = [
+      {
+        approvalId: 'approval-1',
+        commandId: 'command-1',
+        threadId: state.selectedThreadId,
+        status: 'pending',
+        actionKind: 'provider.tool',
+        createdAt: now,
+        summary: 'Run provider tool'
+      }
+    ]
+    let output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('APPROVAL · y/n')
+    expect(output).toContain('Approval · provider.tool')
+    expect(output).toContain('y accept · n decline')
+
+    state.hostProjection!.approvals = []
+    state.hostProjection!.questions = [
+      {
+        questionId: 'question-1',
+        threadId: state.selectedThreadId!,
+        status: 'open',
+        promptPreview: 'Which implementation should I use?',
+        askedAt: now
+      }
+    ]
+    output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('QUESTION · answer below')
+    expect(output).toContain('Answer · Which implementation should I use?')
+    expect(output).toContain('↵ answer · /dismiss')
+  })
+
   it('keeps the insertion point visible when a one-line prompt exceeds its viewport', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)

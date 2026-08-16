@@ -111,6 +111,8 @@ class FakeHostV2 {
   handlers: FakeHostHandlers
   private readonly receipts = new Map<string, HostCommandReceipt>()
   private readonly approvals = new Map<string, HostApprovalProjection>()
+  private readonly decidedProjectionApprovals = new Set<string>()
+  private readonly answeredProjectionQuestions = new Set<string>()
   private cursor = 9
   private eventSequence = 0
   snapshotRequests = 0
@@ -287,7 +289,15 @@ class FakeHostV2 {
       const base = this.handlers.snapshot()
       const snapshot: HostSnapshot = {
         ...base,
-        approvals: [...base.approvals, ...this.approvals.values()],
+        questions: base.questions.filter(
+          (question) => !this.answeredProjectionQuestions.has(question.questionId)
+        ),
+        approvals: [
+          ...base.approvals.filter(
+            (approval) => !this.decidedProjectionApprovals.has(approval.approvalId)
+          ),
+          ...this.approvals.values()
+        ],
         cursor: this.cursor
       }
       this.write(socket, {
@@ -370,6 +380,9 @@ class FakeHostV2 {
     if (command.name === 'approval.decide') {
       return this.handleApprovalDecide(command)
     }
+    if (command.name === 'question.answer' && command.target.questionId) {
+      this.answeredProjectionQuestions.add(command.target.questionId)
+    }
     const mode = this.handlers.mutationMode ?? 'allow'
     if (mode === 'allow' || command.name === 'ping') {
       const receipt = this.makeReceipt(command, {
@@ -403,6 +416,7 @@ class FakeHostV2 {
 
   private handleApprovalDecide(command: HostCommand): HostCommandReceipt {
     const approvalId = command.target.approvalId
+    if (approvalId) this.decidedProjectionApprovals.add(approvalId)
     const approval = approvalId ? this.approvals.get(approvalId) : undefined
     const decision = String(command.arguments.decision ?? '')
     const accept =
@@ -929,6 +943,94 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
       5_000
     )
   }, 15_000)
+
+  it('decides the selected thread provider approval by exact projected identity', async () => {
+    const snapshot = makeHostSnapshot({
+      approvals: [
+        {
+          approvalId: 'provider-approval-1',
+          commandId: 'provider-command-1',
+          threadId: 'thread-1',
+          status: 'pending',
+          actionKind: 'provider.tool',
+          createdAt: 10,
+          summary: 'Run the requested provider tool'
+        }
+      ]
+    })
+    const { host, userDataPath } = await setupHost(snapshot)
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Approval · provider.tool'), 'projected approval')
+    feed(input, 'y')
+
+    await waitFor(
+      () => host.commands.some((command) => command.name === 'approval.decide'),
+      'approval decision command'
+    )
+    const decision = host.commands.find((command) => command.name === 'approval.decide')
+    expect(decision?.target).toEqual({ approvalId: 'provider-approval-1' })
+    expect(decision?.arguments).toEqual({ decision: 'accept' })
+  })
+
+  it('answers projected questions oldest-first and supports explicit dismiss', async () => {
+    const snapshot = makeHostSnapshot({
+      questions: [
+        {
+          questionId: 'question-second',
+          threadId: 'thread-1',
+          status: 'open',
+          promptPreview: 'Should I keep the fallback?',
+          askedAt: 20
+        },
+        {
+          questionId: 'question-first',
+          threadId: 'thread-1',
+          status: 'open',
+          promptPreview: 'Which implementation should I use?',
+          askedAt: 10
+        }
+      ]
+    })
+    const { host, userDataPath } = await setupHost(snapshot)
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(
+      () => output.lastFrame.includes('Answer · Which implementation should I use?'),
+      'first projected question'
+    )
+    expect(output.lastFrame).toMatch(/answer . \/dismiss/)
+    feed(input, 'Use the bounded implementation')
+    feed(input, '\r')
+
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'question.answer').length === 1,
+      'question answer command'
+    )
+    const answer = host.commands.find((command) => command.name === 'question.answer')
+    expect(answer?.target).toEqual({ questionId: 'question-first' })
+    expect(answer?.arguments).toEqual({
+      decision: 'answer',
+      answer: 'Use the bounded implementation',
+      isCustom: true
+    })
+
+    await waitFor(
+      () => output.lastFrame.includes('Answer · Should I keep the fallback?'),
+      'second projected question'
+    )
+    feed(input, '/dismiss')
+    feed(input, '\r')
+    await waitFor(
+      () => host.commands.filter((command) => command.name === 'question.answer').length === 2,
+      'question dismiss command'
+    )
+    const dismiss = host.commands.filter((command) => command.name === 'question.answer')[1]
+    expect(dismiss.target).toEqual({ questionId: 'question-second' })
+    expect(dismiss.arguments).toEqual({ decision: 'dismiss' })
+  })
 
   it('shows the "Open TaskWraith to answer" plain-text attention state from Host run evidence', async () => {
     const snapshot = makeHostSnapshot({
