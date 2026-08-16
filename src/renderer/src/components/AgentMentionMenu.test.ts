@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  composerEnsembleGroupMentionCandidates,
   composerMentionParticipantColor,
   filterComposerMentionCandidates,
   type ComposerMentionCandidate
 } from './AgentMentionMenu'
+import type { EnsembleParticipant } from '../../../main/store/types'
 
 const candidates: ComposerMentionCandidate[] = [
   {
@@ -76,6 +78,79 @@ describe('filterComposerMentionCandidates', () => {
     ])
     expect(matches[0].name).toBe('Brodex')
     expect(matches[1].name).toBe('Chodex #2')
+  })
+
+  it('finds provider-neutral group rows by token or stage description', () => {
+    const groups = composerEnsembleGroupMentionCandidates([
+      {
+        id: 'reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: '',
+        order: 1,
+        stageRole: 'reviewer'
+      } as EnsembleParticipant
+    ])
+
+    expect(filterComposerMentionCandidates(groups, 'review').map((item) => item.name)).toEqual([
+      '@Reviewers'
+    ])
+  })
+})
+
+describe('composerEnsembleGroupMentionCandidates', () => {
+  const seat = (
+    id: string,
+    order: number,
+    stageRole: EnsembleParticipant['stageRole'],
+    enabled = true
+  ): EnsembleParticipant =>
+    ({
+      id,
+      provider: 'codex',
+      enabled,
+      role: id,
+      instructions: '',
+      order,
+      stageRole
+    }) as EnsembleParticipant
+
+  it('lists @All plus only populated enabled stages in canonical order', () => {
+    const groups = composerEnsembleGroupMentionCandidates([
+      seat('worker', 1, 'worker'),
+      seat('scout-1', 2, 'scout'),
+      seat('scout-2', 3, 'scout'),
+      seat('reviewer-disabled', 4, 'reviewer', false),
+      seat('background', 5, 'background')
+    ])
+
+    expect(groups.map((candidate) => candidate.name)).toEqual([
+      '@All',
+      '@Scouts',
+      '@Workers',
+      '@BG'
+    ])
+    expect(groups.find((candidate) => candidate.name === '@Scouts')?.detail).toContain('2 seats')
+    expect(groups.every((candidate) => candidate.kind === 'group')).toBe(true)
+  })
+
+  it('uses the neutral accent and keeps the visible token as insertion text', () => {
+    const [all] = composerEnsembleGroupMentionCandidates([seat('any', 1, undefined)])
+
+    expect(all).toMatchObject({
+      id: 'group:all',
+      kind: 'group',
+      name: '@All',
+      color: 'var(--user-bubble-base, var(--accent))'
+    })
+    expect(all).not.toHaveProperty('participantId')
+    expect(all).not.toHaveProperty('provider')
+    expect(all).not.toHaveProperty('path')
+  })
+
+  it('returns no dead group rows when every participant is disabled', () => {
+    expect(composerEnsembleGroupMentionCandidates([seat('worker', 1, 'worker', false)])).toEqual([])
   })
 })
 

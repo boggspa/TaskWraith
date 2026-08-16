@@ -13,11 +13,16 @@ import type {
 import { deriveChildAgentThreads } from '../lib/ChildAgentThreads'
 import { getProviderName } from './Sidebar'
 import type { ComposerMentionTriggerKind } from '../lib/ComposerMentionTrigger'
+import {
+  ENSEMBLE_GROUP_MENTIONS,
+  ensembleGroupMentionMatchesStage
+} from '../../../shared/ensembleGroupMention'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 export type ComposerMentionKind =
   | 'agent'
+  | 'group'
   | 'participant'
   | 'workspace-file'
   | 'external-grant'
@@ -109,6 +114,34 @@ export function composerMentionParticipantColor(
 ): string {
   const providerClass = resolveProviderHueClass(participant.provider, participant.model)
   return `var(--provider-${providerClass}-color, var(--accent))`
+}
+
+/**
+ * Provider-neutral group rows shown above individual participants. Their name
+ * is also the exact insertion text (`@All`, etc.), so existing Composer
+ * fallback insertion remains plain editable text and carries no hidden target
+ * identity.
+ */
+export function composerEnsembleGroupMentionCandidates(
+  participants: EnsembleParticipant[]
+): ComposerMentionCandidate[] {
+  const enabled = participants.filter((participant) => participant.enabled !== false)
+  if (enabled.length === 0) return []
+  return ENSEMBLE_GROUP_MENTIONS.flatMap<ComposerMentionCandidate>((definition) => {
+    const count = enabled.filter((participant) =>
+      ensembleGroupMentionMatchesStage(definition.id, participant.stageRole)
+    ).length
+    if (count === 0) return []
+    return [
+      {
+        id: `group:${definition.id}`,
+        kind: 'group',
+        name: definition.token,
+        detail: `${definition.description} · ${count} ${count === 1 ? 'seat' : 'seats'}`,
+        color: 'var(--user-bubble-base, var(--accent))'
+      }
+    ]
+  })
 }
 
 function nameFromPath(path: string): string {
@@ -229,11 +262,12 @@ export function AgentMentionMenu({
     }
 
     // `@` trigger in ensemble chats: list participants so the user
-    // can DM-target a specific provider. The picker writes plain
-    // editable `@Role` text and Composer keeps the exact seat id as
-    // short-lived selection metadata for the next dispatch.
+    // can address a stage group or DM-target a specific provider.
+    // Both picker forms write plain editable text; individual seats
+    // additionally keep an exact id as short-lived dispatch metadata.
     if (chat?.chatKind === 'ensemble' && ensembleParticipants) {
-      return ensembleParticipants
+      const groupItems = composerEnsembleGroupMentionCandidates(ensembleParticipants)
+      const participantItems = ensembleParticipants
         .filter((participant) => participant.enabled)
         .sort((a, b) => a.order - b.order)
         .map<ComposerMentionCandidate>((participant) => {
@@ -261,6 +295,7 @@ export function AgentMentionMenu({
             color: composerMentionParticipantColor(participant)
           }
         })
+      return [...groupItems, ...participantItems]
     }
 
     const subagentCandidates = activeSubagents.map<ComposerMentionCandidate>((thread) => {
