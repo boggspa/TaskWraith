@@ -18,6 +18,21 @@ describe('TaskWraith TUI CLI options', () => {
     })
   })
 
+  it('defaults to safe Host startup and recognizes profile/opt-out posture', () => {
+    expect(parseTaskWraithTuiArgs([])).toMatchObject({
+      startHost: true,
+      hostLaunchProfile: 'production'
+    })
+    expect(parseTaskWraithTuiArgs(['--dev', '--no-start-host'])).toMatchObject({
+      startHost: false,
+      hostLaunchProfile: 'development'
+    })
+    expect(parseTaskWraithTuiArgs(['--user-data', './private-profile'])).toMatchObject({
+      startHost: true,
+      hostLaunchProfile: 'custom'
+    })
+  })
+
   it('rejects ambiguous or state-mutating replay combinations', () => {
     expect(() => parseTaskWraithTuiArgs(['--json', '--snapshot'])).toThrow(/different output/)
     expect(() => parseTaskWraithTuiArgs(['--export=a', '--replay=b'])).toThrow(/cannot be combined/)
@@ -30,6 +45,7 @@ describe('TaskWraith TUI CLI options', () => {
     expect(usage).toContain('--json')
     expect(usage).toContain('--export <file>')
     expect(usage).toContain('--replay <file>')
+    expect(usage).toContain('--no-start-host')
     expect(usage).toContain('Ctrl+R missions')
     expect(usage).toContain('detached replay')
   })

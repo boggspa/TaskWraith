@@ -5,6 +5,7 @@ import {
   defaultTaskWraithUserDataPath
 } from '../shared/taskWraithControlPaths.node'
 import { detectAnsiColorMode, type AnsiColorMode } from './ansi'
+import type { TuiHostLaunchProfile } from './hostProcessManager'
 
 export interface TaskWraithTuiCliOptions {
   demo: boolean
@@ -16,6 +17,8 @@ export interface TaskWraithTuiCliOptions {
   height: number
   colorMode: AnsiColorMode
   animationEnabled: boolean
+  startHost: boolean
+  hostLaunchProfile: TuiHostLaunchProfile
   /** Force ASCII chrome; TASKWRAITH_TUI_ASCII is handled by detectTuiUnicode. */
   ascii: boolean
   threadId?: string
@@ -45,6 +48,7 @@ Options:
   --height <rows>        Snapshot/replay height (default: terminal or 24)
   --thread <id>          Open a specific TaskWraith thread
   --user-data <path>     Override Electron's TaskWraith userData directory
+  --no-start-host        Connect only; do not start the app Host when offline
   --no-color             Disable ANSI colour
   --color <mode>         truecolor, ansi256, or none
   --ascii                Force ASCII chrome (also: TASKWRAITH_TUI_ASCII=1)
@@ -93,10 +97,13 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
     height: process.stdout.rows || 24,
     colorMode: detectAnsiColorMode(),
     animationEnabled: true,
+    startHost: true,
+    hostLaunchProfile: 'production',
     ascii: false,
     help: false,
     version: false
   }
+  let explicitUserData = Boolean(String(process.env.TASKWRAITH_USER_DATA || '').trim())
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     const [flag, inline] = argument.includes('=')
@@ -110,6 +117,7 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
     else if (flag === '--no-color') options.colorMode = 'none'
     else if (flag === '--ascii') options.ascii = true
     else if (flag === '--no-animation') options.animationEnabled = false
+    else if (flag === '--no-start-host') options.startHost = false
     else if (flag === '--help' || flag === '-h') options.help = true
     else if (flag === '--version' || flag === '-v') options.version = true
     else if (flag === '--width' || flag === '--height') {
@@ -128,8 +136,10 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
     ) {
       const [value, consumed] = inline ? [inline, index] : takeValue(args, index, flag)
       if (flag === '--thread') options.threadId = value
-      else if (flag === '--user-data') options.userDataPath = resolve(value)
-      else if (flag === '--export') options.exportPath = resolve(value)
+      else if (flag === '--user-data') {
+        options.userDataPath = resolve(value)
+        explicitUserData = true
+      } else if (flag === '--export') options.exportPath = resolve(value)
       else options.replayPath = resolve(value)
       index = consumed
     } else {
@@ -141,6 +151,11 @@ export function parseTaskWraithTuiArgs(args: string[]): TaskWraithTuiCliOptions 
     options.userDataPath = defaultTaskWraithDevUserDataPath()
   }
   if (!options.userDataPath) options.userDataPath = defaultTaskWraithUserDataPath()
+  options.hostLaunchProfile = explicitUserData
+    ? 'custom'
+    : options.dev
+      ? 'development'
+      : 'production'
   if (options.json && options.snapshot) {
     throw new Error('--json and --snapshot select different output formats.')
   }

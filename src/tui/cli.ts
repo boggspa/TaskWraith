@@ -24,6 +24,7 @@ import {
   buildTaskWraithTuiJsonProjection,
   type TaskWraithTuiJsonProjectionSource
 } from './jsonProjection'
+import { ensureTuiHostAvailable } from './hostProcessManager'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
@@ -191,14 +192,27 @@ async function main(): Promise<void> {
     process.stdout.write(`${TUI_VERSION}\n`)
     return
   }
-  if (options.exportPath) {
-    await exportTwMission(options)
-    return
-  }
   if (options.replayPath) {
     const replay = await loadReplay(options)
     if (options.json) printJsonProjection(replay.state, 'twmission-replay', replay.manifest)
     else renderSnapshotState(replay.state, options)
+    return
+  }
+  const interactive = !options.exportPath && !options.json && !options.snapshot
+  if (interactive && (!process.stdin.isTTY || !process.stdout.isTTY)) {
+    throw new Error(
+      'Interactive mode requires a terminal. Use --snapshot, --json, --export, or --replay for redirected output.'
+    )
+  }
+  if (!options.demo && options.startHost) {
+    if (!options.userDataPath) throw new Error('TaskWraith Host userData path is unavailable.')
+    await ensureTuiHostAvailable({
+      userDataPath: options.userDataPath,
+      profile: options.hostLaunchProfile
+    })
+  }
+  if (options.exportPath) {
+    await exportTwMission(options)
     return
   }
   if (options.json) {
@@ -210,11 +224,6 @@ async function main(): Promise<void> {
     const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
     renderSnapshotState(state, options)
     return
-  }
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error(
-      'Interactive mode requires a terminal. Use --snapshot, --json, --export, or --replay for redirected output.'
-    )
   }
   activeTui = new TaskWraithTui({
     clientVersion: TUI_VERSION,
