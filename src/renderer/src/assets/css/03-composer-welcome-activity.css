@@ -7134,6 +7134,131 @@ button.composer-run-timecode.is-open {
   color: var(--text-muted, var(--text-secondary));
 }
 
+/* Transcript-only presentation for chronological AppShots/Appwatch captures.
+   The original media bytes stay untouched; this restrained provider-hued frame
+   groups existing thumbnails into one visual checkpoint. */
+.tw-frame-set {
+  --tw-frame-set-accent: var(--message-working-accent, var(--provider-accent, var(--accent)));
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--tw-frame-set-accent) 22%, var(--panel-border));
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--tw-frame-set-accent) 9%, var(--app-bg-elevated)) 0%,
+      color-mix(in srgb, var(--tw-frame-set-accent) 3%, var(--app-bg-sunken)) 100%
+    );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 2%, transparent);
+}
+
+.message-bubble.user .tw-frame-set {
+  --tw-frame-set-accent: var(--user-bubble-base, var(--accent));
+}
+
+.tw-frame-set-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 2px 7px;
+}
+
+.tw-frame-set-title {
+  color: color-mix(in srgb, var(--tw-frame-set-accent) 74%, var(--text-primary));
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.tw-frame-set-meta,
+.tw-frame-set-label {
+  color: var(--text-muted, var(--text-secondary));
+  font-size: var(--font-size-xs, 11px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.tw-frame-set-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.tw-frame-set-frame {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 132px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tw-frame-set-frame:disabled {
+  cursor: default;
+}
+
+.tw-frame-set-thumb {
+  display: block;
+  width: 132px;
+  max-height: 96px;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--tw-frame-set-accent) 18%, var(--panel-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-bg-sunken) 88%, black 12%);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.tw-frame-set-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.tw-frame-set-thumb.is-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--app-bg-sunken) 94%, var(--tw-frame-set-accent) 6%);
+}
+
+.tw-frame-set-placeholder-label {
+  color: var(--text-muted, var(--text-secondary));
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1;
+}
+
+.tw-frame-set-frame.is-placeholder {
+  opacity: 0.78;
+}
+
+.tw-frame-set-frame:hover:not(:disabled) .tw-frame-set-thumb,
+.tw-frame-set-frame:focus-visible .tw-frame-set-thumb {
+  border-color: color-mix(in srgb, var(--tw-frame-set-accent) 48%, var(--panel-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tw-frame-set-accent) 24%, transparent);
+}
+
+.tw-frame-set-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .discord-context-picker-backdrop {
   position: fixed;
   inset: 0;

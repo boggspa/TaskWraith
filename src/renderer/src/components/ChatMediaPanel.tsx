@@ -25,6 +25,10 @@ import { WaveformAudioPlayer } from './WaveformAudioPlayer'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import { formatBytes } from '../lib/formatBytes'
 import { twMediaUrl } from '../../../shared/twMedia'
+import {
+  isTranscriptFrameSetGroupKind,
+  type TranscriptFrameSetGroupKind
+} from '../../../shared/transcriptMediaGrouping'
 import { PillButton } from './PillButton'
 
 export type ChatMediaSource = TranscriptMediaRef['source'] | 'external_path'
@@ -1187,7 +1191,7 @@ function ChatMessageAvAttachment({
 }
 
 /** The grouping kind that renders a contiguous ref run as an NLE filmstrip. */
-const FILMSTRIP_GROUP_KIND = 'video_frames'
+const VIDEO_FILMSTRIP_GROUP_KIND = 'video_frames'
 
 /**
  * A horizontal NLE "filmstrip" for a run of video-frame refs (inspect_video_frames):
@@ -1244,25 +1248,134 @@ function VideoFilmstrip({
   )
 }
 
+function frameSetSourceLabel(groupKind: TranscriptFrameSetGroupKind): string {
+  return groupKind === 'appshots' ? 'AppShots' : 'Appwatch'
+}
+
+function frameSetCaption(ref: ChatMediaRef, index: number): string {
+  const caption = ref.caption?.trim() || ''
+  if (!caption || caption.toLowerCase() === 'appshots' || /^frame-\d+$/i.test(caption)) {
+    return `Frame ${index + 1}`
+  }
+  return `Frame ${index + 1} · ${caption}`
+}
+
 /**
- * Partition refs into a sequence of segments, where each MAXIMAL run of consecutive refs
- * sharing `groupKind === 'video_frames'` becomes one `filmstrip` segment and every other
- * ref is its own `single` segment. Refs arrive in emission order, so the frames of one
- * inspect_video_frames call are contiguous and group cleanly without reordering.
+ * A compact chronological packet for live-app capture bursts. The outer frame
+ * is transcript-only chrome; every thumbnail still opens its original owned
+ * media ref through the existing lightbox.
  */
-function partitionFilmstripRuns(
+function TranscriptFrameSet({
+  refs,
+  groupKind,
+  onPreviewImage
+}: {
   refs: ChatMediaRef[]
-): Array<{ kind: 'filmstrip'; refs: ChatMediaRef[] } | { kind: 'single'; ref: ChatMediaRef }> {
+  groupKind: TranscriptFrameSetGroupKind
+  onPreviewImage?: (ref: ChatMediaRef) => void
+}) {
+  if (refs.length === 0) return null
+  const sourceLabel = frameSetSourceLabel(groupKind)
+  const frameCountLabel = `${refs.length} ${refs.length === 1 ? 'frame' : 'frames'}`
+  return (
+    <div
+      className="tw-frame-set"
+      data-frame-set-kind={groupKind}
+      role="group"
+      aria-label={`${sourceLabel} Frame Set, ${frameCountLabel}`}
+    >
+      <div className="tw-frame-set-head" aria-hidden="true">
+        <span className="tw-frame-set-title">Frame Set</span>
+        <span className="tw-frame-set-meta">
+          {sourceLabel} · {frameCountLabel}
+        </span>
+      </div>
+      <div className="tw-frame-set-track">
+        {refs.map((ref, index) => {
+          const previewSrc = chatMediaPreviewSrc(ref)
+          const label = frameSetCaption(ref, index)
+          if (!previewSrc) {
+            const statusLabel = chatMediaStatusLabel(ref.status) || 'Preview unavailable'
+            return (
+              <button
+                key={ref.id}
+                type="button"
+                className="tw-frame-set-frame is-placeholder"
+                title={`${label}: ${statusLabel}`}
+                aria-label={`${sourceLabel} ${label}, ${index + 1} of ${refs.length}: ${statusLabel}`}
+                disabled={!onPreviewImage}
+                onClick={onPreviewImage ? () => onPreviewImage(ref) : undefined}
+              >
+                <span className="tw-frame-set-thumb is-placeholder" aria-hidden="true">
+                  <span className="tw-frame-set-placeholder-label">No preview</span>
+                </span>
+                <span className="tw-frame-set-label">{label}</span>
+              </button>
+            )
+          }
+          return (
+            <button
+              key={ref.id}
+              type="button"
+              className="tw-frame-set-frame"
+              title={onPreviewImage ? `Preview ${label}` : label}
+              aria-label={`Preview ${sourceLabel} ${label}, ${index + 1} of ${refs.length}`}
+              disabled={!onPreviewImage}
+              onClick={onPreviewImage ? () => onPreviewImage(ref) : undefined}
+            >
+              <span
+                className="tw-frame-set-thumb"
+                style={{ aspectRatio: mediaThumbnailAspectRatio(ref) }}
+              >
+                <img src={previewSrc} alt="" loading="lazy" decoding="async" />
+              </span>
+              <span className="tw-frame-set-label">{label}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Partition refs into presentation runs without reordering them. Video frames retain
+ * their existing NLE filmstrip. AppShots/Appwatch runs become Frame Sets, and a reset
+ * to `frame-1` starts a new set even when two capture calls land on the same message.
+ * Every other ref (including arbitrary image_view bundles) remains a standard card.
+ */
+function partitionMediaRuns(
+  refs: ChatMediaRef[]
+): Array<
+  | { kind: 'filmstrip'; refs: ChatMediaRef[] }
+  | { kind: 'frame-set'; groupKind: TranscriptFrameSetGroupKind; refs: ChatMediaRef[] }
+  | { kind: 'single'; ref: ChatMediaRef }
+> {
   const segments: Array<
-    { kind: 'filmstrip'; refs: ChatMediaRef[] } | { kind: 'single'; ref: ChatMediaRef }
+    | { kind: 'filmstrip'; refs: ChatMediaRef[] }
+    | { kind: 'frame-set'; groupKind: TranscriptFrameSetGroupKind; refs: ChatMediaRef[] }
+    | { kind: 'single'; ref: ChatMediaRef }
   > = []
   for (const ref of refs) {
-    if (ref.groupKind === FILMSTRIP_GROUP_KIND) {
+    if (ref.groupKind === VIDEO_FILMSTRIP_GROUP_KIND) {
       const last = segments[segments.length - 1]
       if (last && last.kind === 'filmstrip') {
         last.refs.push(ref)
       } else {
         segments.push({ kind: 'filmstrip', refs: [ref] })
+      }
+    } else if (isTranscriptFrameSetGroupKind(ref.groupKind)) {
+      const last = segments[segments.length - 1]
+      const startsNewSet = /^frame-1$/i.test(ref.caption?.trim() || '')
+      if (
+        last &&
+        last.kind === 'frame-set' &&
+        last.groupKind === ref.groupKind &&
+        !startsNewSet
+      ) {
+        last.refs.push(ref)
+      } else {
+        segments.push({ kind: 'frame-set', groupKind: ref.groupKind, refs: [ref] })
       }
     } else {
       segments.push({ kind: 'single', ref })
@@ -1285,7 +1398,7 @@ export function ChatMessageMediaStrip({
 }) {
   const { copiedId, copy } = useCopyFeedback()
   if (refs.length === 0) return null
-  const segments = partitionFilmstripRuns(refs)
+  const segments = partitionMediaRuns(refs)
   return (
     <div className="message-attachment-strip" aria-label="Message attachments">
       {segments.map((segment, segmentIndex) => {
@@ -1299,7 +1412,17 @@ export function ChatMessageMediaStrip({
             />
           )
         }
-        const ref = segment.ref
+        if (segment.kind === 'frame-set' && segment.refs.length > 1) {
+          return (
+            <TranscriptFrameSet
+              key={`frame-set:${segment.groupKind}:${segment.refs[0].id}:${segmentIndex}`}
+              refs={segment.refs}
+              groupKind={segment.groupKind}
+              onPreviewImage={onPreviewImage}
+            />
+          )
+        }
+        const ref = segment.kind === 'frame-set' ? segment.refs[0] : segment.ref
         const previewSrc = ref.kind === 'image' ? chatMediaPreviewSrc(ref) : ''
         const isCopied = copiedId === ref.id
         if (ref.kind === 'image') {

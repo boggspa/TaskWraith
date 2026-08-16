@@ -739,6 +739,151 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(refs[0].caption).toBe('0:03')
   })
 
+  it('renders AppShots and Appwatch captures as restrained chronological Frame Sets', () => {
+    const captureFrame = (
+      id: string,
+      groupKind: 'appshots' | 'appwatch_frames',
+      caption: string
+    ): ChatMediaRef => ({
+      id,
+      kind: 'image',
+      source: 'tool_result',
+      name: id,
+      path: '',
+      mimeType: 'image/png',
+      thumbnail: {
+        dataBase64: `thumb-${id}`,
+        mimeType: 'image/png',
+        width: 320,
+        height: 180
+      },
+      caption,
+      groupKind
+    })
+    const refs: ChatMediaRef[] = [
+      captureFrame('shot-1', 'appshots', 'frame-1'),
+      captureFrame('shot-2', 'appshots', 'frame-2'),
+      {
+        id: 'ordinary-image',
+        kind: 'image',
+        source: 'tool_result',
+        name: 'ordinary.png',
+        path: '',
+        thumbnail: { dataBase64: 'ordinary-thumb', mimeType: 'image/png' }
+      },
+      captureFrame('watch-1', 'appwatch_frames', 'frame-1'),
+      captureFrame('watch-2', 'appwatch_frames', 'frame-2')
+    ]
+
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+
+    expect((html.match(/class="tw-frame-set"/g) ?? []).length).toBe(2)
+    expect(html).toContain('data-frame-set-kind="appshots"')
+    expect(html).toContain('data-frame-set-kind="appwatch_frames"')
+    expect(html).toContain('aria-label="AppShots Frame Set, 2 frames"')
+    expect(html).toContain('aria-label="Appwatch Frame Set, 2 frames"')
+    expect((html.match(/class="tw-frame-set-frame"/g) ?? []).length).toBe(4)
+    expect(html).toContain('Preview AppShots Frame 1, 1 of 2')
+    expect(html).toContain('Preview Appwatch Frame 2, 2 of 2')
+    expect(html).toContain('aria-label="Preview image ordinary.png"')
+    expect(html).not.toContain('tw-filmstrip')
+  })
+
+  it('keeps arbitrary image bundles as ordinary cards and splits adjacent capture calls', () => {
+    const frame = (id: string, caption: string): ChatMediaRef => ({
+      id,
+      kind: 'image',
+      source: 'tool_result',
+      name: id,
+      path: '',
+      thumbnail: { dataBase64: `thumb-${id}`, mimeType: 'image/png' },
+      caption,
+      groupKind: 'appshots'
+    })
+    const captureHtml = renderToStaticMarkup(
+      <ChatMessageMediaStrip
+        refs={[
+          frame('first-1', 'frame-1'),
+          frame('first-2', 'frame-2'),
+          frame('second-1', 'frame-1'),
+          frame('second-2', 'frame-2')
+        ]}
+        onPreviewImage={() => {}}
+      />
+    )
+    expect((captureHtml.match(/class="tw-frame-set"/g) ?? []).length).toBe(2)
+
+    const ordinaryHtml = renderToStaticMarkup(
+      <ChatMessageMediaStrip
+        refs={[
+          { ...frame('plain-1', ''), groupKind: undefined },
+          { ...frame('plain-2', ''), groupKind: undefined }
+        ]}
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(ordinaryHtml).not.toContain('tw-frame-set')
+    expect((ordinaryHtml.match(/message-attachment-thumb is-image/g) ?? []).length).toBe(2)
+  })
+
+  it('leaves a singleton capture quiet and keeps missing frames visible inside real sets', () => {
+    const singletonHtml = renderToStaticMarkup(
+      <ChatMessageMediaStrip
+        refs={[
+          {
+            id: 'single-frame',
+            kind: 'image',
+            source: 'tool_result',
+            name: 'appshots image 1',
+            path: '',
+            caption: 'appshots',
+            groupKind: 'appshots',
+            thumbnail: { dataBase64: 'single-thumb', mimeType: 'image/png' }
+          }
+        ]}
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(singletonHtml).not.toContain('tw-frame-set')
+    expect(singletonHtml).toContain('message-attachment-thumb is-image')
+
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip
+        refs={[
+          {
+            id: 'available-frame',
+            kind: 'image',
+            source: 'tool_result',
+            name: 'appshots image 1',
+            path: '',
+            caption: 'frame-1',
+            groupKind: 'appshots',
+            thumbnail: { dataBase64: 'available-thumb', mimeType: 'image/png' }
+          },
+          {
+            id: 'missing-frame',
+            kind: 'image',
+            source: 'tool_result',
+            name: 'appshots image 1',
+            path: '',
+            caption: 'frame-2',
+            groupKind: 'appshots',
+            status: 'missing'
+          }
+        ]}
+      />
+    )
+
+    expect(html).toContain('data-frame-set-kind="appshots"')
+    expect(html).not.toContain('message-attachment-card is-file is-image-fallback')
+    expect(html).toContain('class="tw-frame-set-frame is-placeholder"')
+    expect(html).toContain('No preview')
+    expect(html).toContain('aria-label="AppShots Frame 2, 2 of 2: Image missing"')
+    expect(html).toMatch(/class="tw-frame-set-frame is-placeholder"[^>]*disabled=""/)
+  })
+
   it('groups a CONSECUTIVE run of video_frames refs into ONE filmstrip', () => {
     const frame = (n: number): ChatMediaRef => ({
       id: `frame-${n}`,
