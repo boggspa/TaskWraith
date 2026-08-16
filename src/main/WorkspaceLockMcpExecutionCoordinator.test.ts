@@ -320,6 +320,72 @@ describe('WorkspaceLockMcpExecutionCoordinator', () => {
     expect(events).toEqual(['fence', 'acquisition'])
   })
 
+  it('hands path-bearing git_stage its narrow repository mutex as verified root scope', async () => {
+    const repositoryTarget = resolve('/repo/.git')
+    const args = { paths: ['docs/channels-p6-plan.md'] }
+    const h = harness({
+      admitted: admission({
+        claims: [
+          {
+            workspacePath: '/repo',
+            worktreePath: '/repo',
+            kind: 'file',
+            targetPath: repositoryTarget
+          }
+        ],
+        runtimeInput: runtimeInput('git_stage', args)
+      }),
+      capabilities: [capability({ target: repositoryTarget })]
+    })
+
+    const prepared = await h.coordinator.prepare(
+      prepareInput({ toolName: 'git_stage', args, cwd: '/repo' })
+    )
+
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    expect(prepared.args).toEqual({ paths: [resolve('/repo/docs/channels-p6-plan.md')] })
+    expect(prepared.context).toMatchObject({
+      cwd: resolve('/repo'),
+      workspacePath: resolve('/repo')
+    })
+    expect(prepared.directMutationAuthority).toBeNull()
+    await prepared.finish()
+  })
+
+  it('hands git_commit the same narrow repository mutex without requiring a workspace lock', async () => {
+    const repositoryTarget = resolve('/repo/.git')
+    const args = { message: 'docs: record the verified finding' }
+    const h = harness({
+      admitted: admission({
+        claims: [
+          {
+            workspacePath: '/repo',
+            worktreePath: '/repo',
+            kind: 'file',
+            targetPath: repositoryTarget
+          }
+        ],
+        runtimeInput: runtimeInput('git_commit', args)
+      }),
+      capabilities: [capability({ target: repositoryTarget })]
+    })
+
+    const prepared = await h.coordinator.prepare(
+      prepareInput({ toolName: 'git_commit', args, cwd: '/repo' })
+    )
+
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    expect(prepared.args).toEqual(args)
+    expect(prepared.context).toMatchObject({
+      cwd: resolve('/repo'),
+      workspacePath: resolve('/repo')
+    })
+    expect(prepared.directMutationAuthority).toBeNull()
+    await prepared.finish()
+  })
+
   it('rejects post-approval cancellation at the final executor boundary', async () => {
     let live = true
     const h = harness()
