@@ -6,6 +6,33 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.9.6 - Unreleased
+
+### Provider setup and run control
+
+- **Grok 4.6 in Grok and Cursor.** Direct Grok now follows the CLI's advertised
+  4.6 default with Low through Extra High reasoning, while Cursor exposes its
+  exact 4.6 Standard/Fast variants behind one provider-facing row. Grok 4.5 is
+  retained on both providers; plan and quota eligibility remains provider-owned.
+- **Gemini 3.7 Flash in AntiGravity.** The official `agy` catalogue now offers
+  Gemini 3.7 Flash with Low, Medium, and High reasoning. TaskWraith groups the
+  exact variants under one picker row, retains them in the consent-gated
+  fallback, and leads New Additions with the new family.
+
+### Permissions and approvals
+
+- **Auto-approvals stop elevating when a seat cannot be identified.** Ensemble auto-approvals depend on knowing which authorities are external people, because an external never receives an approval prompt. When that list cannot be read — a degraded Channels launch, or a channel whose recovery has not completed — TaskWraith now asks you instead of approving on an authority it could not verify. You may see an approval prompt where a run previously proceeded unattended.
+
+### Channels and collaboration
+
+- **A shared chat is no longer treated as an abandoned draft.** Create-time cleanup protects chats it can see are shared, but that list was still read from the retired People records, so a chat shared to a Channel — with no messages yet, still on its default title, and nobody joined — could be swept away. Sharing is now read from the channels themselves, and when that cannot be read at all, cleanup protects everything rather than guessing.
+- **Your collaboration history survives a failed Channels start.** Sharing is now Channel-native throughout, but the previous collaboration layer is deliberately kept as a fallback rather than deleted. If Channels cannot start on a launch — an unreadable pinned identity key after a keychain reset, for instance — collaborators can still reconnect and history still reads, even though no new sharing changes are accepted until Channels come back. A transient failure clears itself on the next launch.
+
+### Host authority and companion parity
+
+- **A Host you control.** TaskWraith now says plainly that Host runs only while the app is open and offers visible Stop Host / Start Host controls. An intentional stop reads “Stopped by you,” restart obtains a fresh supervised owner, failures stay visible, and nothing installs or silently respawns as a background daemon.
+- **Governed Channel administration.** Mission Control carries compact Channel/member state and routes owner revoke/close actions through Host commands and durable receipts without copying invite secrets or message history into Host.
+
 ## 1.9.5 - 2026-08-12
 
 ### Meta Muse Code
@@ -18,14 +45,6 @@ to answer.
 
 ### Provider setup and run control
 
-- **Grok 4.6 in Grok and Cursor.** Direct Grok now follows the CLI's advertised
-  4.6 default with Low through Extra High reasoning, while Cursor exposes its
-  exact 4.6 Standard/Fast variants behind one provider-facing row. Grok 4.5 is
-  retained on both providers; plan and quota eligibility remains provider-owned.
-- **Gemini 3.7 Flash in AntiGravity.** The official `agy` catalogue now offers
-  Gemini 3.7 Flash with Low, Medium, and High reasoning. TaskWraith groups the
-  exact variants under one picker row, retains them in the consent-gated
-  fallback, and leads New Additions with the new family.
 - **Mid-turn steering.** A Steer control sits beside Stop while a solo chat is running, so a follow-up no longer has to wait for the turn to end. How far it reaches depends on the provider: Pi, Cursor, and Ollama take the text into the turn in progress; Kimi, Mistral, and Grok interrupt the in-flight prompt and immediately re-prompt with it; Claude, Codex, AntiGravity, and Muse deliver at the next turn boundary. Anything a transport cannot confirm falls back to boundary delivery rather than being lost.
 - **AntiGravity work is visible while it happens.** The `agy` CLI publishes no tool stream of its own, so headless runs used to finish with a blank transcript even though files changed on disk. Arbitrated shell and write calls now project live through the permission bridge, and read-side views, greps, and directory listings are recovered from AntiGravity's own transcript afterwards — bringing it to tool-call parity with the other seats.
 - **AntiGravity launch honesty.** Cold-start project launches report liveness instead of appearing hung, approved headless shell commands are honoured, and a launch aborts outright when its permission lease fails rather than proceeding with no allow rules.
@@ -46,7 +65,6 @@ to answer.
 - **A posture override hatch in Settings.** Policy postures can be overridden from Settings behind a risk acknowledgement, and workspace edit-consent acknowledgements now persist correctly instead of being replaced wholesale.
 - **Failover keeps its posture.** Automatic provider failover preserves Accept Edits, verifies posture across reroutes, and binds retries to source proof.
 - **No impossible retries.** A lane blocked by a permission its seat can never obtain is no longer offered as a retry.
-- **Auto-approvals stop elevating when a seat cannot be identified.** Ensemble auto-approvals depend on knowing which authorities are external people, because an external never receives an approval prompt. When that list cannot be read — a degraded Channels launch, or a channel whose recovery has not completed — TaskWraith now asks you instead of approving on an authority it could not verify. You may see an approval prompt where a run previously proceeded unattended.
 
 ### Channels and collaboration
 
@@ -58,8 +76,6 @@ to answer.
 - **Host and member panels.** Channels ship a host panel and a primary member panel with durable member replicas, closed-member controls, host-shown admission codes, and readable history for members whose access was revoked.
 - **Erasable Channel history.** Deleting Channel history is replay-safe and settles globally after the runtime quiesces, so an erasure cannot be undone by a late write or a reconnecting member.
 - **A Channel fault no longer blocks launch.** A failed Channels bootstrap degrades to a reduced Channels experience instead of blocking the app, and expired invite checkpoints are recovered rather than stranding the invite.
-- **A shared chat is no longer treated as an abandoned draft.** Create-time cleanup protects chats it can see are shared, but that list was still read from the retired People records, so a chat shared to a Channel — with no messages yet, still on its default title, and nobody joined — could be swept away. Sharing is now read from the channels themselves, and when that cannot be read at all, cleanup protects everything rather than guessing.
-- **Your collaboration history survives a failed Channels start.** Sharing is now Channel-native throughout, but the previous collaboration layer is deliberately kept as a fallback rather than deleted. If Channels cannot start on a launch — an unreadable pinned identity key after a keychain reset, for instance — collaborators can still reconnect and history still reads, even though no new sharing changes are accepted until Channels come back. A transient failure clears itself on the next launch.
 - **Blackboard images.** Ensemble blackboard entries can carry bounded image attachments — posted, inspected, and rendered in the panel — instead of text only.
 
 ### Ensemble and Orchestration
@@ -100,8 +116,6 @@ to answer.
 
 ### Host authority and companion parity
 
-- **A Host you control.** TaskWraith now says plainly that Host runs only while the app is open and offers visible Stop Host / Start Host controls. An intentional stop reads “Stopped by you,” restart obtains a fresh supervised owner, failures stay visible, and nothing installs or silently respawns as a background daemon.
-- **Governed Channel administration.** Mission Control carries compact Channel/member state and routes owner revoke/close actions through Host commands and durable receipts without copying invite secrets or message history into Host.
 - **Mission Control everywhere.** Desktop, the terminal, and paired iOS now consume coherent Host generations/cursors for live missions, rounds, participants, outcomes, and reconnect state instead of independently reconstructing them.
 - **One question receipt across clients.** Answers and dismissals carry the exact durable Host command ID through the paired bridge, registry transition, ordered delta, Desktop Mission Control, terminal JSON, and iOS projection without exposing answer bodies.
 - **Terminal flight recorder.** `tw` gains an 80×24-friendly live mission view, filters, stable JSON projection, and deterministic `.twmission` export/replay with integrity and corruption checks.
