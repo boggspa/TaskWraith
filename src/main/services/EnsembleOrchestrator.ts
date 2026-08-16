@@ -56,8 +56,10 @@ import {
   resolveActingCaptainParticipantId
 } from '../EnsembleAuthorityResolution'
 import {
+  buildFinalSynthesisPrompt,
   electRoundSynthesizer,
-  resolveRoundSynthesisStatus
+  resolveRoundSynthesisStatus,
+  shouldAttemptFinalSynthesis
 } from '../EnsembleSynthesisLifecycle'
 import { currentEnsembleRuntimeInstanceId } from '../EnsembleRuntimeIdentity'
 import type {
@@ -3388,6 +3390,8 @@ interface ActiveRoundRuntime {
   roundActivities?: Set<Promise<void>>
   /** An explicit yield to user is terminal even after the provider emits late completion events. */
   returnedControlToUser?: boolean
+  /** Runtime half of the durable exactly-once final synthesis boundary. */
+  finalSynthesisTurnAttempted?: boolean
   /**
    * FIFO queue of prompts to dispatch as fresh rounds after the
    * current round finishes. The user can stack multiple sends
@@ -15474,6 +15478,10 @@ export class EnsembleOrchestrator {
       skipPreamble?: boolean
       repeatOpeningScoutFanout?: boolean
       backgroundParticipants?: EnsembleParticipant[]
+      /** One host-owned close-out turn. Participant routing and Continuous
+       * auto-continuation are suppressed after this foreground attempt. */
+      finalSynthesisTurn?: boolean
+      promptOverride?: string
     } = {}
   ): Promise<void> {
     if (runtime.startAfterCancellation) {
@@ -15762,7 +15770,9 @@ export class EnsembleOrchestrator {
       // Terminal-goal pre-emption: once the goal leaves 'active' mid-round,
       // undispatched ordinary serial seats are confirmation ceremony — sweep
       // them out (marked 'skipped') instead of dispatching each in turn.
-      this.preemptRemainingForTerminalGoal(runtime, chat, remaining, stageGateExemptIds)
+      if (!options.finalSynthesisTurn) {
+        this.preemptRemainingForTerminalGoal(runtime, chat, remaining, stageGateExemptIds)
+      }
       if (remaining.length === 0) break
       const nextParticipant = remaining[0]
       // Any external seated at or before this one takes its turn first.
@@ -15983,7 +15993,8 @@ export class EnsembleOrchestrator {
           : undefined
 
       const run = this.seedParticipantRun(dispatchChat, runtime, participant, {
-        sleepResumeWarning
+        sleepResumeWarning,
+        synthesisTurn: options.finalSynthesisTurn
       })
       runtime.activeRunId = run.runId
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
@@ -16012,9 +16023,12 @@ export class EnsembleOrchestrator {
       // The persisted `chat.ensemble.selfReflective` toggle (future
       // UI control) takes precedence so an explicit pre-set isn't
       // accidentally overridden by a non-discuss round.
-      const ensembleConfigForRound: EnsembleConfig = runtime.selfReflective
+      const baseEnsembleConfigForRound: EnsembleConfig = runtime.selfReflective
         ? { ...dispatchChat.ensemble, selfReflective: true }
         : dispatchChat.ensemble
+      const ensembleConfigForRound: EnsembleConfig = options.finalSynthesisTurn
+        ? { ...baseEnsembleConfigForRound, synthesizerParticipantId: participant.id }
+        : baseEnsembleConfigForRound
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // User instruction layers, resolved once per dispatch. The digest joins
       // the shell stamp below, so editing instructions re-briefs slim seats.
@@ -16088,13 +16102,14 @@ export class EnsembleOrchestrator {
         ? { ...dispatchChat, messages: latestPromptChat.messages }
         : dispatchChat
       const skillHookContext = await this.resolveParticipantSkillHookContext(promptChat)
+      const currentPromptForParticipant =
+        options.promptOverride ||
+        (resumeWakeup ? formatWakeupResumePrompt(runtime.prompt, resumeWakeup) : runtime.prompt)
       const promptProjection = buildEnsembleParticipantPromptProjection({
         chat: promptChat,
         config: ensembleConfigForRound,
         participant,
-        currentPrompt: resumeWakeup
-          ? formatWakeupResumePrompt(runtime.prompt, resumeWakeup)
-          : runtime.prompt,
+        currentPrompt: currentPromptForParticipant,
         roundId: runtime.roundId,
         chatContextTurns,
         ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
@@ -16133,7 +16148,7 @@ export class EnsembleOrchestrator {
               chat: promptChat,
               config: ensembleConfigForRound,
               participant,
-              currentPrompt: runtime.prompt,
+              currentPrompt: currentPromptForParticipant,
               roundId: runtime.roundId,
               chatContextTurns,
               scoutBriefs: runtime.scoutBriefs,
@@ -16450,6 +16465,15 @@ export class EnsembleOrchestrator {
       }
       runtime.activeRunId = undefined
       this.applyPendingParticipantSeatChangeFor(runtime, participant.id)
+      if (options.finalSynthesisTurn) {
+        if (this.hasOwnedFanoutWork(run)) {
+          await this.waitForOwnedFanoutSettlements(runtime, run)
+        }
+        runtime.pendingAuthorityFanoutSynthesisParticipantId = undefined
+        runtime.yieldRouting = undefined
+        remaining.length = 0
+        continue
+      }
       // `ensemble_fanout` returns to the provider after dispatch so the tool call
       // itself cannot time out. The caller may then finish, yield, or @mention a
       // peer while its reader/writer lanes are still working. Keep foreground
@@ -17051,6 +17075,7 @@ export class EnsembleOrchestrator {
     }
 
     if (
+      !options.finalSynthesisTurn &&
       remaining.length === 0 &&
       !runtime.cancelled &&
       !runtime.returnedControlToUser &&
@@ -17093,6 +17118,7 @@ export class EnsembleOrchestrator {
     // upstream, so the loop never drains while a run is paused for approval.
     // `tryAutoContinueRound` owns the mode/goal/hop/no-progress gating.
     if (
+      !options.finalSynthesisTurn &&
       remaining.length === 0 &&
       !runtime.cancelled &&
       !runtime.returnedControlToUser &&
@@ -17603,6 +17629,7 @@ export class EnsembleOrchestrator {
     if (continuationLimitStillOwnsClose) {
       this.notifyContinuationLimitReached(runtime)
     }
+    if (this.startFinalSynthesisTurn(runtime, this.deps.getChat(runtime.chatId))) return
     const quarantinedLegacyPrompts = !runtime.cancelled
       ? runtime.quarantinedLegacyQueuedPrompts || []
       : []
@@ -17618,6 +17645,78 @@ export class EnsembleOrchestrator {
       }
     )
     this.clearRuntimeIfCurrent(runtime)
+  }
+
+  private startFinalSynthesisTurn(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord | null | undefined
+  ): boolean {
+    const round = chat?.ensemble?.activeRound
+    const synthesizerParticipantId = round?.synthesizerParticipantId
+    const hasStructuredSummary = Boolean(
+      round &&
+        synthesizerParticipantId &&
+        findTerminalSynthesizerRoundSummary({
+          messages: chat?.messages || [],
+          roundId: round.roundId,
+          synthesizerParticipantId,
+          capturedAt: round.endedAt || round.startedAt
+        })
+    )
+    if (
+      !shouldAttemptFinalSynthesis({
+        round,
+        hasStructuredSummary,
+        attemptedInRuntime: runtime.finalSynthesisTurnAttempted === true,
+        missionWasActiveAtStart:
+          Boolean(runtime.roundStartGoalId) && runtime.roundStartGoalWasTerminal !== true,
+        cancelled: runtime.cancelled,
+        returnedControlToUser: runtime.returnedControlToUser === true,
+        queuedPromptCount: runtime.queuedPrompts.length
+      })
+    ) {
+      return false
+    }
+    const participant = chat?.ensemble?.participants.find(
+      (candidate) =>
+        candidate.id === synthesizerParticipantId &&
+        candidate.enabled &&
+        !isBackgroundParticipant(candidate) &&
+        round?.participants.some(
+          (roundParticipant) => roundParticipant.participantId === candidate.id
+        )
+    )
+    if (!participant || !round) return false
+
+    const attemptedAt = this.deps.nowIso()
+    runtime.finalSynthesisTurnAttempted = true
+    this.updateChatRound(runtime.chatId, (currentRound) =>
+      currentRound?.roundId === runtime.roundId
+        ? {
+            ...currentRound,
+            synthesisStatus: 'pending',
+            synthesisAttemptedAt: attemptedAt
+          }
+        : currentRound
+    )
+    const answerCount = round.participants.filter(
+      (roundParticipant) =>
+        roundParticipant.status === 'answered' || roundParticipant.status === 'yielded'
+    ).length
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Final synthesis · ${participantDisplayName(participant)} is reconciling ${answerCount} participant answer(s) before close.`
+    )
+    void this.trackRoundActivity(
+      runtime,
+      this.runRound(runtime, [participant], {
+        skipPreamble: true,
+        finalSynthesisTurn: true,
+        promptOverride: buildFinalSynthesisPrompt(runtime.prompt)
+      })
+    )
+    return true
   }
 
   private resolveFanoutTargets(
@@ -18880,6 +18979,7 @@ export class EnsembleOrchestrator {
       fanoutCategory?: 'user' | 'orchestrated'
       approvedWriteScopes?: ConcurrentLaneWriteScope[]
       preserveParticipantRoundStatus?: boolean
+      synthesisTurn?: boolean
     } = {}
   ): ActiveParticipantRun {
     const startedAt = this.deps.nowIso()
@@ -18891,12 +18991,9 @@ export class EnsembleOrchestrator {
     const laneRunSuffix = options.laneId ? `-${runId}` : ''
     const promptMessageId = `ensemble-prompt-${runtime.roundId}-${participant.id}${laneRunSuffix}`
     const assistantMessageId = `ensemble-assistant-${runtime.roundId}-${participant.id}${laneRunSuffix}`
-    const authorityRoutingCheckpoint = this.takeAuthorityRoutingCheckpoint(
-      chat,
-      runtime,
-      participant,
-      Boolean(options.laneId)
-    )
+    const authorityRoutingCheckpoint = options.synthesisTurn
+      ? undefined
+      : this.takeAuthorityRoutingCheckpoint(chat, runtime, participant, Boolean(options.laneId))
     const runtimeProfileId = resolveRuntimeProfileIdForScope({
       provider: participant.provider,
       scope: chat.scope === 'global' ? 'global' : 'workspace',
@@ -18913,6 +19010,7 @@ export class EnsembleOrchestrator {
       ensembleRoundId: runtime.roundId,
       ensembleParticipantId: participant.id,
       ensembleParticipantStatus: 'running',
+      ...(options.synthesisTurn ? { ensembleSynthesisTurn: true as const } : {}),
       ...(options.laneId ? { ensembleLaneId: options.laneId } : {}),
       ...(options.laneId ? { ensembleLaneIntent: options.laneIntent || 'read' } : {}),
       ensembleRole: participant.role,

@@ -89,4 +89,25 @@ describe('EnsembleRoundSummary', () => {
     })
     expect(record).toBeNull()
   })
+
+  it('ignores a host status receipt after the terminal synthesizer', () => {
+    const status: ChatMessage = {
+      id: 'status',
+      role: 'system',
+      content: 'Continuous handoff limit reached.',
+      timestamp: '2026-05-27T12:00:30.000Z',
+      metadata: {
+        kind: 'ensembleParticipantStatus',
+        ensembleRoundId: 'round-1'
+      }
+    }
+    const record = findTerminalSynthesizerRoundSummary({
+      messages: [assistant('a', 'codex', structured), status],
+      roundId: 'round-1',
+      synthesizerParticipantId: 'codex',
+      capturedAt: '2026-05-27T12:01:00.000Z'
+    })
+
+    expect(record?.participantId).toBe('codex')
+  })
 })

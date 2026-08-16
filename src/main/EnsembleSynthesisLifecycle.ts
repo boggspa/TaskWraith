@@ -1,6 +1,7 @@
 import type {
   EnsembleParticipant,
   EnsembleRoundParticipantState,
+  EnsembleRoundState,
   EnsembleRoundSynthesisStatus
 } from './store/types'
 
@@ -68,4 +69,54 @@ export function resolveRoundSynthesisStatus(input: {
 }): EnsembleRoundSynthesisStatus {
   if (!roundRequiresSynthesis(input.participants)) return 'not-required'
   return input.hasStructuredSummary ? 'completed' : 'unresolved'
+}
+
+export function shouldAttemptFinalSynthesis(input: {
+  round: EnsembleRoundState | null | undefined
+  hasStructuredSummary: boolean
+  attemptedInRuntime: boolean
+  missionWasActiveAtStart: boolean
+  cancelled: boolean
+  returnedControlToUser: boolean
+  queuedPromptCount: number
+}): boolean {
+  const round = input.round
+  return Boolean(
+    round &&
+    round.status === 'running' &&
+    round.orchestrationMode === 'continuous' &&
+    round.synthesizerParticipantId &&
+    !round.synthesisAttemptedAt &&
+    round.synthesisStatus !== 'completed' &&
+    !input.hasStructuredSummary &&
+    !input.attemptedInRuntime &&
+    input.missionWasActiveAtStart &&
+    !input.cancelled &&
+    !input.returnedControlToUser &&
+    input.queuedPromptCount === 0 &&
+    roundRequiresSynthesis(round.participants)
+  )
+}
+
+export function buildFinalSynthesisPrompt(originalPrompt: string): string {
+  return `TaskWraith final synthesis pass.
+
+Reconcile the completed participant answers for the user's original request below. This is one bounded close-out turn: do not start new implementation work, call tools, fan out, yield, schedule a wakeup, or delegate. Use evidence already present in the round transcript, preserve material disagreements, and do not invent consensus.
+
+Original user request:
+${originalPrompt.trim()}
+
+Return exactly one compact block containing every label below:
+
+Round summary:
+
+Decisions:
+
+Corrections:
+
+Open risks:
+
+Next action:
+
+If disagreement remains, record it under Open risks and give the user-facing resolution under Next action.`
 }

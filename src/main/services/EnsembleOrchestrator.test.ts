@@ -5137,6 +5137,80 @@ Next action:
     })
   })
 
+  it('runs one bounded final synthesis turn before closing a Continuous mission round', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 20
+    harness.chat.activeGoal = buildActiveGoal('mission-synthesis')
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Complete and reconcile the mission.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'The reviewer found one risk.' }
+    )
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'The worker completed the requested change.' }
+    )
+    harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
+    completeDispatchedRun(harness, 1)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const synthesis = harness.dispatched[2]
+    expect(synthesis.ensembleRun?.participantId).toBe('codex')
+    expect(synthesis.prompt).toContain('TaskWraith final synthesis pass')
+    expect(synthesis.prompt).toContain('do not start new implementation work')
+    expect(
+      harness.chat.runs.find((run) => run.runId === synthesis.appRunId)
+    ).toMatchObject({ ensembleSynthesisTurn: true })
+    expect(harness.chat.ensemble?.activeRound?.synthesisAttemptedAt).toEqual(
+      expect.any(String)
+    )
+
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: `Round summary:
+The mission work is reconciled.
+
+Decisions:
+- Keep the bounded close-out.
+
+Corrections:
+- None.
+
+Open risks:
+- One follow-up remains.
+
+Next action:
+- Show the follow-up to the user.`
+      }
+    )
+    completeDispatchedRun(harness, 2)
+
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(3)
+    expect(harness.chat.ensemble?.activeRound?.synthesisStatus).toBe('completed')
+    expect(
+      harness.chat.ensemble?.escalationSignals?.some(
+        (signal) => signal.kind === 'disagreement-unresolved'
+      )
+    ).not.toBe(true)
+  })
+
   it('threads the captured summary into the next round prompt', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.synthesizerParticipantId = 'codex'
@@ -13610,7 +13684,10 @@ Next action:
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 8
-    harness.chat.activeGoal = buildActiveGoal('continuous-seat-swap')
+    harness.chat.activeGoal = {
+      ...buildActiveGoal('continuous-seat-swap'),
+      status: 'completed'
+    }
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Use the updated worker later in this pass.',
@@ -13651,10 +13728,6 @@ Next action:
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'content', text: 'First pass implementation complete.' }
     )
-    harness.chat.activeGoal = {
-      ...harness.chat.activeGoal!,
-      status: 'completed'
-    }
     completeDispatchedRun(harness, 1)
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
@@ -15350,10 +15423,38 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2)) // claude
     await answerLatest(3) // claude done → drain → auto-continue pass: codex
     await answerLatest(4) // codex → claude (pass 2)
-    await answerLatest() // drain → hop budget (2) exhausted → stop
+    await answerLatest(5) // drain → hop budget exhausted → bounded synthesis
+    const synthesis = harness.dispatched[4]
+    expect(synthesis.ensembleRun?.participantId).toBe('ensemble-claude')
+    harness.orchestrator.handleProviderOutput(
+      synthesis.provider,
+      { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: `Round summary:
+The continuous pass converged.
+
+Decisions:
+- Preserve the explicit yield.
+
+Corrections:
+- None.
+
+Open risks:
+- None.
+
+Next action:
+- Return control to the user.`
+      }
+    )
+    harness.orchestrator.handleProviderOutput(
+      synthesis.provider,
+      { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     // The explicit yield did not stop auto-continuation: a full second pass ran.
-    expect(harness.dispatched).toHaveLength(4)
+    expect(harness.dispatched).toHaveLength(5)
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
   })
 
@@ -16327,9 +16428,43 @@ Next action:
       stats: { total_tokens: 10 }
     })
 
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const synthesis = harness.dispatched[2]
+    expect(synthesis.ensembleRun?.participantId).toBe('fixman')
+    expect(
+      harness.chat.runs.find((run) => run.runId === synthesis.appRunId)
+    ).toMatchObject({ ensembleSynthesisTurn: true })
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
+      {
+        type: 'content',
+        text: `Round summary:
+The repair completed the active goal.
+
+Decisions:
+- Keep the verified repair.
+
+Corrections:
+- Do not return to the stale gate turn.
+
+Open risks:
+- None.
+
+Next action:
+- Return control to the user.`
+      }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: synthesis.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched.map((payload) => payload.ensembleRun?.participantId)).toEqual([
       'gate',
+      'fixman',
       'fixman'
     ])
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)

@@ -1261,6 +1261,9 @@ export interface EnsembleRoundState {
   /** Main-derived synthesis lifecycle. `completed` requires a captured
    * structured round summary; merely configuring an owner is not proof. */
   synthesisStatus?: EnsembleRoundSynthesisStatus
+  /** Durable exactly-once boundary stamped before the host dispatches the
+   * bounded final synthesis turn. Missing means no such attempt began. */
+  synthesisAttemptedAt?: string
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
@@ -3800,6 +3803,8 @@ export interface ChatRun {
   /** Exact terminal reason for `ensembleParticipantStatus`. Kept on the run so
    * a later attempt cannot inherit failure prose from an older attempt. */
   ensembleTerminalReason?: string
+  /** This immutable attempt was the host's bounded round-close synthesis turn. */
+  ensembleSynthesisTurn?: true
   /** Per-turn immutable seat configuration for accurate round close-outs. */
   ensembleSeatSnapshot?: EnsembleSeatSnapshot
   /**

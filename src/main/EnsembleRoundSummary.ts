@@ -39,14 +39,12 @@ export function findTerminalSynthesizerRoundSummary(input: {
     const metadata = message.metadata as Record<string, unknown> | undefined
     return metadata?.ensembleRoundId === input.roundId
   })
-  const terminal = [...roundMessages].reverse().find((message) => {
-    const metadata = message.metadata as Record<string, unknown> | undefined
-    return (
-      message.role === 'assistant' ||
-      message.role === 'tool' ||
-      metadata?.kind === 'ensembleParticipantStatus'
-    )
-  })
+  // Host status rows may legitimately land between the chair's close-out and
+  // the terminal fold (for example a Continuous hop-limit receipt). They do
+  // not supersede participant evidence. A later assistant or tool row does.
+  const terminal = [...roundMessages]
+    .reverse()
+    .find((message) => message.role === 'assistant' || message.role === 'tool')
   if (!terminal || terminal.role !== 'assistant') return null
   const metadata = terminal.metadata as Record<string, unknown> | undefined
   if (metadata?.ensembleParticipantId !== synthesizerParticipantId) return null

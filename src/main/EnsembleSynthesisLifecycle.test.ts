@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant, EnsembleRoundParticipantState, ProviderId } from './store/types'
 import {
+  buildFinalSynthesisPrompt,
   electRoundSynthesizer,
   resolveRoundSynthesisStatus,
-  roundRequiresSynthesis
+  roundRequiresSynthesis,
+  shouldAttemptFinalSynthesis
 } from './EnsembleSynthesisLifecycle'
 
 function participant(id: string, order: number, overrides: Partial<EnsembleParticipant> = {}) {
@@ -92,5 +94,55 @@ describe('round synthesis state', () => {
         hasStructuredSummary: false
       })
     ).toBe('not-required')
+  })
+
+  it('plans one final synthesis turn only for an unresolved Continuous mission round', () => {
+    const round = {
+      roundId: 'round-1',
+      status: 'running' as const,
+      prompt: 'Ship it.',
+      startedAt: '2026-08-16T00:00:00.000Z',
+      orchestrationMode: 'continuous' as const,
+      synthesizerParticipantId: 'a',
+      synthesisStatus: 'pending' as const,
+      participants: [state('a', 'answered'), state('b', 'answered')]
+    }
+    const base = {
+      round,
+      hasStructuredSummary: false,
+      attemptedInRuntime: false,
+      missionWasActiveAtStart: true,
+      cancelled: false,
+      returnedControlToUser: false,
+      queuedPromptCount: 0
+    }
+
+    expect(shouldAttemptFinalSynthesis(base)).toBe(true)
+    expect(shouldAttemptFinalSynthesis({ ...base, hasStructuredSummary: true })).toBe(false)
+    expect(shouldAttemptFinalSynthesis({ ...base, attemptedInRuntime: true })).toBe(false)
+    expect(shouldAttemptFinalSynthesis({ ...base, missionWasActiveAtStart: false })).toBe(false)
+    expect(shouldAttemptFinalSynthesis({ ...base, queuedPromptCount: 1 })).toBe(false)
+    expect(
+      shouldAttemptFinalSynthesis({
+        ...base,
+        round: { ...round, synthesisAttemptedAt: '2026-08-16T00:01:00.000Z' }
+      })
+    ).toBe(false)
+  })
+
+  it('builds a qualitative bounded close-out prompt with the required receipt labels', () => {
+    const prompt = buildFinalSynthesisPrompt('Fix the mission orchestration.')
+    expect(prompt).toContain('one bounded close-out turn')
+    expect(prompt).toContain('do not start new implementation work')
+    expect(prompt).toContain('Original user request:\nFix the mission orchestration.')
+    for (const label of [
+      'Round summary:',
+      'Decisions:',
+      'Corrections:',
+      'Open risks:',
+      'Next action:'
+    ]) {
+      expect(prompt).toContain(label)
+    }
   })
 })
