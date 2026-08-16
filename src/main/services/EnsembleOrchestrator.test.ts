@@ -4304,7 +4304,9 @@ describe('EnsembleOrchestrator', () => {
     await vi.waitFor(() => expect(restarted.dispatched).toHaveLength(2))
     expect(restarted.dispatched[1].provider).toBe('codex')
     expect(restarted.dispatched[1].imagePaths).toEqual([])
-    expect(restarted.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    // The recovered queued row still routes this one handoff to Codex, but it
+    // must not convert the recovered live round into a durable one-seat round.
+    expect(restarted.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
   })
 
   it('fails a recovered wakeup round when pre-dispatch construction rejects', async () => {
@@ -5312,12 +5314,9 @@ Next action:
     expect(steered.status).toBe('steered')
     expect(steered.roundId).toBe(firstRoundId)
     expect(harness.dispatched).toHaveLength(1)
-    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
-    // The directed scope is held by the routing target — which every dispatch
-    // gate reads, and which the boundary dispatch below actually proves. The
-    // round it landed in keeps its own shape: narrowing the persisted record to
-    // the target alone dropped seats that were still live members of the round,
-    // taking their status pills, working rows and lane shimmer with them.
+    // The target belongs to this interjection, not to the live round. Persisting
+    // it here would terminate the original panel scope after the handoff.
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
     expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
     expect(
       harness.chat.ensemble?.activeRound?.participants.map(
@@ -5363,7 +5362,7 @@ Next action:
     expect(harness.dispatched[1].provider).toBe('codex')
     expect(harness.chat.ensemble?.activeRound?.roundId).toBe(firstRoundId)
     expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Original prompt')
-    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       '@Worker directed follow-up'
     )

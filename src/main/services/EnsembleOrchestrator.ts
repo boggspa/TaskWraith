@@ -3371,8 +3371,10 @@ interface ActiveRoundRuntime {
   roundId: string
   sender: Electron.WebContents
   prompt: string
-  /** Single participant selected by the user's composer @mention for this round. */
+  /** Single participant selected when the user originally opened this round. */
   dmTargetParticipantId?: string
+  /** Message-local recipient for an undelivered directed interjection. */
+  midRunSteeringTargetParticipantId?: string
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
@@ -3469,10 +3471,10 @@ interface ActiveRoundRuntime {
    */
   userFanoutDispatchSettlements?: Map<string, Promise<boolean>>
   /**
-   * Explicit user-tagged seats that must run at the next serial boundary when
-   * the concurrent-write kill switch forbids their configured write posture
-   * from entering a parallel lane. Includes Background seats, which ordinary
-   * roster construction excludes from serial rotation.
+   * Explicit user-directed seats that must run at the next serial boundary.
+   * This covers write-postured tags deferred by the concurrency kill switch
+   * and a new interjection routed back to a fan-out seat that already settled;
+   * both must bypass ordinary "handled by fan-out" suppression exactly once.
    */
   userFanoutSerialParticipantIds?: Set<string>
   /**
@@ -4655,28 +4657,12 @@ export class EnsembleOrchestrator {
       runtime.imageThumbnails = [...runtime.imageThumbnails, ...input.imageThumbnails]
     }
     if (input.dmTargetParticipantId) {
-      runtime.dmTargetParticipantId = input.dmTargetParticipantId
-      // Directed absorb is a hard routing boundary for the seats still to
-      // SPEAK: `runtime.dmTargetParticipantId` is what every dispatch gate
-      // actually reads, so clamping fan-out here is enough to hold the scope,
-      // and restart recovery rebuilds it from the persisted target alone.
-      //
-      // It is NOT a licence to rewrite the round that is already running. This
-      // used to also stamp `fanoutPolicy: 'off'`, `concurrentMode: undefined`
-      // and a one-seat `participants` list onto the persisted record so the UI
-      // would "match beginRound DM scope" — but a live round's other seats are
-      // real members with lanes in flight, and dropping them took their status
-      // pills, token tallies, working rows and lane shimmer with them, for the
-      // whole remaining life of the round. The composer infers a DM target from
-      // any structured @mention, so a single "@Seat try again" silently
-      // converted a running fan-out round into a one-seat serial one.
-      runtime.fanoutPolicy = 'off'
-      runtime.concurrentMode = undefined
-      this.updateChatRound(runtime.chatId, (round) =>
-        round?.roundId === runtime.roundId
-          ? { ...round, dmTargetParticipantId: input.dmTargetParticipantId }
-          : round
-      )
+      // A mid-run @Seat is routing for this interjection only. Reusing the
+      // round-level DM field here converted a continuous panel into a one-seat
+      // round forever: auto-continuation stopped, fan-out was disabled, and the
+      // target survived in the durable round snapshot. Keep the target only
+      // until the registry proves that this message reached a participant.
+      runtime.midRunSteeringTargetParticipantId = input.dmTargetParticipantId
     } else if (input.fanoutPolicy && isEnsembleFanoutPolicy(input.fanoutPolicy)) {
       runtime.fanoutPolicy = input.fanoutPolicy
       runtime.concurrentMode = fanoutPolicyEnablesConcurrent(input.fanoutPolicy) || undefined
@@ -17413,13 +17399,31 @@ export class EnsembleOrchestrator {
       return null
     }
     const pendingIds = getPending(runtime.chatId).filter(Boolean)
-    if (pendingIds.length === 0) return null
+    if (pendingIds.length === 0) {
+      const deliveredTargetParticipantId = runtime.midRunSteeringTargetParticipantId
+      runtime.midRunSteeringTargetParticipantId = undefined
+      runtime.midRunSteeringBoundaryState = undefined
+      if (deliveredTargetParticipantId) {
+        // The explicit handoff is complete. Do not let its earlier User
+        // Fan-Out marker narrow the next Continuous pass back to that same
+        // seat; restore the round's original panel scope.
+        runtime.fannedOutParticipantIds?.delete(deliveredTargetParticipantId)
+        if (runtime.fannedOutParticipantIds?.size === 0) {
+          runtime.fannedOutParticipantIds = undefined
+        }
+      }
+      return null
+    }
+    const steeringTargetParticipantId = runtime.midRunSteeringTargetParticipantId
     const roundStatusByParticipantId = new Map(
       round.participants.map((participant) => [participant.participantId, participant.status])
     )
     const unavailableParticipantIds = new Set(runtime.unreachableParticipantIds || [])
     for (const participant of chat.ensemble.participants) {
-      if (this.participantFanoutDispatchState(runtime, participant.id)) {
+      // A live lane cannot receive a duplicate boundary dispatch. A settled
+      // lane is different: it already handled earlier work and is eligible for
+      // a new user interjection once its provider operation has returned.
+      if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') {
         unavailableParticipantIds.add(participant.id)
       }
     }
@@ -17428,13 +17432,13 @@ export class EnsembleOrchestrator {
       participants: chat.ensemble.participants,
       participantStatusById: roundStatusByParticipantId,
       preferredParticipantIds: [
-        runtime.dmTargetParticipantId,
+        steeringTargetParticipantId,
         runtime.lastForegroundParticipantId,
         runtime.bossmanParticipantId,
         ...this.activeCaptainParticipantIds(chat, runtime),
         resolveForegroundSynthesizerParticipantId(chat.ensemble)
       ],
-      dmTargetParticipantId: runtime.dmTargetParticipantId,
+      dmTargetParticipantId: steeringTargetParticipantId,
       unavailableParticipantIds,
       previousState: runtime.midRunSteeringBoundaryState
     })
@@ -17446,6 +17450,10 @@ export class EnsembleOrchestrator {
         'The user interjected at the round boundary, but no eligible foreground participant remained to receive it.'
       )
       return null
+    }
+    if (plan.participant) {
+      runtime.userFanoutSerialParticipantIds ??= new Set()
+      runtime.userFanoutSerialParticipantIds.add(plan.participant.id)
     }
     return plan.participant
   }

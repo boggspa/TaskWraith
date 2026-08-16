@@ -666,11 +666,10 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
   })
 
-  // A directed absorb carries routing intent for the seats still to speak. It
-  // must not retroactively rewrite the round that is already running: the other
-  // seats are live members of it, and dropping them from `participants` loses
-  // their status pills, their token tallies, and every working row and lane
-  // shimmer derived from the round projection.
+  // A directed absorb carries routing intent for one interjection. It must not
+  // retroactively rewrite the round that is already running: the other seats
+  // are live members of it, and dropping them from `participants` loses their
+  // status pills, token tallies, working rows, and lane shimmer.
   it('keeps every seat on the live round when a directed steer lands', async () => {
     const roster = [
       participant('codex', 'codex', 1, { role: 'Worker' }),
@@ -708,7 +707,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(
       harness.chat.ensemble?.activeRound?.participants.map((entry) => entry.participantId)
     ).toEqual(['codex', 'claude', 'observer'])
-    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBe('claude')
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
   })
 
   it('keeps a live round concurrent when a directed steer lands mid fan-out', async () => {
@@ -748,6 +747,77 @@ describe('EnsembleOrchestrator mid-run steering', () => {
 
     expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
     expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+  })
+
+  it('returns to the continuous panel after a message-local handoff to a settled fan-out seat', async () => {
+    const roster = [
+      participant('work-1', 'codex', 1, { role: 'Work1' }),
+      participant('work-2', 'claude', 2, { role: 'Work2' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Keep the panel running until the task is complete.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('work-1')
+
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: '@Work2 start the parallel review.',
+        dmTargetParticipantId: 'work-2',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('work-2')
+
+    expect(
+      harness.orchestrator.startRound({
+        chatId: CHAT_ID,
+        prompt: '@Work2 incorporate this late boundary correction too.',
+        dmTargetParticipantId: 'work-2',
+        event: { sender: {} as Electron.WebContents },
+        mode: 'steer'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    expect(harness.dispatched).toHaveLength(2)
+
+    stream(harness, 0, 'Work1 completed the original slice.')
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('already running in a fan-out lane')
+        )
+      ).toBe(true)
+    )
+    stream(harness, 1, 'Work2 completed the first parallel review.')
+    complete(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('work-2')
+    expect(harness.dispatched[2].prompt).toContain(
+      '@Work2 incorporate this late boundary correction too.'
+    )
+
+    stream(harness, 2, 'Work2 accepted the late correction.')
+    complete(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('work-1')
+    expect(harness.chat.ensemble?.activeRound).toMatchObject({
+      roundId: started.roundId,
+      status: 'running'
+    })
+    expect(harness.chat.ensemble?.activeRound?.dmTargetParticipantId).toBeUndefined()
+
+    await expect(
+      harness.orchestrator.cancelRound(CHAT_ID, 'test complete', started.roundId)
+    ).resolves.toBe(true)
   })
 
   it('preserves a rejected User Fan-Out target for its original serial turn', async () => {
