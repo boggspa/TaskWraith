@@ -94,6 +94,26 @@ const DIAGNOSTICS_PLAYER_COUNT_BOUNDS = { minimum: 1, maximum: 2 }
  * explicitly so a field cannot be reported as evidence without also being
  * required to be a finite reading.
  */
+/**
+ * A raw OCR digest must be a real SHA-256 hex digest. A one-character string is
+ * "present" but carries no information, and evidence that carries no information
+ * is not evidence - it only makes a schema check pass.
+ */
+const DIAGNOSTICS_OCR_DIGEST_PATTERN = /^[0-9a-f]{64}$/
+
+/**
+ * Absurdity ceiling for a HUD asset-match distance. This is NOT the matcher's
+ * accept/reject threshold - the matcher owns that. It only refuses values that
+ * cannot be a distance at all.
+ */
+const DIAGNOSTICS_MAX_ASSET_MATCH_DISTANCE = 4096
+
+/** Bound on the serialized surface/region identity arrays. */
+const DIAGNOSTICS_MAX_IDENTITY_ENTRIES = 4096
+
+/** The two identity arrays serialized into resourceDelta as evidence. */
+const REQUIRED_RESOURCE_IDENTITY_ARRAYS = ['productSurfaceIds', 'mappedRegionIdentities']
+
 const REQUIRED_RESOURCE_FIELDS = [
   'physicalFootprintBytes',
   'peakPhysicalFootprintBytes',
@@ -274,6 +294,26 @@ function resolveExactSourcePts(censusValues, roundedHudSeconds) {
   return matches[0]
 }
 
+/**
+ * The exact HH:MM:SS.mmm form parseVisibleHud reads. Kept here so the claim can
+ * check the serialized timecode against the number it was parsed into rather
+ * than trusting that they still agree.
+ */
+function formatStudioTimecode(seconds) {
+  const whole = Math.floor(seconds)
+  const milliseconds = Math.round((seconds - whole) * 1000)
+  const pad = (value, width = 2) => String(value).padStart(width, '0')
+  return (
+    pad(Math.floor(whole / 3600)) +
+    ':' +
+    pad(Math.floor((whole % 3600) / 60)) +
+    ':' +
+    pad(whole % 60) +
+    '.' +
+    pad(milliseconds, 3)
+  )
+}
+
 /** OCR routinely renders 0 as o/ø/Ø/e. Anything not an integer stays null. */
 function parseOcrInteger(token) {
   if (typeof token !== 'string' || token.length < 1) return null
@@ -322,7 +362,7 @@ function parseVisibleHud(hud, assetId, options = {}) {
       count: field('play'),
       rssMegabytes: rssMatch ? Number(rssMatch[1]) : null
     },
-    assetMatch: matchAsset(hud, assetId),
+    assetMatch: { ...matchAsset(hud, assetId), assetId },
     rawOcrSha256: hud.stdoutSha256 || null
   }
 }
@@ -362,10 +402,22 @@ function isPlayableSample(observed, previousPtsSeconds, options = {}) {
  * false while a screenshot still looks correct - most importantly a frozen image
  * under a running clock, which `shownFrames` monotonicity is what catches.
  */
-function assertDiagnostics(samples, firstResources, lastResources) {
+function assertDiagnostics(samples, firstResources, lastResources, options) {
   const parsed = samples.map((sample) => sample.observed)
   if (parsed.length < 2) {
     throw new Error('bounded diagnostics needs at least two samples to prove advance')
+  }
+
+  // THE CLAIM MUST NAME ITS SUBJECT. Previously the samples were the only source
+  // of asset identity, so an internally consistent set about the WRONG media
+  // satisfied the claim. The caller now declares what it opened and every sample
+  // must have been matched against exactly that token.
+  const expectedAssetId = options?.expectedAssetId
+  if (typeof expectedAssetId !== 'string' || expectedAssetId.length < 1) {
+    throw new Error(
+      'bounded diagnostics requires the caller to declare the expected asset identity: ' +
+        JSON.stringify({ expectedAssetId: expectedAssetId ?? null })
+    )
   }
 
   for (const [index, sample] of parsed.entries()) {
@@ -430,21 +482,44 @@ function assertDiagnostics(samples, firstResources, lastResources) {
     // of Outcome 9 could have been satisfied by screenshots of entirely different
     // media whose counters happened to advance. isPlayableSample checked it, but
     // no tracked composition enforced that join.
-    if (sample.assetMatch?.matched !== true) {
+    const assetMatch = sample.assetMatch
+    if (
+      !assetMatch ||
+      assetMatch.matched !== true ||
+      assetMatch.assetId !== expectedAssetId ||
+      !Number.isSafeInteger(assetMatch.distance) ||
+      assetMatch.distance < 0 ||
+      assetMatch.distance > DIAGNOSTICS_MAX_ASSET_MATCH_DISTANCE
+    ) {
       throw new Error(
         'sample does not show the opened asset at sample ' +
           String(index) +
           ': ' +
-          JSON.stringify({ assetMatch: sample.assetMatch ?? null })
+          JSON.stringify({ assetMatch: assetMatch ?? null, expectedAssetId })
+      )
+    }
+
+    // The HUD timecode and the parsed playhead are serialized side by side. If
+    // they disagree, the OCR parse is untrustworthy and neither is evidence.
+    const expectedText = formatStudioTimecode(pts)
+    if (typeof sample.contentPtsText !== 'string' || sample.contentPtsText !== expectedText) {
+      throw new Error(
+        'visible timecode disagrees with the parsed playhead at sample ' +
+          String(index) +
+          ': ' +
+          JSON.stringify({ text: sample.contentPtsText ?? null, expected: expectedText })
       )
     }
 
     // OBSERVATION IDENTITY. The verdict now serializes these digests, so a reader
     // can re-derive which OCR output each reading came from. Requiring it keeps
     // that field from being silently absent on the evidence it rests on.
-    if (typeof sample.rawOcrSha256 !== 'string' || sample.rawOcrSha256.length < 1) {
+    if (
+      typeof sample.rawOcrSha256 !== 'string' ||
+      !DIAGNOSTICS_OCR_DIGEST_PATTERN.test(sample.rawOcrSha256)
+    ) {
       throw new Error(
-        'observation identity (raw OCR digest) is missing at sample ' +
+        'observation identity (raw OCR digest) is missing or malformed at sample ' +
           String(index) +
           ': ' +
           JSON.stringify({ value: sample.rawOcrSha256 ?? null })
@@ -524,20 +599,61 @@ function assertDiagnostics(samples, firstResources, lastResources) {
     ['first', firstResources],
     ['last', lastResources]
   ]) {
-    if (!resource || !Number.isFinite(resource.ps?.rssKilobytes)) {
+    const processRssKilobytes = resource?.ps?.rssKilobytes
+    if (!resource || !Number.isSafeInteger(processRssKilobytes) || processRssKilobytes < 0) {
       throw new Error(
-        'resource sample process RSS is unreadable: ' +
-          JSON.stringify({ phase: label, value: resource?.ps?.rssKilobytes ?? null })
+        'resource sample process RSS is unreadable or not a real quantity: ' +
+          JSON.stringify({ phase: label, value: processRssKilobytes ?? null })
       )
     }
     for (const field of REQUIRED_RESOURCE_FIELDS) {
-      if (!Number.isFinite(resource[field])) {
+      const value = resource[field]
+      if (!Number.isSafeInteger(value) || value < 0) {
         throw new Error(
-          'resource sample field is unreadable: ' +
-            JSON.stringify({ phase: label, field, value: resource[field] ?? null })
+          'resource sample field is unreadable or not a real quantity: ' +
+            JSON.stringify({ phase: label, field, value: value ?? null })
         )
       }
     }
+
+    // The identity arrays are serialized into resourceDelta as evidence. An empty
+    // array is a legitimate probe result; a missing one, a non-array, an oversized
+    // one, or one holding blank entries is not, and must not be reported as though
+    // the probe had measured something.
+    for (const field of REQUIRED_RESOURCE_IDENTITY_ARRAYS) {
+      const entries = resource[field]
+      if (!Array.isArray(entries) || entries.length > DIAGNOSTICS_MAX_IDENTITY_ENTRIES) {
+        throw new Error(
+          'resource sample identity array is missing, malformed or oversized: ' +
+            JSON.stringify({
+              phase: label,
+              field,
+              length: Array.isArray(entries) ? entries.length : null,
+              maximum: DIAGNOSTICS_MAX_IDENTITY_ENTRIES
+            })
+        )
+      }
+      for (const [entryIndex, entry] of entries.entries()) {
+        const validString = typeof entry === 'string' && entry.trim().length > 0
+        const validNumber = Number.isSafeInteger(entry) && entry >= 0
+        if (!validString && !validNumber) {
+          throw new Error(
+            'resource sample identity entry is not a usable identity: ' +
+              JSON.stringify({ phase: label, field, entryIndex, entry: entry ?? null })
+          )
+        }
+      }
+    }
+  }
+
+  // Two observations cannot legitimately share a raw OCR digest: that is the same
+  // captured image, which cannot show two different advancing counter readings.
+  const digests = parsed.map((sample) => sample.rawOcrSha256)
+  if (new Set(digests).size !== digests.length) {
+    throw new Error(
+      'observation identities are not distinct - the same capture was reused: ' +
+        JSON.stringify({ digests })
+    )
   }
 
   const first = parsed[0]
@@ -584,6 +700,7 @@ function assertDiagnostics(samples, firstResources, lastResources) {
     ptsDeltaSeconds,
     shownDelta,
     presentedRate,
+    expectedAssetId,
     observationIdentities: parsed.map((sample, index) => ({
       index,
       rawOcrSha256: sample.rawOcrSha256,
@@ -640,10 +757,14 @@ async function runBoundedDiagnostics() {
 }
 
 module.exports = {
+  DIAGNOSTICS_MAX_ASSET_MATCH_DISTANCE,
+  DIAGNOSTICS_MAX_IDENTITY_ENTRIES,
+  DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PLAYER_COUNT_BOUNDS,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   REQUIRED_RESOURCE_FIELDS,
+  REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
   PTS_SELECTION_TOLERANCE_SECONDS,
   UNPROMOTED_SESSION_DEPENDENCIES,

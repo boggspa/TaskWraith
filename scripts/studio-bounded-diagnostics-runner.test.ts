@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const {
+  DIAGNOSTICS_MAX_IDENTITY_ENTRIES,
+  DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   UNPROMOTED_SESSION_DEPENDENCIES,
@@ -15,6 +17,7 @@ const {
   parseOcrInteger,
   parseVisibleHud,
   REQUIRED_RESOURCE_FIELDS,
+  REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
   resolveMediaTool,
   runBoundedDiagnostics
@@ -24,6 +27,36 @@ const {
  * Builds one truthful HUD observation. Tests mutate a single field so a failure
  * names one property rather than "some sample was wrong".
  */
+/** The asset the caller declares it opened. The claim is bound to this token. */
+const EXPECTED_ASSET = 'acceptance-asset-9OdQjf'
+const OPTS = { expectedAssetId: EXPECTED_ASSET }
+
+/** A real lowercase 64-hex digest, distinct per seed so samples cannot collide. */
+function digestFor(seed: unknown) {
+  return require('node:crypto').createHash('sha256').update(String(seed)).digest('hex')
+}
+
+/** HH:MM:SS.mmm for a numeric playhead, so text and seconds cannot disagree. */
+function timecode(seconds: number) {
+  const whole = Math.floor(seconds)
+  const ms = Math.round((seconds - whole) * 1000)
+  const pad = (v: number, n = 2) => String(v).padStart(n, '0')
+  return `${pad(Math.floor(whole / 3600))}:${pad(Math.floor((whole % 3600) / 60))}:${pad(whole % 60)}.${pad(ms, 3)}`
+}
+
+/**
+ * Forwards the caller-declared asset token so the 32 existing call sites keep
+ * reading as intent rather than plumbing. Controls that must prove the claim
+ * REFUSES an omitted token call assertDiagnostics directly instead.
+ */
+const judge = (
+  samples: unknown,
+  first: unknown,
+  last: unknown,
+  options: unknown = OPTS
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+) => (assertDiagnostics as any)(samples, first, last, options)
+
 function observation(overrides: Record<string, unknown> = {}) {
   const diagnostics = {
     droppedFrames: 0,
@@ -38,14 +71,15 @@ function observation(overrides: Record<string, unknown> = {}) {
     rssMegabytes: 512,
     ...((overrides.players as Record<string, number>) || {})
   }
+  const base: Record<string, unknown> = { contentPtsSeconds: 10, state: 'PLAY', ...overrides }
+  const pts = base.contentPtsSeconds
   return {
     observed: {
-      contentPtsText: '00:00:10.000',
-      contentPtsSeconds: 10,
-      state: 'PLAY',
-      assetMatch: { matched: true },
-      rawOcrSha256: 'a'.repeat(64),
-      ...overrides,
+      // Derived defaults first, so an explicit override in `overrides` still wins.
+      contentPtsText: typeof pts === 'number' ? timecode(pts) : 'x',
+      assetMatch: { matched: true, assetId: EXPECTED_ASSET, distance: 0 },
+      rawOcrSha256: digestFor(pts),
+      ...base,
       diagnostics,
       players
     }
@@ -297,7 +331,7 @@ describe('sample validity gates on visible, advancing, matched playback', () => 
 
 describe('assertDiagnostics is the Outcome 9 claim, and it must reject each way it can be false', () => {
   it('accepts a truthful series and reports the derived rate', () => {
-    const verdict = assertDiagnostics(truthfulSeries(), resources(500_000), resources(520_000))
+    const verdict = judge(truthfulSeries(), resources(500_000), resources(520_000))
     expect(verdict.droppedFramesStayedZero).toBe(true)
     expect(verdict.presentedRate).toBeCloseTo(30, 5)
     expect(verdict.rssAgreement.withinTolerance).toBe(true)
@@ -306,17 +340,16 @@ describe('assertDiagnostics is the Outcome 9 claim, and it must reject each way 
   it('rejects a nonzero visible dropped-frame counter', () => {
     const series = truthfulSeries()
     series[1].observed.diagnostics.droppedFrames = 1
-    expect(() => assertDiagnostics(series, resources(500_000), resources(520_000))).toThrow(
-      /dropped-frame/i
-    )
+    expect(() => judge(series, resources(500_000), resources(520_000))).toThrow(/dropped-frame/i)
   })
 
   it('rejects a playhead that does not advance between samples', () => {
     const series = truthfulSeries()
+    // Keep the sample internally CONSISTENT (text and seconds together), or this
+    // trips the timecode gate and silently stops testing monotonicity at all.
     series[1].observed.contentPtsSeconds = 10
-    expect(() => assertDiagnostics(series, resources(500_000), resources(520_000))).toThrow(
-      /monotonic/i
-    )
+    series[1].observed.contentPtsText = timecode(10)
+    expect(() => judge(series, resources(500_000), resources(520_000))).toThrow(/monotonic/i)
   })
 
   it('rejects shown frames that stall while the playhead moves', () => {
@@ -324,32 +357,26 @@ describe('assertDiagnostics is the Outcome 9 claim, and it must reject each way 
     // screenshot alone cannot distinguish from healthy playback.
     const series = truthfulSeries()
     series[1].observed.diagnostics.shownFrames = 300
-    expect(() => assertDiagnostics(series, resources(500_000), resources(520_000))).toThrow(
-      /monotonic/i
-    )
+    expect(() => judge(series, resources(500_000), resources(520_000))).toThrow(/monotonic/i)
   })
 
   it('rejects a cache-hit counter that moves backwards', () => {
     const series = truthfulSeries()
     series[1].observed.diagnostics.cacheHits = 1
-    expect(() => assertDiagnostics(series, resources(500_000), resources(520_000))).toThrow(
-      /monotonic/i
-    )
+    expect(() => judge(series, resources(500_000), resources(520_000))).toThrow(/monotonic/i)
   })
 
   it('rejects a presented rate outside the plausible band', () => {
     const series = truthfulSeries()
     series[1].observed.diagnostics.shownFrames = 300 + 5 // 0.5 fps over 10s
-    expect(() => assertDiagnostics(series, resources(500_000), resources(520_000))).toThrow(/rate/i)
+    expect(() => judge(series, resources(500_000), resources(520_000))).toThrow(/rate/i)
   })
 
   it('rejects a visible RSS that disagrees with the exact process sample', () => {
     // The HUD could render a plausible constant. Cross-checking it against `ps` for
     // the exact pid is what makes the number evidence rather than decoration.
     const series = truthfulSeries()
-    expect(() => assertDiagnostics(series, resources(500_000), resources(4_000_000))).toThrow(
-      /rss/i
-    )
+    expect(() => judge(series, resources(500_000), resources(4_000_000))).toThrow(/rss/i)
   })
 
   it('states its rate band as literals rather than deriving them from itself', () => {
@@ -395,22 +422,14 @@ describe('assertDiagnostics validates every counter it claims to have read', () 
   for (const field of ['droppedFrames', 'heldFrames', 'shownFrames', 'cacheHits', 'textures']) {
     it('rejects a sample whose ' + field + ' counter could not be read', () => {
       expect(() =>
-        assertDiagnostics(
-          series({ diagnostics: { [field]: null } }),
-          resources(500_000),
-          resources(520_000)
-        )
+        judge(series({ diagnostics: { [field]: null } }), resources(500_000), resources(520_000))
       ).toThrow(/unreadable/i)
     })
   }
 
   it('rejects an unreadable player count', () => {
     expect(() =>
-      assertDiagnostics(
-        series({ players: { count: null } }),
-        resources(500_000),
-        resources(520_000)
-      )
+      judge(series({ players: { count: null } }), resources(500_000), resources(520_000))
     ).toThrow(/unreadable/i)
   })
 
@@ -420,17 +439,13 @@ describe('assertDiagnostics validates every counter it claims to have read', () 
     // swallows the difference and the unreadable value passes. A gate that only
     // holds for large processes is not a gate.
     expect(() =>
-      assertDiagnostics(
-        series({ players: { rssMegabytes: null } }),
-        resources(500_000),
-        resources(61_440)
-      )
+      judge(series({ players: { rssMegabytes: null } }), resources(500_000), resources(61_440))
     ).toThrow(/unreadable/i)
   })
 
   it('rejects a counter OCR returned as text rather than a number', () => {
     expect(() =>
-      assertDiagnostics(
+      judge(
         series({ diagnostics: { heldFrames: 'eight' } }),
         resources(500_000),
         resources(520_000)
@@ -440,27 +455,19 @@ describe('assertDiagnostics validates every counter it claims to have read', () 
 
   it('rejects a negative counter, which no frame tally can legitimately be', () => {
     expect(() =>
-      assertDiagnostics(
-        series({ diagnostics: { heldFrames: -1 } }),
-        resources(500_000),
-        resources(520_000)
-      )
+      judge(series({ diagnostics: { heldFrames: -1 } }), resources(500_000), resources(520_000))
     ).toThrow(/unreadable/i)
   })
 
   it('rejects a fractional frame counter', () => {
     expect(() =>
-      assertDiagnostics(
-        series({ diagnostics: { textures: 1.5 } }),
-        resources(500_000),
-        resources(520_000)
-      )
+      judge(series({ diagnostics: { textures: 1.5 } }), resources(500_000), resources(520_000))
     ).toThrow(/unreadable/i)
   })
 
   it('rejects an absurd OCR-inflated RSS rather than trusting the digits', () => {
     expect(() =>
-      assertDiagnostics(
+      judge(
         series({ players: { rssMegabytes: 99_999_999 } }),
         resources(500_000),
         resources(520_000)
@@ -488,7 +495,7 @@ describe('assertDiagnostics validates every counter it claims to have read', () 
 
   it('still accepts the truthful series, so the new gate is not simply refusing everything', () => {
     // A control that reds for ANY reason is indistinguishable from a working one.
-    const verdict = assertDiagnostics(series(), resources(500_000), resources(520_000))
+    const verdict = judge(series(), resources(500_000), resources(520_000))
     expect(verdict.presentedRate).toBeCloseTo(30, 5)
     expect(verdict.droppedFramesStayedZero).toBe(true)
   })
@@ -506,11 +513,11 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
   // completely different media while every counter advanced beautifully.
   const at = (pts: unknown, shown: number, cache: number, over: Record<string, unknown> = {}) => ({
     observed: {
-      contentPtsText: 'x',
+      contentPtsText: typeof pts === 'number' ? timecode(pts) : 'x',
       contentPtsSeconds: pts,
       state: 'PLAY',
-      assetMatch: { matched: true },
-      rawOcrSha256: 'a'.repeat(64),
+      assetMatch: { matched: true, assetId: EXPECTED_ASSET, distance: 0 },
+      rawOcrSha256: digestFor(pts),
       diagnostics: {
         droppedFrames: 0,
         heldFrames: 2,
@@ -532,36 +539,24 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
     it('rejects a playhead OCR returned as text, which coerces into a truthful-looking rate', () => {
       // '20' - '10' is 10 and 300/10 is 30, so every arithmetic claim downstream
       // reads correct while nothing numeric was ever measured.
-      expect(() => assertDiagnostics([at('10', 300, 120), at('20', 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
+      expect(() => judge([at('10', 300, 120), at('20', 600, 240)], R(), R())).toThrow(/playhead/i)
     })
 
     it('rejects a negative playhead, which no transport position can be', () => {
-      expect(() => assertDiagnostics([at(-20, 300, 120), at(-10, 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
+      expect(() => judge([at(-20, 300, 120), at(-10, 600, 240)], R(), R())).toThrow(/playhead/i)
     })
 
     it('rejects an unreadable playhead by validation rather than by coercion', () => {
-      expect(() => assertDiagnostics([at(null, 300, 120), at(null, 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
+      expect(() => judge([at(null, 300, 120), at(null, 600, 240)], R(), R())).toThrow(/playhead/i)
     })
 
     it('rejects a non-finite playhead', () => {
-      expect(() => assertDiagnostics([at(10, 300, 120), at(Infinity, 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
-      expect(() => assertDiagnostics([at(NaN, 300, 120), at(NaN, 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
+      expect(() => judge([at(10, 300, 120), at(Infinity, 600, 240)], R(), R())).toThrow(/playhead/i)
+      expect(() => judge([at(NaN, 300, 120), at(NaN, 600, 240)], R(), R())).toThrow(/playhead/i)
     })
 
     it('rejects a playhead beyond the generated fixture duration', () => {
-      expect(() => assertDiagnostics([at(10, 300, 120), at(601, 600, 240)], R(), R())).toThrow(
-        /playhead/i
-      )
+      expect(() => judge([at(10, 300, 120), at(601, 600, 240)], R(), R())).toThrow(/playhead/i)
     })
   })
 
@@ -575,7 +570,7 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
         at(20, 600, 240, { players: { count: 2, rssMegabytes: 512 } }),
         at(30, 900, 360)
       ]
-      expect(() => assertDiagnostics(samples, R(), R())).toThrow(/player count/i)
+      expect(() => judge(samples, R(), R())).toThrow(/player count/i)
     })
 
     it('rejects an intermediate player count outside the permitted bound', () => {
@@ -584,15 +579,11 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
         at(20, 600, 240, { players: { count: 7, rssMegabytes: 512 } }),
         at(30, 900, 360)
       ]
-      expect(() => assertDiagnostics(samples, R(), R())).toThrow(/player count/i)
+      expect(() => judge(samples, R(), R())).toThrow(/player count/i)
     })
 
     it('accepts a genuinely stable three-sample series', () => {
-      const verdict = assertDiagnostics(
-        [at(10, 300, 120), at(20, 600, 240), at(30, 900, 360)],
-        R(),
-        R()
-      )
+      const verdict = judge([at(10, 300, 120), at(20, 600, 240), at(30, 900, 360)], R(), R())
       expect(verdict.playerCountStable).toBe(true)
     })
   })
@@ -601,26 +592,22 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
     it('rejects samples that do not show the opened asset', () => {
       // THE SEVERE ONE. Without this, Outcome 9 could be satisfied by screenshots
       // of entirely different media with perfectly advancing counters.
-      expect(() => assertDiagnostics(pair({ assetMatch: { matched: false } }), R(), R())).toThrow(
+      expect(() => judge(pair({ assetMatch: { matched: false } }), R(), R())).toThrow(
         /opened asset/i
       )
     })
 
     it('rejects a sample with no asset determination at all', () => {
-      expect(() => assertDiagnostics(pair({ assetMatch: undefined }), R(), R())).toThrow(
-        /opened asset/i
-      )
+      expect(() => judge(pair({ assetMatch: undefined }), R(), R())).toThrow(/opened asset/i)
     })
   })
 
   describe('observation identity', () => {
     it('rejects a sample carrying no raw OCR digest, and reports the digests it relied on', () => {
-      expect(() => assertDiagnostics(pair({ rawOcrSha256: null }), R(), R())).toThrow(
-        /observation identity/i
-      )
-      const verdict = assertDiagnostics(pair(), R(), R())
+      expect(() => judge(pair({ rawOcrSha256: null }), R(), R())).toThrow(/observation identity/i)
+      const verdict = judge(pair(), R(), R())
       expect(verdict.observationIdentities).toHaveLength(2)
-      expect(verdict.observationIdentities[0].rawOcrSha256).toBe('a'.repeat(64))
+      expect(verdict.observationIdentities[0].rawOcrSha256).toBe(digestFor(10))
     })
   })
 
@@ -634,29 +621,21 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
       'iosurfaceRegionCount'
     ]) {
       it('rejects a non-numeric ' + field + ' rather than serializing a coerced delta', () => {
-        expect(() =>
-          assertDiagnostics(pair(), R({ [field]: 'abc' }), R({ [field]: 'abc' }))
-        ).toThrow(/resource sample/i)
+        expect(() => judge(pair(), R({ [field]: 'abc' }), R({ [field]: 'abc' }))).toThrow(
+          /resource sample/i
+        )
       })
     }
 
     it('rejects a null resource field', () => {
       expect(() =>
-        assertDiagnostics(
-          pair(),
-          R({ physicalFootprintBytes: null }),
-          R({ physicalFootprintBytes: null })
-        )
+        judge(pair(), R({ physicalFootprintBytes: null }), R({ physicalFootprintBytes: null }))
       ).toThrow(/resource sample/i)
     })
 
     it('rejects a non-numeric process RSS reading', () => {
       expect(() =>
-        assertDiagnostics(
-          pair(),
-          R({ ps: { rssKilobytes: 'x' } }),
-          R({ ps: { rssKilobytes: 'x' } })
-        )
+        judge(pair(), R({ ps: { rssKilobytes: 'x' } }), R({ ps: { rssKilobytes: 'x' } }))
       ).toThrow(/resource sample/i)
     })
 
@@ -675,10 +654,199 @@ describe('assertDiagnostics validates every truth its verdict reports, not only 
   })
 
   it('still accepts a fully truthful series, so none of the above is refusing everything', () => {
-    const verdict = assertDiagnostics(pair(), R(), R())
+    const verdict = judge(pair(), R(), R())
     expect(verdict.ptsAdvanced).toBe(true)
     expect(verdict.presentedRate).toBeCloseTo(30, 5)
     expect(verdict.resourceDelta.physicalFootprintBytes).toBe(0)
+  })
+})
+
+describe('the serialized evidence schema, closed as a schema rather than by example', () => {
+  // FOURTH PASS, AND THE REASON IS STRUCTURAL. The three previous passes each
+  // closed the EXAMPLES they were handed and generalized one step. That still
+  // leaves "present but not evidence": a field can exist, be finite, and carry no
+  // information - a one-character OCR "digest", an assetMatch that names no asset,
+  // a negative byte count, an identity array that is a string. The fix is to state
+  // what each serialized leaf must BE, not to add another example.
+  const D = (seed: unknown) => digestFor(seed)
+  const R = (o: Record<string, unknown> = {}) => ({ ...resources(520_000), ...o })
+  const S = (pts: number, shown: number, cache: number, over: Record<string, unknown> = {}) => ({
+    observed: {
+      contentPtsText: timecode(pts),
+      contentPtsSeconds: pts,
+      state: 'PLAY',
+      assetMatch: { matched: true, assetId: EXPECTED_ASSET, distance: 0 },
+      rawOcrSha256: D(pts),
+      diagnostics: {
+        droppedFrames: 0,
+        heldFrames: 2,
+        shownFrames: shown,
+        cacheHits: cache,
+        textures: 8
+      },
+      players: { count: 1, rssMegabytes: 512 },
+      ...over
+    }
+  })
+  const pair = (over: Record<string, unknown> = {}) => [
+    S(10, 300, 120, over),
+    S(20, 600, 240, over)
+  ]
+
+  describe('the caller must declare which asset it opened', () => {
+    it('refuses when no expected asset token is supplied at all', () => {
+      // Called directly, not through the forwarder: the point is the omission.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(() => (assertDiagnostics as any)(pair(), R(), R())).toThrow(/expected asset/i)
+    })
+
+    it('refuses an empty expected asset token', () => {
+      expect(() => judge(pair(), R(), R(), { expectedAssetId: '' })).toThrow(/expected asset/i)
+    })
+
+    it('rejects samples matched against a DIFFERENT asset than the caller opened', () => {
+      // Internally consistent samples about the wrong media must not satisfy the
+      // claim. Without the caller-supplied token there was nothing to compare to.
+      expect(() =>
+        judge(
+          pair({ assetMatch: { matched: true, assetId: 'some-other-asset', distance: 0 } }),
+          R(),
+          R()
+        )
+      ).toThrow(/opened asset/i)
+    })
+
+    it('rejects an assetMatch that names no asset at all', () => {
+      expect(() => judge(pair({ assetMatch: { matched: true } }), R(), R())).toThrow(
+        /opened asset/i
+      )
+    })
+
+    for (const distance of [-5, 1.5, 999_999]) {
+      it('rejects an implausible match distance of ' + String(distance), () => {
+        expect(() =>
+          judge(
+            pair({ assetMatch: { matched: true, assetId: EXPECTED_ASSET, distance } }),
+            R(),
+            R()
+          )
+        ).toThrow(/opened asset/i)
+      })
+    }
+  })
+
+  describe('the OCR digest must be a digest, and must differ per observation', () => {
+    for (const [label, value] of [
+      ['one character', 'x'],
+      ['64 non-hex characters', 'z'.repeat(64)],
+      ['uppercase hex', 'A'.repeat(64)],
+      ['63 hex characters', 'a'.repeat(63)]
+    ] as [string, string][]) {
+      it('rejects ' + label, () => {
+        expect(() => judge(pair({ rawOcrSha256: value }), R(), R())).toThrow(
+          /observation identity/i
+        )
+      })
+    }
+
+    it('rejects an identical digest across samples, which means one screenshot was reused', () => {
+      // Self-contradictory evidence: the same captured image cannot show two
+      // different advancing counter readings. Nothing previously caught this.
+      expect(() => judge(pair({ rawOcrSha256: D('same') }), R(), R())).toThrow(/distinct/i)
+    })
+
+    it('states the digest shape as a literal rather than reading the pattern back', () => {
+      expect(DIAGNOSTICS_OCR_DIGEST_PATTERN.source).toBe('^[0-9a-f]{64}$')
+    })
+  })
+
+  describe('the HUD timecode must agree with the playhead it is serialized beside', () => {
+    it('rejects a timecode that disagrees with the parsed seconds', () => {
+      expect(() =>
+        judge([S(10, 300, 120, { contentPtsText: '00:00:59.000' }), S(20, 600, 240)], R(), R())
+      ).toThrow(/timecode/i)
+    })
+
+    it('rejects a missing timecode', () => {
+      expect(() => judge(pair({ contentPtsText: null }), R(), R())).toThrow(/timecode/i)
+    })
+  })
+
+  describe('resource readings must be real quantities', () => {
+    it('rejects a negative byte count', () => {
+      expect(() =>
+        judge(pair(), R({ physicalFootprintBytes: -5 }), R({ physicalFootprintBytes: -5 }))
+      ).toThrow(/resource sample/i)
+    })
+
+    it('rejects a negative process RSS by validation rather than by arithmetic', () => {
+      expect(() =>
+        judge(pair(), R({ ps: { rssKilobytes: -1 } }), R({ ps: { rssKilobytes: -1 } }))
+      ).toThrow(/resource sample/i)
+    })
+
+    it('rejects a reading beyond the safe integer range', () => {
+      expect(() =>
+        judge(pair(), R({ mallocAllocatedBytes: 2 ** 60 }), R({ mallocAllocatedBytes: 2 ** 60 }))
+      ).toThrow(/resource sample/i)
+    })
+  })
+
+  describe('the serialized identity arrays must be arrays of identities', () => {
+    for (const field of ['productSurfaceIds', 'mappedRegionIdentities']) {
+      it('rejects a missing ' + field, () => {
+        expect(() => judge(pair(), R({ [field]: undefined }), R({ [field]: undefined }))).toThrow(
+          /resource sample/i
+        )
+      })
+
+      it('rejects a ' + field + ' that is not an array', () => {
+        expect(() => judge(pair(), R({ [field]: 'nope' }), R({ [field]: 'nope' }))).toThrow(
+          /resource sample/i
+        )
+      })
+
+      it('rejects an oversized ' + field, () => {
+        const huge = new Array(100_000).fill(1)
+        expect(() => judge(pair(), R({ [field]: huge }), R({ [field]: huge }))).toThrow(
+          /resource sample/i
+        )
+      })
+    }
+
+    it('rejects an empty-string identity entry', () => {
+      expect(() =>
+        judge(pair(), R({ mappedRegionIdentities: [''] }), R({ mappedRegionIdentities: [''] }))
+      ).toThrow(/resource sample/i)
+    })
+
+    it('accepts a genuinely empty array, because finding no surfaces is a real result', () => {
+      // An empty probe result is legitimate evidence; a MISSING one is not. The
+      // schema must distinguish those, or it just refuses honest measurements.
+      const verdict = judge(pair(), R({ productSurfaceIds: [] }), R({ productSurfaceIds: [] }))
+      expect(verdict.resourceDelta.productSurfaceIds.last).toEqual([])
+    })
+
+    it('states the identity-array ceiling as a literal', () => {
+      expect(DIAGNOSTICS_MAX_IDENTITY_ENTRIES).toBe(4096)
+    })
+
+    it('requires exactly the identity arrays the verdict serializes', () => {
+      // The per-field controls above iterate a literal list, so SHRINKING the
+      // constant reds them. This catches the other direction: an array ADDED to
+      // the serialized evidence without a schema control to validate it.
+      expect(REQUIRED_RESOURCE_IDENTITY_ARRAYS).toEqual([
+        'productSurfaceIds',
+        'mappedRegionIdentities'
+      ])
+    })
+  })
+
+  it('still accepts fully truthful evidence, so the schema is not simply refusing', () => {
+    const verdict = judge(pair(), R(), R())
+    expect(verdict.presentedRate).toBeCloseTo(30, 5)
+    expect(verdict.observationIdentities).toHaveLength(2)
+    expect(verdict.expectedAssetId).toBe(EXPECTED_ASSET)
   })
 })
 
