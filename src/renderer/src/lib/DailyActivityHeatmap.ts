@@ -29,12 +29,82 @@ import { HEATMAP_PROVIDER_COLOR_HEX, HEATMAP_PROVIDER_ORDER } from './UsageHeatm
 export const DAILY_HEATMAP_ROWS = 7
 
 /** Lowest opacity a day with ANY activity may render at, so a quiet day is
- * still visibly distinct from an empty one. */
-const MIN_ACTIVE_INTENSITY = 0.2
+ * still visibly distinct from an empty one. Below about 0.12 a provider colour
+ * stops separating from the empty-cell background. Exported so tests assert the
+ * floor rather than restating a number that then drifts from it. */
+export const MIN_ACTIVE_INTENSITY = 0.14
 
 /** Token-less activity (Cursor daily rows, Codex SQLite markers) reads as a
  * definite but modest mark rather than borrowing the busiest day's weight. */
-const MARKER_INTENSITY = 0.26
+const MARKER_INTENSITY = 0.2
+
+/**
+ * The ramp always spans at least this many orders of magnitude.
+ *
+ * Percentiles are meaningless on a nearly-empty rollup: with three active days
+ * the 5th and 95th are almost the same number, the span collapses toward zero
+ * and every day snaps to either the floor or full strength. Widening a narrow
+ * band around its own midpoint keeps a young install looking like a heatmap
+ * rather than a chessboard.
+ */
+const MIN_RAMP_DECADES = 1
+
+/**
+ * Map a day's token count to opacity, scaled to the distribution actually being
+ * drawn.
+ *
+ * WHY NOT `log10(value) / log10(max)`, which is what the 90-day grids do and
+ * what this used to do. That normalises against ZERO, so it answers "what
+ * fraction of the busiest day's ORDER OF MAGNITUDE is this day's order of
+ * magnitude" — and every real day is within a few orders of the peak. Measured
+ * against a live 143-day rollup spanning 1.3M to 56.7B tokens, a 43,000x range:
+ * the quietest day scored 0.57 and the median 0.80, so the whole year rendered
+ * in the top 43% of the ramp and read as uniformly solid.
+ *
+ * Normalising against the observed RANGE instead spends the whole ramp on the
+ * data that exists. The bounds are the 5th and 95th percentiles rather than the
+ * extremes, because a single enormous day otherwise drags the top of the scale
+ * away from everything else — on that same corpus, min..max still put 83 of 143
+ * days in one fifth of the ramp, while p05..p95 spread them 26/32/45/25/15.
+ *
+ * Clamping at those percentiles is also exactly the requested behaviour: the
+ * quietest 5% of days all read faint, the busiest 5% all read solid.
+ *
+ * Deliberately NOT quantile-ranked (the GitHub contribution-graph approach).
+ * That spreads days perfectly evenly but makes shade mean POSITION rather than
+ * size, so a 56.7B day would look barely darker than a 4.4B one. Opacity here
+ * still means how much.
+ */
+export function buildDailyIntensityRamp(values: readonly number[]): (value: number) => number {
+  const active = values.filter((value) => value > 0).sort((a, b) => a - b)
+  if (active.length === 0) return () => 0
+
+  const log = (value: number): number => Math.log10(value + 1)
+  const last = active.length - 1
+
+  // Round the bounds INWARD — ceil at the bottom, floor at the top — so the
+  // extreme samples fall outside the band wherever the sample is large enough
+  // to have any. Rounding to nearest instead lets p95 land ON the outlier in a
+  // small sample: with eleven days, `round(0.95 * 10)` is 10, i.e. the maximum
+  // itself, and the clamp protects nothing.
+  const loIndex = Math.min(Math.ceil(0.05 * last), last)
+  const hiIndex = Math.max(Math.floor(0.95 * last), 0)
+  // With very few samples the two can cross; fall back to the full range.
+  let lo = log(active[Math.min(loIndex, hiIndex)])
+  let hi = log(active[Math.max(loIndex, hiIndex)])
+  if (hi - lo < MIN_RAMP_DECADES) {
+    const middle = (hi + lo) / 2
+    lo = middle - MIN_RAMP_DECADES / 2
+    hi = middle + MIN_RAMP_DECADES / 2
+  }
+  const span = hi - lo
+
+  return (value: number): number => {
+    if (!(value > 0)) return 0
+    const position = Math.min(1, Math.max(0, (log(value) - lo) / span))
+    return MIN_ACTIVE_INTENSITY + (1 - MIN_ACTIVE_INTENSITY) * position
+  }
+}
 
 const MONTH_LABELS = [
   'Jan',
@@ -166,14 +236,14 @@ export function buildDailyHeatmapGrid(
 
   const windowKeySet = new Set(windowKeys)
 
-  // Peak weight sets the top of the ramp. Logarithmic, so one enormous day does
-  // not flatten a year of ordinary ones into a single dim shade.
-  let maxTokens = 0
-  for (const key of windowKeys) {
-    const tokens = dailyUsageDayTokens(days[key])
-    if (tokens > maxTokens) maxTokens = tokens
-  }
-  const maxLog = Math.log10(maxTokens + 1) || 1
+  // Build the ramp from the values actually being DRAWN, not from all-provider
+  // totals. Those are the same thing unfiltered, but under a provider filter
+  // the plotted value is that provider's share — normalising against the
+  // all-provider peak made every day of a quiet provider render near the floor,
+  // so filtering to it looked like it had barely been used at all.
+  const tokensForDay = (key: string): number =>
+    filter === 'all' ? dailyUsageDayTokens(days[key]) : (days[key]?.[filter]?.tokens ?? 0)
+  const intensityFor = buildDailyIntensityRamp(windowKeys.map(tokensForDay))
 
   const cells: DailyHeatmapCell[] = []
   const monthLabels: DailyHeatmapMonthLabel[] = []
@@ -233,7 +303,7 @@ export function buildDailyHeatmapGrid(
 
     let intensity = 0
     if (visible && filteredTokens > 0) {
-      intensity = Math.max(MIN_ACTIVE_INTENSITY, Math.log10(filteredTokens + 1) / maxLog)
+      intensity = intensityFor(filteredTokens)
     } else if (visible && filteredRuns > 0) {
       intensity = MARKER_INTENSITY
     }

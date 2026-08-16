@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   DAILY_HEATMAP_ROWS,
+  MIN_ACTIVE_INTENSITY,
   buildDailyHeatmapGrid,
+  buildDailyIntensityRamp,
   describeDailyHeatmapCell,
   formatDailyTokenCount
 } from './DailyActivityHeatmap'
@@ -10,6 +12,17 @@ import type { DailyUsageDays } from '../../../shared/dailyUsageRollup'
 
 /** A Wednesday, so leading-blank padding is exercised by default. */
 const NOW = new Date(2026, 5, 10, 12, 0, 0, 0).getTime()
+
+/** The local day key `back` days before NOW. Building keys by decrementing the
+ * day NUMBER silently produces nonsense like `2026-06--9` past the start of the
+ * month, which lands outside the window and makes an assertion pass on a cell
+ * that was never populated. */
+function dayKeyBefore(back: number): string {
+  const date = new Date(NOW)
+  date.setDate(date.getDate() - back)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
 
 function days(entries: Record<string, Record<string, [number, number]>>): DailyUsageDays {
   const out: DailyUsageDays = {}
@@ -96,7 +109,7 @@ describe('accents and intensity', () => {
     expect(cell.color).toBe(HEATMAP_PROVIDER_COLOR_HEX.claude)
   })
 
-  it('scales intensity logarithmically against the busiest day', () => {
+  it('runs the quietest day to the floor and the busiest to full strength', () => {
     const grid = buildDailyHeatmapGrid(
       days({
         '2026-06-10': { codex: [1_000_000, 10] },
@@ -107,7 +120,7 @@ describe('accents and intensity', () => {
     const busy = grid.cells.find((cell) => cell.day === '2026-06-10')!
     const quiet = grid.cells.find((cell) => cell.day === '2026-06-09')!
     expect(busy.intensity).toBeCloseTo(1, 2)
-    expect(quiet.intensity).toBeGreaterThan(0.2)
+    expect(quiet.intensity).toBeCloseTo(MIN_ACTIVE_INTENSITY, 2)
     expect(quiet.intensity).toBeLessThan(busy.intensity)
   })
 
@@ -118,8 +131,96 @@ describe('accents and intensity', () => {
     )
     const quiet = grid.cells.find((cell) => cell.day === '2026-06-09')!
     const empty = grid.cells.find((cell) => cell.day === '2026-06-08')!
-    expect(quiet.intensity).toBeGreaterThanOrEqual(0.2)
+    expect(quiet.intensity).toBeGreaterThanOrEqual(MIN_ACTIVE_INTENSITY)
     expect(empty.intensity).toBe(0)
+  })
+
+  it('SPREADS a realistic year across the whole ramp instead of pinning it solid', () => {
+    // The regression this replaced: `log10(x)/log10(max)` normalises against
+    // ZERO, so on a real 143-day rollup spanning 1.3M..56.7B the quietest day
+    // scored 0.57 and the median 0.80 — every day rendered above 57% opacity
+    // and the year read as uniformly solid.
+    const spread: Record<string, Record<string, [number, number]>> = {}
+    const sampleCount = 60
+    for (let index = 0; index < sampleCount; index += 1) {
+      // Log-uniform across four decades, the shape real usage actually takes.
+      const tokens = Math.round(10 ** (6 + (4 * index) / (sampleCount - 1)))
+      spread[dayKeyBefore(index)] = { codex: [tokens, 1] }
+    }
+    const grid = buildDailyHeatmapGrid(days(spread), { now: NOW, dayCount: 90 })
+    const shades = Object.keys(spread)
+      .map((day) => grid.cells.find((cell) => cell.day === day)!.intensity)
+      .sort((a, b) => a - b)
+
+    expect(shades[0]).toBeCloseTo(MIN_ACTIVE_INTENSITY, 2)
+    expect(shades[shades.length - 1]).toBeCloseTo(1, 2)
+
+    // Every fifth of the ramp carries some of the year, and the busiest fifth
+    // does not swallow it. Under the old formula the top fifth held all 60.
+    const fifths = [0, 0, 0, 0, 0]
+    for (const shade of shades) {
+      const band = Math.min(
+        4,
+        Math.floor(((shade - MIN_ACTIVE_INTENSITY) / (1 - MIN_ACTIVE_INTENSITY)) * 5)
+      )
+      fifths[Math.max(0, band)] += 1
+    }
+    for (const count of fifths) expect(count).toBeGreaterThan(0)
+    expect(fifths[4]).toBeLessThan(sampleCount / 2)
+
+    // And the middle of the data sits near the middle of the ramp.
+    const median = shades[Math.floor(shades.length / 2)]
+    expect(median).toBeGreaterThan(0.35)
+    expect(median).toBeLessThan(0.8)
+  })
+
+  it('excludes the extremes from the band even on a SMALL sample', () => {
+    // Exercised directly, because the difference only shows when the sample is
+    // small: with eleven values, rounding the 95th percentile to NEAREST gives
+    // index 10 — the outlier itself — so the clamp protects nothing and the
+    // other ten days squash toward the floor. Rounding inward gives index 9.
+    const ordinary = Array.from({ length: 10 }, (_, index) => (index + 1) * 1e6)
+    const ramp = buildDailyIntensityRamp([...ordinary, 5e12])
+    expect(ramp(5e12)).toBeCloseTo(1, 2)
+    expect(ramp(1e6)).toBeCloseTo(MIN_ACTIVE_INTENSITY, 2)
+    // The discriminating pair: the ordinary days still climb the ramp. Round
+    // the bounds to nearest instead and the band stretches to the outlier,
+    // dropping these to roughly 0.19 and 0.23.
+    expect(ramp(5e6)).toBeGreaterThan(0.5)
+    expect(ramp(10e6)).toBeGreaterThan(0.8)
+  })
+
+  it('does not let one enormous day compress everything else', () => {
+    // Absolute min..max still put 83 of 143 real days into one fifth of the
+    // ramp; clamping at the 5th/95th percentiles is what stops that.
+    const base: Record<string, Record<string, [number, number]>> = {}
+    for (let index = 0; index < 30; index += 1) {
+      base[dayKeyBefore(index)] = { codex: [(index + 1) * 1e6, 1] }
+    }
+    const withoutOutlier = buildDailyHeatmapGrid(days(base), { now: NOW, dayCount: 40 })
+    const withOutlier = buildDailyHeatmapGrid(
+      days({ ...base, '2026-05-01': { codex: [5e12, 1] } }),
+      { now: NOW, dayCount: 60 }
+    )
+    const median = dayKeyBefore(15)
+    const before = withoutOutlier.cells.find((cell) => cell.day === median)!.intensity
+    const after = withOutlier.cells.find((cell) => cell.day === median)!.intensity
+    expect(Math.abs(after - before)).toBeLessThan(0.15)
+  })
+
+  it('stays a heatmap rather than a chessboard on a nearly empty rollup', () => {
+    // Percentiles are meaningless over two days; without the minimum span the
+    // ramp collapses and every day snaps to floor or full.
+    const grid = buildDailyHeatmapGrid(
+      days({ '2026-06-10': { codex: [1_000, 1] }, '2026-06-09': { codex: [1_100, 1] } }),
+      { now: NOW, dayCount: 30 }
+    )
+    const a = grid.cells.find((cell) => cell.day === '2026-06-10')!.intensity
+    const b = grid.cells.find((cell) => cell.day === '2026-06-09')!.intensity
+    // Near-identical days should look near-identical, not opposite extremes.
+    expect(Math.abs(a - b)).toBeLessThan(0.2)
+    expect(a).toBeGreaterThan(MIN_ACTIVE_INTENSITY)
+    expect(a).toBeLessThan(1)
   })
 
   it('gives token-less activity markers a definite but modest mark', () => {
@@ -164,6 +265,30 @@ describe('provider filter', () => {
     )
     expect(grid.cells.find((cell) => cell.day === '2026-06-10')!.intensity).toBeGreaterThan(0)
     expect(grid.cells.find((cell) => cell.day === '2026-06-09')!.intensity).toBe(0)
+  })
+
+  it('scales the ramp to the FILTERED provider, not the all-provider peak', () => {
+    // Codex is a rounding error next to Claude here. Normalising against the
+    // all-provider peak put every Codex day within a hair of the floor, so
+    // filtering to a quiet provider made it look barely used at all — the ramp
+    // has to be built from the quantity actually being drawn.
+    const entries: Record<string, Record<string, [number, number]>> = {}
+    for (let index = 0; index < 30; index += 1) {
+      entries[dayKeyBefore(index)] = {
+        codex: [Math.round(10 ** (3 + (2 * index) / 29)), 1],
+        claude: [50_000_000_000, 1]
+      }
+    }
+    const grid = buildDailyHeatmapGrid(days(entries), {
+      now: NOW,
+      dayCount: 60,
+      providerFilter: 'codex'
+    })
+    const shades = Object.keys(entries)
+      .map((day) => grid.cells.find((cell) => cell.day === day)!.intensity)
+      .sort((a, b) => a - b)
+    expect(shades[0]).toBeCloseTo(MIN_ACTIVE_INTENSITY, 2)
+    expect(shades[shades.length - 1]).toBeCloseTo(1, 2)
   })
 
   it('leaves the tooltip breakdown and totals whole while filtering', () => {
