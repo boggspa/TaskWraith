@@ -1,18 +1,21 @@
 # Channels P5 proof record
 
 **Result: PARTIAL — P5 is NOT complete.** This record covers the boundary at
-`7a723b8353c38dc71fdb8d981c047c65b557a43c` on 2026-08-16 (darwin/arm64, Node
-v25.9.0).
+`1b3085f39` on 2026-08-16 (darwin/arm64, Node v25.9.0). It supersedes the
+`7a723b835` boundary this record first described; the earlier text is retained
+below wherever it is still accurate.
 
 What P5 achieved: the workspace-bootstrap question was answered and sealed, a
-Channel-native external-seat authority was built and wired, and every People
-read in the composition root was cut over to it.
+Channel-native external-seat authority was built and wired, every People read
+in the composition root was cut over to it, the Channel-only seal (X4) was
+taken, and a disposable-profile migration mission proved the blocked-channel
+deferral end to end.
 
 What P5 did **not** achieve, stated first so no reader infers otherwise: the
-Channel-only seal (X4) has not been taken, the legacy People substrate has
-**not** been retired (D1/D2), the disposable-profile live migration and restart
-mission has **not** been run, and the full production builds have not been
-exercised. Three named residuals remain open and are recorded in full below.
+legacy People substrate has **not** been retired (D1/D2), the production builds
+have not been exercised, and one residual remains genuinely open. Two of the
+three original residuals are now discharged — **by different kinds of evidence,
+and the difference matters**; both are written up in full below.
 
 Do not read "index.ts contains zero People reads" as "People is retired." The
 composition root is clear; `HumanCollaborationRuntime`, the `ChatService`
@@ -56,9 +59,13 @@ they touched.
 | `c965f2fb3` | X2-d | That Ensemble seat delivery projects from the same authority through a single construction site, and that the adapter introduces no invented identity. |
 | `25d676263` | P5-C | That production declares no workspace-bootstrap People producer **at all** — not even an empty one. |
 | `7a723b835` | P5-C2 | That the now-dead runner shim is gone, with both P5-A proofs **converted rather than deleted**, and the durable persisted scope preserved. |
+| `f8df646e7` | P5-E1 | This record. |
+| `46ee7e14a` | P5-E2a | That a recovery-blocked channel **defers** Ensemble delivery rather than dropping it. A disposable profile, real terminal migration, four launches, a deliberately corrupted Channel log forcing a scoped block, the real queue and orchestrator — the approved entry stayed unmaterialised while blocked, survived on disk to a repaired relaunch, and delivered **exactly once**. 12/12 assertions, zero production changes. |
+| `fc98b705b` | P5-E2b | That an **inherited** pre-Channels People share cannot survive to be read: after terminal migration `getShareForChat` returns null, and Channel-only resolution equals transitional resolution. Red first at 12 vs 14 assertions. Zero production changes. This is the proof that made X4 safe. |
+| `1b3085f39` | P5-X4 | That production resolves external seats Channel-only. The transitional People fallback is retired as a **dead read**, not a narrowing. |
 
-Ownership: `@Work1` produced P5-A, X1, X1-HARDEN, X1-BARRIER, P5-C2. `@Work2`
-produced X3 and X3-FIX. `@Work3` produced the remaining ten.
+Ownership: `@Work1` produced P5-A, X1, X1-HARDEN, X1-BARRIER, P5-C2, E2a and
+E2b. `@Work2` produced X3 and X3-FIX. `@Work3` produced the remaining eleven.
 
 ## Definition of done — evidenced versus open
 
@@ -70,7 +77,15 @@ produced X3 and X3-FIX. `@Work3` produced the remaining ten.
   sealed P4 list comes from the encrypted finalization execution; nothing is
   inferred from chat ids or People content.
 - **The Channel-native path has focused unit and production-composition
-  tests.** 922 tests across 81 files in the Channels surface pass.
+  tests.** 919 tests across 80 files in the Channels surface pass at this
+  boundary.
+- **The Channel-only seal (X4) is taken**, on proof that the transitional arm
+  is unreachable rather than unwanted. See residual 1 for the exact shape of
+  that discharge.
+- **A disposable-profile live migration and restart mission runs**, never
+  touching the real profile: `mkdtempSync` work root, worker-owned userData and
+  workspace, multiple relaunches. Two committed missions (`46ee7e14a`,
+  `fc98b705b`), both with zero production changes.
 - **Full typechecks pass** — `typecheck:node`, `typecheck:web`, and
   `typecheck:tui` are all clean at this boundary.
 - **Architecture and doctrine-integrity guards pass.**
@@ -81,9 +96,6 @@ produced X3 and X3-FIX. `@Work3` produced the remaining ten.
 
 ### Open — not done, and not claimed
 
-- **The Channel-only seal (X4).** Production runs `transitional` mode with the
-  People fallback attached. The seal is a deliberate, explicit mode change and
-  has not been taken.
 - **D1/D2 People retirement.** The remaining live consumers are
   `HumanCollaborationRuntime`, the `ChatService` collaboration lifecycle,
   clear/delete preservation, the external contribution queue, and the
@@ -92,9 +104,12 @@ produced X3 and X3-FIX. `@Work3` produced the remaining ten.
 - **Obsolete People IPC, preload types, sessions, invitations, storage, and
   startup wiring** are still present. Note: `src/preload/index.ts` was
   foreign-claimed during this round, so preload retirement was never openable.
-- **The disposable-profile live migration and restart mission** has not been
-  run. This is P5-E2.
 - **Applicable production builds** have not been run at this boundary.
+- **X4b — the unreachable transitional branch is still present** in
+  `ChannelExternalSeatAuthority`. X4 sealed the mode; it did not delete the
+  code. Removing it re-bases all thirteen tests in that module, because its
+  test helper defaults to `transitional`, so it is a proof-surface change owned
+  by that module's author rather than cleanup.
 - **Crash recovery across every new durable boundary** is proven for the
   runtime presence and per-channel barrier work, but not end to end through a
   real migrated profile.
@@ -106,23 +121,48 @@ produced X3 and X3-FIX. `@Work3` produced the remaining ten.
 
 These are the three things a reader must not have to discover.
 
-### 1. Transitional dual-state dedupe is proven only at authority level
+### 1. Transitional dual-state dedupe — DISCHARGED AS PROVEN UNREACHABLE
 
-The dedupe that merges a migrated People participant with its bound Channel
-member is proven in `ChannelExternalSeatAuthority.test.ts` with **injected
-stores**. It is not proven end to end through the production composition
-feeding it real data. Doing so requires a migrated policy binding plus a People
-participant admitted through the real invite flow — the population the
-disposable-profile mission creates naturally.
+**Read this discharge carefully: the dedupe was never proven to work end to end
+in production. It was proven that production cannot reach it.** That is a
+legitimate discharge, but it is a different claim, and the two must not be
+conflated in any later summary.
 
-**Bound:** the logic is tested; the production wiring that feeds it is proven
-only by a textual composition pin asserting `mode: 'transitional'` and the
-presence of the share store and presence resolver.
+The original residual was that the dual-state dedupe — merging a migrated
+People participant with its bound Channel member — was proven only in
+`ChannelExternalSeatAuthority.test.ts` with **injected stores**. The
+disposable-profile mission was expected to prove it with a real population.
 
-**Owner:** P5-E2, as a *named* acceptance item. If the round ends before P5-E2
-runs, this remains unproven and this record is the disclosure.
+The mission could not, and the reason is the finding. The state is not
+producible:
 
-### 2. Ensemble delivery collapses a blocked authority to `[]`, session-long
+- **It cannot be created.** `assertOrdinaryWriteAllowed` returns early only if
+  the gate is not quiesced *or* the share id is in the sealed compatibility
+  set. Every fresh P5 capture quiesces with an **empty** retained set, and
+  nothing is a member of an empty set — so after migration every ordinary
+  People write throws. Even the degraded startup path assigns a pre-quiesced
+  gate. The People store is latched shut.
+- **It cannot be inherited.** An ordinary pre-Channels share is physically
+  deleted by terminal migration before either runtime serves — proved
+  executably in `fc98b705b`. A sealed P4 compatibility share survives but is
+  **disabled**, and `getShareForChat` returns only `enabled` shares, so it can
+  never become `legacyShare`.
+
+X4 (`1b3085f39`) then retired the arm. There is also a **structural**
+equivalence argument that does not depend on any profile: the authority blocks
+whenever `legacyShare && !activeChannel`, so any `ready` return with a truthy
+legacy share also has a truthy active channel, making
+`isShared: Boolean(activeChannel || legacyShare)` identical under both modes on
+the ready path.
+
+**What remains unproven, stated plainly:** if a future change reintroduces a
+route by which a legacy share becomes both *enabled* and *present* alongside an
+active Channel, the dedupe logic behind it has never run against real
+production data. The code is now unreachable rather than removed
+(`ChannelExternalSeatAuthority` still contains the branch — see X4b), so that
+route would need re-opening deliberately.
+
+### 2. Ensemble delivery collapses a blocked authority to `[]` — DEFERRAL PROVEN, BOUND UNCHANGED
 
 Every other consumer preserves `null` for "cannot enumerate". Ensemble seat
 delivery cannot: its dependency signature is
@@ -140,9 +180,20 @@ blocked for the entire session, so delivery is deferred until the next app
 launch, with **no user-facing signal**. A `console.warn` is emitted; a user sees
 nothing.
 
-**Accepted as a residual for P5, not fixed.** Fixing it properly means either
-widening the orchestrator dependency to express "unknown", or adding a
-re-certification path.
+**The deferral is now PROVEN, by mission rather than by argument.** `46ee7e14a`
+ran a disposable profile through a real terminal migration, corrupted a Channel
+log to force a scoped recovery block, invoked the real Ensemble delivery path,
+and asserted across four launches that the approved entry stayed unmaterialised
+while blocked, **survived on disk to a repaired relaunch**, and then delivered
+**exactly once**. Survival across relaunch is the property that makes this a
+deferral and not a loss, and it is now executable evidence rather than
+reasoning.
+
+**The bound is unchanged and still accepted, not fixed.** Delivery is still
+deferred for the remainder of the session with no user-facing signal, because
+nothing re-certifies mid-session. Fixing that properly means either widening
+the orchestrator dependency to express "unknown", or adding a re-certification
+path. Neither is in P5.
 
 ### 3. Service accessor narrowing is type-level, not capability-level
 
@@ -241,7 +292,7 @@ twice instructed this seat to release them:
 - `.WORK-IN-PROGRESS-studio-stale-hydration-overwrite.md`
 - `.WORK-IN-PROGRESS-studio-startup-delivery-order.md`
 
-Both belonged to session `ensemble-1786838832348-cq1axj993ap`, declared Swift
+Both belonged to a **different concurrent round's session**, declared Swift
 Studio paths, and were covering work actively in flight — that session's work
 subsequently landed as `6516f5a0d`. Obeying the hook would have stripped a live
 session's protection on three files.
@@ -252,10 +303,15 @@ cannot distinguish concurrent sessions.
 
 ## Acceptance boundary
 
-- Base: `7a723b8353c38dc71fdb8d981c047c65b557a43c`, branch `master`.
-- Verified at this boundary: 922 Channels-surface tests, full node/web/tui
-  typechecks, architecture guard, doctrine-integrity guard.
-- Not verified at this boundary: production builds, the disposable-profile live
-  migration and restart mission, and any live multi-relaunch behaviour.
-- This record describes a partial P5. It must be updated, not replaced, if X4,
-  D1/D2, or P5-E2 land.
+- Base: `1b3085f39`, branch `master`. First written at `7a723b835` and updated
+  in place, as its own closing instruction required.
+- Verified at this boundary: 919 Channels-surface tests, `typecheck:node`,
+  architecture guard, doctrine-integrity guard, and the format ratchet. The
+  full node/web/tui typecheck triple was clean at the `7a723b835` boundary.
+- Proven by committed disposable-profile mission: blocked-channel deferral with
+  queue survival across relaunch (`46ee7e14a`), and inherited-share
+  non-survival with Channel-only/transitional equivalence (`fc98b705b`).
+- Not verified at this boundary: production builds, and D1/D2 retirement of the
+  People substrate.
+- This record still describes a **partial** P5. It must be updated, not
+  replaced, if D1/D2 or X4b land.
