@@ -1245,19 +1245,26 @@ function matchHudAssetIdentity(hud, assetId) {
   )
 
   const expected = normalizeHudAssetCandidate(assetId)
-  let best = null
-  const consider = (candidate, observationIndex) => {
+  let bestFullWindow = null
+  let bestShortFragment = null
+  const consider = (candidate, observationIndex, fullWindow) => {
     const distance = editDistance(expected, candidate)
+    const current = fullWindow ? bestFullWindow : bestShortFragment
     if (
-      best === null ||
-      distance < best.distance ||
-      (distance === best.distance && candidate.length > best.observedCandidate.length)
+      current === null ||
+      distance < current.distance ||
+      (distance === current.distance && candidate.length > current.observedCandidate.length)
     ) {
-      best = {
+      const evidence = {
         observedCandidate: candidate,
         observationIndex,
         comparedLength: candidate.length,
         distance
+      }
+      if (fullWindow) {
+        bestFullWindow = evidence
+      } else {
+        bestShortFragment = evidence
       }
     }
   }
@@ -1272,20 +1279,21 @@ function matchHudAssetIdentity(hud, assetId) {
       `HUD asset observation ${observationIndex} exceeded ${HUD_ASSET_MAX_OBSERVATION_LENGTH} normalized characters`
     )
     if (observed.length < HUD_ASSET_ID_LENGTH) {
-      consider(observed, observationIndex)
+      consider(observed, observationIndex, false)
       continue
     }
     for (let offset = 0; offset + HUD_ASSET_ID_LENGTH <= observed.length; offset += 1) {
-      consider(observed.slice(offset, offset + HUD_ASSET_ID_LENGTH), observationIndex)
+      consider(observed.slice(offset, offset + HUD_ASSET_ID_LENGTH), observationIndex, true)
     }
   }
 
-  const winning = best ?? {
-    observedCandidate: null,
-    observationIndex: null,
-    comparedLength: 0,
-    distance: HUD_ASSET_ID_LENGTH
-  }
+  const winning = bestFullWindow ??
+    bestShortFragment ?? {
+      observedCandidate: null,
+      observationIndex: null,
+      comparedLength: 0,
+      distance: HUD_ASSET_ID_LENGTH
+    }
   return {
     matched:
       winning.comparedLength === HUD_ASSET_ID_LENGTH &&

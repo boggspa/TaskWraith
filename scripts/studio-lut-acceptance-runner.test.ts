@@ -788,6 +788,33 @@ describe('studio LUT acceptance runner contract', () => {
     })
   })
 
+  it.each([
+    ['short first', true, 1],
+    ['short last', false, 0]
+  ])(
+    'does not let a near-complete short prefix shadow the sealed full observation: %s',
+    (_name, shortFirst, expectedObservationIndex) => {
+      const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+      const sealedObservation = {
+        text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+      }
+      const shortObservation = { text: assetId.slice(0, 40) }
+      const observations = shortFirst
+        ? [shortObservation, sealedObservation]
+        : [sealedObservation, shortObservation]
+      const result = matchHudAssetIdentity({ observations }, assetId)
+
+      expect(result).toMatchObject({
+        matched: true,
+        observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+        observationIndex: expectedObservationIndex,
+        comparedLength: 43,
+        distance: 12,
+        threshold: 12
+      })
+    }
+  )
+
   it('rejects a full ID with the same first 24 characters and a wrong tail', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
     const wrongTail = `${assetId.slice(0, 24)}${'A'.repeat(19)}`
