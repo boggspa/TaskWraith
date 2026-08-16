@@ -4,10 +4,7 @@ import type {
   TranscriptMediaStatus,
   TranscriptMediaThumbnail
 } from '../main/store/types'
-import {
-  isTranscriptMediaGroupKind,
-  transcriptMediaRefDedupKey
-} from './transcriptMediaGrouping'
+import { isTranscriptMediaGroupKind, transcriptMediaRefDedupKey } from './transcriptMediaGrouping'
 
 /**
  * Shared, node-free sanitizer for `media_refs` arriving on the RAW provider
