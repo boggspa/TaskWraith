@@ -18,6 +18,7 @@ import type {
 import { resolveEnsembleFanoutIsolationPolicy } from '../../../shared/ensembleFanoutIsolation'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import { collectTranscriptExportRounds } from '../../../shared/transcriptExportScope'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
@@ -689,7 +690,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleCancel,
     handleClearDiscordContext,
     handleCollapseEnsembleToSolo,
-    handleCopyCurrentTranscript,
     handleCreateGithubPr,
     handleDeleteQueuedMessage,
     handleDetachWindow,
@@ -5228,13 +5228,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
 	                  resetKey={currentChat?.appChatId || null}
 	                  composerStyle={appearance.composerStyle}
-	                  onCopy={handleCopyCurrentTranscript}
-	                  onCopyMessages={() =>
+	                  getRounds={() => collectTranscriptExportRounds(currentChat)}
+	                  onCopy={(scope) =>
 	                    currentChat?.appChatId
-	                      ? window.api.copyChatMessages(currentChat.appChatId)
+	                      ? window.api.copyChatMarkdownTranscript(currentChat.appChatId, scope)
 	                      : Promise.resolve({ ok: false as const, reason: 'empty' as const })
 	                  }
-	                  onDownload={() => downloadChatMarkdownTranscript(currentChat?.appChatId)}
+	                  onCopyMessages={(scope) =>
+	                    currentChat?.appChatId
+	                      ? window.api.copyChatMessages(currentChat.appChatId, scope)
+	                      : Promise.resolve({ ok: false as const, reason: 'empty' as const })
+	                  }
+	                  onDownload={(scope) =>
+	                    downloadChatMarkdownTranscript(currentChat?.appChatId, scope)
+	                  }
 	                />
 	                <MultiviewLayoutPicker
 	                  layout={multiview.layout}

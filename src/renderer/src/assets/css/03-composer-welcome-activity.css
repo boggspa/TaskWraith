@@ -5756,6 +5756,9 @@
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
+  max-height: min(620px, calc(100vh - 16px));
+  overflow: auto;
+  overscroll-behavior: contain;
   box-sizing: border-box;
   transform: translateY(-100%);
   display: grid;
@@ -5763,6 +5766,7 @@
   grid-template-areas:
     "header header"
     "body action"
+    "scope scope"
     "feedback feedback";
   align-items: center;
   gap: 8px 12px;
@@ -5811,6 +5815,163 @@
   font-size: var(--font-size-xs);
   line-height: 1.4;
   min-width: 0;
+}
+
+.composer-copy-transcript-scope {
+  grid-area: scope;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.composer-copy-transcript-scope-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.composer-copy-transcript-scope-heading > span:first-child {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.composer-copy-transcript-scope-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.composer-copy-transcript-scope-options > button {
+  min-width: 0;
+  min-height: 31px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, transparent);
+  border-radius: 7px;
+  padding: 6px 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-copy-transcript-scope-options > button:hover:not(:disabled),
+.composer-copy-transcript-scope-options > button:focus-visible,
+.composer-copy-transcript-scope-options > button.is-selected {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.composer-copy-transcript-scope-options > button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.composer-copy-transcript-round-chooser {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 82%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-base) 74%, transparent);
+}
+
+.composer-copy-transcript-round-chooser > input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 92%, transparent);
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-base) 86%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.composer-copy-transcript-round-chooser > input:focus {
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.composer-copy-transcript-round-list {
+  display: grid;
+  gap: 5px;
+  max-height: 250px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.composer-copy-transcript-round-list > button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 7px 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.composer-copy-transcript-round-list > button:hover,
+.composer-copy-transcript-round-list > button:focus-visible,
+.composer-copy-transcript-round-list > button.is-selected {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-copy-transcript-round-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+
+.composer-copy-transcript-round-title > span {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.composer-copy-transcript-round-prompt,
+.composer-copy-transcript-round-participants {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-copy-transcript-round-prompt {
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.composer-copy-transcript-round-meta,
+.composer-copy-transcript-round-participants,
+.composer-copy-transcript-stream-note,
+.composer-copy-transcript-round-empty {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.composer-copy-transcript-round-empty {
+  padding: 12px 8px;
+  text-align: center;
 }
 
 .composer-copy-transcript-primary {
@@ -5893,6 +6054,7 @@
     grid-template-areas:
       "header"
       "body"
+      "scope"
       "action"
       "feedback";
   }
@@ -5904,6 +6066,10 @@
   .composer-copy-transcript-primary,
   .composer-copy-transcript-secondary {
     flex: 1 1 0;
+  }
+
+  .composer-copy-transcript-scope-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

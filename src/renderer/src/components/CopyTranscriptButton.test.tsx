@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { CopyTranscriptButton } from './CopyTranscriptButton'
+import type { TranscriptExportRound } from '../../../shared/transcriptExportScope'
 
 const ok = async () => ({
   ok: true as const,
@@ -8,6 +9,30 @@ const ok = async () => ({
   charCount: 120,
   omissions: ['absolute paths scrubbed']
 })
+
+const rounds: TranscriptExportRound[] = [
+  {
+    roundId: 'round-1',
+    ordinal: 1,
+    prompt: 'Inspect the export path',
+    startedAt: '2026-08-16T14:00:00.000Z',
+    endedAt: '2026-08-16T14:02:00.000Z',
+    status: 'completed',
+    hops: 4,
+    participantCount: 2,
+    participantLabels: ['Orchestrator · codex', 'Reviewer · claude']
+  },
+  {
+    roundId: 'round-2',
+    ordinal: 2,
+    prompt: 'Ship the scoped picker',
+    startedAt: '2026-08-16T14:03:00.000Z',
+    status: 'running',
+    hops: 7,
+    participantCount: 3,
+    participantLabels: ['Orchestrator · codex', 'Worker · codex', 'Reviewer · claude']
+  }
+]
 
 describe('CopyTranscriptButton', () => {
   it('renders a stable accessible icon button', () => {
@@ -25,13 +50,25 @@ describe('CopyTranscriptButton', () => {
 
   it('renders the popover with the copy, messages and download actions when open', () => {
     const html = renderToStaticMarkup(
-      <CopyTranscriptButton defaultOpen onCopy={ok} onCopyMessages={ok} onDownload={ok} />
+      <CopyTranscriptButton
+        defaultOpen
+        getRounds={() => rounds}
+        onCopy={ok}
+        onCopyMessages={ok}
+        onDownload={ok}
+      />
     )
 
     expect(html).toContain('role="dialog"')
     expect(html).toContain('Copy Markdown')
     expect(html).toContain('Copy Messages')
     expect(html).toContain('raw conversation messages only')
+    expect(html).toContain('Current round')
+    expect(html).toContain('Previous round')
+    expect(html).toContain('Choose round…')
+    expect(html).toContain('Entire task')
+    expect(html).toContain('aria-label="Transcript scope"')
+    expect(html).toContain('class="is-selected" aria-pressed="true"')
     expect(html).toContain('aria-expanded="true"')
     // The renamed primary must not carry the old "handoff" label anywhere.
     expect(html).not.toContain('Copy handoff Markdown')
@@ -58,8 +95,8 @@ describe('CopyTranscriptButton', () => {
       <CopyTranscriptButton defaultOpen disabled onCopy={ok} onCopyMessages={ok} onDownload={ok} />
     )
 
-    // Trigger plus the three popover actions.
-    expect(html.match(/disabled=""/g) ?? []).toHaveLength(4)
+    // Trigger, four scope choices, and the three export actions.
+    expect(html.match(/disabled=""/g) ?? []).toHaveLength(8)
   })
 
   it('can render disabled and copied states without changing button text width', () => {
