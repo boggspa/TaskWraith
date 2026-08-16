@@ -764,30 +764,88 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('verifies both hashes on a detached RED failure receipt', async () => {
+  it('rehashes every semantic leaf on a detached RED failure receipt', async () => {
     const root = await temporaryRoot('studio-acceptance-detached-failure-receipt-')
     const fixture = await writeDetachedCompletionFixture(root)
+    const leafDirectory = path.join(root, 'failure-leaves')
+    await fsPromises.mkdir(leafDirectory)
+    const leafPaths = {
+      fixtureManifest: path.join(leafDirectory, 'fixture-manifest.json'),
+      generatedFixture: path.join(leafDirectory, 'generated.mp4'),
+      openedMedia: path.join(leafDirectory, 'opened.mp4'),
+      journal: path.join(leafDirectory, 'journal.jsonl'),
+      driverRequest: path.join(leafDirectory, 'request.json'),
+      driverRaw: path.join(leafDirectory, 'raw.json'),
+      driverValidated: path.join(leafDirectory, 'validated.json'),
+      watchdogReceipt: fixture.paths.watchdogReceiptPath
+    }
+    const leafContents = {
+      fixtureManifest: 'fixture manifest',
+      generatedFixture: 'generated fixture',
+      openedMedia: 'opened fixture',
+      journal: 'journal leaf',
+      driverRequest: 'driver request',
+      driverRaw: 'driver raw',
+      driverValidated: 'driver validated'
+    }
+    for (const [name, contents] of Object.entries(leafContents)) {
+      await fsPromises.writeFile(leafPaths[name as keyof typeof leafPaths], contents)
+    }
     const watchdogReceiptSha256 = await sha256HexFile(fixture.paths.watchdogReceiptPath)
-    const watchdogStat = await fsPromises.stat(fixture.paths.watchdogReceiptPath)
+    const artifactReferences = Object.fromEntries(
+      await Promise.all(
+        Object.entries(leafPaths).map(async ([name, leafPath]) => {
+          const stat = await fsPromises.stat(leafPath)
+          return [
+            name,
+            {
+              path: leafPath,
+              present: true,
+              byteLength: stat.size,
+              sha256: await sha256HexFile(leafPath)
+            }
+          ]
+        })
+      )
+    )
     const redEvidence = {
       ...fixture.evidence,
       ok: false,
       verdict: 'RED',
-      failure: { name: 'Error', message: 'bounded journey failure', stage: 'native-exec' },
-      artifactReferences: {
-        watchdogReceipt: {
-          path: fixture.paths.watchdogReceiptPath,
-          present: true,
-          byteLength: watchdogStat.size,
-          sha256: watchdogReceiptSha256
+      speechFixture: {
+        manifestPath: leafPaths.fixtureManifest,
+        outputPath: leafPaths.generatedFixture
+      },
+      asset: { assetPath: leafPaths.openedMedia },
+      durable: { journalPath: leafPaths.journal },
+      watchdogReceiptPath: leafPaths.watchdogReceipt,
+      failure: {
+        name: 'Error',
+        message: 'bounded journey failure',
+        stage: 'native-exec',
+        driverEvidence: {
+          requestPath: leafPaths.driverRequest,
+          rawReceiptPath: leafPaths.driverRaw,
+          validatedReceiptPath: leafPaths.driverValidated
         }
-      }
+      },
+      artifactJoinPolicy: {
+        root,
+        exactSemanticPathSet: true,
+        sha256EveryPresentRegularFile: true,
+        revalidateEveryLeafAtStatusRead: true,
+        missingFilesRemainExplicit: true
+      },
+      artifactReferences
     }
-    await fsPromises.writeFile(
-      fixture.paths.evidencePath,
-      `${JSON.stringify(redEvidence)}\n`,
-      'utf8'
-    )
+    const sealEvidence = async () => {
+      await fsPromises.writeFile(
+        fixture.paths.evidencePath,
+        `${JSON.stringify(redEvidence)}\n`,
+        'utf8'
+      )
+    }
+    await sealEvidence()
     const failedManifest = {
       ...fixture.manifest,
       state: 'failed',
@@ -795,11 +853,14 @@ describe('Studio acceptance harness', () => {
       evidenceSha256: await sha256HexFile(fixture.paths.evidencePath),
       watchdogReceiptSha256
     }
-    await fsPromises.writeFile(
-      fixture.paths.manifestPath,
-      `${JSON.stringify(failedManifest)}\n`,
-      'utf8'
-    )
+    const sealManifest = async () => {
+      await fsPromises.writeFile(
+        fixture.paths.manifestPath,
+        `${JSON.stringify(failedManifest)}\n`,
+        'utf8'
+      )
+    }
+    await sealManifest()
 
     await expect(
       readDetachedCoordinatorStatus({
@@ -817,18 +878,7 @@ describe('Studio acceptance harness', () => {
       watchdogReceiptSha256
     })
 
-    redEvidence.artifactReferences.watchdogReceipt.sha256 = '0'.repeat(64)
-    await fsPromises.writeFile(
-      fixture.paths.evidencePath,
-      `${JSON.stringify(redEvidence)}\n`,
-      'utf8'
-    )
-    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
-    await fsPromises.writeFile(
-      fixture.paths.manifestPath,
-      `${JSON.stringify(failedManifest)}\n`,
-      'utf8'
-    )
+    await fsPromises.appendFile(leafPaths.journal, '-tamper')
     await expect(
       readDetachedCoordinatorStatus({
         instanceId: fixture.plan.instanceId,
@@ -839,21 +889,104 @@ describe('Studio acceptance harness', () => {
       state: 'failed',
       verdict: 'RED',
       green: false,
-      reason: 'detached RED acceptance evidence is not an exact joined failure receipt'
+      reason: 'detached RED artifact leaf join mismatch'
+    })
+    await fsPromises.writeFile(leafPaths.journal, leafContents.journal)
+
+    await fsPromises.appendFile(leafPaths.driverRaw, '-tamper')
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED artifact leaf join mismatch'
+    })
+    await fsPromises.writeFile(leafPaths.driverRaw, leafContents.driverRaw)
+
+    const driverValidatedReference = redEvidence.artifactReferences.driverValidated
+    await fsPromises.unlink(leafPaths.driverValidated)
+    redEvidence.artifactReferences.driverValidated = {
+      path: leafPaths.driverValidated,
+      present: false
+    }
+    await sealEvidence()
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await sealManifest()
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      failureEvidenceVerified: true
+    })
+    await fsPromises.writeFile(leafPaths.driverValidated, leafContents.driverValidated)
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED artifact leaf join mismatch'
+    })
+    redEvidence.artifactReferences.driverValidated = driverValidatedReference
+    await sealEvidence()
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await sealManifest()
+
+    const journalReference = redEvidence.artifactReferences.journal
+    redEvidence.artifactReferences.journal = redEvidence.artifactReferences.driverRaw
+    await sealEvidence()
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await sealManifest()
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED artifact leaf join mismatch'
+    })
+
+    redEvidence.artifactReferences.journal = journalReference
+    redEvidence.artifactReferences.watchdogReceipt.sha256 = '0'.repeat(64)
+    await sealEvidence()
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await sealManifest()
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED artifact leaf join mismatch'
     })
 
     redEvidence.artifactReferences.watchdogReceipt.sha256 = watchdogReceiptSha256
-    await fsPromises.writeFile(
-      fixture.paths.evidencePath,
-      `${JSON.stringify(redEvidence)}\n`,
-      'utf8'
-    )
+    await sealEvidence()
     failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
-    await fsPromises.writeFile(
-      fixture.paths.manifestPath,
-      `${JSON.stringify(failedManifest)}\n`,
-      'utf8'
-    )
+    await sealManifest()
     await fsPromises.appendFile(fixture.paths.evidencePath, 'tamper')
     await expect(
       readDetachedCoordinatorStatus({
@@ -3068,39 +3201,54 @@ describe('Studio acceptance harness', () => {
     ).resolves.toMatchObject({ revision: 2, op: { type: 'set_transcript' } })
   })
 
-  it('adjudicates the recognized passage instead of accepting any nonempty transcript', () => {
+  it('adjudicates only an asset-bound, timed, ordered recognized passage', () => {
     const phrases = expectedTranscriptPhrases()
+    const boundary = { assetId: 'asset-a', durationSeconds: 30, frameRate: 30 }
     const transcript = {
       revision: 2,
       op: {
         type: 'set_transcript',
         transcript: {
+          schemaVersion: 1,
+          transcriptId: 'transcript-a',
           assetId: 'asset-a',
           segments: [
             {
               segmentId: 'seg-a',
-              text: 'TaskWraith Studio ACCEPTANCE transcript; this verifies timed transcript delivery.'
+              text: 'TaskWraith Studio ACCEPTANCE transcript; this verifies timed transcript delivery.',
+              sourceIn: { n: 0, d: 30 },
+              sourceOut: { n: 120, d: 30 }
             },
             {
               segmentId: 'seg-b',
-              text: 'Proposal approval, proposal rejection, and durable restart recovery are checked.'
+              text: 'Proposal approval, proposal rejection, and durable restart recovery are checked.',
+              sourceIn: { n: 120, d: 30 },
+              sourceOut: { n: 300, d: 30 }
             }
           ]
         }
       }
     }
 
-    expect(adjudicateRecognizedTranscript(transcript, phrases)).toMatchObject({
+    expect(adjudicateRecognizedTranscript(transcript, phrases, boundary)).toMatchObject({
       ok: true,
       segmentCount: 2,
       matchedPhrases: phrases,
       phraseMatches: phrases.map((phrase) => expect.objectContaining({ phrase, editDistance: 0 })),
+      timingPolicy: {
+        exactAssetId: 'asset-a',
+        positiveRanges: true,
+        orderedNonOverlapping: true,
+        durationSeconds: 30,
+        frameRate: 30,
+        tailToleranceFrames: 1
+      },
       transcriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
     })
     const measuredRecognition = structuredClone(transcript)
     measuredRecognition.op.transcript.segments[0].text =
       'Task rate Studio ACCEPTANCE transcript; this verifies time transcript delivery.'
-    expect(adjudicateRecognizedTranscript(measuredRecognition, phrases)).toMatchObject({
+    expect(adjudicateRecognizedTranscript(measuredRecognition, phrases, boundary)).toMatchObject({
       ok: true,
       matchedPhrases: phrases,
       phraseMatches: expect.arrayContaining([
@@ -3108,26 +3256,74 @@ describe('Studio acceptance harness', () => {
       ])
     })
     const wrong = structuredClone(transcript)
-    wrong.op.transcript.segments = [{ segmentId: 'seg-wrong', text: 'unrelated spoken words' }]
-    expect(adjudicateRecognizedTranscript(wrong, phrases)).toMatchObject({
+    wrong.op.transcript.segments = [
+      {
+        segmentId: 'seg-wrong',
+        text: 'unrelated spoken words',
+        sourceIn: { n: 0, d: 30 },
+        sourceOut: { n: 30, d: 30 }
+      }
+    ]
+    expect(adjudicateRecognizedTranscript(wrong, phrases, boundary)).toMatchObject({
       ok: false,
       missingPhrases: phrases
     })
     const missing = structuredClone(transcript)
     missing.op.transcript.segments[1].text =
       'Proposal approval and durable restart recovery are checked.'
-    expect(adjudicateRecognizedTranscript(missing, phrases)).toMatchObject({
+    expect(adjudicateRecognizedTranscript(missing, phrases, boundary)).toMatchObject({
       ok: false,
       missingPhrases: ['proposal rejection']
     })
-    const outOfOrder = structuredClone(transcript)
-    outOfOrder.op.transcript.segments[1].text =
+    const phraseOutOfOrder = structuredClone(transcript)
+    phraseOutOfOrder.op.transcript.segments[1].text =
       'Proposal rejection, proposal approval, and durable restart recovery are checked.'
-    expect(adjudicateRecognizedTranscript(outOfOrder, phrases)).toMatchObject({
+    expect(adjudicateRecognizedTranscript(phraseOutOfOrder, phrases, boundary)).toMatchObject({
       ok: false,
       missingPhrases: ['proposal rejection']
     })
-    expect(() => adjudicateRecognizedTranscript(transcript, [])).toThrow(
+    const oneFrameTail = structuredClone(transcript)
+    oneFrameTail.op.transcript.segments[1].sourceIn = { n: 900, d: 30 }
+    oneFrameTail.op.transcript.segments[1].sourceOut = { n: 901, d: 30 }
+    expect(adjudicateRecognizedTranscript(oneFrameTail, phrases, boundary)).toMatchObject({
+      ok: true,
+      timingPolicy: { tailToleranceFrames: 1 }
+    })
+    const reversed = structuredClone(transcript)
+    reversed.op.transcript.segments[0].sourceIn = { n: 300, d: 30 }
+    reversed.op.transcript.segments[0].sourceOut = { n: 30, d: 30 }
+    expect(() => adjudicateRecognizedTranscript(reversed, phrases, boundary)).toThrow(
+      /positive timed range/i
+    )
+    const overlapping = structuredClone(transcript)
+    overlapping.op.transcript.segments[1].sourceIn = { n: 119, d: 30 }
+    expect(() => adjudicateRecognizedTranscript(overlapping, phrases, boundary)).toThrow(
+      /ordered and nonoverlapping/i
+    )
+    const outOfRange = structuredClone(transcript)
+    outOfRange.op.transcript.segments[1].sourceOut = { n: 902, d: 30 }
+    expect(() => adjudicateRecognizedTranscript(outOfRange, phrases, boundary)).toThrow(
+      /fixture duration/i
+    )
+    const duplicateId = structuredClone(transcript)
+    duplicateId.op.transcript.segments[1].segmentId = 'seg-a'
+    expect(() => adjudicateRecognizedTranscript(duplicateId, phrases, boundary)).toThrow(
+      /unique segmentId/i
+    )
+    const malformedExtra = structuredClone(transcript)
+    malformedExtra.op.transcript.segments.push({
+      segmentId: 'seg-c',
+      text: 'ignored malformed segment'
+    })
+    expect(() => adjudicateRecognizedTranscript(malformedExtra, phrases, boundary)).toThrow(
+      /timed transcript segment/i
+    )
+    const foreignAsset = structuredClone(transcript)
+    foreignAsset.op.transcript.assetId = 'asset-b'
+    expect(() => adjudicateRecognizedTranscript(foreignAsset, phrases, boundary)).toThrow(
+      /asset identity/i
+    )
+    expect(() => adjudicateRecognizedTranscript(transcript, [], boundary)).toThrow(
       /expected transcript phrases/i
     )
   })
@@ -4120,6 +4316,7 @@ describe('Studio acceptance harness', () => {
           manifestPath: '/virtual/acceptance/studioJourney01/fixtures/speech-fixture-manifest.json',
           outputSha256: 'b'.repeat(64),
           durationSeconds: 30,
+          frameRate: 30,
           expectedPhrases: expectedTranscriptPhrases(),
           provenanceNote: 'generation alone does not prove recognition'
         }
@@ -4144,11 +4341,15 @@ describe('Studio acceptance harness', () => {
               op: {
                 type: 'set_transcript',
                 transcript: {
+                  schemaVersion: 1,
+                  transcriptId: 'transcript-a',
                   assetId: 'asset-a',
                   segments: [
                     {
                       segmentId: 'segment-a',
-                      text: expectedTranscriptPhrases().join('. ')
+                      text: expectedTranscriptPhrases().join('. '),
+                      sourceIn: { n: 0, d: 30 },
+                      sourceOut: { n: 300, d: 30 }
                     }
                   ]
                 }

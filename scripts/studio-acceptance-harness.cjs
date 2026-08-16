@@ -1701,8 +1701,11 @@ async function validateDetachedFailure(paths, manifest, reason) {
     evidence.instanceId !== manifest.instanceId ||
     !isRecord(evidence.failure) ||
     !isRecord(evidence.artifactReferences) ||
-    evidence.artifactReferences.watchdogReceipt?.present !== true ||
-    evidence.artifactReferences.watchdogReceipt?.sha256 !== actualWatchdogSha256
+    !isRecord(evidence.artifactJoinPolicy) ||
+    evidence.artifactJoinPolicy.exactSemanticPathSet !== true ||
+    evidence.artifactJoinPolicy.sha256EveryPresentRegularFile !== true ||
+    evidence.artifactJoinPolicy.revalidateEveryLeafAtStatusRead !== true ||
+    evidence.artifactJoinPolicy.missingFilesRemainExplicit !== true
   ) {
     return detachedRed(
       'failed',
@@ -1712,6 +1715,29 @@ async function validateDetachedFailure(paths, manifest, reason) {
         watchdogReceiptSha256: actualWatchdogSha256
       }
     )
+  }
+
+  let currentArtifactReferences
+  try {
+    currentArtifactReferences = await measureStudioAcceptanceFailureArtifacts(
+      { artifactRoot: paths.artifactRoot },
+      studioAcceptanceFailureArtifactCandidates(evidence)
+    )
+  } catch {
+    return detachedRed('failed', 'detached RED artifact leaf join mismatch', {
+      evidenceSha256: actualEvidenceSha256,
+      watchdogReceiptSha256: actualWatchdogSha256
+    })
+  }
+  if (
+    JSON.stringify(evidence.artifactReferences) !== JSON.stringify(currentArtifactReferences) ||
+    currentArtifactReferences.watchdogReceipt?.present !== true ||
+    currentArtifactReferences.watchdogReceipt?.sha256 !== actualWatchdogSha256
+  ) {
+    return detachedRed('failed', 'detached RED artifact leaf join mismatch', {
+      evidenceSha256: actualEvidenceSha256,
+      watchdogReceiptSha256: actualWatchdogSha256
+    })
   }
   return detachedRed('failed', reason, {
     evidenceSha256: actualEvidenceSha256,
@@ -3397,7 +3423,115 @@ function boundedRecognizedSpeechEditDistance(left, right, maximumDistance = 1) {
   return previous[right.length]
 }
 
-function adjudicateRecognizedTranscript(entry, expectedPhrases) {
+function assertRecognizedTranscriptRational(value, label) {
+  if (
+    !isRecord(value) ||
+    !Number.isSafeInteger(value.n) ||
+    !Number.isSafeInteger(value.d) ||
+    value.n < 0 ||
+    value.d <= 0
+  ) {
+    throw new Error(`${label} must be a finite nonnegative rational`)
+  }
+  return value
+}
+
+function compareRecognizedTranscriptRationals(left, right) {
+  const difference = BigInt(left.n) * BigInt(right.d) - BigInt(right.n) * BigInt(left.d)
+  return difference < 0n ? -1 : difference > 0n ? 1 : 0
+}
+
+function assertRecognizedTranscriptTiming(entry, boundary) {
+  if (
+    !isRecord(boundary) ||
+    typeof boundary.assetId !== 'string' ||
+    !boundary.assetId ||
+    boundary.assetId.length > 512 ||
+    !Number.isSafeInteger(boundary.durationSeconds) ||
+    boundary.durationSeconds <= 0 ||
+    !Number.isSafeInteger(boundary.frameRate) ||
+    boundary.frameRate <= 0 ||
+    boundary.frameRate > 240 ||
+    !Number.isSafeInteger(boundary.durationSeconds * boundary.frameRate + 1)
+  ) {
+    throw new Error('recognized transcript timing boundary is invalid')
+  }
+  const transcript = entry?.op?.transcript
+  if (
+    entry?.op?.type !== 'set_transcript' ||
+    !isRecord(transcript) ||
+    transcript.schemaVersion !== 1 ||
+    typeof transcript.transcriptId !== 'string' ||
+    !transcript.transcriptId ||
+    transcript.transcriptId.length > 512 ||
+    transcript.assetId !== boundary.assetId ||
+    !Array.isArray(transcript.segments) ||
+    transcript.segments.length < 1 ||
+    transcript.segments.length > 2_048
+  ) {
+    throw new Error('recognized transcript has an invalid schema or asset identity')
+  }
+
+  const segmentIds = new Set()
+  const texts = []
+  let previousSourceOut = null
+  const durationWithTail = {
+    n: boundary.durationSeconds * boundary.frameRate + 1,
+    d: boundary.frameRate
+  }
+  for (const [index, segment] of transcript.segments.entries()) {
+    if (
+      !isRecord(segment) ||
+      typeof segment.segmentId !== 'string' ||
+      !segment.segmentId ||
+      segment.segmentId.length > 512 ||
+      typeof segment.text !== 'string' ||
+      !segment.text.trim() ||
+      Buffer.byteLength(segment.text) > 16 * 1_024
+    ) {
+      throw new Error(`recognized timed transcript segment ${index} has an invalid shape`)
+    }
+    if (segmentIds.has(segment.segmentId)) {
+      throw new Error('recognized transcript requires a unique segmentId for every segment')
+    }
+    segmentIds.add(segment.segmentId)
+    const sourceIn = assertRecognizedTranscriptRational(
+      segment.sourceIn,
+      `recognized timed transcript segment ${index} sourceIn`
+    )
+    const sourceOut = assertRecognizedTranscriptRational(
+      segment.sourceOut,
+      `recognized timed transcript segment ${index} sourceOut`
+    )
+    if (compareRecognizedTranscriptRationals(sourceIn, sourceOut) >= 0) {
+      throw new Error(`recognized transcript segment ${index} is not a positive timed range`)
+    }
+    if (
+      previousSourceOut &&
+      compareRecognizedTranscriptRationals(sourceIn, previousSourceOut) < 0
+    ) {
+      throw new Error('recognized transcript segments are not ordered and nonoverlapping')
+    }
+    if (compareRecognizedTranscriptRationals(sourceOut, durationWithTail) > 0) {
+      throw new Error('recognized transcript segment exceeds the fixture duration plus one frame')
+    }
+    previousSourceOut = sourceOut
+    texts.push(segment.text.trim())
+  }
+  return {
+    texts,
+    timingPolicy: {
+      exactAssetId: boundary.assetId,
+      positiveRanges: true,
+      orderedNonOverlapping: true,
+      durationSeconds: boundary.durationSeconds,
+      frameRate: boundary.frameRate,
+      tailToleranceFrames: 1
+    }
+  }
+}
+
+function adjudicateRecognizedTranscript(entry, expectedPhrases, boundary) {
   if (
     !Array.isArray(expectedPhrases) ||
     expectedPhrases.length < 1 ||
@@ -3418,16 +3552,7 @@ function adjudicateRecognizedTranscript(entry, expectedPhrases) {
     )
   }
 
-  const segments = entry?.op?.transcript?.segments
-  const texts = Array.isArray(segments)
-    ? segments
-        .filter((segment) => isRecord(segment) && typeof segment.text === 'string')
-        .map((segment) => segment.text.trim())
-        .filter(Boolean)
-    : []
-  if (texts.length > 2_048) {
-    throw new Error('recognized transcript exceeds the bounded segment count')
-  }
+  const { texts, timingPolicy } = assertRecognizedTranscriptTiming(entry, boundary)
   const transcriptText = texts.join(' ')
   const textByteLength = Buffer.byteLength(transcriptText)
   if (textByteLength > 256 * 1_024) {
@@ -3472,10 +3597,11 @@ function adjudicateRecognizedTranscript(entry, expectedPhrases) {
     }
   }
   return {
-    ok: texts.length > 0 && missingPhrases.length === 0,
+    ok: missingPhrases.length === 0,
     segmentCount: texts.length,
     textByteLength,
     transcriptSha256: crypto.createHash('sha256').update(transcriptText).digest('hex'),
+    timingPolicy,
     matchPolicy: {
       ordered: true,
       contiguousTokenWindow: true,
@@ -4267,7 +4393,11 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   let recognition = null
   if (target.speechFixture) {
-    recognition = adjudicateRecognizedTranscript(transcript, target.speechFixture.expectedPhrases)
+    recognition = adjudicateRecognizedTranscript(transcript, target.speechFixture.expectedPhrases, {
+      assetId,
+      durationSeconds: target.speechFixture.durationSeconds,
+      frameRate: target.speechFixture.frameRate
+    })
     if (!recognition.ok) {
       throw new Error(
         `Studio recognized transcript is not the generated fixture passage; missing phrases: ${recognition.missingPhrases.join(', ')}`
@@ -4541,6 +4671,22 @@ function boundedAcceptanceFailure(error) {
   }
 }
 
+function studioAcceptanceFailureArtifactCandidates(evidence) {
+  const driverEvidence = isRecord(evidence?.failure?.driverEvidence)
+    ? evidence.failure.driverEvidence
+    : null
+  return [
+    { name: 'fixtureManifest', path: evidence?.speechFixture?.manifestPath ?? null },
+    { name: 'generatedFixture', path: evidence?.speechFixture?.outputPath ?? null },
+    { name: 'openedMedia', path: evidence?.asset?.assetPath ?? null },
+    { name: 'journal', path: evidence?.durable?.journalPath ?? evidence?.journalPath ?? null },
+    { name: 'driverRequest', path: driverEvidence?.requestPath ?? null },
+    { name: 'driverRaw', path: driverEvidence?.rawReceiptPath ?? null },
+    { name: 'driverValidated', path: driverEvidence?.validatedReceiptPath ?? null },
+    { name: 'watchdogReceipt', path: evidence?.watchdogReceiptPath ?? null }
+  ]
+}
+
 async function measureStudioAcceptanceFailureArtifacts(plan, candidates) {
   if (!Array.isArray(candidates) || candidates.length > 16) {
     throw new Error('Studio acceptance failure artifact list is not bounded')
@@ -4548,6 +4694,7 @@ async function measureStudioAcceptanceFailureArtifacts(plan, candidates) {
   const artifactRoot = path.resolve(plan.artifactRoot)
   const canonicalArtifactRoot = await fsPromises.realpath(artifactRoot)
   const references = {}
+  const seenNames = new Set()
   for (const candidate of candidates) {
     if (
       !isRecord(candidate) ||
@@ -4555,11 +4702,16 @@ async function measureStudioAcceptanceFailureArtifacts(plan, candidates) {
       !/^[a-z][a-zA-Z0-9]{0,63}$/.test(candidate.name) ||
       (candidate.path !== null &&
         candidate.path !== undefined &&
-        typeof candidate.path !== 'string')
+        typeof candidate.path !== 'string') ||
+      seenNames.has(candidate.name)
     ) {
       throw new Error('Studio acceptance failure artifact descriptor is invalid')
     }
-    if (candidate.path === null || candidate.path === undefined) continue
+    seenNames.add(candidate.name)
+    if (candidate.path === null || candidate.path === undefined) {
+      references[candidate.name] = { path: null, present: false }
+      continue
+    }
     const artifactPath = path.resolve(candidate.path)
     const relative = path.relative(artifactRoot, artifactPath)
     const canonicalRelativeCandidate = path.relative(canonicalArtifactRoot, artifactPath)
@@ -4837,20 +4989,7 @@ async function runStudioAcceptance(args, adapters = {}) {
   if (failures.length > 0) {
     try {
       const primaryFailure = boundedAcceptanceFailure(failures[0])
-      const driverEvidence = primaryFailure.driverEvidence
-      const artifactReferences = await (
-        adapters.measureFailureArtifacts || measureStudioAcceptanceFailureArtifacts
-      )(plan, [
-        { name: 'fixtureManifest', path: speechFixture?.manifestPath },
-        { name: 'generatedFixture', path: speechFixture?.outputPath },
-        { name: 'openedMedia', path: asset?.assetPath },
-        { name: 'journal', path: durable?.journalPath },
-        { name: 'driverRequest', path: driverEvidence?.requestPath },
-        { name: 'driverRaw', path: driverEvidence?.rawReceiptPath },
-        { name: 'driverValidated', path: driverEvidence?.validatedReceiptPath },
-        { name: 'watchdogReceipt', path: plan.receiptPath }
-      ])
-      const redEvidence = {
+      const redEvidenceBase = {
         ok: false,
         verdict: 'RED',
         instanceId: plan.instanceId,
@@ -4873,6 +5012,7 @@ async function runStudioAcceptance(args, adapters = {}) {
         providerGuards,
         openResult,
         durable,
+        journalPath: path.join(plan.studioStateDirectory, STUDIO_JOURNAL_FILE),
         journey,
         failure: {
           ...primaryFailure,
@@ -4880,15 +5020,20 @@ async function runStudioAcceptance(args, adapters = {}) {
         },
         artifactJoinPolicy: {
           root: plan.artifactRoot,
+          exactSemanticPathSet: true,
           sha256EveryPresentRegularFile: true,
+          revalidateEveryLeafAtStatusRead: true,
           missingFilesRemainExplicit: true
         },
-        artifactReferences,
         watchdogReceiptPath: plan.receiptPath,
         watchdogTerminal,
         priorOrphanScan,
         safety: plan.safety
       }
+      const artifactReferences = await (
+        adapters.measureFailureArtifacts || measureStudioAcceptanceFailureArtifacts
+      )(plan, studioAcceptanceFailureArtifactCandidates(redEvidenceBase))
+      const redEvidence = { ...redEvidenceBase, artifactReferences }
       await (adapters.writeEvidence || writeEvidence)(plan, redEvidence)
     } catch (error) {
       failureEvidenceWriteError = error
