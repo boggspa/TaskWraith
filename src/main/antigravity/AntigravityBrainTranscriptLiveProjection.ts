@@ -9,12 +9,15 @@
 
 import { promises as fs } from 'fs'
 import os from 'os'
+import { isAbsolute, join, resolve, sep } from 'path'
 import {
   advanceCliProviderThinkingSegments,
   cliProviderThinkingSegmentToolId,
   type CliProviderThinkingSegmentsState
 } from '../providers/CliProviderThinking'
+import { normalizeAgyConversationId } from './AntigravityCli'
 import {
+  agyCliRootPath,
   parseAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './AntigravityConversationReceipt'
@@ -29,6 +32,19 @@ import {
 const DEFAULT_POLL_INTERVAL_MS = 400
 const THINKING_CHUNK_MAX_CHARS = 24_000
 const INVALID_TOOL_WARNING_THRESHOLD = 5
+const TASKWRAITH_TRANSCRIPT_MARKERS = [
+  'TaskWraith gateway MCP profile is active for this provider session.',
+  'TaskWraith runtime note (',
+  'TaskWraith Ensemble Mode'
+] as const
+const WORKSPACE_PATH_ARGUMENT_KEYS = new Set([
+  'cwd',
+  'absolutepath',
+  'searchpath',
+  'targetfile',
+  'filepath',
+  'path'
+])
 
 export type AgyBrainTranscriptCompatEvent =
   | AgyToolEvent
@@ -51,6 +67,63 @@ function diagnosticOutput(message: string, count: number, total: number): string
   const occurrence = count === 1 ? '1 occurrence' : `${count} repeated occurrences`
   const totalSuffix = total === count ? '' : ` · ${total} tool errors this turn`
   return `${message || 'AntiGravity reported a tool error.'}\n\n${occurrence}${totalSuffix}`
+}
+
+function decodeAgyTranscriptScalar(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const decoded = JSON.parse(trimmed)
+      if (typeof decoded === 'string') return decoded
+    } catch {
+      return null
+    }
+  }
+  return value
+}
+
+function pathBelongsToWorkspace(value: unknown, workspace: string): boolean {
+  const decoded = decodeAgyTranscriptScalar(value)?.trim()
+  if (!decoded) return false
+  const path = decoded.startsWith('file://') ? decoded.slice('file://'.length) : decoded
+  if (!isAbsolute(path)) return false
+  const root = resolve(workspace)
+  const candidate = resolve(path)
+  return candidate === root || candidate.startsWith(`${root}${sep}`)
+}
+
+function transcriptHasWorkspaceProvenance(raw: string, workspace: string): boolean {
+  let taskWraithPrompt = false
+  let workspaceToolPath = false
+  for (const line of raw.split(/\r?\n/)) {
+    const step = parseAgyTranscriptLine(line)
+    if (!step) continue
+    if (
+      step.source === 'USER_EXPLICIT' &&
+      step.type === 'USER_INPUT' &&
+      TASKWRAITH_TRANSCRIPT_MARKERS.some((marker) => step.content.includes(marker))
+    ) {
+      taskWraithPrompt = true
+    }
+    for (const toolCall of step.tool_calls || []) {
+      if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) continue
+      const args = (toolCall as { args?: unknown }).args
+      if (!args || typeof args !== 'object' || Array.isArray(args)) continue
+      for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+        if (
+          WORKSPACE_PATH_ARGUMENT_KEYS.has(key.toLowerCase()) &&
+          pathBelongsToWorkspace(value, workspace)
+        ) {
+          workspaceToolPath = true
+          break
+        }
+      }
+      if (workspaceToolPath) break
+    }
+    if (taskWraithPrompt && workspaceToolPath) return true
+  }
+  return false
 }
 
 /**
@@ -190,6 +263,7 @@ export interface AgyBrainTranscriptMonitorDependencies {
   readFile?: (path: string) => Promise<string>
   stat?: (path: string) => Promise<{ size: number; mtimeMs: number }>
   readReceipt?: (workspace: string | null | undefined) => Promise<string | null>
+  listBrainConversationIds?: (brainRootPath: string) => Promise<readonly string[]>
   homeDir?: string
   env?: Readonly<Record<string, string | undefined>>
   pollIntervalMs?: number
@@ -209,6 +283,7 @@ export class AgyBrainTranscriptMonitor {
   private readonly deps: AgyBrainTranscriptMonitorDependencies
   private readonly projector: AgyBrainTranscriptProjector
   private conversationId: string | null
+  private freshConversationBaseline: Set<string> | null = null
   private lastSnapshotKey = ''
   private timer: NodeJS.Timeout | undefined
   private inFlight: Promise<void> = Promise.resolve()
@@ -222,7 +297,14 @@ export class AgyBrainTranscriptMonitor {
   }
 
   async prime(): Promise<void> {
-    if (!this.conversationId) return
+    if (!this.conversationId) {
+      try {
+        this.freshConversationBaseline = new Set(await this.listBrainConversationIds())
+      } catch {
+        this.freshConversationBaseline = null
+      }
+      return
+    }
     const raw = await this.readTranscript(this.conversationId)
     if (raw === null) return
     this.projector.markBaseline(raw.split(/\r?\n/))
@@ -264,8 +346,12 @@ export class AgyBrainTranscriptMonitor {
           this.deps.readReceipt ||
           ((workspace: string | null | undefined) => readAgyConversationReceipt(workspace))
         const learned = await readReceipt(this.input.workspace)
-        if (!learned || learned === this.input.receiptBeforeFreshProject) return
-        this.conversationId = learned
+        const discovered =
+          learned && learned !== this.input.receiptBeforeFreshProject
+            ? learned
+            : await this.discoverFreshConversationId()
+        if (!discovered) return
+        this.conversationId = discovered
         this.lastSnapshotKey = ''
       }
 
@@ -292,6 +378,40 @@ export class AgyBrainTranscriptMonitor {
       this.deps.env ?? process.env,
       this.deps.homeDir ?? os.homedir()
     )
+  }
+
+  private brainRootPath(): string {
+    return join(
+      agyCliRootPath(this.deps.env ?? process.env, this.deps.homeDir ?? os.homedir()),
+      'antigravity-cli',
+      'brain'
+    )
+  }
+
+  private async listBrainConversationIds(): Promise<readonly string[]> {
+    if (this.deps.listBrainConversationIds) {
+      return this.deps.listBrainConversationIds(this.brainRootPath())
+    }
+    const entries = await fs.readdir(this.brainRootPath(), { withFileTypes: true })
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  }
+
+  private async discoverFreshConversationId(): Promise<string | null> {
+    const baseline = this.freshConversationBaseline
+    const workspace = typeof this.input.workspace === 'string' ? this.input.workspace.trim() : ''
+    if (!baseline || !workspace) return null
+
+    const candidates = (await this.listBrainConversationIds())
+      .map((candidate) => normalizeAgyConversationId(candidate))
+      .filter((candidate): candidate is string => Boolean(candidate && !baseline.has(candidate)))
+    const matched: string[] = []
+    for (const candidate of candidates) {
+      const raw = await this.readTranscript(candidate)
+      if (raw !== null && transcriptHasWorkspaceProvenance(raw, workspace)) {
+        matched.push(candidate)
+      }
+    }
+    return matched.length === 1 ? matched[0] : null
   }
 
   private async readTranscript(conversationId: string): Promise<string | null> {

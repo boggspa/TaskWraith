@@ -16,6 +16,14 @@ function step(stepIndex: number, type: string, overrides: Record<string, unknown
   })
 }
 
+function taskWraithUserInput(stepIndex = 0): string {
+  return step(stepIndex, 'USER_INPUT', {
+    source: 'USER_EXPLICIT',
+    content:
+      '<USER_REQUEST>\nTaskWraith gateway MCP profile is active for this provider session.\nInspect the workspace.\n</USER_REQUEST>'
+  })
+}
+
 describe('AgyBrainTranscriptProjector', () => {
   it('projects planner thinking without duplicating assistant content', () => {
     const projector = new AgyBrainTranscriptProjector('agy-run-1')
@@ -162,6 +170,7 @@ describe('AgyBrainTranscriptMonitor', () => {
       emit: (event) => emitted.push(event),
       deps: {
         readReceipt: async () => receipt,
+        listBrainConversationIds: async () => [],
         readFile: async () => raw,
         stat: async () => ({ size: raw.length, mtimeMs: raw.length })
       }
@@ -175,6 +184,123 @@ describe('AgyBrainTranscriptMonitor', () => {
     await monitor.pollNow()
     expect(emitted).toHaveLength(2)
     expect(emitted[1]).toMatchObject({ output: 'Fresh project reasoning' })
+  })
+
+  it('attaches a fresh TaskWraith brain before its workspace receipt is published', async () => {
+    const priorId = '55555555-5555-4555-8555-555555555555'
+    const freshId = '66666666-6666-4666-8666-666666666666'
+    let conversationIds = [priorId]
+    const raw = [
+      taskWraithUserInput(),
+      step(1, 'PLANNER_RESPONSE', {
+        thinking: 'Inspecting the focused implementation.',
+        tool_calls: [
+          {
+            name: 'run_command',
+            args: { Cwd: '"/repo"', CommandLine: '"git status --porcelain"' }
+          }
+        ]
+      })
+    ].join('\n')
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'fresh-discovery-run',
+      workspace: '/repo',
+      providerSessionId: null,
+      receiptBeforeFreshProject: priorId,
+      emit: (event) => emitted.push(event),
+      deps: {
+        readReceipt: async () => priorId,
+        listBrainConversationIds: async () => conversationIds,
+        readFile: async (path) => (path.includes(freshId) ? raw : ''),
+        stat: async () => ({ size: raw.length, mtimeMs: raw.length })
+      }
+    })
+
+    await monitor.prime()
+    conversationIds = [priorId, freshId]
+    await monitor.pollNow()
+
+    expect(emitted).toHaveLength(2)
+    expect(emitted[1]).toMatchObject({ output: 'Inspecting the focused implementation.' })
+  })
+
+  it('fails closed when more than one new TaskWraith brain matches the workspace', async () => {
+    const priorId = '77777777-7777-4777-8777-777777777777'
+    const firstId = '88888888-8888-4888-8888-888888888888'
+    const secondId = '99999999-9999-4999-8999-999999999999'
+    let conversationIds = [priorId]
+    let receipt = priorId
+    const transcript = (thinking: string) =>
+      [
+        taskWraithUserInput(),
+        step(1, 'PLANNER_RESPONSE', {
+          thinking,
+          tool_calls: [{ name: 'view_file', args: { AbsolutePath: '"/repo/src/main.ts"' } }]
+        })
+      ].join('\n')
+    const rawById = new Map([
+      [firstId, transcript('First matching run')],
+      [secondId, transcript('Second matching run')]
+    ])
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'ambiguous-fresh-run',
+      workspace: '/repo',
+      providerSessionId: null,
+      receiptBeforeFreshProject: priorId,
+      emit: (event) => emitted.push(event),
+      deps: {
+        readReceipt: async () => receipt,
+        listBrainConversationIds: async () => conversationIds,
+        readFile: async (path) =>
+          [...rawById.entries()].find(([id]) => path.includes(id))?.[1] || '',
+        stat: async () => ({ size: 200, mtimeMs: 2 })
+      }
+    })
+
+    await monitor.prime()
+    conversationIds = [priorId, firstId, secondId]
+    await monitor.pollNow()
+    expect(emitted).toEqual([])
+
+    receipt = secondId
+    await monitor.pollNow()
+    expect(emitted).toHaveLength(2)
+    expect(emitted[1]).toMatchObject({ output: 'Second matching run' })
+  })
+
+  it('ignores a new brain without TaskWraith and workspace provenance', async () => {
+    const priorId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const foreignId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    let conversationIds = [priorId]
+    const foreignRaw = [
+      step(0, 'USER_INPUT', { source: 'USER_EXPLICIT', content: 'Unrelated agy session' }),
+      step(1, 'PLANNER_RESPONSE', {
+        thinking: 'Private unrelated reasoning',
+        tool_calls: [{ name: 'run_command', args: { Cwd: '"/elsewhere"' } }]
+      })
+    ].join('\n')
+    const emitted: AgyBrainTranscriptCompatEvent[] = []
+    const monitor = new AgyBrainTranscriptMonitor({
+      appRunId: 'foreign-fresh-run',
+      workspace: '/repo',
+      providerSessionId: null,
+      receiptBeforeFreshProject: priorId,
+      emit: (event) => emitted.push(event),
+      deps: {
+        readReceipt: async () => priorId,
+        listBrainConversationIds: async () => conversationIds,
+        readFile: async () => foreignRaw,
+        stat: async () => ({ size: foreignRaw.length, mtimeMs: foreignRaw.length })
+      }
+    })
+
+    await monitor.prime()
+    conversationIds = [priorId, foreignId]
+    await monitor.pollNow()
+
+    expect(emitted).toEqual([])
   })
 
   it('forces one final transcript read while stopping even when stat evidence is unchanged', async () => {
