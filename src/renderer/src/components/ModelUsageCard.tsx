@@ -19,6 +19,7 @@
  * visual ordering.
  */
 import {
+  Fragment,
   useEffect,
   useId,
   useMemo,
@@ -127,10 +128,12 @@ interface ModelUsageCardProps {
   apiSpend?: ModelUsageApiSpendOptions
 }
 
-/** Row sort order for the quota view. `sortByProvider` maps an unlisted id to
- *  99, so omissions land at the end in undefined relative order rather than
- *  their intended slot — keep every provider that can produce a row here. */
-const PROVIDER_ORDER: ModelUsageProviderId[] = [
+/**
+ * Source order for the collapsed quota grid. Its compact column order is an
+ * established surface and deliberately stays independent from the expanded
+ * card's provider stack below.
+ */
+const COMPACT_QUOTA_PROVIDER_ORDER: ModelUsageProviderId[] = [
   'gemini',
   'codex',
   'claude',
@@ -143,6 +146,29 @@ const PROVIDER_ORDER: ModelUsageProviderId[] = [
   'cerebras',
   'meta',
   'pi'
+]
+
+/**
+ * Canonical provider stack for the expanded sidebar card and Settings → Model
+ * Usage. Providers without a current meter simply leave no gap. Keep fallback
+ * identities at the end so a legacy snapshot remains visible without
+ * displacing the user-facing roster.
+ */
+export const EXPANDED_USAGE_PROVIDER_ORDER: readonly ModelUsageProviderId[] = [
+  'codex',
+  'claude',
+  'grok',
+  'kimi',
+  'cursor',
+  'antigravity',
+  'ollama',
+  'mistral',
+  'deepseek',
+  'cerebras',
+  'meta',
+  'gemini',
+  'pi',
+  'muse'
 ]
 
 /**
@@ -239,9 +265,24 @@ function persistSidebarUsageHeight(height: number): void {
 
 function sortByProvider(entries: ModelUsageAggregate[]): ModelUsageAggregate[] {
   return [...entries].sort((a, b) => {
-    const aIdx = PROVIDER_ORDER.indexOf(a.provider)
-    const bIdx = PROVIDER_ORDER.indexOf(b.provider)
+    const aIdx = COMPACT_QUOTA_PROVIDER_ORDER.indexOf(a.provider)
+    const bIdx = COMPACT_QUOTA_PROVIDER_ORDER.indexOf(b.provider)
     return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx)
+  })
+}
+
+/** Stable, duplicate-free ordering for the expanded provider stack. */
+export function orderExpandedUsageProviders(
+  providers: readonly ModelUsageProviderId[]
+): ModelUsageProviderId[] {
+  const uniqueProviders = [...new Set(providers)]
+  const sourceIndex = new Map(uniqueProviders.map((provider, index) => [provider, index]))
+  return uniqueProviders.sort((left, right) => {
+    const leftIndex = EXPANDED_USAGE_PROVIDER_ORDER.indexOf(left)
+    const rightIndex = EXPANDED_USAGE_PROVIDER_ORDER.indexOf(right)
+    const leftRank = leftIndex === -1 ? EXPANDED_USAGE_PROVIDER_ORDER.length : leftIndex
+    const rightRank = rightIndex === -1 ? EXPANDED_USAGE_PROVIDER_ORDER.length : rightIndex
+    return leftRank - rightRank || (sourceIndex.get(left) ?? 0) - (sourceIndex.get(right) ?? 0)
   })
 }
 
@@ -349,6 +390,29 @@ function isFiveHourWindow(text: string): boolean {
 
 function isWeeklyWindow(text: string): boolean {
   return text.includes('weekly') || text.includes('7 day') || text.includes('seven day')
+}
+
+/**
+ * Expanded quota blocks lead with the short/session window, then weekly. Any
+ * provider-specific extras retain their source order after those two groups.
+ * The collapsed grid does its own label-based placement and never calls this.
+ */
+export function orderExpandedQuotaWindows(
+  windows: readonly UsageWindowAggregate[]
+): UsageWindowAggregate[] {
+  const rank = (windowEntry: UsageWindowAggregate): number => {
+    const text = normaliseQuotaWindowText(windowEntry)
+    if (isFiveHourWindow(text)) return 0
+    if (isWeeklyWindow(text)) return 1
+    return 2
+  }
+  return windows
+    .map((windowEntry, sourceIndex) => ({ windowEntry, sourceIndex }))
+    .sort(
+      (left, right) =>
+        rank(left.windowEntry) - rank(right.windowEntry) || left.sourceIndex - right.sourceIndex
+    )
+    .map(({ windowEntry }) => windowEntry)
 }
 
 function isCodexSparkWindow(text: string): boolean {
@@ -709,7 +773,7 @@ function ProviderUsageBlock({ entry }: { entry: ModelUsageAggregate }) {
       </div>
       <div className="model-usage-window-list">
         {hasWindows ? (
-          entry.windows!.map((windowEntry) => (
+          orderExpandedQuotaWindows(entry.windows!).map((windowEntry) => (
             <UsageWindowRow
               key={`${entry.provider}-${windowEntry.id}`}
               provider={entry.provider}
@@ -1266,6 +1330,11 @@ export function ModelUsageCard({
       ((entry.windows?.length || 0) > 0 ||
         (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
+  const expandedUsageProviders = orderExpandedUsageProviders([
+    ...quotaEntries.map((entry) => entry.provider),
+    ...(grokAvailable ? (['grok'] as const) : []),
+    ...(mistralQuotaAvailable ? (['mistral'] as const) : [])
+  ])
   // The API-spend view is offered whenever the caller wired it (sidebar).
   const apiSpendEnabled = Boolean(apiSpend)
   // A plan-side meter exists when there are quota entries, the gated Grok
@@ -1522,24 +1591,31 @@ export function ModelUsageCard({
               <ContextLengthsView />
             ) : (
               <div className="model-usage-list">
-                {quotaEntries.map((entry) => (
-                  <ProviderUsageBlock key={`${entry.provider}-${entry.model}`} entry={entry} />
+                {expandedUsageProviders.map((provider) => (
+                  <Fragment key={provider}>
+                    {quotaEntries
+                      .filter((entry) => entry.provider === provider)
+                      .map((entry) => (
+                        <ProviderUsageBlock
+                          key={`${entry.provider}-${entry.model}`}
+                          entry={entry}
+                        />
+                      ))}
+                    {/* Grok and Mistral have bespoke quota data models rather
+                     * than `entry.windows`; place them through the same provider
+                     * ordering path so they no longer fall to the list tail. */}
+                    {provider === 'grok' && grokAvailable ? (
+                      <GrokCreditsMeterView {...grokUsage} />
+                    ) : null}
+                    {provider === 'mistral' && mistralQuotaAvailable ? (
+                      <MistralQuotaMeterView
+                        {...mistralQuota}
+                        currency={apiSpend?.currency}
+                        locale={apiSpend?.locale}
+                      />
+                    ) : null}
+                  </Fragment>
                 ))}
-                {/* 1.0.6-GU — Grok subscription credits (separate data model from
-                 * the token/cost meters above; manual-refresh PTY probe). Only
-                 * mounts when the gated Grok provider adapter is registered. Kept
-                 * inside the list so the `.model-usage-item + .model-usage-item`
-                 * divider lands between Kimi and Grok. */}
-                {grokAvailable ? <GrokCreditsMeterView {...grokUsage} /> : null}
-                {/* Mistral's ESTIMATED monthly band. Spliced in for the same
-                 * reason Grok is: `ProviderUsageBlock` renders only
-                 * `entry.windows`, and this seat has no vendor-reported window
-                 * to put there. The view self-hides when no cycle is persisted. */}
-                <MistralQuotaMeterView
-                  {...mistralQuota}
-                  currency={apiSpend?.currency}
-                  locale={apiSpend?.locale}
-                />
               </div>
             )}
           </div>

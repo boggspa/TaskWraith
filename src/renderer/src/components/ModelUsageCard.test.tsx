@@ -7,7 +7,10 @@ import {
   ApiSpendProviderBlock,
   COMPACT_USAGE_PROVIDER_LABELS,
   CompactModelUsageGrid,
+  EXPANDED_USAGE_PROVIDER_ORDER,
   ModelUsageCard,
+  orderExpandedQuotaWindows,
+  orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
 import { API_SPEND_PROVIDER_ORDER } from '../lib/apiSpendAggregation'
@@ -117,7 +120,7 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>Pro<')
   })
 
-  it('renders API-credit usage as money while retaining its quota fill', () => {
+  it('fills API-credit meters up with credit used rather than down with credit remaining', () => {
     const html = renderToStaticMarkup(
       <ModelUsageCard
         usageSummary={[
@@ -148,9 +151,75 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>$0.92<')
     expect(html).toContain('$0.92 of $10.00')
     expect(html).toContain('width:9.20%')
+    expect(html).not.toContain('width:90.80%')
     expect(html).toContain('data-provider-logo="deepseek"')
     expect(html).toContain('provider-logo-deepseek.png')
     expect(html).not.toContain('provider-glyph-deepseek')
+  })
+
+  it('orders the expanded provider stack independently from the compact grid', () => {
+    const scrambled = [
+      'meta',
+      'ollama',
+      'kimi',
+      'deepseek',
+      'codex',
+      'mistral',
+      'antigravity',
+      'cerebras',
+      'cursor',
+      'grok',
+      'claude'
+    ] as const
+
+    expect(orderExpandedUsageProviders(scrambled)).toEqual(
+      EXPANDED_USAGE_PROVIDER_ORDER.slice(0, 11)
+    )
+  })
+
+  it('puts 5H/session meters above weekly meters only in expanded quota blocks', () => {
+    const sourceWindows = [
+      {
+        id: 'agy-gemini-weekly',
+        label: 'Gemini Weekly',
+        runs: 0,
+        totalTokens: 0,
+        limitLabel: '42% remaining',
+        usedPercent: 58
+      },
+      {
+        id: 'agy-gemini-extra',
+        label: 'Gemini extra',
+        runs: 0,
+        totalTokens: 0,
+        limitLabel: '80% remaining',
+        usedPercent: 20
+      },
+      {
+        id: 'agy-gemini-5h',
+        label: 'Gemini 5H',
+        runs: 0,
+        totalTokens: 0,
+        limitLabel: '100% remaining',
+        usedPercent: 0
+      }
+    ]
+
+    expect(
+      orderExpandedQuotaWindows(sourceWindows).map((windowEntry) => windowEntry.label)
+    ).toEqual(['Gemini 5H', 'Gemini Weekly', 'Gemini extra'])
+    expect(sourceWindows.map((windowEntry) => windowEntry.label)).toEqual([
+      'Gemini Weekly',
+      'Gemini extra',
+      'Gemini 5H'
+    ])
+
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[quotaEntry({ provider: 'antigravity', windows: sourceWindows })]}
+      />
+    )
+    expect(html.indexOf('Gemini 5H')).toBeLessThan(html.indexOf('Gemini Weekly'))
   })
 
   it('shows a connected AntiGravity quota probe failure as unavailable without inventing a meter', () => {
