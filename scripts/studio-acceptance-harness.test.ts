@@ -764,6 +764,111 @@ describe('Studio acceptance harness', () => {
     })
   })
 
+  it('verifies both hashes on a detached RED failure receipt', async () => {
+    const root = await temporaryRoot('studio-acceptance-detached-failure-receipt-')
+    const fixture = await writeDetachedCompletionFixture(root)
+    const watchdogReceiptSha256 = await sha256HexFile(fixture.paths.watchdogReceiptPath)
+    const watchdogStat = await fsPromises.stat(fixture.paths.watchdogReceiptPath)
+    const redEvidence = {
+      ...fixture.evidence,
+      ok: false,
+      verdict: 'RED',
+      failure: { name: 'Error', message: 'bounded journey failure', stage: 'native-exec' },
+      artifactReferences: {
+        watchdogReceipt: {
+          path: fixture.paths.watchdogReceiptPath,
+          present: true,
+          byteLength: watchdogStat.size,
+          sha256: watchdogReceiptSha256
+        }
+      }
+    }
+    await fsPromises.writeFile(
+      fixture.paths.evidencePath,
+      `${JSON.stringify(redEvidence)}\n`,
+      'utf8'
+    )
+    const failedManifest = {
+      ...fixture.manifest,
+      state: 'failed',
+      error: 'bounded journey failure',
+      evidenceSha256: await sha256HexFile(fixture.paths.evidencePath),
+      watchdogReceiptSha256
+    }
+    await fsPromises.writeFile(
+      fixture.paths.manifestPath,
+      `${JSON.stringify(failedManifest)}\n`,
+      'utf8'
+    )
+
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'bounded journey failure',
+      failureEvidenceVerified: true,
+      evidenceSha256: failedManifest.evidenceSha256,
+      watchdogReceiptSha256
+    })
+
+    redEvidence.artifactReferences.watchdogReceipt.sha256 = '0'.repeat(64)
+    await fsPromises.writeFile(
+      fixture.paths.evidencePath,
+      `${JSON.stringify(redEvidence)}\n`,
+      'utf8'
+    )
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await fsPromises.writeFile(
+      fixture.paths.manifestPath,
+      `${JSON.stringify(failedManifest)}\n`,
+      'utf8'
+    )
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED acceptance evidence is not an exact joined failure receipt'
+    })
+
+    redEvidence.artifactReferences.watchdogReceipt.sha256 = watchdogReceiptSha256
+    await fsPromises.writeFile(
+      fixture.paths.evidencePath,
+      `${JSON.stringify(redEvidence)}\n`,
+      'utf8'
+    )
+    failedManifest.evidenceSha256 = await sha256HexFile(fixture.paths.evidencePath)
+    await fsPromises.writeFile(
+      fixture.paths.manifestPath,
+      `${JSON.stringify(failedManifest)}\n`,
+      'utf8'
+    )
+    await fsPromises.appendFile(fixture.paths.evidencePath, 'tamper')
+    await expect(
+      readDetachedCoordinatorStatus({
+        instanceId: fixture.plan.instanceId,
+        artifactRoot: root,
+        token: DETACHED_TEST_TOKEN
+      })
+    ).resolves.toMatchObject({
+      state: 'failed',
+      verdict: 'RED',
+      green: false,
+      reason: 'detached RED artifact hash mismatch'
+    })
+  })
+
   it.each([
     {
       label: 'tampered evidence',
@@ -2877,6 +2982,21 @@ describe('Studio acceptance harness', () => {
     expect(driverSource).toContain('accessibilityLabel == "Playback"')
     expect(driverSource).toContain('playbackValueBefore == observedBefore')
     expect(driverSource).toContain('playbackValueAfter == observedAfter')
+    const playbackPressStart = driverSource.indexOf('func pressAccessibilityPlayback(')
+    const playbackPressEnd = driverSource.indexOf(
+      'func activateExactWindowForExplicitForeground(',
+      playbackPressStart
+    )
+    const playbackPressSource = driverSource.slice(playbackPressStart, playbackPressEnd)
+    expect(playbackPressSource).toContain('let freshWindow = try exactAccessibilityWindow(request)')
+    expect(playbackPressSource).toContain('lastObservationFailure')
+    expect(playbackPressSource).not.toContain('try? exactAccessibilityPlaybackControl')
+    expect(driverSource).toContain('taskwraith-studio-ui-driver-refusal')
+    expect(driverSource).toContain('Playback accessibility control is absent')
+    expect(driverSource).toContain('Playback accessibility control is duplicated')
+    expect(driverSource).toContain('Playback accessibility control is not an AXButton')
+    expect(driverSource).toContain('Playback accessibility control has no AXPress action')
+    expect(driverSource).toContain('Playback accessibility value is unreadable')
     expect(driverSource).toContain(
       'let playheadMaximumForwardAdvanceTicks =\n' +
         '                action.playheadMaximumForwardAdvanceTicks ?? 0'
@@ -2974,13 +3094,38 @@ describe('Studio acceptance harness', () => {
       ok: true,
       segmentCount: 2,
       matchedPhrases: phrases,
+      phraseMatches: phrases.map((phrase) => expect.objectContaining({ phrase, editDistance: 0 })),
       transcriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    const measuredRecognition = structuredClone(transcript)
+    measuredRecognition.op.transcript.segments[0].text =
+      'Task rate Studio ACCEPTANCE transcript; this verifies time transcript delivery.'
+    expect(adjudicateRecognizedTranscript(measuredRecognition, phrases)).toMatchObject({
+      ok: true,
+      matchedPhrases: phrases,
+      phraseMatches: expect.arrayContaining([
+        expect.objectContaining({ phrase: 'timed transcript delivery', editDistance: 1 })
+      ])
     })
     const wrong = structuredClone(transcript)
     wrong.op.transcript.segments = [{ segmentId: 'seg-wrong', text: 'unrelated spoken words' }]
     expect(adjudicateRecognizedTranscript(wrong, phrases)).toMatchObject({
       ok: false,
       missingPhrases: phrases
+    })
+    const missing = structuredClone(transcript)
+    missing.op.transcript.segments[1].text =
+      'Proposal approval and durable restart recovery are checked.'
+    expect(adjudicateRecognizedTranscript(missing, phrases)).toMatchObject({
+      ok: false,
+      missingPhrases: ['proposal rejection']
+    })
+    const outOfOrder = structuredClone(transcript)
+    outOfOrder.op.transcript.segments[1].text =
+      'Proposal rejection, proposal approval, and durable restart recovery are checked.'
+    expect(adjudicateRecognizedTranscript(outOfOrder, phrases)).toMatchObject({
+      ok: false,
+      missingPhrases: ['proposal rejection']
     })
     expect(() => adjudicateRecognizedTranscript(transcript, [])).toThrow(
       /expected transcript phrases/i
@@ -3573,7 +3718,13 @@ describe('Studio acceptance harness', () => {
     expect(invalidJsonFailure.message).toMatch(/did not return a JSON receipt/)
     await expectRawEvidence(invalidJsonFailure, 'json-parse', invalidJson)
 
-    const nativeStdout = 'partial native stdout\n'
+    const nativeRefusal = {
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-ui-driver-refusal',
+      recordedAt: '2026-08-16T14:00:00.000Z',
+      reason: 'Playback accessibility control is absent'
+    }
+    const nativeStdout = `${JSON.stringify(nativeRefusal)}\n`
     const nativeFailure = await captureFailure(
       runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
         execFile: vi.fn(async () => {
@@ -3583,6 +3734,11 @@ describe('Studio acceptance harness', () => {
     )
     expect(nativeFailure.message).toMatch(/native driver failed/)
     await expectRawEvidence(nativeFailure, 'native-exec', nativeStdout)
+    await expect(
+      fsPromises
+        .readFile(nativeFailure.studioUiDriverEvidence.rawReceiptPath as string, 'utf8')
+        .then((raw) => JSON.parse(raw))
+    ).resolves.toEqual(nativeRefusal)
     const oversizedStdout = 'x'.repeat(256 * 1024 + 1)
     const oversizedFailure = await captureFailure(
       runStudioUiDriver({ artifactRoot: root }, target, [{ type: 'read-transport-mutation' }], {
@@ -4156,8 +4312,8 @@ describe('Studio acceptance harness', () => {
       }
     })
     expect(calls).toEqual([
-      'driver:press-playback',
       'journal:set_transcript:asset-a',
+      'driver:press-playback',
       'driver:transcript-band',
       'driver:tab',
       'driver:transcript-selected',
@@ -4678,6 +4834,7 @@ describe('Studio acceptance harness', () => {
 
   it('drives the authorized renderer-to-durable-window joins in order without launching Electron', async () => {
     const root = await temporaryRoot('studio-acceptance-joins-')
+    const artifactRoot = path.join(root, 'acceptance', 'studioJoin01')
     const calls: string[] = []
     const renderer = { close: () => calls.push('renderer.close') }
     const watchdogTerminal = {
@@ -4687,6 +4844,7 @@ describe('Studio acceptance harness', () => {
       detachedGroupExitVerified: true
     }
     let journeyError: Error | null = null
+    let writtenEvidence: Record<string, any> | null = null
     let forgeFixtureDigest = false
     let dirtySourceCustody = false
     const session = {
@@ -4782,7 +4940,8 @@ describe('Studio acceptance harness', () => {
       },
       planOptions: {
         repoRoot: root,
-        home: path.join(root, 'isolated-home'),
+        artifactRoot,
+        home: path.join(artifactRoot, 'home'),
         platform: 'darwin',
         adapters: { resolveElectronPath: () => '/virtual/Electron' }
       },
@@ -4832,7 +4991,7 @@ describe('Studio acceptance harness', () => {
       },
       launchUnderWatchdog: async (spec: { env: Record<string, string> }) => {
         expect(spec.env.TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE).toBe(
-          path.join(root, 'isolated-home', '.grok', 'bin', 'grok')
+          path.join(artifactRoot, 'home', '.grok', 'bin', 'grok')
         )
         calls.push('watchdog.launch')
         return session
@@ -4887,7 +5046,8 @@ describe('Studio acceptance harness', () => {
         if (journeyError) throw journeyError
         return { ok: true, screenshots: ['/virtual/final.png'] }
       },
-      writeEvidence: async () => {
+      writeEvidence: async (_plan: unknown, evidence: Record<string, any>) => {
+        writtenEvidence = evidence
         calls.push('evidence.write')
       }
     }
@@ -4948,8 +5108,10 @@ describe('Studio acceptance harness', () => {
       'custody.after-run',
       'evidence.write'
     ])
+    expect(writtenEvidence).toMatchObject({ ok: true })
 
     calls.length = 0
+    writtenEvidence = null
     journeyError = new Error('mid-action failure')
     await expect(runStudioAcceptance(args, adapters)).rejects.toThrow(/mid-action failure/)
     expect(calls).toEqual([
@@ -4968,8 +5130,33 @@ describe('Studio acceptance harness', () => {
       'journey.drive',
       'renderer.close',
       'watchdog.stop',
-      'custody.after-run'
+      'custody.after-run',
+      'evidence.write'
     ])
+    expect(writtenEvidence).toMatchObject({
+      ok: false,
+      verdict: 'RED',
+      failure: expect.objectContaining({ message: 'mid-action failure' }),
+      custodySource,
+      custodyBefore: expect.objectContaining({ artifactDigest: '7'.repeat(64) }),
+      custodyAfter: expect.objectContaining({ artifactDigest: '7'.repeat(64) }),
+      artifactReferences: {
+        fixtureManifest: expect.objectContaining({
+          present: true,
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+        }),
+        generatedFixture: expect.objectContaining({
+          present: true,
+          sha256: speechFixture?.outputSha256
+        }),
+        openedMedia: expect.objectContaining({
+          present: true,
+          sha256: speechFixture?.outputSha256
+        }),
+        watchdogReceipt: expect.objectContaining({ present: false })
+      },
+      watchdogTerminal
+    })
 
     calls.length = 0
     journeyError = null

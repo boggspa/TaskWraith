@@ -94,6 +94,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_WAIT_MS = 45_000
 const ACCEPTANCE_SCHEMA_VERSION = 1
 const ACCEPTANCE_RECEIPT_MAX_BYTES = 256 * 1024
+const STUDIO_FAILURE_ARTIFACT_MAX_BYTES = 1024 * 1024 * 1024
 const STUDIO_UI_DRIVER_RAW_RECEIPT_MAX_BYTES = 256 * 1024
 const STUDIO_UI_MAX_PLAYHEAD_FORWARD_ADVANCE_TICKS = 1_000_000
 const WATCHDOG_RECEIPT_KIND = 'taskwraith-studio-acceptance-watchdog'
@@ -119,7 +120,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    'aac32f2e839acb79830ef56f8ab1fceee98f43fdc914a4596e855d74c62221b9',
+    '17c7e00b802cfda5860f847e237b6e748240b90abb71f5113bc5038ba4744e72',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -609,6 +610,14 @@ async function sha256Hex(filePath) {
   const stream = fs.createReadStream(filePath)
   for await (const chunk of stream) hash.update(chunk)
   return hash.digest('hex')
+}
+
+async function sha256SafeRegularFileIfPresent(filePath, label) {
+  const stat = await assertSafeRegularFile(filePath, label, {
+    allowMissing: true,
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  return stat ? sha256Hex(filePath) : null
 }
 
 function sha256Text(value) {
@@ -1657,6 +1666,60 @@ async function validateDetachedCompletion(paths, manifest) {
   }
 }
 
+async function validateDetachedFailure(paths, manifest, reason) {
+  const hasEvidenceHash = typeof manifest.evidenceSha256 === 'string'
+  const hasWatchdogHash = typeof manifest.watchdogReceiptSha256 === 'string'
+  if (!hasEvidenceHash && !hasWatchdogHash) {
+    return detachedRed('failed', reason)
+  }
+  if (!hasEvidenceHash || !hasWatchdogHash) {
+    return detachedRed('failed', 'detached RED artifact hash join is incomplete')
+  }
+  await assertSafeRegularFile(paths.evidencePath, 'detached RED acceptance evidence', {
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  await assertSafeRegularFile(paths.watchdogReceiptPath, 'detached RED watchdog receipt', {
+    maxBytes: ACCEPTANCE_RECEIPT_MAX_BYTES
+  })
+  const actualEvidenceSha256 = await sha256Hex(paths.evidencePath)
+  const actualWatchdogSha256 = await sha256Hex(paths.watchdogReceiptPath)
+  if (
+    manifest.evidenceSha256 !== actualEvidenceSha256 ||
+    manifest.watchdogReceiptSha256 !== actualWatchdogSha256
+  ) {
+    return detachedRed('failed', 'detached RED artifact hash mismatch', {
+      evidenceSha256: actualEvidenceSha256,
+      watchdogReceiptSha256: actualWatchdogSha256
+    })
+  }
+  const evidence = await readBoundedJsonFile(paths.evidencePath, 'detached RED acceptance evidence')
+  if (
+    evidence.schemaVersion !== ACCEPTANCE_SCHEMA_VERSION ||
+    evidence.kind !== 'taskwraith-studio-in-product-acceptance' ||
+    evidence.ok !== false ||
+    evidence.verdict !== 'RED' ||
+    evidence.instanceId !== manifest.instanceId ||
+    !isRecord(evidence.failure) ||
+    !isRecord(evidence.artifactReferences) ||
+    evidence.artifactReferences.watchdogReceipt?.present !== true ||
+    evidence.artifactReferences.watchdogReceipt?.sha256 !== actualWatchdogSha256
+  ) {
+    return detachedRed(
+      'failed',
+      'detached RED acceptance evidence is not an exact joined failure receipt',
+      {
+        evidenceSha256: actualEvidenceSha256,
+        watchdogReceiptSha256: actualWatchdogSha256
+      }
+    )
+  }
+  return detachedRed('failed', reason, {
+    evidenceSha256: actualEvidenceSha256,
+    watchdogReceiptSha256: actualWatchdogSha256,
+    failureEvidenceVerified: true
+  })
+}
+
 async function readDetachedCoordinatorStatus(options, adapters = {}) {
   const instanceId = assertStudioInstanceId(options.instanceId)
   const token = assertDetachedToken(options.token)
@@ -1749,7 +1812,7 @@ async function readDetachedCoordinatorStatus(options, adapters = {}) {
       typeof manifest.error === 'string' && manifest.error.length > 0
         ? manifest.error.slice(0, DETACHED_ERROR_MAX_CHARS)
         : 'detached coordinator failed without a bounded error'
-    return detachedRed('failed', reason)
+    return validateDetachedFailure(paths, manifest, reason)
   }
   if (manifest.state !== 'succeeded') {
     return {
@@ -2010,15 +2073,36 @@ async function runDetachedCoordinatorProcess() {
     heartbeatStopped = true
     clearInterval(heartbeat)
     await writer.drain().catch(() => undefined)
+    let evidenceSha256 = null
+    let watchdogReceiptSha256 = null
+    let artifactHashError = null
+    try {
+      evidenceSha256 = await sha256SafeRegularFileIfPresent(
+        paths.evidencePath,
+        'detached RED acceptance evidence'
+      )
+      watchdogReceiptSha256 = await sha256SafeRegularFileIfPresent(
+        paths.watchdogReceiptPath,
+        'detached RED watchdog receipt'
+      )
+    } catch (hashError) {
+      artifactHashError = hashError
+    }
+    const terminalError = artifactHashError
+      ? new AggregateError(
+          [error, artifactHashError],
+          'Studio acceptance failed and its RED artifact hash join failed'
+        )
+      : error
     await writer.update({
       state: 'failed',
       heartbeatAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      evidenceSha256: null,
-      watchdogReceiptSha256: null,
-      error: boundedDetachedError(error)
+      evidenceSha256,
+      watchdogReceiptSha256,
+      error: boundedDetachedError(terminalError)
     })
-    throw error
+    throw terminalError
   }
 }
 
@@ -3285,6 +3369,34 @@ function normalizeRecognizedSpeech(value) {
   )
 }
 
+function boundedRecognizedSpeechEditDistance(left, right, maximumDistance = 1) {
+  if (
+    typeof left !== 'string' ||
+    typeof right !== 'string' ||
+    !Number.isSafeInteger(maximumDistance) ||
+    maximumDistance < 0 ||
+    maximumDistance > 4
+  ) {
+    throw new Error('recognized-speech edit-distance operands are invalid')
+  }
+  if (Math.abs(left.length - right.length) > maximumDistance) return maximumDistance + 1
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex]
+    let rowMinimum = current[0]
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitution =
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+      const value = Math.min(previous[rightIndex] + 1, current[rightIndex - 1] + 1, substitution)
+      current.push(value)
+      rowMinimum = Math.min(rowMinimum, value)
+    }
+    if (rowMinimum > maximumDistance) return maximumDistance + 1
+    previous = current
+  }
+  return previous[right.length]
+}
+
 function adjudicateRecognizedTranscript(entry, expectedPhrases) {
   if (
     !Array.isArray(expectedPhrases) ||
@@ -3313,23 +3425,65 @@ function adjudicateRecognizedTranscript(entry, expectedPhrases) {
         .map((segment) => segment.text.trim())
         .filter(Boolean)
     : []
+  if (texts.length > 2_048) {
+    throw new Error('recognized transcript exceeds the bounded segment count')
+  }
   const transcriptText = texts.join(' ')
+  const textByteLength = Buffer.byteLength(transcriptText)
+  if (textByteLength > 256 * 1_024) {
+    throw new Error('recognized transcript exceeds the bounded text length')
+  }
   const normalizedTranscript = normalizeRecognizedSpeech(transcriptText)
+  const transcriptTokens = normalizedTranscript ? normalizedTranscript.split(' ') : []
   const matchedPhrases = []
   const missingPhrases = []
+  const phraseMatches = []
+  let searchTokenIndex = 0
   for (const [index, normalizedPhrase] of normalizedPhrases.entries()) {
-    const destination = normalizedTranscript.includes(normalizedPhrase)
-      ? matchedPhrases
-      : missingPhrases
-    destination.push(expectedPhrases[index])
+    const phraseTokens = normalizedPhrase.split(' ')
+    let match = null
+    for (
+      let candidateStart = searchTokenIndex;
+      candidateStart + phraseTokens.length <= transcriptTokens.length;
+      candidateStart += 1
+    ) {
+      const candidate = transcriptTokens
+        .slice(candidateStart, candidateStart + phraseTokens.length)
+        .join(' ')
+      const editDistance = boundedRecognizedSpeechEditDistance(normalizedPhrase, candidate, 1)
+      if (editDistance <= 1) {
+        match = {
+          phrase: expectedPhrases[index],
+          normalizedExpected: normalizedPhrase,
+          normalizedObserved: candidate,
+          editDistance,
+          tokenStart: candidateStart,
+          tokenEnd: candidateStart + phraseTokens.length
+        }
+        break
+      }
+    }
+    if (match) {
+      matchedPhrases.push(expectedPhrases[index])
+      phraseMatches.push(match)
+      searchTokenIndex = match.tokenEnd
+    } else {
+      missingPhrases.push(expectedPhrases[index])
+    }
   }
   return {
     ok: texts.length > 0 && missingPhrases.length === 0,
     segmentCount: texts.length,
-    textByteLength: Buffer.byteLength(transcriptText),
+    textByteLength,
     transcriptSha256: crypto.createHash('sha256').update(transcriptText).digest('hex'),
+    matchPolicy: {
+      ordered: true,
+      contiguousTokenWindow: true,
+      maximumCharacterEditDistancePerPhrase: 1
+    },
     matchedPhrases,
-    missingPhrases
+    missingPhrases,
+    phraseMatches
   }
 }
 
@@ -4101,14 +4255,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     return receipt
   }
   const sourceBounds = assertSafeUiDriverTarget(sourceTarget).bounds
-  await drive([
-    {
-      type: 'press-playback',
-      playbackValueBefore: 'playing',
-      playbackValueAfter: 'paused'
-    }
-  ])
-
   const assetId = target.asset && target.asset.sha256
   const transcript = await waitJournal(
     plan,
@@ -4134,6 +4280,13 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       provenanceNote: target.speechFixture.provenanceNote
     }
   }
+  await drive([
+    {
+      type: 'press-playback',
+      playbackValueBefore: 'playing',
+      playbackValueAfter: 'paused'
+    }
+  ])
   let afterRevision = transcript.revision
   const transcriptBandCapture = await drive([{ type: 'screenshot', name: 'transcript-band' }])
   await drive(['tab'])
@@ -4372,6 +4525,94 @@ async function writeEvidence(plan, evidence) {
   await fsPromises.rename(temp, plan.evidencePath)
 }
 
+function boundedAcceptanceFailure(error) {
+  const failure = error instanceof Error ? error : new Error(String(error))
+  const driverEvidence = isRecord(failure.studioUiDriverEvidence)
+    ? failure.studioUiDriverEvidence
+    : null
+  return {
+    name: String(failure.name || 'Error').slice(0, 128),
+    message: String(failure.message || failure).slice(0, DETACHED_ERROR_MAX_CHARS),
+    stage:
+      typeof driverEvidence?.failureStage === 'string'
+        ? driverEvidence.failureStage.slice(0, 128)
+        : 'acceptance',
+    driverEvidence
+  }
+}
+
+async function measureStudioAcceptanceFailureArtifacts(plan, candidates) {
+  if (!Array.isArray(candidates) || candidates.length > 16) {
+    throw new Error('Studio acceptance failure artifact list is not bounded')
+  }
+  const artifactRoot = path.resolve(plan.artifactRoot)
+  const canonicalArtifactRoot = await fsPromises.realpath(artifactRoot)
+  const references = {}
+  for (const candidate of candidates) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.name !== 'string' ||
+      !/^[a-z][a-zA-Z0-9]{0,63}$/.test(candidate.name) ||
+      (candidate.path !== null &&
+        candidate.path !== undefined &&
+        typeof candidate.path !== 'string')
+    ) {
+      throw new Error('Studio acceptance failure artifact descriptor is invalid')
+    }
+    if (candidate.path === null || candidate.path === undefined) continue
+    const artifactPath = path.resolve(candidate.path)
+    const relative = path.relative(artifactRoot, artifactPath)
+    const canonicalRelativeCandidate = path.relative(canonicalArtifactRoot, artifactPath)
+    const lexicallyInside =
+      Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
+    const canonicallyPrefixed =
+      Boolean(canonicalRelativeCandidate) &&
+      !canonicalRelativeCandidate.startsWith('..') &&
+      !path.isAbsolute(canonicalRelativeCandidate)
+    if (!lexicallyInside && !canonicallyPrefixed) {
+      throw new Error(`Studio acceptance failure artifact ${candidate.name} escaped its root`)
+    }
+    let stat
+    try {
+      stat = await fsPromises.lstat(artifactPath)
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        references[candidate.name] = { path: artifactPath, present: false }
+        continue
+      }
+      throw error
+    }
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.size < 0 ||
+      stat.size > STUDIO_FAILURE_ARTIFACT_MAX_BYTES
+    ) {
+      throw new Error(
+        `Studio acceptance failure artifact ${candidate.name} is not a bounded regular file`
+      )
+    }
+    const canonicalArtifactPath = await fsPromises.realpath(artifactPath)
+    const canonicalRelative = path.relative(canonicalArtifactRoot, canonicalArtifactPath)
+    if (
+      !canonicalRelative ||
+      canonicalRelative.startsWith('..') ||
+      path.isAbsolute(canonicalRelative)
+    ) {
+      throw new Error(
+        `Studio acceptance failure artifact ${candidate.name} resolves outside its root`
+      )
+    }
+    references[candidate.name] = {
+      path: artifactPath,
+      present: true,
+      byteLength: stat.size,
+      sha256: await sha256Hex(artifactPath)
+    }
+  }
+  return references
+}
+
 async function runStudioAcceptance(args, adapters = {}) {
   const plan = buildStudioAcceptancePlan({
     instanceId: args.instanceId || undefined,
@@ -4479,6 +4720,12 @@ async function runStudioAcceptance(args, adapters = {}) {
   const watchdogLaunch = adapters.launchUnderWatchdog || launchUnderWatchdog
   const session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
   let renderer = null
+  let openResult = null
+  let durable = null
+  let companion = null
+  let companionCustody = null
+  let window = null
+  let journey = null
   let evidence = null
   let acceptanceError = null
   try {
@@ -4490,25 +4737,18 @@ async function runStudioAcceptance(args, adapters = {}) {
       port: plan.spawnPlan.remoteDebuggingPort,
       ...(adapters.cdpAdapters ? { adapters: adapters.cdpAdapters } : {})
     })
-    const openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(
-      renderer,
-      asset
-    )
-    const durable = await (adapters.verifyDurableOpen || verifyDurableOpen)(plan, asset)
-    const companion = await (adapters.findCompanion || findStudioCompanion)(
+    openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(renderer, asset)
+    durable = await (adapters.verifyDurableOpen || verifyDurableOpen)(plan, asset)
+    companion = await (adapters.findCompanion || findStudioCompanion)(
       session.pid,
       adapters.processAdapters || {}
     )
-    const companionCustody = assertStudioCompanionMatchesCustody(
-      companion,
-      custodyBefore,
-      plan.repoRoot
-    )
-    const window = await (adapters.probeWindow || probeNativeWindow)(
+    companionCustody = assertStudioCompanionMatchesCustody(companion, custodyBefore, plan.repoRoot)
+    window = await (adapters.probeWindow || probeNativeWindow)(
       companion.pid,
       adapters.windowAdapters || {}
     )
-    const journey = await (adapters.driveUiJourney || driveStudioUiJourney)(
+    journey = await (adapters.driveUiJourney || driveStudioUiJourney)(
       plan,
       {
         companion,
@@ -4593,9 +4833,78 @@ async function runStudioAcceptance(args, adapters = {}) {
   const failures = [acceptanceError, rendererCloseError, watchdogError, custodyError].filter(
     Boolean
   )
-  if (failures.length === 1) throw failures[0]
-  if (failures.length > 1) {
-    throw new AggregateError(failures, 'Studio acceptance and cleanup both failed')
+  let failureEvidenceWriteError = null
+  if (failures.length > 0) {
+    try {
+      const primaryFailure = boundedAcceptanceFailure(failures[0])
+      const driverEvidence = primaryFailure.driverEvidence
+      const artifactReferences = await (
+        adapters.measureFailureArtifacts || measureStudioAcceptanceFailureArtifacts
+      )(plan, [
+        { name: 'fixtureManifest', path: speechFixture?.manifestPath },
+        { name: 'generatedFixture', path: speechFixture?.outputPath },
+        { name: 'openedMedia', path: asset?.assetPath },
+        { name: 'journal', path: durable?.journalPath },
+        { name: 'driverRequest', path: driverEvidence?.requestPath },
+        { name: 'driverRaw', path: driverEvidence?.rawReceiptPath },
+        { name: 'driverValidated', path: driverEvidence?.validatedReceiptPath },
+        { name: 'watchdogReceipt', path: plan.receiptPath }
+      ])
+      const redEvidence = {
+        ok: false,
+        verdict: 'RED',
+        instanceId: plan.instanceId,
+        electron: {
+          pid: session.pid,
+          pgid: session.pgid || null,
+          remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
+          mainInspectorPort: plan.spawnPlan.mainInspectorPort
+        },
+        companion,
+        window,
+        asset,
+        speechFixture,
+        speechFixtureCustody,
+        custodyFixture,
+        custodySource,
+        custodyBefore,
+        custodyAfter,
+        companionCustody,
+        providerGuards,
+        openResult,
+        durable,
+        journey,
+        failure: {
+          ...primaryFailure,
+          errors: failures.map(boundedAcceptanceFailure)
+        },
+        artifactJoinPolicy: {
+          root: plan.artifactRoot,
+          sha256EveryPresentRegularFile: true,
+          missingFilesRemainExplicit: true
+        },
+        artifactReferences,
+        watchdogReceiptPath: plan.receiptPath,
+        watchdogTerminal,
+        priorOrphanScan,
+        safety: plan.safety
+      }
+      await (adapters.writeEvidence || writeEvidence)(plan, redEvidence)
+    } catch (error) {
+      failureEvidenceWriteError = error
+    }
+  }
+  const completedFailures = failureEvidenceWriteError
+    ? [...failures, failureEvidenceWriteError]
+    : failures
+  if (completedFailures.length === 1) throw completedFailures[0]
+  if (completedFailures.length > 1) {
+    throw new AggregateError(
+      completedFailures,
+      `Studio acceptance, cleanup, or RED evidence sealing failed: ${completedFailures
+        .map((failure) => boundedAcceptanceFailure(failure).message)
+        .join(' | ')}`
+    )
   }
 
   const completedEvidence = { ...evidence, watchdogTerminal, custodyAfter }

@@ -222,8 +222,26 @@ let keyCodes: [String: CGKeyCode] = [
     "right": 124
 ]
 
+struct DriverRefusalReceipt: Codable {
+    let schemaVersion: Int
+    let kind: String
+    let recordedAt: String
+    let reason: String
+}
+
 func fail(_ message: String) -> Never {
-    fputs("[studio-ui-driver] REFUSED — \(message)\n", stderr)
+    let boundedMessage = String(message.prefix(2_048))
+    let receipt = DriverRefusalReceipt(
+        schemaVersion: 1,
+        kind: "taskwraith-studio-ui-driver-refusal",
+        recordedAt: ISO8601DateFormatter().string(from: Date()),
+        reason: boundedMessage
+    )
+    if let output = try? JSONEncoder().encode(receipt) {
+        FileHandle.standardOutput.write(output)
+        FileHandle.standardOutput.write(Data([0x0A]))
+    }
+    fputs("[studio-ui-driver] REFUSED — \(boundedMessage)\n", stderr)
     exit(2)
 }
 
@@ -364,7 +382,7 @@ func exactAccessibilityPlayhead(in window: AXUIElement) throws -> AXUIElement {
 /// for transport merely because it happens to share one attribute.
 func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIElement {
     var queue: [(AXUIElement, Int)] = [(window, 0)]
-    var matches: [AXUIElement] = []
+    var labeledMatches: [AXUIElement] = []
     var visited = 0
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
@@ -373,15 +391,8 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
             stringAttribute(kAXIdentifierAttribute, of: element) ??
             stringAttribute(kAXDescriptionAttribute, of: element) ??
             stringAttribute(kAXTitleAttribute, of: element)
-        var rawActions: CFArray?
-        let actionResult = AXUIElementCopyActionNames(element, &rawActions)
-        let actionNames = rawActions as? [String] ?? []
-        if stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole,
-           accessibilityLabel == "Playback",
-           actionResult == .success,
-           actionNames.contains(kAXPressAction)
-        {
-            matches.append(element)
+        if accessibilityLabel == "Playback" {
+            labeledMatches.append(element)
         }
         guard depth < 8 else { continue }
         var rawChildren: CFTypeRef?
@@ -392,15 +403,38 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
         ) == .success,
             let children = rawChildren as? [AXUIElement]
         {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused(
+                    "Playback accessibility tree exceeds 512 elements"
+                )
+            }
             queue.append(contentsOf: children.map { ($0, depth + 1) })
         }
     }
-    guard visited < 512, matches.count == 1, let playback = matches.first,
-          let value = stringAttribute(kAXValueAttribute, of: playback),
-          value == "playing" || value == "paused" else {
+    guard visited < 512 else {
+        throw DriverFailure.refused("Playback accessibility tree exceeds 512 elements")
+    }
+    guard labeledMatches.count == 1, let playback = labeledMatches.first else {
         throw DriverFailure.refused(
-            "exact pressable Playback accessibility identity is unavailable"
+            labeledMatches.isEmpty
+                ? "Playback accessibility control is absent"
+                : "Playback accessibility control is duplicated"
         )
+    }
+    guard stringAttribute(kAXRoleAttribute, of: playback) == kAXButtonRole else {
+        throw DriverFailure.refused("Playback accessibility control is not an AXButton")
+    }
+    var rawActions: CFArray?
+    guard AXUIElementCopyActionNames(playback, &rawActions) == .success,
+          let actionNames = rawActions as? [String],
+          actionNames.contains(kAXPressAction) else {
+        throw DriverFailure.refused("Playback accessibility control has no AXPress action")
+    }
+    guard let value = stringAttribute(kAXValueAttribute, of: playback) else {
+        throw DriverFailure.refused("Playback accessibility value is unreadable")
+    }
+    guard value == "playing" || value == "paused" else {
+        throw DriverFailure.refused("Playback accessibility value is invalid: \(value)")
     }
     return playback
 }
@@ -770,14 +804,30 @@ func pressAccessibilityPlayback(
         throw DriverFailure.refused("exact Playback AXPress failed")
     }
 
-    // Play/pause currently rebuilds part of the public tree because the status
-    // line changes width. Reacquire the exact control rather than accepting a
-    // stale proxy's old value as proof that the action settled.
+    // Play/pause currently rebuilds the public window subtree. Reacquire the
+    // exact window and then the exact control on every observation; retaining
+    // either cross-process AX proxy can turn a truthful transition into nil.
+    // Keep the last fixed refusal reason instead of swallowing it with try?.
     let deadline = Date().addingTimeInterval(1)
     var observedAfter: String?
+    var lastObservationFailure: String?
     while Date() < deadline {
-        observedAfter = (try? exactAccessibilityPlaybackControl(in: window))
-            .flatMap { stringAttribute(kAXValueAttribute, of: $0) }
+        do {
+            try validateWindow(request)
+            let freshWindow = try exactAccessibilityWindow(request)
+            let freshPlayback = try exactAccessibilityPlaybackControl(in: freshWindow)
+            guard let candidate = stringAttribute(kAXValueAttribute, of: freshPlayback) else {
+                throw DriverFailure.refused("Playback accessibility value is unreadable")
+            }
+            observedAfter = candidate
+            lastObservationFailure = nil
+        } catch let failure as DriverFailure {
+            observedAfter = nil
+            lastObservationFailure = failure.description
+        } catch {
+            observedAfter = nil
+            lastObservationFailure = String(describing: error)
+        }
         if playbackValueAfter == observedAfter { break }
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
@@ -790,6 +840,7 @@ func pressAccessibilityPlayback(
                 "observedBefore=\(String(describing: observedBefore)) " +
                 "requestedAfter=\(playbackValueAfter) " +
                 "observedAfter=\(String(describing: observedAfter)) " +
+                "lastObservationFailure=\(lastObservationFailure ?? "none") " +
                 "foregroundBefore=\(String(describing: foregroundBefore)) " +
                 "foregroundAfter=\(String(describing: foregroundAfter)) " +
                 "companionActive=\(application.isActive)"
