@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../store/types'
 import {
+  formatAssistantGroupMentionRoutingNotice,
   resolveBackgroundMentionRouting,
   resolveAssistantMentionRoutingPlan,
   resolveEnsembleCommunicationTargets
@@ -96,6 +97,27 @@ describe('resolveAssistantMentionRoutingPlan', () => {
     expect(plan.groupNotices).toEqual([
       { group: 'reviewers', token: '@Reviewers', reason: 'no_eligible_targets' }
     ])
+  })
+})
+
+describe('formatAssistantGroupMentionRoutingNotice', () => {
+  it.each([
+    [
+      'authority_required' as const,
+      '@-mention: @Workers group routing requires Boss/Captain fan-out authority; no turns appended.'
+    ],
+    [
+      'outside_dm_scope' as const,
+      '@-mention: @Workers is outside this user-targeted round; no group turns appended.'
+    ],
+    [
+      'no_eligible_targets' as const,
+      '@-mention: @Workers matched no enabled eligible peer seats; no turns appended.'
+    ]
+  ])('formats %s as a visible routing boundary', (reason, expected) => {
+    expect(
+      formatAssistantGroupMentionRoutingNotice({ group: 'workers', token: '@Workers', reason })
+    ).toBe(expected)
   })
 })
 

@@ -806,6 +806,100 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
   })
 
+  it('expands explicit side-message groups without treating message-body tags as recipients', async () => {
+    const roster = [
+      participant('work-1', 'codex', 1, { role: 'Work1', stageRole: 'worker' }),
+      participant('review-1', 'claude', 2, { role: 'Review1', stageRole: 'reviewer' }),
+      participant('work-2', 'kimi', 3, { role: 'Work2', stageRole: 'worker' }),
+      participant('background-shell', 'codex', 4, {
+        role: 'Background',
+        stageRole: 'background'
+      })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Work1 owns the serial task.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+      to: ['@Workers', '@BG'],
+      message: '@All is quoted context, not an extra recipient selector.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      toParticipantIds: ['work-2', 'background-shell'],
+      boundaryDeliveryParticipantIds: ['work-2', 'background-shell']
+    })
+    expect(result.toParticipantIds).not.toContain('review-1')
+    expect(harness.deliverSideMessageSteering).not.toHaveBeenCalled()
+    expect(
+      harness.chat.messages.find((message) => message.metadata?.kind === 'ensembleSideMessage')
+        ?.metadata?.toParticipantIds
+    ).toEqual(['work-2', 'background-shell'])
+  })
+
+  it('lets the Boss route an assistant-authored stage group in roster order', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Boss', stageRole: 'worker' }),
+      participant('scout', 'claude', 2, { role: 'Scout', stageRole: 'scout' }),
+      participant('reviewer', 'kimi', 3, { role: 'Reviewer', stageRole: 'reviewer' }),
+      participant('worker-1', 'codex', 4, { role: 'Worker1', stageRole: 'worker' }),
+      participant('worker-2', 'claude', 5, { role: 'Worker2', stageRole: 'worker' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Coordinate the staged work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@Workers take both implementation slices next.')
+    complete(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('worker-1')
+    complete(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('worker-2')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
+  it('keeps an ordinary assistant group tag presentation-only without fan-out authority', async () => {
+    const roster = [
+      participant('scout', 'codex', 1, { role: 'Scout', stageRole: 'scout' }),
+      participant('reviewer', 'claude', 2, { role: 'Reviewer', stageRole: 'reviewer' }),
+      participant('background-shell', 'kimi', 3, {
+        role: 'Background',
+        stageRole: 'background'
+      })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Work through the roster.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@BG skip ahead and run the checks now.')
+    complete(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('reviewer')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('@BG group routing requires Boss/Captain fan-out authority')
+      )
+    ).toBe(true)
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
   // A directed absorb carries routing intent for one interjection. It must not
   // retroactively rewrite the round that is already running: the other seats
   // are live members of it, and dropping them from `participants` loses their

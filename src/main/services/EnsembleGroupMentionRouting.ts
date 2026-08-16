@@ -31,6 +31,18 @@ export interface AssistantMentionRoutingPlan {
   groupNotices: AssistantGroupMentionRoutingNotice[]
 }
 
+export function formatAssistantGroupMentionRoutingNotice(
+  notice: AssistantGroupMentionRoutingNotice
+): string {
+  if (notice.reason === 'authority_required') {
+    return `@-mention: ${notice.token} group routing requires Boss/Captain fan-out authority; no turns appended.`
+  }
+  if (notice.reason === 'outside_dm_scope') {
+    return `@-mention: ${notice.token} is outside this user-targeted round; no group turns appended.`
+  }
+  return `@-mention: ${notice.token} matched no enabled eligible peer seats; no turns appended.`
+}
+
 export interface BackgroundMentionRoutingPlan {
   /** Enabled background seats explicitly selected by a direct or group token. */
   participantIds: Set<string>

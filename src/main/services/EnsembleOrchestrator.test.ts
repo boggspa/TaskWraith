@@ -22859,7 +22859,7 @@ describe('background stage routing', () => {
     }
   })
 
-  it('does not guess when a bare @BG mention matches multiple background seats', async () => {
+  it('expands a bare @BG mention to every enabled background seat', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -22889,18 +22889,24 @@ describe('background stage routing', () => {
       prompt: '@BG investigate while Lead continues.',
       event: { sender: {} as Electron.WebContents }
     })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('lead')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(
+      harness.dispatched.map((payload) => payload.ensembleRun?.participantId)
+    ).toEqual(expect.arrayContaining(['lead', 'background-tests', 'background-logs']))
+    expect(
+      harness.dispatched
+        .filter((payload) => payload.ensembleRun?.participantId?.startsWith('background-'))
+        .every((payload) => Boolean(payload.ensembleRun?.laneId))
+    ).toBe(true)
     expect(
       harness.chat.messages.some(
         (message) =>
           typeof message.content === 'string' &&
-          message.content.includes('`@BG` was ambiguous') &&
-          message.content.includes('No background lane launched')
+          message.content.includes('`@BG` was ambiguous')
       )
-    ).toBe(true)
+    ).toBe(false)
 
-    completeDispatchedRun(harness, 0)
+    await harness.orchestrator.cancelRound('ensemble-chat')
   })
 
   it('never treats a background lane as Boss or Captain authority', async () => {
@@ -22947,6 +22953,7 @@ describe('background stage routing', () => {
 
   it('turns an agent @BG mention into a lane without delaying the next serial seat', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'lead'
     harness.chat.ensemble!.participants = [
       {
         id: 'lead',
@@ -23005,6 +23012,8 @@ describe('background stage routing', () => {
 
   it('can dispatch the same BG seat twice without duplicating either result', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'lead'
+    harness.chat.ensemble!.captainParticipantIds = ['worker']
     harness.chat.ensemble!.participants = [
       {
         id: 'lead',

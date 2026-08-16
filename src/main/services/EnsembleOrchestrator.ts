@@ -124,7 +124,6 @@ import {
   isImageViewToolUse
 } from '../../shared/imageViewIdentity'
 import {
-  findAllMentions,
   resolvePhraseToParticipant,
   resolveYieldTargetDetail,
   type ParticipantMentionMatch
@@ -211,6 +210,12 @@ import {
   type EnsembleSideMessageSteeringResult
 } from '../steering/EnsembleSideMessageSteering'
 import { buildCursorPathBCompactionSummary } from './CursorContextPressureRecovery'
+import {
+  formatAssistantGroupMentionRoutingNotice,
+  resolveAssistantMentionRoutingPlan,
+  resolveBackgroundMentionRouting,
+  resolveEnsembleCommunicationTargets
+} from './EnsembleGroupMentionRouting'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
@@ -1911,27 +1916,6 @@ function fanoutTargetStageMatches(
 
 function isBackgroundParticipant(participant: EnsembleParticipant): boolean {
   return participant.stageRole === 'background'
-}
-
-function resolveBackgroundMentions(
-  prompt: string,
-  participants: EnsembleParticipant[]
-): { participantIds: Set<string>; ambiguities: ParticipantMentionMatch[] } {
-  const participantIds = new Set<string>()
-  const ambiguities: ParticipantMentionMatch[] = []
-  for (const match of findAllMentions(prompt, participants)) {
-    if (match.kind !== 'participant') continue
-    const candidates = [match.participant, ...(match.ambiguousAmong || [])]
-    if (!candidates.some((candidate) => isBackgroundParticipant(candidate))) continue
-    if (match.ambiguousAmong && match.ambiguousAmong.length > 0) {
-      ambiguities.push(match)
-      continue
-    }
-    if (isBackgroundParticipant(match.participant) && match.participant.enabled !== false) {
-      participantIds.add(match.participant.id)
-    }
-  }
-  return { participantIds, ambiguities }
 }
 
 function fanoutPolicyAllowsRead(policy: EnsembleFanoutPolicy): boolean {
@@ -12780,22 +12764,11 @@ export class EnsembleOrchestrator {
     }
     const targets = normalizeTargetList(input.to)
     const participants = chat.ensemble.participants || []
-    const recipients =
-      targets.length === 0
-        ? []
-        : dedupeParticipants(
-            targets
-              .map((target) =>
-                resolvePhraseToParticipant(
-                  stripLeadingAt(target),
-                  participants,
-                  new Set([run.participant.id])
-                )
-              )
-              .filter((participant): participant is EnsembleParticipant =>
-                Boolean(participant?.enabled)
-              )
-          )
+    const recipients = resolveEnsembleCommunicationTargets({
+      selectors: targets,
+      participants,
+      senderParticipantId: run.participant.id
+    })
     if (recipients.length === 0) {
       return {
         ok: false,
@@ -15071,10 +15044,10 @@ export class EnsembleOrchestrator {
       )
     }
     const requestedParticipants = dmTargetParticipant ? [dmTargetParticipant] : orderedFull
-    const backgroundMentionResolution = resolveBackgroundMentions(
-      prompt,
-      chat.ensemble.participants
-    )
+    const backgroundMentionResolution = resolveBackgroundMentionRouting({
+      text: prompt,
+      participants: chat.ensemble.participants
+    })
     const backgroundParticipants = requestedParticipants.filter(
       (participant) =>
         isBackgroundParticipant(participant) &&
@@ -16730,14 +16703,25 @@ export class EnsembleOrchestrator {
         }
       }
       const allParticipants = chat?.ensemble?.participants || []
-      const detectedParticipantTagMatches = findAllMentions(
-        run.content,
-        allParticipants,
-        new Set([participant.id])
-      ).filter(
-        (match): match is ParticipantMentionMatch =>
-          match.kind === 'participant' && match.participant.enabled
+      const groupRoutingAuthorityParticipantIds = new Set(
+        [
+          this.activeBossmanParticipantId(chat, runtime),
+          ...this.activeCaptainParticipantIds(chat, runtime)
+        ].filter((participantId): participantId is string => Boolean(participantId))
       )
+      const assistantMentionRoutingPlan = resolveAssistantMentionRoutingPlan({
+        text: run.content,
+        participants: allParticipants,
+        callerParticipantId: participant.id,
+        canRouteGroups: Boolean(
+          this.fanoutAuthorityRoleForCaller(chat, runtime, participant.id)
+        ),
+        ...(runtime.dmTargetParticipantId
+          ? { dmTargetParticipantId: runtime.dmTargetParticipantId }
+          : {}),
+        excludedGroupParticipantIds: groupRoutingAuthorityParticipantIds
+      })
+      const detectedParticipantTagMatches = assistantMentionRoutingPlan.participantMatches
       // An explicit yield normally wins over conversational @mentions. The
       // active Boss/Captain is the deliberate exception: if a participant tags
       // the authority and then yields, run the bounded authority checkpoint
@@ -16751,6 +16735,15 @@ export class EnsembleOrchestrator {
           run,
           detectedParticipantTagMatches
         )
+      }
+      if (!routedByYieldTarget) {
+        for (const notice of assistantMentionRoutingPlan.groupNotices) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            formatAssistantGroupMentionRoutingNotice(notice)
+          )
+        }
       }
       const pendingParticipantTagMatches = routedByYieldTarget ? [] : detectedParticipantTagMatches
       const hasRoutableForegroundMention = pendingParticipantTagMatches.some(
