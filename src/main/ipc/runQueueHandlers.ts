@@ -25,7 +25,8 @@ import {
   type RunQueueJobFilter,
   type RunQueueJobStatus,
   type RunRecoveryFilter,
-  type RunRecoveryRecord
+  type RunRecoveryRecord,
+  type ToolActivityDetailRef
 } from '../store/types'
 
 type BridgeRequest = (method: string, params: unknown, options?: { timeoutMs?: number }) => Promise<unknown>
@@ -111,6 +112,7 @@ export interface RunQueueHandlersDeps {
   } | null
 
   getRunEvents: (filter?: Record<string, unknown>) => Promise<unknown[]>
+  getToolActivityDetails: (refs: ToolActivityDetailRef[]) => Promise<unknown[]>
   getRunEventReplay: (runId: string) => unknown
   getBridgeDaemon: () => BridgeDaemonLike | null
 
@@ -326,6 +328,23 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     const runId = typeof filter?.runId === 'string' ? filter.runId : undefined
     if (runId) assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runId })
     return deps.getRunEvents(scopedChatFilter(scope, filter) || {})
+  })
+  ipcMain.handle('get-tool-activity-details', (event, refs: ToolActivityDetailRef[] = []) => {
+    if (!Array.isArray(refs) || refs.length > 512) {
+      throw new Error('Tool activity detail request exceeds the bounded batch size.')
+    }
+    const scope = deps.resolveSenderRunQueueScope(event)
+    const runIds = new Set<string>()
+    for (const ref of refs) {
+      if (!ref || typeof ref.runId !== 'string' || !ref.runId.trim()) {
+        throw new Error('Tool activity detail request requires a run identity.')
+      }
+      runIds.add(ref.runId)
+    }
+    for (const runId of runIds) {
+      assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runId })
+    }
+    return deps.getToolActivityDetails(refs)
   })
   ipcMain.handle('get-run-event-replay', (event, runId: string) => {
     const scope = deps.resolveSenderRunQueueScope(event)

@@ -95,6 +95,7 @@ import {
   isImageViewToolUse,
   resolveImageViewCount
 } from '../../../shared/imageViewIdentity'
+import { useHydratedToolActivities } from '../lib/toolActivityDetailHydration'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -2950,7 +2951,7 @@ export function activityRowPaintSignature(activity: ToolActivity): string {
 const COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT = 80
 
 export function ActivityStack({
-  activities,
+  activities: compactActivities,
   header,
   workspacePath,
   provider,
@@ -2975,6 +2976,7 @@ export function ActivityStack({
   showDiffStats,
   thinkingTraceActions
 }: ActivityStackProps) {
+  const activities = useHydratedToolActivities(compactActivities)
   const activityAccent = providerAccentVar(
     providerHueClass || resolveProviderHueClass(provider)
   )

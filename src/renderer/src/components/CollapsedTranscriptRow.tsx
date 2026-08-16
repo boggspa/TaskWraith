@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type CSSProperties, type ReactElement, type ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import type { ToolActivity } from '../../../main/store/types'
 import {
   collapsedStackDiffAriaLabel,
@@ -9,6 +9,7 @@ import {
 import { renderCollapsedStackLabelPart } from '../lib/activitySummaryLabel'
 import { providerAccentVar } from '../lib/ollamaDisplayBrand'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
+import { ToolActivityDetailHydrationBoundary } from '../lib/toolActivityDetailHydration'
 
 /**
  * Settled-row collapse chrome shared by activity stacks and plain system
@@ -188,23 +189,29 @@ export function CollapsedActivityStackRow({
   onToggle: (expanded: boolean) => void
   children?: ReactNode
 }): ReactElement {
-  const summary = useMemo(() => summarizeCollapsedActivityStack(activities), [activities])
   return (
-    <CollapsedTranscriptRow
-      header={header}
-      label={summary.label}
-      labelParts={summary.parts}
-      icons={<CollapsedStackIconStrip families={summary.families} />}
-      diffStats={showDiffStats ? summary.diff : null}
-      errored={summary.errorCount > 0}
-      providerHueClass={providerHueClass}
-      expanded={expanded}
-      onToggle={onToggle}
-      ariaTargetLabel={`${summary.activityCount} activity ${
-        summary.activityCount === 1 ? 'step' : 'steps'
-      }`}
-    >
-      {children}
-    </CollapsedTranscriptRow>
+    <ToolActivityDetailHydrationBoundary activities={activities}>
+      {(hydratedActivities) => {
+        const summary = summarizeCollapsedActivityStack(hydratedActivities)
+        return (
+          <CollapsedTranscriptRow
+            header={header}
+            label={summary.label}
+            labelParts={summary.parts}
+            icons={<CollapsedStackIconStrip families={summary.families} />}
+            diffStats={showDiffStats ? summary.diff : null}
+            errored={summary.errorCount > 0}
+            providerHueClass={providerHueClass}
+            expanded={expanded}
+            onToggle={onToggle}
+            ariaTargetLabel={`${summary.activityCount} activity ${
+              summary.activityCount === 1 ? 'step' : 'steps'
+            }`}
+          >
+            {children}
+          </CollapsedTranscriptRow>
+        )
+      }}
+    </ToolActivityDetailHydrationBoundary>
   )
 }

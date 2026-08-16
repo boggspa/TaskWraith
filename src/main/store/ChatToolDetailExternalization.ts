@@ -21,7 +21,7 @@ const HEAVY_TOOL_ACTIVITY_FIELDS = [
   'outputSummary'
 ] as const satisfies readonly (keyof ToolActivity)[]
 
-function isTerminalRun(run: ChatRun): boolean {
+function isTerminalRun(run: ChatRun, hasLaterRun: boolean): boolean {
   const status = String(run.status || '')
     .trim()
     .toLowerCase()
@@ -33,16 +33,18 @@ function isTerminalRun(run: ChatRun): boolean {
   ) {
     return false
   }
-  return Boolean(
-    run.endedAt ||
-    run.cancelled ||
-    run.exitCode !== undefined ||
+  const terminalStatus =
     status === 'success' ||
     status === 'success_with_warnings' ||
     status === 'completed' ||
     status === 'failed' ||
     status === 'cancelled' ||
     status === 'error'
+  // `status` can flip before the provider exit/terminal save reaches the
+  // store. Require an explicit seal for the latest run; a later run is itself
+  // durable proof that an older status-only record crossed its turn boundary.
+  return Boolean(
+    run.endedAt || run.cancelled || run.exitCode !== undefined || (hasLaterRun && terminalStatus)
   )
 }
 
@@ -70,15 +72,16 @@ export function externalizeTerminalToolActivityDetails(
   sink: ToolActivityDetailSink
 ): ChatToolDetailExternalizationResult {
   const runs = Array.isArray(chat.runs) ? chat.runs : []
-  const candidateRunIds = new Set(
-    runs
-      .filter(
-        (run) =>
-          isTerminalRun(run) &&
-          run.toolDetailExternalizationGeneration !== TOOL_DETAIL_EXTERNALIZATION_GENERATION
-      )
-      .map((run) => run.runId)
-  )
+  const candidateRunIds = new Set<string>()
+  for (let index = 0; index < runs.length; index += 1) {
+    const run = runs[index]
+    if (
+      isTerminalRun(run, index < runs.length - 1) &&
+      run.toolDetailExternalizationGeneration !== TOOL_DETAIL_EXTERNALIZATION_GENERATION
+    ) {
+      candidateRunIds.add(run.runId)
+    }
+  }
   if (candidateRunIds.size === 0) {
     return { chat, externalizedActivityCount: 0, completedRunIds: [] }
   }

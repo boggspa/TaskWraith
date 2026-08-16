@@ -113,6 +113,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-repo-convention-indexes',
   'get-run-event-replay',
   'get-run-events',
+  'get-tool-activity-details',
   'get-run-queue-jobs',
   'get-run-recovery-records',
   'get-runtime-profiles',

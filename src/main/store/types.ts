@@ -6306,6 +6306,11 @@ export interface ToolActivity {
   rawEventRefs?: string[]
 }
 
+export interface HydratedToolActivityDetail {
+  ref: ToolActivityDetailRef
+  activity: ToolActivity
+}
+
 export type ChildAgentKind =
   | 'claude-task'
   | 'codex-background'

@@ -82,7 +82,9 @@ import {
   PromptCacheCapability,
   PromptCacheSettings,
   MemoryProposal,
-  MemoryProposalPack
+  MemoryProposalPack,
+  HydratedToolActivityDetail,
+  ToolActivityDetailRef
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
@@ -2679,6 +2681,9 @@ declare global {
       ) => Promise<RunQueueJob | null>
       getRunRecoveryRecords: (filter?: RunRecoveryFilter) => Promise<RunRecoveryRecord[]>
       getRunEvents: (filter?: RunEventFilter) => Promise<RunEventRecord[]>
+      getToolActivityDetails: (
+        refs: ToolActivityDetailRef[]
+      ) => Promise<HydratedToolActivityDetail[]>
       getRunEventReplay: (runId: string) => Promise<RunEventReplay>
       analyzeRun: (request: RunAnalystRequest) => Promise<RunAnalystSnapshot>
       summarizeCloseout: (request: CloseoutSummaryRequest) => Promise<CloseoutSummarySnapshot>

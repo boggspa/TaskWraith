@@ -89,6 +89,15 @@ describe('externalizeTerminalToolActivityDetails', () => {
     expect(sink).not.toHaveBeenCalled()
   })
 
+  it('waits for an explicit terminal seal on the latest run', () => {
+    const source = record('success')
+    delete source.runs[0].endedAt
+    const sink = vi.fn()
+
+    expect(externalizeTerminalToolActivityDetails(source, sink).chat).toBe(source)
+    expect(sink).not.toHaveBeenCalled()
+  })
+
   it('keeps full detail and leaves the run retryable when durable staging fails', () => {
     const source = record()
     const result = externalizeTerminalToolActivityDetails(source, () => null)

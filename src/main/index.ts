@@ -54023,6 +54023,7 @@ if (isGeminiMcpBridgeProcess) {
         runQueueService.transitionJob(runIdOrId, status, partial),
       getRunLifecycleCoordinator: () => runLifecycleCoordinatorRef,
       getRunEvents: (filter = {}) => getRunRepository().getRunEventsAsync(filter || {}),
+      getToolActivityDetails: (refs) => AppStore.getToolActivityDetails(refs),
       getRunEventReplay: (runId) => getRunRepository().getRunEventReplay(runId),
       getBridgeDaemon: () => bridgeDaemonRef,
       sanitizeRunAnalystRequest,

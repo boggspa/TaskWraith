@@ -85,6 +85,8 @@ import {
   RunEventKind,
   RunEventRecord,
   RunEventArtifactRef,
+  ToolActivityDetailRef,
+  HydratedToolActivityDetail,
   ApprovalLedgerFilter,
   ApprovalLedgerRecord,
   ApprovalLedgerRequestInput,
@@ -288,6 +290,15 @@ import {
 import { createProductCrashRecord, filterProductCrashRecords } from '../ProductOperations'
 import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
+import {
+  TOOL_DETAIL_EXTERNALIZATION_GENERATION,
+  externalizeTerminalToolActivityDetails
+} from './ChatToolDetailExternalization'
+import {
+  ToolActivityDetailBatchWriter,
+  hydrateToolActivityDetails,
+  type ToolActivityDetailCheckpoint
+} from './ToolActivityDetailLedger'
 import {
   persistThreadWorktreeBindingPatch,
   readThreadWorktreeBinding
@@ -4720,6 +4731,47 @@ function appendRunStreamArtifact(
   ]
 }
 
+function toolActivityDetailCheckpointInput(
+  chat: ChatRecord,
+  checkpoint: ToolActivityDetailCheckpoint
+): RunEventInput {
+  const run = chat.runs.find((candidate) => candidate.runId === checkpoint.runId)
+  return {
+    runId: checkpoint.runId,
+    chatId: chat.appChatId,
+    workspaceId: chat.workspaceId,
+    workspacePath: chat.workspacePath,
+    provider: run?.provider || chat.provider,
+    kind: 'tool',
+    phase: 'artifact',
+    source: 'main',
+    summary: `Checkpointed ${checkpoint.activityCount} tool activity detail${checkpoint.activityCount === 1 ? '' : 's'}`,
+    payload: {
+      type: 'tool_activity_detail_checkpoint',
+      schemaVersion: 1,
+      generation: TOOL_DETAIL_EXTERNALIZATION_GENERATION,
+      activityCount: checkpoint.activityCount,
+      offset: checkpoint.offset,
+      byteLength: checkpoint.byteLength,
+      sha256: checkpoint.sha256
+    },
+    artifacts: [
+      {
+        id: `${checkpoint.runId}:tool-activity-detail:${checkpoint.offset}`,
+        kind: 'other',
+        path: checkpoint.relativePath,
+        sha256: checkpoint.sha256,
+        sizeBytes: checkpoint.byteLength,
+        metadata: {
+          offset: checkpoint.offset,
+          activityCount: checkpoint.activityCount,
+          generation: TOOL_DETAIL_EXTERNALIZATION_GENERATION
+        }
+      }
+    ]
+  }
+}
+
 export interface ChatSaveOptions {
   /** Exact message operations authored by a trusted main-process producer. */
   authoredTranscript?: AuthoredChatTranscriptMutation
@@ -6871,11 +6923,31 @@ export class AppStore {
         : {})
     }
 
-    // Persisted-chat compaction (Step 4): historical runs shed raw tool
-    // events (inline screenshots become thumbnails, text raw drops) so chat
-    // files stay parse-fast and save-cheap. The latest/running runs keep
-    // full fidelity for live debugging.
-    const compactedChat = compactChatForPersist(chatWithMainOwnedFields)
+    // Terminal tool detail leaves the hot chat record before historical
+    // compaction. One append-only artifact is fsync'd per run, then a strict
+    // run-event checkpoint binds the byte segment. If either durable step
+    // fails, retain the original full activity rows and retry on a later save.
+    let externalizedChat = chatWithMainOwnedFields
+    try {
+      const detailWriter = new ToolActivityDetailBatchWriter(runArtifactsDir)
+      const externalization = externalizeTerminalToolActivityDetails(
+        chatWithMainOwnedFields,
+        (runId, activity) => detailWriter.stage(runId, activity)
+      )
+      const checkpoints = detailWriter.commit()
+      for (const checkpoint of checkpoints) {
+        this.appendRunEvent(toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint), {
+          durability: 'strict'
+        })
+      }
+      externalizedChat = externalization.chat
+    } catch (error) {
+      console.error('Failed to externalize terminal tool activity detail', error)
+    }
+
+    // Persisted-chat compaction (Step 4): historical runs shed remaining raw
+    // tool events so chat files stay parse-fast and save-cheap.
+    const compactedChat = compactChatForPersist(externalizedChat)
     // Exact producer operations are valid only while the save pipeline kept
     // the producer's transcript intact. A stale renderer merge or a one-time
     // historical compaction falls back to the proven diff derivation rather
@@ -11946,6 +12018,13 @@ export class AppStore {
         ? await readAllRunEventFilesAsync(filter.kinds)
         : await readRunEventFilesAsync(paths, filter.kinds)
     return filterRunEvents(events, filter)
+  }
+
+  /** Exact byte-range hydration for virtualized transcript tool rows. */
+  static getToolActivityDetails(
+    refs: readonly ToolActivityDetailRef[]
+  ): Promise<HydratedToolActivityDetail[]> {
+    return hydrateToolActivityDetails(runArtifactsDir, refs)
   }
 
   static getRunEventReplay(runId: string) {

@@ -87,6 +87,7 @@ const createDeps = () => {
     transitionRunQueueJob: vi.fn(() => defaultJob),
     getRunLifecycleCoordinator: vi.fn(() => null),
     getRunEvents: vi.fn(async () => [{ runId: 'run-1' }]),
+    getToolActivityDetails: vi.fn(async () => []),
     getRunEventReplay: vi.fn(() => ({ runId: 'run-1', events: [] })),
     getBridgeDaemon: vi.fn(() => null),
     sanitizeRunAnalystRequest: vi.fn(() => analyzerRequest),
@@ -128,6 +129,7 @@ describe('registerRunQueueHandlers', () => {
     expect(handlerFor('lease-promoted-steer-job')).toBeTypeOf('function')
     expect(handlerFor('fallback-promoted-steer-job')).toBeTypeOf('function')
     expect(handlerFor('get-run-events')).toBeTypeOf('function')
+    expect(handlerFor('get-tool-activity-details')).toBeTypeOf('function')
     expect(handlerFor('get-run-event-replay')).toBeTypeOf('function')
     expect(handlerFor('run-analyst:analyze')).toBeTypeOf('function')
     expect(handlerFor('closeout:summarize')).toBeTypeOf('function')
@@ -167,6 +169,9 @@ describe('registerRunQueueHandlers', () => {
 
     await handlerFor('get-run-events')(event, { runId: 'run-1' })
     expect(deps.getRunEvents).toHaveBeenCalledWith({ runId: 'run-1', chatId: 'chat-1' })
+
+    await handlerFor('get-tool-activity-details')(event, [{ runId: 'run-1' }])
+    expect(deps.getToolActivityDetails).toHaveBeenCalled()
 
     handlerFor('get-run-event-replay')(event, 'run-1')
     expect(deps.getRunEventReplay).toHaveBeenCalledWith('run-1')
@@ -226,6 +231,7 @@ describe('registerRunQueueHandlers', () => {
         ownerToken: 'owner'
       }),
       () => handlerFor('get-run-events')(event, { runId: 'run-3' }),
+      () => handlerFor('get-tool-activity-details')(event, [{ runId: 'run-3' }]),
       () => handlerFor('get-run-event-replay')(event, 'run-3'),
       () => handlerFor('run-analyst:analyze')(event, { runId: 'run-3' }),
       () => handlerFor('closeout:summarize')(event, {
@@ -802,6 +808,9 @@ describe('registerRunQueueHandlers', () => {
 
     expect(await handlerFor('get-run-events')({}, { runId: 'run-1' })).toEqual([{ runId: 'run-1' }])
     expect(deps.getRunEvents).toHaveBeenCalledWith({ runId: 'run-1' })
+
+    expect(await handlerFor('get-tool-activity-details')({}, [])).toEqual([])
+    expect(deps.getToolActivityDetails).toHaveBeenCalledWith([])
 
     expect(await handlerFor('get-run-event-replay')({}, 'run-1')).toEqual({ runId: 'run-1', events: [] })
     expect(deps.getRunEventReplay).toHaveBeenCalledWith('run-1')

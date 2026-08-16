@@ -310,6 +310,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'steering:inject': ['object'],
   'steering:cancel': ['object'],
   'get-run-events': ['optionalObject'],
+  'get-tool-activity-details': ['array'],
   'get-run-event-replay': ['runId'],
   'run-analyst:analyze': ['object'],
   'closeout:summarize': ['object'],

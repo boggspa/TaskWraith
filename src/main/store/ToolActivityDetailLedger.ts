@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { safeRunEventFileName } from '../RunEventStore'
-import type { ToolActivity, ToolActivityDetailRef } from './types'
+import type { HydratedToolActivityDetail, ToolActivity, ToolActivityDetailRef } from './types'
 
 export const TOOL_ACTIVITY_DETAIL_ARTIFACT_NAME = 'tool-activity-details.jsonl'
 export const MAX_TOOL_ACTIVITY_DETAIL_BYTES = 32 * 1024 * 1024
@@ -31,11 +31,6 @@ export interface ToolActivityDetailCheckpoint {
   byteLength: number
   sha256: string
   activityCount: number
-}
-
-export interface HydratedToolActivityDetail {
-  ref: ToolActivityDetailRef
-  activity: ToolActivity
 }
 
 function sha256(bytes: Buffer): string {

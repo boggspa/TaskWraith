@@ -22,7 +22,9 @@ import type {
   ScheduledTaskCreateInput,
   ScheduledTaskLifecycleUpdate,
   WorkflowDefinitionCreateInput,
-  WorkflowDefinitionRendererUpdate
+  WorkflowDefinitionRendererUpdate,
+  HydratedToolActivityDetail,
+  ToolActivityDetailRef
 } from '../main/store/types'
 import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
@@ -2605,6 +2607,9 @@ const api = {
   getRunRecoveryRecords: (filter: any = {}) =>
     ipcRenderer.invoke('get-run-recovery-records', filter),
   getRunEvents: (filter: any = {}) => ipcRenderer.invoke('get-run-events', filter),
+  getToolActivityDetails: (
+    refs: ToolActivityDetailRef[]
+  ): Promise<HydratedToolActivityDetail[]> => ipcRenderer.invoke('get-tool-activity-details', refs),
   getRunEventReplay: (runId: string) => ipcRenderer.invoke('get-run-event-replay', runId),
   analyzeRun: (request: RunAnalystRequest) =>
     ipcRenderer.invoke('run-analyst:analyze', request) as Promise<RunAnalystSnapshot>,
