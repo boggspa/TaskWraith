@@ -715,7 +715,8 @@ import {
 import {
   retainQuotaSnapshotOnDeadlineMiss,
   shouldLoadUsageRecords,
-  shouldRunUsageRefresh
+  shouldRunUsageRefresh,
+  waitForUsageRefreshIdle
 } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
@@ -1106,6 +1107,7 @@ const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
  */
 const APP_DRIVE_PREVIEW_POLL_MS = 1_500
 const BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS = 1_000
+const MANUAL_QUOTA_HYDRATION_DEADLINE_MS = 16_000
 const CONTEXT_COMPACTION_PROGRESS_STALE_MS = 5 * 60 * 1000
 
 type ContextCompactionProgressState = ContextCompactionProgressEvent & {
@@ -8820,6 +8822,9 @@ function App(): React.JSX.Element {
     const now = Date.now()
     const effectiveCodexStatus = codexStatusHint ?? codexStatus
     const quotaRefreshOptions = options.force ? { force: true } : undefined
+    const quotaHydrationDeadlineMs = options.force
+      ? MANUAL_QUOTA_HYDRATION_DEADLINE_MS
+      : BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS
     const loadUsageRecords = shouldLoadUsageRecords({
       quotaOnly: options.quotaOnly === true,
       recordsInitialized: usageRecordsInitializedRef.current
@@ -8833,7 +8838,7 @@ function App(): React.JSX.Element {
       resolveWithinDeadline(
         Promise.resolve().then(load),
         null,
-        BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS,
+        quotaHydrationDeadlineMs,
         options.allowLateQuotaFollowup === false
           ? undefined
           : { onLateResolve: queueLateQuotaRefresh }
@@ -9336,6 +9341,10 @@ function App(): React.JSX.Element {
     if (manualUsageRefreshInFlight) return
     setManualUsageRefreshInFlight(true)
     try {
+      const refreshGateReleased = await waitForUsageRefreshIdle(
+        () => usageRefreshInFlightRef.current
+      )
+      if (!refreshGateReleased) return
       const usageWorkspaceId =
         getUsageWorkspaceIdForChat(currentChat) ||
         currentWorkspaceIdRef.current ||

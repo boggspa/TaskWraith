@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   fingerprintUsageSummary,
   hasUsageSummaryChanged,
   retainQuotaSnapshotOnDeadlineMiss,
   shouldLoadUsageRecords,
-  shouldRunUsageRefresh
+  shouldRunUsageRefresh,
+  waitForUsageRefreshIdle
 } from './usageRefresh'
 
 describe('fingerprintUsageSummary', () => {
@@ -214,5 +215,36 @@ describe('shouldRunUsageRefresh', () => {
 
   it('lets a focus-resume win after the debounce window passes', () => {
     expect(shouldRunUsageRefresh({ ...base, msSinceLastRefresh: 6_000 })).toBe(true)
+  })
+})
+
+describe('waitForUsageRefreshIdle', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('queues a manual refresh until the background refresh releases', async () => {
+    vi.useFakeTimers()
+    let busy = true
+    const waiting = waitForUsageRefreshIdle(() => busy, {
+      pollIntervalMs: 50,
+      timeoutMs: 500
+    })
+
+    await vi.advanceTimersByTimeAsync(100)
+    busy = false
+    await vi.advanceTimersByTimeAsync(50)
+    await expect(waiting).resolves.toBe(true)
+  })
+
+  it('fails boundedly if the refresh gate never releases', async () => {
+    vi.useFakeTimers()
+    const waiting = waitForUsageRefreshIdle(() => true, {
+      pollIntervalMs: 50,
+      timeoutMs: 200
+    })
+
+    await vi.advanceTimersByTimeAsync(200)
+    await expect(waiting).resolves.toBe(false)
   })
 })

@@ -6,16 +6,10 @@ describe('LateBackgroundRefreshCoordinator', () => {
     vi.useRealTimers()
   })
 
-  it('coalesces late results through the follow-up and cooldown', async () => {
+  it('coalesces late results queued before the follow-up starts', async () => {
     vi.useFakeTimers()
     let busy = true
-    let finishFollowup!: () => void
-    const runFollowup = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishFollowup = resolve
-        })
-    )
+    const runFollowup = vi.fn(async () => undefined)
     const coordinator = new LateBackgroundRefreshCoordinator({
       isBusy: () => busy,
       runFollowup,
@@ -33,14 +27,64 @@ describe('LateBackgroundRefreshCoordinator', () => {
     busy = false
     await vi.advanceTimersByTimeAsync(250)
     expect(runFollowup).toHaveBeenCalledTimes(1)
-    expect(coordinator.queue()).toBe(false)
-
-    finishFollowup()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(coordinator.queue()).toBe(false)
     await vi.advanceTimersByTimeAsync(30_000)
     expect(coordinator.queue()).toBe(true)
+    coordinator.dispose()
+  })
+
+  it('runs one trailing follow-up when another provider resolves during a read', async () => {
+    vi.useFakeTimers()
+    const finishes: Array<() => void> = []
+    const runFollowup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishes.push(resolve)
+        })
+    )
+    const coordinator = new LateBackgroundRefreshCoordinator({
+      isBusy: () => false,
+      runFollowup,
+      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      retryDelayMs: 250,
+      cooldownMs: 30_000
+    })
+
+    expect(coordinator.queue()).toBe(true)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(runFollowup).toHaveBeenCalledTimes(1)
+    expect(coordinator.queue()).toBe(true)
+    expect(coordinator.queue()).toBe(false)
+
+    finishes[0]()
+    await Promise.resolve()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(runFollowup).toHaveBeenCalledTimes(2)
+    finishes[1]()
+    coordinator.dispose()
+  })
+
+  it('interrupts cooldown when a slower provider finishes with newer data', async () => {
+    vi.useFakeTimers()
+    const runFollowup = vi.fn(async () => undefined)
+    const coordinator = new LateBackgroundRefreshCoordinator({
+      isBusy: () => false,
+      runFollowup,
+      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      retryDelayMs: 250,
+      cooldownMs: 30_000
+    })
+
+    expect(coordinator.queue()).toBe(true)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(runFollowup).toHaveBeenCalledTimes(1)
+
+    expect(coordinator.queue()).toBe(true)
+    expect(coordinator.queue()).toBe(false)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(runFollowup).toHaveBeenCalledTimes(2)
     coordinator.dispose()
   })
 

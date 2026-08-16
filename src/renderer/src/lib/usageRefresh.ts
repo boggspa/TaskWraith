@@ -187,6 +187,47 @@ export function shouldRunUsageRefresh(input: UsageRefreshDecisionInput): boolean
   return true
 }
 
+export interface WaitForUsageRefreshIdleOptions {
+  pollIntervalMs?: number
+  timeoutMs?: number
+  now?: () => number
+  schedule?: (callback: () => void, delayMs: number) => void
+}
+
+/**
+ * An explicit user refresh must queue behind the lightweight heartbeat rather
+ * than being reported as complete without issuing its forced provider reads.
+ * The wait is bounded so a broken caller cannot leave the refresh control busy
+ * forever.
+ */
+export function waitForUsageRefreshIdle(
+  isBusy: () => boolean,
+  options: WaitForUsageRefreshIdleOptions = {}
+): Promise<boolean> {
+  if (!isBusy()) return Promise.resolve(true)
+  const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? 50)
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 5_000)
+  const now = options.now ?? Date.now
+  const schedule = options.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs))
+  const startedAt = now()
+
+  return new Promise((resolve) => {
+    const poll = (): void => {
+      if (!isBusy()) {
+        resolve(true)
+        return
+      }
+      const elapsedMs = Math.max(0, now() - startedAt)
+      if (elapsedMs >= timeoutMs) {
+        resolve(false)
+        return
+      }
+      schedule(poll, Math.min(pollIntervalMs, timeoutMs - elapsedMs))
+    }
+    schedule(poll, Math.min(pollIntervalMs, timeoutMs))
+  })
+}
+
 function intervalFloor(intervalMs: number): number {
   // Allow at most one in-flight refresh per ~third of the cadence so a
   // focus-resume immediately after a heartbeat doesn't double-fire.
