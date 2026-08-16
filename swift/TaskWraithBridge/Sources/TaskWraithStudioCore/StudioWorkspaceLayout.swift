@@ -124,6 +124,7 @@ public enum StudioWorkspaceViewerPresentation: Equatable, Sendable {
 public enum StudioWorkspaceSelection: Equatable, Sendable {
   case none
   case clip(id: String)
+  case mixedClips(ids: Set<String>)
   case proposal(id: String)
 }
 
@@ -132,6 +133,7 @@ public enum StudioWorkspaceSelection: Equatable, Sendable {
 public enum StudioWorkspaceInspectorContent: Equatable, Sendable {
   case empty(section: StudioWorkspaceInspectorSection)
   case clip(id: String, section: StudioWorkspaceInspectorSection)
+  case mixed(section: StudioWorkspaceInspectorSection)
   case proposal(id: String)
 }
 
@@ -261,6 +263,21 @@ public struct StudioWorkspacePresentationState: Equatable, Sendable {
   }
 
   @discardableResult
+  public mutating func selectClips(ids: Set<String>) -> Bool {
+    guard ids.count >= 2, ids.count <= 256 else {
+      selection = .none
+      return false
+    }
+    let normalizedIds = Set(ids.compactMap(Self.validIdentifier))
+    guard normalizedIds.count == ids.count else {
+      selection = .none
+      return false
+    }
+    selection = .mixedClips(ids: normalizedIds)
+    return true
+  }
+
+  @discardableResult
   public mutating func selectProposal(id: String) -> Bool {
     guard let id = Self.validIdentifier(id) else {
       selection = .none
@@ -277,6 +294,7 @@ public struct StudioWorkspacePresentationState: Equatable, Sendable {
   public func snapshot(
     viewport: StudioWorkspaceViewport,
     visibleRoutes: Set<StudioViewerRoute>,
+    validClipIds: Set<String> = [],
     activeProposalId: String?,
     policy: StudioWorkspaceLayoutPolicy = .standard
   ) -> StudioWorkspacePresentationSnapshot {
@@ -303,7 +321,10 @@ public struct StudioWorkspacePresentationState: Equatable, Sendable {
       browserDrawerAvailable: browserRequested && !sidebarVisibility.browser,
       inspectorDrawerAvailable: inspectorRequested && !sidebarVisibility.inspector,
       proposalBarVisible: validProposalId != nil,
-      inspectorContent: resolvedInspectorContent(activeProposalId: validProposalId)
+      inspectorContent: resolvedInspectorContent(
+        activeProposalId: validProposalId,
+        validClipIds: validClipIds
+      )
     )
   }
 
@@ -346,13 +367,24 @@ public struct StudioWorkspacePresentationState: Equatable, Sendable {
   }
 
   private func resolvedInspectorContent(
-    activeProposalId: String?
+    activeProposalId: String?,
+    validClipIds: Set<String>
   ) -> StudioWorkspaceInspectorContent {
     switch (inspectorSection, selection) {
     case (.proposal, .proposal(let id)) where id == activeProposalId:
       return .proposal(id: id)
-    case (.clip, .clip(let id)), (.color, .clip(let id)), (.audio, .clip(let id)):
-      return .clip(id: id, section: inspectorSection)
+    case (.clip, .clip(let id)) where validClipIds.contains(id):
+      return .clip(id: id, section: .clip)
+    case (.color, .clip(let id)) where validClipIds.contains(id):
+      return .clip(id: id, section: .color)
+    case (.audio, .clip(let id)) where validClipIds.contains(id):
+      return .clip(id: id, section: .audio)
+    case (.clip, .mixedClips(let ids)) where ids.isSubset(of: validClipIds):
+      return .mixed(section: .clip)
+    case (.color, .mixedClips(let ids)) where ids.isSubset(of: validClipIds):
+      return .mixed(section: .color)
+    case (.audio, .mixedClips(let ids)) where ids.isSubset(of: validClipIds):
+      return .mixed(section: .audio)
     default:
       return .empty(section: inspectorSection)
     }

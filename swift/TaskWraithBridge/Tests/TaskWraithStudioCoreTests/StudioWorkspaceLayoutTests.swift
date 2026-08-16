@@ -147,6 +147,7 @@ final class StudioWorkspaceLayoutTests: XCTestCase {
     let narrow = state.snapshot(
       viewport: viewport(width: 720),
       visibleRoutes: [.source],
+      validClipIds: ["clip-a"],
       activeProposalId: nil,
       policy: policy
     )
@@ -156,6 +157,7 @@ final class StudioWorkspaceLayoutTests: XCTestCase {
     let wide = state.snapshot(
       viewport: viewport(width: 1_600),
       visibleRoutes: [.source],
+      validClipIds: ["clip-a"],
       activeProposalId: nil,
       policy: policy
     )
@@ -253,11 +255,109 @@ final class StudioWorkspaceLayoutTests: XCTestCase {
       state.snapshot(
         viewport: viewport(width: 1_600),
         visibleRoutes: [.source, .review],
+        validClipIds: ["clip-a"],
         activeProposalId: nil,
         policy: policy
       ).inspectorContent,
       .clip(id: "clip-a", section: .audio)
     )
+  }
+
+  func testRemovedHostClipFailsInspectorClosed() {
+    var state = StudioWorkspacePresentationState()
+    XCTAssertTrue(state.selectClip(id: "clip-a"))
+    state.setInspectorSection(.color)
+
+    XCTAssertEqual(
+      state.snapshot(
+        viewport: viewport(width: 1_600),
+        visibleRoutes: [.source],
+        validClipIds: ["clip-a"],
+        activeProposalId: nil,
+        policy: policy
+      ).inspectorContent,
+      .clip(id: "clip-a", section: .color)
+    )
+    XCTAssertEqual(
+      state.snapshot(
+        viewport: viewport(width: 1_600),
+        visibleRoutes: [.source],
+        validClipIds: ["clip-b"],
+        activeProposalId: nil,
+        policy: policy
+      ).inspectorContent,
+      .empty(section: .color),
+      "a clip removed by a later host revision must not leave stale inspector values"
+    )
+    XCTAssertEqual(state.selection, .clip(id: "clip-a"))
+  }
+
+  func testMixedSelectionIsExplicitAndHostValidated() {
+    var state = StudioWorkspacePresentationState()
+    state.setInspectorSection(.audio)
+    XCTAssertTrue(state.selectClips(ids: ["clip-a", "clip-b"]))
+    XCTAssertEqual(state.selection, .mixedClips(ids: ["clip-a", "clip-b"]))
+
+    XCTAssertEqual(
+      state.snapshot(
+        viewport: viewport(width: 1_600),
+        visibleRoutes: [.source],
+        validClipIds: ["clip-a", "clip-b"],
+        activeProposalId: nil,
+        policy: policy
+      ).inspectorContent,
+      .mixed(section: .audio)
+    )
+    XCTAssertEqual(
+      state.snapshot(
+        viewport: viewport(width: 1_600),
+        visibleRoutes: [.source],
+        validClipIds: ["clip-a"],
+        activeProposalId: nil,
+        policy: policy
+      ).inspectorContent,
+      .empty(section: .audio),
+      "a partially stale mixed selection must fail closed as one selection"
+    )
+
+    state.setInspectorSection(.proposal)
+    XCTAssertEqual(
+      state.snapshot(
+        viewport: viewport(width: 1_600),
+        visibleRoutes: [.source],
+        validClipIds: ["clip-a", "clip-b"],
+        activeProposalId: "proposal-a",
+        policy: policy
+      ).inspectorContent,
+      .empty(section: .proposal)
+    )
+  }
+
+  func testCollapsedInspectorRevalidatesAfterHostRevisionBeforeExpanding() {
+    var state = StudioWorkspacePresentationState()
+    XCTAssertTrue(state.selectClip(id: "clip-a"))
+    state.setInspectorSection(.clip)
+
+    let collapsed = state.snapshot(
+      viewport: viewport(width: 720),
+      visibleRoutes: [.source],
+      validClipIds: ["clip-a"],
+      activeProposalId: nil,
+      policy: policy
+    )
+    XCTAssertFalse(collapsed.inspectorVisible)
+    XCTAssertEqual(collapsed.inspectorContent, .clip(id: "clip-a", section: .clip))
+
+    let expandedAfterRevision = state.snapshot(
+      viewport: viewport(width: 1_600),
+      visibleRoutes: [.source],
+      validClipIds: ["clip-b"],
+      activeProposalId: nil,
+      policy: policy
+    )
+    XCTAssertTrue(expandedAfterRevision.inspectorVisible)
+    XCTAssertEqual(expandedAfterRevision.inspectorContent, .empty(section: .clip))
+    XCTAssertEqual(state.selection, .clip(id: "clip-a"))
   }
 
   func testInvalidDimensionsPoliciesAndSelectionIdentifiersFailClosed() {
@@ -273,6 +373,14 @@ final class StudioWorkspaceLayoutTests: XCTestCase {
     var state = StudioWorkspacePresentationState()
     XCTAssertTrue(state.selectClip(id: "clip-a"))
     XCTAssertFalse(state.selectClip(id: "   "))
+    XCTAssertEqual(state.selection, .none)
+    XCTAssertFalse(state.selectClips(ids: ["clip-a"]))
+    XCTAssertEqual(state.selection, .none)
+    XCTAssertFalse(state.selectClips(ids: ["clip-a", " clip-a "]))
+    XCTAssertEqual(state.selection, .none)
+    XCTAssertFalse(
+      state.selectClips(ids: Set((0...256).map { "clip-\($0)" }))
+    )
     XCTAssertEqual(state.selection, .none)
     XCTAssertFalse(state.selectProposal(id: String(repeating: "p", count: 513)))
     XCTAssertEqual(state.selection, .none)
