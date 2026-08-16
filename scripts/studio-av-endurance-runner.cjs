@@ -763,11 +763,21 @@ function routeReceiptFailure(route, label) {
   if (!isFiniteNumber(route.nominalSampleRate) || route.nominalSampleRate <= 0) {
     return `${label} nominalSampleRate is not positive`
   }
-  if (route.alive !== true || route.running !== true || route.hasOutputStream !== true) {
-    return `${label} device is not alive/running with an output stream`
+  if (route.alive !== true || route.running !== true) {
+    return `${label} device is not alive/running`
+  }
+  if (!isSafeInteger(route.outputStreamCount) || route.outputStreamCount <= 0) {
+    return `${label} outputStreamCount is not a positive exact integer`
   }
   if (!isSafeInteger(route.outputChannelCount) || route.outputChannelCount <= 0) {
-    return `${label} outputChannelCount is not a positive integer`
+    return `${label} outputChannelCount is not a positive exact integer`
+  }
+  if (typeof route.hasOutputStream !== 'boolean') {
+    return `${label} hasOutputStream is not declared`
+  }
+  const countsHaveOutput = route.outputStreamCount > 0 && route.outputChannelCount > 0
+  if (route.hasOutputStream !== countsHaveOutput) {
+    return `${label} hasOutputStream is inconsistent with output counts`
   }
   // Support must be DECLARED. A missing field is not evidence of anything, and
   // inferring "unsupported" from absence is how an unreadable route passes.

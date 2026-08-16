@@ -550,6 +550,7 @@ describe('audibility evidence is never allowed to overclaim', () => {
     alive: true,
     running: true,
     hasOutputStream: true,
+    outputStreamCount: 1,
     outputChannelCount: 2,
     muteSupported: true,
     muted: false,
@@ -675,6 +676,60 @@ describe('audibility evidence is never allowed to overclaim', () => {
     expect(complete({ routeHealth: route({ uid: '' }) }).routeState).toBe('unknown')
     expect(complete({ routeHealth: route({ id: 0 }) }).routeState).toBe('unknown')
     expect(complete({ routeHealth: route({ nominalSampleRate: 0 }) }).routeState).toBe('unknown')
+  })
+
+  it('validates positive exact outputStreamCount for current and prior routes', () => {
+    const invalidCounts = [undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]
+    for (const outputStreamCount of invalidCounts) {
+      const current = complete({ routeHealth: route({ outputStreamCount }) })
+      expect(current.status).toBe('red')
+      expect(current.failures).toContain(
+        'current outputStreamCount is not a positive exact integer'
+      )
+
+      const prior = complete({ priorRouteHealth: route({ outputStreamCount }) })
+      expect(prior.status).toBe('red')
+      expect(prior.failures).toContain('prior outputStreamCount is not a positive exact integer')
+    }
+  })
+
+  it('validates positive exact outputChannelCount for current and prior routes', () => {
+    const invalidCounts = [undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]
+    for (const outputChannelCount of invalidCounts) {
+      const current = complete({ routeHealth: route({ outputChannelCount }) })
+      expect(current.status).toBe('red')
+      expect(current.failures).toContain(
+        'current outputChannelCount is not a positive exact integer'
+      )
+
+      const prior = complete({ priorRouteHealth: route({ outputChannelCount }) })
+      expect(prior.status).toBe('red')
+      expect(prior.failures).toContain('prior outputChannelCount is not a positive exact integer')
+    }
+  })
+
+  it('requires an explicit hasOutputStream consistent with raw counts on both routes', () => {
+    for (const hasOutputStream of [undefined, 1]) {
+      const current = complete({ routeHealth: route({ hasOutputStream }) })
+      expect(current.status).toBe('red')
+      expect(current.failures).toContain('current hasOutputStream is not declared')
+
+      const prior = complete({ priorRouteHealth: route({ hasOutputStream }) })
+      expect(prior.status).toBe('red')
+      expect(prior.failures).toContain('prior hasOutputStream is not declared')
+    }
+
+    const currentFalse = complete({ routeHealth: route({ hasOutputStream: false }) })
+    expect(currentFalse.status).toBe('red')
+    expect(currentFalse.failures).toContain(
+      'current hasOutputStream is inconsistent with output counts'
+    )
+
+    const priorFalse = complete({ priorRouteHealth: route({ hasOutputStream: false }) })
+    expect(priorFalse.status).toBe('red')
+    expect(priorFalse.failures).toContain(
+      'prior hasOutputStream is inconsistent with output counts'
+    )
   })
 
   it('validates the PRIOR route receipt in full, not just the current one', () => {
@@ -848,6 +903,7 @@ describe('the terminal verdict reclassifies RAW evidence', () => {
     alive: true,
     running: true,
     hasOutputStream: true,
+    outputStreamCount: 1,
     outputChannelCount: 2,
     muteSupported: true,
     muted: false,
