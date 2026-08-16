@@ -38,7 +38,11 @@ quits. A failed start does not trigger a hidden restart loop.
 Clients share the transport-independent protocol in `src/shared/hostProtocol.ts`:
 
 - Desktop uses a main-owned authenticated local client behind preload IPC.
-- The TUI uses the authenticated local Host socket directly.
+- The TUI uses the authenticated local Host socket directly, and no longer
+  needs the desktop window open first: when no Host is reachable it launches the
+  app executable in windowless Host mode under the TUI's own process identity,
+  waits for an authenticated handshake, then connects. See
+  [`src/tui/WINDOWLESS_HOST.md`](src/tui/WINDOWLESS_HOST.md).
 - Paired iOS uses the existing E2EE remote bridge and a paired-identity Host
   gateway for snapshots, deltas, governed commands, and durable receipts.
 - Multi-human Channels contribute a compact lifecycle/member projection and

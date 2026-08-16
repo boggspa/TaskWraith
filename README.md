@@ -381,6 +381,7 @@ npm run test
 npm run test:swift:bridge   # macOS only — see note below
 npm run validate:release    # release-readiness wrapper; see note below
 npm run build
+npm run tui                 # terminal client; launches a windowless Host if needed
 ```
 
 `npm run test:swift:bridge` runs the native macOS bridge daemon's Swift test
@@ -405,6 +406,10 @@ validation, SBOM generation, or platform-specific artifact signing.
 - `src/preload`: Narrow IPC bridge exposed to the renderer.
 - `src/renderer`: React UI, provider review surfaces, settings, and visual
   system.
+- `src/tui`: Terminal client. Connects to the authenticated local Host, and can
+  launch a windowless Host when the desktop app is not running — see
+  [`src/tui/README.md`](src/tui/README.md) and
+  [`src/tui/WINDOWLESS_HOST.md`](src/tui/WINDOWLESS_HOST.md).
 - `swift`: macOS bridge daemon sources used by local release builds.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 

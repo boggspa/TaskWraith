@@ -6,9 +6,10 @@
 The diff hover preview is a floating popover that shows a code diff (added/removed lines, with a `+X -Y` summary) for a file change without leaving the transcript. It appears when you hover, focus, or tap a diff-capable row, and can include a button to jump into the full diff view.
 
 ## Where to find it
-It attaches to two places in the transcript:
+It attaches to three places in the transcript:
 - Rows in the **File changes** card above the composer (each changed-file row and its "Diff" bubble).
 - Individual tool-call rows in the **activity stack** that represent a write/edit action (e.g. a file edit), shown when that row has captured diff text.
+- **Inline commit hashes in ordinary message text.** A commit-hash-shaped token written in assistant or user prose is now hoverable on its own, opening the same popover for that commit's changed files — so a hash quoted mid-sentence behaves like a File changes row.
 
 ![Hovering over a diff in the transcript to show the preview](../images/transcript-and-search__diff-hover-preview.png)
 

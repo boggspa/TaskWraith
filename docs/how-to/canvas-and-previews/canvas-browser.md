@@ -26,6 +26,8 @@ The empty Canvas starts with a quiet **New tab** view. Use **+** to switch betwe
 
 Accept Edits and higher authorize ordinary navigation, clicks, and typing without a second approval for every page action. Ask and Plan keep these actions attended with per-invocation approval. Workspace-wide denies, preview-model clamps, stale-target checks, covered-element checks, and the recent-human-input takeover guard still apply. Script evaluation keeps its separate, stricter permission path.
 
+**One exception overrides your posture entirely:** a click on a target the page labels destructive or financial stops for a single native confirmation — "Allow one consequential action?" — even at Full Access. The check runs before dispatch and inside the same lock, so a second interaction cannot slip past while you are deciding, and declining refuses that one action rather than ending the run. Raising your permission tier does not remove it.
+
 ## Sign-ins and credentials
 
 - TaskWraith retains the Canvas Browser's cookies and site storage between app launches.
