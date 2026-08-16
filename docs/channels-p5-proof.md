@@ -1,10 +1,21 @@
 # Channels P5 proof record
 
-**Result: COMPLETE — Channel-native, with the People substrate deliberately
-retained.** This record covers the boundary at `1b3085f39` on 2026-08-16
-(darwin/arm64, Node v25.9.0). It supersedes the `7a723b835` boundary this
-record first described; the earlier text is retained below wherever it is still
-accurate.
+**Result: COMPLETE for the P5 objective — with two named verification
+residuals, and the People substrate deliberately retained.** This record covers
+the verified code boundary `8b699c9f0` on 2026-08-16 (darwin/arm64, Node
+v25.9.0). It supersedes the `7a723b835` and `1b3085f39` boundaries it described
+earlier; the text below is retained wherever it is still accurate.
+
+**"Complete" is scoped, and the scope belongs here rather than being discovered
+further down.** The P5 objective is met: workspace bootstrap is Channel-native,
+the external-seat authority is built, wired and sealed, every composition-root
+People read is cut over, and the D2 question is answered. But **two Definition-
+of-Done items remain only partially evidenced, and the user's decision did not
+touch either of them**: crash recovery is proven for the presence and
+per-channel barrier work but **not** end to end through a real migrated
+profile, and interrupted-start recovery is evidenced at unit level with the
+live matrix never run as a full matrix. Both are listed under "Still open —
+genuinely" below. **Do not read this banner as "everything is proven."**
 
 **Read the verdict change carefully — it is the most misreadable line in this
 document.** P5 moved off PARTIAL because **a decision resolved the blocker, not
@@ -406,6 +417,19 @@ turns is worth less than one that names them.
   reviewers** — which is the strongest signal an audit can give, and also the
   latest possible moment to find it. The structural rule at the end of this
   document exists because of it.
+- **"Eleven of twelve DoD items evidenced" was an overclaim**, reported to the
+  user before this record was re-read. Two of those eleven are only partially
+  evidenced — the two verification residuals now named in the banner — and the
+  user's decision resolved neither. The record was more honest than the summary
+  drawn from it.
+
+  **The pattern across all four of these corrections is one thing:** a summary
+  was accepted where the artifact should have been read. A member-conditional
+  barrier described as global, a `prettier --check` believed because it printed
+  success, a record assumed current because it had been current, and a DoD tally
+  quoted rather than recounted. Each was caught by opening the thing itself.
+  That is the only technique in this document that found anything.
+
 - **Two citations and three symbols were fabricated during the round** by three
   different seats, and none reached a commit. Every one was caught by opening
   the file. That is the only reason this record can be trusted.
@@ -431,22 +455,33 @@ cannot distinguish concurrent sessions.
 
 ## Acceptance boundary
 
-- Base: `3d576061d`, branch `master`. First written at `7a723b835` and updated
-  in place at `1b3085f39` and again here, as its own closing instruction
-  required.
-- Verified at this boundary: the Channels-surface suites, the full node/web/tui
+- **Verified code boundary: `8b699c9f0`** (X4b), branch `master` — the last P5
+  commit that changed code. The record was first written at `7a723b835` and
+  updated in place at `1b3085f39` and again since, as its own closing
+  instruction requires.
+- **Gate tree: `3d576061d`.** The full gate set ran against that tree, which
+  differs from `8b699c9f0` **only in this document** (`git diff --name-only`
+  between them lists `docs/channels-p5-proof.md` and nothing else), so the code
+  under test is identical to the code at the verified boundary. Every P5 commit
+  after `3d576061d` touches only `docs/` and `CHANGELOG.md`.
+  Two boundaries are named rather than one because collapsing them would make
+  the record claim gates ran on a tree they did not, or that code changed when
+  it did not.
+- Verified at the gate tree: the Channels-surface suites, the full node/web/tui
   typecheck triple, architecture guard, doctrine-integrity guard, the format
   ratchet, and `npm run build` (exit 0).
 - Proven by committed disposable-profile mission: blocked-channel deferral with
   queue survival across relaunch (`46ee7e14a`), and inherited-share
   non-survival with Channel-only/transitional equivalence (`fc98b705b`).
-- Not verified at this boundary: full platform packaging, which was never in P5
-  scope.
+- Not verified: full platform packaging, which was never in P5 scope; crash
+  recovery end to end through a real migrated profile; and the live
+  interrupted-start matrix as a full matrix.
 - **The code boundary did not move when the verdict changed.** The People
-  substrate was retained by decision, not by a code change, so `3d576061d`
-  remains the verified boundary and the commits after it are docs-only.
+  substrate was retained by decision, not by a code change, so `8b699c9f0`
+  remains the verified code boundary and every commit after the gate tree is
+  docs-only.
 - This record must be updated, not replaced, if the retained People substrate is
-  ever revisited.
+  ever revisited or either verification residual is closed.
 
 **A rule this record learned the hard way, and the reason it is written here
 rather than in a commit message: the record must be updated by the slice that
