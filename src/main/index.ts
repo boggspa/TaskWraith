@@ -49246,11 +49246,11 @@ if (isGeminiMcpBridgeProcess) {
           safeStorage,
           loadIdentity: () => channelIdentityStore.load(),
           hostDisplayName: app.getName().trim() || 'TaskWraith',
-          listChats: () => AppStore.getChats(),
-          // P5 has not registered a concrete workspace-bootstrap People edge in
-          // this production root. An explicit empty scope is an assertion, not
-          // a heuristic: P5 must replace this port when it owns an id.
-          retainedWorkspaceBootstrapShareIds: () => []
+          // P5-C removed the workspace-bootstrap retention port. Workspace
+          // bootstrap is Channel-native: no automatic People share is ever
+          // created, so this root owns no id to retain. A sealed P4 scope stays
+          // readable as compatibility state through the checkpoint, never here.
+          listChats: () => AppStore.getChats()
         }),
         createBootstrap: ({ migratedAdmissionAuthority, migrationHandoff }) =>
           createChannelProductionBootstrap({

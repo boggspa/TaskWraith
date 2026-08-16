@@ -23,7 +23,13 @@ describe('Channels production main integration', () => {
     )
     expect(composition).toContain("hostDisplayName: app.getName().trim() || 'TaskWraith'")
     expect(composition).toContain('listChats: () => AppStore.getChats()')
-    expect(composition).toContain('retainedWorkspaceBootstrapShareIds: () => []')
+    // P5-C RETIRED the retention port. This previously pinned the literal
+    // `retainedWorkspaceBootstrapShareIds: () => []` — an explicit empty
+    // declaration. Workspace bootstrap is Channel-native and no automatic
+    // People share is ever created, so production declares no producer AT ALL;
+    // the assertion is inverted so the port cannot return, not even as an
+    // "empty" one that would re-open the seam P5-A sealed.
+    expect(composition).not.toContain('retainedWorkspaceBootstrapShareIds')
     expect(composition).toContain('createChannelProductionBootstrap({')
     expect(composition).toContain("'human-collaboration-identity.json'")
     expect(composition).toContain('safeStorage,')
