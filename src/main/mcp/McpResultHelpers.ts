@@ -1,8 +1,9 @@
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import { projectBlackboardDeleteResultForModel } from '../blackboard/BlackboardDeleteReceipt'
 export const MAX_MCP_TEXT_CHARS = 200_000
 
 export function mcpJson(value: unknown): string {
-  const text = JSON.stringify(value, null, 2)
+  const text = JSON.stringify(projectBlackboardDeleteResultForModel(value), null, 2)
   if (text.length <= MAX_MCP_TEXT_CHARS) return text
   return JSON.stringify(
     {
