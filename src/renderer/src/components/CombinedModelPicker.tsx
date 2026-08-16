@@ -50,6 +50,8 @@ import { modelRequiresApiKey } from '../../../shared/apiKeyModelIndicator'
 import { PillButton } from './PillButton'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
+import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
 
 export type {
   CombinedModelPickerModelOption,
@@ -61,6 +63,7 @@ export function modelPickerHueClass(
   modelId?: string | null,
   modelLabel?: string | null
 ): string {
+  if (provider === 'ollama' && isOllamaCloudModelId(modelId)) return 'ollama'
   return resolveProviderHueClass(provider, modelId, modelLabel)
 }
 
@@ -92,7 +95,9 @@ function modelPickerAccentStyle(
 export function emptyProviderModelsLabel(provider?: string | null): string {
   const id = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
   if (id === 'pi') return 'No models — add an upstream API key in Settings → Providers → Pi'
-  if (id === 'ollama') return 'No local models found — pull one with the Ollama CLI'
+  if (id === 'ollama') {
+    return 'No Ollama models found — pull a local model or sign in for Ollama Cloud'
+  }
   return 'No models available'
 }
 
@@ -326,11 +331,12 @@ interface CombinedModelPickerProps {
 
 type CombinedModelPickerColumn = 'provider' | 'model' | 'reasoning'
 
-type OllamaProviderGroup = {
+export type OllamaProviderGroup = {
   id: string
   label: string
   providerClass: string
   models: CombinedModelPickerModelOption[]
+  isCloud?: boolean
 }
 
 export type UnifiedModelEntry = {
@@ -400,7 +406,7 @@ const OLLAMA_CUSTOM_PROVIDER_GROUP = {
   providerClass: 'ollama'
 }
 
-function buildOllamaProviderGroups(
+export function buildOllamaProviderGroups(
   options: readonly CombinedModelPickerModelOption[]
 ): OllamaProviderGroup[] {
   const groups = new Map<string, OllamaProviderGroup>()
@@ -413,7 +419,9 @@ function buildOllamaProviderGroups(
     })
   }
 
+  const cloudModels = options.filter((option) => isOllamaCloudModelId(option.id))
   for (const option of options) {
+    if (isOllamaCloudModelId(option.id)) continue
     const brand = resolveOllamaDisplayBrand(option.id, option.label)
     const groupId = brand?.providerClass || OLLAMA_CUSTOM_PROVIDER_GROUP.id
     const existing = groups.get(groupId)
@@ -427,7 +435,41 @@ function buildOllamaProviderGroups(
     })
   }
 
-  return [...groups.values()].filter((group) => group.models.length > 0)
+  return [
+    ...(cloudModels.length > 0
+      ? [
+          {
+            id: 'ollama-cloud',
+            label: 'Ollama Cloud',
+            providerClass: 'ollama',
+            models: cloudModels,
+            isCloud: true
+          }
+        ]
+      : []),
+    ...[...groups.values()].filter((group) => group.models.length > 0)
+  ]
+}
+
+function OllamaCloudModelIndicator({
+  provider,
+  modelId,
+  className = ''
+}: {
+  provider: string
+  modelId: string
+  className?: string
+}): React.JSX.Element | null {
+  if (provider !== 'ollama' || !isOllamaCloudModelId(modelId)) return null
+  return (
+    <span
+      className={`composer-combined-picker-cloud-indicator ${className}`.trim()}
+      title="Ollama Cloud model"
+      aria-label="Ollama Cloud model"
+    >
+      <OllamaCloudIcon decorative />
+    </span>
+  )
 }
 
 export function resolveCombinedModelPickerResetState(params: {
@@ -1350,9 +1392,11 @@ export function CombinedModelPicker({
     reasoningSuffix
   ])
   const providerDisplayLabel =
-    resolveProviderBrandLabel(provider, selectedModelOption.id) ||
-    selectedProviderGroup?.label ||
-    getProviderName(provider)
+    provider === 'ollama' && isOllamaCloudModelId(selectedModelOption.id)
+      ? 'Ollama Cloud'
+      : resolveProviderBrandLabel(provider, selectedModelOption.id) ||
+        selectedProviderGroup?.label ||
+        getProviderName(provider)
   const providerHueClass = modelPickerHueClass(
     provider,
     selectedModelOption.id,
@@ -1692,7 +1736,14 @@ export function CombinedModelPicker({
                 }}
               >
                 <span className="composer-combined-picker-row-label">
-                  <span className="composer-combined-picker-provider-swatch" aria-hidden />
+                  {group.isCloud ? (
+                    <OllamaCloudIcon
+                      className="composer-combined-picker-provider-cloud-icon"
+                      decorative
+                    />
+                  ) : (
+                    <span className="composer-combined-picker-provider-swatch" aria-hidden />
+                  )}
                   <span>{group.label}</span>
                 </span>
                 <span className="composer-combined-picker-provider-count">
@@ -1779,6 +1830,11 @@ export function CombinedModelPicker({
                           : ''
                       }`}
                       data-provider-model={`${group.provider}:${option.id}`}
+                      data-ollama-cloud-model={
+                        group.provider === 'ollama' && isOllamaCloudModelId(option.id)
+                          ? 'true'
+                          : undefined
+                      }
                       data-provider-hue={rowHueClass}
                       style={modelPickerAccentStyle(group.provider, option.id, option.label)}
                       disabled={Boolean(disabled || option.disabled)}
@@ -1794,6 +1850,10 @@ export function CombinedModelPicker({
                       }}
                     >
                       <span className="composer-combined-picker-row-label">{option.label}</span>
+                      <OllamaCloudModelIndicator
+                        provider={group.provider}
+                        modelId={option.id}
+                      />
                       {option.retiresAt && (
                         <span
                           className="composer-combined-picker-retirement-pill"
@@ -1864,6 +1924,11 @@ export function CombinedModelPicker({
                     idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''
                   }`}
                   data-provider-hue={rowHueClass}
+                  data-ollama-cloud-model={
+                    provider === 'ollama' && isOllamaCloudModelId(option.id)
+                      ? 'true'
+                      : undefined
+                  }
                   style={modelPickerAccentStyle(provider, option.id, option.label)}
                   disabled={Boolean(disabled || option.disabled)}
                   aria-pressed={option.id === selectedModelId}
@@ -1884,6 +1949,7 @@ export function CombinedModelPicker({
                   }}
                 >
                   <span className="composer-combined-picker-row-label">{option.label}</span>
+                  <OllamaCloudModelIndicator provider={provider} modelId={option.id} />
                   {option.retiresAt && (
                     <span
                       className="composer-combined-picker-retirement-pill"
@@ -2052,6 +2118,11 @@ export function CombinedModelPicker({
               <span className="composer-combined-picker-trigger-provider-label">
                 {providerDisplayLabel}
               </span>
+              <OllamaCloudModelIndicator
+                provider={provider}
+                modelId={selectedModelOption.id}
+                className="composer-combined-picker-trigger-cloud-indicator"
+              />
               {selectedProviderGroup?.pauseLabel && (
                 <span
                   className="composer-provider-button-paused"

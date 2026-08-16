@@ -5,6 +5,7 @@ import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTabl
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
+  buildOllamaProviderGroups,
   emptyProviderModelsLabel,
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
@@ -14,6 +15,10 @@ import {
   resolveCombinedPickerPosition,
   runCombinedModelPickerConfirmAction
 } from './CombinedModelPicker'
+import {
+  OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL,
+  OllamaCloudIcon
+} from './icons/OllamaCloudIcon'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
 
@@ -244,6 +249,60 @@ describe('CombinedModelPicker', () => {
     expect(html).not.toContain('provider-glyph-ollama')
     // The spoof hue remains on the surrounding chip; official artwork is not tinted.
     expect(html).not.toContain('--provider-accent:')
+  })
+
+  it('separates Ollama Cloud models from local upstream-brand groups', () => {
+    const groups = buildOllamaProviderGroups([
+      { id: 'glm-5.2:cloud', label: 'GLM 5.2' },
+      { id: 'qwen3.5:cloud', label: 'Qwen 3.5' },
+      { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
+      { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' }
+    ])
+
+    expect(groups[0]).toMatchObject({
+      id: 'ollama-cloud',
+      label: 'Ollama Cloud',
+      providerClass: 'ollama',
+      isCloud: true
+    })
+    expect(groups[0]?.models.map((model) => model.id)).toEqual([
+      'glm-5.2:cloud',
+      'qwen3.5:cloud'
+    ])
+    expect(groups.slice(1).flatMap((group) => group.models).map((model) => model.id)).toEqual([
+      'qwen3.5:9b',
+      'granite4.1:3b'
+    ])
+    expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('ollama')
+  })
+
+  it('renders a current-color SVG classifier for Ollama Cloud', () => {
+    const html = renderToStaticMarkup(<OllamaCloudIcon />)
+
+    expect(html).toContain(`aria-label="${OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL}"`)
+    expect(html).toContain(`<title>${OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL}</title>`)
+    expect(html).toContain('stroke="currentColor"')
+    expect(html).not.toMatch(/stroke="#|fill="#/)
+  })
+
+  it('labels a selected Cloud model distinctly in the trigger', () => {
+    const model = { id: 'glm-5.2:cloud', label: 'GLM 5.2' }
+    const html = renderToStaticMarkup(
+      <CombinedModelPicker
+        provider="ollama"
+        composerStyle="default"
+        modelOptions={[model]}
+        selectedModelId={model.id}
+        onSelectModel={() => undefined}
+        reasoningOptions={[]}
+        selectedReasoning=""
+        onSelectReasoning={() => undefined}
+      />
+    )
+
+    expect(html).toContain('>Ollama Cloud<')
+    expect(html).toContain('composer-combined-picker-trigger-cloud-indicator')
+    expect(html).toContain('aria-label="Ollama Cloud model"')
   })
 
   it('derives the AntiGravity reasoning hue hook from the concrete model id', () => {
@@ -480,6 +539,7 @@ describe('emptyProviderModelsLabel', () => {
     expect(emptyProviderModelsLabel('pi')).toMatch(/API key/i)
     expect(emptyProviderModelsLabel('pi')).toMatch(/Settings/)
     expect(emptyProviderModelsLabel('ollama')).toMatch(/local/i)
+    expect(emptyProviderModelsLabel('ollama')).toMatch(/Cloud/i)
   })
 
   it('stays neutral for seats whose empty reason we do not know', () => {

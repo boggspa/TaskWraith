@@ -8871,6 +8871,13 @@
   white-space: nowrap;
 }
 
+.composer-combined-picker-trigger-cloud-indicator {
+  width: 13px;
+  height: 13px;
+  margin-left: -1px;
+  color: color-mix(in srgb, var(--provider-ollama-color) 82%, var(--text-primary));
+}
+
 /* Trailing "Fast" tail after the reasoning suffix (Cursor formats) — plain
  * chip text, never the reasoning tier hue. Direct-child only: the Claude
  * shell's "Fast" segment nests inside -fast-reasoning and keeps its own
@@ -9649,6 +9656,12 @@
   --composer-ollama-brand-color: var(--provider-ollama-color);
 }
 
+.composer-combined-picker-provider-row .composer-combined-picker-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .composer-combined-picker-provider-row[data-ollama-provider-class="alibaba"] {
   --composer-ollama-brand-color: var(--provider-alibaba-color);
 }
@@ -9723,6 +9736,14 @@
   flex: 0 0 auto;
   background: var(--composer-ollama-brand-color);
   box-shadow: 0 0 8px color-mix(in srgb, var(--composer-ollama-brand-color) 48%, transparent);
+}
+
+.composer-combined-picker-provider-cloud-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: color-mix(in srgb, var(--provider-ollama-color) 82%, var(--text-primary));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--provider-ollama-color) 38%, transparent));
 }
 
 .composer-combined-picker-provider-count {
@@ -9871,6 +9892,32 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-combined-picker-cloud-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: color-mix(
+    in srgb,
+    var(--model-row-accent, var(--provider-ollama-color)) 74%,
+    var(--text-primary)
+  );
+  opacity: 0.78;
+}
+
+.composer-combined-picker-cloud-indicator svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.composer-combined-picker-row.is-selected .composer-combined-picker-cloud-indicator,
+.composer-combined-picker-row.is-highlighted .composer-combined-picker-cloud-indicator {
+  opacity: 1;
 }
 
 .composer-timecode-popover {

@@ -307,6 +307,55 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Open Terminal to sign in')
   })
 
+  it('separates authenticated Ollama Cloud models from installed local models', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: true,
+            setupRequired: false,
+            modelCount: 2,
+            localModelCount: 1,
+            cloudModelCount: 1,
+            cloud: {
+              supported: true,
+              enabled: true,
+              authenticated: true,
+              plan: 'pro',
+              models: []
+            },
+            models: [
+              {
+                id: 'glm-5.2:cloud',
+                label: 'GLM 5.2',
+                source: 'cloud',
+                isCloud: true,
+                requiredPlan: 'pro',
+                contextLength: 1_000_000
+              },
+              {
+                id: 'qwen3.5:9b',
+                label: 'Qwen 3.5 (9B Param)',
+                source: 'local',
+                installed: true,
+                contextLength: 262_144
+              }
+            ]
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
+    expect(html).toContain('Cloud connected · pro')
+    expect(html).toContain('Ollama Cloud</span>')
+    expect(html).toContain('Local models')
+    expect(html).toContain('glm-5.2:cloud')
+    expect(html).toContain('qwen3.5:9b')
+    expect(html).toContain('aria-label="Ollama Cloud model"')
+    expect(html).toContain('1000k ctx')
+  })
+
   it('renders the Mistral Vibe plan setup card separately from Pi API keys', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

@@ -158,6 +158,8 @@ import type {
 } from '../../../shared/plugins/PluginTypes'
 import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
 import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
+import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
+import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
@@ -4923,21 +4925,114 @@ export function SettingsPanel({
     'Grok',
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
-  // Ollama's status reflects the LOCAL runtime; the card's sign-in is the
-  // OPTIONAL ollama.com cloud auth (`ollama signin`), which local models don't
-  // need. Custom summary (not summariseCliProviderEnabled) so "ready" reads as a
-  // green local-runtime dot rather than the CLI-provider "Available · sign-in".
+  const ollamaCatalogModels = Array.isArray(ollamaStatus?.models) ? ollamaStatus.models : []
+  const ollamaCloudModels = ollamaCatalogModels.filter(
+    (model: any) => model?.source === 'cloud' || isOllamaCloudModelId(model?.id)
+  )
+  const ollamaLocalModels = ollamaCatalogModels.filter(
+    (model: any) => model?.source !== 'cloud' && !isOllamaCloudModelId(model?.id)
+  )
+  const ollamaCloudAuthenticated = ollamaStatus?.cloud?.authenticated === true
+  const ollamaCloudDisabled = ollamaStatus?.cloud?.enabled === false
+  const ollamaCloudPlan = String(ollamaStatus?.cloud?.plan || '').trim()
+  // The local daemon remains the provider transport in both modes. Its account
+  // state is shown separately so a green local-runtime signal cannot imply that
+  // Cloud models are authenticated when only local tags are runnable.
   const ollamaAuthSummary: ProviderAuthSummary = ollamaStatus?.available
-    ? {
-        variant: 'signed-in',
-        statusText: 'Local runtime ready',
-        hint: 'Local models need no account. Sign in to ollama.com only for Ollama Cloud / Turbo.'
-      }
+    ? ollamaCloudAuthenticated
+      ? {
+          variant: 'signed-in',
+          statusText: `Cloud connected${ollamaCloudPlan ? ` · ${ollamaCloudPlan}` : ''}`,
+          hint: 'Local and Ollama Cloud models are available through the local Ollama daemon.'
+        }
+      : {
+          variant: 'partial',
+          statusText: ollamaCloudDisabled
+            ? 'Local runtime ready · Cloud disabled'
+            : 'Local runtime ready · Cloud sign-in optional',
+          hint: ollamaCloudDisabled
+            ? 'Local models remain available; this Ollama daemon has Cloud features disabled.'
+            : 'Local models need no account. Run `ollama signin` to unlock the separate Cloud catalog.'
+        }
     : {
         variant: 'partial',
         statusText: 'Local setup optional',
-        hint: 'Install Ollama and pull a model, or sign in to ollama.com to use cloud models.'
+        hint: 'Install Ollama, then pull a local model or sign in to use Ollama Cloud models.'
       }
+
+  const renderOllamaModelOption = (model: any): React.JSX.Element => {
+    const modelId = String(model.id || '')
+    const cloudModel = model.source === 'cloud' || isOllamaCloudModelId(modelId)
+    const selected = ollamaDefaultModel
+      ? modelId === ollamaDefaultModel
+      : model.isDefault === true
+    const disabled = Boolean(model.disabled)
+    const chips = [
+      cloudModel ? 'Cloud' : 'Local',
+      model.requiredPlan ? `${model.requiredPlan} plan` : '',
+      model.parameterSize,
+      model.quantizationLevel,
+      typeof model.contextLength === 'number'
+        ? `${Math.round(model.contextLength / 1000)}k ctx`
+        : '',
+      Array.isArray(model.capabilities) && model.capabilities.includes('tools') ? 'tools' : '',
+      Array.isArray(model.capabilities) && model.capabilities.includes('thinking')
+        ? 'thinking'
+        : '',
+      model.family || model.format
+    ].filter(Boolean)
+    return (
+      <button
+        key={modelId || model.label}
+        type="button"
+        className={`settings-radio-option ${selected ? 'active' : ''}`}
+        onClick={() => {
+          if (!disabled) onChange({ ollamaDefaultModel: modelId })
+        }}
+        disabled={disabled}
+        aria-pressed={selected}
+        title={
+          [modelId, model.digest, disabled ? model.disabledReason || 'Unavailable' : '']
+            .filter(Boolean)
+            .join('\n') || modelId
+        }
+        style={disabled ? { cursor: 'not-allowed', opacity: 0.55 } : undefined}
+      >
+        <span className="settings-radio-dot" />
+        <span>
+          <strong style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            {cloudModel && <OllamaCloudIcon />}
+            {model.label || modelId}
+          </strong>
+          <span>{modelId}</span>
+          {chips.length > 0 && (
+            <span
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 'var(--space-2xs)',
+                marginTop: '4px'
+              }}
+            >
+              {chips.slice(0, 7).map((chip: string) => (
+                <span
+                  key={chip}
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '999px',
+                    padding: '1px 6px',
+                    color: 'var(--text-tertiary)'
+                  }}
+                >
+                  {chip}
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+      </button>
+    )
+  }
   const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
   const museAuthSummary = summariseMuseCodeStatus(providerStatusByProvider?.muse)
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
@@ -8210,10 +8305,30 @@ export function SettingsPanel({
                       ● Service not reachable
                     </span>
                   )}
-                  {typeof ollamaStatus?.modelCount === 'number' && (
+                  {typeof ollamaStatus?.localModelCount === 'number' && (
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                      {ollamaStatus.modelCount} local model
-                      {ollamaStatus.modelCount === 1 ? '' : 's'}
+                      {ollamaStatus.localModelCount} local model
+                      {ollamaStatus.localModelCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {typeof ollamaStatus?.cloudModelCount === 'number' && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                      {ollamaStatus.cloudModelCount} Cloud model
+                      {ollamaStatus.cloudModelCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {ollamaStatus?.available && !ollamaCloudDisabled && (
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        color: ollamaCloudAuthenticated
+                          ? 'var(--color-success, #3fb950)'
+                          : 'var(--color-warning, #d29922)'
+                      }}
+                    >
+                      {ollamaCloudAuthenticated
+                        ? `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
+                        : 'Cloud sign-in required'}
                     </span>
                   )}
                   <PillButton
@@ -8237,69 +8352,42 @@ export function SettingsPanel({
                   TaskWraith talks to the local Ollama HTTP service. No cloud API key is required.
                 </p>
 
-                <label className="settings-label">Default local model</label>
-                {Array.isArray(ollamaStatus?.models) && ollamaStatus.models.length > 0 ? (
+                <label className="settings-label">Default Ollama model</label>
+                {ollamaCatalogModels.length > 0 ? (
                   <div className="settings-option-list">
-                    {ollamaStatus.models.map((model: any) => {
-                      const modelId = String(model.id || '')
-                      const selected = ollamaDefaultModel
-                        ? modelId === ollamaDefaultModel
-                        : model.isDefault === true
-                      const chips = [
-                        model.parameterSize,
-                        model.quantizationLevel,
-                        typeof model.contextLength === 'number'
-                          ? `${Math.round(model.contextLength / 1000)}k ctx`
-                          : '',
-                        Array.isArray(model.capabilities) && model.capabilities.includes('tools')
-                          ? 'tools'
-                          : '',
-                        Array.isArray(model.capabilities) && model.capabilities.includes('thinking')
-                          ? 'thinking'
-                          : '',
-                        model.family || model.format
-                      ].filter(Boolean)
-                      return (
-                        <button
-                          key={modelId || model.label}
-                          type="button"
-                          className={`settings-radio-option ${selected ? 'active' : ''}`}
-                          onClick={() => onChange({ ollamaDefaultModel: modelId })}
-                          aria-pressed={selected}
-                          title={model.digest ? `${modelId}\n${model.digest}` : modelId}
+                    {ollamaCloudModels.length > 0 && (
+                      <div style={{ display: 'grid', gap: '6px' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: 'var(--text-secondary)',
+                            fontSize: '0.76rem',
+                            fontWeight: 700
+                          }}
                         >
-                          <span className="settings-radio-dot" />
-                          <span>
-                            <strong>{model.label || modelId}</strong>
-                            <span>{modelId}</span>
-                            {chips.length > 0 && (
-                              <span
-                                style={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  gap: 'var(--space-2xs)',
-                                  marginTop: '4px'
-                                }}
-                              >
-                                {chips.slice(0, 6).map((chip: string) => (
-                                  <span
-                                    key={chip}
-                                    style={{
-                                      border: '1px solid var(--border-subtle)',
-                                      borderRadius: '999px',
-                                      padding: '1px 6px',
-                                      color: 'var(--text-tertiary)'
-                                    }}
-                                  >
-                                    {chip}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                          </span>
-                        </button>
-                      )
-                    })}
+                          <OllamaCloudIcon decorative />
+                          <span>Ollama Cloud</span>
+                        </div>
+                        {ollamaCloudModels.map(renderOllamaModelOption)}
+                      </div>
+                    )}
+                    {ollamaLocalModels.length > 0 && (
+                      <div style={{ display: 'grid', gap: '6px' }}>
+                        <div
+                          style={{
+                            color: 'var(--text-secondary)',
+                            fontSize: '0.76rem',
+                            fontWeight: 700,
+                            marginTop: ollamaCloudModels.length > 0 ? '4px' : 0
+                          }}
+                        >
+                          Local models
+                        </div>
+                        {ollamaLocalModels.map(renderOllamaModelOption)}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <CommittedDraftField
@@ -8310,8 +8398,8 @@ export function SettingsPanel({
                   />
                 )}
                 <p className="settings-hint">
-                  Select an exact installed tag. Leave blank only when no installed model list is
-                  available.
+                  Cloud rows run remotely through your signed-in local daemon; local rows are exact
+                  installed tags. Leave blank only when no model catalog is available.
                 </p>
                 {/* Tier retirement (2026-07): the Ollama coding-profile picker + tool-control
                     tier radios + provider-parity grant were removed. Local models are governed
