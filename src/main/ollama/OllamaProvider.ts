@@ -52,6 +52,7 @@ import {
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
 import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
+import { OLLAMA_CLOUD_API_BASE_URL, ollamaCloudApiHeaders } from './OllamaCloudApi'
 import { resolveOllamaTurnNumPredict } from './OllamaRunProfiles'
 import {
   createOllamaHarnessRunState,
@@ -161,6 +162,7 @@ export interface OllamaModelShowInfo {
 
 export interface OllamaStatusSnapshot {
   available: boolean
+  localAvailable: boolean
   setupRequired: boolean
   baseUrl: string
   modelCount: number
@@ -179,6 +181,8 @@ export interface OllamaModelCatalogSnapshot {
   localModels: OllamaModelInfo[]
   cloudModels: OllamaModelInfo[]
   cloud: OllamaCloudDiscoverySnapshot
+  localReachable: boolean
+  localError?: string
 }
 
 export interface OllamaProcessMemoryEntry {
@@ -205,6 +209,8 @@ export interface OllamaProviderDeps {
     | 'geminiMcpBridgeEnabled'
     | 'codexSandboxFallback'
   >
+  /** Decrypt on demand; the value is used only for direct ollama.com requests. */
+  getCloudApiKey?: () => string | null
   getTotalMemoryBytes?: () => number
   markOllamaModelPreflightComplete?: (modelId: string) => void
   /**
@@ -1124,7 +1130,7 @@ function cloudRecommendationModels(
     if (cloud.authenticated !== true) {
       info.disabledReason =
         cloud.authenticated === false
-          ? 'Sign in to Ollama Cloud with `ollama signin`.'
+          ? 'Sign in with `ollama signin` or add an Ollama Cloud API key.'
           : 'Ollama Cloud account status is unavailable.'
     }
     if (recommendation.contextLength) info.contextLength = recommendation.contextLength
@@ -1139,7 +1145,8 @@ function cloudRecommendationModels(
 export function mergeOllamaLocalAndCloudModels(
   localModels: readonly OllamaModelInfo[],
   cloud: OllamaCloudDiscoverySnapshot,
-  defaultModel?: string | null
+  defaultModel?: string | null,
+  localState: { reachable?: boolean; error?: string } = {}
 ): OllamaModelCatalogSnapshot {
   const byKey = new Map<string, OllamaModelInfo>()
   const cloudModels = cloudRecommendationModels(cloud, defaultModel)
@@ -1161,7 +1168,9 @@ export function mergeOllamaLocalAndCloudModels(
     models,
     localModels: models.filter((model) => model.source !== 'cloud'),
     cloudModels: models.filter((model) => model.source === 'cloud'),
-    cloud
+    cloud,
+    localReachable: localState.reachable !== false,
+    ...(localState.error ? { localError: localState.error } : {})
   }
 }
 
@@ -1171,10 +1180,20 @@ export async function fetchOllamaModelCatalog(
     signal?: AbortSignal
     timeoutMs?: number
     launchAuthorized?: OllamaTransportLaunchAuthority
+    cloudApiKey?: string | null
   } = {}
 ): Promise<OllamaModelCatalogSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
-  const localModels = await fetchOllamaLocalModels({ ...settings, ollamaBaseUrl: baseUrl }, options)
+  let localModels: OllamaModelInfo[] = []
+  let localReachable = true
+  let localError = ''
+  try {
+    localModels = await fetchOllamaLocalModels({ ...settings, ollamaBaseUrl: baseUrl }, options)
+  } catch (error) {
+    localReachable = false
+    localError = unknownErrorMessage(error)
+    if (!options.cloudApiKey) throw error
+  }
   const cloud =
     options.signal?.aborted || options.launchAuthorized?.() === false
       ? {
@@ -1185,9 +1204,13 @@ export async function fetchOllamaModelCatalog(
         }
       : await discoverOllamaCloud(baseUrl, {
           signal: options.signal,
-          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500)
+          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500),
+          apiKey: options.cloudApiKey
         })
-  return mergeOllamaLocalAndCloudModels(localModels, cloud, settings.ollamaDefaultModel)
+  return mergeOllamaLocalAndCloudModels(localModels, cloud, settings.ollamaDefaultModel, {
+    reachable: localReachable,
+    error: localError
+  })
 }
 
 /** Models that can be dispatched now: installed local tags plus signed-in Cloud rows. */
@@ -1197,6 +1220,7 @@ export async function fetchOllamaModels(
     signal?: AbortSignal
     timeoutMs?: number
     launchAuthorized?: OllamaTransportLaunchAuthority
+    cloudApiKey?: string | null
   } = {}
 ): Promise<OllamaModelInfo[]> {
   const catalog = await fetchOllamaModelCatalog(settings, options)
@@ -1210,6 +1234,7 @@ async function fetchOllamaModelShow(
     signal?: AbortSignal
     timeoutMs?: number
     launchAuthorized?: OllamaTransportLaunchAuthority
+    apiKey?: string | null
   } = {}
 ): Promise<OllamaModelShowInfo | null> {
   const timeoutMs = options.timeoutMs ?? 2_000
@@ -1221,7 +1246,9 @@ async function fetchOllamaModelShow(
     const response = await fetch(endpoint(baseUrl, '/api/show'), {
       method: 'POST',
       signal,
-      headers: { 'content-type': 'application/json' },
+      headers: options.apiKey
+        ? ollamaCloudApiHeaders(options.apiKey, { json: true })
+        : { 'content-type': 'application/json' },
       body: JSON.stringify({ model })
     })
     if (!response.ok) return null
@@ -1240,14 +1267,22 @@ async function fetchOllamaModelShow(
 
 async function enrichOllamaModelsWithShowInfo(
   baseUrl: string,
-  models: OllamaModelInfo[]
+  models: OllamaModelInfo[],
+  cloudApiKey?: string | null
 ): Promise<OllamaModelInfo[]> {
   const targets = models.filter((model) => !model.contextLength && !model.disabled).slice(0, 16)
   if (targets.length === 0) return models
   const showResults = await Promise.all(
     targets.map(async (model) => ({
       id: model.id,
-      show: await fetchOllamaModelShow(baseUrl, model.id, { timeoutMs: 750 })
+      show: await fetchOllamaModelShow(
+        model.source === 'cloud' && cloudApiKey ? OLLAMA_CLOUD_API_BASE_URL : baseUrl,
+        model.source === 'cloud' && cloudApiKey ? ollamaCloudBaseModelId(model.id) : model.id,
+        {
+          timeoutMs: 750,
+          ...(model.source === 'cloud' && cloudApiKey ? { apiKey: cloudApiKey } : {})
+        }
+      )
     }))
   )
   const showById = new Map(showResults.map((result) => [result.id, result.show]))
@@ -1255,12 +1290,20 @@ async function enrichOllamaModelsWithShowInfo(
 }
 
 export async function getOllamaStatusSnapshot(
-  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>
+  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
+  options: { cloudApiKey?: string | null } = {}
 ): Promise<OllamaStatusSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   try {
-    const catalog = await fetchOllamaModelCatalog({ ...settings, ollamaBaseUrl: baseUrl })
-    const models = await enrichOllamaModelsWithShowInfo(baseUrl, catalog.models)
+    const catalog = await fetchOllamaModelCatalog(
+      { ...settings, ollamaBaseUrl: baseUrl },
+      { cloudApiKey: options.cloudApiKey }
+    )
+    const models = await enrichOllamaModelsWithShowInfo(
+      baseUrl,
+      catalog.models,
+      options.cloudApiKey
+    )
     const localModels = models.filter((model) => model.source !== 'cloud')
     const cloudModels = models.filter((model) => model.source === 'cloud')
     const runnableCloudModelCount = catalog.cloud.authenticated
@@ -1271,7 +1314,8 @@ export async function getOllamaStatusSnapshot(
       String(settings.ollamaDefaultModel || '').trim() ||
       models.find((model) => model.isDefault)?.id
     return {
-      available: true,
+      available: catalog.localReachable || runnableCloudModelCount > 0,
+      localAvailable: catalog.localReachable,
       setupRequired: modelCount === 0,
       baseUrl,
       modelCount,
@@ -1286,7 +1330,7 @@ export async function getOllamaStatusSnapshot(
         ? {
             error:
               cloudModels.length > 0 && catalog.cloud.authenticated === false
-                ? 'Ollama is reachable. Sign in with `ollama signin` to use Cloud models, or pull a local model.'
+                ? 'Sign in with `ollama signin` or add an Ollama Cloud API key, or pull a local model.'
                 : catalog.cloud.enabled === false
                   ? 'Ollama is reachable, but Cloud is disabled and no local models are installed.'
                   : 'Ollama is reachable, but no local models are installed and no signed-in Cloud model is available.'
@@ -1296,6 +1340,7 @@ export async function getOllamaStatusSnapshot(
   } catch (error) {
     return {
       available: false,
+      localAvailable: false,
       setupRequired: true,
       baseUrl,
       modelCount: 0,
@@ -1313,7 +1358,7 @@ export async function getOllamaStatusSnapshot(
 }
 
 export async function getOllamaCapabilityContract(
-  deps: Pick<OllamaProviderDeps, 'getSettings'>,
+  deps: Pick<OllamaProviderDeps, 'getSettings' | 'getCloudApiKey'>,
   request: { workspacePath?: string; approvalMode?: string; networkAccess?: string | null } = {}
 ): Promise<ProviderCapabilityContract> {
   const settings = deps.getSettings()
@@ -1322,7 +1367,9 @@ export async function getOllamaCapabilityContract(
   // Tier retirement (2026-07): the surface is always full; 'provider_parity' is a
   // fixed placeholder for the (tier-agnostic) name resolver.
   const toolNames = ollamaToolNamesForTier('provider_parity', { networkAccess })
-  const status = await getOllamaStatusSnapshot(settings)
+  const status = await getOllamaStatusSnapshot(settings, {
+    cloudApiKey: deps.getCloudApiKey?.()
+  })
   return buildProviderCapabilityContract({
     provider: 'ollama',
     settings,
@@ -2851,6 +2898,7 @@ function shouldHoldOllamaContentForPublicStream(input: {
 
 async function fetchOllamaChatResponseWithRetry(input: {
   baseUrl: string
+  apiKey?: string | null
   signal: AbortSignal
   request: Record<string, unknown>
   launchAuthorized?: OllamaTransportLaunchAuthority
@@ -2867,7 +2915,9 @@ async function fetchOllamaChatResponseWithRetry(input: {
       return await fetch(endpoint(input.baseUrl, '/api/chat'), {
         method: 'POST',
         signal: input.signal,
-        headers: { 'content-type': 'application/json' },
+        headers: input.apiKey
+          ? ollamaCloudApiHeaders(input.apiKey, { json: true })
+          : { 'content-type': 'application/json' },
         body: JSON.stringify(input.request)
       })
     } catch (error) {
@@ -3177,6 +3227,8 @@ export function validateOllamaToolArguments(
 async function runOllamaChatTurn(input: {
   baseUrl: string
   model: string
+  apiKey?: string | null
+  cloudModel?: boolean
   messages: OllamaChatMessage[]
   signal: AbortSignal
   tools?: OllamaNativeToolDefinition[]
@@ -3210,6 +3262,7 @@ async function runOllamaChatTurn(input: {
   }
   const response = await fetchOllamaChatResponseWithRetry({
     baseUrl: input.baseUrl,
+    apiKey: input.apiKey,
     signal: input.signal,
     launchAuthorized: input.launchAuthorized,
     onRetry: input.onRetry,
@@ -3248,9 +3301,9 @@ async function runOllamaChatTurn(input: {
     } catch {
       // The HTTP status remains actionable when an older daemon sends no JSON.
     }
-    if (isOllamaCloudModelId(input.model) && response.status === 401) {
+    if (input.cloudModel && response.status === 401) {
       throw new Error(
-        'Ollama Cloud authentication is required. Run `ollama signin` in Settings → Providers, then refresh models.'
+        'Ollama Cloud authentication failed. Replace the API key or run `ollama signin` in Settings → Providers, then refresh models.'
       )
     }
     throw new Error(`Ollama chat failed with HTTP ${response.status}.${detail ? ` ${detail}` : ''}`)
@@ -3378,10 +3431,12 @@ export async function runOllamaProvider(
 ): Promise<void> {
   const settings = deps.getSettings()
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
+  const cloudApiKey = deps.getCloudApiKey?.() || null
   const controller = new AbortController()
   let memoryMonitor: ReturnType<typeof createOllamaMemoryMonitor> | null = null
   let terminalStatus: RunSessionStatus = 'failed'
   let terminalProjectionStarted = false
+  let directCloudRun = false
   // Captured after launch so the catch path can unload on transport/OOM failure.
   let launchedModel: string | null = null
   deps.runManager.attachAbortController(route.appRunId!, controller)
@@ -3428,13 +3483,18 @@ export async function runOllamaProvider(
         loadInstalledModels: () =>
           fetchOllamaModels(
             { ...settings, ollamaBaseUrl: baseUrl },
-            { signal: controller.signal, launchAuthorized }
+            { signal: controller.signal, launchAuthorized, cloudApiKey }
           ),
         loadModelShow: (model) =>
-          fetchOllamaModelShow(baseUrl, model, {
-            signal: controller.signal,
-            launchAuthorized
-          }),
+          fetchOllamaModelShow(
+            isOllamaCloudModelId(model) && cloudApiKey ? OLLAMA_CLOUD_API_BASE_URL : baseUrl,
+            isOllamaCloudModelId(model) && cloudApiKey ? ollamaCloudBaseModelId(model) : model,
+            {
+              signal: controller.signal,
+              launchAuthorized,
+              ...(isOllamaCloudModelId(model) && cloudApiKey ? { apiKey: cloudApiKey } : {})
+            }
+          ),
         modelLabel: humanizeOllamaModelId,
         buildNativeToolDefinitions: (input) =>
           ollamaNativeToolDefinitions('provider_parity', input),
@@ -3451,7 +3511,9 @@ export async function runOllamaProvider(
       deps.sendAgentCompatError(
         event.sender,
         'ollama',
-        'Ollama is reachable, but no local model is installed. Open Settings → Providers → Ollama models for the verified pull/run commands (or start with `ollama pull llama3.2:3b`), then refresh models.',
+        cloudApiKey
+          ? 'No runnable Ollama Cloud model was returned for this API key. Check the key and account plan in Settings → Providers, or install a local model.'
+          : 'Ollama is reachable, but no local model is installed. Open Settings → Providers → Ollama models for the verified pull/run commands (or start with `ollama pull llama3.2:3b`), then refresh models.',
         route
       )
       deps.sendAgentCompatExit(event.sender, 'ollama', 1, route)
@@ -3474,6 +3536,10 @@ export async function runOllamaProvider(
       harnessEnabled
     } = launchPlan
     const cloudModel = isOllamaCloudModelId(model)
+    const directCloudApi = cloudModel && Boolean(cloudApiKey)
+    directCloudRun = directCloudApi
+    const transportBaseUrl = directCloudApi ? OLLAMA_CLOUD_API_BASE_URL : baseUrl
+    const transportModel = directCloudApi ? ollamaCloudBaseModelId(model) : model
     launchedModel = cloudModel ? null : model
     const modelInfo = launchPlan.modelManifest.merged
     // Tool-result truncation scales to the daemon-measured window (bounded by
@@ -3710,8 +3776,10 @@ export async function runOllamaProvider(
         }
       }
       const turn = await runOllamaChatTurn({
-        baseUrl,
-        model,
+        baseUrl: transportBaseUrl,
+        model: transportModel,
+        cloudModel,
+        ...(directCloudApi ? { apiKey: cloudApiKey } : {}),
         messages,
         signal: controller.signal,
         tools: jsonToolFallback ? [] : nativeToolDefs,
@@ -3730,7 +3798,8 @@ export async function runOllamaProvider(
         toolProtocolEnabled,
         availableToolNames,
         formatToolNames,
-        request: turnIndex === 0 ? launchPlan.firstRequest : undefined,
+        request:
+          turnIndex === 0 ? { ...launchPlan.firstRequest, model: transportModel } : undefined,
         launchAuthorized,
         onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
           deps.sendAgentCompatLine(
@@ -3741,7 +3810,7 @@ export async function runOllamaProvider(
               id: 'ollama-chat-transport-retry',
               severity: 'warning',
               title: 'Retrying Ollama connection',
-              message: `Ollama dropped the local chat request (${error}). Retrying ${attempt + 1}/${maxAttempts} in ${delayMs}ms.`
+              message: `Ollama dropped the ${directCloudApi ? 'Cloud' : 'local'} chat request (${error}). Retrying ${attempt + 1}/${maxAttempts} in ${delayMs}ms.`
             },
             route
           )
@@ -4280,7 +4349,11 @@ export async function runOllamaProvider(
     }
     const message = cancelled
       ? 'Ollama run cancelled.'
-      : ollamaRunFailureMessage(error, baseUrl, { unloadAttempted })
+      : directCloudRun
+        ? unknownErrorMessage(error).startsWith('Ollama Cloud')
+          ? unknownErrorMessage(error)
+          : `Ollama Cloud request failed. ${unknownErrorMessage(error)}`
+        : ollamaRunFailureMessage(error, baseUrl, { unloadAttempted })
     deps.sendAgentCompatError(event.sender, 'ollama', message, route)
     deps.sendAgentCompatExit(event.sender, 'ollama', cancelled ? 130 : 1, route)
   } finally {

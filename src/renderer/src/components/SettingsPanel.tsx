@@ -4934,6 +4934,7 @@ export function SettingsPanel({
     (model: any) => model?.source !== 'cloud' && !isOllamaCloudModelId(model?.id)
   )
   const ollamaCloudAuthenticated = ollamaStatus?.cloud?.authenticated === true
+  const ollamaCloudApiKeyConfigured = ollamaStatus?.cloud?.apiKeyConfigured === true
   const ollamaCloudDisabled = ollamaStatus?.cloud?.enabled === false
   const ollamaCloudPlan = String(ollamaStatus?.cloud?.plan || '').trim()
   // The local daemon remains the provider transport in both modes. Its account
@@ -4943,8 +4944,12 @@ export function SettingsPanel({
     ? ollamaCloudAuthenticated
       ? {
           variant: 'signed-in',
-          statusText: `Cloud connected${ollamaCloudPlan ? ` · ${ollamaCloudPlan}` : ''}`,
-          hint: 'Local and Ollama Cloud models are available through the local Ollama daemon.'
+          statusText: ollamaCloudApiKeyConfigured
+            ? 'Cloud API key configured'
+            : `Cloud connected${ollamaCloudPlan ? ` · ${ollamaCloudPlan}` : ''}`,
+          hint: ollamaCloudApiKeyConfigured
+            ? 'Cloud models use Ollama’s direct API; local models remain on the local daemon.'
+            : 'Local and Ollama Cloud models are available through the local Ollama daemon.'
         }
       : {
           variant: 'partial',
@@ -8298,13 +8303,13 @@ export function SettingsPanel({
                     flexWrap: 'wrap'
                   }}
                 >
-                  {ollamaStatus?.available ? (
+                  {(ollamaStatus?.localAvailable ?? ollamaStatus?.available) ? (
                     <span style={{ fontSize: '0.78rem', color: 'var(--color-success, #3fb950)' }}>
-                      ● Service reachable
+                      ● Local service reachable
                     </span>
                   ) : (
                     <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                      ● Service not reachable
+                      ● Local service not reachable
                     </span>
                   )}
                   {typeof ollamaStatus?.localModelCount === 'number' && (
@@ -8329,7 +8334,9 @@ export function SettingsPanel({
                       }}
                     >
                       {ollamaCloudAuthenticated
-                        ? `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
+                        ? ollamaCloudApiKeyConfigured
+                          ? 'Cloud API key configured'
+                          : `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
                         : 'Cloud sign-in required'}
                     </span>
                   )}

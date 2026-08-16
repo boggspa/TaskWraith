@@ -75,6 +75,7 @@ export interface OllamaMainRuntimeDependencies {
     saveChat: (chat: ChatRecord) => void
     getRunQueueJob: (runId?: string) => { executionGraph?: unknown } | null
   }
+  getCloudApiKey?: () => string | null
   canonicalPath: (value: string) => string
   canonicalExternalGrantPath: (value: string) => string | null
   isPathInsideRoot: (rootPath: string | undefined, candidatePath: string) => boolean
@@ -669,6 +670,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     await deps.runProvider(
       {
         getSettings: deps.store.getSettings,
+        getCloudApiKey: deps.getCloudApiKey,
         getTotalMemoryBytes: () => os.totalmem(),
         markOllamaModelPreflightComplete: markModelPreflightComplete,
         recordOllamaModelContextTokens: recordModelContextTokens,

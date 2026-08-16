@@ -1249,6 +1249,7 @@ import {
   getGeminiOAuthLoginStatus,
   getStoredClaudeApiKey,
   getStoredKimiApiKey,
+  getStoredOllamaApiKey,
   importCodexUsageCredential,
   loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
@@ -32697,6 +32698,7 @@ const ollamaMainRuntime = createOllamaMainRuntime({
     saveChat: (chat) => AppStore.saveChat(chat),
     getRunQueueJob: (runId) => (runId ? AppStore.getRunQueueJob(runId) : null)
   },
+  getCloudApiKey: getStoredOllamaApiKey,
   canonicalPath,
   canonicalExternalGrantPath,
   isPathInsideRoot,
@@ -34895,7 +34897,10 @@ const providerAdapters = createProviderAdapterRegistry<
       ...defaultProviderDescriptor('ollama'),
       run: ({ event, payload }) => runOllamaProviderAdapter(event, payload),
       cancel: (runId) => cancelProviderRun('ollama', runId),
-      getStatus: () => getOllamaStatusSnapshot(AppStore.getSettings()),
+      getStatus: () =>
+        getOllamaStatusSnapshot(AppStore.getSettings(), {
+          cloudApiKey: getStoredOllamaApiKey()
+        }),
       getMcpStatus: async () => {
         const settings = AppStore.getSettings()
         const enabled = settings.agenticServices?.mcpTools !== 'deny'
@@ -34917,7 +34922,13 @@ const providerAdapters = createProviderAdapterRegistry<
         }
       },
       getCapabilityContract: (request = {}) =>
-        getOllamaCapabilityContract({ getSettings: () => AppStore.getSettings() }, request)
+        getOllamaCapabilityContract(
+          {
+            getSettings: () => AppStore.getSettings(),
+            getCloudApiKey: getStoredOllamaApiKey
+          },
+          request
+        )
     },
     ...antigravityAdapters,
     ...grokAdapters,
@@ -55614,7 +55625,11 @@ if (isGeminiMcpBridgeProcess) {
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()
-          return (await fetchOllamaModelCatalog(settings)).models
+          return (
+            await fetchOllamaModelCatalog(settings, {
+              cloudApiKey: getStoredOllamaApiKey()
+            })
+          ).models
         } catch {
           return getStaticProviderModels('ollama')
         }
@@ -56844,7 +56859,9 @@ if (isGeminiMcpBridgeProcess) {
           // at least one model installed. isLocal defaults true in
           // buildProviderSignals; the resolver gates it behind policy.ollamaEnabled.
           try {
-            const snapshot = await getOllamaStatusSnapshot(settings)
+            const snapshot = await getOllamaStatusSnapshot(settings, {
+              cloudApiKey: getStoredOllamaApiKey()
+            })
             if (snapshot.available && snapshot.modelCount > 0) {
               inputs.push({
                 provider,

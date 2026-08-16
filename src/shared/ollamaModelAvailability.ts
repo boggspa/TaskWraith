@@ -24,6 +24,13 @@ export function ollamaCloudBaseModelId(modelId?: string | null): string {
   return value.slice(0, -'-cloud'.length)
 }
 
+/** Internal picker id for a model served by the direct Ollama Cloud API. */
+export function ollamaCloudModelId(modelId?: string | null): string {
+  const value = String(modelId || '').trim()
+  if (!value || isOllamaCloudModelId(value)) return value
+  return `${value}:cloud`
+}
+
 const OLLAMA_CLOUD_MODEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   'glm-5.2': 'GLM 5.2',
   'minimax-m3': 'MiniMax M3'

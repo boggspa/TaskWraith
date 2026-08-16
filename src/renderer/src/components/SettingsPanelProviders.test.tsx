@@ -359,6 +359,42 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('1000k ctx')
   })
 
+  it('labels the direct API-key route without implying local-daemon auth', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: true,
+            localAvailable: false,
+            setupRequired: false,
+            modelCount: 1,
+            localModelCount: 0,
+            cloudModelCount: 1,
+            cloud: {
+              supported: true,
+              enabled: true,
+              authenticated: true,
+              apiKeyConfigured: true,
+              models: []
+            },
+            models: [
+              {
+                id: 'minimax-m3:cloud',
+                label: 'MiniMax M3',
+                source: 'cloud',
+                isCloud: true
+              }
+            ]
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('Cloud API key configured')
+    expect(html).toContain('Cloud models use Ollama’s direct API')
+    expect(html).toContain('Local service not reachable')
+  })
+
   it('renders the Mistral Vibe plan setup card separately from Pi API keys', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel

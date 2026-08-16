@@ -4,6 +4,7 @@ import {
   isOllamaCloudModelId,
   isOllamaModelInstalled,
   ollamaCloudBaseModelId,
+  ollamaCloudModelId,
   ollamaCloudModelDisplayName,
   ollamaModelIdsMatch
 } from './ollamaModelAvailability'
@@ -64,6 +65,9 @@ describe('ollama model availability helpers', () => {
     expect(ollamaCloudBaseModelId('kimi-k2.5:cloud')).toBe('kimi-k2.5')
     expect(ollamaCloudBaseModelId('gpt-oss:120b-cloud')).toBe('gpt-oss:120b')
     expect(ollamaCloudBaseModelId('kimi-k2.5:latest-cloud')).toBe('kimi-k2.5:latest')
+    expect(ollamaCloudModelId('kimi-k2.7-code')).toBe('kimi-k2.7-code:cloud')
+    expect(ollamaCloudModelId('gpt-oss:120b')).toBe('gpt-oss:120b:cloud')
+    expect(ollamaCloudModelId('glm-5.2:cloud')).toBe('glm-5.2:cloud')
   })
 
   it('resolves curated Cloud ids to display names without altering unknown ids', () => {

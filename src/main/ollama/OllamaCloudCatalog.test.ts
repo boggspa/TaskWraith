@@ -79,6 +79,74 @@ describe('discoverOllamaCloud', () => {
     }
   })
 
+  it('unions direct API tags with daemon metadata when an API key is configured', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url === 'https://ollama.com/api/tags') {
+        expect(init?.headers).toEqual({ Authorization: 'Bearer cloud-key' })
+        return jsonResponse({
+          models: [{ model: 'minimax-m2.7' }, { model: 'glm-5.2' }]
+        })
+      }
+      if (url.endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (url.endsWith('/api/me')) return jsonResponse({}, 401)
+      if (url.endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({
+          recommendations: [
+            { model: 'glm-5.2:cloud', context_length: 1_000_000, required_plan: 'pro' }
+          ]
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }) as unknown as typeof fetch
+
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', {
+        fetchImpl,
+        apiKey: 'cloud-key'
+      })
+    ).resolves.toMatchObject({
+      supported: true,
+      enabled: true,
+      authenticated: true,
+      apiKeyConfigured: true,
+      models: [
+        { model: 'minimax-m2.7:cloud' },
+        {
+          model: 'glm-5.2:cloud',
+          contextLength: 1_000_000,
+          requiredPlan: 'pro'
+        }
+      ]
+    })
+  })
+
+  it('keeps direct API-key Cloud available when the local daemon disables its own Cloud bridge', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url === 'https://ollama.com/api/tags') {
+        return jsonResponse({ models: [{ model: 'kimi-k3' }] })
+      }
+      if (url.endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: true, source: 'env' } })
+      }
+      if (url.endsWith('/api/me')) return jsonResponse({}, 401)
+      return jsonResponse({ recommendations: [] })
+    }) as unknown as typeof fetch
+
+    await expect(
+      discoverOllamaCloud('http://localhost:11434', { fetchImpl, apiKey: 'cloud-key' })
+    ).resolves.toMatchObject({
+      enabled: true,
+      authenticated: true,
+      apiKeyConfigured: true,
+      source: 'env',
+      models: [{ model: 'kimi-k3:cloud' }]
+    })
+  })
+
   it('reports sign-in required without retaining account response details', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)

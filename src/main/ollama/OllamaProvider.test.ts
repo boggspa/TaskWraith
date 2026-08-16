@@ -173,6 +173,7 @@ function makeProviderDeps(
     canAdmitTransport?: (runId: string | undefined, requireExistingRun?: boolean) => boolean
     claimedTerminalStatus?: (runId: string | undefined) => 'failed' | 'cancelled' | undefined
     settings?: Record<string, unknown>
+    cloudApiKey?: string | null
   } = {}
 ): {
   deps: OllamaProviderDeps
@@ -239,6 +240,7 @@ function makeProviderDeps(
           ...(overrides.settings || {})
         }) as any,
       getTotalMemoryBytes: () => 32 * 1024 ** 3,
+      getCloudApiKey: () => overrides.cloudApiKey || null,
       markOllamaModelPreflightComplete: vi.fn(),
       sendAgentCompatLine: (_sender, provider, payload, route) => {
         lines.push({ provider, payload, route })
@@ -408,6 +410,68 @@ describe('prepareOllamaEnsemblePromptForRuntime', () => {
 })
 
 describe('runOllamaProvider streaming', () => {
+  it('routes keyed Cloud runs directly with a Bearer header and a suffix-free wire model', async () => {
+    const directRequests: Array<{ path: string; init?: RequestInit }> = []
+    const localRequests: Array<{ path: string; init?: RequestInit }> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const parsed = new URL(String(url))
+      const record = { path: parsed.pathname, init }
+      if (parsed.origin === 'https://ollama.com') {
+        directRequests.push(record)
+        if (parsed.pathname === '/api/tags') {
+          return jsonResponse({ models: [{ model: 'minimax-m3' }] })
+        }
+        if (parsed.pathname === '/api/show') {
+          return jsonResponse({
+            details: { family: 'minimax', context_length: 262_144 },
+            capabilities: ['completion', 'tools']
+          })
+        }
+        if (parsed.pathname === '/api/chat') {
+          return ollamaStreamResponse([
+            JSON.stringify({ message: { role: 'assistant', content: 'Cloud ok.' } }),
+            JSON.stringify({ done: true, prompt_eval_count: 5, eval_count: 2 })
+          ])
+        }
+      }
+      localRequests.push(record)
+      throw new Error('local daemon is offline')
+    })
+    const { deps, errors, exits } = makeProviderDeps({
+      fetchMock,
+      cloudApiKey: 'ollama-secret',
+      settings: {
+        ollamaDefaultModel: 'minimax-m3:cloud',
+        ollamaModelPreflightAt: {}
+      }
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      { ...basePayload, model: 'minimax-m3:cloud' },
+      baseRoute
+    )
+
+    expect(directRequests.map((request) => request.path)).toContain('/api/tags')
+    expect(directRequests.map((request) => request.path)).toContain('/api/show')
+    expect(directRequests.map((request) => request.path)).toContain('/api/chat')
+    for (const request of directRequests) {
+      expect(request.init?.headers).toMatchObject({
+        Authorization: 'Bearer ollama-secret'
+      })
+    }
+    for (const request of localRequests) {
+      expect(request.init?.headers || {}).not.toHaveProperty('Authorization')
+    }
+    const showRequest = directRequests.find((request) => request.path === '/api/show')
+    const chatRequest = directRequests.find((request) => request.path === '/api/chat')
+    expect(JSON.parse(String(showRequest?.init?.body))).toMatchObject({ model: 'minimax-m3' })
+    expect(JSON.parse(String(chatRequest?.init?.body))).toMatchObject({ model: 'minimax-m3' })
+    expect(errors).toEqual([])
+    expect(exits.at(-1)?.code).toBe(0)
+  })
+
   it('passes the exact run AbortSignal to model discovery, show, and chat requests', async () => {
     let attachedController: AbortController | undefined
     const requestSignals = new Map<string, AbortSignal | null | undefined>()

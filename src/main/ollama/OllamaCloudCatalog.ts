@@ -1,4 +1,9 @@
-import { isOllamaCloudModelId, normalizeOllamaModelKey } from '../../shared/ollamaModelAvailability'
+import {
+  isOllamaCloudModelId,
+  normalizeOllamaModelKey,
+  ollamaCloudBaseModelId
+} from '../../shared/ollamaModelAvailability'
+import { fetchOllamaCloudApiCatalog } from './OllamaCloudApi'
 
 export interface OllamaCloudModelRecommendation {
   model: string
@@ -15,6 +20,8 @@ export interface OllamaCloudDiscoverySnapshot {
   authenticated: boolean | null
   plan?: string
   source?: string
+  /** A write-only encrypted key is configured for direct ollama.com API requests. */
+  apiKeyConfigured?: boolean
   models: OllamaCloudModelRecommendation[]
 }
 
@@ -22,6 +29,7 @@ interface OllamaCloudDiscoveryOptions {
   signal?: AbortSignal
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  apiKey?: string | null
 }
 
 interface JsonResult {
@@ -73,6 +81,21 @@ export function normalizeOllamaCloudRecommendations(
   return models
 }
 
+function mergeCloudRecommendations(
+  ...sources: readonly OllamaCloudModelRecommendation[][]
+): OllamaCloudModelRecommendation[] {
+  const byKey = new Map<string, OllamaCloudModelRecommendation>()
+  for (const source of sources) {
+    for (const model of source) {
+      const key = normalizeOllamaModelKey(ollamaCloudBaseModelId(model.model))
+      if (!key) continue
+      const previous = byKey.get(key)
+      byKey.set(key, previous ? { ...previous, ...model } : { ...model })
+    }
+  }
+  return [...byKey.values()]
+}
+
 async function readJson(
   fetchImpl: typeof fetch,
   url: string,
@@ -109,9 +132,9 @@ async function readJson(
 }
 
 /**
- * Discover Cloud account state and the daemon's own recommended Cloud catalog.
- * All requests stay on the configured Ollama daemon; TaskWraith never reads or
- * stores Ollama credentials and never calls ollama.com with an API key.
+ * Discover the daemon-managed account plus, when the user configured a key,
+ * Ollama's direct Cloud catalog. The key is used only as a Bearer header by the
+ * dedicated direct-API client and is never projected into this snapshot.
  */
 export async function discoverOllamaCloud(
   baseUrl: string,
@@ -119,7 +142,8 @@ export async function discoverOllamaCloud(
 ): Promise<OllamaCloudDiscoverySnapshot> {
   const fetchImpl = options.fetchImpl ?? fetch
   const requestOptions = { signal: options.signal, timeoutMs: options.timeoutMs }
-  const [statusResult, accountResult, recommendationsResult] = await Promise.all([
+  const apiKey = String(options.apiKey || '').trim()
+  const [statusResult, accountResult, recommendationsResult, directCatalog] = await Promise.all([
     readJson(fetchImpl, `${baseUrl}/api/status`, { method: 'GET' }, requestOptions),
     readJson(fetchImpl, `${baseUrl}/api/me`, { method: 'POST' }, requestOptions),
     readJson(
@@ -127,7 +151,14 @@ export async function discoverOllamaCloud(
       `${baseUrl}/api/experimental/model-recommendations`,
       { method: 'GET' },
       requestOptions
-    )
+    ),
+    apiKey
+      ? fetchOllamaCloudApiCatalog(apiKey, {
+          fetchImpl,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs
+        })
+      : Promise.resolve(null)
   ])
 
   const statusCloud =
@@ -136,22 +167,37 @@ export async function discoverOllamaCloud(
       : null
   const explicitlyDisabled = statusCloud?.disabled === true
   const source = optionalString(statusCloud?.source)
-  const authenticated = accountResult.ok ? true : accountResult.status === 401 ? false : null
+  const authenticated = apiKey
+    ? true
+    : accountResult.ok
+      ? true
+      : accountResult.status === 401
+        ? false
+        : null
   const plan =
     accountResult.ok && accountResult.value && typeof accountResult.value === 'object'
       ? optionalString((accountResult.value as any).plan)
       : undefined
-  const supported =
-    statusResult.ok || recommendationsResult.ok || accountResult.ok || accountResult.status === 401
+  const supported = Boolean(
+    directCatalog?.reachable ||
+    statusResult.ok ||
+    recommendationsResult.ok ||
+    accountResult.ok ||
+    accountResult.status === 401
+  )
+  const daemonModels = normalizeOllamaCloudRecommendations(recommendationsResult.value)
+  const directModels: OllamaCloudModelRecommendation[] = (directCatalog?.models || []).map(
+    (model) => ({ ...model })
+  )
+  const enabled = apiKey ? true : !explicitlyDisabled
 
   return {
     supported,
-    enabled: !explicitlyDisabled,
+    enabled,
     authenticated,
     ...(plan ? { plan } : {}),
     ...(source ? { source } : {}),
-    models: explicitlyDisabled
-      ? []
-      : normalizeOllamaCloudRecommendations(recommendationsResult.value)
+    ...(apiKey ? { apiKeyConfigured: true } : {}),
+    models: enabled ? mergeCloudRecommendations(directModels, daemonModels) : []
   }
 }
