@@ -1203,10 +1203,16 @@ function ocrScreenshot(screenshotPath) {
   }
 }
 
-function normalizeHud(value) {
+const HUD_ASSET_ID_LENGTH = 43
+const HUD_ASSET_EDIT_DISTANCE_THRESHOLD = 12
+const HUD_ASSET_MAX_OBSERVATIONS = 128
+const HUD_ASSET_MAX_OBSERVATION_LENGTH = 1_024
+
+function normalizeHudAssetCandidate(value) {
   return String(value)
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
+    .replace(/[^a-z0-9_-]/g, '')
 }
 
 function editDistance(left, right) {
@@ -1225,30 +1231,75 @@ function editDistance(left, right) {
   return previous[right.length]
 }
 
-function hudContainsAsset(hud, assetId) {
-  const expected = normalizeHud(assetId).slice(0, 24)
-  const observed = normalizeHud(hud.texts.join(' '))
-  if (observed.includes(expected)) {
-    return { matched: true, expected, distance: 0 }
+function matchHudAssetIdentity(hud, assetId) {
+  invariant(
+    typeof assetId === 'string' &&
+      assetId.length === HUD_ASSET_ID_LENGTH &&
+      /^[A-Za-z0-9_-]+$/.test(assetId),
+    'expected HUD asset identity must be one 43-character Base64URL SHA-256 value'
+  )
+  invariant(Array.isArray(hud?.observations), 'HUD asset matching requires OCR observations')
+  invariant(
+    hud.observations.length <= HUD_ASSET_MAX_OBSERVATIONS,
+    `HUD asset matching exceeded ${HUD_ASSET_MAX_OBSERVATIONS} observations`
+  )
+
+  const expected = normalizeHudAssetCandidate(assetId)
+  let best = null
+  const consider = (candidate, observationIndex) => {
+    const distance = editDistance(expected, candidate)
+    if (
+      best === null ||
+      distance < best.distance ||
+      (distance === best.distance && candidate.length > best.observedCandidate.length)
+    ) {
+      best = {
+        observedCandidate: candidate,
+        observationIndex,
+        comparedLength: candidate.length,
+        distance
+      }
+    }
   }
-  let bestDistance = expected.length
-  for (let index = 0; index + expected.length <= observed.length; index += 1) {
-    bestDistance = Math.min(
-      bestDistance,
-      editDistance(expected, observed.slice(index, index + expected.length))
+
+  for (const [observationIndex, observation] of hud.observations.entries()) {
+    if (typeof observation?.text !== 'string') {
+      continue
+    }
+    const observed = normalizeHudAssetCandidate(observation.text)
+    invariant(
+      observed.length <= HUD_ASSET_MAX_OBSERVATION_LENGTH,
+      `HUD asset observation ${observationIndex} exceeded ${HUD_ASSET_MAX_OBSERVATION_LENGTH} normalized characters`
     )
+    if (observed.length < HUD_ASSET_ID_LENGTH) {
+      consider(observed, observationIndex)
+      continue
+    }
+    for (let offset = 0; offset + HUD_ASSET_ID_LENGTH <= observed.length; offset += 1) {
+      consider(observed.slice(offset, offset + HUD_ASSET_ID_LENGTH), observationIndex)
+    }
+  }
+
+  const winning = best ?? {
+    observedCandidate: null,
+    observationIndex: null,
+    comparedLength: 0,
+    distance: HUD_ASSET_ID_LENGTH
   }
   return {
-    matched: bestDistance <= 4,
+    matched:
+      winning.comparedLength === HUD_ASSET_ID_LENGTH &&
+      winning.distance <= HUD_ASSET_EDIT_DISTANCE_THRESHOLD,
     expected,
-    distance: bestDistance
+    ...winning,
+    threshold: HUD_ASSET_EDIT_DISTANCE_THRESHOLD
   }
 }
 
 async function capturePlayable(plan, target, name) {
   const capture = await captureGuarded(plan, target, name)
   const hud = ocrScreenshot(capture.path)
-  const assetMatch = hudContainsAsset(hud, target.asset.sha256)
+  const assetMatch = matchHudAssetIdentity(hud, target.asset.sha256)
   invariant(
     hud.parsed.state === 'PLAY' &&
       Number.isFinite(hud.parsed.contentPtsSeconds) &&
@@ -2092,6 +2143,7 @@ module.exports = {
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  matchHudAssetIdentity,
   parseCli,
   resolveArtifactRoot,
   runAcceptance,

@@ -21,6 +21,7 @@ const {
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  matchHudAssetIdentity,
   parseCli,
   resolveArtifactRoot,
   validateClearedState,
@@ -60,6 +61,18 @@ const {
     windowBounds: { width: number; height: number }
     hudOverlayHeight?: number
   }) => Record<string, any>
+  matchHudAssetIdentity: (
+    hud: { observations: Array<{ text: string }> },
+    assetId: string
+  ) => {
+    matched: boolean
+    expected: string
+    observedCandidate: string | null
+    observationIndex: number | null
+    comparedLength: number
+    distance: number
+    threshold: number
+  }
   parseCli: (argv: string[]) => Record<string, any>
   resolveArtifactRoot: (candidate: string, acceptanceRoot?: string) => string
   validateClearedState: (
@@ -731,6 +744,97 @@ describe('studio LUT acceptance runner contract', () => {
     expect(() => parseCli(['--artifact-root', '/tmp/example', '--unknown'])).toThrow(
       /unknown argument/
     )
+  })
+
+  it('matches an exact normalized full SHA-256 asset identity', () => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const result = matchHudAssetIdentity(
+      { observations: [{ text: `HUD asset: ${assetId}` }] },
+      assetId
+    )
+
+    expect(result).toMatchObject({
+      matched: true,
+      expected: assetId.toLowerCase(),
+      observedCandidate: assetId.toLowerCase(),
+      observationIndex: 0,
+      comparedLength: 43,
+      distance: 0,
+      threshold: 12
+    })
+  })
+
+  it('accepts the deterministic w2lut0816h full-ID OCR observation at distance 12', () => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const result = matchHudAssetIdentity(
+      {
+        observations: [
+          { text: 'PLAY' },
+          {
+            text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+          }
+        ]
+      },
+      assetId
+    )
+
+    expect(result).toMatchObject({
+      matched: true,
+      observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+      observationIndex: 1,
+      comparedLength: 43,
+      distance: 12,
+      threshold: 12
+    })
+  })
+
+  it('rejects a full ID with the same first 24 characters and a wrong tail', () => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const wrongTail = `${assetId.slice(0, 24)}${'A'.repeat(19)}`
+    const result = matchHudAssetIdentity({ observations: [{ text: wrongTail }] }, assetId)
+
+    expect(result.matched).toBe(false)
+    expect(result.comparedLength).toBe(43)
+    expect(result.distance).toBeGreaterThan(12)
+  })
+
+  it('rejects the first candidate beyond the full-ID edit-distance boundary', () => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const thirteenEdits = Array.from(assetId, (character, index) =>
+      index < 13 ? (character.toLowerCase() === 'a' ? 'B' : 'A') : character
+    ).join('')
+    const result = matchHudAssetIdentity({ observations: [{ text: thirteenEdits }] }, assetId)
+
+    expect(result).toMatchObject({
+      matched: false,
+      comparedLength: 43,
+      distance: 13,
+      threshold: 12
+    })
+  })
+
+  it.each([
+    ['short fragment', 'rdQM2RCZQARUViCxHpzBJ9TQEqbdF'],
+    ['no-media HUD', 'No media | PAUSE | 00:00:00:00']
+  ])('rejects %s observations as full asset identities', (_name, text) => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const result = matchHudAssetIdentity({ observations: [{ text }] }, assetId)
+
+    expect(result.matched).toBe(false)
+    expect(result.comparedLength).toBeLessThan(43)
+  })
+
+  it('never concatenates separate OCR observations into one asset identity', () => {
+    const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const result = matchHudAssetIdentity(
+      {
+        observations: [{ text: assetId.slice(0, 24) }, { text: assetId.slice(24) }]
+      },
+      assetId
+    )
+
+    expect(result.matched).toBe(false)
+    expect(result.comparedLength).toBeLessThan(43)
   })
 
   it('uses the verifier overlay default for LUT material-color gates', async () => {
