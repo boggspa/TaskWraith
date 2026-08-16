@@ -49268,8 +49268,19 @@ if (isGeminiMcpBridgeProcess) {
       // Channels fail closed; the app fails open. A dead launch with no window
       // is strictly worse than a launch without channels (soaked live: an
       // undecryptable pinned identity key killed startup before the first
-      // durable write). The degraded gate keeps every People write quiesced,
-      // so neither runtime serves collaboration state this launch.
+      // durable write). The degraded gate keeps every People WRITE quiesced.
+      //
+      // It does NOT stop People reads. This comment previously claimed neither
+      // runtime serves collaboration state on a degraded launch; that is false,
+      // and the distinction is load-bearing for any retirement work. Execution
+      // continues past this catch, so HumanCollaborationStore, its runtime and
+      // its IPC handlers are all still constructed, and reopenCollaborationRooms
+      // re-opens the host seat for every enabled share's still-live invite —
+      // including consumed invites whose collaborator is still active, so a
+      // pinned-identity reconnect finds the host listening. Channels are absent
+      // here, so on such a launch that legacy path is the ONLY collaboration
+      // state a user can reach: retiring it removes a live recovery capability
+      // rather than dead code.
       const degraded = degradePeopleToChannelMigrationStartup(error)
       channelMigrationLegacyWriteGate = degraded.legacyWriteGate
       console.error(
