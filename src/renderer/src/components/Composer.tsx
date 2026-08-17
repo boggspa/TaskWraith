@@ -741,6 +741,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isWorkflowComposeChat,
     kimiFastMode,
     kimiReasoningEffort,
+    mistralReasoningEffort,
     lastNonCustomModelType,
     liveRunOutputTokens,
     activeRunId,
