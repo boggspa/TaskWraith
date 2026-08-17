@@ -699,7 +699,7 @@ describe('ModelUsageCard', () => {
   it('adds the AGY column only when an antigravity quota snapshot exists', () => {
     const withAgy = renderToStaticMarkup(
       <CompactModelUsageGrid
-        quotaEntries={[
+          quotaEntries={[
           quotaEntry({
             provider: 'antigravity',
             windows: [
@@ -718,20 +718,92 @@ describe('ModelUsageCard', () => {
                 totalTokens: 0,
                 limitLabel: '100% remaining',
                 usedPercent: 0
+              },
+              {
+                id: 'agy-3p-weekly',
+                label: '3P Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '5% remaining',
+                usedPercent: 95
+              },
+              {
+                id: 'agy-3p-5h',
+                label: '3P 5H',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
               }
             ]
           })
         ]}
       />
     )
-    // The hook-backed Gemini pool's two sub-limits land on 5H and WK by label
-    // predicate, with the normalized snapshot truth carried in each title.
+    // The hook-backed pools land on 5H/WK plus X1/X2 by label/id predicate.
     expect(withAgy).toContain('>AGY</th>')
     expect(withAgy).toContain('Gemini Weekly')
     expect(withAgy).toContain('Gemini 5H')
+    expect(withAgy).toContain('3P Weekly')
+    expect(withAgy).toContain('3P 5H')
 
     const withoutAgy = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[]} />)
     expect(withoutAgy).not.toContain('>AGY</th>')
+  })
+
+  it('maps AGY Gemini windows to 5H/WK and 3P windows to X1/X2', () => {
+    const withAgy = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [
+              {
+                id: 'agy-gemini-5h',
+                label: 'Gemini 5H',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              },
+              {
+                id: 'agy-gemini-weekly',
+                label: 'Gemini Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '42% remaining',
+                usedPercent: 58
+              },
+              {
+                id: 'agy-3p-5h',
+                label: '3P 5H',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              },
+              {
+                id: 'agy-3p-weekly',
+                label: '3P Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '5% remaining',
+                usedPercent: 95
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(withAgy).toContain('>5H</th>')
+    expect(withAgy).toContain('>WK</th>')
+    expect(withAgy).toContain('>X1</th>')
+    expect(withAgy).toContain('>X2</th>')
+    expect(withAgy).toContain('Antigravity Gemini 5H')
+    expect(withAgy).toContain('Antigravity Gemini Weekly')
+    expect(withAgy).toContain('Antigravity 3P 5H')
+    expect(withAgy).toContain('Antigravity 3P Weekly')
   })
 
   it('shows the AGY column with the reason when the lane is configured but has no windows', () => {

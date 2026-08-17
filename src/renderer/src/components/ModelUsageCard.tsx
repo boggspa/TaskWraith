@@ -392,6 +392,18 @@ function isWeeklyWindow(text: string): boolean {
   return text.includes('weekly') || text.includes('7 day') || text.includes('seven day')
 }
 
+function isThirdPartyAgyWindow(text: string): boolean {
+  return text.includes('agy') && text.includes('3p')
+}
+
+function isAgyThirdPartyWeeklyWindow(text: string): boolean {
+  return isThirdPartyAgyWindow(text) && isWeeklyWindow(text)
+}
+
+function isAgyThirdPartyFiveHourWindow(text: string): boolean {
+  return isThirdPartyAgyWindow(text) && isFiveHourWindow(text)
+}
+
 /**
  * Expanded quota blocks lead with the short/session window, then weekly. Any
  * provider-specific extras retain their source order after those two groups.
@@ -402,6 +414,7 @@ export function orderExpandedQuotaWindows(
 ): UsageWindowAggregate[] {
   const rank = (windowEntry: UsageWindowAggregate): number => {
     const text = normaliseQuotaWindowText(windowEntry)
+    if (isThirdPartyAgyWindow(text)) return 2
     if (isFiveHourWindow(text)) return 0
     if (isWeeklyWindow(text)) return 1
     return 2
@@ -477,12 +490,13 @@ function compactCellsForEntry(
   }
 
   if (provider === 'antigravity') {
-    // agy /usage reports the Gemini pool (only — resold models were purged)
-    // as two sub-limits: a Five Hour Limit and a Weekly Limit, labelled
-    // "Gemini 5H" / "Gemini Weekly" by the parser. Map by label predicate,
-    // not by position, so the panel's own ordering can't misplace them.
+    // agy /usage reports Gemini and CLAUDE/GPT 3P pools as separate sub-limit
+    // windows. The Gemini windows map to 5H/WK; the 3P windows map to X1/X2.
+    // The same panel now also includes third-party windows; those land on X1/X2.
     assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
     assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    assign('extraOne', findCompactWindow(entry, isAgyThirdPartyFiveHourWindow))
+    assign('extraTwo', findCompactWindow(entry, isAgyThirdPartyWeeklyWindow))
     return cells
   }
 
