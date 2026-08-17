@@ -2571,6 +2571,38 @@
   .first-launch-sheet-provider-card-label {
   color: color-mix(in srgb, var(--provider-grok-color) 78%, var(--text-primary));
 }
+.first-launch-sheet-provider-card[data-provider="ollama"] {
+  border-color: color-mix(in srgb, var(--provider-ollama-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-ollama-color) 6%, transparent);
+}
+.first-launch-sheet-provider-card[data-provider="ollama"]
+  .first-launch-sheet-provider-card-label {
+  color: color-mix(in srgb, var(--provider-ollama-color) 78%, var(--text-primary));
+}
+.first-launch-sheet-provider-card[data-provider="mistral"] {
+  border-color: color-mix(in srgb, var(--provider-mistral-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-mistral-color) 6%, transparent);
+}
+.first-launch-sheet-provider-card[data-provider="mistral"]
+  .first-launch-sheet-provider-card-label {
+  color: color-mix(in srgb, var(--provider-mistral-color) 78%, var(--text-primary));
+}
+.first-launch-sheet-provider-card[data-provider="pi"] {
+  border-color: color-mix(in srgb, var(--provider-pi-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-pi-color) 6%, transparent);
+}
+.first-launch-sheet-provider-card[data-provider="pi"]
+  .first-launch-sheet-provider-card-label {
+  color: color-mix(in srgb, var(--provider-pi-color) 78%, var(--text-primary));
+}
+.first-launch-sheet-provider-card[data-provider="antigravity"] {
+  border-color: color-mix(in srgb, var(--provider-antigravity-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-antigravity-color) 6%, transparent);
+}
+.first-launch-sheet-provider-card[data-provider="antigravity"]
+  .first-launch-sheet-provider-card-label {
+  color: color-mix(in srgb, var(--provider-antigravity-color) 78%, var(--text-primary));
+}
 
 /* 1.0.72 — consistent provider-coloured hover lift across ALL provider
  * cards (six when this shipped; the sheet renders nine today).
@@ -2596,6 +2628,18 @@
 }
 .first-launch-sheet-provider-card[data-provider="grok"] {
   --card-accent: var(--provider-grok-color);
+}
+.first-launch-sheet-provider-card[data-provider="ollama"] {
+  --card-accent: var(--provider-ollama-color);
+}
+.first-launch-sheet-provider-card[data-provider="mistral"] {
+  --card-accent: var(--provider-mistral-color);
+}
+.first-launch-sheet-provider-card[data-provider="pi"] {
+  --card-accent: var(--provider-pi-color);
+}
+.first-launch-sheet-provider-card[data-provider="antigravity"] {
+  --card-accent: var(--provider-antigravity-color);
 }
 .first-launch-sheet-provider-card:hover {
   border-color: color-mix(in srgb, var(--card-accent, rgba(255, 255, 255, 0.5)) 62%, var(--surface-border));
