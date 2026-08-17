@@ -774,11 +774,7 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
         return query ? `Searched the workspace for ${query}` : 'Searched the workspace'
       }
       const searchPath = (params.path as string) || (params.dir as string) || ''
-      return query
-        ? `Searched for ${query}`
-        : searchPath
-          ? `Searched ${searchPath}`
-          : 'Searched'
+      return query ? `Searched for ${query}` : searchPath ? `Searched ${searchPath}` : 'Searched'
     }
     case 'shell':
       return 'Shell command'
@@ -818,9 +814,35 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
   deletions?: number
 } {
   if (!parameters) return {}
+
+  const explicitAdditions =
+    typeof parameters.additions === 'number'
+      ? parameters.additions
+      : typeof parameters.additions === 'string'
+        ? parseInt(parameters.additions, 10)
+        : undefined
+  const explicitDeletions =
+    typeof parameters.deletions === 'number'
+      ? parameters.deletions
+      : typeof parameters.deletions === 'string'
+        ? parseInt(parameters.deletions, 10)
+        : undefined
+  if (
+    (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
+    (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))
+  ) {
+    return {
+      additions:
+        explicitAdditions !== undefined && !Number.isNaN(explicitAdditions) ? explicitAdditions : 0,
+      deletions:
+        explicitDeletions !== undefined && !Number.isNaN(explicitDeletions) ? explicitDeletions : 0
+    }
+  }
   const oldString =
     (typeof parameters.old_string === 'string' && parameters.old_string) ||
     (typeof parameters.oldString === 'string' && parameters.oldString) ||
+    (typeof parameters.old_text === 'string' && parameters.old_text) ||
+    (typeof parameters.oldText === 'string' && parameters.oldText) ||
     (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
     (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
     (typeof parameters.target_content === 'string' && parameters.target_content) ||
@@ -829,6 +851,8 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
   const newString =
     (typeof parameters.new_string === 'string' && parameters.new_string) ||
     (typeof parameters.newString === 'string' && parameters.newString) ||
+    (typeof parameters.new_text === 'string' && parameters.new_text) ||
+    (typeof parameters.newText === 'string' && parameters.newText) ||
     (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
     (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
     (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
@@ -1099,7 +1123,7 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
   const category =
     toolName === IMAGE_VIEW_TOOL_NAME
       ? 'read'
-      : mapToolKindToCategory(extractToolKind(toolUseEvent)) ?? getToolCategory(toolName)
+      : (mapToolKindToCategory(extractToolKind(toolUseEvent)) ?? getToolCategory(toolName))
   const displayName = getToolDisplayName(toolName, parameters)
   const filePath = getPathFromRecord(parameters)
   const parentToolCallId = extractParentToolCallId(toolUseEvent)
@@ -1163,8 +1187,7 @@ function inferNamelessActivityFromResult(
             files: [
               {
                 path,
-                status:
-                  verb === 'created' ? 'created' : verb === 'deleted' ? 'deleted' : 'modified'
+                status: verb === 'created' ? 'created' : verb === 'deleted' ? 'deleted' : 'modified'
               }
             ],
             source: 'unknown',
@@ -1183,7 +1206,9 @@ function inferNamelessActivityFromResult(
     }
   }
 
-  const searchMatch = trimmed.match(/^searched(?:\s+(?:for|the workspace for|the web for))?\s+(.+?)\.?$/i)
+  const searchMatch = trimmed.match(
+    /^searched(?:\s+(?:for|the workspace for|the web for))?\s+(.+?)\.?$/i
+  )
   if (searchMatch) {
     const query = normalizeInferredPath(searchMatch[1] || '')
     if (!query) return {}
