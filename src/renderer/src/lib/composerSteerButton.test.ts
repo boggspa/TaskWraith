@@ -2,18 +2,22 @@ import { readFileSync } from 'fs'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The composer Steer button is the ONLY user gesture that reaches the solo
- * live-steering lane (`handleSteer` → prepared barrier → attemptLiveSteering →
- * `steering:inject`). The queued-row Steer action is boundary-only by design
- * (promote → wait for the run to idle → dispatch), so if the composer button
- * disappears, live injection for every provider (pi frame, ACP interrupt,
- * Cursor/Ollama broker-injection) goes dark UI-side while all its main-process
- * machinery keeps passing tests — exactly the regression this file pins.
+ * Solo live steering used to be reachable only through the composer Steer
+ * button — `handleSteer` → prepared barrier → attemptLiveSteering →
+ * `steering:inject`. The button was removed (so the destructive Stop control
+ * keeps its edge slot) but the live-steering lane itself must stay reachable
+ * from the keyboard: pressing Return while a round runs now dispatches
+ * `handleSteer` from the Enter handler. The queued-row Steer action is still
+ * boundary-only by design (promote → wait for the run to idle → dispatch), so
+ * if either gesture disappears, live injection for every provider (pi frame,
+ * ACP interrupt, Cursor/Ollama broker-injection) goes dark UI-side while all
+ * its main-process machinery keeps passing tests — exactly the regression
+ * this file pins.
  *
  * Composer has no DOM test environment, so these are source-structure
  * assertions in the established style of midRunSteeringQueue.test.ts.
  */
-describe('composer steer button (solo live steering gesture)', () => {
+describe('composer steer gesture (solo live steering lane)', () => {
   const composerSource = readFileSync(
     new URL('../components/Composer.tsx', import.meta.url),
     'utf8'
@@ -24,34 +28,36 @@ describe('composer steer button (solo live steering gesture)', () => {
     expect(composerSource).toContain('\n    handleSteerToQueuedMessage,')
   })
 
-  it('renders Steer beside Stop while the chat runs, wired to handleSteer', () => {
+  it('no longer renders a dedicated Steer button inside the send cluster', () => {
     const cluster = composerSource.indexOf('className="composer-send-cluster"')
     expect(cluster).toBeGreaterThan(0)
-    const steerBtn = composerSource.indexOf('steer-btn', cluster)
+    // The button class and the glyph import are both gone.
+    expect(composerSource).not.toContain('composer-action-btn steer-btn')
+    expect(composerSource).not.toContain('<SteerSymbolIcon />')
+    expect(composerSource).not.toContain(", SteerSymbolIcon,")
+    // Stop keeps its edge slot and is still disabled while a steer is in flight.
     const stopBtn = composerSource.indexOf('stop-btn', cluster)
-    expect(steerBtn).toBeGreaterThan(cluster)
-    // Steer renders before Stop so the destructive control keeps its edge slot.
-    expect(stopBtn).toBeGreaterThan(steerBtn)
-    const steerSlice = composerSource.slice(steerBtn, stopBtn)
-    expect(steerSlice).toContain('handleSteer(')
-    expect(steerSlice).toContain('SteerSymbolIcon')
-    // A second steer for the same chat must wait for the first to settle.
-    expect(steerSlice).toContain('isSteerBusyForCurrentChat')
+    expect(stopBtn).toBeGreaterThan(cluster)
+    const stopSlice = composerSource.slice(stopBtn, stopBtn + 400)
+    expect(stopSlice).toContain('isSteerBusyForCurrentChat')
   })
 
-  it('only offers Steer when the gesture can deliver something', () => {
-    const cluster = composerSource.indexOf('className="composer-send-cluster"')
-    const running = composerSource.indexOf('isCurrentChatRunning ?', cluster)
-    const steerGate = composerSource.indexOf('isCurrentChatBusyForSteer', running)
-    const stopBtn = composerSource.indexOf('stop-btn', running)
-    expect(running).toBeGreaterThan(cluster)
-    // The gate lives inside the running branch, ahead of the Stop control.
-    expect(steerGate).toBeGreaterThan(running)
-    expect(steerGate).toBeLessThan(stopBtn)
-    const gateSlice = composerSource.slice(steerGate, stopBtn)
-    // Present handler + non-empty draft; a dead or empty steer renders nothing.
-    expect(gateSlice).toContain("typeof handleSteer === 'function'")
-    expect(gateSlice).toContain('prompt.trim()')
+  it('still offers solo live steering from the Return-key path while a round runs', () => {
+    // The gate mirrors the original button gates (handler present, draft
+    // non-empty, chat busy enough for steer, not already steering) and lives
+    // inside the Enter onKeyDown branch — ahead of the handleRun dispatch so
+    // a busy round never falls through to a cold start.
+    const enterKey = composerSource.indexOf("e.key === 'Enter'")
+    expect(enterKey).toBeGreaterThan(0)
+    const runDispatch = composerSource.indexOf('handleRun(', enterKey)
+    expect(runDispatch).toBeGreaterThan(enterKey)
+    const steerBranch = composerSource.slice(enterKey, runDispatch)
+    expect(steerBranch).toContain('isCurrentChatRunning')
+    expect(steerBranch).toContain("typeof handleSteer === 'function'")
+    expect(steerBranch).toContain('isCurrentChatBusyForSteer')
+    expect(steerBranch).toContain('prompt.trim()')
+    expect(steerBranch).toContain('isSteerBusyForCurrentChat')
+    expect(steerBranch).toContain('void handleSteer()')
   })
 
   it('detached side-chat surfaces omit the handler instead of wiring a dead button', () => {

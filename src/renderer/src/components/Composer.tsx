@@ -20,7 +20,7 @@ import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { collectTranscriptExportRounds } from '../../../shared/transcriptExportScope'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -3142,6 +3142,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             if (tryHandleInlineGoalSlashSubmit()) {
                               return
                             }
+                            // Solo live-steering lane: when a round is in flight,
+                            // Return-key (no modifier) dispatches `handleSteer`
+                            // instead of queuing/cancelling — this is the
+                            // post-Phase-J3 path that replaces the removed
+                            // composer Steer button. Mirrors the original
+                            // button gates: handler present, draft non-empty,
+                            // chat busy enough for steer, not already busy
+                            // steering. Detached side chats omit `handleSteer`
+                            // and fall through to `handleRun` below.
+                            if (
+                              isCurrentChatRunning &&
+                              typeof handleSteer === 'function' &&
+                              isCurrentChatBusyForSteer &&
+                              prompt.trim() &&
+                              !isSteerBusyForCurrentChat
+                            ) {
+                              e.preventDefault()
+                              void handleSteer()
+                              return
+                            }
                             triggerSendConfirmation()
                             // DM target resolution order (first match wins):
                             //   1. A participant chosen from the visible
@@ -4737,30 +4757,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           {isCurrentChatRunning ? (
                             <>
                               {/*
-                                Phase J3 (steer): the live-capable gesture. This is
-                                the ONLY control that reaches `handleSteer` — the
-                                queued-row Steer is boundary-only — so hiding it
-                                turns solo live injection dark for every provider.
-                                Pinned by composerSteerButton.test.ts. Only offered
-                                when a handler exists (detached side chats omit it)
-                                and the draft has text to deliver.
+                                Phase J3 (steer): the live-capable gesture. The
+                                `handleSteer` handler is preserved and dispatched
+                                from the Return-key path while a round runs (see
+                                the Enter-handler steer branch above). The
+                                dedicated Steer button was removed so the
+                                destructive Stop control keeps its edge slot; the
+                                queued-row Steer action (boundary-only) is
+                                unaffected. Pinned by composerSteerButton.test.ts.
+                                Detached side chats still omit the handler.
                               */}
-                              {isCurrentChatBusyForSteer &&
-                                typeof handleSteer === 'function' &&
-                                prompt.trim() && (
-                                  <button
-                                    className="composer-action-btn steer-btn"
-                                    onClick={() => {
-                                      void handleSteer()
-                                    }}
-                                    title="Steer the active run — deliver this message without stopping it"
-                                    aria-label="Steer the active run"
-                                    type="button"
-                                    disabled={isSteerBusyForCurrentChat}
-                                  >
-                                    <SteerSymbolIcon />
-                                  </button>
-                                )}
                               <button
                                 className="composer-action-btn stop-btn"
                                 onClick={handleCancel}
