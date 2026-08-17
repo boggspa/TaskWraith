@@ -122,6 +122,55 @@ describe('PiRpcTurnReducer', () => {
     expect(content).toEqual([expect.objectContaining({ type: 'content', text: 'Hello ' })])
   })
 
+  it('parses JSON-string tool arguments instead of dropping the command', () => {
+    // Mistral's OpenAI-shaped API sends `arguments` as a JSON STRING, not an
+    // object. asRecord() rejected the string, so toolInput was omitted entirely
+    // and run_shell_command arrived with no `command` — the harness then failed
+    // closed on a call whose arguments we had silently discarded. Observed on a
+    // Mistral GLM-5.2 seat, which read it as the command being "stripped".
+    const reducer = new PiRpcTurnReducer()
+    const use = reducer.ingest(
+      jsonLine({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'toolcall_end',
+          toolCall: {
+            id: 'call-str',
+            name: 'run_shell_command',
+            arguments: '{"command":"git status --porcelain"}'
+          }
+        }
+      })
+    )
+    expect(use).toEqual([
+      expect.objectContaining({
+        type: 'tool_use',
+        toolId: 'call-str',
+        toolName: 'run_shell_command',
+        toolInput: { command: 'git status --porcelain' }
+      })
+    ])
+  })
+
+  it('keeps a tool call usable when its string arguments are unparseable', () => {
+    // Fail soft, not silent: an argument blob we cannot parse must still
+    // announce the call so the seat sees a refusal it can act on, rather than a
+    // call that looks argument-less.
+    const reducer = new PiRpcTurnReducer()
+    const use = reducer.ingest(
+      jsonLine({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'toolcall_end',
+          toolCall: { id: 'call-bad', name: 'run_shell_command', arguments: '{not json' }
+        }
+      })
+    )
+    expect(use).toEqual([
+      expect.objectContaining({ type: 'tool_use', toolId: 'call-bad', toolName: 'run_shell_command' })
+    ])
+  })
+
   it('emits tool_use on toolcall_end and tool_result on tool_execution_end', () => {
     const reducer = new PiRpcTurnReducer()
     const use = reducer.ingest(

@@ -115,6 +115,34 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
+/**
+ * Tool-call arguments, accepting the two shapes upstreams actually send.
+ *
+ * Pi's own events carry `arguments` as an object, but the OpenAI-shaped APIs it
+ * fronts — Mistral among them — send it as a JSON STRING. `asRecord` rejects a
+ * string, which meant `toolInput` was dropped entirely and a call arrived with
+ * no arguments at all: `run_shell_command` reached the gate with no `command`
+ * and was refused, on every single call, for any model whose upstream stringify
+ * their arguments. The seat cannot tell that apart from its command being
+ * censored, so it reports the harness as corrupting or stripping the call.
+ *
+ * An unparseable blob still returns undefined so the call is announced without
+ * arguments and the gate refuses it visibly — better a refusal the seat can
+ * read than a silently argument-less call.
+ */
+function asToolArguments(value: unknown): Record<string, unknown> | undefined {
+  const direct = asRecord(value)
+  if (direct) return direct
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  try {
+    return asRecord(JSON.parse(trimmed))
+  } catch {
+    return undefined
+  }
+}
+
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
@@ -293,7 +321,7 @@ export class PiRpcTurnReducer {
         if (!toolCall) return []
         const name = typeof toolCall.name === 'string' ? toolCall.name : 'tool'
         const id = typeof toolCall.id === 'string' ? toolCall.id : ''
-        const args = asRecord(toolCall.arguments)
+        const args = asToolArguments(toolCall.arguments)
         return [
           {
             type: 'tool_use',
