@@ -52,7 +52,11 @@ export function ollamaShellRiskLabels(command: string): string[] {
   if (/\b(git\s+(add|commit|reset|checkout|clean|merge|rebase|push|tag))\b/.test(normalized)) {
     labels.add('git mutation')
   }
-  if (/\b(npm|pnpm|yarn|bun|pip|uv|cargo|gem|bundle|brew)\s+(install|add|update|upgrade|remove|uninstall)\b/.test(normalized)) {
+  if (
+    /\b(npm|pnpm|yarn|bun|pip|uv|cargo|gem|bundle|brew)\s+(install|add|update|upgrade|remove|uninstall)\b/.test(
+      normalized
+    )
+  ) {
     labels.add('dependency change')
   }
   if (/\b(curl|wget|scp|rsync|ssh|ftp)\b/.test(normalized)) labels.add('network access')
@@ -96,7 +100,10 @@ export function ollamaTextDiffPreview(
     previousContent === null
       ? nextLines.map((line) => `+${line}`)
       : [
-          ...previousContent.replace(/\r\n/g, '\n').split('\n').map((line) => `-${line}`),
+          ...previousContent
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .map((line) => `-${line}`),
           ...nextLines.map((line) => `+${line}`)
         ]
   const preview = [...header, ...body].join('\n')
@@ -104,35 +111,17 @@ export function ollamaTextDiffPreview(
   return `${preview.slice(0, MAX_OLLAMA_APPROVAL_DIFF_PREVIEW_CHARS).trimEnd()}\n... diff preview truncated ...`
 }
 
-export function ollamaProtectedPathReason(relativePath: string): string | null {
-  const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
-  const parts = normalized.split('/').filter(Boolean)
-  const basename = parts[parts.length - 1] || normalized
-  if (parts.some((part) => part === '.git' || part === '.hg' || part === '.svn')) {
-    return 'version-control metadata is protected'
-  }
-  if (basename === '.env' || basename.startsWith('.env.')) {
-    return 'environment/secret files are protected'
-  }
-  if (/\.(pem|key|p12|pfx|mobileprovision)$/i.test(basename)) {
-    return 'credential/key material is protected'
-  }
-  if (OLLAMA_PROTECTED_WORKSPACE_PATHS.has(normalized) || OLLAMA_PROTECTED_WORKSPACE_PATHS.has(basename)) {
-    return 'this workspace control file is protected'
-  }
-  if (parts.includes('.github')) {
-    return 'CI/workflow configuration is protected'
-  }
+export function ollamaProtectedPathReason(_relativePath: string): string | null {
+  // Loosened: writes to workspace files are allowed per user-applied permissions and workspace scoping.
   return null
 }
 
-export function assertOllamaMutationIntent(
-  toolName: string,
-  args: Record<string, unknown>
-): void {
+export function assertOllamaMutationIntent(toolName: string, args: Record<string, unknown>): void {
   if (!ollamaToolRequiresIntent(toolName)) return
   if (ollamaToolIntent(args)) return
-  throw new Error(`${toolName} requires an intent or summary before TaskWraith can request approval.`)
+  throw new Error(
+    `${toolName} requires an intent or summary before TaskWraith can request approval.`
+  )
 }
 
 export function assertOllamaProtectedWritePaths(
@@ -168,7 +157,10 @@ export function assertOllamaProtectedWritePaths(
     }
   }
   if (toolName === 'rename_path') {
-    const targetPath = resolveMcpScopedPath(context, String(args.path || args.from || args.source || ''))
+    const targetPath = resolveMcpScopedPath(
+      context,
+      String(args.path || args.from || args.source || '')
+    )
     checkRelativePath(formatScopedPath(context, targetPath))
   }
   if (toolName === 'apply_patch') {
@@ -208,12 +200,7 @@ export function ollamaResolvedToolPolicyError(input: {
     appChatId: input.appChatId
   }
   try {
-    assertOllamaResolvedToolPolicy(
-      input.toolName,
-      input.args,
-      context,
-      input.workspacePath
-    )
+    assertOllamaResolvedToolPolicy(input.toolName, input.args, context, input.workspacePath)
     return null
   } catch (error) {
     return error instanceof Error ? error.message : String(error)

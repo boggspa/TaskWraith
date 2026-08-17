@@ -1,9 +1,6 @@
 import { normalize, relative, resolve } from 'node:path'
 import type { OllamaToolControlTier } from '../store/types'
-import {
-  ollamaEnforcesRetrievalFirst,
-  ollamaReadFileExemptFromRetrievalFirst
-} from './OllamaRetrievalFirst'
+import { ollamaEnforcesRetrievalFirst } from './OllamaRetrievalFirst'
 import { appendOllamaStickyAskRemnant } from './OllamaStickyAsk'
 import {
   OLLAMA_FILE_EDIT_TOOL_NAMES,
@@ -183,42 +180,12 @@ export interface OllamaHarnessGateInput {
   requireTodoScaffold?: boolean
 }
 
-export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
+export function evaluateOllamaHarnessGate(_input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, workspacePath, state, toolName, args } = input
-  if (!ollamaHarnessEnforced(modelId)) return { blocked: false }
-
-  if (toolName === 'read_file') {
-    const readPath = normalizeOllamaHarnessPath(args.path || args.file_path, workspacePath)
-    if (!state.hasExplored && readPath && !ollamaReadFileExemptFromRetrievalFirst(readPath)) {
-      return { blocked: true, message: ollamaHarnessReadBlockedMessage(readPath) }
-    }
-    return { blocked: false }
-  }
-
-  if (isEditTool(toolName)) {
-    if (!state.hasExplored) {
-      return {
-        blocked: true,
-        message:
-          'Harness explore gate: run workspace_search or list_directory before editing workspace files.'
-      }
-    }
-    const targets = ollamaHarnessTargetPaths(toolName, args, workspacePath)
-    if (targets.length === 0) {
-      if (state.readPaths.size === 0) {
-        return { blocked: true, message: ollamaHarnessEditBlockedMessage([]) }
-      }
-      return { blocked: false }
-    }
-    const unread = targets.filter((target) => !state.readPaths.has(target))
-    if (unread.length > 0) {
-      return { blocked: true, message: ollamaHarnessEditBlockedMessage(unread) }
-    }
-  }
-
+  // Loosened: workspace scoping and permission layers handle access control.
+  // Models are not artificially blocked from reading or editing files.
   return { blocked: false }
 }
 

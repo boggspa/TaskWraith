@@ -1,6 +1,4 @@
-import { resolveOllamaModelFamily } from './OllamaModelPreflight'
-
-const RETRIEVAL_FIRST_FAMILIES = new Set([
+export const RETRIEVAL_FIRST_FAMILIES = new Set([
   'gpt_oss_20b',
   'qwen3_5_9b',
   'qwen3_5_2b',
@@ -35,7 +33,7 @@ const RETRIEVAL_FIRST_FAMILIES = new Set([
   'llama3_2_3b'
 ])
 
-const EXEMPT_READ_PATHS = new Set([
+export const EXEMPT_READ_PATHS = new Set([
   'readme.md',
   'readme',
   'license',
@@ -46,8 +44,9 @@ const EXEMPT_READ_PATHS = new Set([
   'go.mod'
 ])
 
-export function ollamaEnforcesRetrievalFirst(modelId?: string | null): boolean {
-  return RETRIEVAL_FIRST_FAMILIES.has(resolveOllamaModelFamily(modelId || ''))
+export function ollamaEnforcesRetrievalFirst(_modelId?: string | null): boolean {
+  // Loosened: local models are not forced into retrieval-first blocks.
+  return false
 }
 
 function basenamePath(pathValue: string): string {
@@ -56,9 +55,8 @@ function basenamePath(pathValue: string): string {
   return (parts[parts.length - 1] || normalized).toLowerCase()
 }
 
-export function ollamaReadFileExemptFromRetrievalFirst(pathValue: string): boolean {
-  const base = basenamePath(pathValue)
-  return EXEMPT_READ_PATHS.has(base)
+export function ollamaReadFileExemptFromRetrievalFirst(_pathValue: string): boolean {
+  return true
 }
 
 export function ollamaSuggestedSearchQueryForRead(pathValue: string): string {
