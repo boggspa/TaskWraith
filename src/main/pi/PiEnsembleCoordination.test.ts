@@ -32,6 +32,26 @@ afterEach(() => {
   }
 })
 
+/**
+ * Run the extension's own repair helper, lifted out of the generated source.
+ *
+ * The extension is emitted as a string that only Pi's runtime can import, so
+ * exercising the shipped text — rather than a copy of it — is the only way this
+ * stays pinned to what the seat actually loads.
+ */
+function extractRepairForkedToolCalls(
+  source: string
+): (content: unknown) => Record<string, unknown>[] | null {
+  const start = source.indexOf('function repairForkedToolCalls(content) {')
+  expect(start).toBeGreaterThan(-1)
+  const end = source.indexOf('\n}\n', start)
+  expect(end).toBeGreaterThan(start)
+  const body = source.slice(start, end + 2)
+  return new Function(`${body}; return repairForkedToolCalls`)() as (
+    content: unknown
+  ) => Record<string, unknown>[] | null
+}
+
 describe('Pi managed Ensemble coordination extension', () => {
   it('recognizes only the fixed ensemble coordination broker surface', () => {
     for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
@@ -66,6 +86,86 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain(
       `const TOOL_NAMES = ${JSON.stringify(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)}`
     )
+  })
+
+  it('repairs Pi forked tool-call blocks before the message is dispatched', () => {
+    // Pi's mistral-conversations accumulator keys on `${callId}:${index}`, and
+    // Mistral's continuation deltas arrive with `id: "null"` / `name: ""` — a
+    // different key, so a SECOND, nameless block is forked and the arguments
+    // land in whichever of the two the packet boundaries filled. The extension
+    // repairs the message on message_end, which is the object Pi dispatches
+    // from, so the fix reaches execution rather than only the transcript.
+    const home = createCanonicalHome()
+    const prepared = preparePiTaskWraithExtension({
+      isolatedHomeDir: home,
+      toolNames: [...PI_MANAGED_SHELL_TOOL_NAMES]
+    })
+    const source = readFileSync(prepared.path, 'utf8')
+    expect(source).toContain("pi.on('message_end'")
+
+    const repair = extractRepairForkedToolCalls(source)
+
+    // Arguments forked onto the nameless block: hand them back.
+    expect(
+      repair([
+        {
+          type: 'toolCall',
+          id: 'chatcmpl-tool-8c5da23850ab7ca1',
+          name: 'run_shell_command',
+          arguments: {}
+        },
+        { type: 'toolCall', id: 'toolcall0', name: '', arguments: { command: 'echo hello world' } }
+      ])
+    ).toEqual([
+      {
+        type: 'toolCall',
+        id: 'chatcmpl-tool-8c5da23850ab7ca1',
+        name: 'run_shell_command',
+        arguments: { command: 'echo hello world' }
+      }
+    ])
+
+    // Arguments stayed on the named block: keep them, drop the empty fork.
+    expect(
+      repair([
+        {
+          type: 'toolCall',
+          id: 'call-ok',
+          name: 'run_shell_command',
+          arguments: { command: 'swift' }
+        },
+        { type: 'toolCall', id: 'toolcall0', name: '', arguments: {} }
+      ])
+    ).toEqual([
+      {
+        type: 'toolCall',
+        id: 'call-ok',
+        name: 'run_shell_command',
+        arguments: { command: 'swift' }
+      }
+    ])
+
+    // Several calls in one turn: each fork walks back to its own call.
+    expect(
+      repair([
+        { type: 'toolCall', id: 'call-a', name: 'read', arguments: {} },
+        { type: 'toolCall', id: 'call-b', name: 'grep', arguments: {} },
+        { type: 'toolCall', id: 'toolcall0', name: '', arguments: { path: 'a.ts' } },
+        { type: 'toolCall', id: 'toolcall1', name: '', arguments: { pattern: 'x' } }
+      ])
+    ).toEqual([
+      { type: 'toolCall', id: 'call-a', name: 'read', arguments: { path: 'a.ts' } },
+      { type: 'toolCall', id: 'call-b', name: 'grep', arguments: { pattern: 'x' } }
+    ])
+
+    // Nothing forked: leave the message alone rather than rewriting it.
+    expect(
+      repair([
+        { type: 'text', text: 'hello' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }
+      ])
+    ).toBeNull()
+    expect(repair(undefined)).toBeNull()
   })
 
   it('builds one fixed extension for file, shell, coordination, and Mesh tools', () => {

@@ -14,6 +14,23 @@ function jsonLine(value: Record<string, unknown>): PiStreamLine {
   return { json: value }
 }
 
+/**
+ * Tool-call blocks are held until the burst ends so a forked, nameless block
+ * can hand its arguments back. Any following line releases them; Pi always
+ * sends one (message_end/tool_execution_start/turn_end/agent_settled) before
+ * anything executes.
+ */
+function flushLine(): PiStreamLine {
+  return jsonLine({ type: 'tool_execution_start' })
+}
+
+function toolCallEndLine(toolCall: Record<string, unknown>): PiStreamLine {
+  return jsonLine({
+    type: 'message_update',
+    assistantMessageEvent: { type: 'toolcall_end', toolCall }
+  })
+}
+
 describe('parsePiStreamChunk', () => {
   it('splits NDJSON and carries partial trailing lines across chunks', () => {
     const first = parsePiStreamChunk('{"type":"agent_start"}\n{"type":"turn_st', '')
@@ -129,19 +146,14 @@ describe('PiRpcTurnReducer', () => {
     // closed on a call whose arguments we had silently discarded. Observed on a
     // Mistral GLM-5.2 seat, which read it as the command being "stripped".
     const reducer = new PiRpcTurnReducer()
-    const use = reducer.ingest(
-      jsonLine({
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'toolcall_end',
-          toolCall: {
-            id: 'call-str',
-            name: 'run_shell_command',
-            arguments: '{"command":"git status --porcelain"}'
-          }
-        }
+    reducer.ingest(
+      toolCallEndLine({
+        id: 'call-str',
+        name: 'run_shell_command',
+        arguments: '{"command":"git status --porcelain"}'
       })
     )
+    const use = reducer.ingest(flushLine())
     expect(use).toEqual([
       expect.objectContaining({
         type: 'tool_use',
@@ -157,31 +169,116 @@ describe('PiRpcTurnReducer', () => {
     // announce the call so the seat sees a refusal it can act on, rather than a
     // call that looks argument-less.
     const reducer = new PiRpcTurnReducer()
-    const use = reducer.ingest(
-      jsonLine({
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'toolcall_end',
-          toolCall: { id: 'call-bad', name: 'run_shell_command', arguments: '{not json' }
-        }
-      })
+    reducer.ingest(
+      toolCallEndLine({ id: 'call-bad', name: 'run_shell_command', arguments: '{not json' })
     )
+    const use = reducer.ingest(flushLine())
     expect(use).toEqual([
       expect.objectContaining({ type: 'tool_use', toolId: 'call-bad', toolName: 'run_shell_command' })
     ])
   })
 
-  it('emits tool_use on toolcall_end and tool_result on tool_execution_end', () => {
+  it('hands a forked nameless block its arguments back instead of announcing two calls', () => {
+    // Pi's mistral-conversations accumulator keys on `${callId}:${index}`, and
+    // Mistral's continuation deltas carry `id: "null"` / `name: ""` — a
+    // different key, so the arguments fork into a second, nameless block while
+    // the named one keeps `{}`. Captured verbatim from a Mistral GLM-5.2 run:
+    // the named call was refused ("must have required properties command") and
+    // the fork was refused as `Tool  not found`.
     const reducer = new PiRpcTurnReducer()
-    const use = reducer.ingest(
-      jsonLine({
-        type: 'message_update',
-        assistantMessageEvent: {
-          type: 'toolcall_end',
-          toolCall: { id: 'call-1', name: 'bash', arguments: { command: 'ls' } }
-        }
+    reducer.ingest(
+      toolCallEndLine({
+        id: 'chatcmpl-tool-8c5da23850ab7ca1',
+        name: 'run_shell_command',
+        arguments: {}
       })
     )
+    reducer.ingest(
+      toolCallEndLine({ id: 'toolcall0', name: '', arguments: { command: 'echo hello world' } })
+    )
+    const use = reducer.ingest(flushLine())
+    expect(use).toEqual([
+      expect.objectContaining({
+        type: 'tool_use',
+        toolId: 'chatcmpl-tool-8c5da23850ab7ca1',
+        toolName: 'run_shell_command',
+        toolInput: { command: 'echo hello world' }
+      })
+    ])
+  })
+
+  it('drops the forked block without disturbing a call whose own arguments survived', () => {
+    // The other half of the coin flip: the packet boundaries put the arguments
+    // on the named block and the fork came through empty. The named call must
+    // keep exactly what it had.
+    const reducer = new PiRpcTurnReducer()
+    reducer.ingest(
+      toolCallEndLine({ id: 'call-ok', name: 'run_shell_command', arguments: { command: 'swift' } })
+    )
+    reducer.ingest(toolCallEndLine({ id: 'toolcall0', name: '', arguments: {} }))
+    const use = reducer.ingest(flushLine())
+    expect(use).toEqual([
+      expect.objectContaining({
+        type: 'tool_use',
+        toolId: 'call-ok',
+        toolName: 'run_shell_command',
+        toolInput: { command: 'swift' }
+      })
+    ])
+  })
+
+  it('pairs each fork with its own call when several run in one turn', () => {
+    const reducer = new PiRpcTurnReducer()
+    reducer.ingest(toolCallEndLine({ id: 'call-a', name: 'read', arguments: {} }))
+    reducer.ingest(toolCallEndLine({ id: 'call-b', name: 'grep', arguments: {} }))
+    reducer.ingest(toolCallEndLine({ id: 'toolcall0', name: '', arguments: { path: 'a.ts' } }))
+    reducer.ingest(toolCallEndLine({ id: 'toolcall1', name: '', arguments: { pattern: 'x' } }))
+    const use = reducer.ingest(flushLine())
+    // Each fork claims the earliest call still waiting, so the arguments
+    // cannot be swapped between two parallel calls.
+    expect(use).toEqual([
+      expect.objectContaining({ toolId: 'call-a', toolName: 'read', toolInput: { path: 'a.ts' } }),
+      expect.objectContaining({ toolId: 'call-b', toolName: 'grep', toolInput: { pattern: 'x' } })
+    ])
+  })
+
+  it('suppresses the dead result of a fork it never announced', () => {
+    // Without the managed extension Pi still dispatches the fork and answers
+    // `Tool  not found`. That result has no row to attach to, so it must not
+    // reach the transcript as an orphan failure.
+    const reducer = new PiRpcTurnReducer()
+    reducer.ingest(toolCallEndLine({ id: 'call-1', name: 'run_shell_command', arguments: {} }))
+    reducer.ingest(toolCallEndLine({ id: 'toolcall0', name: '', arguments: { command: 'pwd' } }))
+    reducer.ingest(flushLine())
+    const orphan = reducer.ingest(
+      jsonLine({
+        type: 'tool_execution_end',
+        toolCallId: 'toolcall0',
+        toolName: '',
+        isError: true,
+        result: { content: [{ type: 'text', text: 'Tool  not found' }] }
+      })
+    )
+    expect(orphan).toEqual([])
+
+    const real = reducer.ingest(
+      jsonLine({
+        type: 'tool_execution_end',
+        toolCallId: 'call-1',
+        toolName: 'run_shell_command',
+        isError: false,
+        output: 'Exit code: 0'
+      })
+    )
+    expect(real).toEqual([
+      expect.objectContaining({ type: 'tool_result', toolId: 'call-1', toolStatus: 'success' })
+    ])
+  })
+
+  it('emits tool_use on toolcall_end and tool_result on tool_execution_end', () => {
+    const reducer = new PiRpcTurnReducer()
+    reducer.ingest(toolCallEndLine({ id: 'call-1', name: 'bash', arguments: { command: 'ls' } }))
+    const use = reducer.ingest(flushLine())
     expect(use).toEqual([
       expect.objectContaining({
         type: 'tool_use',

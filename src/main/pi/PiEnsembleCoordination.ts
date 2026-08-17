@@ -509,7 +509,72 @@ function parametersFor(name) {
   }
 }
 
+/**
+ * Repair the forked tool-call blocks Pi's mistral-conversations accumulator
+ * produces, BEFORE Pi dispatches them.
+ *
+ * Mistral streams a tool call as an opening delta carrying \`id\` + \`name\` with
+ * empty arguments, then continuation deltas carrying the argument fragments
+ * with \`id: "null"\` and \`name: ""\`. Pi keys its accumulator on
+ * \`\${callId}:\${index}\`, so the continuation deltas derive a *different* key
+ * (\`toolcall0\`) and fork a SECOND block. The arguments land on whichever of the
+ * two the packet boundaries happened to fill: the named block is dispatched
+ * with \`{}\` and refused by its own schema ("must have required properties
+ * command"), and the nameless block is refused as \`Tool  not found\`. Which one
+ * wins is a coin flip per call, which is why the seat sees the same command
+ * land and then fail on a retry.
+ *
+ * A nameless block can never execute — Pi has no tool by that name — so the
+ * only reading that can be correct is to give its arguments back to the named
+ * block it was split from and drop it. Kept deliberately generic (never keyed
+ * on the derived \`toolcall<N>\` id, which Pi hashes past index 9) so any
+ * upstream that forks this way is repaired the same way.
+ */
+function repairForkedToolCalls(content) {
+  if (!Array.isArray(content)) return null
+  const isCall = (block) => Boolean(block) && block.type === 'toolCall'
+  const isNamed = (block) => typeof block.name === 'string' && block.name.length > 0
+  const hasArgs = (block) =>
+    Boolean(block) &&
+    Boolean(block.arguments) &&
+    typeof block.arguments === 'object' &&
+    !Array.isArray(block.arguments) &&
+    Object.keys(block.arguments).length > 0
+  if (!content.some((block) => isCall(block) && !isNamed(block))) return null
+  const repaired = []
+  for (const block of content) {
+    if (isCall(block) && !isNamed(block)) {
+      if (hasArgs(block)) {
+        // Forks arrive in the same order as the calls they were split from, so
+        // claim the EARLIEST call still waiting for arguments. Walking back
+        // from the end instead hands the first fork to the last call, which
+        // silently swaps arguments between parallel tool calls.
+        for (let index = 0; index < repaired.length; index++) {
+          const target = repaired[index]
+          if (isCall(target) && isNamed(target) && !hasArgs(target)) {
+            repaired[index] = { ...target, arguments: block.arguments }
+            break
+          }
+        }
+      }
+      continue
+    }
+    repaired.push(block)
+  }
+  return repaired
+}
+
 export default function (pi) {
+  // message_end lands after every toolcall block is final and before Pi
+  // dispatches any of them, and its return value replaces the message Pi
+  // dispatches from — so the repair reaches execution, not just the log.
+  pi.on('message_end', (event) => {
+    const message = event && event.message
+    if (!message || message.role !== 'assistant') return undefined
+    const repaired = repairForkedToolCalls(message.content)
+    if (!repaired) return undefined
+    return { message: { ...message, content: repaired } }
+  })
   for (const name of TOOL_NAMES) {
     pi.registerTool({
       name,

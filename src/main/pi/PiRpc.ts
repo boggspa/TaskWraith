@@ -178,6 +178,23 @@ export function piToolKind(name: string): string | undefined {
   }
 }
 
+/** One buffered `toolcall_end` block, held until its burst can be merged. */
+interface PendingPiToolCall {
+  name: string
+  id: string
+  args?: Record<string, unknown>
+  raw: unknown
+}
+
+/**
+ * A forked block leaves `arguments: {}` behind, not a missing key, so emptiness
+ * has to be counted rather than tested for truthiness — `{}` is truthy, and
+ * treating it as "has arguments" is exactly what stops the hand-back.
+ */
+function hasToolArguments(call: PendingPiToolCall): boolean {
+  return Boolean(call.args) && Object.keys(call.args as Record<string, unknown>).length > 0
+}
+
 export interface PiTerminalCompatOutcome {
   failed: boolean
   status: 'success' | 'failed'
@@ -205,6 +222,8 @@ export class PiRpcTurnReducer {
   private aborted = false
   private modelLabel = ''
   private sessionId = ''
+  private pendingToolCalls: PendingPiToolCall[] = []
+  private readonly forkedToolCallIds = new Set<string>()
 
   get isSettled(): boolean {
     return this.settled
@@ -218,6 +237,23 @@ export class PiRpcTurnReducer {
     const json = line.json
     if (!json) return []
     const type = typeof json.type === 'string' ? json.type : ''
+    // Hold a contiguous run of toolcall_end blocks so a forked, nameless block
+    // can hand its arguments back before anything is announced. Pi emits the
+    // whole burst at stream end, ahead of every execution line, so nothing is
+    // reordered relative to its result.
+    if (type === 'message_update') {
+      const delta = asRecord(json.assistantMessageEvent)
+      if (delta && delta.type === 'toolcall_end') {
+        this.bufferToolCall(delta, json)
+        return []
+      }
+    }
+    const flushed = this.flushPendingToolCalls()
+    const events = this.ingestLine(type, json)
+    return flushed.length ? [...flushed, ...events] : events
+  }
+
+  private ingestLine(type: string, json: Record<string, unknown>): NormalizedPiRunEvent[] {
     switch (type) {
       case 'response':
         return this.ingestResponse(json)
@@ -316,23 +352,6 @@ export class PiRpcTurnReducer {
         const text = typeof delta.delta === 'string' ? delta.delta : ''
         return text ? [{ type: 'thinking', text, raw: json }] : []
       }
-      case 'toolcall_end': {
-        const toolCall = asRecord(delta.toolCall)
-        if (!toolCall) return []
-        const name = typeof toolCall.name === 'string' ? toolCall.name : 'tool'
-        const id = typeof toolCall.id === 'string' ? toolCall.id : ''
-        const args = asToolArguments(toolCall.arguments)
-        return [
-          {
-            type: 'tool_use',
-            toolName: name,
-            ...(id ? { toolId: id } : {}),
-            ...(piToolKind(name) ? { toolKind: piToolKind(name) } : {}),
-            ...(args ? { toolInput: args } : {}),
-            raw: json
-          }
-        ]
-      }
       case 'error': {
         const reason = typeof delta.reason === 'string' ? delta.reason : 'error'
         if (reason === 'aborted') {
@@ -347,6 +366,71 @@ export class PiRpcTurnReducer {
     }
   }
 
+  private bufferToolCall(delta: Record<string, unknown>, json: Record<string, unknown>): void {
+    const toolCall = asRecord(delta.toolCall)
+    if (!toolCall) return
+    this.pendingToolCalls.push({
+      name: typeof toolCall.name === 'string' ? toolCall.name : '',
+      id: typeof toolCall.id === 'string' ? toolCall.id : '',
+      args: asToolArguments(toolCall.arguments),
+      raw: json
+    })
+  }
+
+  /**
+   * Announce the buffered burst, having first put the forked blocks back
+   * together.
+   *
+   * Pi's mistral-conversations accumulator keys on `${callId}:${index}`, and
+   * Mistral's continuation deltas carry `id: "null"` with `name: ""` — a
+   * different key, so the arguments fork into a SECOND, nameless block while
+   * the named one keeps `{}`. Which block the arguments land in depends on
+   * where the packet boundaries fell, which is the whole of the seat's
+   * "intermittent" stripping.
+   *
+   * A nameless block is never executable, so it is dropped rather than shown —
+   * but its arguments are moved onto the named block first. Dropping the empty
+   * slot WITHOUT that hand-back would turn a coin-flip failure into silent,
+   * total argument loss on every call whose arguments forked.
+   */
+  private flushPendingToolCalls(): NormalizedPiRunEvent[] {
+    if (!this.pendingToolCalls.length) return []
+    const pending = this.pendingToolCalls
+    this.pendingToolCalls = []
+    const merged: PendingPiToolCall[] = []
+    for (const call of pending) {
+      if (call.name) {
+        merged.push(call)
+        continue
+      }
+      if (hasToolArguments(call)) {
+        // Forks arrive in the same order as the calls they were split from, so
+        // claim the EARLIEST call still waiting for arguments. Walking back
+        // from the end instead hands the first fork to the last call, which
+        // silently swaps arguments between parallel tool calls.
+        for (let index = 0; index < merged.length; index++) {
+          const target = merged[index]
+          if (target.name && !hasToolArguments(target)) {
+            merged[index] = { ...target, args: call.args }
+            break
+          }
+        }
+      }
+      if (call.id) this.forkedToolCallIds.add(call.id)
+    }
+    return merged.map((call) => {
+      const kind = piToolKind(call.name)
+      return {
+        type: 'tool_use' as const,
+        toolName: call.name,
+        ...(call.id ? { toolId: call.id } : {}),
+        ...(kind ? { toolKind: kind } : {}),
+        ...(call.args ? { toolInput: call.args } : {}),
+        raw: call.raw
+      }
+    })
+  }
+
   private ingestToolStart(json: Record<string, unknown>): NormalizedPiRunEvent[] {
     // toolcall_end (from message_update) already announced the call with its
     // arguments; the execution-start line adds nothing for the transcript.
@@ -357,6 +441,10 @@ export class PiRpcTurnReducer {
   private ingestToolEnd(json: Record<string, unknown>): NormalizedPiRunEvent[] {
     const toolCallId = typeof json.toolCallId === 'string' ? json.toolCallId : ''
     const toolName = typeof json.toolName === 'string' ? json.toolName : ''
+    // A forked block was never announced, so its `Tool  not found` result has
+    // no row to attach to. It only reaches here when the managed extension is
+    // absent and Pi dispatched the fork anyway.
+    if (toolCallId && this.forkedToolCallIds.has(toolCallId)) return []
     const result = asRecord(json.result)
     const isError = json.isError === true || (result ? result.isError === true : false)
     // Live-verified shape (pi 0.82.1): `result.content` is an ARRAY of
