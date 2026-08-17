@@ -87,8 +87,8 @@ function multiEditLineChanges(parameters: Record<string, unknown>): {
   for (const raw of edits) {
     if (!raw || typeof raw !== 'object') continue
     const item = raw as Record<string, unknown>
-    const oldString = item.old_string ?? item.oldString
-    const newString = item.new_string ?? item.newString
+    const oldString = item.old_string ?? item.oldString ?? item.old_text ?? item.oldText
+    const newString = item.new_string ?? item.newString ?? item.new_text ?? item.newText
     if (typeof oldString === 'string' || typeof newString === 'string') {
       additions += typeof newString === 'string' ? newString.split('\n').length : 0
       deletions += typeof oldString === 'string' ? oldString.split('\n').length : 0
