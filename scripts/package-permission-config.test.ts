@@ -12,6 +12,7 @@ const REQUIRED_NATIVE_PERMISSION_KEYS = [
 ] as const
 
 type BuilderConfig = {
+  files?: string[]
   mac?: {
     extendInfo?: unknown
     x64ArchFiles?: unknown
@@ -76,5 +77,48 @@ describe('macOS package permission metadata', () => {
   it('preserves both architecture-specific TUI runtimes as universal resources', () => {
     expect(releaseConfig.mac?.x64ArchFiles).toEqual(expect.any(String))
     expect(releaseConfig.mac?.x64ArchFiles).toMatch(/\*\*\/tui-runtime\/darwin-\*\/node/)
+  })
+})
+
+describe('app.asar denylist', () => {
+  const files = readBuilderConfig('electron-builder.yml').files ?? []
+
+  // `files` is a DENYLIST: anything not excluded is bundled. A dropped entry
+  // is silent — the build still succeeds and the tree just ships.
+  it.each([
+    ['.work-guard/**'],
+    ['.tmp_vitest/**'],
+    ['.WORK-IN-PROGRESS-*.md'],
+    ['artifacts/**'],
+    ['perf-artifacts/**'],
+    ['prototypes/**'],
+    ['papercuts/**'],
+    ['.githooks/**'],
+    ['test_output.log']
+  ])('keeps %s out of the package', (pattern) => {
+    expect(files).toContain(`!${pattern}`)
+  })
+
+  // The two above that are WRITTEN DURING A BUILD are the ones that do more
+  // than bloat the package. electron-builder records each file's size in the
+  // asar header and streams the bytes afterwards, so a file that changes size
+  // between its stat and its read shifts the offset of every entry after it.
+  // `.work-guard/heartbeat.json` is megabytes large and re-stamped every few
+  // seconds by any peer session; when it shrank 121 bytes mid-package the
+  // build died reading the root package.json as `"dex.js",` — a truthful JSON
+  // error about a file that was never malformed.
+  it.each([['.work-guard/**'], ['.tmp_vitest/**']])(
+    'never reintroduces %s, whose live writes corrupt asar offsets',
+    (pattern) => {
+      expect(files).toContain(`!${pattern}`)
+      expect(files).not.toContain(pattern)
+    }
+  )
+
+  // `resources/` carries the app icons and Tools.md. It sits next to the
+  // artefact trees above and reads like more of the same; excluding it ships
+  // an app with no icon set.
+  it('keeps the load-bearing resources tree bundled', () => {
+    expect(files).not.toContain('!resources/**')
   })
 })

@@ -35,6 +35,31 @@ files:
   - '!.WORK-IN-PROGRESS-*.md'
   - '!SESSION-IN-PROGRESS*'
   - '!SHIP-HOLD*'
+  # Build-time scratch that is WRITTEN WHILE THE BUILD RUNS. This is not just
+  # bloat — it corrupts the archive. electron-builder records each file's size
+  # in the asar header and then streams the bytes; every later file's offset is
+  # the running sum of those sizes. `.work-guard/heartbeat.json` is the
+  # concurrency clock, is megabytes large, and is rewritten every few seconds
+  # by any peer session, so it shrank 121 bytes between its stat and its read
+  # during the 1.9.6 universal build. Every entry after it was then 121 bytes
+  # off, and the FIRST thing afterPack reads is the root package.json:
+  #   "packaged package.json is invalid JSON: Unexpected token 'd', "dex.js","
+  # — the parse starting mid-way through `"./out/main/index.js"`. The error
+  # names package.json, which is intact; nothing is wrong with it.
+  # `.tmp_vitest` is the same hazard (a peer running the suite mid-build) plus
+  # 558 entries of test droppings. Both are untracked and gitignored, which is
+  # exactly why this denylist has to name them.
+  - '!.work-guard/**'
+  - '!.tmp_vitest/**'
+  - '!test_output.log'
+  # Dev/CI artefact trees. No runtime code resolves any of these; `resources/`
+  # (app icons, Tools.md) is the one sibling that IS load-bearing — do not add
+  # it here.
+  - '!artifacts/**'
+  - '!perf-artifacts/**'
+  - '!prototypes/**'
+  - '!papercuts/**'
+  - '!.githooks/**'
   # Native/mobile source trees are development inputs only. The mac app
   # receives the release TaskWraithBridgeDaemon via `mac.extraResources`
   # below; packaging the full Swift/iOS `.build` trees into app.asar
