@@ -26,7 +26,11 @@ import type {
   CombinedModelPickerReasoningOption
 } from './combinedModelPickerTypes'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
-import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
+import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel, mistralReasoningDisplayLabel } from './composerChipFormat'
+import {
+  isMistralThinkingCapableModel,
+  isPiMistralThinkingCapableModel
+} from '../../../shared/mistralModels'
 import {
   CLAUDE_DEFAULT_MODELS,
   CODEX_DEFAULT_MODELS,
@@ -136,17 +140,14 @@ const grokReasoningOptions = (
 const GROK_45_REASONING = grokReasoningOptions(GROK_45_REASONING_EFFORTS)
 const GROK_46_REASONING = grokReasoningOptions(GROK_46_REASONING_EFFORTS)
 
-// Mistral Medium 3.5 thinks at exactly one level — vibe-acp's own schema pins
-// `thinking="high"` for it (devstral-small runs thinking off and gets no
-// options at all). A single option renders the ladder in the established
-// LOCKED aesthetic: pinned at High, non-interactive, "Reasoning is fixed for
-// this model" tooltip.
+// Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
+// (off, low, medium, high, max). These match the Vibe CLI's ThinkingLevel enum.
 const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
-  {
-    value: 'high',
-    label: 'High',
-    disabledReason: 'Mistral Medium 3.5 always thinks at High.'
-  }
+  { value: 'off', label: 'Off' },
+  { value: 'low', label: mistralReasoningDisplayLabel('low') },
+  { value: 'medium', label: mistralReasoningDisplayLabel('medium') },
+  { value: 'high', label: mistralReasoningDisplayLabel('high') },
+  { value: 'max', label: mistralReasoningDisplayLabel('max') }
 ]
 
 /** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
@@ -504,25 +505,10 @@ export function getEnsembleReasoningOptions(
       return []
     }
     case 'mistral': {
-      const normalized = String(modelId || '')
-        .trim()
-        .toLowerCase()
-      return normalized === 'mistral-medium-3.5' ||
-        normalized === 'mistral-vibe-cli-latest' ||
-        normalized === 'mistral-medium-latest' ||
-        normalized === 'mistral-small-2603'
-        ? MISTRAL_THINKING_REASONING
-        : []
+      return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
     case 'pi': {
-      const normalized = String(modelId || '')
-        .trim()
-        .toLowerCase()
-      return normalized === 'mistral/mistral-medium-3.5' ||
-        normalized === 'mistral/mistral-medium-latest' ||
-        normalized === 'mistral/mistral-small-2603'
-        ? MISTRAL_THINKING_REASONING
-        : []
+      return isPiMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
     case 'muse':
       return MUSE_REASONING
@@ -645,7 +631,8 @@ export function getDefaultEnsembleParticipantConfig(
       // created it.
       return {
         model: 'devstral-small',
-        permissionPresetId: 'default'
+        permissionPresetId: 'default',
+        reasoningEffort: 'medium'
       }
     case 'muse':
       // Must stay in lockstep with getDefaultEnsembleModel in
@@ -1288,8 +1275,8 @@ export function getEnsembleModelDefaults(
       // which is exactly why the gap was invisible.
       return {
         modelOptions: MISTRAL_MODELS,
-        reasoningOptions: [],
-        defaultReasoning: '',
+        reasoningOptions: MISTRAL_THINKING_REASONING,
+        defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'devstral-small'
       }

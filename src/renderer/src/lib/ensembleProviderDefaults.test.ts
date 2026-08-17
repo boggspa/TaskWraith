@@ -938,6 +938,44 @@ describe('mistral configurable reasoning support', () => {
     expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 
+  it('keeps legacy Mistral aliases configurable for picker continuity', () => {
+    expect(getEnsembleReasoningOptions('mistral', 'mistral-vibe-cli-latest')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(getEnsembleReasoningOptions('mistral', 'mistral-small-2603')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(getEnsembleReasoningOptions('mistral', 'mistral-medium-latest')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-latest')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-small-2603')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+  })
+
   it('keeps unsupported models on an empty reasoning set', () => {
     expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
     expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])

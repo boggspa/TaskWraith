@@ -14,6 +14,7 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
+import { isMistralThinkingCapableModel, isPiMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   cursorGrokBaseModelId,
   isCursorGrokModelId,
@@ -42,6 +43,8 @@ export interface ComposerChipContext {
   kimiReasoningEffort?: string
   /** Muse Spark reasoning effort (minimal→ultra; never none). */
   museReasoningEffort?: string
+  /** Mistral thinking effort token (off/low/medium/high/max). */
+  mistralReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -346,26 +349,20 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
   }
 
-  // Mistral Medium 3.5 (Vibe seat + Pi BYOK mirror) is fixed at High thinking
-  // — vibe-acp schema pin / known upstream default. Not user-adjustable, but
-  // the compact chip still names the level so it matches the locked ladder.
+  // Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
+  // (off, low, medium, high, max). Use the stored reasoning effort for these models.
   const modelId = ctx.modelId.trim().toLowerCase()
   if (
     provider === 'mistral' &&
-    (modelId === 'mistral-medium-3.5' ||
-      modelId === 'mistral-vibe-cli-latest' ||
-      modelId === 'mistral-medium-latest' ||
-      modelId === 'mistral-small-2603')
+    isMistralThinkingCapableModel(modelId)
   ) {
-    return 'High'
+    return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
   if (
     provider === 'pi' &&
-    (modelId === 'mistral/mistral-medium-3.5' ||
-      modelId === 'mistral/mistral-medium-latest' ||
-      modelId === 'mistral/mistral-small-2603')
+    isPiMistralThinkingCapableModel(modelId)
   ) {
-    return 'High'
+    return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
 
   if (provider === 'muse') {
@@ -430,6 +427,16 @@ export function grokReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
   if (effort === 'xhigh' || effort === 'extra') return 'Extra High'
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
+export function mistralReasoningDisplayLabel(effortValue?: string | null): string {
+  const effort = (effortValue || '').toLowerCase()
+  if (!effort || effort === 'off') return ''
+  if (effort === 'low') return 'Low'
+  if (effort === 'medium') return 'Medium'
+  if (effort === 'high') return 'High'
+  if (effort === 'max') return 'Max'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
