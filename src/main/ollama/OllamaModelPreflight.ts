@@ -11,6 +11,7 @@ export type OllamaModelFamily =
   | 'qwen3_8_27b'
   | 'gemma3_4b'
   | 'gemma4_12b'
+  | 'gemma4_31b'
   | 'ornith_9b'
   | 'ornith_35b'
   | 'laguna_xs_2_1'
@@ -152,6 +153,7 @@ export function resolveOllamaModelFamily(
     return 'gemma3_4b'
   }
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b')) return 'gemma4_12b'
+  if (key === 'gemma4:31b-mlx' || key.startsWith('gemma4:31b-mlx')) return 'gemma4_31b'
   if (
     key === 'ornith' ||
     key === 'ornith:latest' ||
@@ -411,6 +413,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For large refactors or repo-wide test fixes, confirm the required edit and shell permissions before starting the implementation pass.'
       }
+    case 'gemma4_31b':
+      return {
+        guidance: `${modelLabel} is a strong local reasoning model with a large parameter count and long context.`,
+        delegateHint:
+          'For large refactors or repo-wide test fixes, confirm the required edit and shell permissions before starting the implementation pass.'
+      }
     case 'ornith_9b':
       return {
         guidance: `${modelLabel} is an agentic-coding local model; keep tasks scoped, search first, and verify generated edits carefully.`,
@@ -576,6 +584,8 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 4
     case 'gemma4_12b':
       return 12
+    case 'gemma4_31b':
+      return 31
     case 'ornith_9b':
       return 9
     case 'ornith_35b':

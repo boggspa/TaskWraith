@@ -180,6 +180,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'gemma4:12b' || id.startsWith('gemma4:12b-')) {
       return 'Gemma 4 (12B Param)'
     }
+    if (id === 'gemma4:31b-mlx' || id.startsWith('gemma4:31b-mlx-')) {
+      return 'Gemma 4 (31B-MLX)'
+    }
     if (
       id === 'ornith' ||
       id === 'ornith:latest' ||

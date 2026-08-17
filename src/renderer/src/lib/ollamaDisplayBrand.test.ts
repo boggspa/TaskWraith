@@ -26,6 +26,10 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Google',
       providerClass: 'google'
     })
+    expect(resolveOllamaDisplayBrand('gemma4:31b-mlx', 'Gemma 4 (31B-MLX)')).toMatchObject({
+      providerLabel: 'Google',
+      providerClass: 'google'
+    })
     expect(resolveOllamaDisplayBrand('granite4.1:30b', 'Granite 4.1 (30B Param)')).toMatchObject({
       providerLabel: 'IBM',
       providerClass: 'ibm'
@@ -147,6 +151,7 @@ describe('resolveProviderHueClass', () => {
   it('returns the spoofed brand class for Ollama display brands', () => {
     expect(resolveProviderHueClass('ollama', 'qwen3.5:9b')).toBe('alibaba')
     expect(resolveProviderHueClass('ollama', 'gemma4:12b')).toBe('google')
+    expect(resolveProviderHueClass('ollama', 'gemma4:31b-mlx')).toBe('google')
     expect(resolveProviderHueClass('ollama', 'gpt-oss:20b')).toBe('openai')
     expect(resolveProviderHueClass('ollama', 'laguna-xs-2.1:q8_0')).toBe('poolside')
     // Reuses the first-class Mistral seat's hue — one brand, one colour.

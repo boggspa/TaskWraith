@@ -273,6 +273,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'qwen3.8:27b-mlx',
       'gemma3:4b',
       'gemma4:12b',
+      'gemma4:31b-mlx',
       'ornith:9b',
       'ornith:35b',
       'laguna-xs-2.1:q8_0',

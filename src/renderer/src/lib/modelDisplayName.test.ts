@@ -220,6 +220,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
       expect(humaniseModelId('ollama', 'gemma4:12b')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
+      expect(humaniseModelId('ollama', 'gemma4:31b-mlx')).toBe('Gemma 4 (31B-MLX)')
       expect(humaniseModelId('ollama', 'ornith')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:latest')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')

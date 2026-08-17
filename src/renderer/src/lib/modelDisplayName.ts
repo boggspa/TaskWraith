@@ -184,6 +184,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gemma4:12b-mlx-bf16': 'Gemma 4 (12B Param)',
   'gemma4:12b-mxfp8': 'Gemma 4 (12B Param)',
   'gemma4:12b-nvfp4': 'Gemma 4 (12B Param)',
+  'gemma4:31b-mlx': 'Gemma 4 (31B-MLX)',
   ornith: 'Ornith 1.0 (9B Param)',
   'ornith:latest': 'Ornith 1.0 (9B Param)',
   'ornith:9b': 'Ornith 1.0 (9B Param)',

@@ -47,6 +47,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'qwen3.8:27b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b-it-q4_K_M')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'gemma4:31b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ornith')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ornith:latest')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ornith:9b')).toBe(262_144)

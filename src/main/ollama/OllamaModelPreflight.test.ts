@@ -18,6 +18,7 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('qwen3:4b-instruct')).toBe('qwen3_4b')
     expect(resolveOllamaModelFamily('minicpm-v4.5:8b')).toBe('minicpm_v45_8b')
     expect(resolveOllamaModelFamily('gemma4:12b-it-q4_K_M')).toBe('gemma4_12b')
+    expect(resolveOllamaModelFamily('gemma4:31b-mlx')).toBe('gemma4_31b')
     expect(resolveOllamaModelFamily('ornith')).toBe('ornith_9b')
     expect(resolveOllamaModelFamily('ornith:latest')).toBe('ornith_9b')
     expect(resolveOllamaModelFamily('ornith:9b')).toBe('ornith_9b')

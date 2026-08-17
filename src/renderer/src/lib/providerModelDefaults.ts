@@ -445,6 +445,11 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Google Gemma 4 12B via Ollama · 262k context'
   },
   {
+    id: 'gemma4:31b-mlx',
+    label: 'Gemma 4 (31B-MLX)',
+    description: 'Google Gemma 4 31B-MLX via Ollama · 262k context'
+  },
+  {
     id: 'ornith:9b',
     label: 'Ornith 1.0 (9B Param)',
     description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding'

@@ -109,6 +109,7 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)', command: 'ollama run gemma3:4b' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
+  { id: 'gemma4:31b-mlx', label: 'Gemma 4 (31B-MLX)', command: 'ollama run gemma4:31b-mlx' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
   {
