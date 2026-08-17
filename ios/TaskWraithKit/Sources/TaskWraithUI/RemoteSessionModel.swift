@@ -2225,7 +2225,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-16","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-18","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
@@ -2237,6 +2237,10 @@ public final class RemoteSessionModel: ObservableObject {
             ]},
             {"provider":"muse","label":"Muse","models":[
               {"name":"Muse Spark 1.2","blurb":"Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok."}
+            ]},
+            {"provider":"mistral","label":"Mistral","models":[
+              {"name":"Devstral Small","blurb":"New configurable Effort options for a faster, lower-cost default or deeper reasoning."},
+              {"name":"Mistral 3.5 Medium","blurb":"Configurable Effort tuning now available, balancing latency and reasoning depth."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
               {"name":"Qwen 3.8 (27B-MLX)","blurb":"Alibaba's 27B MLX multimodal agent with tools, thinking, and 262K context (Ollama 0.32.12+).","accentProvider":"qwen"},

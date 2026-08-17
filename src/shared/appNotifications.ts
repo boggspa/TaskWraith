@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-16'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-18'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.',
+    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.',
     dismissible: true,
     groups: [
       {
@@ -180,6 +180,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Muse Spark 1.2',
             blurb: 'Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok.'
+          }
+        ]
+      },
+      {
+        provider: 'mistral',
+        label: 'Mistral',
+        models: [
+          {
+            name: 'Devstral Small',
+            blurb: 'New configurable Effort options for a faster, lower-cost default or deeper reasoning.'
+          },
+          {
+            name: 'Mistral 3.5 Medium',
+            blurb: 'Configurable Effort tuning now available, balancing latency and reasoning depth.'
           }
         ]
       },

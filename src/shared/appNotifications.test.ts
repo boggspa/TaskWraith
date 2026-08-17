@@ -153,13 +153,20 @@ describe('notification registry', () => {
       'grok',
       'cursor',
       'muse',
+      'mistral',
       'ollama'
     ])
-    expect(groups.map((g) => g.label)).toEqual(['AntiGravity', 'Grok', 'Cursor', 'Muse', 'Ollama'])
+    expect(groups.map((g) => g.label)).toEqual([
+      'AntiGravity',
+      'Grok',
+      'Cursor',
+      'Muse',
+      'Mistral',
+      'Ollama'
+    ])
     // Dropped from the card once they stopped being the newest story.
     expect(groups.map((g) => g.provider)).not.toContain('claude')
     expect(groups.map((g) => g.provider)).not.toContain('kimi')
-    expect(groups.map((g) => g.provider)).not.toContain('mistral')
     expect(groups.map((g) => g.provider)).not.toContain('pi')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
@@ -180,6 +187,13 @@ describe('notification registry', () => {
     for (const model of muse?.models ?? []) {
       expect(model.accentProvider).toBeUndefined()
     }
+
+    const mistral = groups.find((g) => g.provider === 'mistral')
+    expect(mistral?.models.map((m) => m.name)).toEqual([
+      'Devstral Small',
+      'Mistral 3.5 Medium'
+    ])
+    expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
 
     const ollama = groups.find((g) => g.provider === 'ollama')
     // Newest curated local tags — each spoofs its upstream brand hue.
@@ -227,7 +241,7 @@ describe('notification registry', () => {
     )
     expect(iosDemoSource).toContain(`"id":"${NEW_ADDITIONS_NOTIFICATION_ID}"`)
     expect(iosDemoSource).toContain(`"body":${JSON.stringify(newAdditions?.body)}`)
-    expect(iosDemoSource).not.toContain('"provider":"mistral","label":"Mistral","models"')
+    expect(iosDemoSource).toContain('"provider":"mistral","label":"Mistral","models"')
     expect(iosDemoSource).not.toContain('"provider":"pi","label":"Pi","models"')
     for (const group of newAdditions?.groups ?? []) {
       expect(iosDemoSource).toContain(
