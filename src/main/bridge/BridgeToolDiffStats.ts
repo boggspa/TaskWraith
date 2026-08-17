@@ -89,7 +89,12 @@ export function parsePatchFileStats(patch: string): ToolDiffFileSummary[] {
     path: string | undefined,
     status: ToolDiffFileSummary['status']
   ): ToolDiffFileSummary => {
-    const entry: ToolDiffFileSummary = { path: path || undefined, status, additions: 0, deletions: 0 }
+    const entry: ToolDiffFileSummary = {
+      path: path || undefined,
+      status,
+      additions: 0,
+      deletions: 0
+    }
     files.push(entry)
     return entry
   }
@@ -113,7 +118,13 @@ export function parsePatchFileStats(patch: string): ToolDiffFileSummary[] {
     }
     if (line.startsWith('--- ')) {
       const target = line.slice(4).trim()
-      if (current && files[files.length - 1] === current && current.additions === 0 && current.deletions === 0 && target === '/dev/null') {
+      if (
+        current &&
+        files[files.length - 1] === current &&
+        current.additions === 0 &&
+        current.deletions === 0 &&
+        target === '/dev/null'
+      ) {
         // `diff --git` already opened this file; refine to created.
         current.status = 'created'
       } else {
@@ -145,7 +156,11 @@ export function parsePatchFileStats(patch: string): ToolDiffFileSummary[] {
           current = open(newPath, 'modified')
         }
         pendingOldSide = null
-      } else if (current && target !== '/dev/null' && (!current.path || current.path === '/dev/null')) {
+      } else if (
+        current &&
+        target !== '/dev/null' &&
+        (!current.path || current.path === '/dev/null')
+      ) {
         current.path = stripAB(target)
       }
       continue
@@ -173,9 +188,58 @@ export function bridgeToolDiffStats(
   toolName: string,
   input: Record<string, unknown>
 ): ToolDiffSummary | undefined {
+  const explicitAdditions =
+    typeof input.additions === 'number'
+      ? input.additions
+      : typeof input.additions === 'string'
+        ? parseInt(input.additions, 10)
+        : undefined
+  const explicitDeletions =
+    typeof input.deletions === 'number'
+      ? input.deletions
+      : typeof input.deletions === 'string'
+        ? parseInt(input.deletions, 10)
+        : undefined
+  if (
+    (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
+    (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))
+  ) {
+    return {
+      additions:
+        explicitAdditions !== undefined && !Number.isNaN(explicitAdditions) ? explicitAdditions : 0,
+      deletions:
+        explicitDeletions !== undefined && !Number.isNaN(explicitDeletions) ? explicitDeletions : 0,
+      source: 'string_replace',
+      confidence: 'exact'
+    }
+  }
+
+  const edits = input.edits
+  if (Array.isArray(edits) && edits.length > 0) {
+    let additions = 0
+    let deletions = 0
+    let touched = false
+    for (const raw of edits) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      const oldStr = item.old_string ?? item.oldString ?? item.old_text ?? item.oldText
+      const newStr = item.new_string ?? item.newString ?? item.new_text ?? item.newText
+      if (typeof oldStr === 'string' || typeof newStr === 'string') {
+        additions += typeof newStr === 'string' ? newStr.split('\n').length : 0
+        deletions += typeof oldStr === 'string' ? oldStr.split('\n').length : 0
+        touched = true
+      }
+    }
+    if (touched) {
+      return { additions, deletions, source: 'string_replace', confidence: 'exact' }
+    }
+  }
+
   const oldString =
     (typeof input.old_string === 'string' && input.old_string) ||
     (typeof input.oldString === 'string' && input.oldString) ||
+    (typeof input.old_text === 'string' && input.old_text) ||
+    (typeof input.oldText === 'string' && input.oldText) ||
     (typeof input.TargetContent === 'string' && input.TargetContent) ||
     (typeof input.targetContent === 'string' && input.targetContent) ||
     (typeof input.target_content === 'string' && input.target_content) ||
@@ -184,6 +248,8 @@ export function bridgeToolDiffStats(
   const newString =
     (typeof input.new_string === 'string' && input.new_string) ||
     (typeof input.newString === 'string' && input.newString) ||
+    (typeof input.new_text === 'string' && input.new_text) ||
+    (typeof input.newText === 'string' && input.newText) ||
     (typeof input.ReplacementContent === 'string' && input.ReplacementContent) ||
     (typeof input.replacementContent === 'string' && input.replacementContent) ||
     (typeof input.replacement_content === 'string' && input.replacement_content) ||
