@@ -1651,6 +1651,7 @@ import {
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
   preparePiTaskWraithExtension,
+  preparePiToolCallRepairExtension,
   type PiTaskWraithToolName,
   type PreparedPiTaskWraithExtension
 } from './pi/PiEnsembleCoordination'
@@ -22473,6 +22474,26 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   const preparedTaskWraithTools =
     taskWraithTools && piTaskWraithBrokerToken ? taskWraithTools : undefined
 
+  // Every other Pi run still calls Pi's own read/grep/find/ls (and bash/edit/
+  // write when write-capable), and Mistral forks those tool-call blocks the
+  // same way it forks brokered ones — the fork is a property of the upstream
+  // stream, not of the tool. Attach the tools-free repair so an unprivileged
+  // seat is not the only one left dispatching `{}`. It registers nothing and
+  // needs no broker credential, so it is also safe on the paths where the
+  // managed extension failed to prepare.
+  let piToolCallRepairExtensionPath: string | undefined
+  if (!preparedTaskWraithTools) {
+    try {
+      piToolCallRepairExtensionPath = preparePiToolCallRepairExtension({
+        isolatedHomeDir: isolatedHomeLease.path
+      }).path
+    } catch {
+      // Best effort only: a run without the repair still works, it just keeps
+      // the upstream's split. Never fail a launch over it.
+      piToolCallRepairExtensionPath = undefined
+    }
+  }
+
   const args = buildPiRpcArgs({
     upstream: split.upstream,
     modelId: split.modelId,
@@ -22486,7 +22507,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
           coordinationExtensionPath: preparedTaskWraithTools.path,
           coordinationToolNames: preparedTaskWraithTools.toolNames
         }
-      : {}),
+      : piToolCallRepairExtensionPath
+        ? { toolCallRepairExtensionPath: piToolCallRepairExtensionPath }
+        : {}),
     harnessPosture: resolveProviderHarnessPosture(
       'pi',
       AppStore.getSettings().providerHarnessPosture

@@ -83,10 +83,14 @@ export const PI_TASKWRAITH_TOOLS_READY_MARKER = '__TASKWRAITH_PI_TOOLS_READY_V2_
 export const PI_ENSEMBLE_COORDINATION_READY_MARKER = PI_TASKWRAITH_TOOLS_READY_MARKER
 
 const EXTENSION_FILE_NAME = 'taskwraith-tools.mjs'
+const REPAIR_EXTENSION_FILE_NAME = 'taskwraith-toolcall-repair.mjs'
 
-export interface PreparedPiTaskWraithExtension {
+export interface PreparedPiToolCallRepairExtension {
   readonly path: string
   readonly sourceSha256: string
+}
+
+export interface PreparedPiTaskWraithExtension extends PreparedPiToolCallRepairExtension {
   readonly toolNames: readonly PiTaskWraithToolName[]
 }
 
@@ -120,8 +124,43 @@ export function preparePiTaskWraithExtension(input: {
   if (!toolNames.length || !toolNames.every(isPiTaskWraithToolName)) {
     throw new TypeError('Pi TaskWraith extension requires a non-empty fixed tool allowlist.')
   }
-  const path = join(isolatedHomeDir, EXTENSION_FILE_NAME)
   const source = piTaskWraithExtensionSource(toolNames)
+  return Object.freeze({
+    ...writePiExtensionFile(isolatedHomeDir, EXTENSION_FILE_NAME, source),
+    toolNames: Object.freeze(toolNames)
+  })
+}
+
+/**
+ * Materialize the tools-free repair extension for a run that gets no managed
+ * tools — or whose managed extension could not be prepared. It registers no
+ * tool and opens no broker connection, so it is attachable wherever the
+ * managed one is not, and it deliberately does NOT print the tools-ready
+ * marker: there are no tools to be ready, and Main's readiness gate must not
+ * be told otherwise.
+ *
+ * Written under its own filename so it never collides with a managed
+ * extension already written into the same per-run home.
+ */
+export function preparePiToolCallRepairExtension(input: {
+  isolatedHomeDir: string
+}): PreparedPiToolCallRepairExtension {
+  const isolatedHomeDir = requireCanonicalDirectory(input.isolatedHomeDir)
+  return Object.freeze(
+    writePiExtensionFile(
+      isolatedHomeDir,
+      REPAIR_EXTENSION_FILE_NAME,
+      piToolCallRepairExtensionSource()
+    )
+  )
+}
+
+function writePiExtensionFile(
+  isolatedHomeDir: string,
+  fileName: string,
+  source: string
+): { path: string; sourceSha256: string } {
+  const path = join(isolatedHomeDir, fileName)
   // `wx` means a pre-existing file (including one planted before this call)
   // is never replaced. The isolated home itself is main-issued and 0700, but
   // fail-closed is still clearer than silently accepting an unexpected file.
@@ -144,11 +183,10 @@ export function preparePiTaskWraithExtension(input: {
   ) {
     throw new Error('TaskWraith Pi coordination extension escaped its isolated home.')
   }
-  return Object.freeze({
+  return {
     path: canonicalPath,
-    sourceSha256: createHash('sha256').update(source, 'utf8').digest('hex'),
-    toolNames: Object.freeze(toolNames)
-  })
+    sourceSha256: createHash('sha256').update(source, 'utf8').digest('hex')
+  }
 }
 
 /** Exact preamble inserted only after Pi has loaded the extension. */
@@ -265,6 +303,100 @@ function requireCanonicalDirectory(value: string): string {
     throw new Error('Pi isolated home must be a real directory.')
   }
   return canonical
+}
+
+/**
+ * The forked-tool-call repair, verbatim, for BOTH extensions Main can attach.
+ *
+ * Mistral streams a tool call as an opening delta carrying `id` + `name` with
+ * empty arguments, then continuation deltas carrying the argument fragments
+ * with `id: "null"` and `name: ""`. Pi keys its accumulator on
+ * `${callId}:${index}`, so the continuation deltas derive a *different* key
+ * (`toolcall0`) and fork a SECOND block. The arguments land on whichever of the
+ * two the packet boundaries happened to fill: the named block is dispatched
+ * with `{}` and refused by its own schema ("must have required properties
+ * command"), and the nameless block is refused as `Tool  not found`. Which one
+ * wins is a coin flip per call, which is why a seat sees the same command land
+ * and then fail on a retry.
+ *
+ * A nameless block can never execute — Pi has no tool by that name — so the
+ * only reading that can be correct is to give its arguments back to the named
+ * block it was split from and drop it. Kept deliberately generic (never keyed
+ * on the derived `toolcall<N>` id, which Pi hashes past index 9) so any
+ * upstream that forks this way is repaired the same way, and so this covers
+ * Pi's own read/grep/find/ls/bash/edit/write calls, not only brokered ones.
+ *
+ * ONE definition, interpolated into both sources: the repair is the reason the
+ * repair-only extension exists at all, so a second copy could drift into
+ * repairing only the seats that were already the best off.
+ */
+const PI_TOOL_CALL_REPAIR_SOURCE = `
+function repairForkedToolCalls(content) {
+  if (!Array.isArray(content)) return null
+  const isCall = (block) => Boolean(block) && block.type === 'toolCall'
+  const isNamed = (block) => typeof block.name === 'string' && block.name.length > 0
+  const hasArgs = (block) =>
+    Boolean(block) &&
+    Boolean(block.arguments) &&
+    typeof block.arguments === 'object' &&
+    !Array.isArray(block.arguments) &&
+    Object.keys(block.arguments).length > 0
+  if (!content.some((block) => isCall(block) && !isNamed(block))) return null
+  const repaired = []
+  for (const block of content) {
+    if (isCall(block) && !isNamed(block)) {
+      if (hasArgs(block)) {
+        // Forks arrive in the same order as the calls they were split from, so
+        // claim the EARLIEST call still waiting for arguments. Walking back
+        // from the end instead hands the first fork to the last call, which
+        // silently swaps arguments between parallel tool calls.
+        for (let index = 0; index < repaired.length; index++) {
+          const target = repaired[index]
+          if (isCall(target) && isNamed(target) && !hasArgs(target)) {
+            repaired[index] = { ...target, arguments: block.arguments }
+            break
+          }
+        }
+      }
+      continue
+    }
+    repaired.push(block)
+  }
+  return repaired
+}
+
+// message_end lands after every toolcall block is final and before Pi
+// dispatches any of them, and its return value replaces the message Pi
+// dispatches from — so the repair reaches execution, not just the log.
+function registerPiToolCallRepair(pi) {
+  pi.on('message_end', (event) => {
+    const message = event && event.message
+    if (!message || message.role !== 'assistant') return undefined
+    const repaired = repairForkedToolCalls(message.content)
+    if (!repaired) return undefined
+    return { message: { ...message, content: repaired } }
+  })
+}
+`
+
+/**
+ * The repair with NO tools, NO broker, and NO ready marker.
+ *
+ * Attached to every Pi run that does not already carry the managed-tools
+ * extension. Those runs still call Pi's own read/grep/find/ls (and bash, edit
+ * and write when write-capable), and the fork is a property of the upstream
+ * stream rather than of the tool, so leaving them unrepaired would fix the
+ * privileged seats and leave the plain ones broken. It registers nothing, so
+ * it widens no capability and needs no broker credential — which is also why
+ * it is safe to attach on the paths where preparing the managed extension
+ * FAILED.
+ */
+function piToolCallRepairExtensionSource(): string {
+  return `${PI_TOOL_CALL_REPAIR_SOURCE}
+export default function (pi) {
+  registerPiToolCallRepair(pi)
+}
+`.trimStart()
 }
 
 // This source is deliberately self-contained. Pi's explicit extension loader
@@ -509,72 +641,9 @@ function parametersFor(name) {
   }
 }
 
-/**
- * Repair the forked tool-call blocks Pi's mistral-conversations accumulator
- * produces, BEFORE Pi dispatches them.
- *
- * Mistral streams a tool call as an opening delta carrying \`id\` + \`name\` with
- * empty arguments, then continuation deltas carrying the argument fragments
- * with \`id: "null"\` and \`name: ""\`. Pi keys its accumulator on
- * \`\${callId}:\${index}\`, so the continuation deltas derive a *different* key
- * (\`toolcall0\`) and fork a SECOND block. The arguments land on whichever of the
- * two the packet boundaries happened to fill: the named block is dispatched
- * with \`{}\` and refused by its own schema ("must have required properties
- * command"), and the nameless block is refused as \`Tool  not found\`. Which one
- * wins is a coin flip per call, which is why the seat sees the same command
- * land and then fail on a retry.
- *
- * A nameless block can never execute — Pi has no tool by that name — so the
- * only reading that can be correct is to give its arguments back to the named
- * block it was split from and drop it. Kept deliberately generic (never keyed
- * on the derived \`toolcall<N>\` id, which Pi hashes past index 9) so any
- * upstream that forks this way is repaired the same way.
- */
-function repairForkedToolCalls(content) {
-  if (!Array.isArray(content)) return null
-  const isCall = (block) => Boolean(block) && block.type === 'toolCall'
-  const isNamed = (block) => typeof block.name === 'string' && block.name.length > 0
-  const hasArgs = (block) =>
-    Boolean(block) &&
-    Boolean(block.arguments) &&
-    typeof block.arguments === 'object' &&
-    !Array.isArray(block.arguments) &&
-    Object.keys(block.arguments).length > 0
-  if (!content.some((block) => isCall(block) && !isNamed(block))) return null
-  const repaired = []
-  for (const block of content) {
-    if (isCall(block) && !isNamed(block)) {
-      if (hasArgs(block)) {
-        // Forks arrive in the same order as the calls they were split from, so
-        // claim the EARLIEST call still waiting for arguments. Walking back
-        // from the end instead hands the first fork to the last call, which
-        // silently swaps arguments between parallel tool calls.
-        for (let index = 0; index < repaired.length; index++) {
-          const target = repaired[index]
-          if (isCall(target) && isNamed(target) && !hasArgs(target)) {
-            repaired[index] = { ...target, arguments: block.arguments }
-            break
-          }
-        }
-      }
-      continue
-    }
-    repaired.push(block)
-  }
-  return repaired
-}
-
+${PI_TOOL_CALL_REPAIR_SOURCE}
 export default function (pi) {
-  // message_end lands after every toolcall block is final and before Pi
-  // dispatches any of them, and its return value replaces the message Pi
-  // dispatches from — so the repair reaches execution, not just the log.
-  pi.on('message_end', (event) => {
-    const message = event && event.message
-    if (!message || message.role !== 'assistant') return undefined
-    const repaired = repairForkedToolCalls(message.content)
-    if (!repaired) return undefined
-    return { message: { ...message, content: repaired } }
-  })
+  registerPiToolCallRepair(pi)
   for (const name of TOOL_NAMES) {
     pi.registerTool({
       name,

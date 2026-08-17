@@ -134,6 +134,33 @@ describe('buildPiRpcArgs', () => {
     expect(tools).not.toContain('bash')
   })
 
+  it('attaches the tools-free repair extension without granting any tool', () => {
+    // The repair covers Pi's OWN read/grep/find/ls calls, which an
+    // unprivileged seat still makes and Mistral still forks in two.
+    const repairPath = '/tmp/taskwraith-pi-home/taskwraith-toolcall-repair.mjs'
+    const args = buildPiRpcArgs({
+      ...base,
+      writeCapable: false,
+      toolCallRepairExtensionPath: repairPath
+    })
+    expect(args).toContain('--no-extensions')
+    expect(args[args.indexOf('--extension') + 1]).toBe(repairPath)
+    // It registers nothing, so --tools must stay exactly the native surface.
+    expect(args[args.indexOf('--tools') + 1].split(',')).toEqual([...PI_READ_ONLY_TOOLS])
+  })
+
+  it('refuses to attach both extensions, since Pi takes one -e file', () => {
+    expect(() =>
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        coordinationExtensionPath: '/tmp/taskwraith-pi-home/taskwraith-tools.mjs',
+        coordinationToolNames: PI_MANAGED_SHELL_TOOL_NAMES,
+        toolCallRepairExtensionPath: '/tmp/taskwraith-pi-home/taskwraith-toolcall-repair.mjs'
+      })
+    ).toThrow(/either the managed extension or the repair-only one/i)
+  })
+
   it('refuses a custom coordination allowlist without its explicit extension', () => {
     expect(() =>
       buildPiRpcArgs({

@@ -53,6 +53,13 @@ export interface PiRpcArgsInput {
   /** Fixed custom tool names implemented by coordinationExtensionPath. */
   coordinationToolNames?: readonly PiTaskWraithToolName[]
   /**
+   * The tools-free forked-tool-call repair, for runs that get no managed
+   * tools. It registers nothing, so it carries no tool names — which is
+   * exactly why it needs its own field rather than relaxing the allowlist
+   * invariant that keeps an extension and its `--tools` entries in step.
+   */
+  toolCallRepairExtensionPath?: string
+  /**
    * Optional Wave C harness posture. When omitted, keeps today's fail-safe
    * `--no-skills`. `allow-native` skills omits `--no-skills`; suppress and
    * tw-only keep it. Hooks have no separate Pi argv today.
@@ -76,14 +83,20 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   if (!coordinationToolNames.every(isPiTaskWraithToolName)) {
     throw new TypeError('Pi extension tools must come from TaskWraith fixed allowlists.')
   }
+  // Pi's `-e` allowlist stays one file. The managed extension already carries
+  // the repair, so asking for both would attach it twice.
+  if (input.coordinationExtensionPath && input.toolCallRepairExtensionPath) {
+    throw new TypeError('Pi takes either the managed extension or the repair-only one, not both.')
+  }
   const tools = [...new Set([...nativeTools, ...coordinationToolNames])]
   args.push('--tools', tools.join(','))
   args.push('--no-extensions')
   const passNoSkills = input.harnessPosture ? piShouldPassNoSkills(input.harnessPosture) : true
   if (passNoSkills) args.push('--no-skills')
   args.push('--no-prompt-templates')
-  if (input.coordinationExtensionPath) {
-    args.push('--extension', input.coordinationExtensionPath)
+  const extensionPath = input.coordinationExtensionPath || input.toolCallRepairExtensionPath
+  if (extensionPath) {
+    args.push('--extension', extensionPath)
   }
   args.push('--no-context-files', '--no-approve')
   args.push('--offline')

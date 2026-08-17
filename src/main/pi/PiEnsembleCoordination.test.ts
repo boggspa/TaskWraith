@@ -15,7 +15,8 @@ import {
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
   preparePiEnsembleCoordinationExtension,
-  preparePiTaskWraithExtension
+  preparePiTaskWraithExtension,
+  preparePiToolCallRepairExtension
 } from './PiEnsembleCoordination'
 
 const temporaryHomes: string[] = []
@@ -166,6 +167,62 @@ describe('Pi managed Ensemble coordination extension', () => {
       ])
     ).toBeNull()
     expect(repair(undefined)).toBeNull()
+  })
+
+  it('carries the same repair in a tools-free extension for unprivileged runs', () => {
+    // A run with no managed tools still drives Pi's own read/grep/find/ls (and
+    // bash/edit/write when write-capable), and the fork is a property of the
+    // upstream stream rather than of the tool. Without this the seats with the
+    // fewest privileges would be the only ones left dispatching `{}`.
+    const home = createCanonicalHome()
+
+    const repairOnly = preparePiToolCallRepairExtension({ isolatedHomeDir: home })
+
+    expect(repairOnly.path).toBe(join(home, 'taskwraith-toolcall-repair.mjs'))
+    expect(repairOnly.sourceSha256).toMatch(/^[a-f0-9]{64}$/)
+    const repairSource = readFileSync(repairOnly.path, 'utf8')
+    expect(repairSource).toContain("pi.on('message_end'")
+    // Registers nothing and opens no broker connection, so it widens no
+    // capability and is attachable where the managed extension is not.
+    expect(repairSource).not.toContain('registerTool')
+    expect(repairSource).not.toContain('node:net')
+    expect(repairSource).not.toContain('TASKWRAITH_PI_COORDINATION_TOKEN')
+    // No tools means nothing to be ready: Main's readiness gate must not be
+    // told the managed surface arrived.
+    expect(repairSource).not.toContain(PI_ENSEMBLE_COORDINATION_READY_MARKER)
+
+    // Its own filename, so it never collides with a managed extension already
+    // written into the same per-run home.
+    const managed = preparePiTaskWraithExtension({
+      isolatedHomeDir: home,
+      toolNames: [...PI_MANAGED_SHELL_TOOL_NAMES]
+    })
+    expect(managed.path).not.toBe(repairOnly.path)
+
+    // Both extensions must repair identically, or attaching the tools-free one
+    // would quietly be a weaker fix than the managed one.
+    const managedSource = readFileSync(managed.path, 'utf8')
+    const cases = [
+      [
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+        { type: 'toolCall', id: 'toolcall0', name: '', arguments: { path: 'a.ts' } }
+      ],
+      [
+        { type: 'toolCall', id: 'call-a', name: 'grep', arguments: {} },
+        { type: 'toolCall', id: 'call-b', name: 'ls', arguments: {} },
+        { type: 'toolCall', id: 'toolcall0', name: '', arguments: { pattern: 'x' } },
+        { type: 'toolCall', id: 'toolcall1', name: '', arguments: { path: '.' } }
+      ],
+      [{ type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }]
+    ]
+    const repairFromRepairOnly = extractRepairForkedToolCalls(repairSource)
+    const repairFromManaged = extractRepairForkedToolCalls(managedSource)
+    for (const content of cases) {
+      expect(repairFromRepairOnly(content)).toEqual(repairFromManaged(content))
+    }
+    expect(repairFromRepairOnly(cases[0])).toEqual([
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }
+    ])
   })
 
   it('builds one fixed extension for file, shell, coordination, and Mesh tools', () => {
