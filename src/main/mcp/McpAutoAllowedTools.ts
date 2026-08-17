@@ -110,12 +110,16 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.
   'todo_write',
-  // Shared blackboard posts are coordination state, like todo_write. Deletion
-  // remains a destructive app-state mutation and is not auto-allowed.
+  // Shared blackboard operations are coordination state, like todo_write.
+  // Delete is auto-allowed alongside post/read: board stacking from stale
+  // entries nobody can prune (the author has moved on) is worse than the
+  // counter-intuitive-deletion risk, which is recoverable — delete receipts
+  // (createBlackboardDeleteReceipt) trace every removal.
   'blackboard_post',
   // Blackboard reads are bounded, chat-local, and only mutate the per-entry
   // seenBy marker for the calling participant so slim prompts can omit it.
   'blackboard_read',
+  'blackboard_delete',
   // Evidence Packs are run-observability/progress records, not workspace
   // mutation. Read-only agents must still be able to leave auditable evidence
   // and check whether completion language is supported.
@@ -210,7 +214,7 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_brief_update',
   'schedule_wakeup',
   'cancel_wakeup',
-  'blackboard_delete',
+
   'workspace_board_apply_plan',
   'tw_introspection_run',
   'tw_introspection_review',

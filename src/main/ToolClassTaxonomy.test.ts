@@ -432,7 +432,6 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('switch_auth_profile', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('browser_open', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('workspace_board_apply_plan', ro)).toBe(true)
-    expect(isReadOnlyBlockedTool('blackboard_delete', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('cancel_active_run', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('start_background_process', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('kill_background_process', ro)).toBe(true)
@@ -458,7 +457,6 @@ describe('isReadOnlyBlockedTool', () => {
     // …and every other app-state mutation + the fs/shell/workspace-write floor stays blocked.
     expect(isReadOnlyBlockedTool('ensemble_bossman_control', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('ensemble_roster_edit', ro)).toBe(true)
-    expect(isReadOnlyBlockedTool('blackboard_delete', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('write_file', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('run_shell_command', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('apply_patch', ro)).toBe(true)
@@ -471,6 +469,7 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('workspace_board_snapshot', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('workspace_board_preview_plan', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('blackboard_post', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('blackboard_delete', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('todo_write', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('goal_update', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('list_active_runs', ro)).toBe(false)

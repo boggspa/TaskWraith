@@ -345,7 +345,6 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'ensemble_brief_update',
       'schedule_wakeup',
       'cancel_wakeup',
-      'blackboard_delete',
       'cancel_active_run',
       'workspace_board_apply_plan',
       'totally_unknown_future_tool'

@@ -3770,7 +3770,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'blackboard_delete',
       description:
-        'Retire stale or superseded Ensemble blackboard entries by id, key, category, or all:true. This mutates shared blackboard state and is not available to read-only seats. Returns a bounded count-only receipt; deleted entry content is never echoed.',
+        'Retire stale or superseded Ensemble blackboard entries by id, key, category, or all:true. Returns a bounded count-only receipt; deleted entry content is never echoed.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
