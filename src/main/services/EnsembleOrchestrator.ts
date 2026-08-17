@@ -497,6 +497,7 @@ const PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS = 450
 // dead zone here. The guard in EnsembleOrchestrator.fanoutOptionB.test.ts holds
 // the two together.
 export const DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS = 600 * 1000
+const DEFAULT_ACTIVE_FANOUT_AWAIT_REMINDER_TURNS = 3
 const TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS = 2 * 60 * 1000
 const TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT = 256
 
@@ -921,6 +922,11 @@ interface ActiveParticipantRun {
    * only after the synthesis hold is released.
    */
   fanoutTimedOut?: boolean
+  /**
+   * Count of fan-out hold turns without an `ensemble_await` tool call while
+   * fan-out lanes remain unsettled. Used to escalate to a system reminder.
+   */
+  fanoutAwaitReminderTurns?: number
   /**
    * Set after owned fan-out lanes settle if the caller has produced no post-
    * fan-out timeline content. The turn remains force-persisted until the
@@ -5940,6 +5946,17 @@ export class EnsembleOrchestrator {
       if (!activeParticipantIds.has(participantId)) count += 1
     }
     return Math.max(count, run.pendingFanoutDispatches?.size || 0)
+  }
+
+  private maybeAppendFanoutAwaitReminder(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): void {
+    const turns = (run.fanoutAwaitReminderTurns || 0) + 1
+    run.fanoutAwaitReminderTurns = turns
+    if (turns !== DEFAULT_ACTIVE_FANOUT_AWAIT_REMINDER_TURNS) return
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${participantDisplayName(run.participant)} remains on an active fan-out; the next action must be ensemble_await.`
+    )
   }
 
   private runMissingOwnedFanoutSynthesis(run: ActiveParticipantRun): boolean {
@@ -14832,6 +14849,10 @@ export class EnsembleOrchestrator {
         run.participant,
         this.deps.getChat(run.chatId)?.ensemble?.participants
       )
+      const toolName = stripToolNamespace(activity.toolName)
+      if (toolName === 'ensemble_await') {
+        run.fanoutAwaitReminderTurns = 0
+      }
       const upsert = upsertEnsembleToolUseActivity(run, activity)
       if (upsert === 'inserted') {
         appendTimelineTool(run, activity.id)
@@ -16572,20 +16593,22 @@ export class EnsembleOrchestrator {
           // non-manager handoff is already stored. Re-summoning in that case
           // would start another Boss speaking turn and bury the deferred yield;
           // wait for settlement instead, then fall through to applyStoredYieldRouting.
-          if (
-            !pendingDeferredNonManagerYield &&
-            this.requeueAuthorityForActiveFanoutHold(
-              runtime,
-              remaining,
-              participant,
-              synthesisPendingForSeat
-                ? unsettledLaneCount > 0 || ownedFanoutWork
-                  ? `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled; synthesize before ordinary serial writers.`
-                  : `${participantDisplayName(participant)} retains the authority turn to synthesize fan-out results.`
-                : `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled.`
-            )
-          ) {
-            continue
+          if (!pendingDeferredNonManagerYield) {
+            if (waveActive) this.maybeAppendFanoutAwaitReminder(runtime, run)
+            if (
+              this.requeueAuthorityForActiveFanoutHold(
+                runtime,
+                remaining,
+                participant,
+                synthesisPendingForSeat
+                  ? unsettledLaneCount > 0 || ownedFanoutWork
+                    ? `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled; synthesize before ordinary serial writers.`
+                    : `${participantDisplayName(participant)} retains the authority turn to synthesize fan-out results.`
+                  : `${participantDisplayName(participant)} retains the authority turn while ${Math.max(unsettledLaneCount, ownedFanoutWork ? 1 : 0)} fan-out lane(s) remain unsettled.`
+              )
+            ) {
+              continue
+            }
           }
           if (ownedFanoutWork) {
             await this.waitForOwnedFanoutSettlements(runtime, run)
@@ -16618,6 +16641,9 @@ export class EnsembleOrchestrator {
             noteMissingOnce()
             if (stillWaveActive) {
               this.clearNonAuthorityFanoutYieldRouting(runtime, run)
+            }
+            if (stillWaveActive) {
+              this.maybeAppendFanoutAwaitReminder(runtime, run)
             }
             if (
               this.requeueAuthorityForActiveFanoutHold(

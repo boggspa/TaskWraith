@@ -115,6 +115,61 @@ describe('normalizeMistralVibePermissionRequest', () => {
     })
   })
 
+  it('canonicalizes scoped GLM variants and case/format drift into strict TaskWraith form', () => {
+    const request = permissionRequest({
+      toolCallId: 'glm-1',
+      title: 'Legacy GLM write',
+      kind: 'other',
+      rawInput: {
+        path: 'taskwraith-provider-accept-edits-qa.txt',
+        content: 'MISTRAL_ACCEPT_EDITS_QA_OK'
+      },
+      _meta: { tool_name: 'taskwraith-zai-glm__write_file', effect_kind: 'tool' }
+    })
+    const normalized = normalizeMistralVibePermissionRequest(request)
+
+    expect(normalized).not.toBe(request)
+    expect(normalized.rawToolCall?.rawInput).toEqual({
+      path: 'taskwraith-provider-accept-edits-qa.txt',
+      content: 'MISTRAL_ACCEPT_EDITS_QA_OK',
+      tool_name: 'taskwraith-mistral__write_file'
+    })
+    expect(resolveStructuredTaskWraithToolRequest(normalized, MISTRAL_NAMESPACES)).toMatchObject({
+      toolName: 'write_file',
+      effectiveToolName: 'write_file',
+      mutation: 'workspace'
+    })
+  })
+
+  it('normalizes top-level and input-identity drift together before resolving', () => {
+    const request = permissionRequest({
+      toolCallId: 'drift-1',
+      title: 'Top-level alias',
+      kind: 'other',
+      toolName: 'TASKWRIGHT__write_file',
+      rawInput: {
+        path: 'taskwraith-provider-accept-edits-qa.txt',
+        content: 'TASKWRIGHT_WRITE_FILE'
+      },
+      _meta: { tool_name: 'TASKWRIGHT__write_file', effect_kind: 'tool' }
+    })
+
+    const normalized = normalizeMistralVibePermissionRequest(request)
+
+    expect(normalized).not.toBe(request)
+    expect(normalized.rawToolCall?.toolName).toBe('TaskWraith__write_file')
+    expect(normalized.rawToolCall?.rawInput).toEqual({
+      path: 'taskwraith-provider-accept-edits-qa.txt',
+      content: 'TASKWRIGHT_WRITE_FILE',
+      tool_name: 'TaskWraith__write_file'
+    })
+    expect(resolveStructuredTaskWraithToolRequest(normalized, MISTRAL_NAMESPACES)).toMatchObject({
+      toolName: 'write_file',
+      effectiveToolName: 'write_file',
+      mutation: 'workspace'
+    })
+  })
+
   it('never treats the human title as TaskWraith broker provenance', () => {
     const request = permissionRequest({
       toolCallId: 'title-only',

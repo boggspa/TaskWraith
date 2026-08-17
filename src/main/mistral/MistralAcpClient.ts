@@ -51,10 +51,34 @@ export type { AcpChildProcess } from '../acp/AcpTurnClient'
 /** The client name Mistral sees in request metadata. Must be non-empty. */
 const MISTRAL_CLIENT_NAME = 'taskwraith'
 
-const MISTRAL_VIBE_MCP_ALIASES = [
-  MISTRAL_SCOPED_MCP_SERVER_NAME,
-  MISTRAL_BROKER_MCP_TOOL_NAMESPACE
+const MISTRAL_VIBE_BROKER_TOOL_NAMESPACE_ALIASES = [
+  MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+  'taskwraith'
 ] as const
+const MISTRAL_VIBE_SCOPED_TOOL_NAMESPACE_ALIASES = [
+  MISTRAL_SCOPED_MCP_SERVER_NAME,
+  'taskwraith-mistral',
+  'taskwraith_mistral',
+  'taskwraith-glm',
+  'taskwraith_glm',
+  'taskwraith-zai',
+  'taskwraith_zai',
+  'taskwraith-zai-glm',
+  'taskwraith_zai_glm'
+] as const
+const MISTRAL_VIBE_TOOL_NAMESPACE_ALIASES: readonly {
+  canonical: string
+  aliases: readonly string[]
+}[] = [
+  {
+    canonical: MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+    aliases: MISTRAL_VIBE_BROKER_TOOL_NAMESPACE_ALIASES
+  },
+  {
+    canonical: MISTRAL_SCOPED_MCP_SERVER_NAME,
+    aliases: MISTRAL_VIBE_SCOPED_TOOL_NAMESPACE_ALIASES
+  }
+]
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -63,18 +87,42 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function canonicalVibeTaskWraithToolName(machineName: unknown): string | null {
-  if (typeof machineName !== 'string' || machineName !== machineName.trim()) return null
-  for (const alias of MISTRAL_VIBE_MCP_ALIASES) {
-    // Vibe publishes MCP tools to the model as `<server alias>_<remote tool>`.
-    // TaskWraith's strict resolver uses the canonical MCP spelling with two
-    // underscores, so translate only the exact alias configured on this seat.
-    const prefix = `${alias}_`
-    if (!machineName.startsWith(prefix)) continue
-    const toolName = machineName.slice(prefix.length)
-    if (!toolName || toolName.startsWith('_')) return null
-    return `${alias}__${toolName}`
+  if (typeof machineName !== 'string') return null
+  const trimmedName = machineName.trim()
+  const normalizedName = trimmedName.toLowerCase()
+  if (!trimmedName) return null
+  for (const { canonical, aliases } of MISTRAL_VIBE_TOOL_NAMESPACE_ALIASES) {
+    for (const alias of aliases) {
+      const lowerAlias = alias.toLowerCase()
+      const doubleUnderscorePrefix = `${lowerAlias}__`
+      const singleUnderscorePrefix = `${lowerAlias}_`
+      const prefixLength =
+        normalizedName.startsWith(doubleUnderscorePrefix) ? lowerAlias.length + 2
+        : normalizedName.startsWith(singleUnderscorePrefix) &&
+          normalizedName.charAt(lowerAlias.length) === '_'
+          ? lowerAlias.length + 1
+          : 0
+      if (!prefixLength) continue
+      if (trimmedName.length <= prefixLength) continue
+      return `${canonical}__${trimmedName.slice(prefixLength)}`
+    }
   }
   return null
+}
+
+function patchIfTaskWraithAlias(
+  holder: Record<string, unknown> | null | undefined,
+  key: string,
+  canonicalName: string,
+  patch: Record<string, unknown>
+): boolean {
+  if (!holder || typeof holder[key] !== 'string') return false
+  const candidate = holder[key]
+  if (typeof candidate !== 'string') return false
+  const normalized = canonicalVibeTaskWraithToolName(candidate)
+  if (normalized !== canonicalName || candidate === canonicalName) return false
+  patch[key] = canonicalName
+  return true
 }
 
 /**
@@ -105,9 +153,6 @@ export function normalizeMistralVibePermissionRequest(
   if (rawToolCall.kind !== 'other' || metadata.effect_kind !== 'tool') return request
   if (request.toolKind && request.toolKind !== 'other') return request
 
-  const canonicalName = canonicalVibeTaskWraithToolName(metadata.tool_name)
-  if (!canonicalName) return request
-
   const snakeToolInput = record(rawInput.tool_input)
   const camelToolInput = record(rawInput.toolInput)
   if (snakeToolInput && camelToolInput) return request
@@ -119,19 +164,69 @@ export function normalizeMistralVibePermissionRequest(
     rawInput.tool_name,
     rawInput.toolName,
     nestedToolInput?.tool_name,
-    nestedToolInput?.toolName
+    nestedToolInput?.toolName,
+    metadata.tool_name
   ]
-  for (const identity of identityCandidates) {
-    if (identity === undefined) continue
-    if (identity !== canonicalName) return request
+  const canonicalNames = identityCandidates.flatMap((identity) => {
+    const canonicalName = canonicalVibeTaskWraithToolName(identity)
+    return canonicalName ? [canonicalName] : []
+  })
+  const canonicalName = canonicalNames[0]
+  if (!canonicalName) return request
+  if (
+    canonicalNames.some((candidate) => candidate !== canonicalName) ||
+    identityCandidates.some((identity) => {
+      if (identity === undefined) return false
+      return canonicalVibeTaskWraithToolName(identity) !== canonicalName
+    })
+  ) {
+    return request
   }
 
-  if (rawInput.tool_name === canonicalName) return request
+  const rawInputPatch: Record<string, unknown> = {
+    ...(rawInput.tool_name !== canonicalName ? { tool_name: canonicalName } : {}),
+    ...(Object.keys(rawInput).length === 0 ? { tool_name: canonicalName } : {})
+  }
+  if (Object.keys(rawInputPatch).length === 0 && rawInput.tool_name === canonicalName) {
+    if (Object.keys(rawInput).length > 0) return request
+  }
+  const rawToolCallPatch: Record<string, unknown> = {}
+  patchIfTaskWraithAlias(rawToolCall, 'tool_name', canonicalName, rawToolCallPatch)
+  patchIfTaskWraithAlias(rawToolCall, 'toolName', canonicalName, rawToolCallPatch)
+  patchIfTaskWraithAlias(rawToolCall, 'name', canonicalName, rawToolCallPatch)
+  if (nestedToolInput) {
+    const nestedInputPatch: Record<string, unknown> = {}
+    const didPatchNestedToolName =
+      patchIfTaskWraithAlias(nestedToolInput, 'tool_name', canonicalName, nestedInputPatch) ||
+      patchIfTaskWraithAlias(nestedToolInput, 'toolName', canonicalName, nestedInputPatch)
+    if (didPatchNestedToolName) {
+      if (rawInput.tool_input) {
+        rawInputPatch.tool_input = {
+          ...(snakeToolInput || {}),
+          ...(nestedInputPatch as Record<string, unknown>)
+        }
+      } else if (rawInput.toolInput) {
+        rawInputPatch.toolInput = {
+          ...(camelToolInput || {}),
+          ...(nestedInputPatch as Record<string, unknown>)
+        }
+      }
+    }
+  }
+  if (
+    Object.keys(rawToolCallPatch).length === 0 &&
+    Object.keys(rawInputPatch).length === 0
+  ) {
+    return request
+  }
+  const nextRawInput =
+    Object.keys(rawInputPatch).length > 0 ? { ...rawInput, ...rawInputPatch } : rawInput
   return {
     ...request,
     rawToolCall: {
       ...rawToolCall,
-      rawInput: { ...rawInput, tool_name: canonicalName }
+      ...rawToolCallPatch,
+      rawInput: nextRawInput
     }
   }
 }

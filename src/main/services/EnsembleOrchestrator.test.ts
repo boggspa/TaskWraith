@@ -19406,6 +19406,32 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
+  it('reminds an authority holder to call ensemble_await while fan-out remains active', async () => {
+    const harness = makeFanoutRaceHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    completeDispatchedRun(harness, 2)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+    completeDispatchedRun(harness, 3)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5), { timeout: 1000 })
+
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('the next action must be ensemble_await.')
+      )
+    ).toBe(true)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+    completeDispatchedRun(harness, 4)
+    await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
+  })
+
   it('keeps both Boss and Captain inside the active fan-out authority ring', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
