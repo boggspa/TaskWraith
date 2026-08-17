@@ -12514,26 +12514,6 @@ export class EnsembleOrchestrator {
       }
     }
 
-    const writeAdmission = evaluateEnsembleFanoutWriteAdmission(
-      resolvedTargets.targets.map((participant) => ({
-        participantId: participant.id,
-        participantLabel: participantDisplayName(participant),
-        intent: this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
-          ? 'read'
-          : 'write',
-        approvedWriteScopeCount: 0
-      }))
-    )
-    if (!writeAdmission.ok) {
-      const message = `ensemble_fanout_all cannot infer lane write authority from seat permissions. ${writeAdmission.message}`
-      this.appendRoundStatus(run.chatId, run.roundId, message)
-      return {
-        ok: false,
-        tool: 'ensemble_fanout_all',
-        message,
-        error: 'missing_write_scope'
-      }
-    }
 
     // Same gate as ensemble_fanout, and deliberately the same cap: the two
     // tools dispatch into one round, so counting them separately would let a
@@ -12981,12 +12961,6 @@ export class EnsembleOrchestrator {
       }
     }
     const scopes = run.approvedWriteScopes || lane?.approvedWriteScopes || []
-    if (scopes.length === 0) {
-      return {
-        ok: false,
-        reason: `Lane ${run.laneId} has no approved write scope.`
-      }
-    }
     const workspacePath = resolve(input.workspacePath)
     const resourcePaths = proposedResourcePaths?.map((resourcePath) => resolve(resourcePath))
     if (resourcePaths?.some((resourcePath) => !pathIsInsideOrSame(workspacePath, resourcePath))) {
@@ -12995,6 +12969,9 @@ export class EnsembleOrchestrator {
         reason:
           'External path writes are disabled inside parallel writer lanes; use a serial writer for external grants.'
       }
+    }
+    if (scopes.length === 0) {
+      return { ok: true }
     }
     if (!resourcePaths) {
       return scopes.some((scope) => scope.kind === 'workspace')
@@ -18350,7 +18327,17 @@ export class EnsembleOrchestrator {
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
-    const readerIntentMode = mode === 'read_only' && !options.deriveLaneIntentFromPermissions
+    // Lane intent follows the SEAT's configured posture and nothing else. A
+    // seat the user granted write access stays a writer even when the round,
+    // the Boss or a Captain asked for a reader-intent wave — no orchestrator
+    // authority demotes a user-set permission tier. This used to read
+    // `mode === 'read_only' && !options.deriveLaneIntentFromPermissions`, and
+    // since `mode` DEFAULTS to 'read_only' while exactly one call site in the
+    // process passed `deriveLaneIntentFromPermissions`, virtually every fan-out
+    // pinned every lane to 'read'. Write-capable seats were then handed the
+    // "inspection, recon, or review only" boundary below and cancelled rather
+    // than edit. A genuine host clamp still lands, because
+    // `forceReadOnlyDispatch` clamps `permissions` itself and is asserted below.
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
     // Wave 3 — same seat-compaction barrier as the serial path, for every
     // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
@@ -18394,23 +18381,24 @@ export class EnsembleOrchestrator {
           `runParallelFanoutPass: forced read-only dispatch did not clamp participant ${currentParticipant.id}.`
         )
       }
-      const laneIntent: 'read' | 'write' =
-        readerIntentMode || permissions.readOnly ? 'read' : 'write'
+      const laneIntent: 'read' | 'write' = permissions.readOnly ? 'read' : 'write'
       return {
         participant: currentParticipant,
         laneIntent,
         approvedWriteScopes: options.writeScopesByParticipantId?.get(currentParticipant.id)
       }
     })
-    const admission = evaluateEnsembleFanoutWriteAdmission(
-      lanePlans.map(({ participant, laneIntent, approvedWriteScopes }) => ({
-        participantId: participant.id,
-        participantLabel: participantDisplayName(participant),
-        intent: laneIntent,
-        approvedWriteScopeCount: approvedWriteScopes?.length || 0
-      }))
-    )
-    if (!admission.ok) throw new Error(admission.message)
+    if (mode === 'locked_writers') {
+      const admission = evaluateEnsembleFanoutWriteAdmission(
+        lanePlans.map(({ participant, laneIntent, approvedWriteScopes }) => ({
+          participantId: participant.id,
+          participantLabel: participantDisplayName(participant),
+          intent: laneIntent,
+          approvedWriteScopeCount: approvedWriteScopes?.length || 0
+        }))
+      )
+      if (!admission.ok) throw new Error(admission.message)
+    }
     const readIntentCount = lanePlans.filter((plan) => plan.laneIntent === 'read').length
     const writeIntentCount = lanePlans.length - readIntentCount
     // Worktree isolation applies to WRITE-intent lanes only: read lanes need
@@ -18453,9 +18441,7 @@ export class EnsembleOrchestrator {
         ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (${readIntentCount} read / ${writeIntentCount} write-intent).${isolationNote}${ollamaRamNote}`
         : options.forceReadOnlyDispatch
           ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (host-clamped reader lanes).${ollamaRamNote}`
-          : readerIntentMode
-            ? `${label} · ${lanePlans.length} participant(s) dispatched concurrently (reader-intent lanes; seat permissions preserved).${ollamaRamNote}`
-            : `${label} · ${lanePlans.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
+          : `${label} · ${lanePlans.length} participant(s) dispatched concurrently (read-only seat lanes).${ollamaRamNote}`,
       { fanoutCategory, fanoutLabel: label }
     )
 

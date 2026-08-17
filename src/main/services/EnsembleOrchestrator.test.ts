@@ -18480,9 +18480,8 @@ Next action:
       readOnly: false,
       agenticServices: { shellCommands: 'allow' }
     })
-    expect(lane.prompt).toContain('Your configured permission tier remains active')
     const chatRun = harness.chat.runs.find((run) => run.runId === lane.appRunId)
-    expect(chatRun?.ensembleLaneIntent).toBe('read')
+    expect(chatRun?.ensembleLaneIntent).toBe('write')
     completeDispatchedRun(harness, 1)
     await expect(fanout).resolves.toMatchObject({ ok: true })
   })
@@ -21886,7 +21885,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(waveNote).toBeTruthy()
   })
 
-  it('preserves reviewer postures while keeping the Fan-out All review wave reader-intent', async () => {
+  it('preserves reviewer postures in a Fan-out All review wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'all'
     harness.chat.ensemble!.participants = [
@@ -21955,7 +21954,7 @@ describe('staged fan-out (stageRole)', () => {
       ['antigravity-reviewer', 'claude-reviewer'].includes(run.ensembleParticipantId || '')
     )
     expect(reviewRuns).toHaveLength(2)
-    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
+    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'write')).toBe(true)
   })
 
   it('lets an explicit yield target run a reviewer immediately (routing outranks the stage gate)', async () => {
@@ -22017,7 +22016,7 @@ describe('staged fan-out (stageRole)', () => {
   // distinction in ensembles stays Boss/Captain authority, which is
   // stage-independent.
 
-  it('keeps a write-postured scout at its configured tier in a reader-intent opening wave', async () => {
+  it('keeps a write-postured scout at its configured tier in an opening wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
@@ -22076,11 +22075,10 @@ describe('staged fan-out (stageRole)', () => {
         agenticServices: { shellCommands: 'allow' }
       }
     })
-    expect(codexScout?.prompt).toContain('Your configured permission tier remains active')
-    const scoutRuns = harness.chat.runs.filter((run) =>
-      ['kimi-scout', 'codex-scout'].includes(run.ensembleParticipantId || '')
-    )
-    expect(scoutRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
+    const kimiRun = harness.chat.runs.find((run) => run.ensembleParticipantId === 'kimi-scout')
+    const codexRun = harness.chat.runs.find((run) => run.ensembleParticipantId === 'codex-scout')
+    expect(kimiRun?.ensembleLaneIntent).toBe('read')
+    expect(codexRun?.ensembleLaneIntent).toBe('write')
     completeRun(harness, 0, 'Scout A findings.')
     completeRun(harness, 1, 'Scout B findings.')
     // The unstaged Builder keeps its ordinary serial turn under its OWN posture.
@@ -22093,7 +22091,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(waveNote).toBeTruthy()
   })
 
-  it('preserves scout postures while keeping the Fan-out All opening wave reader-intent', async () => {
+  it('preserves scout postures in a Fan-out All opening wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'all'
     harness.chat.ensemble!.participants = [
@@ -22150,7 +22148,7 @@ describe('staged fan-out (stageRole)', () => {
     })
     const antigravityRun = harness.chat.runs.find((run) => run.runId === antigravity?.appRunId)
     const kimiRun = harness.chat.runs.find((run) => run.runId === kimi?.appRunId)
-    expect(antigravityRun?.ensembleLaneIntent).toBe('read')
+    expect(antigravityRun?.ensembleLaneIntent).toBe('write')
     expect(kimiRun?.ensembleLaneIntent).toBe('read')
 
     completeRun(harness, 0, 'Scout A findings.')
@@ -22159,7 +22157,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[2].provider).toBe('claude')
   })
 
-  it('keeps write-postured reviewers at their configured tiers in a reader-intent review wave', async () => {
+  it('keeps write-postured reviewers at their configured tiers in a review wave', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
@@ -22222,7 +22220,7 @@ describe('staged fan-out (stageRole)', () => {
     const reviewRuns = harness.chat.runs.filter((run) =>
       ['claude-rev', 'kimi-rev'].includes(run.ensembleParticipantId || '')
     )
-    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
+    expect(reviewRuns.every((run) => run.ensembleLaneIntent === 'write')).toBe(true)
     const waveNote = harness.chat.messages.find((message) =>
       message.content?.includes('Review wave')
     )
@@ -22534,7 +22532,7 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBeGreaterThan(0)
   })
 
-  it('broad reader-intent fan-out includes write-postured seats without demoting them', async () => {
+  it('broad fan-out includes write-postured seats without demoting them', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
@@ -22598,7 +22596,10 @@ describe('staged fan-out (stageRole)', () => {
     const fanoutRuns = harness.chat.runs.filter((run) =>
       ['claude', 'kimi'].includes(run.ensembleParticipantId || '') && run.ensembleLaneId
     )
-    expect(fanoutRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
+    const helperRun = fanoutRuns.find((run) => run.ensembleParticipantId === 'claude')
+    const researcherRun = fanoutRuns.find((run) => run.ensembleParticipantId === 'kimi')
+    expect(helperRun?.ensembleLaneIntent).toBe('write')
+    expect(researcherRun?.ensembleLaneIntent).toBe('read')
   })
 })
 
@@ -22707,7 +22708,7 @@ describe('background stage routing', () => {
     ).toBe(true)
   })
 
-  it('launches a user-mentioned BG seat with its own posture and reader lane intent', async () => {
+  it('launches a user-mentioned BG seat with its own posture and lane intent', async () => {
     // A composer @BG mention preserves the seat's own permission posture but
     // has no writeScopes surface, so its asynchronous lane remains reader
     // intent. Peer/yield-directed BG lanes additionally clamp permissions.
@@ -22742,7 +22743,7 @@ describe('background stage routing', () => {
     expect(harness.dispatched[backgroundIndex].ensembleRun?.laneId).toBeTruthy()
     expect(harness.dispatched[backgroundIndex].effectivePermissions?.readOnly).toBe(false)
     expect(harness.dispatched[backgroundIndex].prompt).toContain('Stage role: background')
-    expect(harness.dispatched[backgroundIndex].prompt).toContain(
+    expect(harness.dispatched[backgroundIndex].prompt).not.toContain(
       'inspection, recon, or review only'
     )
 
@@ -22764,7 +22765,7 @@ describe('background stage routing', () => {
     expect(result?.metadata).toMatchObject({
       ensembleParticipantId: 'background-shell',
       ensembleStageRole: 'background',
-      ensembleLaneIntent: 'read'
+      ensembleLaneIntent: 'write'
     })
   })
 
@@ -24582,7 +24583,7 @@ describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
     expect(harness.dispatched).toHaveLength(1)
   })
 
-  it('rejects a Captain full-roster call before dispatch when a writer has no scopes', async () => {
+  it('dispatches a Captain full-roster call with participants under their configured postures', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'off'
     harness.chat.ensemble!.bossmanParticipantId = 'claude'
@@ -24600,17 +24601,21 @@ describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
       harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
     ).toBeUndefined()
 
-    const result = await harness.orchestrator.fanoutAllForRun(captainRunId, {
+    const fanout = harness.orchestrator.fanoutAllForRun(captainRunId, {
       prompt: 'All hands: take your assigned system.'
     })
-    expect(result).toMatchObject({
-      ok: false,
-      error: 'missing_write_scope'
-    })
-    expect(result.message).toContain('before provider dispatch')
-    expect(result.message).toContain('mode="locked_writers"')
-    expect(result.message).toContain('writeScopes')
-    expect(harness.dispatched).toHaveLength(1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.participantIds).toEqual(expect.arrayContaining(['claude', 'kimi']))
+    expect(result.laneIds).toHaveLength(2)
   })
 
   it('dispatches every idle reader seat under its own posture, ignoring fan-out policy off', async () => {
@@ -24660,7 +24665,7 @@ describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
     expect(laneRuns.every((run) => run.ensembleLaneIntent === 'read')).toBe(true)
   })
 
-  it('resolves an explicit writer target, then rejects its missing scope before dispatch', async () => {
+  it('resolves an explicit writer target and dispatches under its configured posture', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'off'
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
@@ -24672,19 +24677,23 @@ describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const result = await harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
       targets: ['@Builder'],
       prompt: 'Builder: implement the ballistics system.'
     })
-    expect(result).toMatchObject({
-      ok: false,
-      error: 'missing_write_scope'
-    })
-    expect(result.message).toContain('Builder')
-    expect(harness.dispatched).toHaveLength(1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('kimi')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[1].provider,
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    const result = await fanout
+    expect(result.ok).toBe(true)
   })
 
-  it('rechecks writer admission after the seat-compaction barrier before seeding a lane', async () => {
+  it('dispatches a writer target after the seat-compaction barrier under its updated posture', async () => {
     const compaction = deferred<void>()
     let waitingForCompaction = false
     const harness = makeHarness({
@@ -24735,12 +24744,16 @@ describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
     reviewer.permissionPresetId = 'workspace_write'
     compaction.resolve(undefined)
 
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
+    harness.orchestrator.handleProviderOutput(
+      harness.dispatched[1].provider,
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
     const result = await fanout
-    expect(result).toMatchObject({ ok: false, error: 'dispatch_failed' })
-    expect(result.message).toContain('before provider dispatch')
-    expect(result.message).toContain('writeScopes')
-    expect(harness.dispatched).toHaveLength(1)
-    expect(harness.chat.runs).toHaveLength(1)
+    expect(result.ok).toBe(true)
   })
 })
 
