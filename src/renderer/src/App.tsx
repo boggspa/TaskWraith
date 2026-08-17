@@ -21922,6 +21922,8 @@ function App(): React.JSX.Element {
                 participant.provider === 'codex' ? participant.reasoningEffort : undefined,
               claudeReasoningEffort:
                 participant.provider === 'claude' ? participant.reasoningEffort : undefined,
+              mistralReasoningEffort:
+                participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
               kimiReasoningEffort:
                 participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
               kimiThinkingEnabled:

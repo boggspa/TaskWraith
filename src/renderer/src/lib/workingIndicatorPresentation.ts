@@ -108,6 +108,8 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
       participant.provider === 'codex' ? participant.reasoningEffort : undefined,
     claudeReasoningEffort:
       participant.provider === 'claude' ? participant.reasoningEffort : undefined,
+    mistralReasoningEffort:
+      participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
     kimiReasoningEffort:
       participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
     kimiThinkingEnabled: participant.provider === 'kimi' ? participant.thinkingEnabled : undefined

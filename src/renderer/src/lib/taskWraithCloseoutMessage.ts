@@ -1592,6 +1592,7 @@ function formatParticipantReasoning(input: {
     modelLabel: '',
     codexReasoningEffort: input.provider === 'codex' ? input.reasoningEffort : undefined,
     claudeReasoningEffort: input.provider === 'claude' ? input.reasoningEffort : undefined,
+    mistralReasoningEffort: input.provider === 'mistral' ? input.reasoningEffort : undefined,
     kimiReasoningEffort: input.provider === 'kimi' ? input.reasoningEffort : undefined,
     grokReasoningEffort: input.provider === 'grok' ? input.reasoningEffort : undefined,
     cursorReasoningEffort: input.provider === 'cursor' ? input.reasoningEffort : undefined,

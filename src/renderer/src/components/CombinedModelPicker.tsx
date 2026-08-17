@@ -1298,6 +1298,7 @@ export function CombinedModelPicker({
         claudeReasoningEffort,
         grokReasoningEffort,
         cursorReasoningEffort,
+        mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,
         museReasoningEffort:
@@ -1332,6 +1333,7 @@ export function CombinedModelPicker({
         claudeReasoningEffort,
         grokReasoningEffort,
         cursorReasoningEffort,
+        mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,
         museReasoningEffort:

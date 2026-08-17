@@ -248,6 +248,7 @@ const formatAssistantMessageLabel = (
         modelLabel: '',
         codexReasoningEffort: provider === 'codex' ? ensembleReasoningEffort : undefined,
         claudeReasoningEffort: provider === 'claude' ? ensembleReasoningEffort : undefined,
+        mistralReasoningEffort: provider === 'mistral' ? ensembleReasoningEffort : undefined,
         kimiReasoningEffort: provider === 'kimi' ? ensembleReasoningEffort : undefined,
         kimiThinkingEnabled: provider === 'kimi' ? ensembleThinkingEnabled : undefined
       })
