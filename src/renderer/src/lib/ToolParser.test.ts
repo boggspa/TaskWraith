@@ -738,6 +738,27 @@ describe('ToolParser', () => {
         })?.confidence
       ).toBe('estimated')
       expect(
+        deriveToolDiffSummary('replace_file_content', {
+          TargetFile: 'src/a.ts',
+          TargetContent: 'const a = 1\nconst b = 2',
+          ReplacementContent: 'const a = 10\nconst b = 20\nconst c = 30'
+        })
+      ).toMatchObject({
+        additions: 3,
+        deletions: 2,
+        files: [{ path: 'src/a.ts', additions: 3, deletions: 2, status: 'modified' }]
+      })
+      expect(
+        deriveToolDiffSummary('write_to_file', {
+          TargetFile: 'src/b.ts',
+          CodeContent: 'line 1\nline 2\nline 3'
+        })
+      ).toMatchObject({
+        additions: 3,
+        deletions: 0,
+        files: [{ path: 'src/b.ts', additions: 3, deletions: 0 }]
+      })
+      expect(
         deriveToolDiffSummary('run_shell_command', { command: 'sed -i s/a/b/g a.ts' })
       ).toBeUndefined()
     })

@@ -149,6 +149,74 @@ describe('startAgyHookBridgeServer', () => {
     ])
   })
 
+  it('extracts mutation arguments (TargetContent, ReplacementContent, CodeContent) for diff derivation', async () => {
+    const server = await startServer()
+    const token = createAgyHookBridgeToken()
+    const seen: Array<{
+      name: string
+      targetPath: string | null
+      oldString?: string
+      newString?: string
+      content?: string
+    }> = []
+    server.registerRun(token, async (toolCall) => {
+      seen.push({
+        name: toolCall.name,
+        targetPath: toolCall.targetPath,
+        oldString: toolCall.oldString,
+        newString: toolCall.newString,
+        content: toolCall.content
+      })
+      return { decision: 'allow' }
+    })
+
+    await post(
+      server.port,
+      {
+        toolCall: {
+          name: 'replace_file_content',
+          args: {
+            TargetFile: '"/repo/src/App.tsx"',
+            TargetContent: '"const oldCode = 1;"',
+            ReplacementContent: '"const newCode = 2;"'
+          }
+        }
+      },
+      token
+    )
+
+    await post(
+      server.port,
+      {
+        toolCall: {
+          name: 'write_to_file',
+          args: {
+            TargetFile: '/repo/src/newFile.ts',
+            CodeContent: 'console.log("hello world")'
+          }
+        }
+      },
+      token
+    )
+
+    expect(seen).toEqual([
+      {
+        name: 'replace_file_content',
+        targetPath: '/repo/src/App.tsx',
+        oldString: 'const oldCode = 1;',
+        newString: 'const newCode = 2;',
+        content: undefined
+      },
+      {
+        name: 'write_to_file',
+        targetPath: '/repo/src/newFile.ts',
+        oldString: undefined,
+        newString: undefined,
+        content: 'console.log("hello world")'
+      }
+    ])
+  })
+
   it('decodes the JSON-quoted scalar args emitted by agy 1.1.12 before policy checks', async () => {
     const server = await startServer()
     const token = createAgyHookBridgeToken()

@@ -109,6 +109,7 @@ const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   // Reads / listings
   read: 'read_file',
   readfile: 'read_file',
+  viewfile: 'read_file',
   listdirectory: 'list_directory',
   listdir: 'list_directory',
   list: 'list_directory',
@@ -117,6 +118,7 @@ const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   // Writes / edits
   write: 'write_file',
   writefile: 'write_file',
+  writetofile: 'write_file',
   create: 'write_file',
   createfile: 'write_file',
   edit: 'replace',
@@ -124,6 +126,7 @@ const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   multiedit: 'replace',
   notebookedit: 'replace',
   replace: 'replace',
+  replacefilecontent: 'replace',
   strreplace: 'replace',
   strreplaceeditor: 'replace',
   searchreplace: 'replace',

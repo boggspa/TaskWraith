@@ -818,14 +818,34 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
   deletions?: number
 } {
   if (!parameters) return {}
-  const oldString = parameters.old_string as string | undefined
-  const newString = parameters.new_string as string | undefined
+  const oldString =
+    (typeof parameters.old_string === 'string' && parameters.old_string) ||
+    (typeof parameters.oldString === 'string' && parameters.oldString) ||
+    (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
+    (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
+    (typeof parameters.target_content === 'string' && parameters.target_content) ||
+    (typeof parameters.old === 'string' && parameters.old) ||
+    undefined
+  const newString =
+    (typeof parameters.new_string === 'string' && parameters.new_string) ||
+    (typeof parameters.newString === 'string' && parameters.newString) ||
+    (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
+    (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
+    (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
+    (typeof parameters.new === 'string' && parameters.new) ||
+    undefined
   if (typeof oldString === 'string' && typeof newString === 'string') {
     const oldLines = oldString.split('\n').length
     const newLines = newString.split('\n').length
     return { additions: newLines, deletions: oldLines }
   }
-  const content = parameters.content as string | undefined
+  const content =
+    (typeof parameters.content === 'string' && parameters.content) ||
+    (typeof parameters.file_text === 'string' && parameters.file_text) ||
+    (typeof parameters.CodeContent === 'string' && parameters.CodeContent) ||
+    (typeof parameters.codeContent === 'string' && parameters.codeContent) ||
+    (typeof parameters.CodeEdit === 'string' && parameters.CodeEdit) ||
+    undefined
   if (typeof content === 'string') {
     return { additions: content.split('\n').length, deletions: 0 }
   }
@@ -862,6 +882,13 @@ function getPathFromRecord(record: Record<string, unknown>): string | undefined 
     stringValue(record.path) ||
     stringValue(record.filePath) ||
     stringValue(record.file_path) ||
+    stringValue(record.TargetFile) ||
+    stringValue(record.targetFile) ||
+    stringValue(record.target_file) ||
+    stringValue(record.target_file_path) ||
+    stringValue(record.AbsolutePath) ||
+    stringValue(record.absolutePath) ||
+    stringValue(record.absolute_path) ||
     stringValue(record.from) ||
     stringValue(record.source) ||
     stringValue(record.sourcePath) ||
@@ -870,9 +897,7 @@ function getPathFromRecord(record: Record<string, unknown>): string | undefined 
     stringValue(record.destination) ||
     stringValue(record.destinationPath) ||
     stringValue(record.destination_path) ||
-    stringValue(record.target) ||
-    stringValue(record.target_file) ||
-    stringValue(record.target_file_path)
+    stringValue(record.target)
   return path.trim() || undefined
 }
 

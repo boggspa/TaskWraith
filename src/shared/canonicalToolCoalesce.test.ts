@@ -31,10 +31,13 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveCatalogToolName('WebSearch')).toBe('web_search')
   })
 
-  it('maps legacy Codex / Claude native names to catalog names', () => {
+  it('maps legacy Codex / Claude / AntiGravity native names to catalog names', () => {
     expect(resolveCatalogToolName('edit_file')).toBe('replace')
     expect(resolveCatalogToolName('create_file')).toBe('write_file')
     expect(resolveCatalogToolName('delete_file')).toBe('delete_path')
+    expect(resolveCatalogToolName('write_to_file')).toBe('write_file')
+    expect(resolveCatalogToolName('replace_file_content')).toBe('replace')
+    expect(resolveCatalogToolName('view_file')).toBe('read_file')
     expect(resolveCatalogToolName('run_terminal_command')).toBe('run_shell_command')
     expect(resolveCatalogToolName('view_image')).toBe('image_view')
     expect(resolveCatalogToolName('InspectImage')).toBe('image_view')
@@ -63,7 +66,10 @@ describe('canonicalToolCoalesce', () => {
   it('detects file-edit tools for run summaries', () => {
     expect(isCatalogFileEditTool('Write')).toBe(true)
     expect(isCatalogFileEditTool('apply_patch')).toBe(true)
+    expect(isCatalogFileEditTool('write_to_file')).toBe(true)
+    expect(isCatalogFileEditTool('replace_file_content')).toBe(true)
     expect(isCatalogFileEditTool('read_file')).toBe(false)
+    expect(isCatalogFileEditTool('view_file')).toBe(false)
   })
 
   it('compactToolIdentifier normalizes separators', () => {

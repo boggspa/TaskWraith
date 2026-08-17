@@ -173,8 +173,22 @@ export function bridgeToolDiffStats(
   toolName: string,
   input: Record<string, unknown>
 ): ToolDiffSummary | undefined {
-  const oldString = typeof input.old_string === 'string' ? input.old_string : undefined
-  const newString = typeof input.new_string === 'string' ? input.new_string : undefined
+  const oldString =
+    (typeof input.old_string === 'string' && input.old_string) ||
+    (typeof input.oldString === 'string' && input.oldString) ||
+    (typeof input.TargetContent === 'string' && input.TargetContent) ||
+    (typeof input.targetContent === 'string' && input.targetContent) ||
+    (typeof input.target_content === 'string' && input.target_content) ||
+    (typeof input.old === 'string' && input.old) ||
+    undefined
+  const newString =
+    (typeof input.new_string === 'string' && input.new_string) ||
+    (typeof input.newString === 'string' && input.newString) ||
+    (typeof input.ReplacementContent === 'string' && input.ReplacementContent) ||
+    (typeof input.replacementContent === 'string' && input.replacementContent) ||
+    (typeof input.replacement_content === 'string' && input.replacement_content) ||
+    (typeof input.new === 'string' && input.new) ||
+    undefined
   if (oldString !== undefined && newString !== undefined) {
     return {
       additions: lineCount(newString),
@@ -231,6 +245,9 @@ export function bridgeToolDiffStats(
     const content =
       (typeof input.content === 'string' && input.content) ||
       (typeof input.file_text === 'string' && input.file_text) ||
+      (typeof input.CodeContent === 'string' && input.CodeContent) ||
+      (typeof input.codeContent === 'string' && input.codeContent) ||
+      (typeof input.CodeEdit === 'string' && input.CodeEdit) ||
       undefined
     if (content !== undefined) {
       return {

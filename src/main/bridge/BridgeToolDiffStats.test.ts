@@ -21,8 +21,30 @@ describe('bridgeToolDiffStats (input-side derivation)', () => {
     })
   })
 
+  it('counts string replaces from AntiGravity replace_file_content (TargetContent / ReplacementContent)', () => {
+    const stats = bridgeToolDiffStats('replace_file_content', {
+      TargetFile: 'src/App.tsx',
+      TargetContent: 'const a = 1\nconst b = 2',
+      ReplacementContent: 'const a = 10\nconst b = 20\nconst c = 30'
+    })
+    expect(stats).toMatchObject({
+      additions: 3,
+      deletions: 2,
+      source: 'string_replace',
+      confidence: 'exact'
+    })
+  })
+
   it('counts whole-file writes from content', () => {
     const stats = bridgeToolDiffStats('write_file', { path: 'a.md', content: 'a\nb\nc' })
+    expect(stats).toMatchObject({ additions: 3, deletions: 0, source: 'content' })
+  })
+
+  it('counts whole-file writes from AntiGravity write_to_file (CodeContent)', () => {
+    const stats = bridgeToolDiffStats('write_to_file', {
+      TargetFile: 'src/foo.ts',
+      CodeContent: 'export const x = 1\nexport const y = 2\n'
+    })
     expect(stats).toMatchObject({ additions: 3, deletions: 0, source: 'content' })
   })
 

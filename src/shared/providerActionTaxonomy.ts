@@ -529,7 +529,13 @@ export const PROVIDER_ACTION_ADAPTERS = {
     structuredKindMappings: {},
     declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
     deniedNativeActionMappings: {},
-    declaredNativeActions: NO_NATIVE_ACTIONS,
+    declaredNativeActions: [
+      'write_to_file',
+      'replace_file_content',
+      'create_file',
+      'delete_file',
+      'rename_file'
+    ] as const,
     nativeActionMappings: {
       write_to_file: {
         aliases: ['write_to_file'],
@@ -553,7 +559,7 @@ export const PROVIDER_ACTION_ADAPTERS = {
       },
       rename_file: {
         aliases: ['rename_file'],
-        catalogTool: 'move_path',
+        catalogTool: 'rename_path',
         action: 'workspace.mutate'
       }
     }

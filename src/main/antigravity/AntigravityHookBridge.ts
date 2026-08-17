@@ -96,8 +96,11 @@ export function classifyAgyHookTool(name: string): AgyHookToolKind {
 const TARGET_PATH_KEYS = [
   'TargetFile',
   'target_file',
+  'targetFile',
+  'target_file_path',
   'AbsolutePath',
   'absolute_path',
+  'absolutePath',
   'FilePath',
   'file_path',
   'filePath',
@@ -113,20 +116,41 @@ const MUTATION_ARG_KEYS: ReadonlyArray<{
   key: string
   canonical: keyof Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>
 }> = [
+  { key: 'TargetContent', canonical: 'oldString' },
+  { key: 'targetContent', canonical: 'oldString' },
+  { key: 'target_content', canonical: 'oldString' },
   { key: 'OldString', canonical: 'oldString' },
+  { key: 'oldString', canonical: 'oldString' },
   { key: 'old_string', canonical: 'oldString' },
   { key: 'Old', canonical: 'oldString' },
+  { key: 'old', canonical: 'oldString' },
+  { key: 'ReplacementContent', canonical: 'newString' },
+  { key: 'replacementContent', canonical: 'newString' },
+  { key: 'replacement_content', canonical: 'newString' },
   { key: 'NewString', canonical: 'newString' },
+  { key: 'newString', canonical: 'newString' },
   { key: 'new_string', canonical: 'newString' },
   { key: 'New', canonical: 'newString' },
+  { key: 'new', canonical: 'newString' },
+  { key: 'CodeContent', canonical: 'content' },
+  { key: 'codeContent', canonical: 'content' },
+  { key: 'code_content', canonical: 'content' },
   { key: 'CodeEdit', canonical: 'content' },
+  { key: 'codeEdit', canonical: 'content' },
+  { key: 'code_edit', canonical: 'content' },
   { key: 'content', canonical: 'content' },
-  { key: 'file_text', canonical: 'content' },
   { key: 'Content', canonical: 'content' },
+  { key: 'file_text', canonical: 'content' },
+  { key: 'fileText', canonical: 'content' },
   { key: 'FileText', canonical: 'content' },
   { key: 'Patch', canonical: 'patch' },
   { key: 'patch', canonical: 'patch' },
-  { key: 'diff', canonical: 'patch' }
+  { key: 'diff', canonical: 'patch' },
+  { key: 'PatchPreview', canonical: 'patch' },
+  { key: 'patchPreview', canonical: 'patch' },
+  { key: 'patch_preview', canonical: 'patch' },
+  { key: 'unifiedDiff', canonical: 'patch' },
+  { key: 'unified_diff', canonical: 'patch' }
 ]
 
 /**
