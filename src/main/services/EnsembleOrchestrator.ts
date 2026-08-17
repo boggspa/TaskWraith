@@ -923,11 +923,6 @@ interface ActiveParticipantRun {
    */
   fanoutTimedOut?: boolean
   /**
-   * Count of fan-out hold turns without an `ensemble_await` tool call while
-   * fan-out lanes remain unsettled. Used to escalate to a system reminder.
-   */
-  fanoutAwaitReminderTurns?: number
-  /**
    * Set after owned fan-out lanes settle if the caller has produced no post-
    * fan-out timeline content. The turn remains force-persisted until the
    * caller emits synthesis prose or the hold is explicitly released.
@@ -3400,6 +3395,11 @@ interface ActiveRoundRuntime {
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
+  /**
+   * Tracks how many active fan-out authority turns have passed without an
+   * explicit `ensemble_await` for each authority participant.
+   */
+  fanoutAwaitReminderTurnsByParticipant?: Map<string, number>
   cancelled: boolean
   /** Every async round loop currently capable of projecting or dispatching. */
   roundActivities?: Set<Promise<void>>
@@ -5949,14 +5949,32 @@ export class EnsembleOrchestrator {
   }
 
   private maybeAppendFanoutAwaitReminder(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): void {
-    const turns = (run.fanoutAwaitReminderTurns || 0) + 1
-    run.fanoutAwaitReminderTurns = turns
+    const turns = this.nextFanoutAwaitReminderTurn(runtime, run.participant.id)
     if (turns !== DEFAULT_ACTIVE_FANOUT_AWAIT_REMINDER_TURNS) return
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
       `${participantDisplayName(run.participant)} remains on an active fan-out; the next action must be ensemble_await.`
     )
+  }
+
+  private nextFanoutAwaitReminderTurn(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): number {
+    if (!runtime.fanoutAwaitReminderTurnsByParticipant) {
+      runtime.fanoutAwaitReminderTurnsByParticipant = new Map<string, number>()
+    }
+    const turns = (runtime.fanoutAwaitReminderTurnsByParticipant.get(participantId) || 0) + 1
+    runtime.fanoutAwaitReminderTurnsByParticipant.set(participantId, turns)
+    return turns
+  }
+
+  private clearFanoutAwaitReminderTurns(runtime: ActiveRoundRuntime, participantId: string): void {
+    runtime.fanoutAwaitReminderTurnsByParticipant?.delete(participantId)
+    if (!runtime.fanoutAwaitReminderTurnsByParticipant?.size) {
+      runtime.fanoutAwaitReminderTurnsByParticipant = undefined
+    }
   }
 
   private runMissingOwnedFanoutSynthesis(run: ActiveParticipantRun): boolean {
@@ -14851,7 +14869,7 @@ export class EnsembleOrchestrator {
       )
       const toolName = stripToolNamespace(activity.toolName)
       if (toolName === 'ensemble_await') {
-        run.fanoutAwaitReminderTurns = 0
+        this.clearFanoutAwaitReminderTurns(runtime, run.participant.id)
       }
       const upsert = upsertEnsembleToolUseActivity(run, activity)
       if (upsert === 'inserted') {
@@ -16555,6 +16573,9 @@ export class EnsembleOrchestrator {
           runtime.pendingAuthorityFanoutSynthesisParticipantId === participant.id
         const waveActive = ownedFanoutWork || unsettledLaneCount > 0
         const waveSettled = !waveActive
+        if (!waveActive) {
+          this.clearFanoutAwaitReminderTurns(runtime, participant.id)
+        }
         const synthesizedThisTurn =
           waveSettled &&
           synthesisPendingForSeat &&

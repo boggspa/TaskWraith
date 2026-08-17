@@ -53,7 +53,8 @@ const MISTRAL_CLIENT_NAME = 'taskwraith'
 
 const MISTRAL_VIBE_BROKER_TOOL_NAMESPACE_ALIASES = [
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
-  'taskwraith'
+  'taskwraith',
+  'taskwright'
 ] as const
 const MISTRAL_VIBE_SCOPED_TOOL_NAMESPACE_ALIASES = [
   MISTRAL_SCOPED_MCP_SERVER_NAME,
@@ -64,7 +65,15 @@ const MISTRAL_VIBE_SCOPED_TOOL_NAMESPACE_ALIASES = [
   'taskwraith-zai',
   'taskwraith_zai',
   'taskwraith-zai-glm',
-  'taskwraith_zai_glm'
+  'taskwraith_zai_glm',
+  'taskwright-mistral',
+  'taskwright_mistral',
+  'taskwright-glm',
+  'taskwright_glm',
+  'taskwright-zai',
+  'taskwright_zai',
+  'taskwright-zai-glm',
+  'taskwright_zai_glm'
 ] as const
 const MISTRAL_VIBE_TOOL_NAMESPACE_ALIASES: readonly {
   canonical: string
