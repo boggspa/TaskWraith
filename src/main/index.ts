@@ -16894,6 +16894,7 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
     const models = await fetchOllamaModels(settings)
     return { available: true, modelCount: models.length }
   },
+  getMistralConfiguredApiKeyPresent: () => mistralApiKeyStore()?.getStatus().configured === true,
   getAntigravityCombinedModels: (settings) =>
     discoverAuthenticatedAntigravityCombinedModels(settings, {
       getSecretStore: () => antigravityGeminiApiSecretStoreRef,

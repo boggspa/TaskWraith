@@ -502,14 +502,27 @@ export function getEnsembleReasoningOptions(
       if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) return GROK_45_REASONING
       return []
     }
-    case 'mistral':
-      return modelId === 'mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
-    case 'pi':
-      // Pi's sealed launch policy never sends `--thinking` (provider-default),
-      // so a locked label is only truthful where the upstream default is
-      // known: mistral's own schema pins medium-3.5 at high. Every other Pi
-      // model runs its upstream default and stays honestly option-free.
-      return modelId === 'mistral/mistral-medium-3.5' ? MISTRAL_THINKING_REASONING : []
+    case 'mistral': {
+      const normalized = String(modelId || '')
+        .trim()
+        .toLowerCase()
+      return normalized === 'mistral-medium-3.5' ||
+        normalized === 'mistral-vibe-cli-latest' ||
+        normalized === 'mistral-medium-latest' ||
+        normalized === 'mistral-small-2603'
+        ? MISTRAL_THINKING_REASONING
+        : []
+    }
+    case 'pi': {
+      const normalized = String(modelId || '')
+        .trim()
+        .toLowerCase()
+      return normalized === 'mistral/mistral-medium-3.5' ||
+        normalized === 'mistral/mistral-medium-latest' ||
+        normalized === 'mistral/mistral-small-2603'
+        ? MISTRAL_THINKING_REASONING
+        : []
+    }
     case 'muse':
       return MUSE_REASONING
     default:

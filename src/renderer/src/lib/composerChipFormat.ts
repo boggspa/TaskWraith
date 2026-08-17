@@ -347,8 +347,23 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   // — vibe-acp schema pin / known upstream default. Not user-adjustable, but
   // the compact chip still names the level so it matches the locked ladder.
   const modelId = ctx.modelId.trim().toLowerCase()
-  if (provider === 'mistral' && modelId === 'mistral-medium-3.5') return 'High'
-  if (provider === 'pi' && modelId === 'mistral/mistral-medium-3.5') return 'High'
+  if (
+    provider === 'mistral' &&
+    (modelId === 'mistral-medium-3.5' ||
+      modelId === 'mistral-vibe-cli-latest' ||
+      modelId === 'mistral-medium-latest' ||
+      modelId === 'mistral-small-2603')
+  ) {
+    return 'High'
+  }
+  if (
+    provider === 'pi' &&
+    (modelId === 'mistral/mistral-medium-3.5' ||
+      modelId === 'mistral/mistral-medium-latest' ||
+      modelId === 'mistral/mistral-small-2603')
+  ) {
+    return 'High'
+  }
 
   if (provider === 'muse') {
     const value = String(ctx.museReasoningEffort || '')

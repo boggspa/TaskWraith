@@ -66,6 +66,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'mistral-medium-3.5': 262_144,
   'mistral-vibe-cli-latest': 262_144,
   'devstral-small': 262_144,
+  'devstral-small-latest': 262_144,
   'mistral-large-2512': 262_144,
   'zai-glm-5-2': 1_000_000,
   'codestral-2508': 131_072,

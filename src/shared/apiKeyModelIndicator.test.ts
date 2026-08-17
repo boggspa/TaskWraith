@@ -45,6 +45,9 @@ describe('modelRequiresApiKey', () => {
     expect(modelRequiresApiKey('mistral', 'mistral-medium-3.5')).toBe(false)
     expect(modelRequiresApiKey('mistral', 'devstral-small-latest')).toBe(false)
     expect(modelRequiresApiKey('mistral', 'mistral-vibe-cli-latest')).toBe(false)
+    expect(modelRequiresApiKey('mistral', '')).toBe(false)
+    expect(modelRequiresApiKey('mistral', null)).toBe(false)
+    expect(modelRequiresApiKey('mistral', undefined)).toBe(false)
   })
 
   // The whole point of the glyph is that it means something. If it appeared on

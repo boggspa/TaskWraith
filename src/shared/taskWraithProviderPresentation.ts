@@ -126,7 +126,19 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
   'muse-spark-1.2': 'Muse Spark 1.2',
-  'devstral-small': 'Devstral Small'
+  'devstral-small': 'Devstral Small',
+  'mistral-large-2512': 'Mistral Large 3',
+  'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
+  'codestral-2508': 'Codestral (Aug 2025)',
+  'mistral-small-2603': 'Mistral Small 4',
+  'devstral-2512': 'Devstral 2',
+  'labs-leanstral-1-5': 'Leanstral 1.5 (Labs)',
+  'mistral-medium-latest': 'Mistral Medium (Latest)',
+  'mistral-medium-2508': 'Mistral Medium 3.1',
+  'mistral-medium-2505': 'Mistral Medium 3',
+  'ministral-14b-2512': 'Ministral 3 (14B)',
+  'ministral-8b-2512': 'Ministral 3 (8B)',
+  'ministral-3b-2512': 'Ministral 3 (3B)'
 }
 
 function titleWords(value: string): string {

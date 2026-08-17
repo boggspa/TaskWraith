@@ -136,9 +136,11 @@ describe('MistralApiKeyStore', () => {
 
     // Overwrite with invalid json
     writeFileSync(keyFilePath(dir), '{ corrupt json', 'utf8')
-    expect(store.getStatus().configured).toBe(false)
+    expect(store.getStatus().configured).toBe(true)
     expect(store.loadApiKey()).toEqual({ status: 'corrupt' })
     expect(store.setApiKey('new-key').error).toBe('existingRecordUnreadable')
+    expect(store.clearApiKey().ok).toBe(true)
+    expect(store.getStatus().configured).toBe(false)
   })
 
   it('manages configure singleton', () => {

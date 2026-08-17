@@ -60,6 +60,7 @@ export function modelRequiresApiKey(
   if (BYOK_ONLY_PROVIDERS.has(normalizedProvider)) return true
   if (!MIXED_LANE_PROVIDERS.has(normalizedProvider)) return false
   const normalizedModel = typeof modelId === 'string' ? modelId.trim().toLowerCase() : ''
+  if (!normalizedModel) return false
   if (normalizedProvider === 'antigravity') {
     return normalizedModel.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)
   }

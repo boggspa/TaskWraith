@@ -379,12 +379,15 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mistral-quota:set-plan',
   'mistral-quota:set-anchor',
   'mistral-quota:clear-anchor',
-  // The Admin API key is credential material, so it sits on the identical
-  // main-renderer-only footing as the Gemini and Pi keys above. The refresh it
-  // authorises joins it: a popout must not be able to spend an org's admin key.
+  // The Admin and direct BYOK API keys are credential material, so they sit on
+  // the identical main-renderer-only footing as the Gemini and Pi keys above.
+  // The refresh it authorises joins it: a popout must not be able to spend an org's admin key.
   'mistral-admin-key:status',
   'mistral-admin-key:set',
   'mistral-admin-key:clear',
+  'mistral-api-key:get-status',
+  'mistral-api-key:set',
+  'mistral-api-key:clear',
   'mistral-quota:refresh-admin',
 
   // Canvas WebContentsView state belongs to the primary window. Popouts and

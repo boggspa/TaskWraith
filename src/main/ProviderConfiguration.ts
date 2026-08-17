@@ -26,9 +26,7 @@ export interface DetectConfiguredProvidersDependencies {
   resolveProviderBinary?: (
     provider: ProviderId
   ) => Promise<{ binaryPath: string | null | undefined }>
-  getOllamaStatus?: (
-    settings: AppSettings
-  ) => Promise<{ available: boolean; modelCount: number }>
+  getOllamaStatus?: (settings: AppSettings) => Promise<{ available: boolean; modelCount: number }>
   /** Count of Pi upstreams with a stored BYOK key; 0 keeps pi unconfigured. */
   getPiConfiguredUpstreamCount?: () => number
   /**
@@ -36,10 +34,14 @@ export interface DetectConfiguredProvidersDependencies {
    * admission. Binary alone must not admit an unauthenticated seat.
    */
   getMuseConfiguredCredentialPresent?: () => boolean
+  /** True when a direct Mistral API key is stored. */
+  getMistralConfiguredApiKeyPresent?: () => boolean
   /** Official `agy models` probe; only called after opt-in or API-key admission. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
   /** Combined authenticated agy + Gemini API catalog; called only after lane admission. */
-  getAntigravityCombinedModels?: (settings: AppSettings) => Promise<AntigravityCombinedCatalogModel[]>
+  getAntigravityCombinedModels?: (
+    settings: AppSettings
+  ) => Promise<AntigravityCombinedCatalogModel[]>
   /** Nonsecret key-generation identity used to invalidate a completed catalog. */
   getAntigravityGeminiApiKeyGeneration?: (settings: AppSettings) => string | null
   /** Called after a complete cached generation; never authorizes a provider. */
@@ -101,9 +103,9 @@ function hasConfiguredGeminiApiKey(generation: string | null | undefined): boole
   const normalized = generation?.trim()
   return Boolean(
     normalized &&
-      normalized !== 'missing' &&
-      normalized !== 'unconfigured' &&
-      normalized !== 'unavailable'
+    normalized !== 'missing' &&
+    normalized !== 'unconfigured' &&
+    normalized !== 'unavailable'
   )
 }
 
@@ -159,27 +161,27 @@ function configuredProviderProbes(
     probes.push({
       provider: 'codex',
       run: () =>
-        dependencies
-          .getCodexConfiguredStatus!(settings)
-          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
+        dependencies.getCodexConfiguredStatus!(settings).then((status) => ({
+          configured: configuredStatusIsAuthenticated(status)
+        }))
     })
   }
   if (dependencies.getClaudeConfiguredStatus) {
     probes.push({
       provider: 'claude',
       run: () =>
-        dependencies
-          .getClaudeConfiguredStatus!(settings)
-          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
+        dependencies.getClaudeConfiguredStatus!(settings).then((status) => ({
+          configured: configuredStatusIsAuthenticated(status)
+        }))
     })
   }
   if (dependencies.getKimiConfiguredStatus) {
     probes.push({
       provider: 'kimi',
       run: () =>
-        dependencies
-          .getKimiConfiguredStatus!()
-          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
+        dependencies.getKimiConfiguredStatus!().then((status) => ({
+          configured: configuredStatusIsAuthenticated(status)
+        }))
     })
   }
   probes.push({
@@ -193,9 +195,20 @@ function configuredProviderProbes(
     probes.push({
       provider,
       run: () =>
-        resolveProviderBinary(provider).then((resolved) => ({ configured: Boolean(resolved.binaryPath) }))
+        resolveProviderBinary(provider).then((resolved) => ({
+          configured: Boolean(resolved.binaryPath)
+        }))
     })
   }
+  probes.push({
+    provider: 'mistral',
+    run: () =>
+      resolveProviderBinary('mistral').then((resolved) => ({
+        configured:
+          Boolean(resolved.binaryPath) ||
+          Boolean(dependencies.getMistralConfiguredApiKeyPresent?.())
+      }))
+  })
   probes.push({
     provider: 'pi',
     // Configured = pi binary present AND at least one allowlisted upstream key
@@ -208,8 +221,7 @@ function configuredProviderProbes(
     run: () =>
       resolveProviderBinary('pi').then((resolved) => ({
         configured:
-          Boolean(resolved.binaryPath) &&
-          (dependencies.getPiConfiguredUpstreamCount?.() ?? 0) > 0
+          Boolean(resolved.binaryPath) && (dependencies.getPiConfiguredUpstreamCount?.() ?? 0) > 0
       }))
   })
   probes.push({
@@ -285,11 +297,16 @@ export async function detectConfiguredProviders(
   const probes = configuredProviderProbes(settings, dependencies, deadlineMs)
 
   const outcomes = await Promise.all(
-    probes.map(async ({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }) => ({
-      provider,
-      includeWhenUnknown,
-      ...(await boundedProviderProbe(Promise.resolve().then(run), providerDeadlineMs ?? deadlineMs))
-    }))
+    probes.map(
+      async ({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }) => ({
+        provider,
+        includeWhenUnknown,
+        ...(await boundedProviderProbe(
+          Promise.resolve().then(run),
+          providerDeadlineMs ?? deadlineMs
+        ))
+      })
+    )
   )
   for (const { provider, outcome, includeWhenUnknown } of outcomes) {
     // A timeout is uncertainty, not proof that the user lacks the provider.
@@ -372,32 +389,34 @@ export function createConfiguredProviderDetector(
       return
     }
 
-    probes.forEach(({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }, index) => {
-      const timer = setTimeout(() => {
-        void boundedProviderProbe(
-          Promise.resolve().then(run),
-          providerDeadlineMs ?? deadlineMs
-        ).then(({ outcome, result }) => {
-          if (currentGeneration !== generation) return
-          if (outcome === 'configured') {
-            rosterConfigured.add(provider)
-            confirmedConfigured.add(provider)
-            if (result?.models?.length) configuredModels.set(provider, [...result.models])
-          } else if (outcome === 'unknown' && includeWhenUnknown) {
-            rosterConfigured.add(provider)
-          } else {
-            confirmedConfigured.delete(provider)
-            configuredModels.delete(provider)
-          }
-          remaining -= 1
-          if (remaining === 0) {
-            completedKey = key
-            dependencies.onDiscoveryComplete?.(settings)
-          }
-        })
-      }, index * staggerMs)
-      timer.unref?.()
-    })
+    probes.forEach(
+      ({ provider, run, includeWhenUnknown = true, deadlineMs: providerDeadlineMs }, index) => {
+        const timer = setTimeout(() => {
+          void boundedProviderProbe(
+            Promise.resolve().then(run),
+            providerDeadlineMs ?? deadlineMs
+          ).then(({ outcome, result }) => {
+            if (currentGeneration !== generation) return
+            if (outcome === 'configured') {
+              rosterConfigured.add(provider)
+              confirmedConfigured.add(provider)
+              if (result?.models?.length) configuredModels.set(provider, [...result.models])
+            } else if (outcome === 'unknown' && includeWhenUnknown) {
+              rosterConfigured.add(provider)
+            } else {
+              confirmedConfigured.delete(provider)
+              configuredModels.delete(provider)
+            }
+            remaining -= 1
+            if (remaining === 0) {
+              completedKey = key
+              dependencies.onDiscoveryComplete?.(settings)
+            }
+          })
+        }, index * staggerMs)
+        timer.unref?.()
+      }
+    )
   }
 
   return {

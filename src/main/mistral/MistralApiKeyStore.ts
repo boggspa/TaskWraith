@@ -3,6 +3,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  existsSync,
   fchmodSync,
   fstatSync,
   fsyncSync,
@@ -130,6 +131,14 @@ export class MistralApiKeyStore {
         updatedAt: read.envelope.updatedAt
       }
     }
+    // Corrupt or unreadable reports as configured so the UI offers an explicit Clear
+    // recovery action rather than attempting a silent overwrite that fails closed.
+    if (read.status === 'corrupt' || read.status === 'unreadable') {
+      return {
+        configured: true,
+        encryptionAvailable
+      }
+    }
     return {
       configured: false,
       encryptionAvailable
@@ -178,6 +187,7 @@ export class MistralApiKeyStore {
     if (!trimmed || trimmed.length > MAX_API_KEY_BYTES) {
       return { ok: false, status: this.getStatus(), error: 'invalidApiKey' }
     }
+
     if (!this.encryptionAvailable()) {
       return { ok: false, status: this.getStatus(), error: 'encryptionUnavailable' }
     }
@@ -217,34 +227,36 @@ export class MistralApiKeyStore {
   }
 
   clear(): MistralApiKeyMutationResult {
-    const read = this.readEnvelope()
-    if (read.status === 'missing') {
-      return { ok: true, status: this.getStatus() }
-    }
     try {
-      unlinkSync(this.secretPath)
-    } catch (err: any) {
-      if (err?.code !== 'ENOENT') {
-        return { ok: false, status: this.getStatus(), error: 'clearFailed' }
+      if (existsSync(this.secretPath)) {
+        unlinkSync(this.secretPath)
       }
+      return { ok: true, status: this.getStatus() }
+    } catch {
+      return { ok: false, status: this.getStatus(), error: 'clearFailed' }
     }
-    return { ok: true, status: this.getStatus() }
+  }
+
+  clearApiKey(): MistralApiKeyMutationResult {
+    return this.clear()
   }
 
   private readEnvelope(): PersistedEnvelopeRead {
-    let raw: string
+    if (!existsSync(this.secretPath)) {
+      return { status: 'missing' }
+    }
+
     let fd = -1
+    let raw = ''
     try {
       fd = openSync(this.secretPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
       const stat = fstatSync(fd)
       if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_SECRET_FILE_BYTES) {
-        return { status: 'corrupt' }
+        return { status: 'unreadable' }
       }
       raw = readFileSync(fd, 'utf8')
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') return { status: 'missing' }
-      if (err?.code === 'EACCES' || err?.code === 'EPERM') return { status: 'unreadable' }
-      return { status: 'corrupt' }
+    } catch {
+      return { status: 'unreadable' }
     } finally {
       if (fd >= 0) {
         try {
@@ -262,11 +274,13 @@ export class MistralApiKeyStore {
       return { status: 'corrupt' }
     }
 
-    if (!isPlainObject(parsed)) return { status: 'corrupt' }
+    if (!isPlainObject(parsed) || !exactKeys(parsed, OUTER_KEYS)) {
+      return { status: 'corrupt' }
+    }
+
     if (
-      !exactKeys(parsed, OUTER_KEYS) ||
-      parsed.schemaVersion !== 1 ||
       parsed.purpose !== ENVELOPE_PURPOSE ||
+      parsed.schemaVersion !== 1 ||
       typeof parsed.updatedAt !== 'string' ||
       !canonicalIsoTimestamp(parsed.updatedAt) ||
       typeof parsed.encryptedPayload !== 'string' ||
@@ -282,14 +296,25 @@ export class MistralApiKeyStore {
 
   private atomicWriteFile(content: string): void {
     const dir = dirname(this.secretPath)
-    mkdirSync(dir, { recursive: true })
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
     const tmp = join(dir, `.${basename(this.secretPath)}.tmp.${randomBytes(8).toString('hex')}`)
     let fd = -1
+    let temporaryExists = false
     try {
       fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+      temporaryExists = true
       fchmodSync(fd, 0o600)
       writeFileSync(fd, content, 'utf8')
       fsyncSync(fd)
+      closeSync(fd)
+      fd = -1
+      renameSync(tmp, this.secretPath)
+      temporaryExists = false
+      try {
+        chmodSync(this.secretPath, 0o600)
+      } catch {
+        // best-effort
+      }
     } finally {
       if (fd >= 0) {
         try {
@@ -298,12 +323,13 @@ export class MistralApiKeyStore {
           // ignore
         }
       }
-    }
-    renameSync(tmp, this.secretPath)
-    try {
-      chmodSync(this.secretPath, 0o600)
-    } catch {
-      // best-effort
+      if (temporaryExists) {
+        try {
+          unlinkSync(tmp)
+        } catch {
+          // best-effort cleanup on failure
+        }
+      }
     }
   }
 }

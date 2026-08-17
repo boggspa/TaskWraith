@@ -39,7 +39,19 @@ export interface MistralModelRate {
 
 const MISTRAL_MODEL_RATES: Readonly<Record<string, MistralModelRate>> = {
   [MISTRAL_MODEL_DEVSTRAL_SMALL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.3 },
-  [MISTRAL_MODEL_MEDIUM]: { inputUsdPerMillion: 1.5, outputUsdPerMillion: 7.5 }
+  [MISTRAL_MODEL_MEDIUM]: { inputUsdPerMillion: 1.5, outputUsdPerMillion: 7.5 },
+  'mistral-large-2512': { inputUsdPerMillion: 0.5, outputUsdPerMillion: 1.5 },
+  'zai-glm-5-2': { inputUsdPerMillion: 1.4, outputUsdPerMillion: 4.4 },
+  'codestral-2508': { inputUsdPerMillion: 0.3, outputUsdPerMillion: 0.9 },
+  'mistral-small-2603': { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 },
+  'devstral-2512': { inputUsdPerMillion: 0.4, outputUsdPerMillion: 2.0 },
+  'labs-leanstral-1-5': { inputUsdPerMillion: 0.0, outputUsdPerMillion: 0.0 },
+  'mistral-medium-latest': { inputUsdPerMillion: 1.5, outputUsdPerMillion: 7.5 },
+  'mistral-medium-2508': { inputUsdPerMillion: 0.4, outputUsdPerMillion: 2.0 },
+  'mistral-medium-2505': { inputUsdPerMillion: 0.4, outputUsdPerMillion: 2.0 },
+  'ministral-14b-2512': { inputUsdPerMillion: 0.2, outputUsdPerMillion: 0.2 },
+  'ministral-8b-2512': { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.15 },
+  'ministral-3b-2512': { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.1 }
 }
 
 /**
@@ -56,6 +68,8 @@ const MISTRAL_UNKNOWN_MODEL_RATE: MistralModelRate = MISTRAL_MODEL_RATES[MISTRAL
 
 export function mistralModelRate(model: string | null | undefined): MistralModelRate {
   const key = typeof model === 'string' ? model.trim().toLowerCase() : ''
+  if (key === 'mistral-vibe-cli-latest') return MISTRAL_MODEL_RATES[MISTRAL_MODEL_MEDIUM]
+  if (key === 'devstral-small-latest') return MISTRAL_MODEL_RATES[MISTRAL_MODEL_DEVSTRAL_SMALL]
   return MISTRAL_MODEL_RATES[key] ?? MISTRAL_UNKNOWN_MODEL_RATE
 }
 

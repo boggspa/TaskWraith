@@ -17,9 +17,10 @@ vi.mock('./ollama/OllamaProvider', () => ({
   getOllamaStatusSnapshot: async () => ({ available: false, modelCount: 0 })
 }))
 
-function dependencies(
-  kimi: { available: boolean; authState?: string }
-): DetectConfiguredProvidersDependencies {
+function dependencies(kimi: {
+  available: boolean
+  authState?: string
+}): DetectConfiguredProvidersDependencies {
   return {
     getKimiConfiguredStatus: async () => kimi,
     resolveProviderBinary: async () => ({ binaryPath: null }),
@@ -198,7 +199,9 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
 
       await vi.advanceTimersByTimeAsync(CONFIGURED_PROVIDER_PROBE_DEADLINE_MS)
 
-      await expect(result).resolves.toEqual(new Set(['kimi', 'ollama', 'grok', 'cursor']))
+      await expect(result).resolves.toEqual(
+        new Set(['kimi', 'ollama', 'grok', 'cursor', 'mistral'])
+      )
     } finally {
       vi.useRealTimers()
     }
@@ -241,26 +244,26 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       expect(getOllamaStatus).not.toHaveBeenCalled()
       expect(onDiscoveryComplete).not.toHaveBeenCalled()
 
-      // Six staggered probes now (kimi, ollama, grok, cursor, pi, muse at
+      // Seven staggered probes now (kimi, ollama, grok, cursor, mistral, pi, muse at
       // 100ms apart); pi and muse resolve binaries but have no injected
       // credentials, so they complete the round without joining the set.
-      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(600)
       await expect(discovery.snapshot(settings)).resolves.toEqual(
-        new Set(['kimi', 'ollama', 'grok', 'cursor'])
+        new Set(['kimi', 'ollama', 'grok', 'cursor', 'mistral'])
       )
       expect(discovery.statusSnapshot(settings)).toEqual({
         ready: true,
-        configuredProviders: new Set(['kimi', 'ollama', 'grok', 'cursor'])
+        configuredProviders: new Set(['kimi', 'ollama', 'grok', 'cursor', 'mistral'])
       })
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(4)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(5)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
 
       discovery.start(settings)
       await vi.runAllTimersAsync()
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(4)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(5)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
@@ -288,7 +291,7 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       await vi.advanceTimersByTimeAsync(1_000)
 
       await expect(discovery.snapshot(settings)).resolves.toEqual(
-        new Set(['codex', 'claude', 'kimi', 'ollama', 'grok', 'cursor'])
+        new Set(['codex', 'claude', 'kimi', 'ollama', 'grok', 'cursor', 'mistral'])
       )
       expect(discovery.statusSnapshot(settings)).toEqual({
         ready: true,
@@ -420,13 +423,10 @@ describe('configured AntiGravity discovery', () => {
         optedInSettings,
         antigravityDependencies(async () => Promise.reject(new Error('logged out')))
       )
-      const timedOut = detectConfiguredProviders(
-        optedInSettings,
-        {
-          ...antigravityDependencies(() => never),
-          probeDeadlineMs: 1_000
-        }
-      )
+      const timedOut = detectConfiguredProviders(optedInSettings, {
+        ...antigravityDependencies(() => never),
+        probeDeadlineMs: 1_000
+      })
       await vi.advanceTimersByTimeAsync(ANTIGRAVITY_CONFIGURED_CATALOG_PROBE_DEADLINE_MS)
 
       expect(empty.has('antigravity')).toBe(false)

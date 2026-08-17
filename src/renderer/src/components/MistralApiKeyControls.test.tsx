@@ -41,7 +41,7 @@ describe('MistralApiKeyControlsView', () => {
     expect(html).toContain('settings-provider-auth-status-dot-not-available')
   })
 
-  it('shows footnote when keychain encryption is unavailable', () => {
+  it('shows footnote when keychain encryption is unavailable and disables input', () => {
     const html = renderToStaticMarkup(
       <MistralApiKeyControlsView
         status={{ configured: false, encryptionAvailable: false }}
@@ -55,5 +55,22 @@ describe('MistralApiKeyControlsView', () => {
     )
 
     expect(html).toContain('System keychain encryption is unavailable')
+    expect(html).toContain('disabled=""')
+  })
+
+  it('renders error message when present', () => {
+    const html = renderToStaticMarkup(
+      <MistralApiKeyControlsView
+        status={{ configured: true, encryptionAvailable: true }}
+        draft=""
+        busy={false}
+        error="Could not store the Mistral API key."
+        onDraftChange={() => {}}
+        onSave={() => {}}
+        onClear={() => {}}
+      />
+    )
+
+    expect(html).toContain('Could not store the Mistral API key.')
   })
 })

@@ -156,8 +156,8 @@ export function MistralApiKeyControls({
       busy={busy}
       error={error}
       onDraftChange={setDraft}
-      onSave={save}
-      onClear={clear}
+      onSave={() => void save()}
+      onClear={() => void clear()}
     />
   )
 }
