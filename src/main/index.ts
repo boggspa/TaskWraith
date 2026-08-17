@@ -16084,6 +16084,7 @@ function appendEnsembleSteerIntoLiveRound(
       content: text,
       timestampIso: nowIso,
       author: HOST_MIDRUN_STEERING_AUTHOR,
+      ...(chat.ensemble?.activeRound?.roundId ? { ensembleRoundId: chat.ensemble.activeRound.roundId } : {}),
       ...(imageAttachments.length > 0 ? { imageAttachments } : {}),
       ...(imageThumbnails.length > 0 ? { imageThumbnails } : {})
     })

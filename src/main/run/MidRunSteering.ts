@@ -299,6 +299,7 @@ export function buildMidRunSteeringMessage(input: {
   content: string
   timestampIso: string
   author: MidRunSteeringAuthor
+  ensembleRoundId?: string
   imageAttachments?: Array<{ id?: string; path: string; name?: string }>
   imagePaths?: string[]
   imageThumbnails?: Array<{
@@ -335,6 +336,7 @@ export function buildMidRunSteeringMessage(input: {
     // message to appear instantly.
     metadata: {
       kind: 'midRunSteering',
+      ...(input.ensembleRoundId ? { ensembleRoundId: input.ensembleRoundId } : {}),
       ...(external
         ? {
             sourceTrust: 'external_untrusted' as const,

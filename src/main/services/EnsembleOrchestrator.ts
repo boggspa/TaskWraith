@@ -4642,7 +4642,15 @@ export class EnsembleOrchestrator {
         ? { exactTargetParticipantId: input.dmTargetParticipantId }
         : {})
     })
-    if (!userFanout.hasParticipantMention) return
+    if (!userFanout.hasParticipantMention) {
+      if (!input.receipt?.messageId) return
+      const fallbackTargetId = input.dmTargetParticipantId || runtime.lastForegroundParticipantId || runtime.bossmanParticipantId
+      const fallbackParticipant = fallbackTargetId ? chat.ensemble.participants.find(p => p.id === fallbackTargetId) : null
+      if (fallbackParticipant) {
+        this.launchUserFanout(runtime, [fallbackParticipant], input.prompt, input.receipt.messageId)
+      }
+      return
+    }
     for (const ambiguity of userFanout.ambiguities) {
       this.appendRoundStatus(
         runtime.chatId,

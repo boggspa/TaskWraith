@@ -25,7 +25,7 @@ export const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
   Boolean(job.request?.remoteComposer)
 
 export const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
-  job.status === 'queued' && !isRemoteComposerRunQueueJob(job)
+  (job.status === 'queued' || job.status === 'steer_promoting') && !isRemoteComposerRunQueueJob(job)
 
 export const acceptedEnsembleRunQueueWrapperReason = (input: {
   mode: 'normal' | 'queue'
