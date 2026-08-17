@@ -895,29 +895,52 @@ describe('muse reasoning options', () => {
   })
 })
 
-describe('mistral reasoning lock (vibe schema: medium-3.5 thinking=high, devstral off)', () => {
-  it('locks Mistral Medium 3.5 to a single High option so the ladder renders fixed', () => {
+describe('mistral configurable reasoning support', () => {
+  it('unlocks Devstral Small and Mistral Medium 3.5 to configurable reasoning', () => {
     expect(getEnsembleReasoningOptions('mistral', 'mistral-medium-3.5')).toEqual([
-      { value: 'high', label: 'High', disabledReason: 'Mistral Medium 3.5 always thinks at High.' }
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
     ])
   })
 
   it('mirrors the lock on the Pi BYOK lane and keeps every other Pi model honestly inert', () => {
-    // Pi's launch authority seals thinkingMode 'provider-default' — no level
-    // is ever sent, so a locked label is only truthful where the upstream
-    // default is known (mistral's schema pins medium-3.5 at high). The other
-    // thinking models run their upstream defaults and stay option-free.
+    // Pi's launch authority seals thinkingMode 'provider-default' — we keep
+    // this to a known model-specific ladder for Mistral-hosted options.
     expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-3.5')).toEqual([
-      { value: 'high', label: 'High', disabledReason: 'Mistral Medium 3.5 always thinks at High.' }
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+  })
+
+  it('unlocks Devstral Small in both live and Pi BYOK lanes', () => {
+    expect(getEnsembleReasoningOptions('mistral', 'devstral-small')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(getEnsembleReasoningOptions('pi', 'mistral/devstral-small')).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
     ])
     expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual([])
     expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual([])
     expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 
-  it('keeps Devstral Small reasoning-free (inert rail)', () => {
-    expect(getEnsembleReasoningOptions('mistral', 'devstral-small')).toEqual([])
+  it('keeps unsupported models on an empty reasoning set', () => {
     expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
+    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 })
 

@@ -352,21 +352,23 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('')
   })
 
-  it('Mistral Medium 3.5 (and Pi BYOK mirror) show locked High; Devstral stays blank', () => {
+  it('Mistral configurable Thinking renders selected effort labels; Devstral stays blank when unset', () => {
     expect(
       reasoningDisplayLabel({
         provider: 'mistral',
         composerStyle: 'claude',
         modelId: 'mistral-medium-3.5',
-        modelLabel: 'Mistral Medium 3.5'
+        modelLabel: 'Mistral Medium 3.5',
+        mistralReasoningEffort: 'medium'
       })
-    ).toBe('High')
+    ).toBe('Medium')
     expect(
       reasoningDisplayLabel({
         provider: 'pi',
         composerStyle: 'claude',
         modelId: 'mistral/mistral-medium-3.5',
-        modelLabel: 'Mistral Medium 3.5'
+        modelLabel: 'Mistral Medium 3.5',
+        mistralReasoningEffort: 'high'
       })
     ).toBe('High')
     expect(
@@ -374,7 +376,17 @@ describe('reasoningDisplayLabel', () => {
         provider: 'mistral',
         composerStyle: 'claude',
         modelId: 'devstral-small',
-        modelLabel: 'Devstral Small'
+        modelLabel: 'Devstral Small',
+        mistralReasoningEffort: undefined
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'mistral',
+        composerStyle: 'claude',
+        modelId: 'devstral-small',
+        modelLabel: 'Devstral Small',
+        mistralReasoningEffort: 'off'
       })
     ).toBe('')
   })
