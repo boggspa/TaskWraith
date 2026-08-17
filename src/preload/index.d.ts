@@ -486,6 +486,7 @@ interface ComposerRunInput {
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
+  mistralReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   runtimeProfileId?: string

@@ -27,6 +27,10 @@ import {
   MISTRAL_MODEL_MEDIUM,
   normalizeMistralModel
 } from '../mistral/MistralCliArgs'
+import {
+  MISTRAL_DEFAULT_REASONING_EFFORT,
+  MISTRAL_REASONING_EFFORTS
+} from '../../shared/mistralModels'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
 
@@ -844,12 +848,16 @@ const MISTRAL_STATIC_MODELS = [
     id: MISTRAL_DEFAULT_MODEL,
     label: 'Devstral Small',
     description: '256K context - coding-tuned, $0.10/$0.30 per Mtok',
-    isDefault: true
+    isDefault: true,
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
   },
   {
     id: MISTRAL_MODEL_MEDIUM,
     label: 'Mistral Medium 3.5',
-    description: '256K context - flagship, $1.50/$7.50 per Mtok'
+    description: '256K context - flagship, $1.50/$7.50 per Mtok',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
   },
   {
     id: 'mistral-large-2512',
