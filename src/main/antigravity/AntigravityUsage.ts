@@ -136,13 +136,30 @@ function isGroupHeaderLine(value: string): boolean {
   return /^[a-z0-9 .+&/-]{1,40}\bmodels?$/.test(normalized)
 }
 
-/** Gemini pools ONLY. The Claude + GPT pool is deliberately not surfaced: the
- * resold first-party models were removed from the agy offer entirely
- * (AntigravityAgyStaticModels — metering a pool the app never dispatches to
- * would only advertise the extra-ToS-risk lane), so the region scan treats
- * the Claude header purely as the Gemini region's END. */
-function isGeminiGroupHeader(value: string): boolean {
-  return isGroupHeaderLine(value) && /\bgemini\b/.test(cleanPanelLine(value).toLowerCase())
+type AntigravityUsagePoolType = 'gemini' | 'thirdParty'
+
+type AgyUsagePoolWindows = {
+  weekly: { id: string; label: string }
+  fiveHour: { id: string; label: string }
+}
+
+const AGY_USAGE_POOL_WINDOWS: Record<AntigravityUsagePoolType, AgyUsagePoolWindows> = {
+  gemini: {
+    weekly: { id: 'agy-gemini-weekly', label: 'Gemini Weekly' },
+    fiveHour: { id: 'agy-gemini-5h', label: 'Gemini 5H' }
+  },
+  thirdParty: {
+    weekly: { id: 'agy-3p-weekly', label: '3P Weekly' },
+    fiveHour: { id: 'agy-3p-5h', label: '3P 5H' }
+  }
+}
+
+function agyUsagePoolType(value: string): AntigravityUsagePoolType | null {
+  const normalized = cleanPanelLine(value).toLowerCase()
+  if (!isGroupHeaderLine(normalized)) return null
+  if (/\bgemini\b/.test(normalized)) return 'gemini'
+  if (/\bclaude\b/.test(normalized) && /\bgpt\b/.test(normalized)) return 'thirdParty'
+  return null
 }
 
 /** Within a Gemini pool the panel prints two sub-limits, each with its own
@@ -215,13 +232,59 @@ function parsePlanType(lines: readonly string[]): string | undefined {
   return undefined
 }
 
+function parseAgyUsagePoolWindows(
+  poolType: AntigravityUsagePoolType,
+  region: readonly string[],
+  windows: NormalizedProviderUsageWindow[]
+): void {
+  const config = AGY_USAGE_POOL_WINDOWS[poolType]
+  const seenKinds = new Set<'weekly' | 'five-hour'>()
+  for (let index = 0; index < region.length; index += 1) {
+    const kind = subLimitKind(region[index])
+    if (!kind || seenKinds.has(kind)) continue
+    let blockEnd = region.length
+    for (let next = index + 1; next < region.length; next += 1) {
+      if (subLimitKind(region[next])) {
+        blockEnd = next
+        break
+      }
+    }
+    const block = region.slice(index, blockEnd)
+    const remaining = parseSubLimitRemaining(block)
+    if (!remaining) continue
+    seenKinds.add(kind)
+    const reset = block.map(parseObservedReset).find((value): value is string => Boolean(value))
+    const mapping = kind === 'weekly' ? config.weekly : config.fiveHour
+    windows.push({
+      id: mapping.id,
+      label: mapping.label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel: [remaining.display, reset ? `refresh: ${reset}` : '']
+        .filter(Boolean)
+        .join(' · '),
+      trackingOnly: false,
+      usedPercent: Number((100 - remaining.value).toFixed(3)),
+      remainingPercent: remaining.value,
+      ...(reset && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(reset)
+        ? { resetAt: reset }
+        : {})
+    })
+    if (windows.length >= MAX_QUOTA_GROUPS) return
+  }
+}
+
 /**
  * Parse a documented `/usage` panel conservatively. Verified against agy 1.1.8
  * (2026-07-28): the panel groups models into pools ("GEMINI MODELS",
  * "CLAUDE AND GPT MODELS"), and each pool carries TWO sub-limits with their own
- * progress bars — a "Weekly Limit" and a "Five Hour Limit". Only the Gemini
- * pool is surfaced; each of its sub-limits becomes one window (WK / 5H). The
- * observed percent and reset text are preserved verbatim; no schedule is
+ * progress bars — a "Weekly Limit" and a "Five Hour Limit".
+ *
+ * As of the August 2026 UI update, both pools are surfaced:
+ * - Gemini pool windows: "agy-gemini-weekly" and "agy-gemini-5h"
+ * - Claude+GPT pool windows: "agy-3p-weekly" and "agy-3p-5h"
+ *
+ * The observed percent and reset text are preserved verbatim; no schedule is
  * inferred and no quota is manufactured from an account tier.
  */
 export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
@@ -239,52 +302,25 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
 
   const planType = parsePlanType(lines)
 
-  // Bound the Gemini pool to its own region: from its header to the next pool
-  // header (the Claude pool) or the panel end. Nothing outside that region is
-  // read, so a Claude sub-limit can never be mislabelled as Gemini's.
-  const geminiStart = lines.findIndex((line) => isGeminiGroupHeader(line))
-  if (geminiStart === -1) return { planType, windows: [] }
-  let geminiEnd = lines.length
-  for (let index = geminiStart + 1; index < lines.length; index += 1) {
-    if (isGroupHeaderLine(lines[index])) {
-      geminiEnd = index
-      break
-    }
-  }
-  const region = lines.slice(geminiStart + 1, geminiEnd)
+  // Bound each recognized pool to its own region (to its own header boundary) so
+  // a Claude+GPT line is never mislabelled as Gemini, and vice versa.
+  const headers = lines
+    .map((line, index) => ({ line, index }))
+    .filter((entry) => agyUsagePoolType(entry.line) !== null)
+  if (headers.length === 0) return { planType, windows: [] }
 
-  const windows: NormalizedProviderUsageWindow[] = []
-  const seenKinds = new Set<'weekly' | 'five-hour'>()
-  for (let index = 0; index < region.length; index += 1) {
-    const kind = subLimitKind(region[index])
-    if (!kind || seenKinds.has(kind)) continue
-    let blockEnd = region.length
-    for (let next = index + 1; next < region.length; next += 1) {
-      if (subLimitKind(region[next])) {
-        blockEnd = next
-        break
-      }
+  for (let headerIndex = 0; headerIndex < headers.length; headerIndex += 1) {
+    if (windows.length >= MAX_QUOTA_GROUPS) break
+    const currentHeader = headers[headerIndex]
+    const currentPool = agyUsagePoolType(currentHeader.line)
+    if (!currentPool) continue
+    let nextHeaderIndex = lines.length
+    const nextHeader = headers[headerIndex + 1]
+    if (nextHeader) {
+      nextHeaderIndex = nextHeader.index
     }
-    const block = region.slice(index, blockEnd)
-    const remaining = parseSubLimitRemaining(block)
-    if (!remaining) continue
-    seenKinds.add(kind)
-    const reset = block.map(parseObservedReset).find((value): value is string => Boolean(value))
-    windows.push({
-      id: kind === 'weekly' ? 'agy-gemini-weekly' : 'agy-gemini-5h',
-      label: kind === 'weekly' ? 'Gemini Weekly' : 'Gemini 5H',
-      runs: 0,
-      totalTokens: 0,
-      limitLabel: [remaining.display, reset ? `refresh: ${reset}` : '']
-        .filter(Boolean)
-        .join(' · '),
-      trackingOnly: false,
-      usedPercent: Number((100 - remaining.value).toFixed(3)),
-      remainingPercent: remaining.value,
-      ...(reset && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(reset)
-        ? { resetAt: reset }
-        : {})
-    })
+    const region = lines.slice(currentHeader.index + 1, nextHeaderIndex)
+    parseAgyUsagePoolWindows(currentPool, region, windows)
     if (windows.length >= MAX_QUOTA_GROUPS) break
   }
   return { planType, windows }

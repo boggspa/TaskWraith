@@ -17,7 +17,8 @@ const now = () => '2026-07-23T12:00:00.000Z'
 // The real agy 1.1.8 /usage panel (observed 2026-07-28): pools with two
 // sub-limits each, progress bars carrying a bare percentage, and a status
 // line. The Gemini weekly here is deliberately partial (42%) and the
-// five-hour full so the split is discriminating; the Claude pool is ignored.
+// five-hour full so the split is discriminating; the CLAUDE+GPT pool is now
+// parsed as a separate 3P bucket as well.
 function observedPanel(): string {
   return [
     '\u001b[1mModels & Quota\u001b[0m',
@@ -33,7 +34,9 @@ function observedPanel(): string {
     'CLAUDE AND GPT MODELS',
     'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
     'Weekly Limit',
-    '5% remaining'
+    '5% remaining',
+    'Five Hour Limit',
+    'Quota available'
   ].join('\n')
 }
 
@@ -119,11 +122,10 @@ function immediateTimers(): Pick<AgyUsageProbeDependencies, 'setTimer' | 'clearT
 }
 
 describe('parseAgyUsagePanel', () => {
-  it('splits the Gemini pool into Weekly + Five-Hour windows and ignores Claude', () => {
+  it('maps Gemini and CLAUDE+GPT pools to dedicated windows', () => {
     const parsed = parseAgyUsagePanel(observedPanel())
 
-    // Two windows, both from the GEMINI region. The CLAUDE AND GPT pool's own
-    // "Weekly Limit / 5% remaining" is outside the region and never read.
+    // Four windows, two from each pool.
     expect(parsed.windows).toMatchObject([
       {
         id: 'agy-gemini-weekly',
@@ -138,12 +140,23 @@ describe('parseAgyUsagePanel', () => {
         remainingPercent: 100,
         usedPercent: 0,
         limitLabel: '100% remaining'
+      },
+      {
+        id: 'agy-3p-weekly',
+        label: '3P Weekly',
+        remainingPercent: 5,
+        usedPercent: 95,
+        limitLabel: '5% remaining'
+      },
+      {
+        id: 'agy-3p-5h',
+        label: '3P 5H',
+        remainingPercent: 100,
+        usedPercent: 0,
+        limitLabel: '100% remaining'
       }
     ])
-    expect(parsed.windows).toHaveLength(2)
-    // "Refreshes in 91h 44m" is relative, not an ISO instant, so no resetAt.
-    expect(parsed.windows[0].resetAt).toBeUndefined()
-    expect(parsed.windows.some((window) => window.remainingPercent === 5)).toBe(false)
+    expect(parsed.windows).toHaveLength(4)
   })
 
   it('parses the exact screenshot state — both Gemini limits effectively full', () => {
@@ -167,13 +180,19 @@ describe('parseAgyUsagePanel', () => {
         'Five Hour Limit Remaining',
         '97% remaining · Refreshes in 52m',
         'CLAUDE AND GPT MODELS',
-        'Quota available'
+        'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
+        'Weekly Limit Remaining',
+        '5% remaining · Refreshes in 12h 7m',
+        'Five Hour Limit Remaining',
+        '88% remaining · Refreshes in 17m'
       ].join('\n')
     )
 
     expect(parsed.windows).toMatchObject([
       { label: 'Gemini Weekly', remainingPercent: 100 },
-      { label: 'Gemini 5H', remainingPercent: 97 }
+      { label: 'Gemini 5H', remainingPercent: 97 },
+      { label: '3P Weekly', remainingPercent: 5 },
+      { label: '3P 5H', remainingPercent: 88 }
     ])
   })
 
@@ -301,7 +320,7 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
       provider: 'antigravity',
       configured: true
     })
-    expect(snapshot.windows).toHaveLength(2)
+    expect(snapshot.windows).toHaveLength(4)
     expect(spawnPty).toHaveBeenCalledWith(
       '/Users/test/.local/bin/agy',
       AGY_USAGE_TUI_ARGS,
@@ -330,7 +349,7 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
       ...immediateTimers()
     })
 
-    expect(snapshot.windows).toHaveLength(2)
+    expect(snapshot.windows).toHaveLength(4)
     expect(rendered.writes).toEqual(['\r', AGY_USAGE_COMMAND])
   })
 

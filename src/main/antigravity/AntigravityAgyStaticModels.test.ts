@@ -9,30 +9,32 @@ import { parseAgyModels } from './AntigravityCli'
 import { isAntigravityGeminiApiModelCandidate } from './AntigravityCombinedModeDispatch'
 
 describe('antigravityAgyStaticModels', () => {
-  it('offers the Gemini families and refuses resold first-party models', () => {
+  it('offers Gemini and third-party families now that CLAUDE/GPT fallback IDs are supported', () => {
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.7-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.6-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.1-pro-low')
-    // claude-*/gpt-oss-* exist in agy's catalogue but are never offered:
-    // dispatching first-party models resold through the ban-risk lane
-    // compounds the ToS exposure (the Pi anti-circumvention doctrine).
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('claude-sonnet-4-6')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('claude-opus-4-6-thinking')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('gpt-oss-120b-medium')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-opus-4-6')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-opus-4-8')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-sonnet-4-5')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gpt-oss-120b-medium')
     expect(antigravityAgyStaticModels().length).toBe(ANTIGRAVITY_AGY_STATIC_MODEL_IDS.length)
   })
 
-  it('filters resold first-party ids out of any model list', () => {
-    expect(isResoldFirstPartyAgyModelId('claude-sonnet-4-6')).toBe(true)
-    expect(isResoldFirstPartyAgyModelId('claude-opus-4-6-thinking')).toBe(true)
-    expect(isResoldFirstPartyAgyModelId('gpt-oss-120b-medium')).toBe(true)
+  it('does not filter out any usable model id from fallback offerability by name', () => {
+    expect(isResoldFirstPartyAgyModelId('claude-sonnet-4-6')).toBe(false)
+    expect(isResoldFirstPartyAgyModelId('claude-opus-4-6-thinking')).toBe(false)
+    expect(isResoldFirstPartyAgyModelId('gpt-oss-120b-medium')).toBe(false)
     expect(isResoldFirstPartyAgyModelId('gemini-3.7-flash-high')).toBe(false)
     const filtered = offerableAgyModels([
       { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
       { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
       { id: 'gpt-oss-120b-medium', label: 'gpt-oss-120b-medium' }
     ])
-    expect(filtered.map((model) => model.id)).toEqual(['gemini-3.7-flash-high'])
+    expect(filtered.map((model) => model.id)).toEqual([
+      'gemini-3.7-flash-high',
+      'claude-sonnet-4-6',
+      'gpt-oss-120b-medium'
+    ])
   })
 
   it('uses each exact wire id as the deterministic fallback label', () => {

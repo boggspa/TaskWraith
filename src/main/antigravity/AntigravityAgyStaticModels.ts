@@ -42,19 +42,24 @@ const STATIC_AGY_MODEL_IDS: readonly string[] = [
   'gemini-3.5-flash-medium',
   'gemini-3.5-flash-low',
   'gemini-3.1-pro-high',
-  'gemini-3.1-pro-low'
-  // claude-* and gpt-oss-* are in agy's catalogue but deliberately NOT
-  // offered (2026-07-28): dispatching first-party models resold through the
-  // ban-risk lane compounds the ToS exposure. Mirrors the Pi
-  // anti-circumvention wall's "resold first-party models" refusal —
-  // `isResoldFirstPartyAgyModelId` below also filters them out of LIVE and
-  // CACHED discovery, so a future agy catalogue can't reintroduce them.
+  'gemini-3.1-pro-low',
+  // The CLI availability panel includes a mixed Claude/GPT pool; this floor
+  // keeps the picker and CLI fallback usable when discovery is offline.
+  'claude-opus-4-6',
+  'claude-opus-4-8',
+  'claude-sonnet-4-5',
+  'gpt-oss-120b-medium'
 ]
 
-/** First-party families resold through agy — never offered, in any source. */
+/**
+ * Keep a narrow historical escape hatch: all model ids that pass through
+ * `agy models` are now treated as offerable unless they are malformed.
+ * `offerableAgyModels` remains the source-of-truth gate for this lane so any
+ * future model-policy adjustments stay centralized here.
+ */
 export function isResoldFirstPartyAgyModelId(modelId: string): boolean {
-  const id = modelId.trim().toLowerCase()
-  return id.startsWith('claude-') || id.startsWith('gpt-')
+  const trimmed = modelId.trim()
+  return trimmed.length === 0
 }
 
 /** The one gate every agy model list must pass (live, cached, and floor). */
