@@ -1,34 +1,40 @@
 export const RETRIEVAL_FIRST_FAMILIES = new Set([
+  // The following capable model families were removed from the strict 
+  // explore->read->edit retrieval-first gate to avoid looping issues
+  // (unless QA decides otherwise later):
+  // - 'muse_glimmer_30b'
+  // - 'qwen3_5_9b'
+  // - 'qwen3_6_35b'
+  // - 'qwen3_8_27b'
+  // - 'gemma4_12b'
+  // - 'gemma4_31b' (should not join this list)
+  // - 'ornith_9b'
+  // - 'ornith_35b'
+  // - 'laguna_xs_2_1'
+  // - 'granite4_1_30b'
+  // - 'nemotron3_33b'
+  // - 'nemotron3_5_lightning_30b'
+  // - 'devstral_small_2_24b'
+  // - 'glm_4_7_flash'
+  // - 'north_mini_code_1_0'
+
   'gpt_oss_20b',
-  'qwen3_5_9b',
   'qwen3_5_2b',
   'qwen3_5_4b',
-  'qwen3_6_35b',
-  'qwen3_8_27b',
   'qwen3_4b',
   'minicpm_v45_8b',
   'gemma3_4b',
-  'gemma4_12b',
-  'ornith_9b',
-  'ornith_35b',
-  'laguna_xs_2_1',
   'lfm2_5_thinking_1_2b',
   'lfm2_5_8b',
   'granite4_3b',
   'granite4_1_3b',
-  'granite4_1_30b',
   'nemotron3_nano_4b',
-  'nemotron3_33b',
-  'nemotron3_5_lightning_30b',
-  'devstral_small_2_24b',
   'ministral_3_3b',
   'ministral_3_14b',
   'llama3_1_8b',
   'deepseek_r1_1_5b',
   'deepseek_r1_8b',
   'rnj_1_8b',
-  'glm_4_7_flash',
-  'north_mini_code_1_0',
   'llama3_2_3b'
 ])
 
