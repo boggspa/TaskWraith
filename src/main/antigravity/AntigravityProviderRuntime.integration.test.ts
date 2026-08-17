@@ -62,7 +62,9 @@ describe('AntiGravity S3 runtime integration', () => {
 
     // The binary comes from the prepared launch, never re-resolved here.
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
-    expect(probe.text(agy)).not.toMatch(/\.(push|unshift)\(\s*['"]--dangerously-skip-permissions['"]\s*\)/)
+    expect(probe.text(agy)).not.toMatch(
+      /\.(push|unshift)\(\s*['"]--dangerously-skip-permissions['"]\s*\)/
+    )
   })
 
   it('lets a live hook arbitrate the write lease after an accept-edits launch', () => {
@@ -177,7 +179,8 @@ describe('AntiGravity S3 runtime integration', () => {
     const source = probe.text(agy)
 
     expect(source).toContain('hookOverlay = undefined')
-    const stripStatement = "launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')"
+    const stripStatement =
+      "launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')"
     expect(source).toContain(stripStatement)
 
     // Ensure the strip happens in the failure recovery path where the overlay is unset

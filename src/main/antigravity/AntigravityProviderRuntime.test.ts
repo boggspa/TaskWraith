@@ -421,11 +421,35 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.args).not.toContain('--dangerously-skip-permissions')
   })
 
-  it('auto-approves native confirmations only for a signed non-read-only Full Access posture', async () => {
+  it('skips agy confirmations only when TaskWraith holds the per-tool veto', async () => {
+    // The discriminator is the LIVE hook bridge, not the preset id. agy's own
+    // confirmation layer is fatal under headless print mode, so skipping it is
+    // safe exactly when TaskWraith's PreToolUse veto is in the path to refuse
+    // in its place — the sandbox stays on either way.
+    //
+    // This replaced a `presetId === 'full_access'` gate that ensemble seats
+    // could never satisfy: EnsembleRosterPresetContract normalises full_access
+    // down to workspace_write, so every fan-out lane kept agy's confirmation
+    // layer and died in headless auto-deny.
     const deps = {
       resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'path' as const })
     }
-    const fullAccess = await prepareAntigravityProviderLaunch(
+    const bridged = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Run the migration.',
+        approvalMode: 'default',
+        effectivePermissions: { presetId: 'workspace_write', readOnly: false },
+        perToolApprovalBridge: true
+      },
+      deps
+    )
+    // workspace_write, NOT full_access — this is the ensemble-seat case the
+    // old gate excluded, and it is the whole point of the change.
+    expect(bridged.args).toContain('--dangerously-skip-permissions')
+    expect(bridged.args).toContain('--sandbox')
+
+    const noBridge = await prepareAntigravityProviderLaunch(
       {
         settings: OPTED_IN,
         prompt: 'Run the migration.',
@@ -435,23 +459,21 @@ describe('prepareAntigravityProviderLaunch', () => {
       },
       deps
     )
-    // Full Access already pregrants every native capability, so agy's own
-    // confirmation layer is skipped — while the sandbox and TaskWraith's
-    // hook-bridge holds (remote egress, rm -r) remain in force.
-    expect(fullAccess.args).toContain('--dangerously-skip-permissions')
-    expect(fullAccess.args).toContain('--sandbox')
-    expect(fullAccess.mode).toBe('accept-edits')
+    // No veto in the path ⇒ never skip agy's own layer, even at Full Access.
+    // An isolated worktree bounds file damage but does not arbitrate the call.
+    expect(noBridge.args).not.toContain('--dangerously-skip-permissions')
 
-    const readOnlyFullAccess = await prepareAntigravityProviderLaunch(
+    const readOnly = await prepareAntigravityProviderLaunch(
       {
         settings: OPTED_IN,
         prompt: 'Inspect only.',
         approvalMode: 'default',
-        effectivePermissions: { presetId: 'full_access', readOnly: true }
+        effectivePermissions: { presetId: 'full_access', readOnly: true },
+        perToolApprovalBridge: true
       },
       deps
     )
-    expect(readOnlyFullAccess.args).not.toContain('--dangerously-skip-permissions')
+    expect(readOnly.args).not.toContain('--dangerously-skip-permissions')
 
     const deniedServices = await prepareAntigravityProviderLaunch(
       {
@@ -460,23 +482,11 @@ describe('prepareAntigravityProviderLaunch', () => {
         approvalMode: 'default',
         effectivePermissions: { presetId: 'full_access', readOnly: false },
         agenticServices: { shellCommands: 'deny', fileChanges: 'allow' },
-        isolatedMutationWorkspace: true
+        perToolApprovalBridge: true
       },
       deps
     )
     expect(deniedServices.args).not.toContain('--dangerously-skip-permissions')
-
-    const workspaceWrite = await prepareAntigravityProviderLaunch(
-      {
-        settings: OPTED_IN,
-        prompt: 'Run the migration.',
-        approvalMode: 'default',
-        effectivePermissions: { presetId: 'workspace_write', readOnly: false },
-        isolatedMutationWorkspace: true
-      },
-      deps
-    )
-    expect(workspaceWrite.args).not.toContain('--dangerously-skip-permissions')
   })
 
   it('keeps a write-approved shared checkout in plan mode without an exact bridge', async () => {

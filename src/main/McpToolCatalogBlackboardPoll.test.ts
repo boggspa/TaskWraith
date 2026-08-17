@@ -39,7 +39,8 @@ describe('Blackboard quota and poll MCP schema', () => {
       type: 'integer',
       minimum: 1,
       maximum: 10_080,
-      description: 'Optional self-delete delay in whole minutes. Omit for no time expiry.'
+      description:
+        'Optional self-delete delay in whole minutes. Defaults to 1440 (24 hours) if omitted. Pass null for no time expiry.'
     })
     expect(tool('blackboard_post').description).toMatch(/ensemble_poll_response/i)
     expect(tool('blackboard_post').description).toMatch(/replaced, retired, or expired/i)
