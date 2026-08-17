@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-18'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-19'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.',
+    body: 'AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.',
     dismissible: true,
     groups: [
       {
@@ -194,6 +194,55 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           {
             name: 'Mistral 3.5 Medium',
             blurb: 'Configurable Effort tuning now available, balancing latency and reasoning depth.'
+          },
+          {
+            name: 'Mistral Large 3',
+            blurb: 'A flagship-sized 262K context model tuned for deeper planning and coding tasks.'
+          },
+          {
+            name: 'Mistral Medium (Latest)',
+            blurb: 'Current Mistral Medium flagship with stronger context and balanced latency.'
+          },
+          {
+            name: 'Mistral Medium 3.1',
+            blurb: 'Mistral Medium 3.1 extends the medium family with a refreshed default profile.'
+          },
+          {
+            name: 'Mistral Medium 3',
+            blurb: 'Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package.'
+          },
+          {
+            name: 'Mistral Small 4',
+            blurb: 'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
+          },
+          {
+            name: 'Devstral 2',
+            blurb: 'A faster default path with broader instruction coverage and lower per-token cost.'
+          },
+          {
+            name: 'Leanstral 1.5 (Labs)',
+            blurb: 'Leanstral 1.5 (Labs) is a research-focused experimental reasoning update.'
+          },
+          {
+            name: 'GLM-5.2 (via Mistral)',
+            blurb: 'GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts.'
+          },
+          {
+            name: 'Codestral (Aug 2025)',
+            blurb:
+              'Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning.'
+          },
+          {
+            name: 'Ministral 3 (14B)',
+            blurb: 'Ministral 3 (14B) balances throughput and coding depth on the same family stack.'
+          },
+          {
+            name: 'Ministral 3 (8B)',
+            blurb: 'Ministral 3 (8B) keeps the same family strengths in a smaller profile.'
+          },
+          {
+            name: 'Ministral 3 (3B)',
+            blurb: 'Ministral 3 (3B) is the compact variant for lighter tasks and lower cost.'
           }
         ]
       },
@@ -203,6 +252,12 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         provider: 'ollama',
         label: 'Ollama',
         models: [
+          {
+            name: 'Gemma 4 (31B-MLX)',
+            blurb:
+              'Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.',
+            accentProvider: 'google'
+          },
           {
             name: 'Qwen 3.8 (27B-MLX)',
             blurb:

@@ -2225,7 +2225,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-18","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-19","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
@@ -2240,9 +2240,22 @@ public final class RemoteSessionModel: ObservableObject {
             ]},
             {"provider":"mistral","label":"Mistral","models":[
               {"name":"Devstral Small","blurb":"New configurable Effort options for a faster, lower-cost default or deeper reasoning."},
-              {"name":"Mistral 3.5 Medium","blurb":"Configurable Effort tuning now available, balancing latency and reasoning depth."}
+              {"name":"Mistral 3.5 Medium","blurb":"Configurable Effort tuning now available, balancing latency and reasoning depth."},
+              {"name":"Mistral Large 3","blurb":"A flagship-sized 262K context model tuned for deeper planning and coding tasks."},
+              {"name":"Mistral Medium (Latest)","blurb":"Current Mistral Medium flagship with stronger context and balanced latency."},
+              {"name":"Mistral Medium 3.1","blurb":"Mistral Medium 3.1 extends the medium family with a refreshed default profile."},
+              {"name":"Mistral Medium 3","blurb":"Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package."},
+              {"name":"Mistral Small 4","blurb":"Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient."},
+              {"name":"Devstral 2","blurb":"A faster default path with broader instruction coverage and lower per-token cost."},
+              {"name":"Leanstral 1.5 (Labs)","blurb":"Leanstral 1.5 (Labs) is a research-focused experimental reasoning update."},
+              {"name":"GLM-5.2 (via Mistral)","blurb":"GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts."},
+              {"name":"Codestral (Aug 2025)","blurb":"Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning."},
+              {"name":"Ministral 3 (14B)","blurb":"Ministral 3 (14B) balances throughput and coding depth on the same family stack."},
+              {"name":"Ministral 3 (8B)","blurb":"Ministral 3 (8B) keeps the same family strengths in a smaller profile."},
+              {"name":"Ministral 3 (3B)","blurb":"Ministral 3 (3B) is the compact variant for lighter tasks and lower cost."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
+              {"name":"Gemma 4 (31B-MLX)","blurb":"Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.","accentProvider":"google"},
               {"name":"Qwen 3.8 (27B-MLX)","blurb":"Alibaba's 27B MLX multimodal agent with tools, thinking, and 262K context (Ollama 0.32.12+).","accentProvider":"qwen"},
               {"name":"Muse Glimmer (30B-MLX)","blurb":"Meta's 30B multimodal agent model with vision, tools, thinking, and failure recovery (131K).","accentProvider":"meta"},
               {"name":"Nemotron 3.5 Lightning (30B-MLX)","blurb":"NVIDIA's 30B-A3B always-on agent model with tools, thinking, and a 262K context window.","accentProvider":"nvidia"},

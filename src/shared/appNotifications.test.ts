@@ -191,13 +191,26 @@ describe('notification registry', () => {
     const mistral = groups.find((g) => g.provider === 'mistral')
     expect(mistral?.models.map((m) => m.name)).toEqual([
       'Devstral Small',
-      'Mistral 3.5 Medium'
+      'Mistral 3.5 Medium',
+      'Mistral Large 3',
+      'Mistral Medium (Latest)',
+      'Mistral Medium 3.1',
+      'Mistral Medium 3',
+      'Mistral Small 4',
+      'Devstral 2',
+      'Leanstral 1.5 (Labs)',
+      'GLM-5.2 (via Mistral)',
+      'Codestral (Aug 2025)',
+      'Ministral 3 (14B)',
+      'Ministral 3 (8B)',
+      'Ministral 3 (3B)'
     ])
     expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
 
     const ollama = groups.find((g) => g.provider === 'ollama')
     // Newest curated local tags — each spoofs its upstream brand hue.
     expect(ollama?.models.map((m) => m.name)).toEqual([
+      'Gemma 4 (31B-MLX)',
       'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
       'Nemotron 3.5 Lightning (30B-MLX)',
@@ -206,6 +219,7 @@ describe('notification registry', () => {
       'Rnj-1'
     ])
     expect(ollama?.models.map((m) => m.accentProvider)).toEqual([
+      'google',
       'qwen',
       'meta',
       'nvidia',
