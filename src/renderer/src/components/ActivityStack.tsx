@@ -280,9 +280,7 @@ function wrapThinkingTraceActions(
     onThumbsDown: current.onThumbsDown
       ? (messageId) => inputRef.current?.onThumbsDown?.(messageId)
       : undefined,
-    onDelete: current.onDelete
-      ? (messageId) => inputRef.current?.onDelete?.(messageId)
-      : undefined,
+    onDelete: current.onDelete ? (messageId) => inputRef.current?.onDelete?.(messageId) : undefined,
     onOpenSideChat: current.onOpenSideChat
       ? (messageId, content) => inputRef.current?.onOpenSideChat?.(messageId, content)
       : undefined
@@ -499,10 +497,7 @@ function hashProgressBody(value: string): string {
 }
 
 /** Cache key for cleanProgressText — length + FNV + ends, not the full body. */
-export function cleanProgressTextSignature(
-  value: string,
-  truncate: boolean
-): string {
+export function cleanProgressTextSignature(value: string, truncate: boolean): string {
   return `${truncate ? 't' : 'f'}|${value.length}|${hashProgressBody(value)}|${value.slice(0, 48)}|${value.slice(-48)}`
 }
 
@@ -692,13 +687,47 @@ function buildSanitizedDetail(
       })
     }
 
-    if (toolName === 'replace') {
-      const oldString = typeof parameters.old_string === 'string' ? parameters.old_string : ''
-      const newString = typeof parameters.new_string === 'string' ? parameters.new_string : ''
-      if (oldString)
-        previews.push({ label: 'Removed', content: truncateText(oldString), tone: 'deletion' })
-      if (newString)
-        previews.push({ label: 'Added', content: truncateText(newString), tone: 'addition' })
+    if (
+      toolName === 'replace' ||
+      toolName === 'edit' ||
+      toolName === 'edit_file' ||
+      toolName === 'str_replace' ||
+      toolName === 'str_replace_editor' ||
+      toolName === 'strreplaceeditor'
+    ) {
+      const edits = parameters.edits
+      if (Array.isArray(edits) && edits.length > 0) {
+        previews.push({
+          label: 'Multi-edit',
+          content: `${edits.length} replacement block(s) applied`,
+          tone: 'neutral'
+        })
+      } else {
+        const oldString =
+          (typeof parameters.old_string === 'string' && parameters.old_string) ||
+          (typeof parameters.oldString === 'string' && parameters.oldString) ||
+          (typeof parameters.old_text === 'string' && parameters.old_text) ||
+          (typeof parameters.oldText === 'string' && parameters.oldText) ||
+          (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
+          (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
+          (typeof parameters.target_content === 'string' && parameters.target_content) ||
+          (typeof parameters.old === 'string' && parameters.old) ||
+          ''
+        const newString =
+          (typeof parameters.new_string === 'string' && parameters.new_string) ||
+          (typeof parameters.newString === 'string' && parameters.newString) ||
+          (typeof parameters.new_text === 'string' && parameters.new_text) ||
+          (typeof parameters.newText === 'string' && parameters.newText) ||
+          (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
+          (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
+          (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
+          (typeof parameters.new === 'string' && parameters.new) ||
+          ''
+        if (oldString)
+          previews.push({ label: 'Removed', content: truncateText(oldString), tone: 'deletion' })
+        if (newString)
+          previews.push({ label: 'Added', content: truncateText(newString), tone: 'addition' })
+      }
     } else if (content) {
       previews.push({ label: 'Added content', content: truncateText(content), tone: 'addition' })
     }
@@ -1125,9 +1154,7 @@ export function liveThinkingTraceRenderBody(
   // doesn't open mid-word. A bare newline (the most common trace break) counts
   // even without trailing whitespace.
   const breakMatch = /\n|[.!?]\s/.exec(tail.slice(0, 400))
-  const text = breakMatch
-    ? tail.slice(breakMatch.index + breakMatch[0].length).trimStart()
-    : tail
+  const text = breakMatch ? tail.slice(breakMatch.index + breakMatch[0].length).trimStart() : tail
   return { text: `\u2026 ${text}`, trimmed: true }
 }
 
@@ -1488,14 +1515,7 @@ function getBaseName(path: string): string {
 }
 
 /** Compact-group summary buckets — mirror the settled-stack one-liner voice. */
-type CompactLabelFamily =
-  | 'image-view'
-  | 'read'
-  | 'write'
-  | 'search'
-  | 'shell'
-  | 'task'
-  | 'other'
+type CompactLabelFamily = 'image-view' | 'read' | 'write' | 'search' | 'shell' | 'task' | 'other'
 
 const COMPACT_LABEL_MAX_PARTS = 4
 
@@ -1621,9 +1641,9 @@ function truncateTargetChipLabel(value: string): string {
   return `${collapsed.slice(0, 45)}...`
 }
 
-function coalescibleActivityTarget(activity: ToolActivity):
-  | { key: string; label: string; kind: CompactGroupTargetKind; filePath?: string }
-  | undefined {
+function coalescibleActivityTarget(
+  activity: ToolActivity
+): { key: string; label: string; kind: CompactGroupTargetKind; filePath?: string } | undefined {
   const actor = activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? ''
   if (activity.category === 'read' && !isSearchActivity(activity)) {
     const filePath = safeFileTargetForCoalescing(activity)
@@ -2131,11 +2151,7 @@ function ActivityProgressNote({
           onCopy={() => thinkingTraceActions.copy(traceActionCopyId, traceActionContent)}
           onAddToPrompt={
             thinkingTraceActions.onAddToPrompt
-              ? () =>
-                  thinkingTraceActions.onAddToPrompt?.(
-                    actionMessageId,
-                    traceActionContent
-                  )
+              ? () => thinkingTraceActions.onAddToPrompt?.(actionMessageId, traceActionContent)
               : undefined
           }
           onTogglePin={
@@ -2977,9 +2993,7 @@ export function ActivityStack({
   thinkingTraceActions
 }: ActivityStackProps) {
   const activities = useHydratedToolActivities(compactActivities)
-  const activityAccent = providerAccentVar(
-    providerHueClass || resolveProviderHueClass(provider)
-  )
+  const activityAccent = providerAccentVar(providerHueClass || resolveProviderHueClass(provider))
   const activityAccentStyle = activityAccent
     ? ({ '--accent': activityAccent } as CSSProperties)
     : undefined
@@ -2988,9 +3002,7 @@ export function ActivityStack({
   // could still be in flight; rows receive a boolean `isShimmerStale`
   // so memo(ActivityRow) is not busted by a changing `now` number.
   const shimmerNow = useShimmerStaleTick(activities)
-  const segmentChildrenCacheRef = useRef(
-    new Map<string, { key: string; children: ReactNode }>()
-  )
+  const segmentChildrenCacheRef = useRef(new Map<string, { key: string; children: ReactNode }>())
   const toggleExpandImplRef = useRef<(id: string, modKey: boolean) => void>(() => {})
   const onToggleExpandByIdRef = useRef(new Map<string, (modKey: boolean) => void>())
   const getOnToggleExpand = useCallback((id: string) => {
@@ -3135,10 +3147,7 @@ export function ActivityStack({
   // segment identity while capping rendered items.
   // Sub-agent spawn anchors segment as kind 'agent' so each spawn wave gets
   // its own viewport instead of being buried inside a tool-call viewport.
-  const agentAnchorIds = useMemo(
-    () => new Set(threadByParentId.keys()),
-    [threadByParentId]
-  )
+  const agentAnchorIds = useMemo(() => new Set(threadByParentId.keys()), [threadByParentId])
   const fullTimelineSegments = useMemo(
     () => (liveViewportEnabled ? buildTimelineSegments(timelineItems, agentAnchorIds) : []),
     [liveViewportEnabled, timelineItems, agentAnchorIds]
@@ -3215,11 +3224,7 @@ export function ActivityStack({
       (isClaudeWorkflowToolName(item.activity.toolName) && workflowProvider === 'claude')
     ) {
       return (
-        <WorkflowCard
-          key={item.activity.id}
-          activity={item.activity}
-          provider={workflowProvider}
-        />
+        <WorkflowCard key={item.activity.id} activity={item.activity} provider={workflowProvider} />
       )
     }
     // Codex native-review runs get a lightweight status card in the same slot,
@@ -3556,11 +3561,7 @@ function ChildAgentThreadCard({
       setExpanded(true)
       return
     }
-    if (
-      thread.state === 'completed' ||
-      thread.state === 'failed' ||
-      thread.state === 'cancelled'
-    ) {
+    if (thread.state === 'completed' || thread.state === 'failed' || thread.state === 'cancelled') {
       setExpanded(false)
     }
   }, [thread.state])
@@ -3732,57 +3733,60 @@ function activityRowPropsAreEqual(prev: ActivityRowProps, next: ActivityRowProps
  * Thinking / progress-note path — no diff-hover hooks. Keeps shimmer CSS and
  * LiveActivityViewport chrome intact while skipping tool-row rebuild cost.
  */
-const ThinkingTraceActivityRow = memo(function ThinkingTraceActivityRow({
-  activity,
-  provider,
-  thinkingTraceActions,
-  liveThinkingTrim = false,
-  progressNote,
-  childThread,
-  childActivities,
-  workspacePath,
-  shimmerNow
-}: {
-  activity: ToolActivity
-  provider?: ProviderId
-  thinkingTraceActions?: ThinkingTraceActionsConfig
-  liveThinkingTrim?: boolean
-  progressNote: { title: string; body?: string }
-  childThread?: ChildAgentThread
-  childActivities?: ToolActivity[]
-  workspacePath?: string
-  shimmerNow?: number
-}) {
-  return (
-    <>
-      <ActivityProgressNote
-        activity={activity}
-        provider={provider}
-        thinkingTraceActions={thinkingTraceActions}
-        liveThinkingTrim={liveThinkingTrim}
-        note={progressNote}
-      />
-      {childThread && (
-        <ChildAgentThreadCard
-          thread={childThread}
-          activities={childActivities || []}
-          workspacePath={workspacePath}
-          shimmerNow={shimmerNow}
+const ThinkingTraceActivityRow = memo(
+  function ThinkingTraceActivityRow({
+    activity,
+    provider,
+    thinkingTraceActions,
+    liveThinkingTrim = false,
+    progressNote,
+    childThread,
+    childActivities,
+    workspacePath,
+    shimmerNow
+  }: {
+    activity: ToolActivity
+    provider?: ProviderId
+    thinkingTraceActions?: ThinkingTraceActionsConfig
+    liveThinkingTrim?: boolean
+    progressNote: { title: string; body?: string }
+    childThread?: ChildAgentThread
+    childActivities?: ToolActivity[]
+    workspacePath?: string
+    shimmerNow?: number
+  }) {
+    return (
+      <>
+        <ActivityProgressNote
+          activity={activity}
+          provider={provider}
+          thinkingTraceActions={thinkingTraceActions}
+          liveThinkingTrim={liveThinkingTrim}
+          note={progressNote}
         />
-      )}
-    </>
-  )
-}, (prev, next) => {
-  if (prev.liveThinkingTrim !== next.liveThinkingTrim) return false
-  if (prev.thinkingTraceActions !== next.thinkingTraceActions) return false
-  if (prev.provider !== next.provider) return false
-  if (prev.progressNote !== next.progressNote) return false
-  if (prev.childThread !== next.childThread) return false
-  if (prev.childActivities !== next.childActivities) return false
-  if (prev.workspacePath !== next.workspacePath) return false
-  if (prev.activity === next.activity) return true
-  return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
-})
+        {childThread && (
+          <ChildAgentThreadCard
+            thread={childThread}
+            activities={childActivities || []}
+            workspacePath={workspacePath}
+            shimmerNow={shimmerNow}
+          />
+        )}
+      </>
+    )
+  },
+  (prev, next) => {
+    if (prev.liveThinkingTrim !== next.liveThinkingTrim) return false
+    if (prev.thinkingTraceActions !== next.thinkingTraceActions) return false
+    if (prev.provider !== next.provider) return false
+    if (prev.progressNote !== next.progressNote) return false
+    if (prev.childThread !== next.childThread) return false
+    if (prev.childActivities !== next.childActivities) return false
+    if (prev.workspacePath !== next.workspacePath) return false
+    if (prev.activity === next.activity) return true
+    return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
+  }
+)
 
 function ActivityRow(props: ActivityRowProps) {
   const {
