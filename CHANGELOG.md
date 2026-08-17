@@ -8,8 +8,52 @@ to answer.
 
 ## 1.9.6 - Unreleased
 
+### TaskWraith Studio
+
+- **A native media workspace.** Studio is a macOS companion window that holds
+  every viewer in one place instead of scattering them: a semantic viewer deck,
+  a committed timeline you can play, and review and grading routes reachable
+  from the product rather than from a test harness. Two viewer routes share a
+  single playback authority and one media decoder, so switching between them
+  keeps position instead of reloading.
+- **A transcript band you can work in.** Speech is recognised into a band under
+  the timeline, reachable by keyboard as well as pointer, and trimming is
+  proposal-first — Studio shows you the edit it intends to make and waits,
+  rather than cutting and asking you to undo.
+- **Grading preview with an honest bypass.** Current/Proposed renders two real
+  pictures split on the same frame, with a true bypass rather than a re-render
+  of the same path, and an operator LUT control. External LUTs are bounded at
+  the host boundary.
+- **Diagnostics that can fail.** Route health and sync state are exposed
+  directly, the HUD timecode is read from the same transport snapshot the
+  renderer draws from, and the A/V sync meter is capable of reporting a
+  failure instead of always reading green.
+- **Audio that follows the picture.** Sound is addressed by timeline position
+  rather than elapsed wall clock, switches correctly at cuts, and a clip that
+  is no longer on screen falls silent instead of playing on underneath.
+
 ### Provider setup and run control
 
+- **Ollama Cloud.** TaskWraith discovers the cloud models on your Ollama
+  account and runs keyed models directly. The API key is held in the operating
+  system's secure storage, and if that is unavailable TaskWraith declines to
+  save the key rather than falling back to plain text. Cloud models are
+  distinguished from local ones in the pickers, named readably, and branded by
+  the maker that actually built them. Qwen 3.8 (27B-MLX) joins the local
+  catalogue.
+- **A current AntiGravity catalogue.** Dead 2.5 and 2.0 rows are retired, the
+  current floor is priced, non-text output modalities are kept out of the
+  picker, and a cached catalogue is retained so a launch without a Host
+  baseline no longer empties the model list. Native `agy` seats gain a
+  compaction lifecycle, streamed planner traces, exact command trails, and
+  recovery when the native process times out or exits without a final.
+- **More Mistral through Pi.** The Mistral API catalogue is expanded with
+  additional deployments, and a keyed catalogue now hydrates eagerly rather
+  than on first use.
+- **Truthful quota and overage meters.** Provider quotas are collected
+  in-house, manual refreshes are honoured, DeepSeek overage meters and
+  depletion-based credit budgets survive a refresh, and expanded meters keep a
+  stable order.
 - **Grok 4.6 in Grok and Cursor.** Direct Grok now follows the CLI's advertised
   4.6 default with Low through Extra High reasoning, while Cursor exposes its
   exact 4.6 Standard/Fast variants behind one provider-facing row. Grok 4.5 is
@@ -21,7 +65,59 @@ to answer.
 
 ### Permissions and approvals
 
+- **Consequential web actions are confirmed before dispatch.** A canvas action
+  that changes something outside TaskWraith now asks before it runs, rather
+  than after the fact.
+- **Read-only inspection is recognised as read-only.** A compound shell
+  pipeline that only inspects — a grep piped into a counter, for instance — is
+  proven read-only and allowed under an inspection grant instead of being
+  escalated as a write. Approval prompts also state the effective Ensemble
+  posture rather than the seat's nominal one, and approval and question
+  timeouts are doubled so a prompt does not lapse while you are reading it.
 - **Auto-approvals stop elevating when a seat cannot be identified.** Ensemble auto-approvals depend on knowing which authorities are external people, because an external never receives an approval prompt. When that list cannot be read — a degraded Channels launch, or a channel whose recovery has not completed — TaskWraith now asks you instead of approving on an authority it could not verify. You may see an approval prompt where a run previously proceeded unattended.
+
+### Ensembles and fan-out
+
+- **Group mentions.** Mention a group and the prompt fans out to every seat in
+  it. Groups appear in the mention menu alongside individual seats, and a
+  neutral group tag routes without implying one seat owns the reply.
+- **Bounded final synthesis.** A round can close with a synthesis pass that is
+  bounded rather than open-ended, with its own lifecycle rather than an extra
+  turn that looks indistinguishable from a participant's.
+- **Summaries addressed to you.** A participant's summary is preserved and
+  delivered to User as a side message, with a defined audience, instead of
+  being folded into the round and lost.
+- **Prompt-replay receipts.** Replayed prompts persist a receipt and a cost
+  summary, so a re-run is attributable and its spend is visible rather than
+  silently added to the round.
+- **Three concurrent fan-outs.** Up to three fan-out calls can now run at once.
+- **Honest between-turn status.** The gap between two seats now says what is
+  actually happening and who owns the turn, on desktop and on iPhone, instead
+  of showing an idle transcript while work is in flight.
+
+### Transcript, export, and review
+
+- **Scoped streaming exports.** Export a transcript by lane or by run rather
+  than all-or-nothing, with a round scope picker, streamed to disk instead of
+  assembled in memory. A handoff downloads as a titled `.md`.
+- **Traceable commits.** Commit hashes preview in place, and a revision review
+  sidebar loads historical commit and PR revisions for review without leaving
+  the transcript.
+
+### Performance on long threads
+
+- **Incremental persistence.** Chat saves now replay exact mutations through a
+  journal instead of rewriting the whole thread on every save, with a
+  dual-write cutover and parity checks behind it. Terminal runs compact once
+  rather than repeatedly.
+- **Transcript deltas from the producer.** The producer authors live transcript
+  operations and carries delta metadata through delivery, so the renderer
+  applies a change rather than re-deriving the thread.
+- **Tool detail on demand.** Tool detail is hydrated when you open it and
+  stored as durable artifact batches, so a thread heavy with tool calls no
+  longer pays for all of them up front.
+- **Paged history.** Unpushed commit reads and historical transcript pages are
+  bounded rather than read whole.
 
 ### Channels and collaboration
 
@@ -32,6 +128,20 @@ to answer.
 
 - **A Host you control.** TaskWraith now says plainly that Host runs only while the app is open and offers visible Stop Host / Start Host controls. An intentional stop reads “Stopped by you,” restart obtains a fresh supervised owner, failures stay visible, and nothing installs or silently respawns as a background daemon.
 - **Governed Channel administration.** Mission Control carries compact Channel/member state and routes owner revoke/close actions through Host commands and durable receipts without copying invite secrets or message history into Host.
+- **Host from the terminal.** The `tw` TUI can launch and attach to the app's
+  Host, run it without a desktop window under an explicit headless lifetime
+  policy, and answer Host approvals and questions from the terminal. A
+  windowless Host shuts down cleanly rather than leaving an orphan.
+
+### Git, missions, and provenance
+
+- **Repository capabilities are verified, not assumed.** Git actions honour
+  what the repository actually supports instead of attempting an operation the
+  checkout cannot perform.
+- **An append-only fact ledger.** Mission facts are recorded append-only, with
+  legacy surfaces shadowed into the ledger so history reads from one place.
+  Close-out metrics are receipt-backed, and metrics authored by a provider
+  rather than by TaskWraith are rejected rather than trusted.
 
 ## 1.9.5 - 2026-08-12
 
