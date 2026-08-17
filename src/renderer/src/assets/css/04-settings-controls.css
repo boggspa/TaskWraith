@@ -1484,6 +1484,18 @@
   color: var(--provider-ollama-color);
 }
 
+.settings-provider-auth-card.provider-pi {
+  color: var(--provider-pi-color);
+}
+
+.settings-provider-auth-card.provider-mistral {
+  color: var(--provider-mistral-color);
+}
+
+.settings-provider-auth-card.provider-muse {
+  color: var(--provider-muse-color);
+}
+
 .settings-provider-auth-card.provider-antigravity {
   color: var(--provider-antigravity-color);
 }
