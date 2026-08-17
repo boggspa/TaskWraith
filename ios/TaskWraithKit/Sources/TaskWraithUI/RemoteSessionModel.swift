@@ -2225,9 +2225,12 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-19","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-08-20","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"antigravity","label":"AntiGravity","models":[
-              {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
+              {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."},
+              {"name":"Sonnet 4.6","blurb":"A top-tier model with better long-form reasoning and coding context."},
+              {"name":"Opus 4.6","blurb":"A premium reasoning model tuned for nuanced instruction following."},
+              {"name":"GPT-OSS-120B","blurb":"OpenAI 120B OSS model with broad capability and strong tool use."}
             ]},
             {"provider":"grok","label":"Grok","models":[
               {"name":"Grok 4.6 Fast","blurb":"The new 500K default with Low through Extra High reasoning in Grok Build."}

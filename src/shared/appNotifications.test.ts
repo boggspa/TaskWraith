@@ -170,7 +170,12 @@ describe('notification registry', () => {
     expect(groups.map((g) => g.provider)).not.toContain('pi')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
-    expect(antigravity?.models.map((m) => m.name)).toEqual(['Gemini 3.7 Flash'])
+    expect(antigravity?.models.map((m) => m.name)).toEqual([
+      'Gemini 3.7 Flash',
+      'Sonnet 4.6',
+      'Opus 4.6',
+      'GPT-OSS-120B'
+    ])
     expect(antigravity?.models[0]?.blurb).toMatch(/Low.*Medium.*High.*official agy CLI/i)
     expect(antigravity?.models[0]?.blurb).not.toMatch(/API key|separately billed/i)
 
