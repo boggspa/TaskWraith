@@ -6,7 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## 1.9.6 - Unreleased
+## 1.9.6 - 2026-08-17
 
 ### TaskWraith Studio
 
