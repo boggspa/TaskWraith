@@ -244,6 +244,7 @@ export function GitSyncChip({
   if (!snapshot.upstream) {
     const clickable = Boolean(onOpenCommits)
     const totalCommits = snapshot.totalCommits ?? 0
+    if (totalCommits <= 0) return null
     const commitsLabel = commitLabel(totalCommits)
     const open = (): void => onOpenCommits?.()
     return (

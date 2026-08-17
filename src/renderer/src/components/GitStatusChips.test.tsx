@@ -83,6 +83,14 @@ describe('GitSyncChip', () => {
     expect(html).toContain('7')
   })
 
+  it('does not render a total count for no-upstream repos that have zero commits', () => {
+    const html = renderToStaticMarkup(
+      <GitSyncChip snapshot={snapshot({ upstream: undefined, totalCommits: 0 })} />
+    )
+
+    expect(html).toBe('')
+  })
+
   it('renders an amber branch-drift glyph and traceable count when behind upstream', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ behind: 2 })} />)
 
