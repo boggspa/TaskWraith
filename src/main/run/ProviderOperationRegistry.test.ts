@@ -3,6 +3,7 @@ import { shouldFlushPendingInterrupt } from '../CodexPendingInterrupt'
 import {
   createProviderTerminalProjectionOperation,
   createProviderTransportCloseOperation,
+  explainProviderTransportLaunchDenial,
   providerTransportAdmissionStillAuthorized,
   providerTransportLaunchStillAuthorized,
   ProviderOperationRegistry,
@@ -275,6 +276,57 @@ describe('waitForProviderOperationSettlement', () => {
       await expect(waiting).resolves.toBe(false)
     } finally {
       vi.useRealTimers()
+    }
+  })
+})
+
+describe('explainProviderTransportLaunchDenial', () => {
+  const authorized = {
+    historyBlocked: false,
+    persistenceAuthorized: true,
+    runAdmitted: true
+  }
+
+  it('returns null when the launch would be authorized', () => {
+    expect(explainProviderTransportLaunchDenial(authorized)).toBeNull()
+  })
+
+  it('names each denying limb', () => {
+    expect(explainProviderTransportLaunchDenial({ ...authorized, runAdmitted: false })).toBe(
+      'run admission denied'
+    )
+    expect(
+      explainProviderTransportLaunchDenial({
+        ...authorized,
+        setupSignal: AbortSignal.abort()
+      })
+    ).toBe('setup signal aborted')
+    expect(explainProviderTransportLaunchDenial({ ...authorized, historyBlocked: true })).toBe(
+      'history clear admission blocked'
+    )
+    expect(
+      explainProviderTransportLaunchDenial({ ...authorized, persistenceAuthorized: false })
+    ).toBe('run persistence authority denied')
+  })
+
+  it('never disagrees with the authorization decision it mirrors', () => {
+    // A diagnostic that contradicts the gate is worse than none: it would send
+    // the operator after a limb that did not actually deny. Exhaust the matrix.
+    for (const runAdmitted of [true, false]) {
+      for (const historyBlocked of [true, false]) {
+        for (const persistenceAuthorized of [true, false]) {
+          for (const aborted of [true, false]) {
+            const input = {
+              historyBlocked,
+              persistenceAuthorized,
+              runAdmitted,
+              ...(aborted ? { setupSignal: AbortSignal.abort() } : {})
+            }
+            const allowed = providerTransportLaunchStillAuthorized(input)
+            expect(explainProviderTransportLaunchDenial(input) === null).toBe(allowed)
+          }
+        }
+      }
     }
   })
 })

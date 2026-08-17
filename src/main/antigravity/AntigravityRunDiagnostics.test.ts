@@ -1,8 +1,45 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
-  isAntigravityHeadlessPermissionNoOutput
+  antigravityHeadlessPermissionReason,
+  clearAntigravityLeaseSkip,
+  isAntigravityHeadlessPermissionNoOutput,
+  noteAntigravityLeaseSkipped
 } from './AntigravityRunDiagnostics'
+
+describe('agy lease-skip attribution', () => {
+  it('keeps the agy allow-rule advice when a lease WAS installed', () => {
+    // agy refusing despite a lease is the one case where "configure the
+    // matching agy allow rule" is genuinely the right advice.
+    expect(antigravityHeadlessPermissionReason('run-no-cause')).toBe(
+      ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+    )
+    expect(antigravityHeadlessPermissionReason()).toBe(
+      ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+    )
+  })
+
+  it('names the TaskWraith-side cause when the lease was skipped', () => {
+    noteAntigravityLeaseSkipped('run-skipped', 'run admission denied')
+    const reason = antigravityHeadlessPermissionReason('run-skipped')
+    expect(reason).toContain('installed NO permission lease')
+    expect(reason).toContain('run admission denied')
+    // The operator must not be sent to agy's settings for a cause on our side.
+    expect(reason).toContain('not an agy allow-rule gap')
+    clearAntigravityLeaseSkip('run-skipped')
+    expect(antigravityHeadlessPermissionReason('run-skipped')).toBe(
+      ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+    )
+  })
+
+  it('ignores empty run ids and empty causes rather than recording noise', () => {
+    noteAntigravityLeaseSkipped('', 'run admission denied')
+    noteAntigravityLeaseSkipped('run-blank-cause', '   ')
+    expect(antigravityHeadlessPermissionReason('run-blank-cause')).toBe(
+      ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+    )
+  })
+})
 
 describe('AntiGravity native run diagnostics', () => {
   it.each(['read_file', 'write_file', 'command', 'unsandboxed'])(

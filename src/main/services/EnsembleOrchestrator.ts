@@ -36,7 +36,7 @@ import {
 import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
 import { buildProviderFileRoutingPrompt } from '../ProviderFileRoutingPrompt'
 import {
-  ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
+  antigravityHeadlessPermissionReason,
   isAntigravityHeadlessPermissionNoOutput
 } from '../antigravity/AntigravityRunDiagnostics'
 import {
@@ -14483,7 +14483,7 @@ export class EnsembleOrchestrator {
     if (!run || run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
     if (provider === 'antigravity' && isAntigravityHeadlessPermissionNoOutput(text)) {
-      run.providerDiagnostic = ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+      run.providerDiagnostic = antigravityHeadlessPermissionReason(runId)
       return true
     }
     if (!isHostSeatCompactionProvider(provider)) return false

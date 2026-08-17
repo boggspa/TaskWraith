@@ -105,6 +105,30 @@ export function providerTransportLaunchStillAuthorized(input: {
   )
 }
 
+/**
+ * Name the limb that denied a launch, for diagnostics only.
+ *
+ * `providerTransportLaunchStillAuthorized` answers yes/no, which is all an
+ * authorization decision needs — but a caller that skips work on a `false` has
+ * nothing to tell the operator, and a downstream failure then gets blamed on
+ * whatever surfaced it. Checks the limbs in the same order and with the same
+ * predicates as the decision above, so the two cannot disagree.
+ *
+ * Returns null when the input WOULD authorize. Never call this to authorize.
+ */
+export function explainProviderTransportLaunchDenial(input: {
+  historyBlocked: boolean
+  persistenceAuthorized: boolean
+  runAdmitted: boolean
+  setupSignal?: AbortSignal
+}): string | null {
+  if (!input.runAdmitted) return 'run admission denied'
+  if (input.setupSignal?.aborted) return 'setup signal aborted'
+  if (input.historyBlocked) return 'history clear admission blocked'
+  if (!input.persistenceAuthorized) return 'run persistence authority denied'
+  return null
+}
+
 export interface ProviderTransportCloseOperation {
   operation: Promise<void>
   markTransportClosed(): void

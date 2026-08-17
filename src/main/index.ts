@@ -674,12 +674,14 @@ import { redactCanvasFillValueForDurableStorage } from './canvas/CanvasFillAudit
 import {
   createProviderTerminalProjectionOperation,
   createProviderTransportCloseOperation,
+  explainProviderTransportLaunchDenial,
   providerTransportAdmissionStillAuthorized,
   providerTransportLaunchStillAuthorized,
   ProviderOperationRegistry,
   ProviderProcessTerminationBackstop,
   waitForProviderOperationSettlement
 } from './run/ProviderOperationRegistry'
+import { noteAntigravityLeaseSkipped } from './antigravity/AntigravityRunDiagnostics'
 import {
   acquireProviderRunLifecycleOwnership,
   createProviderRunLifecycleOwnershipDependencies,
@@ -3527,6 +3529,26 @@ function providerTransportLaunchAuthorized(
   route: AgentRunRoute
 ): boolean {
   return providerTransportLaunchStillAuthorized({
+    historyBlocked: historyClearAdmissionBlocked(
+      route.appRunId,
+      payload.workspace,
+      route.appChatId
+    ),
+    persistenceAuthorized: providerRunPersistenceAuthorized(provider, route),
+    runAdmitted: runManager.canAdmitTransport(route.appRunId, true),
+    setupSignal: payload.providerSetupAbortSignal
+  })
+}
+
+/** Diagnostic mirror of `providerTransportLaunchAuthorized` — names the limb
+ * that denied, for callers that skip setup work on a `false` and would
+ * otherwise leave the operator with no cause. Never used to authorize. */
+function explainProviderTransportLaunchDenied(
+  provider: ProviderId,
+  payload: AgentRunPayload,
+  route: AgentRunRoute
+): string | null {
+  return explainProviderTransportLaunchDenial({
     historyBlocked: historyClearAdmissionBlocked(
       route.appRunId,
       payload.workspace,
@@ -34281,6 +34303,16 @@ async function runAntigravityAgyProvider(
     : await readAgyConversationReceipt(payload.workspace)
   let permissionLease: AntigravityPermissionLease | undefined
   let releaseHookBridgeRun: (() => void) | undefined
+  // Record WHY when no lease will be installed. Without this the run dies in
+  // agy's headless auto-deny and the operator is told to fix an agy allow rule,
+  // when in fact `read_file` was never granted because TaskWraith skipped the
+  // lease entirely. Diagnostic only — the condition below is unchanged.
+  if (route.appRunId) {
+    const leaseSkipCause = !payload.workspace
+      ? 'no workspace path on this run'
+      : explainProviderTransportLaunchDenied('antigravity', payload, route)
+    if (leaseSkipCause) noteAntigravityLeaseSkipped(route.appRunId, leaseSkipCause)
+  }
   if (payload.workspace && providerTransportLaunchAuthorized('antigravity', payload, route)) {
     const permissions = payload.effectivePermissions
     // PreToolUse hook bridge: agy's only per-tool seam. Every native tool call
