@@ -249,6 +249,7 @@ export interface ComposerProps {
   codexServiceTier: any
   grokReasoningEffort: any
   museReasoningEffort: any
+  mistralReasoningEffort: any
   cursorReasoningEffort: any
   cursorFastMode: any
   composerAboveBarStackAuraClass: any
@@ -503,6 +504,7 @@ export interface ComposerProps {
   setIntentNote: any
   setKimiFastMode: any
   setKimiReasoningEffort: any
+  setMistralReasoningEffort: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
   setPendingElevation: any
@@ -820,6 +822,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setIntentNote,
     setKimiFastMode,
     setKimiReasoningEffort,
+    setMistralReasoningEffort,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setPendingElevation,
@@ -3744,6 +3747,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'string'
                                 ? soloPendingProviderMetadata.museReasoningEffort
                                 : museReasoningEffort
+                          const effectiveMistralReasoning =
+                            ensembleResolved?.provider === 'mistral' ||
+                            ensembleResolved?.provider === 'pi'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.mistralReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.mistralReasoningEffort
+                                : mistralReasoningEffort
                           const effectiveCursorReasoning =
                             ensembleResolved?.provider === 'cursor'
                               ? ensembleResolved.reasoningEffort
@@ -3891,21 +3902,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             effectiveProvider === 'mistral' ||
                             effectiveProvider === 'pi'
                           ) {
-                            // Mistral Medium 3.5 → locked High (vibe schema /
-                            // known Pi upstream default). Devstral and other
-                            // Pi models stay option-free (inert — rail).
+                            // Mistral/Pi models that support configurable Thinking
+                            // (Devstral Small, Mistral 3.5 Medium). Other rows stay
+                            // option-free so the slider remains hidden.
                             combinedReasoningOptions = getEnsembleReasoningOptions(
                               effectiveProvider,
                               effectiveSelectedModel
                             )
                             combinedSelectedReasoning =
-                              (ensembleResolved &&
-                              (ensembleResolved.provider === 'mistral' ||
-                                ensembleResolved.provider === 'pi')
-                                ? ensembleResolved.reasoningEffort
-                                : '') ||
-                              combinedReasoningOptions[0]?.value ||
-                              ''
+                              combinedReasoningOptions.some(
+                                (option) => option.value === effectiveMistralReasoning
+                              )
+                                ? effectiveMistralReasoning
+                                : combinedReasoningOptions[0]?.value ||
+                                  ''
                           } else if (effectiveProvider === 'muse') {
                             // Muse Spark → minimal…ultra ladder (never none).
                             // Solo persists museReasoningEffort; default high
@@ -4010,6 +4020,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 if (shouldUpdateLiveComposerState) setKimiFastMode(false)
                                 metadataPatch.kimiFastMode = false
                               }
+                            }
+                            if (effectiveProvider === 'mistral' || effectiveProvider === 'pi') {
+                              const mistralModelOption = effectiveModelOptionsRaw.find(
+                                (model: CodexModelOption) => model.id === nextModel
+                              )
+                              const reasoningOptions = getEnsembleReasoningOptions(
+                                effectiveProvider,
+                                nextModel
+                              )
+                              const nextReasoning =
+                                (mistralModelOption?.defaultReasoningEffort &&
+                                reasoningOptions.some(
+                                  (option) => option.value === mistralModelOption.defaultReasoningEffort
+                                )
+                                  ? mistralModelOption.defaultReasoningEffort
+                                  : reasoningOptions[0]?.value) || ''
+                              if (shouldUpdateLiveComposerState) {
+                                setMistralReasoningEffort(nextReasoning)
+                              }
+                              metadataPatch.mistralReasoningEffort = nextReasoning
                             }
                             if (effectiveProvider === 'grok') {
                               if (isGrokReasoningModelId(nextModel)) {
@@ -4190,6 +4220,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               rememberCurrentChatComposerSelection({
                                 kimiReasoningEffort: value,
                                 kimiThinkingEnabled: true
+                              })
+                            } else if (effectiveProvider === 'mistral' || effectiveProvider === 'pi') {
+                              if (shouldUpdateLiveComposerState) {
+                                setMistralReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                mistralReasoningEffort: value
                               })
                             } else if (effectiveProvider === 'grok') {
                               if (shouldUpdateLiveComposerState) {

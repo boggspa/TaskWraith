@@ -1890,6 +1890,7 @@ function App(): React.JSX.Element {
     GROK_45_DEFAULT_REASONING_EFFORT
   )
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
+  const [mistralReasoningEffort, setMistralReasoningEffort] = useState<string>('medium')
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
   // failsafe (Tier 1 → Accept Edits, shown once per workspace+provider;
@@ -4480,6 +4481,12 @@ function App(): React.JSX.Element {
               participant.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
           }
         : {}),
+      ...(provider === 'mistral'
+        ? {
+            mistralReasoningEffort:
+              participant.reasoningEffort || 'medium'
+          }
+        : {}),
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrokModelId(providerModel)
@@ -6349,6 +6356,11 @@ function App(): React.JSX.Element {
         MUSE_REASONING_EFFORT_ALLOWLIST.has(metadata.museReasoningEffort)
           ? metadata.museReasoningEffort
           : MUSE_DEFAULT_REASONING_EFFORT,
+      mistralReasoningEffort:
+        typeof metadata.mistralReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.mistralReasoningEffort)
+          ? metadata.mistralReasoningEffort
+          : 'medium',
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.cursorReasoningEffort)
@@ -6389,6 +6401,7 @@ function App(): React.JSX.Element {
     setKimiThinkingEnabled(true)
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setMuseReasoningEffort(selection.museReasoningEffort)
+    setMistralReasoningEffort(selection.mistralReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
     setCursorFastMode(selection.cursorFastMode)
     setRuntimeProfileForChat(
@@ -6509,6 +6522,7 @@ function App(): React.JSX.Element {
     'kimiThinkingEnabled',
     'grokReasoningEffort',
     'museReasoningEffort',
+    'mistralReasoningEffort',
     'cursorReasoningEffort',
     'cursorFastMode',
     'runtimeProfileId',
@@ -13032,6 +13046,9 @@ function App(): React.JSX.Element {
       ...(snapshot.museReasoningEffort !== undefined
         ? { museReasoningEffort: snapshot.museReasoningEffort }
         : {}),
+      ...(snapshot.mistralReasoningEffort !== undefined
+        ? { mistralReasoningEffort: snapshot.mistralReasoningEffort }
+        : {}),
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
@@ -13133,6 +13150,9 @@ function App(): React.JSX.Element {
       : {}),
     ...(request.museReasoningEffort !== undefined
       ? { museReasoningEffort: request.museReasoningEffort }
+      : {}),
+    ...(request.mistralReasoningEffort !== undefined
+      ? { mistralReasoningEffort: request.mistralReasoningEffort }
       : {}),
     ...(request.cursorReasoningEffort !== undefined
       ? { cursorReasoningEffort: request.cursorReasoningEffort }
@@ -13286,6 +13306,8 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.grokReasoningEffort ?? request.grokReasoningEffort,
       museReasoningEffort:
         queuedProviderSelection?.museReasoningEffort ?? request.museReasoningEffort,
+      mistralReasoningEffort:
+        queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
       cursorReasoningEffort:
         queuedProviderSelection?.cursorReasoningEffort ?? request.cursorReasoningEffort,
       cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
@@ -14334,6 +14356,7 @@ function App(): React.JSX.Element {
           kimiThinkingEnabled: request.kimiThinkingEnabled,
           grokReasoningEffort: request.grokReasoningEffort,
           museReasoningEffort: request.museReasoningEffort,
+          mistralReasoningEffort: request.mistralReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
           cursorFastMode: request.cursorFastMode,
           runtimeProfileId: request.runtimeProfileId,
@@ -17408,6 +17431,7 @@ function App(): React.JSX.Element {
       kimiThinkingEnabled: request.kimiThinkingEnabled,
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
+      mistralReasoningEffort: request.mistralReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
       cursorFastMode: request.cursorFastMode,
       runtimeProfileId: request.runtimeProfileId,
@@ -18358,6 +18382,7 @@ function App(): React.JSX.Element {
       kimiThinkingEnabled: selection.kimiThinkingEnabled,
       grokReasoningEffort: selection.grokReasoningEffort,
       museReasoningEffort: selection.museReasoningEffort,
+      mistralReasoningEffort: selection.mistralReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,
       cursorFastMode: selection.cursorFastMode,
       runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider),
@@ -30366,9 +30391,10 @@ function App(): React.JSX.Element {
           paneRememberComposerSelection({ customModel: value }),
         setCodexReasoningEffort: paneNoopSetter,
         setClaudeReasoningEffort: paneNoopSetter,
-        setKimiFastMode: paneNoopSetter,
-        setKimiReasoningEffort: paneNoopSetter,
-        setKimiThinkingEnabled: paneNoopSetter,
+      setKimiFastMode: paneNoopSetter,
+      setKimiReasoningEffort: paneNoopSetter,
+      setMistralReasoningEffort: paneNoopSetter,
+      setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
         setMuseReasoningEffort: paneNoopSetter,
         setCursorReasoningEffort: paneNoopSetter,
@@ -30567,6 +30593,7 @@ function App(): React.JSX.Element {
     codexServiceTier,
     grokReasoningEffort,
     museReasoningEffort,
+    mistralReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAreaRef,
@@ -30653,6 +30680,7 @@ function App(): React.JSX.Element {
     setClaudeFastMode,
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
+    setMistralReasoningEffort,
     setCodexServiceTier,
     setCustomModel,
     setGrokReasoningEffort,
