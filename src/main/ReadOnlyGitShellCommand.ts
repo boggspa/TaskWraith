@@ -283,14 +283,24 @@ export function isReadOnlyGitShellCommand(command: unknown): boolean {
  * Anything else — objects, mixed arrays — returns null (fail closed).
  */
 export function shellCommandFromRawCommand(value: unknown): string | null {
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    const match = trimmed.match(
+      /^(?:\/usr\/bin\/|\/bin\/)?(?:ba|z|da)?sh\s+-(?:l?c|cl)\s+(?:(['"])([\s\S]*)\1|([^\s'"].*))$/
+    )
+    if (match) {
+      const inner = (match[2] ?? match[3] ?? '').trim()
+      return shellCommandFromRawCommand(inner)
+    }
+    return value
+  }
   if (Array.isArray(value) && value.every((part) => typeof part === 'string')) {
     if (
       value.length === 3 &&
       /^(?:\/usr\/bin\/|\/bin\/)?(?:ba|z|da)?sh$/.test(value[0]) &&
       /^-(?:l?c|cl)$/.test(value[1])
     ) {
-      return value[2]
+      return shellCommandFromRawCommand(value[2])
     }
     return value.join(' ')
   }
@@ -299,15 +309,31 @@ export function shellCommandFromRawCommand(value: unknown): string | null {
 
 /**
  * Extract the shell command from an approval-request preview. Prefers the raw
- * tool input (`preview.params.command` — what actually executes) over the
- * display string (`preview.command`, which some builders derive from
- * descriptions or argv joins).
+ * tool input (`preview.params.command` / `preview.params.CommandLine` — what
+ * actually executes) over the display string (`preview.command`, which some
+ * builders derive from descriptions or argv joins).
  */
 export function shellCommandFromApprovalPreview(preview: unknown): string | null {
   if (!isRecord(preview)) return null
   if (isRecord(preview.params)) {
-    const raw = shellCommandFromRawCommand(preview.params.command)
+    const raw =
+      shellCommandFromRawCommand(preview.params.command) ??
+      shellCommandFromRawCommand(preview.params.CommandLine) ??
+      shellCommandFromRawCommand(preview.params.commandLine) ??
+      shellCommandFromRawCommand(preview.params.cmd) ??
+      shellCommandFromRawCommand(preview.params.script) ??
+      shellCommandFromRawCommand(preview.params.input)
     if (raw !== null) return raw
   }
-  return typeof preview.command === 'string' ? preview.command : null
+  if (isRecord(preview.arguments)) {
+    const raw =
+      shellCommandFromRawCommand(preview.arguments.command) ??
+      shellCommandFromRawCommand(preview.arguments.CommandLine) ??
+      shellCommandFromRawCommand(preview.arguments.commandLine) ??
+      shellCommandFromRawCommand(preview.arguments.cmd) ??
+      shellCommandFromRawCommand(preview.arguments.script) ??
+      shellCommandFromRawCommand(preview.arguments.input)
+    if (raw !== null) return raw
+  }
+  return typeof preview.command === 'string' ? shellCommandFromRawCommand(preview.command) : null
 }

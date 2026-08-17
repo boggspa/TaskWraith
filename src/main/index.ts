@@ -34378,7 +34378,13 @@ async function runAntigravityAgyProvider(
         // reason lets the model finish the turn as a plan instead.
         const target = toolCall.targetPath
         const toolId = `agy-write-${Date.now()}-${++toolSeq}`
-        emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, target ? { path: target } : {})
+        // Forward mutation args for diff stat derivation
+        const parameters: Record<string, unknown> = target ? { path: target } : {}
+        if (toolCall.oldString !== undefined) parameters.old_string = toolCall.oldString
+        if (toolCall.newString !== undefined) parameters.new_string = toolCall.newString
+        if (toolCall.content !== undefined) parameters.content = toolCall.content
+        if (toolCall.patch !== undefined) parameters.patch = toolCall.patch
+        emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, parameters)
         if (launch.mode !== 'accept-edits') {
           const reason =
             'This run is read-only (plan mode), so file changes cannot be applied. Describe the intended edits in your response instead of writing them.'

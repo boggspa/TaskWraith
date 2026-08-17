@@ -530,7 +530,33 @@ export const PROVIDER_ACTION_ADAPTERS = {
     declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
     deniedNativeActionMappings: {},
     declaredNativeActions: NO_NATIVE_ACTIONS,
-    nativeActionMappings: {}
+    nativeActionMappings: {
+      write_to_file: {
+        aliases: ['write_to_file'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      replace_file_content: {
+        aliases: ['replace_file_content'],
+        catalogTool: 'replace',
+        action: 'workspace.mutate'
+      },
+      create_file: {
+        aliases: ['create_file'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      delete_file: {
+        aliases: ['delete_file'],
+        catalogTool: 'delete_path',
+        action: 'workspace.mutate'
+      },
+      rename_file: {
+        aliases: ['rename_file'],
+        catalogTool: 'move_path',
+        action: 'workspace.mutate'
+      }
+    }
   }),
   pi: adapter({
     nativeSurface: 'unobservable-native',

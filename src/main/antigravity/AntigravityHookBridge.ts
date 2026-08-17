@@ -51,6 +51,14 @@ export interface AgyHookToolCall {
   command: string | null
   /** Mutation target, when the tool's args carry a recognisable path. */
   targetPath: string | null
+  /**
+   * AGY mutation arguments that can be used to derive diff stats.
+   * Extracted from toolCall.args and decoded from AGY's JSON-quoted scalars.
+   */
+  oldString?: string
+  newString?: string
+  content?: string
+  patch?: string
 }
 
 /**
@@ -95,6 +103,30 @@ const TARGET_PATH_KEYS = [
   'filePath',
   'Path',
   'path'
+]
+
+/**
+ * AGY mutation argument keys that carry diff-relevant content.
+ * These are extracted and forwarded so bridgeToolDiffStats can derive +N/-N chips.
+ */
+const MUTATION_ARG_KEYS: ReadonlyArray<{
+  key: string
+  canonical: keyof Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>
+}> = [
+  { key: 'OldString', canonical: 'oldString' },
+  { key: 'old_string', canonical: 'oldString' },
+  { key: 'Old', canonical: 'oldString' },
+  { key: 'NewString', canonical: 'newString' },
+  { key: 'new_string', canonical: 'newString' },
+  { key: 'New', canonical: 'newString' },
+  { key: 'CodeEdit', canonical: 'content' },
+  { key: 'content', canonical: 'content' },
+  { key: 'file_text', canonical: 'content' },
+  { key: 'Content', canonical: 'content' },
+  { key: 'FileText', canonical: 'content' },
+  { key: 'Patch', canonical: 'patch' },
+  { key: 'patch', canonical: 'patch' },
+  { key: 'diff', canonical: 'patch' }
 ]
 
 /**
@@ -182,10 +214,20 @@ function extractToolCall(body: unknown): AgyHookToolCall | null {
       break
     }
   }
+  // Extract mutation args for diff stat derivation
+  const mutationArgs: Partial<Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>> =
+    {}
+  for (const { key, canonical } of MUTATION_ARG_KEYS) {
+    const value = decodeAgyHookScalar(argRecord?.[key])
+    if (value !== null && value !== undefined && !mutationArgs[canonical]) {
+      mutationArgs[canonical] = value
+    }
+  }
   return {
     name,
     command: commandLine,
-    targetPath
+    targetPath,
+    ...mutationArgs
   }
 }
 

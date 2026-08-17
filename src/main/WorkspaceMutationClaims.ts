@@ -9,6 +9,7 @@ import {
   type ProviderNativeActionContext,
   type ResolvedProviderAction
 } from '../shared/providerActionTaxonomy'
+import { isPromptFreeReadOnlyShellCommand } from './PromptFreeReadOnlyShell'
 import { isReadOnlyShellCommand } from './grok/GrokReadOnlyShell'
 import type { ProviderId } from './store/types'
 import type { WorkspaceLockClaimRequest, WorkspaceLockHunk } from './workLocks/WorkspaceLockTypes'
@@ -756,8 +757,21 @@ export async function deriveWorkspaceMutationClaims(
       return []
     }
     if (action.catalogTool === 'run_shell_command') {
-      const command = firstArgument(args, ['command', 'cmd'])
-      if (typeof command === 'string' && isReadOnlyShellCommand(command)) return []
+      const command = firstArgument(args, [
+        'command',
+        'cmd',
+        'CommandLine',
+        'commandLine',
+        'script',
+        'input'
+      ])
+      if (
+        command !== undefined &&
+        (isPromptFreeReadOnlyShellCommand(command) ||
+          (typeof command === 'string' && isReadOnlyShellCommand(command)))
+      ) {
+        return []
+      }
       throw new WorkspaceMutationClaimDerivationError(
         'invalid-call',
         'run_shell_command has opaque process side effects, so caller-declared paths cannot prove an exact file/hunk mutation scope. Use exact TaskWraith file tools or request one explicitly approved, auditable host execution.'
