@@ -244,70 +244,55 @@ describe('unavailable reasoning presentation', () => {
     expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
   })
 
-  it('pins Mistral Medium 3.5 at locked High (vibe schema thinking=high), not the generic dash', () => {
-    const mistralHigh = buildLadderModel('mistral', [
-      {
-        value: 'high',
-        label: 'High',
-        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
-      }
-    ])
-    const piHigh = buildLadderModel('pi', [
-      {
-        value: 'high',
-        label: 'High',
-        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
-      }
+  it('enables configurable reasoning for Devstral Small and Mistral Medium 3.5', () => {
+    const mistralLadder = buildLadderModel('mistral', [
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
     ])
 
-    expect(mistralHigh.disabledReason).toBe('Mistral Medium 3.5 always thinks at High.')
-    expect(resolveReasoningLadderAvailability('mistral', 'mistral-medium-3.5', mistralHigh)).toEqual(
+    expect(resolveReasoningLadderAvailability('mistral', 'mistral-medium-3.5', mistralLadder)).toEqual({
+      mutable: true
+    })
+    expect(resolveReasoningLadderAvailability('pi', 'mistral/mistral-medium-3.5', mistralLadder)).toEqual(
       {
-        mutable: false,
-        unavailablePresentation: {
-          index: 3,
-          label: 'High',
-          disabledReason: 'Mistral Medium 3.5 always thinks at High.'
-        }
+        mutable: true
       }
     )
-    expect(
-      resolveReasoningLadderAvailability('pi', 'mistral/mistral-medium-3.5', piHigh)
-    ).toEqual({
-      mutable: false,
-      unavailablePresentation: {
-        index: 3,
-        label: 'High',
-        disabledReason: 'Mistral Medium 3.5 always thinks at High.'
-      }
+    expect(resolveReasoningLadderAvailability('mistral', 'devstral-small', mistralLadder)).toEqual({
+      mutable: true
     })
+    expect(resolveReasoningLadderAvailability('pi', 'mistral/devstral-small', mistralLadder)).toEqual(
+      {
+        mutable: true
+      }
+    )
 
     const markup = renderToStaticMarkup(
       createElement(ReasoningLadderSlider, {
         provider: 'mistral',
-        ladder: mistralHigh,
+        ladder: mistralLadder,
         selectedReasoning: 'high',
         onSelectReasoning: () => undefined,
         unavailablePresentation: resolveReasoningLadderAvailability(
           'mistral',
           'mistral-medium-3.5',
-          mistralHigh
+          mistralLadder
         ).unavailablePresentation,
         onInteract: () => undefined
       })
     )
     expect(markup).toContain('aria-valuenow="3"')
     expect(markup).toContain('aria-valuetext="High"')
-    expect(markup).toContain('data-disabled="true"')
-    expect(markup).toContain('title="Mistral Medium 3.5 always thinks at High."')
     expect(markup).toContain('--ladder-accent:var(--provider-mistral-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup).toContain('--ladder-fx-strength:0.5')
-    expect(markup).toContain('composer-combined-picker-ladder-pulse')
-    expect(markup).toContain('composer-combined-picker-ladder-shimmer')
+    expect(markup).toContain('--ladder-fx-strength:1')
     expect(markup).toContain('composer-combined-picker-ladder-sparkles')
     expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
-    expect(markup.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(2)
+    expect(markup).not.toContain('data-disabled="true"')
+    expect(markup).not.toContain('composer-combined-picker-ladder-shimmer-band')
   })
 
   it('keeps generic zero neutral and animates implicit Cursor Medium', () => {
