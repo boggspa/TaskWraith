@@ -146,7 +146,22 @@ export const MISTRAL_MODEL_DEVSTRAL_SMALL = 'devstral-small'
  */
 export const MISTRAL_LOCAL_ALIAS_EXCLUDED = 'local'
 
-export const MISTRAL_SEAT_MODELS = [MISTRAL_MODEL_MEDIUM, MISTRAL_MODEL_DEVSTRAL_SMALL] as const
+export const MISTRAL_SEAT_MODELS = [
+  MISTRAL_MODEL_DEVSTRAL_SMALL,
+  MISTRAL_MODEL_MEDIUM,
+  'mistral-large-2512',
+  'zai-glm-5-2',
+  'codestral-2508',
+  'mistral-small-2603',
+  'devstral-2512',
+  'labs-leanstral-1-5',
+  'mistral-medium-latest',
+  'mistral-medium-2508',
+  'mistral-medium-2505',
+  'ministral-14b-2512',
+  'ministral-8b-2512',
+  'ministral-3b-2512'
+] as const
 
 /**
  * Default model for a new Mistral seat.
@@ -182,6 +197,8 @@ export function normalizeMistralModel(model: string | null | undefined): string 
   if (lowered === MISTRAL_MODEL_DEVSTRAL_SMALL || lowered === 'devstral-small-latest') {
     return MISTRAL_MODEL_DEVSTRAL_SMALL
   }
+  const match = MISTRAL_SEAT_MODELS.find((m) => m.toLowerCase() === lowered)
+  if (match) return match
   return MISTRAL_DEFAULT_MODEL
 }
 

@@ -778,6 +778,10 @@ const api = {
   getMistralAdminKeyStatus: () => ipcRenderer.invoke('mistral-admin-key:status'),
   setMistralAdminKey: (apiKey: string) => ipcRenderer.invoke('mistral-admin-key:set', apiKey),
   clearMistralAdminKey: () => ipcRenderer.invoke('mistral-admin-key:clear'),
+  // BYOK API key: encrypted safeStorage for direct metered API usage and models.
+  getMistralApiKeyStatus: () => ipcRenderer.invoke('mistral-api-key:get-status'),
+  setMistralApiKey: (apiKey: string) => ipcRenderer.invoke('mistral-api-key:set', apiKey),
+  clearMistralApiKey: () => ipcRenderer.invoke('mistral-api-key:clear'),
   refreshMistralAdminUsage: () => ipcRenderer.invoke('mistral-quota:refresh-admin'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
@@ -801,8 +805,7 @@ const api = {
     repoPath?: string
     chatId?: string
     commitHash: string
-  }) =>
-    ipcRenderer.invoke('get-diff', payload) as Promise<CommitFilePreviewResult>,
+  }) => ipcRenderer.invoke('get-diff', payload) as Promise<CommitFilePreviewResult>,
   getGitRevisionDiff: (payload: {
     workspacePath?: string
     repoPath?: string
@@ -978,11 +981,7 @@ const api = {
     ipcRenderer.invoke('fanout-candidates:discard', chatId, candidateId),
   githubPrStatus: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
-  githubPrWorkspace: (payload: {
-    workspacePath?: string
-    repoPath?: string
-    chatId?: string
-  }) =>
+  githubPrWorkspace: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-workspace', payload) as Promise<
       GitResult<GitPullRequestWorkspaceSnapshot>
     >,
@@ -1893,7 +1892,10 @@ const api = {
   // and builds the data URL; the generation stamp lets the renderer drop a
   // frame that no longer describes the live attachment.
   attachWindowPreviewFrame: (chatId: string) =>
-    ipcRenderer.invoke('attach-window:preview-frame', chatId) as Promise<AppDrivePreviewFrameResult>,
+    ipcRenderer.invoke(
+      'attach-window:preview-frame',
+      chatId
+    ) as Promise<AppDrivePreviewFrameResult>,
   // Sticky AppWatch is a resume hint only. This preload reconstructs an
   // allowlisted display projection and never forwards window IDs, process data,
   // handles, scopes, consent epochs, or lease material.
@@ -2612,9 +2614,8 @@ const api = {
   getRunRecoveryRecords: (filter: any = {}) =>
     ipcRenderer.invoke('get-run-recovery-records', filter),
   getRunEvents: (filter: any = {}) => ipcRenderer.invoke('get-run-events', filter),
-  getToolActivityDetails: (
-    refs: ToolActivityDetailRef[]
-  ): Promise<HydratedToolActivityDetail[]> => ipcRenderer.invoke('get-tool-activity-details', refs),
+  getToolActivityDetails: (refs: ToolActivityDetailRef[]): Promise<HydratedToolActivityDetail[]> =>
+    ipcRenderer.invoke('get-tool-activity-details', refs),
   getRunEventReplay: (runId: string) => ipcRenderer.invoke('get-run-event-replay', runId),
   analyzeRun: (request: RunAnalystRequest) =>
     ipcRenderer.invoke('run-analyst:analyze', request) as Promise<RunAnalystSnapshot>,

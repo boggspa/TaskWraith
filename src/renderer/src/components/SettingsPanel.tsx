@@ -161,6 +161,7 @@ import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPoli
 import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
 import { OllamaApiKeyControls } from './OllamaApiKeyControls'
+import { MistralApiKeyControls } from './MistralApiKeyControls'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
@@ -7480,6 +7481,9 @@ export function SettingsPanel({
                       </PillButton>
                       {renderProviderUpgradeButton('mistral')}
                     </div>
+                    <MistralApiKeyControls
+                      onChanged={() => onRefreshProviderMcpStatus?.('mistral')}
+                    />
                     <p className="settings-provider-auth-footnote">
                       TaskWraith stores no Mistral plan credential; Vibe owns it. Pi&apos;s Mistral
                       key remains a distinct metered upstream route. Vibe keeps its credentials

@@ -31,11 +31,21 @@ import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from './antigravityGeminiApiMo
 const BYOK_ONLY_PROVIDERS: ReadonlySet<string> = new Set(['pi'])
 
 /**
- * Providers with BOTH lanes, where the model id decides. AntiGravity is the only
- * one: `gemini-api:` ids run on the key via the official SDK, while every other
- * id runs the `agy` CLI on the user's own subscription login.
+ * Providers with BOTH lanes, where the model id decides:
+ * - AntiGravity: `gemini-api:` ids run on the key via the official SDK, while every
+ *   other id runs the `agy` CLI on the user's own subscription login.
+ * - Mistral: `devstral-small` and `mistral-medium-3.5` run on the Vibe subscription
+ *   by default, while API-only models (Mistral Large 3, GLM 5.2, Codestral, Ministral, etc.)
+ *   run on the user's Mistral API key (BYOK).
  */
-const MIXED_LANE_PROVIDERS: ReadonlySet<string> = new Set(['antigravity'])
+const MIXED_LANE_PROVIDERS: ReadonlySet<string> = new Set(['antigravity', 'mistral'])
+
+const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
+  'devstral-small',
+  'devstral-small-latest',
+  'mistral-medium-3.5',
+  'mistral-vibe-cli-latest'
+])
 
 /** Tooltip/aria text. One string so every surface says the same thing. */
 export const API_KEY_MODEL_INDICATOR_LABEL =
@@ -50,5 +60,11 @@ export function modelRequiresApiKey(
   if (BYOK_ONLY_PROVIDERS.has(normalizedProvider)) return true
   if (!MIXED_LANE_PROVIDERS.has(normalizedProvider)) return false
   const normalizedModel = typeof modelId === 'string' ? modelId.trim().toLowerCase() : ''
-  return normalizedModel.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)
+  if (normalizedProvider === 'antigravity') {
+    return normalizedModel.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)
+  }
+  if (normalizedProvider === 'mistral') {
+    return !MISTRAL_SUBSCRIPTION_MODELS.has(normalizedModel)
+  }
+  return false
 }

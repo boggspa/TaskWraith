@@ -93,6 +93,15 @@ describe('normalizeMistralModel', () => {
     expect(normalizeMistralModel('  MISTRAL-MEDIUM-3.5  ')).toBe(MISTRAL_MODEL_MEDIUM)
   })
 
+  it('accepts bare Mistral API models', () => {
+    expect(normalizeMistralModel('mistral-large-2512')).toBe('mistral-large-2512')
+    expect(normalizeMistralModel('zai-glm-5-2')).toBe('zai-glm-5-2')
+    expect(normalizeMistralModel('codestral-2508')).toBe('codestral-2508')
+    expect(normalizeMistralModel('ministral-14b-2512')).toBe('ministral-14b-2512')
+    expect(normalizeMistralModel('ministral-8b-2512')).toBe('ministral-8b-2512')
+    expect(normalizeMistralModel('ministral-3b-2512')).toBe('ministral-3b-2512')
+  })
+
   it('never forwards a Pi upstream wire id', () => {
     // THE TWO-IDENTITIES COLLISION. ProviderId 'mistral' (this seat, plan OAuth)
     // and PiUpstreamId 'mistral' (BYOK, wire ids `mistral/<model>`) share a

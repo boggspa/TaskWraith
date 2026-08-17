@@ -167,7 +167,6 @@ const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'ultra', label: 'Ultra' }
 ]
 
-
 const CODEX_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
@@ -249,7 +248,19 @@ const GROK_MODELS: CombinedModelPickerModelOption[] = [
  *  MISTRAL_SEAT_MODELS and the contextWindows registrations. */
 const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'devstral-small', label: 'Devstral Small' },
-  { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' }
+  { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
+  { id: 'mistral-large-2512', label: 'Mistral Large 3' },
+  { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
+  { id: 'codestral-2508', label: 'Codestral (Aug 2025)' },
+  { id: 'mistral-small-2603', label: 'Mistral Small 4' },
+  { id: 'devstral-2512', label: 'Devstral 2' },
+  { id: 'labs-leanstral-1-5', label: 'Leanstral 1.5 (Labs)' },
+  { id: 'mistral-medium-latest', label: 'Mistral Medium (Latest)' },
+  { id: 'mistral-medium-2508', label: 'Mistral Medium 3.1' },
+  { id: 'mistral-medium-2505', label: 'Mistral Medium 3' },
+  { id: 'ministral-14b-2512', label: 'Ministral 3 (14B)' },
+  { id: 'ministral-8b-2512', label: 'Ministral 3 (8B)' },
+  { id: 'ministral-3b-2512', label: 'Ministral 3 (3B)' }
 ]
 
 // Cursor model catalog — backs live Path-B Cursor seats and decodes stored
@@ -756,7 +767,11 @@ function normalizeReasoningEffortToken(value?: string | null): string {
 
 /** K3 has a selectable Low/High/Max effort; K2.7 Coding's thinking is fixed On. */
 export function isKimiK3Model(model?: string | null): boolean {
-  return String(model || '').trim().toLowerCase() === 'kimi-k3'
+  return (
+    String(model || '')
+      .trim()
+      .toLowerCase() === 'kimi-k3'
+  )
 }
 
 /**

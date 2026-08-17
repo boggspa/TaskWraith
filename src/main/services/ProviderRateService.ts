@@ -1383,6 +1383,105 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
+        modelId: 'mistral-large-2512',
+        inputUsdPerMillion: 0.5,
+        outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.05,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Mistral Large 3.'
+      },
+      {
+        modelId: 'zai-glm-5-2',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.14,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Third-party Z.ai GLM-5.2 served by Mistral.'
+      },
+      {
+        modelId: 'codestral-2508',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 0.9,
+        cachedInputUsdPerMillion: 0.03,
+        sourceUrl: 'https://docs.mistral.ai/models/codestral-25-08',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral-small-2603',
+        inputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 0.6,
+        cachedInputUsdPerMillion: 0.015,
+        sourceUrl: 'https://docs.mistral.ai/models/mistral-small-4-0-26-03',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'devstral-2512',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'labs-leanstral-1-5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://docs.mistral.ai/models/leanstral-1-5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Free Mistral Labs public preview.'
+      },
+      {
+        modelId: 'mistral-medium-latest',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral-medium-2508',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral-medium-2505',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'ministral-14b-2512',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.02,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-14b-25-12',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'ministral-8b-2512',
+        inputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 0.15,
+        cachedInputUsdPerMillion: 0.015,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-8b-25-12',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'ministral-3b-2512',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.1,
+        cachedInputUsdPerMillion: 0.01,
+        sourceUrl: 'https://docs.mistral.ai/models/ministral-3-3b-25-12',
+        lastVerified: RATE_TABLE_VERSION
       }
       // Vibe's third catalogue entry, `local` (a llamacpp backend on
       // 127.0.0.1:8080), has NO row here on purpose. An earlier revision

@@ -36,12 +36,25 @@ describe('modelRequiresApiKey', () => {
     expect(modelRequiresApiKey('antigravity', 'gemini-apix-flash')).toBe(false)
   })
 
+  it('marks only API models for Mistral, leaving subscription models unmarked', () => {
+    expect(modelRequiresApiKey('mistral', 'mistral-large-2512')).toBe(true)
+    expect(modelRequiresApiKey('mistral', 'zai-glm-5-2')).toBe(true)
+    expect(modelRequiresApiKey('mistral', 'codestral-2508')).toBe(true)
+    expect(modelRequiresApiKey('mistral', 'ministral-8b-2512')).toBe(true)
+    expect(modelRequiresApiKey('mistral', 'devstral-small')).toBe(false)
+    expect(modelRequiresApiKey('mistral', 'mistral-medium-3.5')).toBe(false)
+    expect(modelRequiresApiKey('mistral', 'devstral-small-latest')).toBe(false)
+    expect(modelRequiresApiKey('mistral', 'mistral-vibe-cli-latest')).toBe(false)
+  })
+
   // The whole point of the glyph is that it means something. If it appeared on
   // subscription/CLI rows it would mark nearly everything and say nothing.
   it('never marks a subscription or CLI-login provider', () => {
-    const subscriptionProviders = LIVE_SELECTABLE_PROVIDER_IDS.filter((id) => id !== 'pi')
-    expect(subscriptionProviders.length).toBeGreaterThan(0)
-    for (const provider of subscriptionProviders) {
+    const pureSubscriptionProviders = LIVE_SELECTABLE_PROVIDER_IDS.filter(
+      (id) => id !== 'pi' && id !== 'antigravity' && id !== 'mistral'
+    )
+    expect(pureSubscriptionProviders.length).toBeGreaterThan(0)
+    for (const provider of pureSubscriptionProviders) {
       expect(modelRequiresApiKey(provider, 'gemini-api:gemini-2.5-flash')).toBe(false)
       expect(modelRequiresApiKey(provider, 'some-model')).toBe(false)
     }

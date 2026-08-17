@@ -894,6 +894,21 @@ declare global {
       } | null>
       setMistralAdminKey: (apiKey: string) => Promise<{ ok: boolean; error?: string }>
       clearMistralAdminKey: () => Promise<{ ok: boolean; error?: string }>
+      getMistralApiKeyStatus: () => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      } | null>
+      setMistralApiKey: (apiKey: string) => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
+      clearMistralApiKey: () => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
       refreshMistralAdminUsage: () => Promise<{
         ok: boolean
         failure?: string
@@ -1328,9 +1343,7 @@ declare global {
       /** Visible lifecycle of Host inside the current TaskWraith process. */
       hostLifecycleStatus: () => Promise<HostLifecycleStatusResult>
       hostLifecycleSet: (request: HostLifecycleActionRequest) => Promise<HostLifecycleActionResult>
-      onHostLifecycleChanged: (
-        handler: (snapshot: HostLifecycleSnapshot) => void
-      ) => () => void
+      onHostLifecycleChanged: (handler: (snapshot: HostLifecycleSnapshot) => void) => () => void
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string
       ) => Promise<boolean>
@@ -2707,9 +2720,7 @@ declare global {
       fallbackPromotedSteerJob: (
         input: FallbackPromotedSteerInput
       ) => Promise<FallbackPromotedSteerJobResult>
-      injectSteering: (
-        input: LiveSteeringInjectionRequest
-      ) => Promise<LiveSteeringInjectionResult>
+      injectSteering: (input: LiveSteeringInjectionRequest) => Promise<LiveSteeringInjectionResult>
       cancelSteering: (input: LiveSteeringCancelRequest) => Promise<LiveSteeringCancelResult>
       transitionRunQueueJob: (
         runIdOrId: string,

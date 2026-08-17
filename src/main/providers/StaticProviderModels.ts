@@ -186,13 +186,9 @@ export const CODEX_WIRE_REASONING_EFFORTS = [
 
 export type CodexWireReasoningEffort = (typeof CODEX_WIRE_REASONING_EFFORTS)[number]
 
-const CODEX_WIRE_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(
-  CODEX_WIRE_REASONING_EFFORTS
-)
+const CODEX_WIRE_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(CODEX_WIRE_REASONING_EFFORTS)
 
-function explicitCodexWireReasoningEffort(
-  effort?: string | null
-): CodexWireReasoningEffort | null {
+function explicitCodexWireReasoningEffort(effort?: string | null): CodexWireReasoningEffort | null {
   const normalized = String(effort || '')
     .trim()
     .toLowerCase()
@@ -849,6 +845,66 @@ const MISTRAL_STATIC_MODELS = [
     id: MISTRAL_MODEL_MEDIUM,
     label: 'Mistral Medium 3.5',
     description: '256K context - flagship, $1.50/$7.50 per Mtok'
+  },
+  {
+    id: 'mistral-large-2512',
+    label: 'Mistral Large 3',
+    description: '262K context - flagship, $0.50/$1.50 per Mtok'
+  },
+  {
+    id: 'zai-glm-5-2',
+    label: 'GLM-5.2 (via Mistral)',
+    description: '1M context - $1.40/$4.40 per Mtok'
+  },
+  {
+    id: 'codestral-2508',
+    label: 'Codestral (Aug 2025)',
+    description: '131K context - coding-tuned, $0.30/$0.90 per Mtok'
+  },
+  {
+    id: 'mistral-small-2603',
+    label: 'Mistral Small 4',
+    description: '256K context - $0.15/$0.60 per Mtok'
+  },
+  {
+    id: 'devstral-2512',
+    label: 'Devstral 2',
+    description: '262K context - $0.40/$2.00 per Mtok'
+  },
+  {
+    id: 'labs-leanstral-1-5',
+    label: 'Leanstral 1.5 (Labs)',
+    description: '262K context - free research tier'
+  },
+  {
+    id: 'mistral-medium-latest',
+    label: 'Mistral Medium (Latest)',
+    description: '262K context - flagship, $1.50/$7.50 per Mtok'
+  },
+  {
+    id: 'mistral-medium-2508',
+    label: 'Mistral Medium 3.1',
+    description: '262K context - $0.40/$2.00 per Mtok'
+  },
+  {
+    id: 'mistral-medium-2505',
+    label: 'Mistral Medium 3',
+    description: '131K context - $0.40/$2.00 per Mtok'
+  },
+  {
+    id: 'ministral-14b-2512',
+    label: 'Ministral 3 (14B)',
+    description: '262K context - $0.20/$0.20 per Mtok'
+  },
+  {
+    id: 'ministral-8b-2512',
+    label: 'Ministral 3 (8B)',
+    description: '262K context - $0.15/$0.15 per Mtok'
+  },
+  {
+    id: 'ministral-3b-2512',
+    label: 'Ministral 3 (3B)',
+    description: '262K context - $0.10/$0.10 per Mtok'
   }
 ]
 // Muse Code CLI seat. Exactly one row on purpose: Meta withdrew Muse Spark 1.1
@@ -945,9 +1001,7 @@ export function isKimiK3Model(model?: string | null): boolean {
     .trim()
     .toLowerCase()
   return (
-    normalized === 'kimi-k3' ||
-    normalized === KIMI_K3_API_MODEL ||
-    normalized === KIMI_K3_CLI_MODEL
+    normalized === 'kimi-k3' || normalized === KIMI_K3_API_MODEL || normalized === KIMI_K3_CLI_MODEL
   )
 }
 
@@ -968,10 +1022,7 @@ export function normalizeKimiReasoningEffort(
 }
 
 /** Value exposed by Kimi Code's ACP `thinking` session config option. */
-export function kimiAcpThinkingConfigValue(
-  model?: string | null,
-  effort?: string | null
-): string {
+export function kimiAcpThinkingConfigValue(model?: string | null, effort?: string | null): string {
   return normalizeKimiReasoningEffort(model, effort) || 'on'
 }
 

@@ -1590,6 +1590,7 @@ import {
   mistralMcpAdvertiseEnabled
 } from './mistralGate'
 import {
+  MISTRAL_API_KEY_ENV,
   MISTRAL_BINARY_NAME,
   MISTRAL_CREDENTIAL_ENV_VARS,
   applyMistralPromptPreamble,
@@ -1622,6 +1623,8 @@ import {
   type MistralQuotaSnapshot
 } from './mistral/MistralQuotaStore'
 import { configureMistralAdminKeyStore, mistralAdminKeyStore } from './mistral/MistralAdminKeyStore'
+import { configureMistralApiKeyStore, mistralApiKeyStore } from './mistral/MistralApiKeyStore'
+import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
   convertVendorAmountToUsd,
   fetchMistralAdminUsage,
@@ -24039,7 +24042,9 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // contribute variables this process never had. Same reason the scheduled
   // launch seal derives `apiKeyEnvScrubbed` from the resolved env instead of
   // asserting it.
-  const mistralByokLane = mistralByokLaneEnabled()
+  const storedMistralKey = mistralApiKeyStore()?.loadApiKey()
+  const mistralHasStoredKey = storedMistralKey?.status === 'ok' && Boolean(storedMistralKey.value)
+  const mistralByokLane = mistralByokLaneEnabled() || mistralHasStoredKey
   const mistralBaseEnv = createCliEnv(
     {
       FORCE_COLOR: '0',
@@ -24047,7 +24052,8 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       TASKWRAITH_PARENT_PROVIDER: 'mistral',
       TASKWRAITH_RUN_ID: route.appRunId || '',
       TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
+      ...(mistralHasStoredKey ? { [MISTRAL_API_KEY_ENV]: storedMistralKey.value } : {})
     },
     binaryPath
   )
@@ -24071,7 +24077,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           severity: 'warning',
           title: 'Mistral BYOK lane enabled',
           message:
-            'TASKWRAITH_MISTRAL_BYOK is set, so MISTRAL_API_KEY is being passed through to Vibe. Vibe resolves credentials API-key-first, so this run bills your metered Mistral API account — not your Vibe plan subscription.'
+            'A direct Mistral API key is active, so MISTRAL_API_KEY is being passed through to Vibe. Vibe resolves credentials API-key-first, so this run bills your metered Mistral API account — not your Vibe plan subscription.'
         },
         state
       )
@@ -24092,7 +24098,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           severity: 'info',
           title: 'Mistral API key not used',
           message:
-            'MISTRAL_API_KEY was removed from this run’s environment so Vibe uses your plan sign-in rather than your metered API account. Set TASKWRAITH_MISTRAL_BYOK=1 if you want the key used instead.'
+            'MISTRAL_API_KEY was removed from this run’s environment so Vibe uses your plan sign-in rather than your metered API account. Add your API key in Settings → Providers → Mistral (or set TASKWRAITH_MISTRAL_BYOK=1) if you want the key used instead.'
         },
         state
       )
@@ -43120,6 +43126,18 @@ if (isGeminiMcpBridgeProcess) {
     configureMistralAdminKeyStore({
       userDataPath: app.getPath('userData'),
       safeStorage
+    })
+    const mistralApiKeyStoreInst = configureMistralApiKeyStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage
+    })
+    registerMistralApiKeyHandlers({
+      keyStore: mistralApiKeyStoreInst,
+      isMainRendererSender,
+      onKeyMutationSuccess: () => {
+        managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        requestRemoteProviderModelsRefresh()
+      }
     })
     const bridgeApnsPusher = buildBridgeApnsPusherFromSettings()
 

@@ -307,6 +307,66 @@ const MISTRAL_DEFAULT_MODELS = [
     id: 'mistral-medium-3.5',
     label: 'Mistral Medium 3.5',
     description: '256K context - flagship'
+  },
+  {
+    id: 'mistral-large-2512',
+    label: 'Mistral Large 3',
+    description: '262K context - flagship'
+  },
+  {
+    id: 'zai-glm-5-2',
+    label: 'GLM-5.2 (via Mistral)',
+    description: '1M context - coding model'
+  },
+  {
+    id: 'codestral-2508',
+    label: 'Codestral (Aug 2025)',
+    description: '131K context - coding-tuned'
+  },
+  {
+    id: 'mistral-small-2603',
+    label: 'Mistral Small 4',
+    description: '256K context - reasoning'
+  },
+  {
+    id: 'devstral-2512',
+    label: 'Devstral 2',
+    description: '262K context'
+  },
+  {
+    id: 'labs-leanstral-1-5',
+    label: 'Leanstral 1.5 (Labs)',
+    description: '262K context - free research tier'
+  },
+  {
+    id: 'mistral-medium-latest',
+    label: 'Mistral Medium (Latest)',
+    description: '262K context - flagship'
+  },
+  {
+    id: 'mistral-medium-2508',
+    label: 'Mistral Medium 3.1',
+    description: '262K context'
+  },
+  {
+    id: 'mistral-medium-2505',
+    label: 'Mistral Medium 3',
+    description: '131K context'
+  },
+  {
+    id: 'ministral-14b-2512',
+    label: 'Ministral 3 (14B)',
+    description: '262K context'
+  },
+  {
+    id: 'ministral-8b-2512',
+    label: 'Ministral 3 (8B)',
+    description: '262K context'
+  },
+  {
+    id: 'ministral-3b-2512',
+    label: 'Ministral 3 (3B)',
+    description: '262K context'
   }
 ] satisfies CodexModelOption[]
 // Muse Code CLI seat catalog (opaque exec). Decode-ready; not live-selectable yet.
