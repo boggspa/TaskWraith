@@ -24,6 +24,17 @@ files:
   - '!.cursor/**'
   - '!.fixpass*'
   - '!.wsa-*'
+  # Shared-checkout coordination markers (AGENTS.md / CLAUDE.md). These are
+  # untracked and gitignored, but this list is a denylist, so without these
+  # entries a marker held during a build is bundled into app.asar carrying
+  # session id, agent, host pid and claimed paths. Worse, its lease is
+  # re-stamped by hand every 15 minutes, so if the content changes between
+  # the arm64 and x64 passes of a universal build, @electron/universal dies
+  # with "Can't reconcile two non-macho files <marker>" and the release
+  # build fails. Both observed 2026-08-16 during the 1.9.6 gate run.
+  - '!.WORK-IN-PROGRESS-*.md'
+  - '!SESSION-IN-PROGRESS*'
+  - '!SHIP-HOLD*'
   # Native/mobile source trees are development inputs only. The mac app
   # receives the release TaskWraithBridgeDaemon via `mac.extraResources`
   # below; packaging the full Swift/iOS `.build` trees into app.asar
