@@ -58,8 +58,7 @@ describe('Ollama tool policy', () => {
     ).not.toThrow()
   })
 
-  // Muted: protected workspace path restrictions have been loosened.
-  it.skip('denies protected workspace paths before approval', () => {
+  it('denies protected workspace paths before approval', () => {
     expect(ollamaProtectedPathReason('.env.local')).toMatch(/environment/)
     expect(ollamaProtectedPathReason('package.json')).toMatch(/control file/)
     expect(ollamaProtectedPathReason('.github/workflows/ci.yml')).toMatch(/CI/)

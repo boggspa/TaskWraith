@@ -56,8 +56,7 @@ describe('OllamaHarnessGates', () => {
     expect(gate.blocked).toBe(false)
   })
 
-  // Muted: explore and pre-read safeguards have been loosened.
-  it.skip('blocks read_file until explore tools run', () => {
+  it('blocks read_file until explore tools run for retrieval-first models', () => {
     const state = createOllamaHarnessRunState()
     const gate = evaluateOllamaHarnessGate({
       modelId: 'gpt-oss:20b',
@@ -96,8 +95,7 @@ describe('OllamaHarnessGates', () => {
     expect(gate.blocked).toBe(false)
   })
 
-  // Muted: explore and pre-read safeguards have been loosened.
-  it.skip('blocks replace until the target file was read', () => {
+  it('blocks replace until the target file was read for retrieval-first models', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'workspace_search', { query: 'Foo' }, true)
     const gate = evaluateOllamaHarnessGate({

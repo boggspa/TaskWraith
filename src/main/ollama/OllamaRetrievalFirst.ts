@@ -44,8 +44,14 @@ export const EXEMPT_READ_PATHS = new Set([
   'go.mod'
 ])
 
-export function ollamaEnforcesRetrievalFirst(_modelId?: string | null): boolean {
-  // Loosened: local models are not forced into retrieval-first blocks.
+export function ollamaEnforcesRetrievalFirst(modelId?: string | null): boolean {
+  const raw = String(modelId || '').trim().toLowerCase()
+  // Normalize both the modelId and family names for matching: replace underscores and hyphens
+  const normalizedRaw = raw.replace(/[-_]/g, '')
+  for (const family of RETRIEVAL_FIRST_FAMILIES) {
+    const normalizedFamily = family.toLowerCase().replace(/[-_]/g, '')
+    if (normalizedRaw.includes(normalizedFamily)) return true
+  }
   return false
 }
 
@@ -55,8 +61,9 @@ function basenamePath(pathValue: string): string {
   return (parts[parts.length - 1] || normalized).toLowerCase()
 }
 
-export function ollamaReadFileExemptFromRetrievalFirst(_pathValue: string): boolean {
-  return true
+export function ollamaReadFileExemptFromRetrievalFirst(pathValue: string): boolean {
+  const base = basenamePath(pathValue).toLowerCase()
+  return EXEMPT_READ_PATHS.has(base)
 }
 
 export function ollamaSuggestedSearchQueryForRead(pathValue: string): string {

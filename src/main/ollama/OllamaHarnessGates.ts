@@ -180,12 +180,46 @@ export interface OllamaHarnessGateInput {
   requireTodoScaffold?: boolean
 }
 
-export function evaluateOllamaHarnessGate(_input: OllamaHarnessGateInput): {
+export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  // Loosened: workspace scoping and permission layers handle access control.
-  // Models are not artificially blocked from reading or editing files.
+  const { modelId, tier, state, toolName, args, requireTodoScaffold } = input
+  const needsRetrievalFirst = ollamaEnforcesRetrievalFirst(modelId)
+
+  // Retrieve-first policy: explore before read, read before edit
+  if (needsRetrievalFirst) {
+    // Must explore before reading
+    if (toolName === 'read_file') {
+      if (!state.hasExplored) {
+        return {
+          blocked: true,
+          message: ollamaHarnessReadBlockedMessage(String(args.path || args.file_path))
+        }
+      }
+    }
+
+    // Must read before editing
+    if (isEditTool(toolName)) {
+      const paths = ollamaHarnessTargetPaths(toolName, args, input.workspacePath)
+      const missingReads = paths.filter((p) => !state.readPaths.has(p) && !ollamaReadFileExemptFromRetrievalFirst(p))
+      if (missingReads.length > 0) {
+        return {
+          blocked: true,
+          message: ollamaHarnessEditBlockedMessage(missingReads)
+        }
+      }
+    }
+  }
+
+  // Todo scaffold requirement
+  if (requireTodoScaffold && !state.publishedTodos) {
+    return {
+      blocked: true,
+      message: ollamaHarnessTodoBlockedMessage()
+    }
+  }
+
   return { blocked: false }
 }
 

@@ -2705,8 +2705,7 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
 
-  // Muted: harness explore gate block has been loosened.
-  it.skip('stops a model that re-hits the harness gate every turn (block is not progress)', async () => {
+  it('stops a model that re-hits the harness gate every turn for retrieval-first models (block is not progress)', async () => {
     let chatCalls = 0
     // The model insists on read_file before any explore, so the harness gate
     // blocks it every turn (no tool ever executes). A harness block is a
