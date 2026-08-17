@@ -7813,7 +7813,7 @@ export class EnsembleOrchestrator {
     }
     const provider =
       typeof input.participant.provider === 'string' ? input.participant.provider : undefined
-    if (provider && !selectableProviderIds().includes(provider as ProviderId)) {
+    if (provider && !selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)) {
       return {
         ok: false,
         message: `Participant seat change rejected: ${provider} is not a live selectable provider.`,
@@ -8362,7 +8362,7 @@ export class EnsembleOrchestrator {
     const provider = typeof patch?.provider === 'string' ? patch.provider : undefined
     if (input.action === 'add_participant') {
       if (!provider) return { ok: true }
-      if (!selectableProviderIds().includes(provider as ProviderId)) {
+      if (!selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)) {
         return {
           ok: false,
           error: 'unknown_provider',
@@ -8403,7 +8403,7 @@ export class EnsembleOrchestrator {
       return { ok: true }
     }
     if (!provider) return { ok: true }
-    if (!selectableProviderIds().includes(provider as ProviderId)) {
+    if (!selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)) {
       return {
         ok: false,
         error: 'unknown_provider',
@@ -9053,7 +9053,7 @@ export class EnsembleOrchestrator {
 
     if (action === 'check_quota_resets') {
       const provider = input.provider
-      if (provider && !selectableProviderIds().includes(provider)) {
+      if (provider && !selectableProviderIds(this.deps.getSettings()).includes(provider)) {
         return {
           ok: false,
           tool: 'ensemble_bossman_control',
@@ -9083,7 +9083,7 @@ export class EnsembleOrchestrator {
           ...(snapshot ? {} : { error: 'quota_unavailable' as const })
         }
       }
-      const providers = selectableProviderIds().reduce<
+      const providers = selectableProviderIds(this.deps.getSettings()).reduce<
         Partial<Record<ProviderId, ProviderUsageSummary>>
       >((acc, candidate) => {
         acc[candidate] = summarizeProviderUsage(
