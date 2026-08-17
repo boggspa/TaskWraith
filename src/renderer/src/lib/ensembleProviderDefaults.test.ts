@@ -318,6 +318,22 @@ describe('buildProviderModelChangeParticipantPatch', () => {
       linkedProviderSessionId: null
     })
   })
+
+  it('preserves a supported Grok effort when switching to a Mistral model', () => {
+    const previous = participant({
+      provider: 'grok',
+      permissionPresetId: 'default',
+      reasoningEffort: 'high',
+      fastModeEnabled: true
+    })
+    expect(
+      buildProviderModelChangeParticipantPatch('mistral', 'mistral-medium-3.5', undefined, previous)
+    ).toMatchObject({
+      provider: 'mistral',
+      reasoningEffort: 'high',
+      model: 'mistral-medium-3.5'
+    })
+  })
 })
 
 describe('resolveReasoningEffortForSeatChange', () => {
