@@ -62,8 +62,7 @@ describe('AntiGravity S3 runtime integration', () => {
 
     // The binary comes from the prepared launch, never re-resolved here.
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
-    // Literal argv content — a string check is the right tool for these.
-    expect(probe.text(agy)).not.toContain('--dangerously-skip-permissions')
+    expect(probe.text(agy)).not.toMatch(/\.(push|unshift)\(\s*['"]--dangerously-skip-permissions['"]\s*\)/)
   })
 
   it('lets a live hook arbitrate the write lease after an accept-edits launch', () => {
@@ -171,5 +170,21 @@ describe('AntiGravity S3 runtime integration', () => {
     // The helper must be wired for both shell and write tool kinds.
     expect(probe.text(agy)).toContain('agy-shell-')
     expect(probe.text(agy)).toContain('agy-write-')
+  })
+
+  it('strips --dangerously-skip-permissions if the hook overlay fails to install', () => {
+    const agy = probe.fn('runAntigravityAgyProvider')
+    const source = probe.text(agy)
+
+    expect(source).toContain('hookOverlay = undefined')
+    const stripStatement = "launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')"
+    expect(source).toContain(stripStatement)
+
+    // Ensure the strip happens in the failure recovery path where the overlay is unset
+    const hookOverlayIdx = source.indexOf('hookOverlay = undefined')
+    const stripIdx = source.indexOf(stripStatement)
+    expect(stripIdx).toBeGreaterThan(hookOverlayIdx)
+    // Ensure they are close to each other (in the same catch block)
+    expect(stripIdx - hookOverlayIdx).toBeLessThan(500)
   })
 })

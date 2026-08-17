@@ -34464,6 +34464,12 @@ async function runAntigravityAgyProvider(
       releaseHookBridgeRun?.()
       releaseHookBridgeRun = undefined
       hookOverlay = undefined
+      
+      // If the hook bridge failed to stand up, agy's native confirmation MUST
+      // not be skipped. The flag might have been provisionally added on the
+      // assumption the hook would route those confirmations to TaskWraith.
+      launch.args = launch.args.filter((a) => a !== '--dangerously-skip-permissions')
+
       // Write capability that was earned by the bridge cannot outlive it. With
       // an isolated worktree the run is still contained, so it proceeds on
       // projection rules alone (exactly as before the bridge existed); in a
