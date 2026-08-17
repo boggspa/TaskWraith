@@ -310,8 +310,8 @@ function extractMultiEditContribution(
   for (const edit of edits) {
     if (!edit || typeof edit !== 'object') continue
     const item = edit as Record<string, unknown>
-    const oldString = item.old_string ?? item.oldString
-    const newString = item.new_string ?? item.newString
+    const oldString = item.old_string ?? item.oldString ?? item.old_text ?? item.oldText
+    const newString = item.new_string ?? item.newString ?? item.new_text ?? item.newText
     if (typeof oldString === 'string') {
       deletions += oldString.split('\n').length
       touched = true
@@ -613,10 +613,7 @@ function mergeWorkspacePreview(
   if (merged.previewKind === 'none' && workspaceSummary.previewKind !== 'none') {
     merged.previewKind = workspaceSummary.previewKind
   }
-  if (
-    merged.diffTextTruncated === undefined &&
-    workspaceSummary.diffTextTruncated !== undefined
-  ) {
+  if (merged.diffTextTruncated === undefined && workspaceSummary.diffTextTruncated !== undefined) {
     merged.diffTextTruncated = workspaceSummary.diffTextTruncated
   }
   if (
