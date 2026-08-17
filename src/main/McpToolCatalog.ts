@@ -3713,7 +3713,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'integer',
             minimum: BLACKBOARD_MIN_TTL_MINUTES,
             maximum: BLACKBOARD_MAX_TTL_MINUTES,
-            description: 'Optional self-delete delay in whole minutes. Omit for no time expiry.'
+            description: 'Optional self-delete delay in whole minutes. Defaults to 1440 (24 hours) if omitted. Pass null for no time expiry.'
           },
           attachmentIds: {
             type: 'array',

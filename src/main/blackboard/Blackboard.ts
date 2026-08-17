@@ -123,7 +123,8 @@ export function resolveBlackboardExpiry(
   createdAt: string,
   ttlMinutes: unknown
 ): BlackboardExpiryResolution {
-  if (ttlMinutes === undefined || ttlMinutes === null) return { ok: true }
+  if (ttlMinutes === null) return { ok: true }
+  if (ttlMinutes === undefined) ttlMinutes = 1440
   if (
     typeof ttlMinutes !== 'number' ||
     !Number.isInteger(ttlMinutes) ||

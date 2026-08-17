@@ -243,7 +243,10 @@ describe('makeBlackboardEntry', () => {
     })
 
     expect(e?.expiresAt).toBe('2026-05-31T00:15:00.000Z')
-    expect(resolveBlackboardExpiry(base.createdAt, undefined)).toEqual({ ok: true })
+    expect(resolveBlackboardExpiry(base.createdAt, undefined)).toEqual({
+      ok: true,
+      expiresAt: '2026-06-01T00:00:00.000Z'
+    })
   })
 
   it('rejects malformed or out-of-range self-delete TTLs instead of clamping them', () => {
@@ -745,7 +748,8 @@ describe('formatBlackboardForPrompt', () => {
       value: long.slice(0, BLACKBOARD_MAX_STORE_LEN),
       category: 'decision',
       scope: 'session',
-      createdAt: '2026-05-31T00:00:00.000Z'
+      createdAt: '2026-05-31T00:00:00.000Z',
+      ttlMinutes: null
     })
     expect(e!.value.endsWith('…')).toBe(false)
 
