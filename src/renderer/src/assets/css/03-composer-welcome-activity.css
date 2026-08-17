@@ -14486,6 +14486,13 @@ button.diff-file-row {
  * provider labels use), while each model's marketing blurb is neutral,
  * theme-aware secondary text — hue signposts identity, the description reads
  * as plain body copy. */
+.notification-newadditions-viewport {
+  --live-activity-edge-fade-size: 34px;
+  margin: 2px 0 0;
+}
+.notification-newadditions-viewport .live-activity-viewport-scroll {
+  border-radius: 8px;
+}
 .notification-newadditions-groups {
   display: flex;
   flex-direction: column;

@@ -12,6 +12,7 @@ import {
 } from '../../../shared/appNotifications'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
+import { LiveActivityViewport } from './LiveActivityViewport'
 
 /**
  * Reusable notification zone — the app/dev "notification area" on the welcome /
@@ -33,6 +34,23 @@ export const NOTIFICATION_ACTIVE_REFRESH_MS = 60_000
 const DRAG_THRESHOLD_PX = 48
 const DRAG_AXIS_RATIO = 1.15
 const DISMISSED_EVENT = 'taskwraith:app-notification-dismissed'
+const NEW_ADDITIONS_MODEL_VIEWPORT_THRESHOLD = 8
+const NEW_ADDITIONS_MODEL_VIEWPORT_COLLAPSED_HEIGHT = 300
+
+function getNotificationModelCount(groups: readonly AppNotificationProviderGroup[]): number {
+  return groups.reduce((count, group) => count + group.models.length, 0)
+}
+
+function getNotificationGroupSignature(groups: readonly AppNotificationProviderGroup[]): string {
+  return groups
+    .map(
+      (group) =>
+        `${group.provider}:${group.models
+          .map((model) => `${model.name}::${model.blurb}`)
+          .join('|')}`
+    )
+    .join(';')
+}
 
 const KIND_ICON: Record<AppNotificationKind, string> = {
   deprecation: 'ⓘ',
@@ -87,12 +105,14 @@ interface NotificationDragState {
 }
 
 function NotificationGroups({
-  groups
+  groups,
+  wrapped = false
 }: {
   groups: readonly AppNotificationProviderGroup[]
+  wrapped?: boolean
 }): React.JSX.Element {
   return (
-    <div className="notification-newadditions-groups">
+    <div className="notification-newadditions-groups" data-swipe-ignore={wrapped || undefined}>
       {groups.map((group) => (
         <div key={group.provider} className="notification-newadditions-group">
           <div className={`notification-newadditions-provider provider-${group.provider}`}>
@@ -129,6 +149,8 @@ function NotificationCard({
   const tone = appNotificationTone(notification.kind)
   const accent = appNotificationAccent(notification)
   const groups = notification.groups
+  const totalModelCount = groups ? getNotificationModelCount(groups) : 0
+  const shouldViewport = Boolean(groups && totalModelCount > NEW_ADDITIONS_MODEL_VIEWPORT_THRESHOLD)
   // A grouped notice is a list of provider headings, not a banner — it sits
   // satellite on the surface with no card around it. Only the one-line body
   // variant (and the red deprecation card, which uses its chrome as a warning
@@ -151,7 +173,21 @@ function NotificationCard({
       {groups && groups.length > 0 ? (
         <div className="notification-card-text">
           <strong>{notification.title}</strong>
-          <NotificationGroups groups={groups} />
+          {shouldViewport ? (
+            <LiveActivityViewport
+              className="notification-newadditions-viewport"
+              collapsedMaxHeight={NEW_ADDITIONS_MODEL_VIEWPORT_COLLAPSED_HEIGHT}
+              revision={`${notification.id}:${getNotificationGroupSignature(groups)}`}
+              label={`${notification.title} model list`}
+              expandLabel="Expand list"
+              collapseLabel="Collapse list"
+              jumpLabel="Jump to latest model"
+            >
+              <NotificationGroups groups={groups} wrapped />
+            </LiveActivityViewport>
+          ) : (
+            <NotificationGroups groups={groups} />
+          )}
         </div>
       ) : (
         <p className="notification-card-text">
