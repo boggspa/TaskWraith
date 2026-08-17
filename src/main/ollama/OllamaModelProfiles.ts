@@ -533,12 +533,12 @@ export function ollamaTierAwareWorkflowHint(
     ].join(' ')
   }
   const scout = capableScoutFamily
-    ? 'Use this Ollama thread to search, read the relevant files, and draft a short implementation plan.'
+    ? 'Use this Ollama thread to search, read the relevant files, and recommend a concrete next step.'
     : 'Use this local thread to explore the workspace and outline the next steps.'
   return [
     'TaskWraith local-scout workflow:',
     scout,
-    'When the plan is ready, ask the user whether to continue locally with a higher tier/profile, assign another participant, or delegate the prepared plan.',
+    'When your investigation is complete, present your findings and wait for further instructions.',
     'Do not attempt repo-wide refactors or full test-suite repair loops without confirming scope, tier, context, and verification path.'
   ].join(' ')
 }

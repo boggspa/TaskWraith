@@ -3189,9 +3189,12 @@ export function validateOllamaToolArguments(
   if (!OLLAMA_KNOWN_TOOL_NAMES.has(toolName as OllamaToolName)) return { ok: true }
   const typedToolName = toolName as OllamaToolName
   const { required } = ollamaNativeToolParameters(typedToolName)
-  const missing = required.filter((field) =>
-    field === 'intent' ? !ollamaToolIntent(args) : !ollamaArgPresent(typedToolName, args, field)
-  )
+  const missing = required.filter((field) => {
+    if (field === 'intent' && !ollamaToolIntent(args)) {
+      args.intent = 'Local model action'
+    }
+    return field === 'intent' ? !ollamaToolIntent(args) : !ollamaArgPresent(typedToolName, args, field)
+  })
   if (missing.length > 0) {
     const fields = missing.join(', ')
     return {

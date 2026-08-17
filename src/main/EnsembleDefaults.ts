@@ -64,7 +64,7 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
     provider: 'ollama',
     role: 'Local',
     instructions:
-      'Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
+      'Provide a local, privacy-preserving second opinion for summaries, triage, and small reasoning tasks.',
     permissionPresetId: 'default'
   }
 ]
