@@ -29841,6 +29841,8 @@ function App(): React.JSX.Element {
         viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerMuseReasoning =
         viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+      const viewerMistralReasoning =
+        viewerSelection.mistralReasoningEffort || 'medium'
       const viewerCursorReasoning =
         viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
@@ -30300,6 +30302,7 @@ function App(): React.JSX.Element {
         kimiThinkingEnabled: viewerKimiThinking,
         grokReasoningEffort: viewerGrokReasoning,
         museReasoningEffort: viewerMuseReasoning,
+        mistralReasoningEffort: viewerMistralReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
         cursorFastMode: viewerCursorFastMode,
         codexServiceTier: paneViewerSelection.codexServiceTier || '',

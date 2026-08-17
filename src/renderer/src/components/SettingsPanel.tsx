@@ -297,6 +297,8 @@ interface SettingsPanelProps {
    * `onChange` on blur/commit. */
   onFontPreview?: (partial: { transcriptFontFamily?: string; composerFontFamily?: string }) => void
   keyCommandBindings?: AppSettings['keyCommandBindings']
+  /** Input behavior while a run is in-flight: queue follow-ups or force steering. */
+  midRunInputBehavior?: 'queue' | 'steer'
   reduceTransparency: boolean
   reduceMotion: boolean
   compactDensity: boolean
