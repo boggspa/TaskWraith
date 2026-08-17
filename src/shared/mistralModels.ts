@@ -32,7 +32,7 @@ export const MISTRAL_DEFAULT_REASONING_EFFORT = 'medium'
  * Includes current aliases and legacy IDs so existing chats/presets keep
  * their picker semantics.
  */
-export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set([
+export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set<string>([
   MISTRAL_DEVSTRAL_SMALL_MODEL_ID,
   MISTRAL_MEDIUM_35_MODEL_ID,
   'devstral-small-latest',
