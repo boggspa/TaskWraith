@@ -1210,6 +1210,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         setClaudeReasoningEffort: noSideComposerAction,
         setKimiFastMode: noSideComposerAction,
         setKimiReasoningEffort: noSideComposerAction,
+        setMistralReasoningEffort: noSideComposerAction,
         setKimiThinkingEnabled: noSideComposerAction,
         setGrokReasoningEffort: noSideComposerAction,
         setMuseReasoningEffort: noSideComposerAction,
