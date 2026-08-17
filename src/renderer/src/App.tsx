@@ -6383,6 +6383,21 @@ function App(): React.JSX.Element {
     }
   }
 
+  const getReasoningEffortForProviderFromSelection = (
+    selection: ReturnType<typeof getChatComposerSelection> | null,
+    provider: ProviderId
+  ): string | undefined => {
+    if (!selection) return undefined
+    if (provider === 'codex') return selection.codexReasoningEffort
+    if (provider === 'claude') return selection.claudeReasoningEffort
+    if (provider === 'kimi') return selection.kimiReasoningEffort
+    if (provider === 'grok') return selection.grokReasoningEffort
+    if (provider === 'muse') return selection.museReasoningEffort
+    if (provider === 'mistral') return selection.mistralReasoningEffort
+    if (provider === 'cursor') return selection.cursorReasoningEffort
+    return undefined
+  }
+
   const applyChatComposerSelection = (chat: ChatRecord, providerOverride?: ProviderId) => {
     const selection = getChatComposerSelection(chat, providerOverride)
     setActiveProvider(selection.provider)
@@ -7963,6 +7978,7 @@ function App(): React.JSX.Element {
         approvalMode: string
         workflowMode?: ChatWorkflowMode
         model?: string
+        previousReasoningEffort?: string
       }
     ): {
       change: PendingProviderChange
@@ -7988,7 +8004,10 @@ function App(): React.JSX.Element {
       const normalizedSelection = normalizeProviderModelSelection(
         provider,
         nextModel,
-        modelMetadata
+        modelMetadata,
+        options.previousReasoningEffort
+          ? { reasoningEffort: options.previousReasoningEffort }
+          : undefined
       )
       const providerMetadata: Record<string, unknown> = {
         selectedModelType: nextModel,
@@ -8045,9 +8064,15 @@ function App(): React.JSX.Element {
         ? readPendingProviderChange(currentChat)?.provider
         : null
     if (provider === (pendingProvider || currentProvider)) return
+    const currentSelection = currentChat ? getChatComposerSelection(currentChat, currentProvider) : null
+    const previousReasoningEffort = getReasoningEffortForProviderFromSelection(
+      currentSelection,
+      currentProvider
+    )
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
       approvalMode,
-      model
+      model,
+      previousReasoningEffort
     })
     const queueAtTurnEnd = Boolean(currentChat && isCurrentChatRunning)
     if (currentChat) {
@@ -22318,7 +22343,11 @@ function App(): React.JSX.Element {
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
       approvalMode: sideSelectedApprovalMode,
       workflowMode: sideComposerWorkflowMode,
-      model
+      model,
+      previousReasoningEffort: getReasoningEffortForProviderFromSelection(
+        sideComposerSelection,
+        sideComposerProvider
+      )
     })
     updateChatById(sideChat.appChatId, (source) => {
       const nextChat = isSideChatRunning
@@ -28282,7 +28311,9 @@ function App(): React.JSX.Element {
       const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
         approvalMode: paneSelection.approvalMode,
         workflowMode: paneSelection.workflowMode,
-        model
+        model,
+        previousReasoningEffort:
+          getReasoningEffortForProviderFromSelection(paneSelection, paneSelection.provider)
       })
       const paneWorkspace = getWorkspaceForChat(paneChat)
       const paneBusy = isChatBusy(chatId)
