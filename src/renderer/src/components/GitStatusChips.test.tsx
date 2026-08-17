@@ -15,6 +15,7 @@ function snapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepository
     remoteUrl: 'git@github.com:example/repo.git',
     ahead: 0,
     behind: 0,
+    totalCommits: 0,
     files: [],
     counts: { changed: 0, staged: 0, unstaged: 0, untracked: 0 },
     clean: true,
@@ -26,12 +27,13 @@ function snapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepository
 }
 
 describe('GitSyncChip', () => {
-  it('renders N/A when a branch has no upstream', () => {
-    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ upstream: undefined })} />)
+  it('renders repository commit total when a branch has no upstream', () => {
+    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ upstream: undefined, totalCommits: 4 })} />)
 
-    expect(html).toContain('git-status-unpublished')
-    expect(html).toContain('N/A')
+    expect(html).toContain('git-status-no-upstream')
+    expect(html).not.toContain('N/A')
     expect(html).toContain('No upstream')
+    expect(html).toContain('4')
   })
 
   it('preserves numeric ahead counts instead of replacing them with PR state', () => {
@@ -69,12 +71,16 @@ describe('GitSyncChip', () => {
 
   it('opens unpublished commits when no upstream exists', () => {
     const html = renderToStaticMarkup(
-      <GitSyncChip snapshot={snapshot({ upstream: undefined })} onOpenCommits={() => undefined} />
+      <GitSyncChip
+        snapshot={snapshot({ upstream: undefined, totalCommits: 7 })}
+        onOpenCommits={() => undefined}
+      />
     )
 
-    expect(html).toContain('git-status-unpublished git-status-push-clickable')
+    expect(html).toContain('git-status-no-upstream git-status-push-clickable')
     expect(html).toContain('role="button"')
     expect(html).toContain('open unpushed commits')
+    expect(html).toContain('7')
   })
 
   it('renders an amber branch-drift glyph and traceable count when behind upstream', () => {

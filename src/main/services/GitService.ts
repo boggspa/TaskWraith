@@ -93,6 +93,7 @@ export interface GitRepositorySnapshot {
   remoteUrl?: string
   ahead: number
   behind: number
+  totalCommits?: number | null
   files: GitFileStatus[]
   counts: {
     changed: number
@@ -1481,6 +1482,7 @@ export class GitService {
     const aheadBehind = upstream
       ? await this.readAheadBehind(repo.repoRoot)
       : { ahead: 0, behind: 0 }
+    const totalCommits = upstream ? undefined : await this.readTotalCommits(repo.repoRoot)
 
     return {
       requestedPath: repo.requestedPath,
@@ -1493,6 +1495,7 @@ export class GitService {
       remoteUrl: remoteResult.code === 0 ? remoteResult.stdout.trim() : undefined,
       ahead: aheadBehind.ahead,
       behind: aheadBehind.behind,
+      totalCommits,
       files,
       counts: {
         changed: files.length,
@@ -1580,6 +1583,15 @@ export class GitService {
       ahead: Number(aheadRaw) || 0,
       behind: Number(behindRaw) || 0
     }
+  }
+
+  private async readTotalCommits(repoRoot: string): Promise<number | null> {
+    const result = await this.run('git', ['rev-list', '--count', 'HEAD'], {
+      cwd: repoRoot,
+      timeoutMs: this.timeoutMs
+    })
+    if (result.code !== 0) return null
+    return parseNonNegativeGitCount(result.stdout) ?? 0
   }
 
   private async assertNoRepositoryLocalFilters(repoRoot: string): Promise<void> {

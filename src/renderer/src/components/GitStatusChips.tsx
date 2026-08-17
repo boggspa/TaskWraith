@@ -239,15 +239,21 @@ export function GitSyncChip({
   onOpenCommits?: () => void
 }): React.JSX.Element | null {
   if (snapshot.detached || !snapshot.branch) return null
+
+  const commitLabel = (count: number): string => `${count} commit${count === 1 ? '' : 's'}`
   if (!snapshot.upstream) {
     const clickable = Boolean(onOpenCommits)
+    const totalCommits = snapshot.totalCommits ?? 0
+    const commitsLabel = commitLabel(totalCommits)
     const open = (): void => onOpenCommits?.()
     return (
       <span
-        className={`git-status-push git-status-unpublished${
+        className={`git-status-push git-status-no-upstream${
           clickable ? ' git-status-push-clickable' : ''
         }`}
-        title={`No upstream — push to publish this branch${clickable ? ' · open unpushed commits' : ''}`}
+        title={`No upstream — ${commitsLabel} in this repository · push to publish this branch${
+          clickable ? ' · open unpushed commits' : ''
+        }`}
         role={clickable ? 'button' : undefined}
         tabIndex={clickable ? 0 : undefined}
         onClick={clickable ? open : undefined}
@@ -257,11 +263,11 @@ export function GitSyncChip({
                 if (event.key !== 'Enter' && event.key !== ' ') return
                 event.preventDefault()
                 open()
-              }
+            }
             : undefined
         }
       >
-        N/A
+        <DigitOdometer value={totalCommits} ariaLabel={`${commitsLabel} in this repository`} />
       </span>
     )
   }
@@ -277,7 +283,6 @@ export function GitSyncChip({
   const syncState = diverged ? 'diverged' : behind > 0 ? 'behind' : 'ahead'
   const clickable = ahead > 0 && Boolean(onOpenCommits)
   const open = (): void => onOpenCommits?.()
-  const commitLabel = (count: number): string => `${count} commit${count === 1 ? '' : 's'}`
   const statusTitle = diverged
     ? `Diverged from local tracking ref ${snapshot.upstream} · ${commitLabel(ahead)} local-only · ${commitLabel(behind)} upstream-only · fetch to refresh remote state.`
     : behind > 0

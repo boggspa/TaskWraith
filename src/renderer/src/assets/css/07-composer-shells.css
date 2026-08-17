@@ -1839,9 +1839,13 @@
 .composer-above-bar-secondary-branch.git-tone-release {
   color: #6ddfa8;
 }
-/* "no upstream" variant of the sync chip — amber (needs publishing). */
+/* "no upstream" variant of the sync chip — neutral contrast for repo totals without upstream. */
 .git-status-push.git-status-unpublished {
   color: #ffc248;
+  font-weight: 600;
+}
+.git-status-push.git-status-no-upstream {
+  color: #fff;
   font-weight: 600;
 }
 .git-status-push.git-status-synced {
@@ -1871,6 +1875,10 @@
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .git-status-push.git-status-unpublished {
   color: #c38b00;
+}
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .git-status-push.git-status-no-upstream {
+  color: #111;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .git-status-push.git-status-synced {
