@@ -136,6 +136,7 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
 ])
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'activeProvider',
+  'midRunInputBehavior',
   'providerRunPauses',
   'windowBounds',
   'claudeBinaryPath',

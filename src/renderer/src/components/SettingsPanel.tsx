@@ -448,6 +448,7 @@ interface SettingsPanelProps {
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
+    midRunInputBehavior?: 'queue' | 'steer'
     sidebarOpacityOverride?: boolean
     mainPaneOpacityOverride?: boolean
     geminiCheckpointingEnabled?: boolean
@@ -3899,6 +3900,7 @@ export function SettingsPanel({
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
+  midRunInputBehavior,
   chatContextTurns,
   currency,
   currencyOverestimatePercent,
@@ -6306,6 +6308,24 @@ export function SettingsPanel({
                   Simulator
                 </h4>
                 <SimulatorControlSettingsCard />
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-label">Mid-Run message behavior</label>
+                <SegmentedControl
+                  ariaLabel="Mid-Run message behavior"
+                  className="settings-option-list settings-option-list-inline"
+                  size="compact"
+                  value={midRunInputBehavior || 'queue'}
+                  options={[
+                    { value: 'steer', label: 'Steer' },
+                    { value: 'queue', label: 'Queue' }
+                  ]}
+                  onValueChange={(value) => onChange({ midRunInputBehavior: value as 'queue' | 'steer' })}
+                />
+                <p className="settings-hint">
+                  Controls whether submitting a message while a run is active immediately steers the agent, or queues the message.
+                </p>
               </div>
 
               <div className="settings-group">
