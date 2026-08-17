@@ -1,6 +1,9 @@
 import { normalize, relative, resolve } from 'node:path'
 import type { OllamaToolControlTier } from '../store/types'
-import { ollamaEnforcesRetrievalFirst } from './OllamaRetrievalFirst'
+import {
+  ollamaEnforcesRetrievalFirst,
+  ollamaReadFileExemptFromRetrievalFirst
+} from './OllamaRetrievalFirst'
 import { appendOllamaStickyAskRemnant } from './OllamaStickyAsk'
 import {
   OLLAMA_FILE_EDIT_TOOL_NAMES,
@@ -184,7 +187,7 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, tier, state, toolName, args, requireTodoScaffold } = input
+  const { modelId, state, toolName, args, requireTodoScaffold } = input
   const needsRetrievalFirst = ollamaEnforcesRetrievalFirst(modelId)
 
   // Retrieve-first policy: explore before read, read before edit

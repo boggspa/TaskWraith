@@ -309,6 +309,7 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
     .filter((entry) => agyUsagePoolType(entry.line) !== null)
   if (headers.length === 0) return { planType, windows: [] }
 
+  const windows: NormalizedProviderUsageWindow[] = []
   for (let headerIndex = 0; headerIndex < headers.length; headerIndex += 1) {
     if (windows.length >= MAX_QUOTA_GROUPS) break
     const currentHeader = headers[headerIndex]
