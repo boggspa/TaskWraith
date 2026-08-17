@@ -185,15 +185,15 @@ export async function prepareAntigravityProviderLaunch(
     mode === 'plan'
       ? buildAgyReadOnlyPrintArgs(argsInput)
       : buildAgyWriteCapablePrintArgs(argsInput)
-  // Signed Full Access is the one posture where every native capability is
-  // already pregranted, so agy's own confirmation layer (fatal under headless
-  // print mode) is skipped. This is NOT a general bypass: the terminal
-  // sandbox stays on, and the PreToolUse hook bridge still routes every
-  // command through TaskWraith's gate, whose universal holds (remote egress,
-  // catastrophic deletion) hold at Full Access too.
+
+  // When the PreToolUse hook bridge is live and the posture pregrants write
+  // capability, agy's own confirmation layer (fatal under headless print mode)
+  // is skipped. This is safe because the terminal sandbox stays on, and the
+  // live hook bridge routes every command through TaskWraith's gate, which
+  // retains authoritative veto power over all native tool calls.
   if (
-    input.effectivePermissions?.presetId === 'full_access' &&
-    input.effectivePermissions.readOnly !== true &&
+    input.perToolApprovalBridge &&
+    input.effectivePermissions?.readOnly !== true &&
     !agenticServicesDenyWrites(input.agenticServices)
   ) {
     args.unshift('--dangerously-skip-permissions')
