@@ -271,6 +271,7 @@ tool, vision, and thinking capabilities remain model-specific.
 | Qwen 3 (4B) **(Default)**  | `qwen3:4b-instruct`  | 262K local context.                             |
 | Qwen 3.5 (9B)              | `qwen3.5:9b`         | 262K local context.                             |
 | Qwen 3.6 (35B-A3B)         | `qwen3.6:35b`        | 262K; vision, tools, thinking.                  |
+| Qwen 3.8 (27B-MLX)         | `qwen3.8:27b-mlx`    | 262K; vision, tools, thinking.                  |
 | Gemma 4 (12B)              | `gemma4:12b`         | 262K local context.                             |
 | Ornith 1.0 (9B)            | `ornith:9b`          | 262K agentic coding.                            |
 | Ornith 1.0 (35B)           | `ornith:35b`         | 262K agentic coding.                            |
