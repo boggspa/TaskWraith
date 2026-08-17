@@ -217,6 +217,7 @@ function reasoningForProvider(
     claude: ['claudeReasoningEffort', 'reasoningEffort'],
     kimi: ['kimiReasoningEffort', 'reasoningEffort'],
     grok: ['grokReasoningEffort', 'reasoningEffort'],
+    mistral: ['mistralReasoningEffort', 'reasoningEffort'],
     muse: ['museReasoningEffort', 'reasoningEffort'],
     cursor: ['cursorReasoningEffort', 'reasoningEffort'],
     antigravity: ['geminiReasoningEffort', 'reasoningEffort'],

@@ -108,6 +108,40 @@ describe('createHostProductionContextResolvers', () => {
     })
   })
 
+  it('reads Mistral default reasoning from metadata keys', async () => {
+    const { resolvers } = open({
+      chats: [
+        chat({
+          provider: 'mistral',
+          requestedModel: 'mistral-medium-3.5',
+          providerMetadata: {
+            mistralReasoningEffort: 'high'
+          }
+        })
+      ]
+    })
+
+    await expect(resolvers.resolveComposerSend('thread-1')).resolves.toEqual({
+      ok: true,
+      value: {
+        mode: 'solo',
+        workspaceId: 'workspace-1',
+        provider: 'mistral',
+        model: 'mistral-medium-3.5',
+        reasoningEffort: 'high'
+      }
+    })
+
+    const offers = await resolvers.resolveThreadOffers('thread-1')
+    expect(offers).toMatchObject({
+      ok: true,
+      value: {
+        currentReasoningEffort: 'high',
+        currentModel: 'mistral-medium-3.5'
+      }
+    })
+  })
+
   it('projects canonical offers and rejects any composer nomination outside them', async () => {
     const { resolvers } = open({
       chats: [
