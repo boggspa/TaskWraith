@@ -3152,6 +3152,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             // steering. Detached side chats omit `handleSteer`
                             // and fall through to `handleRun` below.
                             if (
+                              settings?.midRunInputBehavior === 'steer' &&
                               isCurrentChatRunning &&
                               typeof handleSteer === 'function' &&
                               isCurrentChatBusyForSteer &&
