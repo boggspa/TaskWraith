@@ -553,15 +553,21 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // Full/immutable grow by 502 characters; the two compact fresh transports
     // grow by 501. Both fresh profiles remain below 40k, the over-ceiling
     // inventory is unchanged, and no budget or ratio assertion is relaxed.
-    // 1.9.6: blackboard_delete moved out of the app-state-mutation set into
-    // auto-allowed, dropping "not available to read-only seats" from its
-    // description, while blackboard_post's ttlMinutes text grew. Net -33
-    // characters. A SHRINK is the permitted direction for this budget; if this
-    // number ever has to grow, that is the finding, not the fix.
-    expect(fullChars).toBe(146_407)
-    expect(gatewayChars).toBe(43_513)
-    expect(freshGatewayChars).toBe(37_967)
-    expect(freshMeshGatewayChars).toBe(39_035)
+    // 1.9.6, in two steps. First blackboard_delete moved out of the
+    // app-state-mutation set into auto-allowed, dropping "not available to
+    // read-only seats" and taking the catalogue DOWN 33 characters. Then
+    // ttlMinutes gained `null` as a permitted type and blackboard_post's
+    // description was corrected to state the 24h default, taking it back UP 35.
+    // Net +2 against the pre-1.9.6 figure.
+    //
+    // Growth is the direction this guard exists to question, so it is justified
+    // rather than absorbed: both fresh profiles remain under the 40k ceiling
+    // asserted below, which is the real budget — these exact pins are the
+    // tripwire that forces someone to look.
+    expect(fullChars).toBe(146_442)
+    expect(gatewayChars).toBe(43_548)
+    expect(freshGatewayChars).toBe(38_002)
+    expect(freshMeshGatewayChars).toBe(39_044)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBeLessThan(40_000)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)

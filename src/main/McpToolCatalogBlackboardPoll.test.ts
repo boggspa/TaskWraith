@@ -35,8 +35,11 @@ describe('Blackboard quota and poll MCP schema', () => {
       maxItems: 6,
       items: { type: 'string', minLength: 1, maxLength: 160 }
     })
+    // `null` must be a permitted type, not just a documented one: omission now
+    // means the 24h default, so null is the only way to ask for a durable
+    // entry, and a strict validator would reject it under a bare 'integer'.
     expect(schema.properties?.ttlMinutes).toEqual({
-      type: 'integer',
+      type: ['integer', 'null'],
       minimum: 1,
       maximum: 10_080,
       description:

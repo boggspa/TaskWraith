@@ -1081,7 +1081,7 @@ Emit a structured brief from a parallel fan-out lane. The next serial writer/syn
 
 ## blackboard_post
 
-Post a Blackboard entry/poll with up to 4 raster images. Reuse current-chat attachmentIds or attach workspaceImagePaths (workspace-confined); agents should inspect image aliases from blackboard_read with inspect_chat_attachment. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.
+Post a Blackboard entry/poll with up to 4 raster images. Reuse current-chat attachmentIds or attach workspaceImagePaths (workspace-confined); agents should inspect image aliases from blackboard_read with inspect_chat_attachment. Entries self-delete after 24 hours by default; ttlMinutes sets 1 minute–7 days instead, and null keeps it durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.
 
 - Access: read-only (no approval needed)
 - Required args: key, value

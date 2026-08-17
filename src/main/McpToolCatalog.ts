@@ -3681,7 +3681,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'blackboard_post',
       description:
-        'Post a Blackboard entry/poll with up to 4 raster images. Reuse current-chat attachmentIds or attach workspaceImagePaths (workspace-confined); agents should inspect image aliases from blackboard_read with inspect_chat_attachment. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.',
+        'Post a Blackboard entry/poll with up to 4 raster images. Reuse current-chat attachmentIds or attach workspaceImagePaths (workspace-confined); agents should inspect image aliases from blackboard_read with inspect_chat_attachment. Entries self-delete after 24 hours by default; ttlMinutes sets 1 minute–7 days instead, and null keeps it durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3710,7 +3710,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             enum: ['round', 'session', 'chat']
           },
           ttlMinutes: {
-            type: 'integer',
+            // `null` is a real, documented value here — it is how a caller asks
+            // for a durable entry now that omission means the 24h default. A
+            // bare 'integer' would have a strict validator reject the very
+            // escape hatch this description advertises.
+            type: ['integer', 'null'],
             minimum: BLACKBOARD_MIN_TTL_MINUTES,
             maximum: BLACKBOARD_MAX_TTL_MINUTES,
             description:
