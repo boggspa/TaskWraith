@@ -2011,6 +2011,7 @@ import {
   resolveGatewayInvocation,
   selectGatewayHiddenToolNames,
   shouldEmitCanonicalTargetTranscript,
+  providerEmitsNativeMcpTranscriptRows,
   searchGatewayCapabilities,
   type CapabilityGatewayToolName
 } from './mcp/McpToolGateway'
@@ -36615,9 +36616,11 @@ function recordCapabilityGatewayEvent(
 }
 
 /**
- * Non-Codex providers rely on main for MCP transcript events. Codex emits the
- * wrapper call natively, so only canonical target dispatches are synthesized
- * for Codex (see GatewayTargetDispatch below).
+ * Most providers rely on main for MCP transcript events. The ones that stream
+ * their own rows emit the wrapper call natively, so only canonical target
+ * dispatches are synthesized for them (see GatewayTargetDispatch below). Shares
+ * one predicate with the target-row guard so the two cannot disagree about
+ * which providers already speak for themselves.
  */
 function emitCapabilityGatewayWrapperResult(
   context: GeminiToolContext,
@@ -36626,7 +36629,7 @@ function emitCapabilityGatewayWrapperResult(
   args: Record<string, unknown>,
   result: McpToolExecutionResult
 ): void {
-  if (parentProvider === 'codex') return
+  if (providerEmitsNativeMcpTranscriptRows(parentProvider)) return
   const toolId = `${parentProvider}-mcp-${toolName}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   sendAgentCompatLine(context.sender, parentProvider, {
     type: 'tool_use',
@@ -37338,9 +37341,18 @@ async function executeGeminiMcpTool(
   // and the two ids don't match). The MCP-protocol return value is
   // delivered to the agent via the function return — separate from
   // these renderer-only emissions — so suppression is purely visual
-  // and does not affect what Codex sees. For Gemini/Claude/Kimi the
-  // synthetic emissions are still the authoritative source: those
-  // providers don't natively stream `mcpToolCall` items. Gateway target
+  // and does not affect what the provider sees. Pi has the same shape
+  // and was missed for as long as the check named Codex alone: its
+  // managed tools are registered as real Pi tools by the app-owned
+  // extension, so Pi reports each one through `toolcall_end` and the
+  // transcript showed "Ran 2 commands" for every single call, the two
+  // rows differing only in the duration each layer measured. For
+  // Gemini/Claude/Kimi the synthetic emissions are still the
+  // authoritative source: those providers don't natively stream
+  // `mcpToolCall` items — see the run-event measurements on
+  // PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS before adding one here,
+  // because suppressing a provider that does NOT report its own calls
+  // deletes the row instead of deduplicating it. Gateway target
   // dispatch is the Codex exception: its native row names the outer wrapper,
   // so main emits one canonical target row carrying `via_gateway` metadata.
   const emitMcpToolTranscriptEvent = shouldEmitCanonicalTargetTranscript(

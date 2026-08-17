@@ -35,15 +35,44 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
 }
 
 /**
- * Codex normally supplies its own MCP transcript rows. A gateway call is the
- * exception: Codex owns the outer wrapper row, while main must emit the resolved
- * canonical target row so the transcript retains the real audit identity.
+ * Providers that stream their own row for a TaskWraith MCP call.
+ *
+ * Main synthesizes `tool_use`/`tool_result` for MCP invocations because most
+ * providers never mention them. For these two the provider already emits a row
+ * keyed on ITS OWN call id, so synthesizing a second one keyed on
+ * `<provider>-mcp-<tool>-<ts>-<rand>` renders TWO complete tool cards for one
+ * invocation — the renderer pairs use→result by tool_id, and the two ids never
+ * match. Codex was fixed when this was found (its app-server `mcpToolCall`
+ * items); Pi has the same shape and was missed, because TaskWraith's managed
+ * tools are registered as real Pi tools by the app-owned extension, so Pi
+ * reports every one of them through `toolcall_end` like any native call.
+ * Measured across the run-event corpus: 89–95% of Pi's brokered calls carried
+ * a native twin, and the remainder were the separate forked-tool-call defect
+ * (the nameless block rendered as `tool`) rather than a missing row.
+ *
+ * KIMI IS DELIBERATELY ABSENT and must not be added on the strength of looking
+ * similar. Only 3–13% of its brokered calls carry a native twin, so for Kimi
+ * the synthesized row IS the transcript — suppressing it would delete the
+ * overwhelming majority of its MCP tool cards rather than deduplicate them.
+ * Measure against run-events before extending this list; a provider that
+ * merely COULD report its own calls is not evidence that it does.
+ */
+const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = ['codex', 'pi']
+
+export function providerEmitsNativeMcpTranscriptRows(parentProvider: string): boolean {
+  return PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS.includes(parentProvider)
+}
+
+/**
+ * A gateway call is the exception: the provider's own row names the outer
+ * wrapper, so main must still emit the resolved canonical target row for the
+ * transcript to retain the real audit identity.
  */
 export function shouldEmitCanonicalTargetTranscript(
   parentProvider: string,
   viaGateway: boolean
 ): boolean {
-  return parentProvider !== 'codex' || viaGateway
+  return !providerEmitsNativeMcpTranscriptRows(parentProvider) || viaGateway
 }
 
 /** Return fresh definitions so a transport cannot mutate the shared profile. */

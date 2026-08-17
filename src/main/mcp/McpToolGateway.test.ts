@@ -13,6 +13,7 @@ import {
   resolveGatewayInvocation,
   selectGatewayHiddenToolNames,
   shouldEmitCanonicalTargetTranscript,
+  providerEmitsNativeMcpTranscriptRows,
   searchGatewayCapabilities,
   validateGatewayToolArguments,
   type GatewayToolDefinition
@@ -103,17 +104,49 @@ describe('McpToolGateway virtual definitions', () => {
     expect(shouldEmitCanonicalTargetTranscript('codex', true)).toBe(true)
     expect(shouldEmitCanonicalTargetTranscript('claude', false)).toBe(true)
   })
+
+  it('stops synthesizing a second Pi row for a call Pi already reported', () => {
+    // TaskWraith's managed tools are registered as real Pi tools by the
+    // app-owned extension, so Pi streams `toolcall_end` for every one of them.
+    // Synthesizing `pi-mcp-<tool>-<ts>-<rand>` on top rendered two complete
+    // cards per call — "Ran 2 commands" for one command, the rows differing
+    // only in the duration each layer measured.
+    expect(shouldEmitCanonicalTargetTranscript('pi', false)).toBe(false)
+    // A gateway call still needs the canonical target row: Pi's own row names
+    // the outer wrapper, so suppressing here would lose the audit identity.
+    expect(shouldEmitCanonicalTargetTranscript('pi', true)).toBe(true)
+  })
+
+  it.each([['kimi'], ['claude'], ['gemini'], ['cursor'], ['grok'], ['ollama'], ['antigravity']])(
+    'keeps synthesizing for %s, whose brokered calls it does not otherwise report',
+    (provider) => {
+      // Suppressing one of these DELETES the row rather than deduplicating it.
+      // Kimi is the trap: it looks like Pi, but only 3-13% of its brokered
+      // calls carry a native twin across the whole run-event corpus, so the
+      // synthesized row is the transcript for the rest.
+      expect(providerEmitsNativeMcpTranscriptRows(provider)).toBe(false)
+      expect(shouldEmitCanonicalTargetTranscript(provider, false)).toBe(true)
+    }
+  )
+
+  it('names the providers that speak for themselves', () => {
+    expect(providerEmitsNativeMcpTranscriptRows('codex')).toBe(true)
+    expect(providerEmitsNativeMcpTranscriptRows('pi')).toBe(true)
+  })
 })
 
 describe('searchGatewayCapabilities', () => {
-  it.each([undefined, null, '', '   ', '---'])('never enumerates the catalogue for empty query %j', (query) => {
-    const result = searchGatewayCapabilities({
-      query,
-      definitions: DEFINITIONS,
-      eligibleToolNames: ALL_NAMES
-    })
-    expect(result).toMatchObject({ ok: false, code: 'invalid_query', matches: [] })
-  })
+  it.each([undefined, null, '', '   ', '---'])(
+    'never enumerates the catalogue for empty query %j',
+    (query) => {
+      const result = searchGatewayCapabilities({
+        query,
+        definitions: DEFINITIONS,
+        eligibleToolNames: ALL_NAMES
+      })
+      expect(result).toMatchObject({ ok: false, code: 'invalid_query', matches: [] })
+    }
+  )
 
   it('rejects overlong queries and limits outside the fixed bound', () => {
     expect(
@@ -312,7 +345,9 @@ describe('selectGatewayHiddenToolNames', () => {
 
 describe('findGatewayCapabilityByName', () => {
   it('uses exact case-sensitive names', () => {
-    expect(findGatewayCapabilityByName(DEFINITIONS, 'video_thumbnail')?.name).toBe('video_thumbnail')
+    expect(findGatewayCapabilityByName(DEFINITIONS, 'video_thumbnail')?.name).toBe(
+      'video_thumbnail'
+    )
     expect(findGatewayCapabilityByName(DEFINITIONS, 'VIDEO_THUMBNAIL')).toBeNull()
     expect(findGatewayCapabilityByName(DEFINITIONS, ' video_thumbnail ')).toBeNull()
   })
@@ -441,9 +476,10 @@ describe('validateGatewayToolArguments', () => {
         const required = definition.inputSchema?.required
         if (Array.isArray(required) && required.length > 0) {
           expect(result.code, definition.name).toBe('invalid_arguments')
-          expect(result.issues.some((issue) => issue.keyword === 'required'), definition.name).toBe(
-            true
-          )
+          expect(
+            result.issues.some((issue) => issue.keyword === 'required'),
+            definition.name
+          ).toBe(true)
         }
       }
     }
@@ -582,9 +618,12 @@ describe('C2b-ii-d gateway reviewer-verdict eligibility exception', () => {
 
   it('P-D: exact reviewer-verdict resolves ok despite bossman being INELIGIBLE (both verdicts)', () => {
     for (const verdict of ['passed', 'failed'] as const) {
-      const res = resolve('ensemble_bossman_control', exact(verdict), defs(acceptingBossmanSchema), [
-        'read_file'
-      ])
+      const res = resolve(
+        'ensemble_bossman_control',
+        exact(verdict),
+        defs(acceptingBossmanSchema),
+        ['read_file']
+      )
       expect(res.ok, verdict).toBe(true)
       if (res.ok) expect(res.name).toBe('ensemble_bossman_control')
     }
@@ -615,7 +654,9 @@ describe('C2b-ii-d gateway reviewer-verdict eligibility exception', () => {
       'not-an-object'
     ]
     for (const args of nearMisses) {
-      const res = resolve('ensemble_bossman_control', args, defs(acceptingBossmanSchema), ['read_file'])
+      const res = resolve('ensemble_bossman_control', args, defs(acceptingBossmanSchema), [
+        'read_file'
+      ])
       const label = JSON.stringify(args) ?? 'undefined'
       expect(res.ok, label).toBe(false)
       if (!res.ok) expect(res.code, label).toBe('ineligible_target')
@@ -638,7 +679,9 @@ describe('C2b-ii-d gateway reviewer-verdict eligibility exception', () => {
   })
 
   it('control: an eligible non-bossman tool still resolves normally (floor unchanged)', () => {
-    const res = resolve('read_file', { path: 'README.md' }, defs(acceptingBossmanSchema), ['read_file'])
+    const res = resolve('read_file', { path: 'README.md' }, defs(acceptingBossmanSchema), [
+      'read_file'
+    ])
     expect(res.ok).toBe(true)
   })
 })
