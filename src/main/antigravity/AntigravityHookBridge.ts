@@ -239,8 +239,9 @@ function extractToolCall(body: unknown): AgyHookToolCall | null {
     }
   }
   // Extract mutation args for diff stat derivation
-  const mutationArgs: Partial<Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>> =
-    {}
+  const mutationArgs: Partial<
+    Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>
+  > = {}
   for (const { key, canonical } of MUTATION_ARG_KEYS) {
     const value = decodeAgyHookScalar(argRecord?.[key])
     if (value !== null && value !== undefined && !mutationArgs[canonical]) {
