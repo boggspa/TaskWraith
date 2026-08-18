@@ -14595,6 +14595,9 @@ button.diff-file-row {
 .notification-newadditions-model.provider-poolside {
   color: var(--provider-poolside-color, #0c8194);
 }
+.notification-newadditions-model.provider-google {
+  color: var(--provider-google-color, #308713);
+}
 /* Pi's group heading stays the seat colour; each model name wears the hue of
  * the BYOK upstream that serves it. */
 .notification-newadditions-provider.provider-pi,
