@@ -267,3 +267,104 @@ describe('local Ollama admission gate, wired into dispatch', () => {
     }
   )
 })
+
+describe('fan-out cap refusal names local-capacity backpressure', () => {
+  it(
+    'tells a refused fourth call that waves are waiting on local capacity',
+    { timeout: 30_000 },
+    async () => {
+      // One local slot, and a local lane holding it: the host is saturated, so
+      // open waves drain in turns. A refusal that omits that reads as a
+      // stalled round, and the observed answer to a misread refusal is
+      // shrinking the roster.
+      vi.stubEnv('OLLAMA_MAX_LOADED_MODELS', '1')
+      stubReachableOllama()
+      const harness = makeHarness([
+        participant('lead', 'codex', 'Lead', 1, 'gpt-5.6'),
+        participant('scout', 'ollama', 'Scout', 2, 'qwen3:8b'),
+        participant('reviewer', 'claude', 'Reviewer', 3, 'opus'),
+        participant('auditor', 'grok', 'Auditor', 4, 'grok-4'),
+        participant('scribe', 'kimi', 'Scribe', 5, 'k3')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Lead saturates the local host, then over-dispatches.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const boss = harness.dispatched[0].appRunId
+
+      const first = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Scout'],
+        prompt: 'Local lane holding the only slot.'
+      })
+      expect(first.ok).toBe(true)
+      const second = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Reviewer'],
+        prompt: 'Hosted lane.'
+      })
+      expect(second.ok).toBe(true)
+      const third = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Auditor'],
+        prompt: 'Hosted lane.'
+      })
+      expect(third.ok).toBe(true)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+
+      const fourth = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Scribe'],
+        prompt: 'One wave too many.'
+      })
+      expect(fourth.ok).toBe(false)
+      expect(fourth.error).toBe('too_many_concurrent_fanouts')
+      expect(fourth.message).toContain('waiting on local capacity')
+      expect(fourth.message).toContain('1 of 1')
+      // The anti-roster-shrink copy must survive the addition.
+      expect(fourth.message).toMatch(/do not drop seats/i)
+      expect(fourth.message).toContain('ensemble_await')
+    }
+  )
+
+  it(
+    'leaves the refusal byte-clean of capacity talk when no local seat is in play',
+    { timeout: 30_000 },
+    async () => {
+      // An all-hosted roster (or a rack of H100s) must read the exact refusal
+      // it read before the admission gate existed — it must not even be told a
+      // gate exists.
+      stubReachableOllama()
+      const harness = makeHarness([
+        participant('lead', 'codex', 'Lead', 1, 'gpt-5.6'),
+        participant('reviewer', 'claude', 'Reviewer', 2, 'opus'),
+        participant('auditor', 'grok', 'Auditor', 3, 'grok-4'),
+        participant('scribe', 'kimi', 'Scribe', 4, 'k3'),
+        participant('helper', 'cursor', 'Helper', 5, 'composer')
+      ])
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Hosted roster over-dispatches.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const boss = harness.dispatched[0].appRunId
+
+      for (const target of ['Reviewer', 'Auditor', 'Scribe']) {
+        const wave = await harness.orchestrator.fanoutForRun(boss, {
+          targets: [target],
+          prompt: 'Hosted lane.'
+        })
+        expect(wave.ok).toBe(true)
+      }
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+
+      const fourth = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Helper'],
+        prompt: 'One wave too many.'
+      })
+      expect(fourth.ok).toBe(false)
+      expect(fourth.error).toBe('too_many_concurrent_fanouts')
+      expect(fourth.message).not.toContain('waiting on local capacity')
+      expect(fourth.message).not.toContain('model ceiling')
+    }
+  )
+})

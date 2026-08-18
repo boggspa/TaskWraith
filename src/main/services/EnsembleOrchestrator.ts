@@ -251,6 +251,7 @@ import {
   transitionLane
 } from '../EnsembleLanes'
 import { openFanoutWaves, refuseForConcurrentFanouts } from '../EnsembleFanoutConcurrency'
+import type { LocalCapacityPressure } from '../EnsembleFanoutConcurrency'
 import type { OpenFanoutWave } from '../EnsembleFanoutConcurrency'
 import {
   concurrentLanesEnabled,
@@ -3747,6 +3748,22 @@ export class EnsembleOrchestrator {
   /** Seats of every run the orchestrator still considers live, for reconcile. */
   private liveRunSeats(): { provider: string; model?: string }[] {
     return [...this.runsByRunId.values()].map((live) => live.participant)
+  }
+
+  /**
+   * Point-in-time read of the local admission gate, for refusal context.
+   *
+   * On a tree with no local seats the lazy policy has never probed, so every
+   * field reads as unpressured and the refusal stays byte-identical — the
+   * unbounded-host invariant extends to error copy.
+   */
+  private localCapacityPressure(): LocalCapacityPressure {
+    const admission = this.localAdmission()
+    return {
+      queuedDispatches: admission.waiting,
+      inFlightModels: admission.inFlight,
+      ceiling: admission.capacityEstimate?.ceiling
+    }
   }
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
@@ -12268,7 +12285,8 @@ export class EnsembleOrchestrator {
     // so two calls cannot both read "one wave open" and both dispatch.
     const concurrencyRefusal = refuseForConcurrentFanouts(
       this.openFanoutWavesForChat(run.chatId),
-      'ensemble_fanout'
+      'ensemble_fanout',
+      this.localCapacityPressure()
     )
     if (concurrencyRefusal) {
       this.appendRoundStatus(run.chatId, run.roundId, concurrencyRefusal.message)
@@ -12588,7 +12606,8 @@ export class EnsembleOrchestrator {
     // caller alternate between them and keep four waves alive.
     const concurrencyRefusal = refuseForConcurrentFanouts(
       this.openFanoutWavesForChat(run.chatId),
-      'ensemble_fanout_all'
+      'ensemble_fanout_all',
+      this.localCapacityPressure()
     )
     if (concurrencyRefusal) {
       this.appendRoundStatus(run.chatId, run.roundId, concurrencyRefusal.message)

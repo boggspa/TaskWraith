@@ -65,6 +65,23 @@ export interface OpenFanoutWave {
 
 export type FanoutConcurrencyTool = 'ensemble_fanout' | 'ensemble_fanout_all'
 
+/**
+ * What the local Ollama admission gate can say about itself at refusal time.
+ *
+ * Passed by the orchestrator so the refusal can explain WHY waves are staying
+ * open on a capacity-bound host. All three fields are point-in-time reads of
+ * `OllamaLocalAdmissionPolicy`; `ceiling` undefined means the host declared no
+ * limit and the gate is unbounded.
+ */
+export interface LocalCapacityPressure {
+  /** Dispatches queued behind the local admission gate right now. */
+  queuedDispatches: number
+  /** Distinct local models currently admitted. */
+  inFlightModels: number
+  /** The host's declared/observed model ceiling; undefined means unbounded. */
+  ceiling: number | undefined
+}
+
 export interface FanoutConcurrencyRefusal {
   error: 'too_many_concurrent_fanouts'
   message: string
@@ -99,16 +116,56 @@ export function openFanoutWaves(lanes: Iterable<FanoutWaveLane>): OpenFanoutWave
 }
 
 /**
+ * One sentence of context when the refusal is really local-capacity backpressure.
+ *
+ * Fires on either signal: dispatches literally queued behind the gate, or the
+ * host sitting at its model ceiling (at the ceiling, any further local lane
+ * will queue, so open waves holding local lanes drain in turns — true even
+ * while nothing happens to be queued at this instant). Queue evidence is
+ * trusted on its own because the two reads are not atomic: a slot can free
+ * between reading `inFlightModels` and reading `queuedDispatches`, and
+ * something queued IS pressure whatever the slot count says.
+ *
+ * With headroom — or on a host that never declared a ceiling — this returns
+ * the empty string and the refusal is byte-identical to the pre-gate message.
+ * The empty string is the invariant, not an optimisation: an unbounded host
+ * must not even be told a gate exists.
+ */
+function localCapacityNote(pressure?: LocalCapacityPressure): string {
+  if (!pressure) return ''
+  const queued = Math.max(0, pressure.queuedDispatches)
+  const saturated = pressure.ceiling !== undefined && pressure.inFlightModels >= pressure.ceiling
+  if (queued <= 0 && !saturated) return ''
+  const slots =
+    pressure.ceiling !== undefined
+      ? `${pressure.inFlightModels} of ${pressure.ceiling} model slot${pressure.ceiling === 1 ? '' : 's'} in use`
+      : `${pressure.inFlightModels} local model${pressure.inFlightModels === 1 ? '' : 's'} in use`
+  const queueClause =
+    queued > 0 ? `; ${queued} dispatch${queued === 1 ? '' : 'es'} queued behind them` : ''
+  return (
+    ` Note: the local Ollama host is at its model ceiling (${slots}${queueClause}), so ` +
+    `local-model lanes beyond it are waiting on local capacity and open waves holding local ` +
+    `lanes drain in turns rather than in parallel. That is backpressure from the host, not a ` +
+    `stalled round — dropping or swapping local seats frees nothing. Await as above; slots ` +
+    `free as lanes settle.`
+  )
+}
+
+/**
  * `null` when the caller may dispatch, otherwise the refusal to return verbatim.
  *
  * The message names the waves it is waiting on, points at `ensemble_await`, and
  * says in as many words that this is not a limit on lanes — a Boss that reads
  * it as a seat cap will trim its roster instead of joining, which is the one
- * response that makes the round worse.
+ * response that makes the round worse. When the local admission gate reports
+ * pressure, one more sentence says the waves are waiting on local capacity —
+ * without it, a wave held open by model queueing reads as a stalled round, and
+ * the observed answer to THAT is also shrinking the roster.
  */
 export function refuseForConcurrentFanouts(
   open: readonly OpenFanoutWave[],
-  tool: FanoutConcurrencyTool
+  tool: FanoutConcurrencyTool,
+  localCapacity?: LocalCapacityPressure
 ): FanoutConcurrencyRefusal | null {
   if (open.length < MAX_CONCURRENT_FANOUT_WAVES) return null
 
@@ -129,6 +186,7 @@ export function refuseForConcurrentFanouts(
       `round) until at least one of them settles, read it with ensemble_lane_result, then ` +
       `dispatch again. This is a limit on concurrent fan-out CALLS, not on participants — a ` +
       `single fan-out may still carry as many lanes as the roster allows, so do not drop seats ` +
-      `to get past this.`
+      `to get past this.` +
+      localCapacityNote(localCapacity)
   }
 }

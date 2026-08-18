@@ -136,3 +136,70 @@ describe('refuseForConcurrentFanouts', () => {
     )
   })
 })
+
+describe('refuseForConcurrentFanouts local-capacity note', () => {
+  const wave = (id: string, label: string, lanes: number) =>
+    openFanoutWaves(
+      Array.from({ length: lanes }, (_, i) => lane(`${id}-lane-${i}`, 'running', id, label))
+    )[0]
+  const threeWaves = [
+    wave('w1', 'Reader fan-out', 3),
+    wave('w2', 'Work fan-out', 1),
+    wave('w3', 'Audit fan-out', 2)
+  ]
+
+  it('stays byte-identical while the local host has headroom', () => {
+    // The unbounded-host invariant extends to this message: a rack of H100s
+    // must read the exact refusal it read before the admission gate existed.
+    const plain = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout')
+    const headroom = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout', {
+      queuedDispatches: 0,
+      inFlightModels: 1,
+      ceiling: 2
+    })
+    const unbounded = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout', {
+      queuedDispatches: 0,
+      inFlightModels: 5,
+      ceiling: undefined
+    })
+    expect(headroom?.message).toBe(plain?.message)
+    expect(unbounded?.message).toBe(plain?.message)
+  })
+
+  it('says the waves are waiting on local capacity when the host is saturated', () => {
+    const refusal = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout', {
+      queuedDispatches: 0,
+      inFlightModels: 2,
+      ceiling: 2
+    })
+    const message = refusal?.message ?? ''
+    expect(message).toContain('waiting on local capacity')
+    expect(message).toContain('2 of 2')
+    // The additions must never dilute the original anti-roster-shrink copy.
+    expect(message).toMatch(/not on participants/i)
+    expect(message).toMatch(/do not drop seats/i)
+    expect(message).toContain('ensemble_await')
+  })
+
+  it('counts the queue out loud when dispatches are waiting behind the gate', () => {
+    const refusal = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout_all', {
+      queuedDispatches: 3,
+      inFlightModels: 2,
+      ceiling: 2
+    })
+    const message = refusal?.message ?? ''
+    expect(message).toContain('waiting on local capacity')
+    expect(message).toContain('3 dispatches queued')
+  })
+
+  it('trusts a live queue even when the slot count reads below the ceiling', () => {
+    // The two reads are not atomic: a slot can free between reading inFlight
+    // and reading waiting. Something queued IS pressure; report it.
+    const refusal = refuseForConcurrentFanouts(threeWaves, 'ensemble_fanout', {
+      queuedDispatches: 1,
+      inFlightModels: 0,
+      ceiling: 4
+    })
+    expect(refusal?.message ?? '').toContain('waiting on local capacity')
+  })
+})
