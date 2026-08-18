@@ -947,8 +947,17 @@ import {
   makeDebugLoggerSink,
   type RunEventChannel
 } from './RunEventBus'
-import { AppStore, type ChatSaveOptions } from './store'
+import { AppStore, registerPersistenceWriteEnqueue, type ChatSaveOptions } from './store'
 import { ChatTranscriptMutationIndex } from './store/ChatTranscriptMutationAuthoring'
+import {
+  PersistenceWriteQueue,
+  createUtilityProcessChannelFactory,
+  isUtilityWriteEnabled
+} from './store/PersistenceWriteWorker'
+import {
+  createMainPerfInstrumentation,
+  type MainPerfInstrumentation
+} from './perf/MainPerfSnapshot'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
@@ -2259,6 +2268,10 @@ import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/Antigra
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
 /** Read-only Outlook lane; null until the app is ready. */
 let outlookConnectorServiceRef: OutlookConnectorService | null = null
+/** Item 6 utility writer; null unless TASKWRAITH_UTILITY_WRITE=1 wired it at ready. */
+let persistenceWriteQueueRef: PersistenceWriteQueue | null = null
+/** Main event-loop lag histogram + persistence counters; constructed at ready. */
+let mainPerfInstrumentationRef: MainPerfInstrumentation | null = null
 /**
  * In-memory only and safe to construct eagerly here — unlike the secret store
  * it touches neither safeStorage nor userData, so both the discovery deps below
@@ -42308,6 +42321,43 @@ if (isGeminiMcpBridgeProcess) {
     registerMeshAssetProtocol(meshAssetStore)
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
+    // Item 6 (perf epic): with TASKWRAITH_UTILITY_WRITE=1, saveChat's durable
+    // write+fsync+rename tail runs in a long-lived utility process instead of
+    // blocking the main thread. This registration is the composition-root half
+    // the dark landing (b745115a1) deliberately left out; the flag still gates
+    // activation, so the default build keeps the synchronous writer untouched.
+    if (isUtilityWriteEnabled()) {
+      const persistenceWriteQueue = new PersistenceWriteQueue({
+        channelFactory: createUtilityProcessChannelFactory(
+          join(__dirname, 'persistenceWriteWorker.js')
+        ),
+        onDegraded: (reason) =>
+          console.warn(`[persistence-write] degraded to synchronous writes: ${reason}`)
+      })
+      persistenceWriteQueueRef = persistenceWriteQueue
+      registerPersistenceWriteEnqueue((request) => persistenceWriteQueue.enqueueWrite(request))
+      console.log('[persistence-write] utility-process durable writer registered')
+    }
+    // Perf-epic T1 instrumentation: the event-loop lag histogram beside the
+    // per-subsystem persistence counters, pollable in production. This is the
+    // number every prior multi-ensemble stall diagnosis lacked, and where the
+    // ADR's G-lag gate (p95 < 25ms under 30-seat continuous) becomes readable
+    // outside a profiling harness.
+    mainPerfInstrumentationRef = createMainPerfInstrumentation({
+      sections: {
+        incrementalChatPersistence: () => AppStore.getIncrementalChatPersistenceStats(),
+        persistenceCoalescing: () => AppStore.getPersistenceCoalescingStats(),
+        chatUpdateProtocol: () => chatUpdateDeliveryCoordinator.protocolCounters(),
+        persistenceWriteQueue: () => persistenceWriteQueueRef?.stats ?? null
+      }
+    })
+    mainPerfInstrumentationRef.start()
+    ipcMain.handle('get-main-perf-snapshot', (event, options?: { resetLagWindow?: boolean }) => {
+      if (!isMainRendererSender(event)) return null
+      return mainPerfInstrumentationRef?.snapshot({
+        resetLagWindow: options?.resetLagWindow === true
+      })
+    })
     const rendererDiagnosticRecorder = new RendererDiagnosticRecorder({
       filePath: join(app.getPath('userData'), 'renderer-diagnostics.json'),
       getAppMetrics: () => app.getAppMetrics(),
@@ -51103,6 +51153,17 @@ if (isGeminiMcpBridgeProcess) {
       } catch (e) {
         console.error('Failed to flush pending chat saves on quit', e)
       }
+      // Item 6: the flush above can enqueue barrier jobs onto the utility
+      // writer; settle them on this thread before the channel dies. dispose()
+      // alone kills the worker and would drop whatever is still queued.
+      try {
+        persistenceWriteQueueRef?.drainSync()
+      } catch (e) {
+        console.error('Failed to drain pending utility-process writes on quit', e)
+      }
+      persistenceWriteQueueRef?.dispose()
+      persistenceWriteQueueRef = null
+      mainPerfInstrumentationRef?.stop()
       // Up to one debounce window of the last turn's spend is otherwise lost.
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()

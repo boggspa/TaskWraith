@@ -363,6 +363,37 @@ export class PersistenceWriteQueue {
     this.killChannel()
   }
 
+  /**
+   * Quit-path barrier: perform every queued job — including the in-flight one
+   * whose ACK can no longer be awaited — synchronously, in FIFO order, on this
+   * thread. `dispose()` alone kills the channel and DROPS those jobs, which is
+   * silent history loss at quit because `flushAllChatSaves` can enqueue
+   * barrier writes moments earlier.
+   *
+   * The channel is killed FIRST so a late worker ACK for the drained in-flight
+   * job cannot arrive afterwards and read as a protocol violation. Re-writing
+   * a file the worker may have already written is safe: the bytes are
+   * identical and the write is atomic.
+   */
+  drainSync(): number {
+    this.clearAckTimer()
+    this.killChannel()
+    const jobs = this.inFlight ? [this.inFlight, ...this.queue] : [...this.queue]
+    this.inFlight = null
+    this.queue = []
+    for (const job of jobs) {
+      try {
+        writeSerializedDurably(job.filePath, job.serialized)
+        this.written++
+        this.writtenSynchronously++
+        job.resolve()
+      } catch (error) {
+        job.reject(error)
+      }
+    }
+    return jobs.length
+  }
+
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------

@@ -2630,6 +2630,8 @@ const api = {
   getRunEvents: (filter: any = {}) => ipcRenderer.invoke('get-run-events', filter),
   getToolActivityDetails: (refs: ToolActivityDetailRef[]): Promise<HydratedToolActivityDetail[]> =>
     ipcRenderer.invoke('get-tool-activity-details', refs),
+  getMainPerfSnapshot: (options: { resetLagWindow?: boolean } = {}) =>
+    ipcRenderer.invoke('get-main-perf-snapshot', options),
   getRunEventReplay: (runId: string) => ipcRenderer.invoke('get-run-event-replay', runId),
   analyzeRun: (request: RunAnalystRequest) =>
     ipcRenderer.invoke('run-analyst:analyze', request) as Promise<RunAnalystSnapshot>,

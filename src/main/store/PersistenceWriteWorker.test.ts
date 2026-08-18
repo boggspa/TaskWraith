@@ -165,6 +165,36 @@ describe('PersistenceWriteQueue', () => {
   })
 
   /**
+   * The will-quit contract. `dispose()` kills the channel, which DROPS queued
+   * jobs and the un-ACKed in-flight one — acceptable mid-session (the caller's
+   * degrade paths handle it) but silent history loss at quit, because
+   * `flushAllChatSaves` can enqueue barrier jobs moments earlier.
+   *
+   * FALSIFIED by calling dispose() without drainSync(): revision stays 0 on
+   * disk and both promises hang forever.
+   */
+  it('drains queued and in-flight jobs synchronously at quit instead of dropping them', async () => {
+    const worker = new FakeWriteWorker()
+    const queue = new PersistenceWriteQueue({ channelFactory: () => worker.channel() })
+    const first = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(1) })
+    const second = queue.enqueueWrite({ chatId: 'chat-a', filePath: chatPath, data: payload(2) })
+
+    // Nothing ACKed: one job sits with the worker, one is still queued.
+    expect(queue.drainSync()).toBe(2)
+    await expect(first).resolves.toBeUndefined()
+    await expect(second).resolves.toBeUndefined()
+    expect(readRevision()).toBe(2)
+    expect(queue.stats.writtenSynchronously).toBe(2)
+    // The channel died before the drain wrote anything, so a late worker ACK
+    // for the drained in-flight job can never arrive to look like a protocol
+    // violation.
+    expect(worker.killed).toBe(true)
+
+    queue.dispose()
+    expect(queue.drainSync()).toBe(0)
+  })
+
+  /**
    * Invariant 2, happy path. Five saves for one chat must finish as revision 5.
    *
    * FALSIFIED: letting the queue post while a job is already in flight (drop

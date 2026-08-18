@@ -2787,6 +2787,19 @@ declare global {
       getToolActivityDetails: (
         refs: ToolActivityDetailRef[]
       ) => Promise<HydratedToolActivityDetail[]>
+      getMainPerfSnapshot: (options?: { resetLagWindow?: boolean }) => Promise<{
+        capturedAt: string
+        eventLoopLag: {
+          observedForMs: number
+          p50Ms: number
+          p95Ms: number
+          p99Ms: number
+          maxMs: number
+          meanMs: number
+          sampling: boolean
+        }
+        sections: Record<string, unknown>
+      } | null>
       getRunEventReplay: (runId: string) => Promise<RunEventReplay>
       analyzeRun: (request: RunAnalystRequest) => Promise<RunAnalystSnapshot>
       summarizeCloseout: (request: CloseoutSummaryRequest) => Promise<CloseoutSummarySnapshot>
