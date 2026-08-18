@@ -18667,7 +18667,7 @@ export class EnsembleOrchestrator {
           ? explicitLanePrompt
           : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
               options.reason ? `\n\nReason: ${options.reason}` : ''
-            }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
+            }\n\nTreat this as a scoped lane brief: it was routed to this seat deliberately, so execute it within your permissions and the active goal even when it sits outside your usual role. If something genuinely blocks you, report what is missing instead of handing the brief back on role grounds.`
         : runtime.prompt
       const readerIntentBoundary =
         run.laneIntent === 'read'

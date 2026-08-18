@@ -507,6 +507,26 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Codex / Worker: Implement changes.')
   })
 
+  it('tells a seat that routed work is its own, whatever its role says', () => {
+    // The role-boundary contract exists to stop seats ABSORBING peer work.
+    // Bouncing is the opposite failure: work explicitly routed to a seat gets
+    // handed back "not my role", burning a full turn to re-litigate a routing
+    // decision already made. Both directions must be in the contract.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('yours for this turn even when it sits outside your usual role')
+    expect(prompt).toContain('never a bare "not my role"')
+    // The anti-absorption direction must survive the addition.
+    expect(prompt).toContain('Do not absorb peers')
+  })
+
   it('teaches Captain that fan-out remains available while Boss is healthy', () => {
     const captain = { ...ensemble.participants[1], stageRole: 'worker' as const }
     const captainConfig: EnsembleConfig = {
@@ -3542,8 +3562,8 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
  */
 describe('computeEnsemblePromptShellStamp', () => {
   it('uses the worker-allocation prompt-shell generation', () => {
-    expect(ENSEMBLE_PROMPT_SHELL_VERSION).toBe('ensemble-shell-v6')
-    expect(computeEnsemblePromptShellStamp(ensemble)).toMatch(/^ensemble-shell-v6:/)
+    expect(ENSEMBLE_PROMPT_SHELL_VERSION).toBe('ensemble-shell-v7')
+    expect(computeEnsemblePromptShellStamp(ensemble)).toMatch(/^ensemble-shell-v7:/)
   })
 
   it('is stable, order-independent, and sensitive to shell-relevant changes', () => {
