@@ -914,7 +914,14 @@ function persistIncrementalChat(
 }
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
-const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
+// Volatile chat-list-entry churn (search preview, message/diff counters,
+// per-run stats, source stat) lands on disk at most this often per chat. It
+// was 2s, but the counters sat in the STABLE half of the write gate's diff, so
+// a streaming task bypassed the window entirely and appended a ~160KB line
+// every ~3s — chat-list-index.jsonl grew 17→66MB in ~40min (2026-08-18 live
+// watch). Counters are volatile now, and 15s keeps the DISK cadence lazy while
+// the list stays live: getChatList rebuilds a stale row before serving it.
+const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 15_000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
 const memoryProposalPacksPath = path.join(userDataPath, 'memory-proposal-packs.json')
@@ -5619,7 +5626,17 @@ export class AppStore {
     // section reads activeRound/participants for a row's subtitle and running
     // state, and sidebarTerminalOutcome reads escalationSignals for its tone —
     // and for a chat the user has not opened, the row is the only source.
-    const { ensemble, ...listProjection } = normalizedChat
+    // Same class, next field (2026-08-18 live watch): per-model session
+    // memories measured 133.6 KB of a ~160 KB entry (83%) and re-appended on
+    // every streamed save. Nothing in the chat list renders working memory;
+    // prompt building loads the full record. Drop jumbo blobs HERE, per field
+    // — the spread below carries everything this destructure does not name.
+    const {
+      ensemble,
+      ollamaSessionMemory: _dropOllamaSessionMemory,
+      ollamaSessionMemories: _dropOllamaSessionMemories,
+      ...listProjection
+    } = normalizedChat
     const messages = Array.isArray(normalizedChat.messages)
       ? normalizedChat.messages.filter(
           (message) => !isRetiredExternalChannelInboundMessage(message)
@@ -5631,10 +5648,13 @@ export class AppStore {
       .slice(-8)
       .map((message) => `${message.role} ${previewText(message.content, 180)}`)
       .filter(Boolean)
-    const latestMessagePreview = [...messages]
-      .reverse()
-      .map((message) => previewText(message.content, 180))
-      .find(Boolean)
+    // Backwards scan, no array copy: this now also runs on the getChatList
+    // rebuild path for every throttled-stale row, where the old reverse()
+    // cloned the whole messages array per list read on jumbo chats.
+    let latestMessagePreview: string | undefined
+    for (let i = messages.length - 1; i >= 0 && !latestMessagePreview; i--) {
+      latestMessagePreview = previewText(messages[i].content, 180) || undefined
+    }
     return {
       ...listProjection,
       ...(ensemble ? { ensemble: this.toChatListEnsembleProjection(ensemble) } : {}),
@@ -5726,7 +5746,14 @@ export class AppStore {
     // configured — and the renderer's mergeChatRecordValue spreads a summary's
     // fields over the live record. Re-marking is what keeps saveChat's guard
     // able to recognise a row that has been round-tripped through a merge.
-    const { ensemble, ...listProjection } = normalized
+    // Legacy rows written before the memories strip still carry the blobs;
+    // shed them on the read round-trip too, not only at build time.
+    const {
+      ensemble,
+      ollamaSessionMemory: _dropOllamaSessionMemory,
+      ollamaSessionMemories: _dropOllamaSessionMemories,
+      ...listProjection
+    } = normalized
     return {
       ...listProjection,
       ...(ensemble ? { ensemble: this.toChatListEnsembleProjection(ensemble) } : {}),
@@ -5788,9 +5815,11 @@ export class AppStore {
       }
     }
 
-    // Write only changed entries — O(delta), not O(all-chats).
+    // Write only changed entries — O(delta), not O(all-chats) — and through
+    // the same gate as saveChat: a streaming-stale row rebuilds fresh for the
+    // caller on every read, but its disk append rides the volatile cadence.
     for (const chatId of dirtyChatIds) {
-      chatListIndexStore.writeEntry(chatId, nextIndex[chatId])
+      this.writeChatListIndexEntryIfAllowed(chatId, nextIndex[chatId])
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
   }
@@ -5798,6 +5827,20 @@ export class AppStore {
   /** Per-chat write throttle — still used by shouldWriteChatListIndexItem
    *  to avoid rewriting the list entry on every volatile field bump. */
   private static chatListIndexWriteAtByChatId = new Map<string, number>()
+
+  /** THE single write seam for chat-list index entries. Every door — saveChat,
+   *  the getChatList stale-row rebuild, the durable-write stat refresh — must
+   *  pass the same gate, or volatile churn migrates to whichever door is not
+   *  gated. The 2026-08-18 append storm was two doors at once: saveChat wrote
+   *  a fat line per streamed message AND the settle callback appended a
+   *  second, stale-content line per flush just to refresh two stat numbers. */
+  private static writeChatListIndexEntryIfAllowed(chatId: string, next: ChatListItem): boolean {
+    const previous = chatListIndexStore.readEntry(chatId)
+    if (!this.shouldWriteChatListIndexItem(previous, next)) return false
+    chatListIndexStore.writeEntry(chatId, next)
+    this.chatListIndexWriteAtByChatId.set(chatId, Date.now())
+    return true
+  }
 
   private static chatListItemJson(
     item: ChatListItem | undefined,
@@ -5818,9 +5861,45 @@ export class AppStore {
       searchPreview: _searchPreview,
       sourceChatMtimeMs: _sourceChatMtimeMs,
       sourceChatSize: _sourceChatSize,
+      // Every streamed tool row is a message, so the count changes on
+      // effectively every save — in the stable half it bypassed the volatile
+      // window entirely and appended a fat line per save (2026-08-18).
+      messageCount: _messageCount,
       ...stable
     } = projected
-    return JSON.stringify(stable)
+    return JSON.stringify({
+      ...stable,
+      ...(Array.isArray(stable.runsSummary)
+        ? {
+            runsSummary: stable.runsSummary.map((summary) =>
+              this.chatListRunSummaryStableProjection(summary)
+            )
+          }
+        : {}),
+      ...(stable.lastRun
+        ? { lastRun: this.chatListRunSummaryStableProjection(stable.lastRun) }
+        : {})
+    })
+  }
+
+  /** Per-run fields that tick on every streaming save (diff counter, ollama
+   *  stats) belong to the volatile half of the write gate. Run lifecycle —
+   *  runId appearing, model resolution, startedAt/endedAt — stays in the
+   *  stable half so a run starting or finishing writes its row immediately.
+   *  Accepts the legacy shape too: rows written before summarizeLastRun
+   *  existed still carry a whole ChatRun in `lastRun`, and stripping the same
+   *  two churn fields off either shape keeps the comparison honest (the fat
+   *  legacy row then differs structurally from its lean rebuild exactly once,
+   *  which is the self-heal write). */
+  private static chatListRunSummaryStableProjection(
+    summary: ChatListRunSummary | ChatRun
+  ): Record<string, unknown> {
+    const {
+      diffFileCount: _diffFileCount,
+      stats: _stats,
+      ...stable
+    } = summary as ChatListRunSummary
+    return stable
   }
 
   private static chatListItemMatchesSource(
@@ -7185,11 +7264,22 @@ export class AppStore {
                 (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
                   settled.sourceChatSize !== postStatActual.size)
               ) {
-                chatListIndexStore.writeEntry(chatId, {
-                  ...settled,
-                  sourceChatMtimeMs: postStatActual.mtimeMs,
-                  sourceChatSize: postStatActual.size
-                })
+                // Rebuild rather than patching the new stat onto `settled`:
+                // under the write gate the settled entry can be several saves
+                // old, and stamping a CURRENT stat onto STALE content would
+                // satisfy chatListItemMatchesSource and mask exactly the
+                // staleness the getChatList rebuild exists to catch. An entry
+                // must always pair content and sourceStat from the same
+                // snapshot — and this chat is what the flush just wrote.
+                // Still gated: within the window the disk keeps the old pair
+                // and getChatList serves the rebuilt row.
+                this.writeChatListIndexEntryIfAllowed(
+                  chatId,
+                  this.toChatListItem(normalizedChat, {
+                    mtimeMs: postStatActual.mtimeMs,
+                    size: postStatActual.size
+                  })
+                )
               }
             } catch {
               // Cache was already set optimistically; a stale mtimeMs is harmless.
@@ -7229,16 +7319,12 @@ export class AppStore {
     }
     // The chat-list-index write and harvests stay synchronous — they're cheap
     // thanks to T3c (incremental JSONL) and don't benefit from coalescing.
-    // Read ONE entry, not the whole index: readAll() re-parses the entire
-    // JSONL plus a summary file per chat (~485 ms on a large profile), and it
-    // ran on every save. Under fan-out each lane arms its own flush, so that
-    // cost was multiplied by the number of concurrent lanes.
-    const previousItem = chatListIndexStore.readEntry(normalizedChat.appChatId)
+    // The gate reads ONE entry, not the whole index: readAll() re-parses the
+    // entire JSONL plus a summary file per chat (~485 ms on a large profile),
+    // and it ran on every save. Under fan-out each lane arms its own flush, so
+    // that cost was multiplied by the number of concurrent lanes.
     const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
-    if (this.shouldWriteChatListIndexItem(previousItem, nextItem)) {
-      chatListIndexStore.writeEntry(normalizedChat.appChatId, nextItem)
-      this.chatListIndexWriteAtByChatId.set(normalizedChat.appChatId, Date.now())
-    }
+    this.writeChatListIndexEntryIfAllowed(normalizedChat.appChatId, nextItem)
     try {
       this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
     } catch (e) {

@@ -367,4 +367,137 @@ describe('chat-list index projection', () => {
     expect(item?.sourceChatMtimeMs).toBe(stat.mtimeMs)
     expect(item?.sourceChatSize).toBe(stat.size)
   })
+
+  /**
+   * SIZE, round 2 (2026-08-18 live watch). The lean-ensemble fix above handled
+   * ONE fat field, but `...listProjection` still spreads every OTHER top-level
+   * blob into the row, and ollama's per-model session memories became the next
+   * one: measured 133.6 KB of a ~160 KB entry (83%), re-appended every ~3 s
+   * while a task streamed — chat-list-index.jsonl grew 17→66 MB in ~40 min.
+   * Nothing in the chat list renders a model's working memory; prompt building
+   * loads the full chat record. Fat-in / lean-out, per field, forever.
+   */
+  it('drops per-model session memories from the list projection', () => {
+    const MEMORY_MARKER = 'OLLAMA-SESSION-MEMORY-MARKER'
+    const memory = (padding: string): Record<string, unknown> => ({
+      modelId: 'llama3',
+      updatedAt: 1,
+      workingMemory: `${MEMORY_MARKER} ${padding}`,
+      toolTurnCount: 3
+    })
+    const chat = {
+      ...ensembleChat('chat-projection-mem'),
+      ollamaSessionMemory: memory('legacy single-model slot'),
+      ollamaSessionMemories: { llama3: memory('note '.repeat(4000)) }
+    } as unknown as ChatRecord
+
+    const item = AppStore.toChatListItem(chat)
+    expect(item.ollamaSessionMemories).toBeUndefined()
+    expect(item.ollamaSessionMemory).toBeUndefined()
+    expect(JSON.stringify(item)).not.toContain(MEMORY_MARKER)
+
+    // The persisted line must be clean too, not just the in-memory item.
+    AppStore.saveChat(chat)
+    const line = readIndexLines().find((entry) => entry.includes('chat-projection-mem'))
+    expect(line).toBeDefined()
+    expect(line).not.toContain(MEMORY_MARKER)
+  })
+
+  /**
+   * RATE, round 2 (2026-08-18 live watch). messageCount (and per-run
+   * diffFileCount/stats) sat in the STABLE half of the write gate's diff, so
+   * every streamed tool row — each one is a message — re-passed the gate and
+   * appended a full entry line (~one per 3 s, measured). Counters and per-run
+   * churn are volatile: they land on the volatile-refresh cadence, while
+   * structural changes (title, a run starting or ending) write immediately.
+   * The list the renderer sees stays fresh either way — getChatList rebuilds
+   * a stale row from the chat record before serving it.
+   */
+  it('throttles message-count-only churn on the index write path', () => {
+    const t0 = Date.now()
+    const chat = ensembleChat('chat-projection-rate')
+    AppStore.saveChat(chat)
+    const countLines = (): number =>
+      readIndexLines().filter((entry) => entry.includes('chat-projection-rate')).length
+    const after = countLines()
+
+    const withMessages = (n: number): ChatRecord =>
+      ({
+        ...chat,
+        messages: Array.from({ length: n }, (_, i) => ({
+          id: `m${i + 1}`,
+          role: 'assistant',
+          content: `streamed tool row ${i + 1}`,
+          timestamp: '2026-01-01T00:00:00.000Z'
+        }))
+      }) as unknown as ChatRecord
+
+    const nowSpy = vi.spyOn(Date, 'now')
+    try {
+      // A streamed message lands 3 s later: counter/preview churn only — no
+      // new line inside the volatile window.
+      nowSpy.mockReturnValue(t0 + 3_000)
+      AppStore.saveChat(withMessages(2))
+      expect(countLines()).toBe(after)
+
+      // A structural change inside the window still writes immediately.
+      nowSpy.mockReturnValue(t0 + 4_000)
+      AppStore.saveChat({ ...withMessages(2), title: 'Renamed mid-stream' } as ChatRecord)
+      expect(countLines()).toBe(after + 1)
+
+      // Once the volatile window elapses, counter churn lands again. Keep the
+      // renamed title — reverting it would be a structural change and the
+      // assertion would pass for the wrong reason.
+      nowSpy.mockReturnValue(t0 + 24_000)
+      AppStore.saveChat({ ...withMessages(3), title: 'Renamed mid-stream' } as ChatRecord)
+      expect(countLines()).toBe(after + 2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  /**
+   * The same throttle must hold on the OTHER write door. getChatList rebuilds
+   * any row whose source stat went stale — which during a throttled streaming
+   * window is exactly the hot chat — and used to write the rebuilt entry
+   * unconditionally, so the append storm would simply migrate doors. The
+   * caller still gets the FRESH rebuilt row; only the disk append is gated.
+   * (Red pre-fix via the saveChat door; post-fix it pins the list-read door —
+   * verified by mutation: bypassing the gate in getChatList fails the first
+   * assertion.)
+   */
+  it('does not re-append a throttled row from the list-read rebuild path', () => {
+    const t0 = Date.now()
+    const chat = ensembleChat('chat-projection-rate2')
+    AppStore.saveChat(chat)
+    const countLines = (): number =>
+      readIndexLines().filter((entry) => entry.includes('chat-projection-rate2')).length
+    const after = countLines()
+
+    const nowSpy = vi.spyOn(Date, 'now')
+    try {
+      nowSpy.mockReturnValue(t0 + 3_000)
+      const streamed = {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: 'streamed tool row',
+            timestamp: '2026-01-01T00:00:01.000Z'
+          }
+        ]
+      } as unknown as ChatRecord
+      AppStore.saveChat(streamed)
+
+      const rows = AppStore.getChatList()
+      expect(countLines()).toBe(after)
+      // Freshness is served from the rebuild, not from disk.
+      const row = rows.find((c) => c.appChatId === 'chat-projection-rate2')
+      expect(row?.messageCount).toBe(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
 })

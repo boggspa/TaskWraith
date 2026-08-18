@@ -189,20 +189,32 @@ describe('AppStore chat record cache', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
       const chat = AppStore.createChat('ws-1', '/repo')
 
+      // 2026-08-18: counters/previews are volatile — a message landing inside
+      // the window rides the cadence instead of appending a line per save
+      // (the old stable-messageCount loophole was the append storm). The list
+      // itself never lags: getChatList rebuilds a stale row before serving.
       vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
       AppStore.saveChat({ ...chat, messages: [message('first preview')] } as ChatRecord)
       const firstIndex = readChatListIndex()
-      expect(firstIndex[chat.appChatId].searchPreview).toBe('first preview')
+      expect(firstIndex[chat.appChatId].searchPreview).toBeUndefined()
 
-      vi.setSystemTime(new Date('2026-01-01T00:00:02.000Z'))
+      // The volatile window elapses → the refresh lands on disk.
+      vi.setSystemTime(new Date('2026-01-01T00:00:15.100Z'))
+      AppStore.saveChat({ ...chat, messages: [message('first preview')] } as ChatRecord)
+      const refreshedIndex = readChatListIndex()
+      expect(refreshedIndex[chat.appChatId].searchPreview).toBe('first preview')
+
+      // Inside the next window: throttled again.
+      vi.setSystemTime(new Date('2026-01-01T00:00:16.000Z'))
       AppStore.saveChat({ ...chat, messages: [message('second preview')] } as ChatRecord)
       const throttledIndex = readChatListIndex()
       expect(throttledIndex[chat.appChatId].searchPreview).toBe('first preview')
 
-      vi.setSystemTime(new Date('2026-01-01T00:00:03.100Z'))
+      // And lands once the cadence allows.
+      vi.setSystemTime(new Date('2026-01-01T00:00:30.200Z'))
       AppStore.saveChat({ ...chat, messages: [message('second preview')] } as ChatRecord)
-      const refreshedIndex = readChatListIndex()
-      expect(refreshedIndex[chat.appChatId].searchPreview).toBe('second preview')
+      const secondRefreshIndex = readChatListIndex()
+      expect(secondRefreshIndex[chat.appChatId].searchPreview).toBe('second preview')
     } finally {
       vi.useRealTimers()
     }
