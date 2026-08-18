@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ProviderId, ToolActivity } from '../../../main/store/types'
 import { MOTION_DURATIONS, usePresence } from '../hooks/usePanelPresence'
 import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
@@ -70,6 +70,32 @@ function FoldoutBody({ section }: { section: FoldoutSection }) {
         </span>
       ))}
     </pre>
+  )
+}
+
+/**
+ * One stacked row inside the expanded foldout — i.e. inside THE card
+ * (`.compact-tool-trace-foldout` now carries the trace's full rim highlight;
+ * the collapsed call line above stays a bare, chrome-free transcript line —
+ * see the product-owner amendment note on `.compact-tool-trace` in
+ * 06-component-panels-modals.css). Multiple sections (or Sources) each get
+ * one of these, divided from their neighbours by a hairline rather than
+ * merged into one monolithic block; a very long body clamps inside its own
+ * row (see `.compact-tool-trace-foldout-body`'s max-height) rather than
+ * growing one giant shared pre.
+ *
+ * The label renders as a "tucked tab" — a small rim-highlighted chip
+ * straddling the row's own top seam (the card's own top edge for the first
+ * row) — rather than the old plain caps-text label, reusing the app's
+ * full-perimeter rim idiom at chip scale instead of inventing a new
+ * treatment.
+ */
+export function FoldoutSectionRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="compact-tool-trace-foldout-section">
+      <div className="compact-tool-trace-foldout-tab">{label}</div>
+      {children}
+    </div>
   )
 }
 
@@ -225,20 +251,18 @@ export function CompactToolTrace({
           }`}
         >
           {urlTargets.length > 0 && (
-            <div className="compact-tool-trace-foldout-section">
-              <div className="compact-tool-trace-foldout-label">Sources</div>
+            <FoldoutSectionRow label="Sources">
               <div className="compact-tool-trace-sources">
                 {urlTargets.map((target) => (
                   <ToolUrlBadge key={target.url} target={target} />
                 ))}
               </div>
-            </div>
+            </FoldoutSectionRow>
           )}
           {sections.map((section) => (
-            <div key={section.label} className="compact-tool-trace-foldout-section">
-              <div className="compact-tool-trace-foldout-label">{section.label}</div>
+            <FoldoutSectionRow key={section.label} label={section.label}>
               <FoldoutBody section={section} />
-            </div>
+            </FoldoutSectionRow>
           ))}
         </div>
       )}

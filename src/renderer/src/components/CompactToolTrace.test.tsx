@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { CompactToolTrace } from './CompactToolTrace'
+import { CompactToolTrace, FoldoutSectionRow } from './CompactToolTrace'
 import {
   buildFoldoutSections,
   buildResultPreview,
@@ -297,6 +298,105 @@ describe('CompactToolTrace', () => {
       <CompactToolTrace activity={makeActivity({ durationMs: 1500 })} />
     )
     expect(longHtml).toContain('1.5s')
+  })
+})
+
+// The expanded foldout used to render as a narrower, independently-bordered
+// card indented away from the call line (`margin-left: 24px` + its own
+// `border`/`background`) — it read as a card stacked beside the row rather
+// than a row underneath it. `FoldoutSectionRow` is the new full-width row
+// unit: one per section, its label rendered as a "tucked tab" (rim-
+// highlighted chip straddling the row's own top seam) instead of a plain
+// caps label. It is exported specifically so this structure is directly
+// testable without needing to force the component's `expanded` state, which
+// static-markup rendering cannot do.
+describe('FoldoutSectionRow (tucked-tab section rows)', () => {
+  it('wraps the section label in a tucked-tab element, not the old plain caps label', () => {
+    const html = renderToStaticMarkup(
+      <FoldoutSectionRow label="Result">
+        <div className="probe-body">body content</div>
+      </FoldoutSectionRow>
+    )
+    expect(html).toContain('compact-tool-trace-foldout-section')
+    expect(html).toContain('compact-tool-trace-foldout-tab')
+    expect(html).not.toContain('compact-tool-trace-foldout-label')
+    expect(html).toContain('>Result<')
+    expect(html).toContain('probe-body')
+  })
+
+  it('renders as a bare row wrapper — no card-style indent/border modifier class', () => {
+    const html = renderToStaticMarkup(
+      <FoldoutSectionRow label="Input">
+        <pre>{'{}'}</pre>
+      </FoldoutSectionRow>
+    )
+    // The row is exactly one wrapper div carrying the section class, with the
+    // tab as its first child — never a second "card" class layered on top.
+    const openTag = html.slice(0, html.indexOf('>') + 1)
+    expect(openTag).toBe('<div class="compact-tool-trace-foldout-section">')
+  })
+
+  it('renders distinct tabs for each section when several rows are stacked, proving segmentation', () => {
+    const html = renderToStaticMarkup(
+      <>
+        <FoldoutSectionRow label="Patch preview">
+          <pre>patch</pre>
+        </FoldoutSectionRow>
+        <FoldoutSectionRow label="Result">
+          <pre>result</pre>
+        </FoldoutSectionRow>
+      </>
+    )
+    const sectionCount = html.split('compact-tool-trace-foldout-section').length - 1
+    const tabCount = html.split('compact-tool-trace-foldout-tab').length - 1
+    expect(sectionCount).toBe(2)
+    expect(tabCount).toBe(2)
+    expect(html).toContain('>Patch preview<')
+    expect(html).toContain('>Result<')
+  })
+})
+
+// Product-owner amendment (2026-08-18): the collapsed/at-rest row must read
+// as a bare transcript line — no container, no rounded rim highlight of its
+// own. ALL of that chrome moves to the expanded card (`.compact-tool-trace-
+// foldout`), which now carries its own full-perimeter rim highlight instead
+// of leaning on the outer element's. These read the actual CSS source (the
+// same technique `bannedDefaultStylesCss.test.ts` uses) because a static-
+// markup render can't observe which element paints a border — the row and
+// the card are both plain `<div>`s with no visual-only prop to assert on.
+describe('CompactToolTrace rim polarity — chrome lives on the expanded card, not the bare row', () => {
+  const readCss = (): string =>
+    readFileSync(
+      new URL('../assets/css/06-component-panels-modals.css', import.meta.url),
+      'utf8'
+    )
+
+  const cssBlockStartingAt = (source: string, selector: string): string => {
+    const start = source.indexOf(selector)
+    expect(start, `Missing selector: ${selector}`).toBeGreaterThanOrEqual(0)
+    const end = source.indexOf('}', start)
+    expect(end, `Missing block end for selector: ${selector}`).toBeGreaterThan(start)
+    return source.slice(start, end + 1)
+  }
+
+  it('keeps the outer .compact-tool-trace element bare — no border, radius, or box-shadow', () => {
+    const outer = cssBlockStartingAt(readCss(), '.compact-tool-trace {')
+    expect(outer).not.toContain('border:')
+    expect(outer).not.toContain('border-radius:')
+    expect(outer).not.toContain('box-shadow:')
+    // The status-tinted custom property is still DEFINED here (it must cascade
+    // down to the card), it just must not be used to paint the row itself.
+    expect(outer).toContain('--compact-tool-rim:')
+  })
+
+  it('gives the expanded card (.compact-tool-trace-foldout) the full rim highlight', () => {
+    const card = cssBlockStartingAt(readCss(), '.compact-tool-trace-foldout {')
+    expect(card).toContain('border:')
+    expect(card).toContain('border-radius:')
+    expect(card).toContain('box-shadow:')
+    expect(card).toContain('var(--compact-tool-rim)')
+    // Full-perimeter rim only — never the banned left-edge accent stripe.
+    expect(card).not.toContain('border-left')
   })
 })
 
