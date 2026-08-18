@@ -5,6 +5,7 @@ import {
   evaluateOllamaHarnessGate,
   ollamaHarnessDefaultTodos,
   ollamaHarnessTargetPaths,
+  ollamaHarnessTodoBlockedMessage,
   ollamaHarnessToolFollowUpPrompt,
   normalizeOllamaHarnessPath,
   recordOllamaHarnessToolResult
@@ -116,15 +117,30 @@ describe('OllamaHarnessGates', () => {
 
   it('does not require todo_write before other tools when scaffold is enabled', () => {
     const state = createOllamaHarnessRunState()
+    state.publishedTodos = true
     const gate = evaluateOllamaHarnessGate({
       modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'workspace_search',
       args: { query: 'foo' },
-      _requireTodoScaffold: true
+      requireTodoScaffold: true
     })
     expect(gate.blocked).toBe(false)
+  })
+
+  it('blocks tools when scaffold is enabled but todos are not published', () => {
+    const state = createOllamaHarnessRunState()
+    const gate = evaluateOllamaHarnessGate({
+      modelId: 'gpt_oss_20b',
+      tier: 'approved_edits',
+      state,
+      toolName: 'workspace_search',
+      args: { query: 'foo' },
+      requireTodoScaffold: true
+    })
+    expect(gate.blocked).toBe(true)
+    expect(gate.message).toBe(ollamaHarnessTodoBlockedMessage())
   })
 
   it('extracts apply_patch paths and clears read cache after edit', () => {

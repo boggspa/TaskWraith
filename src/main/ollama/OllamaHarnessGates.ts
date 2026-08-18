@@ -180,14 +180,14 @@ export interface OllamaHarnessGateInput {
   state: OllamaHarnessRunState
   toolName: OllamaToolName | string
   args: Record<string, unknown>
-  _requireTodoScaffold?: boolean
+  requireTodoScaffold?: boolean
 }
 
 export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, state, toolName, args } = input
+  const { modelId, state, toolName, args, requireTodoScaffold } = input
   const needsRetrievalFirst = ollamaEnforcesRetrievalFirst(modelId)
 
   // Retrieve-first policy: explore before read, read before edit
@@ -217,13 +217,13 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
     }
   }
 
-  //  // Todo scaffold requirement
-  //  if (requireTodoScaffold && !state.publishedTodos) {
-  //    return {
-  //      blocked: true,
-  //      message: ollamaHarnessTodoBlockedMessage()
-  //    }
-  //  }
+  // Todo scaffold requirement
+  if (requireTodoScaffold && !state.publishedTodos) {
+    return {
+      blocked: true,
+      message: ollamaHarnessTodoBlockedMessage()
+    }
+  }
 
   return { blocked: false }
 }
