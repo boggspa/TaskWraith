@@ -77,11 +77,23 @@ function finiteNonNegative(value: unknown, maximum = MAX_MONEY_VALUE): number | 
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null
 }
 
-function finiteMoney(value: unknown, maximum = MAX_MONEY_VALUE): number | null {
-  if (typeof value !== 'number' && typeof value !== 'string') return null
-  if (typeof value === 'string' && !value.trim()) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed >= -maximum && parsed <= maximum ? parsed : null
+/**
+ * Money decode matching LLMUsageCounter's DeepSeek decoder: a null or omitted
+ * pool reads as zero, numbers pass bounded, and string amounts tolerate
+ * grouping commas. The vendor sign is preserved (an overdrawn account reports
+ * a small negative total); only unbounded magnitudes fail closed.
+ */
+function lenientMoney(value: unknown, maximum = MAX_MONEY_VALUE): number | null {
+  if (value === undefined || value === null) return 0
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Math.abs(value) <= maximum ? value : null
+  }
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const direct = Number(trimmed)
+  const parsed = Number.isFinite(direct) ? direct : Number(trimmed.replace(/,/g, ''))
+  return Number.isFinite(parsed) && Math.abs(parsed) <= maximum ? parsed : null
 }
 
 function positive(value: unknown): number {
@@ -91,7 +103,14 @@ function positive(value: unknown): number {
 
 export function parseDeepSeekBalanceResponse(value: unknown): DeepSeekBalanceObservation | null {
   const envelope = record(value)
-  if (!envelope || typeof envelope.is_available !== 'boolean') return null
+  if (!envelope) return null
+  // `is_available` has shipped missing from live payloads; default it true the
+  // way LLMUsageCounter's decoder does, and fail closed only when a present
+  // flag is not a boolean.
+  const availability = envelope.is_available
+  if (availability !== undefined && availability !== null && typeof availability !== 'boolean') {
+    return null
+  }
   const rows = Array.isArray(envelope.balance_infos) ? envelope.balance_infos.slice(0, 16) : []
   const parsed = rows.flatMap((candidate) => {
     const row = record(candidate)
@@ -101,21 +120,22 @@ export function parseDeepSeekBalanceResponse(value: unknown): DeepSeekBalanceObs
     // DeepSeek reports a bounded negative total when an account is a few cents
     // overdrawn. Preserve that vendor reading so the UI can show the overage;
     // only the visual usage fraction is clamped to the meter's 100% ceiling.
-    const totalBalance = finiteMoney(row.total_balance)
-    const grantedBalance = finiteNonNegative(row.granted_balance)
-    const toppedUpBalance = finiteNonNegative(row.topped_up_balance)
+    const totalBalance = lenientMoney(row.total_balance)
+    const grantedBalance = lenientMoney(row.granted_balance)
+    const toppedUpBalance = lenientMoney(row.topped_up_balance)
     if (totalBalance === null || grantedBalance === null || toppedUpBalance === null) return []
     return [{ currency, totalBalance, grantedBalance, toppedUpBalance }]
   })
   const selected = parsed.find((row) => row.currency === 'USD') ?? parsed[0]
   if (!selected) return null
-  return { isAvailable: envelope.is_available, ...selected }
+  return { isAvailable: typeof availability === 'boolean' ? availability : true, ...selected }
 }
 
 function formatMoney(amount: number, currency = 'USD'): string {
   const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : ''
-  const value = amount.toFixed(2)
-  return symbol ? `${symbol}${value}` : `${value} ${currency}`
+  const sign = amount < 0 ? '-' : ''
+  const value = Math.abs(amount).toFixed(2)
+  return symbol ? `${sign}${symbol}${value}` : `${sign}${value} ${currency}`
 }
 
 function roundMoney(amount: number): number {
@@ -566,6 +586,15 @@ function metaSnapshot(
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+/**
+ * Every throw below uses this module's own fixed, `DeepSeek `-prefixed copy —
+ * mirroring LLMUsageCounter's status mapping — so the snapshot can surface the
+ * reason verbatim. Response-derived text never rides an error message.
+ */
 async function fetchDeepSeekBalance(
   apiKey: string,
   fetchImpl: FetchLike
@@ -574,30 +603,72 @@ async function fetchDeepSeekBalance(
   const timer = setTimeout(() => controller.abort(), DEEPSEEK_REQUEST_TIMEOUT_MS)
   timer.unref?.()
   try {
-    const response = await fetchImpl(DEEPSEEK_BALANCE_URL, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      redirect: 'error',
-      signal: controller.signal
-    })
-    if (!response.ok) throw new Error(`DeepSeek balance HTTP ${response.status}`)
+    let response: Response
+    try {
+      response = await fetchImpl(DEEPSEEK_BALANCE_URL, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${apiKey}`
+        },
+        redirect: 'error',
+        signal: controller.signal
+      })
+    } catch (error) {
+      throw new Error(
+        isAbortError(error)
+          ? 'DeepSeek balance check timed out. TaskWraith will retry automatically.'
+          : 'DeepSeek could not be reached. TaskWraith will retry automatically.'
+      )
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('DeepSeek rejected the API key. Update it in the Pi provider card.')
+    }
+    if (response.status === 429) {
+      throw new Error(
+        'DeepSeek rate-limited the balance check. TaskWraith will retry automatically.'
+      )
+    }
+    if (!response.ok) {
+      throw new Error(
+        `DeepSeek returned HTTP ${response.status}. TaskWraith will retry automatically.`
+      )
+    }
     const declaredLength = Number(response.headers.get('content-length'))
     if (Number.isFinite(declaredLength) && declaredLength > DEEPSEEK_RESPONSE_LIMIT_BYTES) {
-      throw new Error('DeepSeek balance response was too large')
+      throw new Error('DeepSeek balance response was too large.')
     }
-    const text = await response.text()
+    let text: string
+    try {
+      text = await response.text()
+    } catch (error) {
+      throw new Error(
+        isAbortError(error)
+          ? 'DeepSeek balance check timed out. TaskWraith will retry automatically.'
+          : 'DeepSeek could not be reached. TaskWraith will retry automatically.'
+      )
+    }
     if (Buffer.byteLength(text, 'utf8') > DEEPSEEK_RESPONSE_LIMIT_BYTES) {
-      throw new Error('DeepSeek balance response was too large')
+      throw new Error('DeepSeek balance response was too large.')
     }
-    const parsed = parseDeepSeekBalanceResponse(JSON.parse(text) as unknown)
-    if (!parsed) throw new Error('DeepSeek balance response was malformed')
+    let payload: unknown
+    try {
+      payload = JSON.parse(text) as unknown
+    } catch {
+      throw new Error('DeepSeek returned no readable balance.')
+    }
+    const parsed = parseDeepSeekBalanceResponse(payload)
+    if (!parsed) throw new Error('DeepSeek returned no readable balance.')
     return parsed
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Adopt only this module's own fixed copy as a user-visible reason; anything
+ * else (driver internals, dependency throws) stays behind the generic line. */
+function reportableDeepSeekFailure(error: unknown): string | null {
+  return error instanceof Error && error.message.startsWith('DeepSeek ') ? error.message : null
 }
 
 /**
@@ -621,6 +692,8 @@ export function createTaskWraithQuotaSnapshotHook(
     observation: DeepSeekBalanceObservation | null
     observationFetchedAt: number | null
     nextAttemptAt: number
+    /** Fixed-vocabulary reason the last refresh failed; null after a success. */
+    lastError: string | null
   } | null = null
   let deepSeekInFlight: { apiKey: string; request: Promise<void> } | null = null
   let activeDeepSeekKey: string | null = null
@@ -644,9 +717,10 @@ export function createTaskWraithQuotaSnapshotHook(
               apiKey,
               observation,
               observationFetchedAt: completedAt,
-              nextAttemptAt: completedAt + successTtlMs
+              nextAttemptAt: completedAt + successTtlMs,
+              lastError: null
             }
-          } catch {
+          } catch (error) {
             if (activeDeepSeekKey !== apiKey) return
             const failedAt = now()
             deepSeekCache = {
@@ -654,7 +728,8 @@ export function createTaskWraithQuotaSnapshotHook(
               observation: deepSeekCache?.apiKey === apiKey ? deepSeekCache.observation : null,
               observationFetchedAt:
                 deepSeekCache?.apiKey === apiKey ? deepSeekCache.observationFetchedAt : null,
-              nextAttemptAt: failedAt + failureRetryMs
+              nextAttemptAt: failedAt + failureRetryMs,
+              lastError: reportableDeepSeekFailure(error)
             }
           }
         })()
@@ -669,11 +744,15 @@ export function createTaskWraithQuotaSnapshotHook(
     if (cached?.observation && cached.observationFetchedAt !== null) {
       return deepSeekSnapshot(cached.observation, cached.observationFetchedAt, billing, now())
     }
+    // With no reading to serve, say WHY: a rejected key, a rate limit, and a
+    // network outage are different user problems, and the generic sentence
+    // rendered every one of them as the same silent "No data".
     return emptySnapshot(
       'deepseek',
       now(),
       true,
-      'DeepSeek balance is temporarily unavailable. TaskWraith will retry automatically.'
+      cached?.lastError ??
+        'DeepSeek balance is temporarily unavailable. TaskWraith will retry automatically.'
     )
   }
 
