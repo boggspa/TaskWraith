@@ -44,6 +44,7 @@ import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../sh
 import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
+import { MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS } from '../EnsembleAuthorityRouting'
 import { ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX } from '../antigravity/AntigravityGoalLifecycleFallback'
 
 function expectYielded(outcome: EnsembleYieldOutcome): void {
@@ -12679,6 +12680,83 @@ Next action:
     expect(
       harness.chat.messages.some((message) => message.content.includes('auto-continuing for pass'))
     ).toBe(false)
+  })
+
+  it('accepts the yield once an unresolvable authority routing checkpoint exhausts its chances', async () => {
+    // Reproduces the observed stall: a Continuous Boss whose surface advertises
+    // the control tool under the other spelling (or whose transport strips the
+    // decision arguments) can never record a routing decision, so every yield
+    // is rejected and the seat spins until the hop budget is gone.
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 24
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Assess and then hand back.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossRunId = harness.dispatched[0].appRunId!
+
+    // The seat never calls the control tool — it cannot. Its bounded chances
+    // are spent on rejected yields.
+    for (let attempt = 0; attempt < MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS; attempt += 1) {
+      expect(
+        harness.orchestrator.markYielded(bossRunId, 'Returning control to the user.', 'user')
+      ).toMatchObject({ kind: 'authority_routing_decision_required' })
+    }
+
+    // The gate must now fail open rather than reject a third time.
+    expectYielded(
+      harness.orchestrator.markYielded(bossRunId, 'Returning control to the user.', 'user')
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('preserved the existing queue')
+      )
+    ).toBe(true)
+  })
+
+  it('re-summons an unresolved authority checkpoint a bounded number of times, then advances', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 24
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Assess and then hand back.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    // The Boss keeps ending quietly with no routing decision. Each quiet end
+    // used to re-summon it unconditionally; the bound must let the ordinary
+    // serial queue through instead of looping on the same seat.
+    for (let turn = 0; turn < MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS + 2; turn += 1) {
+      const pending = harness.dispatched[harness.dispatched.length - 1]
+      if (pending.provider !== 'claude') break
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: pending.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+      )
+      await vi.waitFor(() =>
+        expect(harness.dispatched.length).toBeGreaterThan(
+          harness.dispatched.indexOf(pending) + 0
+        )
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    await vi.waitFor(() =>
+      expect(harness.dispatched.some((payload) => payload.provider === 'codex')).toBe(true)
+    )
+    const bossTurns = harness.dispatched.filter((payload) => payload.provider === 'claude').length
+    expect(bossTurns).toBeLessThanOrEqual(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS + 1)
   })
 
   it('settles the round at yield-to-user acceptance instead of waiting for the provider transport', async () => {

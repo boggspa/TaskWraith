@@ -132,8 +132,10 @@ import {
 } from './EnsembleMentionAlias'
 import {
   applyQueuedAuthorityRosterSelection,
+  authorityRoutingCheckpointExhausted,
   collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
+  MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -3549,6 +3551,14 @@ interface ActiveRoundRuntime {
   queuedAuthoritySelection?: QueuedAuthorityRosterSelection
   /** Tagged authority call-ins waiting to be attached to the resulting run. */
   pendingAuthorityRoutingCheckpoints?: Map<string, EnsembleAuthorityRoutingCheckpoint>
+  /**
+   * Bounded checkpoint chances spent per authority seat this round — counting
+   * both rejected yields and unresolved-checkpoint re-summons, because a seat
+   * that cannot answer the checkpoint exhibits both shapes. Runtime-only: the
+   * bound exists to guarantee forward progress inside one round, and a restart
+   * legitimately re-earns the nudge.
+   */
+  authorityRoutingCheckpointAttempts?: Map<string, number>
   continuationLimitNotified?: boolean
   /**
    * The serial continuation budget is exhausted, but terminal publication is
@@ -5886,11 +5896,37 @@ export class EnsembleOrchestrator {
       : undefined
     const requiresExplicitAuthorityRoutingDecision =
       checkpoint?.selectionRequired || checkpoint?.kind === 'tagged_intervention'
+    // The gate is bounded. A seat whose MCP profile advertises the control
+    // front door under the other spelling — or whose transport strips the tool
+    // arguments carrying the decision — can never satisfy this checkpoint, and
+    // an unbounded gate turns that into a livelock: every yield rejected, the
+    // seat re-summoned, the hop budget spent without dispatching anyone. After
+    // its chances are spent the host preserves the queue on the seat's behalf
+    // and lets the yield through.
+    const authorityCheckpointExhausted =
+      requiresExplicitAuthorityRoutingDecision &&
+      Boolean(runtime) &&
+      authorityRoutingCheckpointExhausted(
+        this.authorityRoutingCheckpointAttemptsFor(runtime!, run.participant.id)
+      )
+    if (
+      requiresExplicitAuthorityRoutingDecision &&
+      !run.authorityRoutingDecision &&
+      authorityCheckpointExhausted
+    ) {
+      this.markAuthorityRoutingDecision(run, 'skipped_intervention')
+      this.appendRoundStatus(
+        run.chatId,
+        run.roundId,
+        `Authority routing checkpoint: ${participantDisplayName(run.participant)} could not record a routing decision after ${MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS} attempts; the host preserved the existing queue and accepted this yield. If this repeats, check that this seat's MCP profile advertises an Ensemble control tool it can call.`
+      )
+    }
     if (
       requiresExplicitAuthorityRoutingDecision &&
       !run.authorityRoutingDecision &&
       (!target || isUserYieldTarget(target) || explicitCheckpointTarget?.kind !== 'resolved')
     ) {
+      if (runtime) this.noteAuthorityRoutingCheckpointAttempt(runtime, run.participant.id)
       this.appendRoundStatus(
         run.chatId,
         run.roundId,
@@ -13440,6 +13476,24 @@ export class EnsembleOrchestrator {
     run.authorityRoutingDecision = decision
   }
 
+  private authorityRoutingCheckpointAttemptsFor(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): number {
+    return runtime.authorityRoutingCheckpointAttempts?.get(participantId) || 0
+  }
+
+  /** Spend one bounded checkpoint chance and report the new total. */
+  private noteAuthorityRoutingCheckpointAttempt(
+    runtime: ActiveRoundRuntime,
+    participantId: string
+  ): number {
+    runtime.authorityRoutingCheckpointAttempts ??= new Map()
+    const spent = this.authorityRoutingCheckpointAttemptsFor(runtime, participantId) + 1
+    runtime.authorityRoutingCheckpointAttempts.set(participantId, spent)
+    return spent
+  }
+
   private noteUnresolvedAuthorityRoutingCheckpoint(run: ActiveParticipantRun): void {
     const checkpoint = run.authorityRoutingCheckpoint
     if (!checkpoint || run.authorityRoutingDecision) return
@@ -16851,7 +16905,8 @@ export class EnsembleOrchestrator {
         !shouldResummonAuthorityForUnresolvedRouting({
           orchestrationMode: runtime.orchestrationMode,
           selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
-          decision: run.authorityRoutingDecision
+          decision: run.authorityRoutingDecision,
+          attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
         })
       ) {
         this.noteUnresolvedAuthorityRoutingCheckpoint(run)
@@ -17203,13 +17258,17 @@ export class EnsembleOrchestrator {
         shouldResummonAuthorityForUnresolvedRouting({
           orchestrationMode: runtime.orchestrationMode,
           selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
-          decision: run.authorityRoutingDecision
+          decision: run.authorityRoutingDecision,
+          attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
         })
       ) {
         const statusMessage = `Authority routing checkpoint: ${participantDisplayName(participant)} ended without an explicit routing decision; re-summoning before ordinary serial writers.`
         if (
           this.requeueAuthorityForActiveFanoutHold(runtime, remaining, participant, statusMessage)
         ) {
+          // Spend a bounded chance: a seat that cannot answer the checkpoint
+          // must not be re-summoned indefinitely against the hop budget.
+          this.noteAuthorityRoutingCheckpointAttempt(runtime, participant.id)
           runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
           runtime.pendingAuthorityRoutingCheckpoints.set(
             participant.id,

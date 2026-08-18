@@ -50,14 +50,39 @@ export function preservesInitialPassRoster(input: {
   return input.continuationPass <= 1 && input.orchestrationMode !== 'continuous'
 }
 
+/**
+ * How many chances one authority seat gets to resolve its routing checkpoint
+ * before the host preserves the queue for it.
+ *
+ * The checkpoint asks the seat to call its Ensemble control tool, but a seat
+ * can be structurally unable to answer: the control front door is advertised as
+ * `ensemble_control` on v2+ MCP profiles and `ensemble_bossman_control` on
+ * v1/pinned ones, and some transports drop the tool arguments that carry the
+ * decision. An unbounded gate turns that into a livelock — every yield is
+ * rejected and each quiet turn re-summons the same seat, so a Continuous round
+ * can burn its whole hop budget without ever dispatching another participant.
+ * Two chances keeps the nudge and guarantees progress.
+ */
+export const MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS = 2
+
+/** Chances already spent by this seat this round; absent counts as none. */
+export function authorityRoutingCheckpointExhausted(attempts: number | undefined): boolean {
+  return (attempts || 0) >= MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
+}
+
 /** Quiet Continuous authority completion with an unmet selection checkpoint. */
 export function shouldResummonAuthorityForUnresolvedRouting(input: {
   orchestrationMode: string | undefined
   selectionRequired: boolean | undefined
   decision: EnsembleAuthorityRoutingDecision | undefined
+  /** Bounded chances already spent; omitted keeps pre-bound caller behaviour. */
+  attempts?: number
 }): boolean {
   return (
-    input.orchestrationMode === 'continuous' && Boolean(input.selectionRequired) && !input.decision
+    input.orchestrationMode === 'continuous' &&
+    Boolean(input.selectionRequired) &&
+    !input.decision &&
+    !authorityRoutingCheckpointExhausted(input.attempts)
   )
 }
 

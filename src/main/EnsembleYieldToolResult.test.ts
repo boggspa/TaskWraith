@@ -187,4 +187,18 @@ describe('buildEnsembleYieldToolResult', () => {
       message: expect.stringContaining('skip_intervention')
     })
   })
+
+  it('names both advertised control spellings so a legacy-profile seat can act on the rejection', () => {
+    // The control front door is `ensemble_control` on v2+ profiles and
+    // `ensemble_bossman_control` on v1/pinned ones. Naming only one strands the
+    // other half of the fleet with an instruction it cannot follow.
+    for (const requirement of ['later_pass_selection', 'tagged_intervention'] as const) {
+      const message =
+        buildEnsembleYieldToolResult({
+          outcome: { kind: 'authority_routing_decision_required', pass: 2, requirement }
+        }).message || ''
+      expect(message).toContain('ensemble_control')
+      expect(message).toContain('ensemble_bossman_control')
+    }
+  })
 })

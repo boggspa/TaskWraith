@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyQueuedAuthorityRosterSelection,
+  authorityRoutingCheckpointExhausted,
   collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
+  MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
   preservesInitialPassRoster,
   resolveAuthoritySelection,
   shouldAttachContinuousAuthoritySelectionCheckpoint,
@@ -174,6 +176,31 @@ describe('Continuous Boss ownership helpers', () => {
         decision: undefined
       })
     ).toBe(false)
+  })
+
+  it('stops re-summoning once the seat has spent its bounded checkpoint chances', () => {
+    // An authority seat can be structurally unable to resolve its checkpoint
+    // (control tool advertised under the other spelling, or an arg-stripping
+    // transport). Re-summoning it forever burns the whole hop budget.
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'continuous',
+        selectionRequired: true,
+        decision: undefined,
+        attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS - 1
+      })
+    ).toBe(true)
+    expect(
+      shouldResummonAuthorityForUnresolvedRouting({
+        orchestrationMode: 'continuous',
+        selectionRequired: true,
+        decision: undefined,
+        attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
+      })
+    ).toBe(false)
+    // Omitted attempts stay backwards-compatible with pre-bound callers.
+    expect(authorityRoutingCheckpointExhausted(undefined)).toBe(false)
+    expect(authorityRoutingCheckpointExhausted(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS)).toBe(true)
   })
 
   it('distinguishes a goal terminalized during this round from stale terminal context', () => {

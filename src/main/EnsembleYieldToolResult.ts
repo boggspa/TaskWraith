@@ -66,12 +66,23 @@ export function buildEnsembleYieldToolResult(input: {
   }
 
   if (input.outcome.kind === 'authority_routing_decision_required') {
+    // Name BOTH advertised spellings of the control front door. It is
+    // `ensemble_control` on v2+ MCP profiles and `ensemble_bossman_control` on
+    // v1/pinned ones, so naming one strands the other half of the fleet with an
+    // instruction it cannot follow — the seat then spins on rejected yields.
+    // The bounded fall-back is stated too, so a seat that genuinely cannot call
+    // either tool stops retrying and just ends its turn.
+    const controlToolHint =
+      'Call whichever control tool this session lists — `ensemble_control` or ' +
+      '`ensemble_bossman_control`'
     const message =
       input.outcome.requirement === 'tagged_intervention'
         ? `The active Boss/Captain must make a targeted interstitial routing decision for pass ${input.outcome.pass} before yielding. ` +
-          'Use skip_intervention to preserve the queue, or yield/fan out to a specific participant or role.'
+          `${controlToolHint} with skip_intervention to preserve the queue, or yield/fan out to a specific participant or role. ` +
+          'If neither control tool is listed for you, end your turn — the host preserves the queue after a bounded number of attempts.'
         : `The active Boss/Captain must make an explicit routing decision for Continuous pass ${input.outcome.pass} before yielding. ` +
-          'Use ensemble_control select_participants or skip_intervention, or yield to a specific participant/role.'
+          `${controlToolHint} with select_participants or skip_intervention, or yield to a specific participant/role. ` +
+          'If neither control tool is listed for you, end your turn — the host preserves the queue after a bounded number of attempts.'
     return {
       ...base,
       ok: false,
