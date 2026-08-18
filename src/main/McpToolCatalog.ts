@@ -3472,6 +3472,15 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
+        examples: [
+          {
+            merge: true,
+            todos: [
+              { id: '1', content: 'Investigate the codebase', status: 'completed' },
+              { id: '2', content: 'Implement the feature', status: 'in_progress' }
+            ]
+          }
+        ],
         properties: {
           merge: {
             type: 'boolean',

@@ -1637,6 +1637,33 @@ function ollamaNativeToolParameters(
             },
             required: ['pattern']
           }
+    case 'todo_write':
+      return {
+        description: compact
+          ? 'Update your step checklist.'
+          : 'Write or update a multi-step checklist to coordinate your run.',
+        properties: {
+          merge: { type: 'boolean', description: 'When true, merges items into the existing list. When false, replaces the whole list.' },
+          todos: {
+            type: 'array',
+            description: 'Goal steps for this run.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Stable identifier for this step.' },
+                content: { type: 'string', description: 'Short human-readable step label.' },
+                status: {
+                  type: 'string',
+                  enum: ['pending', 'in_progress', 'completed', 'cancelled'],
+                  description: 'Current state of the step.'
+                }
+              },
+              required: ['id', 'content', 'status']
+            }
+          }
+        },
+        required: ['todos']
+      }
     case 'workspace_search':
       return compact
         ? {
@@ -3028,7 +3055,8 @@ const OLLAMA_ARG_SYNONYMS_BY_TOOL: Partial<Record<OllamaToolName, Record<string,
     path: ['from', 'source'],
     newName: ['name']
   },
-  apply_patch: { patch: ['diff'] }
+  apply_patch: { patch: ['diff'] },
+  todo_write: { todos: ['items'] }
 }
 
 function ollamaArgPresent(
