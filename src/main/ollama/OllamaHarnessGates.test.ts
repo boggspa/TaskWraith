@@ -5,10 +5,10 @@ import {
   evaluateOllamaHarnessGate,
   ollamaHarnessDefaultTodos,
   ollamaHarnessTargetPaths,
-  ollamaHarnessTodoBlockedMessage,
   ollamaHarnessToolFollowUpPrompt,
   normalizeOllamaHarnessPath,
-  recordOllamaHarnessToolResult
+  recordOllamaHarnessToolResult,
+  takeOllamaHarnessTodoAdvisory
 } from './OllamaHarnessGates'
 
 describe('OllamaHarnessGates', () => {
@@ -96,7 +96,7 @@ describe('OllamaHarnessGates', () => {
     expect(gate.blocked).toBe(false)
   })
 
-  it('blocks replace until the target file was read for retrieval-first models', () => {
+  it('no longer blocks replace on an unread file — retrieval-first is retired', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'workspace_search', { query: 'Foo' }, true)
     const gate = evaluateOllamaHarnessGate({
@@ -116,32 +116,43 @@ describe('OllamaHarnessGates', () => {
     expect(gate.message).toBeUndefined()
   })
 
-  it('does not require todo_write before other tools when scaffold is enabled', () => {
+  it('never blocks on todos — the gate has no scaffold requirement any more', () => {
     const state = createOllamaHarnessRunState()
-    state.publishedTodos = true
     const gate = evaluateOllamaHarnessGate({
       modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'workspace_search',
-      args: { query: 'foo' },
-      requireTodoScaffold: true
+      args: { query: 'foo' }
     })
     expect(gate.blocked).toBe(false)
+    expect(gate.message).toBeUndefined()
   })
 
-  it('blocks tools when scaffold is enabled but todos are not published', () => {
+  it('offers the todo tip exactly once, and only while todos are unpublished', () => {
     const state = createOllamaHarnessRunState()
-    const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt_oss_20b',
-      tier: 'approved_edits',
-      state,
-      toolName: 'workspace_search',
-      args: { query: 'foo' },
-      requireTodoScaffold: true
-    })
-    expect(gate.blocked).toBe(true)
-    expect(gate.message).toBe(ollamaHarnessTodoBlockedMessage())
+    const first = takeOllamaHarnessTodoAdvisory(state, 'approved_edits', 'workspace_search')
+    expect(first).toContain('publish a short checklist now with todo_write')
+    expect(first).toContain('your own steps, in your own words')
+    expect(first).toContain('Skip it if the task is a single step')
+    // One-shot: taking it again returns nothing, forever.
+    expect(takeOllamaHarnessTodoAdvisory(state, 'approved_edits', 'read_file')).toBeNull()
+
+    // Already-published todos need no encouragement, and the untaken tip stays
+    // available-but-null without burning the one shot.
+    const published = createOllamaHarnessRunState()
+    published.publishedTodos = true
+    expect(
+      takeOllamaHarnessTodoAdvisory(published, 'approved_edits', 'workspace_search')
+    ).toBeNull()
+    expect(published.todoAdvisoryIssued).toBe(false)
+  })
+
+  it('does not pitch todo_write on its own result', () => {
+    const state = createOllamaHarnessRunState()
+    expect(takeOllamaHarnessTodoAdvisory(state, 'approved_edits', 'todo_write')).toBeNull()
+    // Not burned: the next ordinary result still gets the tip.
+    expect(takeOllamaHarnessTodoAdvisory(state, 'approved_edits', 'read_file')).not.toBeNull()
   })
 
   it('extracts apply_patch paths and clears read cache after edit', () => {

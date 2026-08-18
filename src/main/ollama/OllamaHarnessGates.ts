@@ -17,6 +17,8 @@ export interface OllamaHarnessRunState {
   hasExplored: boolean
   readPaths: Set<string>
   publishedTodos: boolean
+  /** One-shot: the todo_write tip has already ridden on a tool result. */
+  todoAdvisoryIssued: boolean
   activePhase?: OllamaHarnessPhase
 }
 
@@ -30,7 +32,8 @@ export function createOllamaHarnessRunState(): OllamaHarnessRunState {
   return {
     hasExplored: false,
     readPaths: new Set<string>(),
-    publishedTodos: false
+    publishedTodos: false,
+    todoAdvisoryIssued: false
   }
 }
 
@@ -166,10 +169,30 @@ export function ollamaHarnessEditBlockedMessage(paths: string[]): string {
   ].join(' ')
 }
 
-export function ollamaHarnessTodoBlockedMessage(): string {
+/**
+ * One-shot todo encouragement, taken (not read) so it can only ever fire once
+ * per run. This replaces the retired `requireTodoScaffold` hard block, which
+ * refused EVERY tool until todos were published and dictated a canned
+ * checklist — the exact intent-override the local-model un-nerf removed. The
+ * tip rides on the first clean tool result instead: by then the model has its
+ * own first evidence in hand, and whether the task deserves a checklist is its
+ * call, with its own steps in its own words.
+ *
+ * Returns null (and stamps nothing) when the run has already published todos,
+ * when the tier has no todo_write, or for todo_write's own result.
+ */
+export function takeOllamaHarnessTodoAdvisory(
+  state: OllamaHarnessRunState,
+  tier: OllamaToolControlTier | string | undefined | null,
+  toolName: OllamaToolName | string
+): string | null {
+  if (state.todoAdvisoryIssued || state.publishedTodos) return null
+  if (toolName === 'todo_write') return null
+  if (!ollamaToolNamesForTier(tier).includes('todo_write')) return null
+  state.todoAdvisoryIssued = true
   return [
-    'Harness scheduling: publish the checklist with todo_write before other tools on workspace coding tasks.',
-    `Call todo_write with merge:true and todos: ${JSON.stringify(ollamaHarnessDefaultTodos())}`
+    'One-time tip: if this task needs several steps, publish a short checklist now with todo_write (merge:true) — your own steps, in your own words — to keep the remaining turns focused.',
+    'Skip it if the task is a single step.'
   ].join(' ')
 }
 
@@ -180,14 +203,13 @@ export interface OllamaHarnessGateInput {
   state: OllamaHarnessRunState
   toolName: OllamaToolName | string
   args: Record<string, unknown>
-  requireTodoScaffold?: boolean
 }
 
 export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, state, toolName, args, requireTodoScaffold } = input
+  const { modelId, state, toolName, args } = input
   const needsRetrievalFirst = ollamaEnforcesRetrievalFirst(modelId)
 
   // Retrieve-first policy: explore before read, read before edit
@@ -217,14 +239,10 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
     }
   }
 
-  // Todo scaffold requirement
-  if (requireTodoScaffold && !state.publishedTodos) {
-    return {
-      blocked: true,
-      message: ollamaHarnessTodoBlockedMessage()
-    }
-  }
-
+  // Todo encouragement is deliberately NOT a gate: it rides on the first tool
+  // RESULT as a one-shot tip (takeOllamaHarnessTodoAdvisory). The old
+  // requireTodoScaffold refusal blocked every tool until todos were published,
+  // which re-nerfed every model regardless of the retrieval-first membership.
   return { blocked: false }
 }
 

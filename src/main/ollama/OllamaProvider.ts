@@ -61,6 +61,7 @@ import {
   ollamaHarnessKickoffPrompt,
   ollamaHarnessToolFollowUpPrompt,
   recordOllamaHarnessToolResult,
+  takeOllamaHarnessTodoAdvisory,
   type OllamaHarnessRunState
 } from './OllamaHarnessGates'
 import {
@@ -4228,6 +4229,21 @@ export async function runOllamaProvider(
           modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName, stickyRetryOptions)
         } else if (repeat.repeated && repeat.compactedAway) {
           modelFacingOutput = `${ollamaCompactedRepeatToolCallPreamble(toolRequest.toolName)}\n${truncatedOutput}`
+        } else if (harnessEnabled && toolResult.ok) {
+          // One-shot todo encouragement on the first CLEAN tool result — never
+          // on a turn already carrying a corrective nudge, where it would
+          // dilute the correction. Appended (not substituted) so the model
+          // keeps the result it asked for; take* stamps the state so it can
+          // never fire twice. This is the un-nerfed replacement for the
+          // retired requireTodoScaffold hard block.
+          const todoAdvisory = takeOllamaHarnessTodoAdvisory(
+            harnessState,
+            toolControlTier,
+            toolRequest.toolName
+          )
+          if (todoAdvisory) {
+            modelFacingOutput = `${modelFacingOutput}\n\n${todoAdvisory}`
+          }
         }
         sessionMemory = appendOllamaTrajectoryEntry(sessionMemory, {
           toolName: toolRequest.toolName,

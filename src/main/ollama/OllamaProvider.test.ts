@@ -2761,6 +2761,87 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).not.toContain('Harness edit gate')
   }, 10000)
 
+  it('appends a one-shot todo_write tip to the first clean tool result, and only the first', async () => {
+    // The retired requireTodoScaffold hard block refused EVERY tool until todos
+    // were published and dictated a canned checklist. This is its replacement:
+    // pure encouragement, delivered once, riding on the first tool result the
+    // model reads — never a refusal, never someone else's plan.
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'hits: src/main/Foo.ts' }))
+    let chatCalls = 0
+    const chatBodies: Array<{ messages: Array<{ content?: string }> }> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content:
+                  '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"Foo"}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        if (chatCalls === 2) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content:
+                  '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"src/main/Foo.ts"}}}'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'All done.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          gpt_oss_20b: { protocolMode: 'json_only' }
+        }
+      },
+      executeTool
+    })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(2)
+    expect(chatBodies).toHaveLength(3)
+    // The tip is what the model READS in the follow-up carrying the first tool
+    // result — and it is gone again by the second.
+    const firstFollowUp = String(chatBodies[1].messages.at(-1)?.content || '')
+    const secondFollowUp = String(chatBodies[2].messages.at(-1)?.content || '')
+    expect(firstFollowUp).toContain('publish a short checklist now with todo_write')
+    expect(firstFollowUp).toContain('Skip it if the task is a single step')
+    expect(secondFollowUp).not.toContain('publish a short checklist')
+  })
+
   it('stops a tool that keeps failing the SAME way instead of looping for hours', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []
