@@ -55,7 +55,7 @@ describe('createMistralWebUsageLane', () => {
     const fetchSubscription = vi.fn(
       async () => (overrides.fetchResults ?? [SUMMARY]).shift() ?? null
     )
-    const setReport = vi.fn(async () => {})
+    const setReport = vi.fn(async (_report: unknown, _options?: unknown) => {})
     const created = createMistralWebUsageLane({
       loadCookie: () =>
         overrides.cookieStatus === undefined || overrides.cookieStatus === 'ok'
