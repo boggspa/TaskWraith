@@ -63,11 +63,11 @@ import {
   type RendererDiagnosticPerformance
 } from './lib/rendererDiagnosticSample'
 import {
-  TASKWRAITH_CLOSEOUT_KIND,
   closeoutAiSummaryFromMetadata,
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../shared/taskWraithCloseout'
+import { buildLiveToolFileSummarySignature } from './lib/liveToolFileSummarySignature'
 import {
   coerceLiveProvider,
   DEFAULT_PROVIDER,
@@ -1401,30 +1401,6 @@ function shareUnchangedMessageObjects(
     return prior
   })
   return changed ? shared : (next as ChatMessage[])
-}
-
-// Per-message chunk cache for the live tool-file signature. Safe because
-// every toolActivities writer replaces the MESSAGE OBJECT rather than
-// mutating in place (applyAssistantDelta slice-preserve + the solo/multi-
-// agent/review/workflow telemetry reducers all spread - audited 2026-07-10),
-// so message identity keys the cache. During text streaming only the
-// streaming bubble changes identity; every other message skips its
-// JSON.stringify - O(all tool messages) -> O(changed) per coalesced flush.
-const liveToolFileSummaryChunkCache = new WeakMap<ChatMessage, string>()
-
-function buildLiveToolFileSummarySignature(messages: readonly ChatMessage[]): string {
-  const chunks: string[] = []
-  for (const message of messages) {
-    if (message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) continue
-    if (!message.toolActivities?.length) continue
-    let chunk = liveToolFileSummaryChunkCache.get(message)
-    if (chunk === undefined) {
-      chunk = `${message.id}:${JSON.stringify(message.toolActivities)}`
-      liveToolFileSummaryChunkCache.set(message, chunk)
-    }
-    chunks.push(chunk)
-  }
-  return chunks.join('\u0001')
 }
 
 interface LiveToolFileSummaryState {
