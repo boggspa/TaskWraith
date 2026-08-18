@@ -6,7 +6,6 @@ import {
   type QuotaSnapshotHookSnapshot,
   type QuotaSnapshotHookWindow
 } from '../../shared/quotaSnapshotHook'
-import { resolveMuseMonthlySpendCapUsd } from '../../shared/museSpendBudget'
 import {
   hasApiUsageBillingProvider,
   type ApiUsageBillingCurrency,
@@ -348,30 +347,9 @@ function financialWindow(input: {
   }
 }
 
-function estimateWindow(input: {
-  id: string
-  label: string
-  amountUsd: number
-  subtitle: string
-  totalUsd?: number | null
-  resetAt?: string
-}): QuotaSnapshotHookWindow {
-  return financialWindow({
-    id: input.id,
-    label: input.label,
-    amount: input.amountUsd,
-    currency: 'USD',
-    subtitle: input.subtitle,
-    total: input.totalUsd,
-    resetAt: input.resetAt,
-    estimated: true
-  })
-}
-
 function deepSeekSnapshot(
   observation: DeepSeekBalanceObservation,
   observationFetchedAt: number,
-  spend: SpendSummary & { nextMonth: string },
   billing: DeepSeekApiUsageBilling | undefined,
   now: number
 ): QuotaSnapshotHookSnapshot {
@@ -452,7 +430,6 @@ function deepSeekSnapshot(
 }
 
 function cerebrasSnapshot(
-  spend: SpendSummary & { nextMonth: string },
   billing: CerebrasApiUsageBilling | undefined,
   now: number
 ): QuotaSnapshotHookSnapshot {
@@ -509,8 +486,6 @@ function cerebrasSnapshot(
 }
 
 function metaSnapshot(
-  spend: SpendSummary & { nextMonth: string },
-  monthlyCapUsd: number | null,
   billing: MetaApiUsageBilling | undefined,
   localSpendSinceAnchorUsd: number,
   fxRates: unknown,
@@ -518,18 +493,12 @@ function metaSnapshot(
 ): QuotaSnapshotHookSnapshot {
   const currency = billing?.currency ?? 'USD'
   const perUsd = fxRatePerUsd(fxRates, currency)
-  const resetAt = billing?.resetAt ?? spend.nextMonth
   const preload = billing?.preloadCredits
   const threshold = billing?.paymentThreshold
   const remaining = billing?.remainingBalance
-  const impliedSpend =
-    threshold !== undefined && remaining !== undefined ? Math.max(0, threshold - remaining) : null
-  const anchoredSpend = billing?.spent ?? impliedSpend ?? (threshold !== undefined ? 0 : null)
   const localIncrement = billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
   const effectiveRemaining =
     remaining === undefined ? undefined : roundMoney(Math.max(0, remaining - localIncrement))
-  const budgetUsd = billing?.monthlyBudgetUsd ?? monthlyCapUsd ?? 0
-  const convertedBudget = budgetUsd * perUsd
   const windows: QuotaSnapshotHookWindow[] = []
 
   if (preload !== undefined && effectiveRemaining !== undefined) {
@@ -658,7 +627,6 @@ export function createTaskWraithQuotaSnapshotHook(
 
   const readDeepSeek = async (
     apiKey: string,
-    spend: SpendSummary & { nextMonth: string },
     billing: DeepSeekApiUsageBilling | undefined,
     readAt: number
   ): Promise<QuotaSnapshotHookSnapshot> => {
@@ -699,13 +667,7 @@ export function createTaskWraithQuotaSnapshotHook(
     }
     const cached = deepSeekCache
     if (cached?.observation && cached.observationFetchedAt !== null) {
-      return deepSeekSnapshot(
-        cached.observation,
-        cached.observationFetchedAt,
-        spend,
-        billing,
-        now()
-      )
+      return deepSeekSnapshot(cached.observation, cached.observationFetchedAt, billing, now())
     }
     return emptySnapshot(
       'deepseek',
@@ -749,7 +711,10 @@ export function createTaskWraithQuotaSnapshotHook(
       apiUsageBilling = {}
     }
 
-    const deepSeekSpend = summarizeSpend(usageRecords, providerRates, 'deepseek', readAt)
+    // Spend summaries GATE lane visibility (a lane with local runs shows even
+    // before its billing anchor exists); the snapshots themselves render only
+    // official balances and anchors since the estimated-window retirement.
+    // DeepSeek needs no summary: its key alone gates it.
     const cerebrasSpend = summarizeSpend(usageRecords, providerRates, 'cerebras', readAt)
     const metaSpend = summarizeSpend(usageRecords, providerRates, 'meta', readAt)
     const metaAnchorMs = apiUsageBilling.meta?.anchorUpdatedAt
@@ -769,7 +734,7 @@ export function createTaskWraithQuotaSnapshotHook(
 
     const [deepSeek, museConfigured] = await Promise.all([
       deepSeekKey
-        ? readDeepSeek(deepSeekKey, deepSeekSpend, apiUsageBilling.deepseek, readAt)
+        ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
         : Promise.resolve(
             emptySnapshot(
               'deepseek',
@@ -791,17 +756,10 @@ export function createTaskWraithQuotaSnapshotHook(
       cerebrasKey ||
       cerebrasSpend.runs > 0 ||
       hasApiUsageBillingProvider(apiUsageBilling, 'cerebras')
-        ? cerebrasSnapshot(cerebrasSpend, apiUsageBilling.cerebras, readAt)
+        ? cerebrasSnapshot(apiUsageBilling.cerebras, readAt)
         : emptySnapshot('cerebras', readAt, false),
       museConfigured || metaSpend.runs > 0 || hasApiUsageBillingProvider(apiUsageBilling, 'meta')
-        ? metaSnapshot(
-            metaSpend,
-            resolveMuseMonthlySpendCapUsd(dependencies.getMuseMonthlySpendCapUsd()),
-            apiUsageBilling.meta,
-            metaSpendSinceAnchorUsd,
-            fxRates,
-            readAt
-          )
+        ? metaSnapshot(apiUsageBilling.meta, metaSpendSinceAnchorUsd, fxRates, readAt)
         : emptySnapshot('meta', readAt, false)
     ]
   }

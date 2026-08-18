@@ -168,7 +168,7 @@ describe('parseDeepSeekBalanceResponse', () => {
 })
 
 describe('createTaskWraithQuotaSnapshotHook', () => {
-  it('combines the official DeepSeek balance with TaskWraith-owned Cerebras and Meta estimates', async () => {
+  it('serves the official DeepSeek balance and anchor-less Cerebras/Meta lanes without estimate windows', async () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('GET')
       expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer ds-secret')
@@ -206,6 +206,10 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       'https://api.deepseek.com/user/balance',
       expect.objectContaining({ redirect: 'error' })
     )
+    // The 'Estimated this month' / 'Estimated last 30 days' windows are
+    // RETIRED (only official balances and Credit-used anchors meter now), so
+    // an anchor-less lane shows its plan tag and no windows — never a
+    // fabricated estimate bar.
     expect(snapshots).toEqual([
       expect.objectContaining({
         provider: 'deepseek',
@@ -216,10 +220,6 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
             label: 'Available balance',
             valueText: '$9.08',
             limitLabel: expect.stringContaining('official DeepSeek balance API')
-          }),
-          expect.objectContaining({
-            label: 'Estimated this month',
-            valueText: '~$3.00'
           })
         ],
         balances: [
@@ -231,22 +231,12 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       expect.objectContaining({
         provider: 'cerebras',
         planType: 'TaskWraith estimate',
-        windows: [
-          expect.objectContaining({ label: 'Estimated this month', valueText: '~$1.10' }),
-          expect.objectContaining({ label: 'Estimated last 30 days', valueText: '~$1.10' })
-        ]
+        windows: []
       }),
       expect.objectContaining({
         provider: 'meta',
         planType: 'Muse local estimate',
-        windows: [
-          expect.objectContaining({
-            label: 'Estimated this month',
-            valueText: '~$5.50',
-            usedPercent: expect.closeTo(36.6666667)
-          }),
-          expect.objectContaining({ label: 'Estimated last 30 days', valueText: '~$5.50' })
-        ]
+        windows: []
       })
     ])
     expect(JSON.stringify(snapshots)).not.toContain('ds-secret')
@@ -327,6 +317,8 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         ])
       })
     )
+    // Credit-used is the ONLY meter each anchored lane keeps — the estimate
+    // and 'Spend this billing period' companions are retired.
     expect(snapshots[1]).toEqual(
       expect.objectContaining({
         provider: 'cerebras',
@@ -336,8 +328,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
             label: 'Credit used',
             valueText: '£13.50',
             usedPercent: 67.5
-          }),
-          expect.objectContaining({ label: 'Estimated this month', valueText: '~$1.10' })
+          })
         ]
       })
     )
@@ -345,13 +336,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       expect.objectContaining({
         provider: 'meta',
         planType: 'API Credits',
-        windows: [
-          expect.objectContaining({
-            label: 'Spend this billing period',
-            valueText: '£4.45'
-          }),
-          expect.objectContaining({ label: 'Credit used', valueText: '£4.45' })
-        ],
+        windows: [expect.objectContaining({ label: 'Credit used', valueText: '£4.45' })],
         balances: expect.arrayContaining([
           expect.objectContaining({ label: 'Remaining balance', amount: 10.55, unit: 'GBP' })
         ])
@@ -436,7 +421,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     )
   })
 
-  it('advances a Meta payment threshold from a zero anchor using later Muse spend', async () => {
+  it('keeps a threshold-only Meta anchor visible as a balance, never a spend meter', async () => {
     const now = Date.parse('2026-08-15T12:00:00.000Z')
     const hook = createTaskWraithQuotaSnapshotHook({
       loadPiKeys: () => ({ status: 'ok', keys: {} }),
@@ -464,11 +449,17 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     })
 
     const snapshots = await hook()
-    expect(snapshots[2].windows[0]).toEqual(
+    // A threshold alone cannot form a Credit-used meter (that needs preload +
+    // remaining), and the retired spend window must not resurrect for it. The
+    // anchor stays visible as its balance row instead.
+    expect(snapshots[2]).toEqual(
       expect.objectContaining({
-        label: 'Spend this billing period',
-        valueText: '$5.50',
-        limitLabel: expect.stringContaining('$5.50 of $20.00')
+        provider: 'meta',
+        configured: true,
+        windows: [],
+        balances: [
+          expect.objectContaining({ label: 'Payment threshold', amount: 20, unit: 'USD' })
+        ]
       })
     )
   })
