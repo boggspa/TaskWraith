@@ -480,7 +480,14 @@ export function humaniseModelId(
   if (provider === 'antigravity') {
     const apiLabel = antigravityGeminiApiModelDisplayLabel(key)
     if (apiLabel) return apiLabel
-    if (key.startsWith('gemini-')) return antigravityDisplayName(key)
+    if (
+      key.startsWith('gemini-') ||
+      key.startsWith('claude-') ||
+      key.startsWith('gpt-oss') ||
+      key.startsWith('flash-')
+    ) {
+      return antigravityDisplayName(key)
+    }
   }
   // Pi wire ids are `<upstream>/<modelId>` and are matched CASE-SENSITIVELY
   // against the curated catalog — `minimax/MiniMax-M3` is mixed-case on the

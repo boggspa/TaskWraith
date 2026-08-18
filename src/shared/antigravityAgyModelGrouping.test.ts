@@ -19,8 +19,11 @@ const CATALOGUE = [
   'gemini-3.5-flash-low',
   'gemini-3.1-pro-high',
   'gemini-3.1-pro-low',
+  'flash-3.7',
+  'flash-3.6',
+  'flash-3.5',
   'claude-sonnet-4-6',
-  'claude-opus-4-6-thinking',
+  'claude-opus-4-6',
   'gpt-oss-120b-medium'
 ].map((id) => ({ id, label: id }))
 
@@ -32,9 +35,12 @@ describe('antigravityModelGrouping', () => {
       'Gemini 3.6 Flash',
       'Gemini 3.5 Flash',
       'Gemini 3.1 Pro',
-      'Claude Sonnet 4.6',
-      'Claude Opus 4.6 Thinking',
-      'GPT-OSS 120B'
+      'Flash 3.7 Fast',
+      'Flash 3.6 Fast',
+      'Flash 3.5 Fast',
+      'Sonnet 4.6',
+      'Opus 4.6',
+      'GPT-OSS (120B Param)'
     ])
     // Unselected grouped rows resolve to their catalogue-first variant.
     expect(rows[0].id).toBe('gemini-3.7-flash-high')
@@ -44,7 +50,7 @@ describe('antigravityModelGrouping', () => {
       { effort: 'high', id: 'gemini-3.7-flash-high' }
     ])
     expect(rows[3].id).toBe('gemini-3.1-pro-high')
-    expect(rows[6].id).toBe('gpt-oss-120b-medium')
+    expect(rows[9].id).toBe('gpt-oss-120b-medium')
   })
 
   it('a grouped row follows the selected variant of its family', () => {
@@ -54,12 +60,12 @@ describe('antigravityModelGrouping', () => {
     expect(rows[1].id).toBe('gemini-3.6-flash-high')
   })
 
-  it('parses effort suffixes and refuses -thinking', () => {
+  it('parses effort suffixes and fixed reasoning', () => {
     expect(antigravityEffortForModelId('gemini-3.7-flash-high')).toBe('high')
     expect(antigravityEffortForModelId('gemini-3.1-pro-low')).toBe('low')
     expect(antigravityEffortForModelId('gpt-oss-120b-medium')).toBe('medium')
-    expect(antigravityEffortForModelId('claude-opus-4-6-thinking')).toBeNull()
-    expect(antigravityEffortForModelId('claude-sonnet-4-6')).toBeNull()
+    expect(antigravityEffortForModelId('claude-opus-4-6')).toBe('on')
+    expect(antigravityEffortForModelId('claude-sonnet-4-6')).toBe('on')
   })
 
   it('exposes slider variants low → high with the family default preserved', () => {
@@ -72,7 +78,7 @@ describe('antigravityModelGrouping', () => {
     expect(pro?.variants.map((variant) => variant.effort)).toEqual(['low', 'high'])
 
     const oss = antigravityVariantGroupForModel(CATALOGUE, 'gpt-oss-120b-medium')
-    expect(oss?.variants.map((variant) => variant.effort)).toEqual(['medium'])
+    expect(oss).toBeNull()
 
     expect(antigravityVariantGroupForModel(CATALOGUE, 'claude-sonnet-4-6')).toBeNull()
   })

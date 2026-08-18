@@ -30,6 +30,7 @@ import { resolveProviderRows } from './ComposerProviderPicker'
 import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { isCursorGrokModelId } from '../../../shared/grok45Models'
 import {
+  FAST_MODEL_IDS,
   antigravityEffortForModelId,
   antigravityVariantGroupForModel,
   groupAntigravityModelRows
@@ -192,7 +193,11 @@ export function ParticipantPickerCluster({
           ? resolved.fastModeEnabled
           : participant.provider === 'cursor'
             ? selectedModelId === 'composer-2.5-fast' || resolved.fastModeEnabled
-            : false
+            : participant.provider === 'grok'
+              ? true
+              : participant.provider === 'antigravity'
+                ? FAST_MODEL_IDS.has(selectedModelId)
+                : false
   const onToggleFastMode =
     participant.provider === 'codex'
       ? (): void => {

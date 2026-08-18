@@ -346,6 +346,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     // (gemini-3.6-flash-high); the picker groups families and the slider
     // swaps variants, so the chip suffix reads straight off the id.
     const effort = antigravityEffortForModelId(ctx.modelId)
+    if (effort === 'on') return 'Thinking On'
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
   }
 

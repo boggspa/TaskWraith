@@ -43,10 +43,14 @@ const STATIC_AGY_MODEL_IDS: readonly string[] = [
   'gemini-3.5-flash-low',
   'gemini-3.1-pro-high',
   'gemini-3.1-pro-low',
+  'flash-3.7',
+  'flash-3.6',
+  'flash-3.5',
   // The CLI availability panel includes a mixed Claude/GPT pool; this floor
   // keeps the picker and CLI fallback usable when discovery is offline.
   'claude-opus-4-6',
   'claude-opus-4-8',
+  'claude-sonnet-4-6',
   'claude-sonnet-4-5',
   'gpt-oss-120b-medium'
 ]

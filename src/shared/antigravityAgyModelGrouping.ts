@@ -19,45 +19,46 @@
 import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from './antigravityGeminiApiModelNaming'
 
 export type AntigravityEffort = 'high' | 'medium' | 'low'
+export type AntigravityReasoningEffort = AntigravityEffort | 'on'
 
 /** Slider presentation order (matches the Grok/Cursor ladder, low → high). */
 export const ANTIGRAVITY_EFFORT_ORDER: readonly AntigravityEffort[] = ['low', 'medium', 'high']
 
-const EFFORT_SUFFIX = /-(high|medium|low)$/
+const VARIANT_EFFORT_SUFFIX = /-(high|medium|low)$/
+export const FAST_MODEL_IDS = new Set(['flash-3.7', 'flash-3.6', 'flash-3.5'])
 
-export function antigravityEffortForModelId(modelId: string): AntigravityEffort | null {
-  const match = EFFORT_SUFFIX.exec(modelId.trim())
-  return match ? (match[1] as AntigravityEffort) : null
+const FIXED_REASONING_MODELS: Record<string, AntigravityReasoningEffort> = {
+  'claude-sonnet-4-6': 'on',
+  'claude-sonnet-4-6-thinking': 'on',
+  'claude-opus-4-6': 'on',
+  'claude-opus-4-6-thinking': 'on',
+  'gpt-oss-120b-medium': 'medium'
 }
 
-export interface AntigravityVariantGroup {
-  baseId: string
-  displayName: string
-  /** Present variants in slider order (low → high). */
-  variants: Array<{ effort: AntigravityEffort; id: string }>
-  /** Catalogue-first variant — what a fresh click on the row selects. */
-  defaultId: string
+export function antigravityEffortForModelId(modelId: string): AntigravityReasoningEffort | null {
+  const normalized = modelId.trim().toLowerCase()
+  const match = VARIANT_EFFORT_SUFFIX.exec(normalized)
+  if (match) {
+    return match[1] as AntigravityEffort
+  }
+  if (normalized.endsWith('-thinking')) return 'on'
+  return FIXED_REASONING_MODELS[normalized] ?? null
 }
 
-export interface AntigravityGroupedModelRow {
-  id: string
-  label: string
-  /** Concrete wire-model variants retained for a consumer that needs to
-   * switch the family through the reasoning ladder. */
-  antigravityVariants?: AntigravityVariantGroup['variants']
-}
-
-interface CatalogueOptionLike {
-  id: string
-  label?: string
-}
-
-/** Human-readable name for a bare agy id ('gemini-3.6-flash' → 'Gemini 3.6
- * Flash', 'claude-sonnet-4-6' → 'Claude Sonnet 4.6', 'gpt-oss-120b' →
- * 'GPT-OSS 120B'). Generic word rules plus a tiny exception map; an unknown
- * id still comes out readable. */
-export function antigravityDisplayName(baseId: string): string {
-  const tokens = baseId.trim().split('-').filter(Boolean)
+function collectDisplayNameTokens(modelId: string): string[] {
+  const normalized = modelId.trim().toLowerCase()
+  const fixedEffort = FIXED_REASONING_MODELS[normalized]
+  const suffixToStrip =
+    fixedEffort === 'on'
+      ? '-thinking'
+      : fixedEffort
+        ? `-${fixedEffort}`
+        : ''
+  const baseId =
+    suffixToStrip && normalized.endsWith(suffixToStrip)
+      ? normalized.slice(0, -suffixToStrip.length)
+      : normalized
+  const tokens = baseId.split('-').filter(Boolean)
   const words: string[] = []
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
@@ -90,7 +91,44 @@ export function antigravityDisplayName(baseId: string): string {
     }
     words.push(token.charAt(0).toUpperCase() + token.slice(1))
   }
-  return words.join(' ')
+  if (FAST_MODEL_IDS.has(normalized)) {
+    words.push('Fast')
+  }
+  return words
+}
+
+export interface AntigravityVariantGroup {
+  baseId: string
+  displayName: string
+  /** Present variants in slider order (low → high). */
+  variants: Array<{ effort: AntigravityEffort; id: string }>
+  /** Catalogue-first variant — what a fresh click on the row selects. */
+  defaultId: string
+}
+
+export interface AntigravityGroupedModelRow {
+  id: string
+  label: string
+  /** Concrete wire-model variants retained for a consumer that needs to
+   * switch the family through the reasoning ladder. */
+  antigravityVariants?: AntigravityVariantGroup['variants']
+}
+
+interface CatalogueOptionLike {
+  id: string
+  label?: string
+}
+
+/** Human-readable name for a bare agy id ('gemini-3.6-flash' → 'Gemini 3.6
+ * Flash', 'claude-sonnet-4-6' → 'Claude Sonnet 4.6', 'gpt-oss-120b' →
+ * 'GPT-OSS 120B'). Generic word rules plus a tiny exception map; an unknown
+ * id still comes out readable. */
+export function antigravityDisplayName(baseId: string): string {
+  const normalized = baseId.trim().toLowerCase()
+  if (normalized === 'claude-sonnet-4-6' || normalized === 'claude-sonnet-4-6-thinking') return 'Sonnet 4.6'
+  if (normalized === 'claude-opus-4-6' || normalized === 'claude-opus-4-6-thinking') return 'Opus 4.6'
+  if (normalized.startsWith('gpt-oss-120b')) return 'GPT-OSS (120B Param)'
+  return collectDisplayNameTokens(baseId).join(' ')
 }
 
 function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
@@ -114,7 +152,11 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
       orderedEntries.push({ kind: 'single', id, label: option.label })
       continue
     }
-    const effort = antigravityEffortForModelId(id)
+    const normalized = id.trim().toLowerCase()
+    const effort =
+      !FIXED_REASONING_MODELS[normalized] && VARIANT_EFFORT_SUFFIX.exec(normalized)
+        ? (antigravityEffortForModelId(id) as AntigravityEffort)
+        : null
     if (!effort) {
       // A curated label (differing from the id) is authored — keep it.
       const curated = option.label && option.label !== id ? option.label : undefined

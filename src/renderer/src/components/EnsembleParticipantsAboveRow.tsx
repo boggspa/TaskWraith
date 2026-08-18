@@ -107,7 +107,7 @@ import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
-import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
+import { FAST_MODEL_IDS, antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
@@ -1668,7 +1668,13 @@ function EnsembleAddParticipantButton({
         ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
         : draft.reasoningEffort || ''
   const fastModeEnabled =
-    draft.provider === 'codex' ? draft.serviceTier === 'fast' : Boolean(draft.fastModeEnabled)
+    draft.provider === 'codex'
+      ? draft.serviceTier === 'fast'
+      : draft.provider === 'grok'
+        ? true
+        : draft.provider === 'antigravity' && FAST_MODEL_IDS.has(draft.model)
+          ? true
+          : Boolean(draft.fastModeEnabled)
 
   const resetDraft = useCallback(
     (
