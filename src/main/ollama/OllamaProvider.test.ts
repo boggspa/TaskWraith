@@ -1212,7 +1212,9 @@ describe('runOllamaProvider streaming', () => {
     expect(deps.saveOllamaSessionMemory).toHaveBeenCalledWith(
       'chat-ollama-1',
       expect.objectContaining({
-        model: 'gpt_oss_20b',
+        // The persisted session-memory record keys on `modelId`. Only the run
+        // PAYLOAD field is `model`; `4f17c6f48` renamed both alike.
+        modelId: 'gpt_oss_20b',
         toolTurnCount: 1
       }),
       'ensemble:lfm-seat'
@@ -2705,13 +2707,14 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
   })
 
-  it('stops a model that re-hits the harness gate every turn for retrieval-first models (block is not progress)', async () => {
+  it('lets a model read straight away now that retrieval-first is retired', async () => {
     let chatCalls = 0
-    // The model insists on read_file before any explore, so the harness gate
-    // blocks it every turn (no tool ever executes). A harness block is a
-    // pre-execution redirect, not progress, so it must feed the retry ceiling —
-    // otherwise this loops forever. executeTool must never be reached.
-    const executeTool = vi.fn(async () => ({ ok: true, output: 'should never run' }))
+    // This model goes straight to read_file with no explore call first. That
+    // used to be refused every turn by the retrieval-first gate, so the run
+    // burned its retry ceiling and stopped without executing a single tool —
+    // the exact hand-holding that made capable local models unusable. The tool
+    // must now simply run.
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'file contents' }))
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
@@ -2747,13 +2750,15 @@ describe('runOllamaProvider streaming', () => {
 
     await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
-    expect(executeTool).not.toHaveBeenCalled()
-    expect(chatCalls).toBe(4)
+    expect(chatCalls).toBeGreaterThan(0)
+    expect(executeTool).toHaveBeenCalled()
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
-    expect(contentTexts).toHaveLength(1)
-    expect(contentTexts[0]).toContain('stopping instead of looping')
+    // No harness refusal reached the model, and nothing redirected it to
+    // workspace_search before it was allowed to read.
+    expect(contentTexts.join('\n')).not.toContain('Retrieval-first policy')
+    expect(contentTexts.join('\n')).not.toContain('Harness edit gate')
   }, 10000)
 
   it('stops a tool that keeps failing the SAME way instead of looping for hours', async () => {

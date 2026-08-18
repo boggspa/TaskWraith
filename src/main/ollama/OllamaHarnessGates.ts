@@ -105,7 +105,7 @@ export function ollamaEnsembleHarnessKickoffPrompt(
   return [
     'Ensemble workspace task: start from the Current user request at the top of the previous capsule.',
     'Stay in your local Ollama seat and role; do not invent peers from workspace fixture files.',
-    'If your posture is Ask/read-only, gather evidence and report; otherwise take one concrete workspace action.',
+    'If your posture is Ask/read-only, gather evidence and report; otherwise do the workspace work your slice needs.',
     tools.includes('todo_write')
       ? 'Use todo_write only if your assigned slice genuinely needs a visible checklist.'
       : 'Ground with workspace_search or list_directory before reading unfamiliar paths.',

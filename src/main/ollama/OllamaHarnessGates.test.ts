@@ -57,7 +57,7 @@ describe('OllamaHarnessGates', () => {
     expect(gate.blocked).toBe(false)
   })
 
-  it('blocks read_file until explore tools run for retrieval-first models', () => {
+  it('no longer blocks read_file before an explore call — retrieval-first is retired', () => {
     const state = createOllamaHarnessRunState()
     const gate = evaluateOllamaHarnessGate({
       modelId: 'gpt_oss_20b',
@@ -66,8 +66,8 @@ describe('OllamaHarnessGates', () => {
       toolName: 'read_file',
       args: { path: 'src/main/Foo.ts' }
     })
-    expect(gate.blocked).toBe(true)
-    expect(gate.message).toContain('workspace_search')
+    expect(gate.blocked).toBe(false)
+    expect(gate.message).toBeUndefined()
   })
 
   it('allows read_file after list_directory', () => {
@@ -111,8 +111,9 @@ describe('OllamaHarnessGates', () => {
         intent: 'test'
       }
     })
-    expect(gate.blocked).toBe(true)
-    expect(gate.message).toContain('read_file')
+    // Read-before-edit is now advice in the model profile prompt, not a refusal.
+    expect(gate.blocked).toBe(false)
+    expect(gate.message).toBeUndefined()
   })
 
   it('does not require todo_write before other tools when scaffold is enabled', () => {
