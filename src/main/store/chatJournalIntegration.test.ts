@@ -26,6 +26,7 @@ import { chatUpdateProducerEnvelopeFor } from '../../shared/chatUpdateTransport'
 import { AppStore } from './index'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import { ChatTranscriptMutationAuthor } from './ChatTranscriptMutationAuthoring'
+import { hydrateToolActivityDetails } from './ToolActivityDetailLedger'
 import type { ChatRecord, ChatRun } from './types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-journal-integration-test-${process.pid}`)
@@ -359,6 +360,124 @@ describe('T4a chat journal integration', () => {
       expect(fs.existsSync(journalDir())).toBe(false)
       expect(fs.existsSync(incrementalJournalDir())).toBe(false)
       expect(AppStore.getChats()).toHaveLength(0)
+    })
+  })
+
+  describe('T5 hot-case live tool-detail externalization', () => {
+    const JUMBO = 'j'.repeat(64 * 1024)
+    const detailArtifactPath = (): string =>
+      join(userDataPath, 'run-artifacts', 'run-live', 'tool-activity-details.jsonl')
+
+    // Fresh heavy objects each call, the way the orchestrator re-composes its
+    // in-memory timeline on every flush.
+    function liveToolMessages(): ChatRecord['messages'] {
+      return [
+        {
+          id: 'tool-msg',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-08-18T00:00:10.000Z',
+          runId: 'run-live',
+          toolActivities: [
+            {
+              id: 'act-jumbo',
+              toolName: 'run_shell_command',
+              displayName: 'Ran command',
+              category: 'shell',
+              status: 'success',
+              endedAt: '2026-08-18T00:00:12.000Z',
+              durationMs: 2000,
+              parameters: { command: 'cat big.log' },
+              resultSummary: 'read big.log',
+              rawResultEvent: { output: JUMBO }
+            }
+          ]
+        }
+      ]
+    }
+
+    function liveToolChat(chatId: string): ChatRecord {
+      const chat = saveChat(chatId, [runningRun('run-live')])
+      chat.messages = liveToolMessages()
+      return chat
+    }
+
+    it('archives a sealed jumbo payload mid-run and keeps every later flush small', async () => {
+      const chat = liveToolChat('chat-live-detail')
+      const saved = AppStore.saveChat(chat)
+      const activity = saved.messages[0].toolActivities![0]
+
+      // The hot record carries a ref plus bounded summaries; the raw payload
+      // lives in the run's detail artifact. The run itself is still running,
+      // so it must NOT be stamped as fully externalized.
+      expect(activity.rawResultEvent).toBeUndefined()
+      expect(activity.parameters).toBeUndefined()
+      expect(activity.resultSummary).toBe('read big.log')
+      expect(activity.detailRef).toMatchObject({ runId: 'run-live', activityId: 'act-jumbo' })
+      expect(saved.runs[0].toolDetailExternalizationGeneration).toBeUndefined()
+      expect(fs.readFileSync(detailArtifactPath(), 'utf8')).toContain(JUMBO)
+      // The durable mutation stream must not carry the jumbo payload — that
+      // is the whole point of the hot case.
+      expect(fs.readFileSync(incrementalMutationPath('chat-live-detail'), 'utf8')).not.toContain(
+        JUMBO
+      )
+      const artifactSizeAfterFirst = fs.statSync(detailArtifactPath()).size
+
+      // Orchestrator-style re-delivery: the in-memory timeline re-attaches the
+      // heavy activity on the next flush. The save must re-adopt the existing
+      // ref rather than appending the same bytes again.
+      const redelivered: ChatRecord = { ...saved, messages: liveToolMessages() }
+      const second = AppStore.saveChat(redelivered)
+      const secondActivity = second.messages[0].toolActivities![0]
+      expect(secondActivity.rawResultEvent).toBeUndefined()
+      expect(secondActivity.detailRef).toEqual(activity.detailRef)
+      expect(fs.statSync(detailArtifactPath()).size).toBe(artifactSizeAfterFirst)
+      expect(fs.readFileSync(incrementalMutationPath('chat-live-detail'), 'utf8')).not.toContain(
+        JUMBO
+      )
+
+      // Replay parity: the journal reproduces the stripped record exactly.
+      const replayed =
+        createIncrementalChatJournal(incrementalJournalDir()).replay('chat-live-detail')
+      const replayedActivity = replayed.record?.messages[0]?.toolActivities?.[0]
+      expect(replayedActivity?.rawResultEvent).toBeUndefined()
+      expect(replayedActivity?.detailRef).toEqual(activity.detailRef)
+
+      // The archived bytes stay reachable for expand/export.
+      const hydrated = await hydrateToolActivityDetails(join(userDataPath, 'run-artifacts'), [
+        activity.detailRef!
+      ])
+      expect(hydrated).toHaveLength(1)
+      expect(hydrated[0].activity.rawResultEvent).toEqual({ output: JUMBO })
+      expect(hydrated[0].activity.resultSummary).toBe('read big.log')
+    })
+
+    it('folds the remaining summaries at run-terminal without losing the archived raw', async () => {
+      const chat = liveToolChat('chat-live-terminal')
+      const saved = AppStore.saveChat(chat)
+      const liveRef = saved.messages[0].toolActivities![0].detailRef!
+
+      const terminal: ChatRecord = {
+        ...saved,
+        runs: [
+          {
+            ...saved.runs[0],
+            status: 'success',
+            endedAt: '2026-08-18T00:01:00.000Z'
+          }
+        ]
+      }
+      const settled = AppStore.saveChat(terminal)
+      const settledActivity = settled.messages[0].toolActivities![0]
+
+      expect(settled.runs[0].toolDetailExternalizationGeneration).toBe(1)
+      expect(settledActivity.resultSummary).toBeUndefined()
+      expect(settledActivity.detailRef).toEqual(liveRef)
+      const hydrated = await hydrateToolActivityDetails(join(userDataPath, 'run-artifacts'), [
+        settledActivity.detailRef!
+      ])
+      expect(hydrated[0].activity.rawResultEvent).toEqual({ output: JUMBO })
+      await settleTimers()
     })
   })
 })

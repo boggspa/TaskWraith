@@ -200,6 +200,33 @@ function parseDetail(bytes: Buffer, ref: ToolActivityDetailRef): ToolActivity | 
   }
 }
 
+/**
+ * Synchronous single-ref read for the save path. The terminal fold of a
+ * live-externalized activity must decide inside `saveChat` whether the archive
+ * already covers the inline fields it is about to strip; a durable answer
+ * cannot wait on the event loop. One bounded `readSync` at a verified offset —
+ * never a whole-file read.
+ */
+export function readToolActivityDetailSync(
+  runArtifactsDir: string,
+  ref: ToolActivityDetailRef
+): ToolActivity | null {
+  if (!validRef(ref)) return null
+  const { filePath } = detailArtifactPaths(runArtifactsDir, ref.runId)
+  let fd: number | null = null
+  try {
+    fd = fs.openSync(filePath, 'r')
+    const bytes = Buffer.allocUnsafe(ref.byteLength)
+    const bytesRead = fs.readSync(fd, bytes, 0, ref.byteLength, ref.offset)
+    if (bytesRead !== ref.byteLength) return null
+    return parseDetail(bytes, ref)
+  } catch {
+    return null
+  } finally {
+    if (fd !== null) fs.closeSync(fd)
+  }
+}
+
 /** Read only the authenticated ranges requested by visible/expanded rows. */
 export async function hydrateToolActivityDetails(
   runArtifactsDir: string,

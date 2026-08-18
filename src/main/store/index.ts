@@ -150,7 +150,8 @@ import {
   IntrospectionScheduleSettings,
   MemoryProposalPack,
   MemoryProposal,
-  SubThreadJoinPolicy
+  SubThreadJoinPolicy,
+  ToolActivity
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
@@ -294,11 +295,14 @@ import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
 import {
   TOOL_DETAIL_EXTERNALIZATION_GENERATION,
-  externalizeTerminalToolActivityDetails
+  authoredMutationMentionsActivityIds,
+  externalizeToolActivityDetails,
+  substituteToolActivitiesInAuthoredMutation
 } from './ChatToolDetailExternalization'
 import {
   ToolActivityDetailBatchWriter,
   hydrateToolActivityDetails,
+  readToolActivityDetailSync,
   type ToolActivityDetailCheckpoint
 } from './ToolActivityDetailLedger'
 import {
@@ -7011,16 +7015,24 @@ export class AppStore {
         : {})
     }
 
-    // Terminal tool detail leaves the hot chat record before historical
-    // compaction. One append-only artifact is fsync'd per run, then a strict
-    // run-event checkpoint binds the byte segment. If either durable step
-    // fails, retain the original full activity rows and retry on a later save.
+    // Tool detail leaves the hot chat record before historical compaction:
+    // whole runs at terminal, and sealed jumbo activities mid-run (T5 hot
+    // case — the raw payload otherwise rides every flush of a live ensemble).
+    // One append-only artifact is fsync'd per run, then a strict run-event
+    // checkpoint binds the byte segment. If either durable step fails, retain
+    // the original full activity rows and retry on a later save.
     let externalizedChat = chatWithMainOwnedFields
+    let externalizedActivitiesById: ReadonlyMap<string, ToolActivity> = new Map()
+    let externalizationOpRequiredIds: ReadonlySet<string> = new Set()
     try {
       const detailWriter = new ToolActivityDetailBatchWriter(runArtifactsDir)
-      const externalization = externalizeTerminalToolActivityDetails(
+      const externalization = externalizeToolActivityDetails(
         chatWithMainOwnedFields,
-        (runId, activity) => detailWriter.stage(runId, activity)
+        (runId, activity) => detailWriter.stage(runId, activity),
+        {
+          previousChat: previousChatForFeedback,
+          readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref)
+        }
       )
       const checkpoints = detailWriter.commit()
       for (const checkpoint of checkpoints) {
@@ -7029,23 +7041,32 @@ export class AppStore {
         })
       }
       externalizedChat = externalization.chat
+      externalizedActivitiesById = externalization.strippedActivitiesById
+      externalizationOpRequiredIds = externalization.opRequiredActivityIds
     } catch (error) {
-      console.error('Failed to externalize terminal tool activity detail', error)
+      console.error('Failed to externalize tool activity detail', error)
     }
 
     // Persisted-chat compaction (Step 4): historical runs shed remaining raw
     // tool events so chat files stay parse-fast and save-cheap.
     const compactedChat = compactChatForPersist(externalizedChat)
     // Exact producer operations are valid only while the save pipeline kept
-    // the producer's transcript intact. A stale renderer merge or a one-time
-    // historical compaction falls back to the proven diff derivation rather
-    // than attaching a misleading operation chain.
-    const authoredTranscript =
+    // the producer's transcript intact. Externalization is the one sanctioned
+    // rewrite: its strips are substituted into the authored ops so journal
+    // replay reproduces the stripped record, and any strip the ops cannot
+    // express (a stage without an authoring op, a terminal fold) rejects the
+    // authored chain instead. A stale renderer merge or a one-time historical
+    // compaction still falls back to the proven diff derivation.
+    const authoredCandidate =
       options.authoredTranscript &&
       reconciledMessages === rendererMessages &&
-      compactedChat.messages === chatWithMainOwnedFields.messages
+      compactedChat.messages === externalizedChat.messages &&
+      authoredMutationMentionsActivityIds(options.authoredTranscript, externalizationOpRequiredIds)
         ? options.authoredTranscript
         : undefined
+    const authoredTranscript = authoredCandidate
+      ? substituteToolActivitiesInAuthoredMutation(authoredCandidate, externalizedActivitiesById)
+      : undefined
     const normalizedChat = this.normalizeChatRecord(compactedChat)
     normalizedChat.updatedAt = Date.now()
     normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1

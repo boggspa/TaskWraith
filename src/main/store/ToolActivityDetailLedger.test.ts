@@ -4,7 +4,8 @@ import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   ToolActivityDetailBatchWriter,
-  hydrateToolActivityDetails
+  hydrateToolActivityDetails,
+  readToolActivityDetailSync
 } from './ToolActivityDetailLedger'
 import type { ToolActivity } from './types'
 
@@ -77,5 +78,27 @@ describe('ToolActivityDetailBatchWriter', () => {
 
     expect(secondRef.offset).toBe(firstRef.byteLength)
     await expect(hydrateToolActivityDetails(root, [firstRef, secondRef])).resolves.toHaveLength(2)
+  })
+})
+
+describe('readToolActivityDetailSync', () => {
+  it('reads back the exact archived activity for a committed ref', () => {
+    const root = tempDir()
+    const writer = new ToolActivityDetailBatchWriter(root)
+    const archived = activity('tool-1', 'sync output')
+    const detailRef = writer.stage('run-1', archived)!
+    writer.commit()
+
+    expect(readToolActivityDetailSync(root, detailRef)).toEqual(archived)
+  })
+
+  it('returns null for a forged hash or a missing artifact', () => {
+    const root = tempDir()
+    const writer = new ToolActivityDetailBatchWriter(root)
+    const detailRef = writer.stage('run-1', activity('tool-1', 'secret'))!
+    writer.commit()
+
+    expect(readToolActivityDetailSync(root, { ...detailRef, sha256: '0'.repeat(64) })).toBeNull()
+    expect(readToolActivityDetailSync(tempDir(), detailRef)).toBeNull()
   })
 })
