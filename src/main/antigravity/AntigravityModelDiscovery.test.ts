@@ -126,9 +126,13 @@ describe('discoverAuthenticatedAgyModels', () => {
       recordProvenance
     })
 
+    // `8c91d096b` relaxed the resold-model policy: `isResoldFirstPartyAgyModelId`
+    // now rejects only malformed ids, so every id agy reports is offerable and
+    // the returned list matches what gets cached.
     expect(models).toEqual([
       { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
-      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' }
+      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
+      { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }
     ])
     expect(writeCachedModels).toHaveBeenCalledWith(
       [

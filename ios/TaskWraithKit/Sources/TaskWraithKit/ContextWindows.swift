@@ -155,6 +155,7 @@ public enum ContextWindows {
         "gemma4:12b-it-q4_k_m": 262_144,
         "gemma4:12b-it-q8_0": 262_144,
         "gemma4:12b-it-bf16": 262_144,
+        "gemma4:31b-mlx": 262_144,
         "ornith": 262_144,
         "ornith:latest": 262_144,
         "ornith:9b": 262_144,

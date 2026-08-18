@@ -416,6 +416,7 @@ describe('buildRemoteFirstLaunchState', () => {
       'grok',
       'cursor',
       'muse',
+      'mistral',
       'ollama'
     ])
     expect(
@@ -431,6 +432,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'Gemma 4 (31B-MLX)',
       'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
       'Nemotron 3.5 Lightning (30B-MLX)',
@@ -439,6 +441,7 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'google',
       'qwen',
       'meta',
       'nvidia',
@@ -447,9 +450,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'essential'
     ])
     expect(newAdditions?.groups?.find((group) => group.provider === 'meta')).toBeUndefined()
-    expect(
-      newAdditions?.groups?.find((group) => group.provider === 'mistral')
-    ).toBeUndefined()
+    // Mistral is deliberately BACK: `068867185` retired the Pi and Mistral
+    // additions (which is where this guard came from), then `aff6db7f9`
+    // re-added the Mistral entries and `717f43933` refreshed them. Only the
+    // guard was left behind. Pi is still retired.
     expect(newAdditions?.groups?.find((group) => group.provider === 'pi')).toBeUndefined()
   })
 
