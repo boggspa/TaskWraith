@@ -14,28 +14,40 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('multi-file')
   })
 
-  it('flips tiny-model guidance from hand-off (read-only) to direct edits (edit tiers)', () => {
+  it('states the real permission on read-only and never hedges on edit tiers', () => {
     const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
-    expect(qwenReadOnly).toContain('edit-capable tier')
+    // Read-only text describes the tier's actual permission, which is honest.
+    expect(qwenReadOnly).toContain('no edit tools')
     const qwenEdits = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'provider_parity').join(
       ' '
     )
-    expect(qwenEdits).toContain('make small, localized, verified edits directly')
-    expect(qwenEdits).not.toContain('hand to a larger model')
+    expect(qwenEdits).toContain('make the edits the task needs')
+    // An edit-capable tier must never be told to defer, shrink, or hand off the
+    // user's task — that overrode user intent and made local models unusable.
+    for (const nerf of [
+      'hand to a larger model',
+      'hand off',
+      'suggest delegation',
+      'Avoid wide refactors',
+      'instead of guessing'
+    ]) {
+      expect(qwenEdits).not.toContain(nerf)
+    }
 
     const graniteReadOnly = ollamaModelFamilyPromptLines(
       'granite4.1:3b',
       'workspace',
       'read_only'
     ).join(' ')
-    expect(graniteReadOnly).toContain('hand off a short plan')
+    expect(graniteReadOnly).toContain('no edit tools')
     const graniteEdits = ollamaModelFamilyPromptLines(
       'granite4.1:3b',
       'workspace',
       'approved_edits'
     ).join(' ')
-    expect(graniteEdits).toContain('make small, localized edits directly')
+    expect(graniteEdits).toContain('the changes the task needs')
     expect(graniteEdits).not.toContain('hand off a short plan')
+    expect(graniteEdits).not.toContain('suggest delegation')
   })
 
   it('adds GPT-OSS tool-call emphasis', () => {
@@ -74,14 +86,15 @@ describe('ollamaModelFamilyPromptLines', () => {
       'read_only'
     ).join(' ')
     expect(ministralReadOnly).toContain('Ministral 3 14B')
-    expect(ministralReadOnly).toContain('short plan')
+    expect(ministralReadOnly).toContain('no edit tools')
     const ministralEdits = ollamaModelFamilyPromptLines(
       'ministral-3:14b',
       'workspace',
       'approved_edits'
     ).join(' ')
-    expect(ministralEdits).toContain('small localized edits directly')
+    expect(ministralEdits).toContain('the edits the task needs')
     expect(ministralEdits).not.toContain('short plan')
+    expect(ministralEdits).not.toContain('slice anything multi-file')
   })
 
   it('adds Muse Glimmer agentic tool and verification guidance', () => {

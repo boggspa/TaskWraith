@@ -42,7 +42,7 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Qwen 3.6 35B): use its larger local context for deeper review, but still search before reading unfamiliar files.',
         'Prefer native tool calls and keep each tool payload focused on the next concrete step.',
-        'For release-critical edits, summarize verification gaps and ask for a second-provider review when useful.'
+        'For release-critical edits, make verification gaps explicit before landing changes.'
       ]
     case 'qwen3_8_27b':
       return [
@@ -54,42 +54,41 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
         normalizedTier === 'read_only'
-          ? 'Avoid wide refactors; prefer a short plan the user can run with an edit-capable tier or a wider local profile.'
-          : 'You have edit tools in this tier — make small, localized, verified edits directly rather than only planning. For broad multi-file refactors, summarize progress and suggest delegation instead of guessing.'
+          ? 'This tier has no edit tools: report findings, and name the concrete steps an edit-capable run would take.'
+          : 'You have edit tools in this tier — make the edits the task needs and state what you verified.'
       ]
     case 'qwen3_5_2b':
       return [
         'Model profile (Qwen 3.5 2B): ultra-light local model; keep context compact, search first, and take one concrete step at a time.',
         normalizedTier === 'read_only'
-          ? 'Prefer chat, quick lookups, and targeted reads; hand off a short plan when the task becomes multi-file.'
-          : 'Make only small localized edits and verify each one; summarize instead of entering a long autonomous loop.'
+          ? 'This tier has no edit tools: use chat, quick lookups, and targeted reads, then report what you found.'
+          : 'Make the edits the task needs and verify each one as you go.'
       ]
     case 'qwen3_5_4b':
       return [
         'Model profile (Qwen 3.5 4B): stay lightweight — search first, read one file at a time, answer concisely.',
         normalizedTier === 'read_only'
-          ? 'Avoid wide refactors; hand off a short plan when the task grows past a couple of files.'
-          : 'You have edit tools in this tier — make small, localized, verified edits. Summarize progress instead of guessing on broad multi-file refactors.'
+          ? 'This tier has no edit tools: report findings, and name the concrete steps an edit-capable run would take.'
+          : 'You have edit tools in this tier — make the edits the task needs and state what you verified.'
       ]
     case 'devstral_small_2_24b':
       return [
         'Model profile (Devstral Small 2 24B): agentic coding model; search for the target, read it, then make a focused edit with explicit verification notes.',
-        'Keep tool payloads compact and take one concrete step per turn rather than chaining speculative calls.',
-        'For broad refactors, claim a clear slice and state what is left instead of attempting the whole pass at once.'
+        'Keep tool payloads compact and ground each call in what you actually need next.'
       ]
     case 'ministral_3_3b':
       return [
         'Model profile (Ministral 3 3B): edge-sized multimodal model; search with a concrete query, read one target at a time, then act.',
         normalizedTier === 'read_only'
-          ? 'Use it for chat, visual checks, and concise findings rather than broad changes.'
-          : 'Make one small localized edit at a time and state what you verified.'
+          ? 'This tier has no edit tools: use chat, visual checks, and concise findings.'
+          : 'Make the edits the task needs and state what you verified.'
       ]
     case 'ministral_3_14b':
       return [
         'Model profile (Ministral 3 14B): compact tool-capable model; search with a concrete query, read targeted files, then act.',
         normalizedTier === 'read_only'
-          ? 'Report findings and a short plan rather than attempting broad changes.'
-          : 'Make small localized edits directly and note what you verified; slice anything multi-file.'
+          ? 'This tier has no edit tools: report findings and the concrete next steps you would take.'
+          : 'Make the edits the task needs directly and note what you verified.'
       ]
     case 'muse_glimmer_30b':
       return [
@@ -99,12 +98,12 @@ export function ollamaModelFamilyPromptLines(
     case 'llama3_1_8b':
       return [
         'Model profile (Llama 3.1 8B): general tool-capable local model; search before reading and keep tool payloads focused.',
-        'Use the long context for grounded review, but split broad implementation into small verified edits.'
+        'Use the long context for grounded review, and verify each edit as you make it.'
       ]
     case 'deepseek_r1_1_5b':
       return [
         'Model profile (DeepSeek R1 1.5B): tiny distilled reasoning model; keep prompts and tool results compact and take one concrete step at a time.',
-        'Use it for private chat, narrow analysis, and short tool calls; stop with a concise handoff before multi-file execution.'
+        'Keep each tool call short and concrete, and say plainly what you verified.'
       ]
     case 'deepseek_r1_8b':
       return [
@@ -114,7 +113,7 @@ export function ollamaModelFamilyPromptLines(
     case 'rnj_1_8b':
       return [
         'Model profile (Rnj-1 8B): agentic-coding model; search for the target, read the relevant file, then make a focused verified edit.',
-        'Its context window is 32K, so keep tool results compact and slice multi-file work explicitly.'
+        'Its context window is 32K, so keep tool results compact.'
       ]
     case 'glm_4_7_flash':
       return [
@@ -130,13 +129,13 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Llama 3.2 3B): lightweight tool-capable local model; search first, read one relevant file at a time, and answer concisely.',
         normalizedTier === 'read_only'
-          ? 'Avoid broad edits; hand off a short plan when the task grows beyond targeted local investigation.'
-          : 'Make small localized edits directly and summarize progress instead of guessing across broad refactors.'
+          ? 'This tier has no edit tools: report findings and the concrete next steps you would take.'
+          : 'Make the edits the task needs directly and state what you verified.'
       ]
     case 'minicpm_v45_8b':
       return [
         'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read with a concrete intent and use native tools when available.',
-        'For code edits, prefer a concise plan or a single localized patch rather than broad autonomous changes.'
+        'For code edits, ground each change in a file you have read and state what you verified.'
       ]
     case 'gemma3_4b':
       return [
@@ -151,48 +150,48 @@ export function ollamaModelFamilyPromptLines(
     case 'ornith_9b':
       return [
         'Model profile (Ornith 1.0 9B): agentic coding model; search first, then make focused edits with explicit verification notes.',
-        'Keep tool payloads compact. When the task becomes broad, claim a clear local slice or ask the user which part should land first instead of defaulting to another provider.'
+        'Keep tool payloads compact and work the task the user asked for here, instead of defaulting to another provider.'
       ]
     case 'ornith_35b':
       return [
         'Model profile (Ornith 1.0 35B): agentic coding model; use its larger coding context for deeper review and focused implementation.',
         'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
-        'Stay local for scoped coding work; prefer a smaller concrete next step over a delegation handoff.'
+        'Stay local: work the task the user asked for rather than deferring it to another provider.'
       ]
     case 'laguna_xs_2_1':
       return [
         'Model profile (Laguna XS 2.1): long-context Poolside local model with native tools and thinking support.',
-        'Search/read before editing, keep tool payloads focused, and use its context for grounded review rather than broad speculative changes.',
+        'Search/read before editing, keep tool payloads focused, and use its context for grounded review.',
         'For release-critical edits, state verification gaps and run targeted checks when the selected tier allows it.'
       ]
     case 'lfm2_5_thinking_1_2b':
       return [
         'Model profile (LFM 2.5 Thinking 1.2B): ultra-light reasoning model; keep context and tool outputs compact.',
-        'Use one short tool step at a time and stop with a concise handoff when the task becomes broad.'
+        'Use one short tool step at a time and say plainly what you verified.'
       ]
     case 'lfm2_5_8b':
       return [
         'Model profile (LFM 2.5 8B-A1B): long-context local model with tool-chaining training; search/read before editing and keep each tool step concrete.',
-        'Use the long context for grounded local review, but keep broad implementation work sliced with explicit verification notes.'
+        'Use the long context for grounded local review, with explicit verification notes.'
       ]
     case 'granite4_3b':
       return [
         'Model profile (Granite 4.0 3B): lightweight tool model; list/search first and read only the files relevant to the task.',
         normalizedTier === 'read_only'
-          ? 'Use it for chat, retrieval, and concise findings rather than broad edits.'
-          : 'Make small structured changes directly; avoid long edit-and-test loops.'
+          ? 'This tier has no edit tools: use chat, retrieval, and concise findings.'
+          : 'Make the changes the task needs directly and verify them.'
       ]
     case 'granite4_1_3b':
       return [
         'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and read the files relevant to the task.',
         normalizedTier === 'read_only'
-          ? 'Avoid broad edits or long shell/test loops; hand off a short plan when the task grows.'
-          : 'You have edit tools in this tier — make small, localized edits directly. For broad changes or long shell/test loops, summarize and suggest delegation rather than looping alone.'
+          ? 'This tier has no edit tools: report findings and the concrete next steps you would take.'
+          : 'You have edit tools in this tier — make the changes the task needs directly and verify them.'
       ]
     case 'granite4_1_30b':
       return [
         'Model profile (Granite 4.1 30B): strong for local review, RAG-style search, and structured tool use.',
-        'Read targeted files before editing and summarize any assumptions before broad changes.'
+        'Read targeted files before editing and make any assumptions explicit.'
       ]
     case 'nemotron3_nano_4b':
       return [
@@ -201,7 +200,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'nemotron3_33b':
       return [
-        'Model profile (Nemotron 3 33B): use its multimodal reasoning profile for deeper local analysis, but keep workspace tools scoped.',
+        'Model profile (Nemotron 3 33B): use its multimodal reasoning profile for deeper local analysis.',
         'Prefer native tool calls and make verification gaps explicit before release-sensitive changes.'
       ]
     case 'nemotron3_5_lightning_30b':
@@ -216,9 +215,9 @@ export function ollamaModelFamilyPromptLines(
         'Prefer native tool/function calls over describing tools in prose.',
         'Call exactly one TaskWraith tool per turn.',
         normalizedTier === 'read_only'
-          ? 'Read-only profile: act as a scout. Search/list first, read narrow ranges, then report findings and handoff-worthy next steps.'
+          ? 'Read-only profile: this tier has no edit tools. Search/list first, read narrow ranges, then report findings and the concrete next steps you would take.'
           : normalizedTier === 'approved_edits'
-            ? 'Approved patch profile: make bounded, localized edits only after search/list and read_file. Stop and summarize when the task becomes broad.'
+            ? 'Approved patch profile: ground each edit in a file you read first, then make the changes the task needs.'
             : normalizedTier === 'approved_shell'
               ? 'Approved shell profile: after a scoped edit, run a targeted verification command when useful and approved.'
               : 'Provider parity profile: use the broader TaskWraith surface only when it is directly relevant; prefer the smallest governed tool that solves the request.',
@@ -229,7 +228,7 @@ export function ollamaModelFamilyPromptLines(
     default:
       return [
         'Model profile (local): search first, read the relevant files, and keep tool payloads purposeful.',
-        'Stop with a concise plan when the requested scope exceeds the selected tier, context window, or available tools.'
+        'Say plainly when a step is not possible with the tools or context this run actually has.'
       ]
   }
 }
@@ -471,15 +470,15 @@ export function ollamaTierAwareWorkflowHint(
   if (normalizedTier === 'approved_edits') {
     return [
       'TaskWraith approved-patcher workflow:',
-      'Search or list before reading unfamiliar files, read the exact target, then make a localized edit.',
-      'Keep the patch bounded; when the task becomes multi-file or ambiguous, summarize the partial result and ask for explicit scope or a reviewer.'
+      'Search or list before reading unfamiliar files, read the exact target, then make the edit.',
+      'Carry the task through to the change the user asked for, and state what you verified. Ask only when the request itself is genuinely ambiguous.'
     ].join(' ')
   }
   if (normalizedTier === 'approved_shell') {
     return [
       'TaskWraith verify-with-shell workflow:',
-      'Search/list, read, patch only scoped files, then run a targeted approved verification command when it adds confidence.',
-      'Do not attempt unbounded full-suite repair loops; summarize failures and confirm the next scope when the loop expands.'
+      'Search/list, read, patch, then run a targeted approved verification command when it adds confidence.',
+      'Report failures honestly with the command output rather than claiming a pass you did not see.'
     ].join(' ')
   }
   if (normalizedTier === 'provider_parity') {
@@ -487,13 +486,13 @@ export function ollamaTierAwareWorkflowHint(
       return [
         'TaskWraith provider-parity workflow:',
         'Use the full tool surface sparingly and stay anchored to the user request.',
-        'Ornith should attempt scoped coding work locally first. Do not recommend or use delegation as the default recovery path; if the task is too broad, claim a clear local slice or explain the exact blocker.'
+        'Ornith should attempt scoped coding work locally first. Do not recommend or use delegation as the default recovery path; if something genuinely blocks you, explain the exact blocker.'
       ].join(' ')
     }
     return [
       'TaskWraith provider-parity workflow:',
       'Use the full tool surface sparingly and stay anchored to the user request.',
-      'Delegation is available only through TaskWraith tools in this tier; use it for broad refactors or long autonomous loops, not as a default.'
+      'Delegation is available through TaskWraith tools in this tier, but it is never the default: do the work here unless the user asked otherwise.'
     ].join(' ')
   }
   const capableScoutFamily =
@@ -528,8 +527,7 @@ export function ollamaTierAwareWorkflowHint(
       capableScoutFamily
         ? 'Use this Ollama thread to search, read the relevant files, and report your findings directly.'
         : 'Use this local thread to explore the workspace and report what you find.',
-      'This is a read-only review turn, not a planning turn: answer in place with findings, evidence, and risks, plus handoff-worthy next steps only when they are genuinely useful. Do not draft an implementation plan and do not stop to ask whether to proceed.',
-      'Do not attempt repo-wide refactors or full test-suite repair loops without confirming scope, tier, context, and verification path.'
+      'This is a read-only review turn, not a planning turn: answer in place with findings, evidence, and risks, plus concrete next steps when they are genuinely useful. Do not draft an implementation plan and do not stop to ask whether to proceed.'
     ].join(' ')
   }
   const scout = capableScoutFamily
@@ -538,7 +536,11 @@ export function ollamaTierAwareWorkflowHint(
   return [
     'TaskWraith local-scout workflow:',
     scout,
+    // This variant is only used for a genuine Plan-workflow run, where holding
+    // back from implementation is the user's own choice, not a nerf. What the
+    // un-nerf removes is the assumption that the follow-through belongs to a
+    // cloud provider.
     'When your investigation is complete, present your findings and wait for further instructions.',
-    'Do not attempt repo-wide refactors or full test-suite repair loops without confirming scope, tier, context, and verification path.'
+    'The work itself should continue locally in this thread; only if it genuinely needs tools this run does not have, name the higher tier/profile that would have them and say why.'
   ].join(' ')
 }
