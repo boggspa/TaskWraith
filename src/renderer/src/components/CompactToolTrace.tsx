@@ -36,6 +36,15 @@ interface CompactToolTraceProps {
    * trace softens to a friendly summary ("Searched the web…") for web tools.
    * Softens, never hides: the foldout still carries the full raw output. */
   globalScope?: boolean
+  /**
+   * Controlled expansion. Compact traces are the compact-density form of tool
+   * rows, so the parent threads the SAME panel-owned single-open row set the
+   * full-density ActivityRow uses (bare activity id) — expansion survives
+   * virtualisation unmounts, and ⌘/Shift keeps rows additive. Omit both for
+   * local state.
+   */
+  isExpanded?: boolean
+  onToggleExpand?: (modKey: boolean) => void
 }
 
 /**
@@ -103,9 +112,12 @@ export function CompactToolTrace({
   activity,
   provider,
   workspacePath,
-  globalScope = false
+  globalScope = false,
+  isExpanded,
+  onToggleExpand
 }: CompactToolTraceProps) {
-  const [expanded, setExpanded] = useState(false)
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const expanded = isExpanded ?? localExpanded
   const resolvedProvider = resolveProvider(activity, provider)
   const family = toolNameToFamily(activity.toolName)
   const preview = buildResultPreview(activity)
@@ -141,7 +153,13 @@ export function CompactToolTrace({
     expanded && hasFoldout && foldoutPresence.mounted
   )
 
-  const toggleExpanded = () => setExpanded((current) => !current)
+  const toggleExpanded = (modKey = false) => {
+    if (onToggleExpand) {
+      onToggleExpand(modKey)
+      return
+    }
+    setLocalExpanded((current) => !current)
+  }
 
   return (
     <div
@@ -154,11 +172,11 @@ export function CompactToolTrace({
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
-        onClick={toggleExpanded}
+        onClick={(event) => toggleExpanded(event.metaKey || event.shiftKey)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            toggleExpanded()
+            toggleExpanded(event.metaKey || event.shiftKey)
           }
         }}
       >

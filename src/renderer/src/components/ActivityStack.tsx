@@ -3377,6 +3377,8 @@ export function ActivityStack({
           provider={provider}
           workspacePath={workspacePath}
           globalScope={isGlobalChat(chat)}
+          isExpanded={expandedIds.has(item.activity.id)}
+          onToggleExpand={getOnToggleExpand(item.activity.id)}
         />
       )
     }

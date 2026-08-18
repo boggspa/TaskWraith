@@ -954,6 +954,23 @@ describe('ActivityStack compactDensity routing', () => {
     expect(html).toContain('/repo/src/foo.ts')
   })
 
+  it('opens a compact tool trace from panel-owned row expansion state', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeWriteActivity({ id: 'tool-write-1' })]}
+        provider="codex"
+        compactDensity
+        expandedActivityIds={new Set(['tool-write-1'])}
+        onExpandedActivityIdsChange={() => {}}
+      />
+    )
+
+    // Compact traces are the compact-density form of tool rows, so they ride
+    // the same panel-owned single-open set (bare activity id) and survive
+    // virtualisation unmounts exactly like full-density rows.
+    expect(html).toContain('compact-tool-trace is-expanded')
+  })
+
   it('opens a compact group from panel-owned expansion state so it survives virtualisation', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
