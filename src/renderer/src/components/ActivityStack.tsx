@@ -402,6 +402,58 @@ export type ActivityTimelineItem =
 
 export type ActivityTimelineSegmentKind = 'thinking' | 'tools' | 'agent'
 
+/**
+ * Namespace prefix for NON-ROW entries in the lifted `expandedActivityIds`
+ * set (compact groups, spawn-block collapse overrides). Rows store bare
+ * activity ids; namespaced entries ride the same panel-owned set so they
+ * survive transcript virtualisation, but the single-open row coordinator
+ * must never sweep them — `nextExpandedActivityIds` partitions on this
+ * prefix.
+ */
+export const ACTIVITY_DISCLOSURE_ID_PREFIX = 'tw-disclosure:'
+
+/** Expansion id for a compact group, keyed by its FIRST CONSTITUENT activity
+ * id — the group's own merged id churns as members join mid-stream (same
+ * churn `toolStackStateKey` dodges), the first constituent survives. */
+export function compactGroupExpansionId(firstActivityId: string): string {
+  return `${ACTIVITY_DISCLOSURE_ID_PREFIX}group:${firstActivityId}`
+}
+
+/** Collapse OVERRIDE for the default-expanded spawn block (presence in the
+ * set means the user folded it), keyed by the first child thread id. */
+export function spawnBlockCollapsedExpansionId(firstThreadId: string): string {
+  return `${ACTIVITY_DISCLOSURE_ID_PREFIX}spawn-collapsed:${firstThreadId}`
+}
+
+export function isRowActivityExpansionId(id: string): boolean {
+  return !id.startsWith(ACTIVITY_DISCLOSURE_ID_PREFIX)
+}
+
+/**
+ * Row-toggle transition for the lifted expansion set. Regular click keeps
+ * single-open semantics for ROWS ONLY: other row entries clear, namespaced
+ * disclosure entries (groups, spawn overrides) are untouched. ⌘/Shift with
+ * multi-open allowed toggles the row additively.
+ */
+export function nextExpandedActivityIds(
+  prev: ReadonlySet<string>,
+  id: string,
+  options: { modKey: boolean; allowMultiOpen: boolean }
+): Set<string> {
+  const next = new Set(prev)
+  if (options.modKey && options.allowMultiOpen) {
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  }
+  const wasOpen = next.has(id)
+  for (const existing of next) {
+    if (isRowActivityExpansionId(existing)) next.delete(existing)
+  }
+  if (!wasOpen) next.add(id)
+  return next
+}
+
 export interface ActivityTimelineSegment {
   id: string
   kind: ActivityTimelineSegmentKind
@@ -2207,7 +2259,9 @@ function ActivityCompactGroup({
   participants,
   shimmerNow,
   showDiffStats,
-  onOpenFileChangeInWorkbench
+  onOpenFileChangeInWorkbench,
+  isExpanded,
+  onToggleExpand
 }: {
   activities: ToolActivity[]
   workspacePath?: string
@@ -2222,8 +2276,21 @@ function ActivityCompactGroup({
    * and sub-agent viewports stay bare. */
   showDiffStats?: boolean
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
+  /** Controlled expansion (panel-owned via `compactGroupExpansionId`, so it
+   * survives virtualisation unmounts). Omit both for local state. */
+  isExpanded?: boolean
+  onToggleExpand?: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const expanded = isExpanded ?? localExpanded
+  const setExpanded = (next: boolean | ((current: boolean) => boolean)): void => {
+    const resolved = typeof next === 'function' ? next(expanded) : next
+    if (onToggleExpand && resolved !== expanded) {
+      onToggleExpand()
+      return
+    }
+    setLocalExpanded(resolved)
+  }
   const groupRevealRef = useRevealOnExpand<HTMLDivElement>(expanded)
   const searchCount = activities.filter(isSearchActivity).length
   const readCount = activities.filter((a) => a.category === 'read' && !isSearchActivity(a)).length
@@ -2711,8 +2778,27 @@ function ActivityImageBlocks({ blocks }: { blocks: ReturnType<typeof extractMcpI
  * Spawn block — collapsed summary that precedes the individual provider-native
  * agent cards when 2+ agents are spawned in the same message.
  */
-function ChildAgentSpawnBlock({ threads }: { threads: ChildAgentThread[] }) {
-  const [expanded, setExpanded] = useState(true)
+function ChildAgentSpawnBlock({
+  threads,
+  isExpanded,
+  onToggleExpand
+}: {
+  threads: ChildAgentThread[]
+  /** Controlled expansion (panel-owned collapse OVERRIDE via
+   * `spawnBlockCollapsedExpansionId` — the block defaults to open, so the
+   * lifted state records the exception). Omit both for local state. */
+  isExpanded?: boolean
+  onToggleExpand?: (expanded: boolean) => void
+}) {
+  const [localExpanded, setLocalExpanded] = useState(true)
+  const expanded = isExpanded ?? localExpanded
+  const setExpanded = (next: boolean): void => {
+    if (onToggleExpand) {
+      onToggleExpand(next)
+      return
+    }
+    setLocalExpanded(next)
+  }
   if (!threads || threads.length < 2) return null
 
   const scrollToAgent = (agentId: string) => {
@@ -3200,23 +3286,21 @@ export function ActivityStack({
   }
 
   toggleExpandImplRef.current = (id: string, modKey: boolean): void => {
+    setExpandedIds((prev) => nextExpandedActivityIds(prev, id, { modKey, allowMultiOpen }))
+  }
+  // Namespaced (non-row) disclosures toggle independently — never part of the
+  // single-open row accordion.
+  const toggleDisclosureExpansionId = (id: string): void => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
-      if (modKey && allowMultiOpen) {
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-      } else {
-        // Single-open: clicking a row collapses everything else and
-        // toggles this one. Clicking the only-open row closes it.
-        const wasOpen = next.has(id)
-        next.clear()
-        if (!wasOpen) next.add(id)
-      }
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
   const renderTimelineItem = (item: ActivityTimelineItem): ReactNode => {
     if (item.type === 'compact-group') {
+      const groupExpansionId = compactGroupExpansionId(item.activities[0]?.id ?? item.id)
       return (
         <ActivityCompactGroup
           key={item.id}
@@ -3227,6 +3311,8 @@ export function ActivityStack({
           shimmerNow={shimmerNow}
           showDiffStats={showDiffStats}
           onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+          isExpanded={expandedIds.has(groupExpansionId)}
+          onToggleExpand={() => toggleDisclosureExpansionId(groupExpansionId)}
         />
       )
     }
@@ -3349,7 +3435,17 @@ export function ActivityStack({
     return (
       <div className="activity-timeline" style={activityAccentStyle}>
         {header}
-        {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
+        {childThreads.length >= 2 && (
+          <ChildAgentSpawnBlock
+            threads={childThreads}
+            isExpanded={
+              !expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
+            }
+            onToggleExpand={() =>
+              toggleDisclosureExpansionId(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
+            }
+          />
+        )}
         {timelineSegments.map((segment, index) => {
           const isThinkingSegment = segment.kind === 'thinking'
           // Sub-agent spawn waves stand apart from the thinking/tool
@@ -3468,7 +3564,17 @@ export function ActivityStack({
   return (
     <div className="activity-timeline" style={activityAccentStyle}>
       {header}
-      {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}
+      {childThreads.length >= 2 && (
+          <ChildAgentSpawnBlock
+            threads={childThreads}
+            isExpanded={
+              !expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
+            }
+            onToggleExpand={() =>
+              toggleDisclosureExpansionId(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
+            }
+          />
+        )}
       {timelineNodes}
     </div>
   )

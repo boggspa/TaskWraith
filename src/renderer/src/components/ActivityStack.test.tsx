@@ -7,8 +7,10 @@ import {
   buildActivityWorkbenchDiffSummary,
   buildTimelineItems,
   buildTimelineSegments,
+  compactGroupExpansionId,
   LIVE_THINKING_TRACE_RENDER_CHAR_CAP,
   liveThinkingTraceRenderBody,
+  nextExpandedActivityIds,
   shouldDebounceActivityTimelineCollapse,
   sliceTimelineSegmentsToTail
 } from './ActivityStack'
@@ -950,6 +952,49 @@ describe('ActivityStack compactDensity routing', () => {
     expect(html).toContain('>Edited</span>')
     expect(html).toContain('transcript-file-target compact-tool-trace-path')
     expect(html).toContain('/repo/src/foo.ts')
+  })
+
+  it('opens a compact group from panel-owned expansion state so it survives virtualisation', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeReadActivity({ id: 'tool-read-1', parameters: { file_path: '/repo/src/foo.ts' } }),
+          makeReadActivity({ id: 'tool-read-2', parameters: { file_path: '/repo/src/bar.ts' } })
+        ]}
+        provider="codex"
+        expandedActivityIds={new Set([compactGroupExpansionId('tool-read-1')])}
+        onExpandedActivityIdsChange={() => {}}
+      />
+    )
+
+    // The group folds two reads; the panel-held expansion id (keyed by the
+    // FIRST CONSTITUENT, which survives group growth) renders it open.
+    expect(html).toContain('activity-compact-group expanded')
+  })
+
+  it('single-open row toggles never clear namespaced disclosure expansions', () => {
+    const groupId = compactGroupExpansionId('tool-read-1')
+    const next = nextExpandedActivityIds(new Set(['row-a', groupId]), 'row-b', {
+      modKey: false,
+      allowMultiOpen: true
+    })
+    // Regular click: other ROWS collapse (single-open), the group stays open.
+    expect(next.has('row-b')).toBe(true)
+    expect(next.has('row-a')).toBe(false)
+    expect(next.has(groupId)).toBe(true)
+
+    // Mod-click keeps multi-open additive behaviour for rows.
+    const multi = nextExpandedActivityIds(next, 'row-a', { modKey: true, allowMultiOpen: true })
+    expect(multi.has('row-a')).toBe(true)
+    expect(multi.has('row-b')).toBe(true)
+
+    // Clicking the only-open row closes it and still leaves the group alone.
+    const closed = nextExpandedActivityIds(new Set(['row-b', groupId]), 'row-b', {
+      modKey: false,
+      allowMultiOpen: true
+    })
+    expect(closed.has('row-b')).toBe(false)
+    expect(closed.has(groupId)).toBe(true)
   })
 
   it('still renders ChildAgentSpawnBlock and falls back to ActivityRow when an activity has a child thread, even in compact mode', () => {
