@@ -49,7 +49,9 @@ describe('host command route/history integration', () => {
 
     const mcp = between(mainSource, 'async function executeGeminiMcpTool(', 'async function startGeminiMcpBroker(')
     expect(mcp).toContain("source: 'brokered-mcp'")
-    expect(mcp).toContain('runHostCommand(command, cwd)')
+    // Call head only: the brokered shell also forwards a session release-lease
+    // approval, so this call is no longer two-arity.
+    expect(mcp).toContain('runHostCommand(command, cwd')
     expect(mcp).toContain('workspaceToolExecutors.executeWorkspaceMcpTool')
     expect(mcp).toContain('completeHostCommandTerminalProjection(hostCommandProjection)')
   })

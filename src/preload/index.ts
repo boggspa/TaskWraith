@@ -1862,6 +1862,14 @@ const api = {
     ipcRenderer.invoke('bridge-finalize-pairing', sessionID, userConfirmed),
   bridgeBeginPairing: (displayName?: string, options?: { force?: boolean }) =>
     ipcRenderer.invoke('bridge-begin-pairing', displayName, options),
+  releaseLeaseGrant: (input?: {
+    minutes?: number
+    commandClasses?: 'all' | string[]
+    workspacePath?: string
+    note?: string
+  }) => ipcRenderer.invoke('release-lease-grant', input),
+  releaseLeaseStatus: () => ipcRenderer.invoke('release-lease-status'),
+  releaseLeaseRevoke: (leaseId?: string) => ipcRenderer.invoke('release-lease-revoke', leaseId),
   bridgeListPairedDevices: () => ipcRenderer.invoke('bridge-list-paired-devices'),
   bridgeUnpairDevice: (iphoneIdentityPubKey: string) =>
     ipcRenderer.invoke('bridge-unpair-device', iphoneIdentityPubKey),

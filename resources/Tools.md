@@ -199,11 +199,11 @@ Create a git commit in the active workspace with the supplied message.
 
 ## git_push
 
-Push the current git branch for the active workspace.
+Push the current git branch, or an explicit ref/tag, for the active workspace.
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: none
-- Optional args: remote, setUpstream
+- Optional args: remote, setUpstream, refspec, tag, force, forceMode
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"git_push","arguments":{"remote":"text"}}}}`
 
 ## git_create_pr

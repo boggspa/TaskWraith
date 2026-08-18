@@ -583,6 +583,12 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'import-codex-usage-credential',
   'clear-codex-usage-credential',
 
+  // Session release lease. Granting one lets agents run release-class commands
+  // unattended, so it stays on the main renderer only — never a secondary one.
+  'release-lease-grant',
+  'release-lease-status',
+  'release-lease-revoke',
+
   // Mobile bridge, remote allowlist, pairing, and notification credentials.
   'bridge-allowlist-upsert',
   'bridge-allowlist-remove',

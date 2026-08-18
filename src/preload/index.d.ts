@@ -676,6 +676,20 @@ interface StudioEffectPreviewActionResult {
   state: StudioEffectPreviewState
 }
 
+/**
+ * Mirror of the main-process `ReleaseAuthorizationLease`. Declared here rather
+ * than imported so preload keeps no dependency on the main bundle.
+ */
+interface ReleaseLeaseSnapshot {
+  id: string
+  commandClasses: 'all' | string[]
+  workspacePath?: string
+  grantedAt: string
+  expiresAt: string
+  note?: string
+  origin: 'desktop-ui' | 'ios-bridge' | 'host'
+}
+
 declare global {
   interface Window {
     api: {
@@ -1939,6 +1953,14 @@ declare global {
         bootstrap?: unknown // PairingBootstrapPayload shape; consumer passes through to QR/JSON
         error?: string
       }>
+      releaseLeaseGrant: (input?: {
+        minutes?: number
+        commandClasses?: 'all' | string[]
+        workspacePath?: string
+        note?: string
+      }) => Promise<ReleaseLeaseSnapshot>
+      releaseLeaseStatus: () => Promise<ReleaseLeaseSnapshot[]>
+      releaseLeaseRevoke: (leaseId?: string) => Promise<{ revoked: number }>
       bridgeListPairedDevices: () => Promise<
         Array<{
           iphoneIdentityPubKey: string

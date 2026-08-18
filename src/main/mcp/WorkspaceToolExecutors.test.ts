@@ -258,6 +258,89 @@ describe('executeRunTask', () => {
   })
 })
 
+describe('executeGitPush ref targeting', () => {
+  const workspace = resolve('/tmp/taskwraith-git-push')
+
+  function pushDeps() {
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      commands.push(command as string[])
+      const argv = command as string[]
+      if (argv[1] === 'branch') return commandResult('master\n')
+      if (argv[1] === 'rev-parse') return commandResult('origin/master\n')
+      if (argv[1] === 'status') return commandResult('')
+      return commandResult('')
+    })
+    return { deps, commands }
+  }
+
+  it('pushes the current branch when no ref is given, as it always has', async () => {
+    const { deps, commands } = pushDeps()
+    const result = await executeGitPush(deps, {}, workspace)
+    expect(result.command).toEqual(['git', 'push'])
+    expect(commands[0]).toEqual(['git', 'branch', '--show-current'])
+  })
+
+  it('pushes an explicit tag without needing a checked-out branch', async () => {
+    const { deps, commands } = pushDeps()
+    const result = await executeGitPush(deps, { tag: 'v1.9.6' }, workspace)
+    expect(result.command).toEqual(['git', 'push', 'origin', 'refs/tags/v1.9.6'])
+    // The branch/upstream probes belong to the branch path only, so the push is
+    // the very first command — nothing resolves a checked-out branch ahead of
+    // it. (Commands after the push are the post-push status refresh.)
+    expect(commands[0]).toEqual(['git', 'push', 'origin', 'refs/tags/v1.9.6'])
+  })
+
+  it('force-moves a tag with --force, since a tag has no remote-tracking ref to lease', async () => {
+    const { deps } = pushDeps()
+    const result = await executeGitPush(deps, { tag: 'v1.9.6', force: true }, workspace)
+    expect(result.command).toEqual([
+      'git',
+      'push',
+      '--force',
+      'origin',
+      'refs/tags/v1.9.6'
+    ])
+    expect(result.forceMode).toBe('force')
+  })
+
+  it('prefers --force-with-lease when force targets a branch', async () => {
+    const { deps } = pushDeps()
+    const result = await executeGitPush(deps, { refspec: 'master', force: true }, workspace)
+    expect(result.command).toEqual([
+      'git',
+      'push',
+      '--force-with-lease',
+      'origin',
+      'master'
+    ])
+    expect(result.forceMode).toBe('lease')
+  })
+
+  it('lets an explicit forceMode override the tag/branch default', async () => {
+    const { deps } = pushDeps()
+    const result = await executeGitPush(
+      deps,
+      { tag: 'v1.9.6', force: true, forceMode: 'lease' },
+      workspace
+    )
+    expect(result.command).toContain('--force-with-lease')
+  })
+
+  it('honours an explicit remote and rejects an injected ref', async () => {
+    const { deps } = pushDeps()
+    const result = await executeGitPush(
+      deps,
+      { tag: 'v1.9.6', remote: 'upstream' },
+      workspace
+    )
+    expect(result.command).toEqual(['git', 'push', 'upstream', 'refs/tags/v1.9.6'])
+    await expect(executeGitPush(deps, { refspec: '--exec=rm -rf /' }, workspace)).rejects.toThrow(
+      /unsupported characters/i
+    )
+  })
+})
+
 describe('resolveMcpScopedPath', () => {
   it('allows workspace-root directory/search targets only when requested', () => {
     const workspace = resolve('/tmp/taskwraith-workspace-tools')

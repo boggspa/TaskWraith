@@ -1414,8 +1414,10 @@ import { createSemaphore } from './media/Semaphore'
 import {
   releaseCommandBlockReason,
   releasePackageScriptBlockReason,
+  type ReleaseCommandApprovalSource,
   type ReleaseCommandCheckOptions
 } from './ReleaseCommandPolicy'
+import { ReleaseAuthorizationLeaseRegistry } from './ReleaseAuthorizationLease'
 import { runningAppBundleMutationBlockReason } from './RunningAppBundleMutationGuard'
 import {
   createImageGenExecutor,
@@ -4100,6 +4102,42 @@ function hostCommandHistoryCancellationScope(
     }
   }
   return { kind: 'chat', chatIds: preparation.chatIds }
+}
+
+/**
+ * Session release leases. `ReleaseCommandPolicy` declares five approval
+ * sources; before this only `externalPublishReceipt` (git_push/git_create_pr)
+ * and `approvedHostCommand` (the Codex approval re-run) were ever supplied, so
+ * the brokered MCP shell, run_task and background processes could not satisfy
+ * the gate by any means — an agent working an explicit user directive with
+ * nobody at the keyboard just stalled. A lease is the user's directive in
+ * machine-readable form. Default-closed: no lease, no release command.
+ */
+const releaseAuthorizationLeases = new ReleaseAuthorizationLeaseRegistry({
+  log: (line) => console.log(line)
+})
+
+function releaseApprovalFromLease(input: {
+  command?: unknown
+  commandClass?: string
+  source: ReleaseCommandApprovalSource
+  workspacePath?: string
+}): ReleaseCommandCheckOptions | undefined {
+  const match = input.commandClass
+    ? releaseAuthorizationLeases.approvalForClass(input.commandClass, {
+        source: input.source,
+        workspacePath: input.workspacePath
+      })
+    : releaseAuthorizationLeases.approvalFor({
+        command: input.command,
+        source: input.source,
+        workspacePath: input.workspacePath
+      })
+  if (!match) return undefined
+  console.log(
+    `[release-lease] ${input.source} authorized ${match.commandClass} under lease ${match.lease.id}`
+  )
+  return match.approval
 }
 
 const backgroundProcessRegistry = new BackgroundProcessRegistry({
@@ -8478,9 +8516,15 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
     runHostCommand,
     startBackgroundProcess: (command, cwd, options) => {
       const workspaceId = AppStore.getChat(options.appChatId)?.workspaceId
+      const releaseApproval = releaseApprovalFromLease({
+        command,
+        source: 'approvedBackgroundProcess',
+        workspacePath: cwd
+      })
       return backgroundProcessRegistry.start(command, cwd, {
         ...options,
-        ...(workspaceId ? { workspaceId } : {})
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(releaseApproval ? { releaseApproval } : {})
       })
     },
     listBackgroundProcesses: (filter) => backgroundProcessRegistry.list(filter),
@@ -8504,6 +8548,7 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
     getSubThreadResumeSessionId
   },
   externalPublishReceipts: externalPublishReceiptsForOrigin('agent'),
+  releaseApprovalFor: releaseApprovalFromLease,
   media: {
     readTranscriptMediaAsset: (input) => {
       const store = getTranscriptMediaAssetStore()
@@ -38126,8 +38171,19 @@ async function executeGeminiMcpTool(
         workspacePath: workspaceExecutionContext.workspacePath
       })
       await workspaceExecutionContext.assertMutationAuthorized?.()
+      // The brokered MCP shell is the route most agents actually use, and it
+      // was the one route with no way to present an approval at all. A live
+      // lease supplies `approvedMcpShell` here; without one this stays
+      // undefined and the release gate blocks exactly as before.
+      const shellReleaseApproval = releaseApprovalFromLease({
+        command,
+        source: 'approvedMcpShell',
+        workspacePath: cwd
+      })
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
-        runHostCommand(command, cwd)
+        runHostCommand(command, cwd, {
+          ...(shellReleaseApproval ? { releaseApproval: shellReleaseApproval } : {})
+        })
       )
       text = formatHostCommandResult(result)
       const isError = Boolean(
@@ -52698,6 +52754,28 @@ if (isGeminiMcpBridgeProcess) {
         return pairingWarning ? { ...result, warning: pairingWarning } : result
       }
     )
+
+    // Session release lease. The user grants this when they intend an agent to
+    // publish unattended; it satisfies ReleaseCommandPolicy on every route for
+    // its lifetime, and is capped + revocable.
+    ipcMain.handle(
+      'release-lease-grant',
+      async (
+        _,
+        input: {
+          minutes?: number
+          commandClasses?: 'all' | string[]
+          workspacePath?: string
+          note?: string
+        } = {}
+      ) => releaseAuthorizationLeases.grant({ ...input, origin: 'desktop-ui' })
+    )
+
+    ipcMain.handle('release-lease-status', async () => releaseAuthorizationLeases.active())
+
+    ipcMain.handle('release-lease-revoke', async (_, leaseId?: string) => ({
+      revoked: releaseAuthorizationLeases.revoke(leaseId)
+    }))
 
     ipcMain.handle('bridge-list-paired-devices', async () => {
       if (!iosRemoteRuntime) return []

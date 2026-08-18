@@ -38,6 +38,7 @@ import { readScopedRegularFile } from '../ScopedPathAccess'
 import type { McpToolExecutionResult } from './McpBridgeRuntime'
 import {
   releaseScriptBlockReason,
+  type ReleaseCommandApprovalSource,
   type ReleaseCommandCheckOptions
 } from '../ReleaseCommandPolicy'
 import type {
@@ -147,6 +148,17 @@ export interface WorkspaceToolExecutorDependencies {
   store: WorkspaceToolStoreDependencies
   runs: WorkspaceToolRunDependencies
   externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
+  /**
+   * Resolve a session release lease into an approval for a release-class
+   * command on this route. Absent (or returning undefined) leaves the release
+   * gate closed exactly as before.
+   */
+  releaseApprovalFor?: (input: {
+    command?: unknown
+    commandClass?: string
+    source: ReleaseCommandApprovalSource
+    workspacePath?: string
+  }) => ReleaseCommandCheckOptions | undefined
   gitService?: Pick<GitService, 'ciStatus'>
   media?: {
     readTranscriptMediaAsset: (input: {
@@ -1331,48 +1343,97 @@ export async function executeGitCommit(
   }
 }
 
+/**
+ * Resolve the force flag. `--force-with-lease` is the safe default for a
+ * branch, but it leases against the remote-tracking ref, and a tag normally has
+ * none — so a tag force-move needs plain `--force` or it fails to lock the ref.
+ * An explicit `forceMode` always wins; the resolved mode is reported back in the
+ * result and the publish receipt so the escalation is never silent.
+ */
+function resolveGitPushForceMode(args: Record<string, any>, targetsTag: boolean): 'lease' | 'force' | null {
+  const explicit = optionalString(args.forceMode)
+  if (explicit === 'lease' || explicit === 'force') return explicit
+  if (explicit) throw new Error("git_push forceMode must be 'lease' or 'force'.")
+  if (args.force !== true) return null
+  return targetsTag ? 'force' : 'lease'
+}
+
 export async function executeGitPush(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
   cwd: string,
   context?: WorkspaceToolContext
 ) {
-  const branchResult = await runCommandArgs(deps, ['git', 'branch', '--show-current'], cwd, 30_000)
-  const branch = branchResult.stdout.trim()
-  if (branchResult.exitCode !== 0 || !branch) {
-    return {
-      ok: false,
-      command: ['git', 'branch', '--show-current'],
-      exitCode: branchResult.exitCode,
-      timedOut: branchResult.timedOut,
-      stderr: truncateText(branchResult.stderr, 20_000),
-      error: branchResult.error || 'Cannot push from a detached HEAD. Create or switch to a branch first.'
+  // An explicit refspec is what makes tag pushes and force-moves reachable at
+  // all. Without one this reads the current branch and pushes that, which is
+  // the historical behaviour — and the reason a release could not move a tag
+  // through the receipt-minting path and fell back to a blocked raw shell.
+  const requestedTag = optionalString(args.tag)
+  const requestedRefspec = requestedTag
+    ? `refs/tags/${requestedTag}`
+    : optionalString(args.refspec || args.ref)
+  const targetsTag = Boolean(requestedTag) || /^\+?refs\/tags\//.test(requestedRefspec || '')
+  const forceMode = resolveGitPushForceMode(args, targetsTag)
+  const remote = optionalString(args.remote) ? sanitizeGitRemote(args.remote) : undefined
+
+  const forceArgs = forceMode === 'force' ? ['--force'] : forceMode === 'lease' ? ['--force-with-lease'] : []
+
+  let safeBranch = ''
+  let safeRefspec = ''
+  let hasUpstream = false
+  let upstreamText = ''
+  let setUpstream = false
+  let command: string[]
+
+  if (requestedRefspec) {
+    // A refspec push does not need a checked-out branch, so the detached-HEAD
+    // refusal below deliberately does not apply to this path.
+    safeRefspec = sanitizeGitRef(requestedRefspec)
+    command = ['git', 'push', ...forceArgs, remote || 'origin', safeRefspec]
+  } else {
+    const branchResult = await runCommandArgs(deps, ['git', 'branch', '--show-current'], cwd, 30_000)
+    const branch = branchResult.stdout.trim()
+    if (branchResult.exitCode !== 0 || !branch) {
+      return {
+        ok: false,
+        command: ['git', 'branch', '--show-current'],
+        exitCode: branchResult.exitCode,
+        timedOut: branchResult.timedOut,
+        stderr: truncateText(branchResult.stderr, 20_000),
+        error:
+          branchResult.error ||
+          'Cannot push from a detached HEAD. Create or switch to a branch first, or pass an explicit refspec/tag.'
+      }
     }
+
+    const upstreamResult = await runCommandArgs(
+      deps,
+      ['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+      cwd,
+      30_000
+    )
+    hasUpstream = upstreamResult.exitCode === 0 && upstreamResult.stdout.trim().length > 0
+    upstreamText = hasUpstream ? upstreamResult.stdout.trim() : ''
+    setUpstream =
+      args.setUpstream === true || args.upstream === true || !hasUpstream || Boolean(remote)
+    safeBranch = sanitizeGitRef(branch)
+    command = setUpstream
+      ? ['git', 'push', ...forceArgs, '-u', remote || 'origin', safeBranch]
+      : ['git', 'push', ...forceArgs]
   }
 
-  const upstreamResult = await runCommandArgs(
-    deps,
-    ['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
-    cwd,
-    30_000
-  )
-  const hasUpstream = upstreamResult.exitCode === 0 && upstreamResult.stdout.trim().length > 0
-  const remote = optionalString(args.remote) ? sanitizeGitRemote(args.remote) : undefined
-  const setUpstream =
-    args.setUpstream === true || args.upstream === true || !hasUpstream || Boolean(remote)
-  const safeBranch = sanitizeGitRef(branch)
-  const command = setUpstream
-    ? ['git', 'push', '-u', remote || 'origin', safeBranch]
-    : ['git', 'push']
   const receiptResult = await beginAgentExternalPublishReceipt(deps, {
     action: 'gitPush',
     workspacePath: cwd,
     repoPath: cwd,
-    remote: remote || (setUpstream ? 'origin' : undefined),
+    remote: remote || (setUpstream || safeRefspec ? 'origin' : undefined),
     setUpstream,
     metadata: {
       branch: safeBranch,
-      upstream: hasUpstream ? upstreamResult.stdout.trim() : ''
+      refspec: safeRefspec,
+      targetsTag,
+      forceMode: forceMode || 'none',
+      upstream: upstreamText
     }
   })
   if (!receiptResult.ok) {
@@ -1380,7 +1441,9 @@ export async function executeGitPush(
       ok: false,
       command,
       branch: safeBranch,
-      upstream: hasUpstream ? upstreamResult.stdout.trim() : undefined,
+      upstream: upstreamText || undefined,
+      refspec: safeRefspec || undefined,
+      forceMode: forceMode || undefined,
       setUpstream,
       exitCode: null,
       timedOut: false,
@@ -1406,7 +1469,9 @@ export async function executeGitPush(
     ok: result.exitCode === 0 && result.timedOut !== true && !result.error,
     command,
     branch: safeBranch,
-    upstream: hasUpstream ? upstreamResult.stdout.trim() : undefined,
+    upstream: upstreamText || undefined,
+    refspec: safeRefspec || undefined,
+    forceMode: forceMode || undefined,
     setUpstream,
     exitCode: result.exitCode,
     timedOut: result.timedOut,
@@ -1531,10 +1596,26 @@ export async function executeRunTask(
   const packageJson = await readJsonFile(join(cwd, 'package.json'))
   const scripts = isRecord(packageJson?.scripts) ? packageJson.scripts : null
   let command: string[]
+  let effectiveApproval = releaseApproval
   if (scripts && task in scripts) {
     command = ['npm', 'run', task]
     const script = String(scripts[task] || '')
-    const blockedReleaseScript = releaseScriptBlockReason(task, script, releaseApproval)
+    // A release-class package script blocks on its NAME as well as its body, so
+    // ask the lease about both: the caller-named script class first, then the
+    // script body itself. An explicit approval from the caller still wins.
+    effectiveApproval =
+      effectiveApproval ||
+      deps.releaseApprovalFor?.({
+        commandClass: `package script ${task}`,
+        source: 'approvedMcpTask',
+        workspacePath: cwd
+      }) ||
+      deps.releaseApprovalFor?.({
+        command: script,
+        source: 'approvedMcpTask',
+        workspacePath: cwd
+      })
+    const blockedReleaseScript = releaseScriptBlockReason(task, script, effectiveApproval)
     if (blockedReleaseScript) {
       return {
         task,
@@ -1571,7 +1652,7 @@ export async function executeRunTask(
   command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
   await context?.assertMutationAuthorized?.()
-  const result = await runCommandArgs(deps, command, cwd, timeoutMs, releaseApproval)
+  const result = await runCommandArgs(deps, command, cwd, timeoutMs, effectiveApproval)
   return {
     task,
     command,

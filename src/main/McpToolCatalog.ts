@@ -736,7 +736,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     },
     {
       name: 'git_push',
-      description: 'Push the current git branch for the active workspace.',
+      description: 'Push the current git branch, or an explicit ref/tag, for the active workspace.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -750,7 +750,21 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             description: 'Optional remote name. Defaults to upstream or origin.'
           },
-          setUpstream: { type: 'boolean', description: 'Push with -u even when upstream exists.' }
+          setUpstream: { type: 'boolean', description: 'Push with -u even when upstream exists.' },
+          refspec: {
+            type: 'string',
+            description: 'Explicit refspec to push instead of the current branch.'
+          },
+          tag: { type: 'string', description: 'Tag name to push; shorthand for refs/tags/<tag>.' },
+          force: {
+            type: 'boolean',
+            description: 'Force the push. Uses --force-with-lease for a branch, --force for a tag.'
+          },
+          forceMode: {
+            type: 'string',
+            enum: ['lease', 'force'],
+            description: 'Override the force flag chosen by `force`.'
+          }
         }
       }
     },

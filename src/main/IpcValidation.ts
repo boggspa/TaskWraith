@@ -765,6 +765,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'discord-context:read-channel': ['object'],
   'bridge-finalize-pairing': ['nonEmptyString', 'boolean'],
   'bridge-begin-pairing': ['optionalString'],
+  // Session release lease. Grant takes an options record; revoke takes an
+  // optional lease id (omitted revokes every live lease).
+  'release-lease-grant': ['optionalObject'],
+  'release-lease-status': [],
+  'release-lease-revoke': ['optionalString'],
   'bridge-list-paired-devices': [],
   'bridge-unpair-device': ['nonEmptyString'],
   // Native-window attachments are chat-scoped. The renderer receives only a

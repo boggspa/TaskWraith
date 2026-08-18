@@ -72,9 +72,13 @@ describe('main capability gateway dispatch contract', () => {
   it('resolves every brokered shell cwd through the workspace scope before execution', () => {
     const scopeResolution = canonicalDispatchSource.indexOf('cwd = resolveScopedDirectory(')
     const shellExecution = canonicalDispatchSource.indexOf("if (toolName === 'run_shell_command')")
-    const hostCommand = canonicalDispatchSource.indexOf('runHostCommand(command, cwd)')
+    // Anchored on the call head, not the full argument list: the brokered shell
+    // also forwards a session release-lease approval, so the call is no longer
+    // two-arity. The contract being guarded is the ordering, not the arity.
+    const hostCommand = canonicalDispatchSource.indexOf('runHostCommand(command, cwd')
 
     expect(scopeResolution).toBeGreaterThan(-1)
+    expect(hostCommand).toBeGreaterThan(-1)
     expect(canonicalDispatchSource.slice(scopeResolution, shellExecution)).toContain(
       'String(args.cwd || args.working_directory || args.workdir || \'\')'
     )
