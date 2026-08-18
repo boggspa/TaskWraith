@@ -107,6 +107,54 @@ function acpToolContentToText(value: unknown): string {
 }
 
 /**
+ * Recover file-edit arguments from an ACP `{type:'diff'}` content block.
+ *
+ * ACP describes a file edit twice: in the tool's `rawInput`, and as a diff
+ * content block carrying `path` + the before/after text. An agent may send ONLY
+ * the block — Mistral Vibe omits `rawInput` on some tool calls (the same reason
+ * AcpTurnClient retains a merged copy of each tool call), and the block is then
+ * the sole evidence of what was edited. `acpToolContentToText` deliberately
+ * flattens it to a short "(diff path)" label for the human-readable output, so
+ * without this the edit reaches the transcript with no target file and no
+ * `+N -M` stats.
+ *
+ * The fields are emitted under the canonical SNAKE_CASE names because that is
+ * what every downstream diff parser reads first (renderer `estimateLineChanges`
+ * / `getPathFromRecord`, main-side `bridgeToolDiffStats`), so an ACP edit lands
+ * on the same, best-supported path as a native Claude or broker-MCP edit rather
+ * than relying on an alias.
+ *
+ * Shape rules, both deliberate:
+ *  - A block with before AND after text is a replacement → `old_string` /
+ *    `new_string`.
+ *  - A block with only after text states no prior content, so it is a
+ *    create/overwrite → `content`, which counts additions-only. Claiming
+ *    `old_string: ''` instead would invent deletions the agent never reported.
+ * Only the first diff block is read: one ACP tool call describes one edit, and
+ * `locations` — not repeated diff blocks — is how ACP reports multiple targets.
+ */
+function acpDiffBlockToolInput(content: unknown): Record<string, unknown> {
+  if (!Array.isArray(content)) return {}
+  for (const entry of content) {
+    const block = asObject(entry)
+    if (!block || block.type !== 'diff') continue
+    const path = firstStr(block.path, block.file_path, block.filePath)
+    const oldText = firstStr(block.oldText, block.old_text)
+    const newText = firstStr(block.newText, block.new_text)
+    const recovered: Record<string, unknown> = {}
+    if (path) recovered.file_path = path
+    if (oldText && newText) {
+      recovered.old_string = oldText
+      recovered.new_string = newText
+    } else if (newText) {
+      recovered.content = newText
+    }
+    if (Object.keys(recovered).length > 0) return recovered
+  }
+  return {}
+}
+
+/**
  * Map an ACP `session/update` tool event (`tool_call` / `tool_call_update`) to
  * normalized run events. A `tool_call` opens the activity card (`tool_use`); a
  * terminal status (completed/failed) closes it (`tool_result`). Stateless: a
@@ -124,6 +172,11 @@ function acpToolUpdateToRunEvents(
   const terminal = status === 'completed' || status === 'failed'
   const events: NormalizedGrokRunEvent[] = []
   if (sub === 'tool_call') {
+    // Diff-block evidence FILLS GAPS ONLY: whatever the agent stated in
+    // rawInput/input wins every key it set, so a recovered value can never
+    // contradict the arguments the tool was actually invoked with.
+    const statedInput = asObject(update.rawInput) || asObject(update.input) || {}
+    const recoveredInput = acpDiffBlockToolInput(update.content)
     events.push({
       type: 'tool_use',
       toolId: toolId || undefined,
@@ -131,7 +184,7 @@ function acpToolUpdateToRunEvents(
       // Canonical ACP kind drives the renderer's category icon — the human
       // `title` (the label) is rarely a recognised tool name on its own.
       toolKind: firstStr(update.kind) || undefined,
-      toolInput: asObject(update.rawInput) || asObject(update.input) || {},
+      toolInput: { ...recoveredInput, ...statedInput },
       raw
     })
   }

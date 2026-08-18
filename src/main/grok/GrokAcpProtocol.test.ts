@@ -273,6 +273,100 @@ describe('G4c — ACP tool_call / tool_call_update → tool-card run events', ()
       )
     ).toEqual([])
   })
+
+  /**
+   * ACP carries file edits in a `{type:'diff', path, oldText, newText}` content
+   * block as well as in `rawInput` — and an agent may send ONLY the block.
+   * Mistral Vibe does exactly that when it omits rawInput (see the retained
+   * tool-call merge in AcpTurnClient). The block used to be flattened to the
+   * literal string "(diff path)" and thrown away, so those edits reached the
+   * transcript with no `+N -N` pill and no file target at all.
+   */
+  describe('file-edit diff content blocks', () => {
+    it('recovers path and edit text when the agent sends no rawInput', () => {
+      const [use] = acpMessageToRunEvents(
+        toolUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_d1',
+          title: 'Edit main.py',
+          kind: 'edit',
+          status: 'pending',
+          content: [{ type: 'diff', path: '/ws/src/main.py', oldText: 'a\nb', newText: 'a\nb\nc' }]
+        })
+      )
+
+      expect(use).toMatchObject({
+        type: 'tool_use',
+        toolId: 'call_d1',
+        toolKind: 'edit',
+        // Canonical snake_case: the names every downstream diff parser reads.
+        toolInput: {
+          file_path: '/ws/src/main.py',
+          old_string: 'a\nb',
+          new_string: 'a\nb\nc'
+        }
+      })
+    })
+
+    it('maps a create-shaped block (no prior text) to whole-file content', () => {
+      const [use] = acpMessageToRunEvents(
+        toolUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_d2',
+          title: 'Write notes.md',
+          kind: 'edit',
+          status: 'pending',
+          content: [{ type: 'diff', path: 'notes.md', oldText: null, newText: 'one\ntwo' }]
+        })
+      )
+
+      // Additions-only is the honest reading: the block states no prior text.
+      expect(use.toolInput).toEqual({ file_path: 'notes.md', content: 'one\ntwo' })
+    })
+
+    it('never overwrites arguments the agent did send', () => {
+      const [use] = acpMessageToRunEvents(
+        toolUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_d3',
+          kind: 'edit',
+          status: 'pending',
+          rawInput: { file_path: 'real.py', old_string: 'keep', new_string: 'kept' },
+          content: [{ type: 'diff', path: 'other.py', oldText: 'x', newText: 'y' }]
+        })
+      )
+
+      expect(use.toolInput).toEqual({
+        file_path: 'real.py',
+        old_string: 'keep',
+        new_string: 'kept'
+      })
+    })
+
+    it('accepts snake_case block fields and leaves non-diff calls untouched', () => {
+      const [snake] = acpMessageToRunEvents(
+        toolUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_d4',
+          kind: 'edit',
+          status: 'pending',
+          content: [{ type: 'diff', path: 'a.ts', old_text: 'p', new_text: 'p\nq' }]
+        })
+      )
+      expect(snake.toolInput).toEqual({ file_path: 'a.ts', old_string: 'p', new_string: 'p\nq' })
+
+      const [plain] = acpMessageToRunEvents(
+        toolUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call_d5',
+          kind: 'execute',
+          status: 'pending',
+          content: [{ type: 'content', content: { type: 'text', text: 'hello' } }]
+        })
+      )
+      expect(plain.toolInput).toEqual({})
+    })
+  })
 })
 
 describe('G5 — session/request_permission (client-mediated approvals)', () => {
