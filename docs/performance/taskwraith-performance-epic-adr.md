@@ -691,13 +691,45 @@ pathspec / private-index commits; same standing position on invariant 6 as the
 - **T3a's fan-out seed multiplier is gone** (`98da30050`). An N-lane wave
   seeds through `flushChatOverlay` and persists once (pinned: lane-run growth
   per save went [1,1,1] → [3]).
-- **Item 6 is wired** (`4480ab827` + `0b94acdd6`). The composition root
-  registers the queue when `TASKWRAITH_UTILITY_WRITE=1` (still dark by
-  default); the queue gains `drainSync()` and will-quit drains before
+- **Item 6 is wired — and measured INERT** (`4480ab827` + `0b94acdd6`). The
+  composition root registers the queue when `TASKWRAITH_UTILITY_WRITE=1` (still
+  dark by default); the queue gains `drainSync()` and will-quit drains before
   disposing, closing a dispose-drops-queued-barrier-writes quit hazard. T1
   production instrumentation lands with it: a `monitorEventLoopDelay` meter
   plus `get-main-perf-snapshot` IPC bundling the store's persistence counters —
   where G-lag becomes readable outside a harness.
+
+  **T4 superseded item 6, and §5.2's amendment above overstates it.** With the
+  flag on, `utilityWriteEnqueueFor` hands back the writer for a barrier only
+  when `outstandingUtilityWriteChatIds` already holds that chat, and the only
+  code that could populate that set is the `normal`-save branch — which T4
+  removed from the legacy write path entirely (`legacyWriteReason !== 'normal'`
+  now gates the whole block). So the set can never be non-empty, every barrier
+  takes the synchronous branch, and the worker receives nothing. The shipped
+  suite already encodes half of this without drawing the conclusion:
+  `persistenceDurability.test.ts` asserts `workerCallLog` is EMPTY with the flag
+  on, and its own header comment still describes the opposite intent
+  ("GREEN: the worker receives enqueue calls for chat saves").
+
+  **Verified live 2026-08-18** on an isolated instance (`TASKWRAITH_INSTANCE_ID=
+  verify-utilwrite`, flag on): registration logs, then 10 terminal-barrier saves
+  and 12 streaming saves produced `persistenceWriteQueue: {written: 0,
+  writtenByWorker: 0, writtenSynchronously: 0, degraded: false}` and **no
+  `taskwraith-persistence-write` utility process was ever spawned** (the channel
+  is lazy — no job, no fork). Enabling the flag today is therefore a no-op, not
+  a risk and not a win. The same run validated the D1 classifier end-to-end
+  (the save carrying the run transition fsynced immediately, the 11 pure
+  content-append saves deferred, 0 failures) and confirmed all 12 deferred
+  appends survived a real quit in the V2 checkpoint at revision 23.
+
+  Note the ~57% figure in §5.2's amendment was never wrong about the WRITE tail;
+  it is wrong about the reachable benefit, because `serializeForDurableWrite`
+  runs on main by design (the queue serializes on enqueue). Item 6 could only
+  ever move the fsync/rename tail, and post-T4 it moves nothing. The open
+  decision is retire vs activate-for-barriers (which would need a deletion-time
+  drain hook: a queued compatibility write landing after the history-deletion
+  transaction removed the file is a resurrection, and §5.4's ordering contract
+  plus TW-SEC-014 both bear on that path).
 - **Diagnostic numbers** (dirty-tree, non-authoritative per §7.1; 4 chats × 12
   interleaved streaming saves, each chat carrying 3×256 KB sealed live
   activities + a streaming assistant message, orchestrator-style heavy
