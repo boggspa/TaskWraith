@@ -102,28 +102,34 @@ describe('McpToolGateway virtual definitions', () => {
   it('synthesizes Codex transcript rows only for resolved canonical targets', () => {
     expect(shouldEmitCanonicalTargetTranscript('codex', false)).toBe(false)
     expect(shouldEmitCanonicalTargetTranscript('codex', true)).toBe(true)
-    expect(shouldEmitCanonicalTargetTranscript('claude', false)).toBe(true)
+    expect(shouldEmitCanonicalTargetTranscript('grok', false)).toBe(true)
   })
 
-  it('stops synthesizing a second Pi row for a call Pi already reported', () => {
-    // TaskWraith's managed tools are registered as real Pi tools by the
-    // app-owned extension, so Pi streams `toolcall_end` for every one of them.
-    // Synthesizing `pi-mcp-<tool>-<ts>-<rand>` on top rendered two complete
-    // cards per call — "Ran 2 commands" for one command, the rows differing
-    // only in the duration each layer measured.
-    expect(shouldEmitCanonicalTargetTranscript('pi', false)).toBe(false)
-    // A gateway call still needs the canonical target row: Pi's own row names
-    // the outer wrapper, so suppressing here would lose the audit identity.
-    expect(shouldEmitCanonicalTargetTranscript('pi', true)).toBe(true)
-  })
+  it.each([['pi'], ['claude'], ['kimi'], ['ollama']])(
+    'stops synthesizing a second %s row for a call the provider already reported',
+    (provider) => {
+      // Each of these streams its own row for every brokered TaskWraith call
+      // (Pi via `toolcall_end`; Claude as a `mcp__TaskWraith__<tool>` tool_use
+      // block in its assistant envelope; Kimi via wire-protocol ToolCall since
+      // the gateway migration; Ollama via its native function-call echo).
+      // Synthesizing `<provider>-mcp-<tool>-<ts>-<rand>` on top rendered two
+      // complete cards per call — the user-visible "every Edit shows twice"
+      // pre-emptive-edit duplicate.
+      expect(shouldEmitCanonicalTargetTranscript(provider, false)).toBe(false)
+      // A gateway call still needs the canonical target row: the provider's own
+      // row names the outer wrapper, so suppressing here would lose the audit
+      // identity.
+      expect(shouldEmitCanonicalTargetTranscript(provider, true)).toBe(true)
+    }
+  )
 
-  it.each([['kimi'], ['claude'], ['gemini'], ['cursor'], ['grok'], ['ollama'], ['antigravity']])(
+  it.each([['gemini'], ['cursor'], ['grok'], ['mistral'], ['antigravity']])(
     'keeps synthesizing for %s, whose brokered calls it does not otherwise report',
     (provider) => {
-      // Suppressing one of these DELETES the row rather than deduplicating it.
-      // Kimi is the trap: it looks like Pi, but only 3-13% of its brokered
-      // calls carry a native twin across the whole run-event corpus, so the
-      // synthesized row is the transcript for the rest.
+      // Suppressing one of these DELETES the row rather than deduplicating it:
+      // measured 2026-08-18 over the 14-day run-event corpus, grok twins 0.2%
+      // of its brokered calls, mistral 1.8%, cursor 0% — the synthesized row
+      // is their transcript.
       expect(providerEmitsNativeMcpTranscriptRows(provider)).toBe(false)
       expect(shouldEmitCanonicalTargetTranscript(provider, false)).toBe(true)
     }
@@ -132,6 +138,9 @@ describe('McpToolGateway virtual definitions', () => {
   it('names the providers that speak for themselves', () => {
     expect(providerEmitsNativeMcpTranscriptRows('codex')).toBe(true)
     expect(providerEmitsNativeMcpTranscriptRows('pi')).toBe(true)
+    expect(providerEmitsNativeMcpTranscriptRows('claude')).toBe(true)
+    expect(providerEmitsNativeMcpTranscriptRows('kimi')).toBe(true)
+    expect(providerEmitsNativeMcpTranscriptRows('ollama')).toBe(true)
   })
 })
 

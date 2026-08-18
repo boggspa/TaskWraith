@@ -37438,20 +37438,22 @@ async function executeGeminiMcpTool(
   // and the two ids don't match). The MCP-protocol return value is
   // delivered to the agent via the function return — separate from
   // these renderer-only emissions — so suppression is purely visual
-  // and does not affect what the provider sees. Pi has the same shape
-  // and was missed for as long as the check named Codex alone: its
-  // managed tools are registered as real Pi tools by the app-owned
-  // extension, so Pi reports each one through `toolcall_end` and the
-  // transcript showed "Ran 2 commands" for every single call, the two
-  // rows differing only in the duration each layer measured. For
-  // Gemini/Claude/Kimi the synthetic emissions are still the
-  // authoritative source: those providers don't natively stream
-  // `mcpToolCall` items — see the run-event measurements on
+  // and does not affect what the provider sees. Pi (`toolcall_end`
+  // rows from the app-owned extension), then Claude
+  // (`mcp__TaskWraith__<tool>` tool_use blocks in the assistant
+  // envelope), Kimi (wire-protocol ToolCall since the gateway
+  // migration) and Ollama (native function-call echo) were each added
+  // on run-event measurement — ~100% of their plain brokered calls
+  // carry a native twin, so the synthesised row rendered every call,
+  // most visibly every file Edit, twice. For Grok/Mistral/Cursor the
+  // synthetic emissions ARE the transcript (native-twin rates 0.2% /
+  // 1.8% / 0% on 2026-08-18) — see the measurement notes on
   // PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS before adding one here,
   // because suppressing a provider that does NOT report its own calls
   // deletes the row instead of deduplicating it. Gateway target
-  // dispatch is the Codex exception: its native row names the outer wrapper,
-  // so main emits one canonical target row carrying `via_gateway` metadata.
+  // dispatch is the exception for every listed provider: the native
+  // row names the outer wrapper, so main emits one canonical target
+  // row carrying `via_gateway` metadata.
   const emitMcpToolTranscriptEvent = shouldEmitCanonicalTargetTranscript(
     parentProvider,
     Boolean(gatewayDispatch || permissionRetry)

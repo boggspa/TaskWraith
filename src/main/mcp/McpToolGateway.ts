@@ -37,27 +37,39 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
 /**
  * Providers that stream their own row for a TaskWraith MCP call.
  *
- * Main synthesizes `tool_use`/`tool_result` for MCP invocations because most
- * providers never mention them. For these two the provider already emits a row
- * keyed on ITS OWN call id, so synthesizing a second one keyed on
- * `<provider>-mcp-<tool>-<ts>-<rand>` renders TWO complete tool cards for one
- * invocation — the renderer pairs use→result by tool_id, and the two ids never
- * match. Codex was fixed when this was found (its app-server `mcpToolCall`
- * items); Pi has the same shape and was missed, because TaskWraith's managed
- * tools are registered as real Pi tools by the app-owned extension, so Pi
- * reports every one of them through `toolcall_end` like any native call.
- * Measured across the run-event corpus: 89–95% of Pi's brokered calls carried
- * a native twin, and the remainder were the separate forked-tool-call defect
- * (the nameless block rendered as `tool`) rather than a missing row.
+ * Main synthesizes `tool_use`/`tool_result` for MCP invocations because some
+ * providers never mention them. For the providers listed here the provider
+ * already emits a row keyed on ITS OWN call id, so synthesizing a second one
+ * keyed on `<provider>-mcp-<tool>-<ts>-<rand>` renders TWO complete tool cards
+ * for one invocation — the renderer pairs use→result by tool_id, and the two
+ * ids never match. Codex was fixed when this was found (its app-server
+ * `mcpToolCall` items); Pi followed (TaskWraith's managed tools are registered
+ * as real Pi tools by the app-owned extension, so Pi reports each through
+ * `toolcall_end`). Claude, Kimi and Ollama joined on the 2026-08-18
+ * measurement, after the user-visible "every Edit shows twice" duplicate:
+ * over the 14-day run-event corpus their plain (non-gateway) brokered calls
+ * carried a native twin at 4896/4897 (claude, 515 runs — `mcp__TaskWraith__
+ * <tool>` tool_use blocks in the assistant envelope), 1095/1095 (kimi, 73
+ * runs — wire-protocol ToolCall; the old "only 3–13% twin" reading predates
+ * the gateway migration and no longer holds in any era of the current corpus)
+ * and 389/389 (ollama, 69 runs).
  *
- * KIMI IS DELIBERATELY ABSENT and must not be added on the strength of looking
- * similar. Only 3–13% of its brokered calls carry a native twin, so for Kimi
- * the synthesized row IS the transcript — suppressing it would delete the
- * overwhelming majority of its MCP tool cards rather than deduplicate them.
- * Measure against run-events before extending this list; a provider that
- * merely COULD report its own calls is not evidence that it does.
+ * GROK, MISTRAL AND CURSOR ARE DELIBERATELY ABSENT: the same measurement put
+ * their native-twin rates at 0.2%, 1.8% and 0% — the synthesized row IS their
+ * transcript, so suppression would delete their MCP tool cards rather than
+ * deduplicate them. Measure against run-events before extending this list; a
+ * provider that merely COULD report its own calls is not evidence that it
+ * does. When measuring, fold the control tool's two advertised spellings
+ * (`ensemble_control` v2+ vs canonical `ensemble_bossman_control`) into one
+ * name, or every control call reads as untwinned and drags the rate down.
  */
-const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = ['codex', 'pi']
+const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
+  'codex',
+  'pi',
+  'claude',
+  'kimi',
+  'ollama'
+]
 
 export function providerEmitsNativeMcpTranscriptRows(parentProvider: string): boolean {
   return PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS.includes(parentProvider)
