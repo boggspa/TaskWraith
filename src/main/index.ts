@@ -1626,8 +1626,14 @@ import {
 } from './mistral/MistralQuotaStore'
 import { configureMistralAdminKeyStore, mistralAdminKeyStore } from './mistral/MistralAdminKeyStore'
 import { configureMistralApiKeyStore, mistralApiKeyStore } from './mistral/MistralApiKeyStore'
-import { configureMistralWebSessionStore } from './mistral/MistralWebSessionStore'
-import { configureOllamaWebSessionStore } from './ollama/OllamaWebSessionStore'
+import {
+  configureMistralWebSessionStore,
+  mistralWebSessionStore
+} from './mistral/MistralWebSessionStore'
+import {
+  configureOllamaWebSessionStore,
+  ollamaWebSessionStore
+} from './ollama/OllamaWebSessionStore'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
   convertVendorAmountToUsd,
@@ -43183,12 +43189,14 @@ if (isGeminiMcpBridgeProcess) {
     // Optional Admin API key. Constructed here (post app-ready) so safeStorage
     // has settled on its platform backend, same as the Gemini and Pi stores.
     // Most installs never populate it: the Admin API is Enterprise-only.
-    configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage });
-    configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage });
     configureMistralAdminKeyStore({
       userDataPath: app.getPath('userData'),
       safeStorage
     })
+    // Import Web Session cookie envelopes (Mistral console + ollama.com).
+    // Same post-app-ready construction so safeStorage has settled.
+    configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
+    configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     const mistralApiKeyStoreInst = configureMistralApiKeyStore({
       userDataPath: app.getPath('userData'),
       safeStorage
@@ -43199,7 +43207,8 @@ if (isGeminiMcpBridgeProcess) {
       onKeyMutationSuccess: () => {
         managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
         requestRemoteProviderModelsRefresh()
-      }
+      },
+      webSessionStore: () => mistralWebSessionStore()
     })
     const bridgeApnsPusher = buildBridgeApnsPusherFromSettings()
 
@@ -55279,7 +55288,9 @@ if (isGeminiMcpBridgeProcess) {
       getSettings: () => AppStore.getSettings(),
       updateSettings: (patch) => AppStore.updateSettings(patch),
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-      encryptApiKey
+      encryptApiKey,
+      isMainRendererSender,
+      webSessionStore: () => ollamaWebSessionStore()
     })
 
     registerGeminiAuthHandlers({

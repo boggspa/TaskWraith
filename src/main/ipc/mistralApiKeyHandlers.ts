@@ -4,19 +4,37 @@ import type {
   MistralApiKeyStatus,
   MistralApiKeyStore
 } from '../mistral/MistralApiKeyStore'
+import type { WebSessionCookieStore } from '../providers/WebSessionCookieStore'
+import {
+  importMistralWebSession,
+  type CapturedWebSession,
+  type WebSessionImportOutcome
+} from '../providers/WebSessionBrowser'
+import type { MistralWebSubscriptionResult } from '../mistral/MistralWebSubscriptionClient'
 
 export const MISTRAL_API_KEY_STATUS_CHANNEL = 'mistral-api-key:get-status'
 export const MISTRAL_API_KEY_SET_CHANNEL = 'mistral-api-key:set'
 export const MISTRAL_API_KEY_CLEAR_CHANNEL = 'mistral-api-key:clear'
+export const MISTRAL_WEB_SESSION_IMPORT_CHANNEL = 'mistral-web-session:import'
+export const MISTRAL_WEB_SESSION_STATUS_CHANNEL = 'mistral-web-session:get-status'
+export const MISTRAL_WEB_SESSION_CLEAR_CHANNEL = 'mistral-web-session:clear'
 
 export interface MistralApiKeyHandlerDeps {
   keyStore: Pick<MistralApiKeyStore, 'getStatus' | 'setApiKey' | 'clear'>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
   onKeyMutationSuccess?: () => void
+  /** Web-session cookie envelope; null until configured post-app-ready. */
+  webSessionStore?: () => Pick<WebSessionCookieStore, 'getStatus' | 'setCookie' | 'clear'> | null
+  /** Injectable for tests; defaults to the real embedded sign-in window. */
+  importWebSession?: () => Promise<CapturedWebSession<MistralWebSubscriptionResult> | null>
+  /** Fired after a session is captured AND persisted — the moment a quota
+   *  refresh can use it. Receives the already-validated subscription read. */
+  onWebSessionImported?: (summary: MistralWebSubscriptionResult) => void
 }
 
 const RECOGNIZED_MUTATION_ERRORS = new Set([
   'invalidApiKey',
+  'invalidCookie',
   'encryptionUnavailable',
   'encryptFailed',
   'existingRecordUnreadable',
@@ -121,17 +139,66 @@ export function registerMistralApiKeyHandlers(deps: MistralApiKeyHandlerDeps): v
     return result
   })
 
-  ipcMain.handle('import-mistral-web-session', async (event) => {
-    if (!deps.isMainRendererSender(event)) return null
-    return await importMistralWebSession()
+  // ── Import Web Session ─────────────────────────────────────────────────────
+  // The cookie header stays in the main process end to end: captured by the
+  // embedded window, validated against the live subscription page, persisted
+  // into the safeStorage envelope. The renderer only ever sees the projection.
+
+  ipcMain.handle(
+    MISTRAL_WEB_SESSION_IMPORT_CHANNEL,
+    async (event): Promise<WebSessionImportOutcome> => {
+      if (!deps.isMainRendererSender(event)) return { ok: false, reason: 'unavailable' }
+      const store = deps.webSessionStore?.() ?? null
+      if (!store) return { ok: false, reason: 'unavailable' }
+      const captured = await (deps.importWebSession ?? importMistralWebSession)()
+      if (!captured) return { ok: false, reason: 'cancelled' }
+      const result = store.setCookie(captured.cookieHeader)
+      if (!result.ok) {
+        return { ok: false, reason: 'storeFailed', status: projectStatus(result.status) }
+      }
+      try {
+        deps.onWebSessionImported?.(captured.summary)
+      } catch {
+        // ignore
+      }
+      return { ok: true, status: projectStatus(result.status) }
+    }
+  )
+
+  ipcMain.handle(MISTRAL_WEB_SESSION_STATUS_CHANNEL, (event): MistralApiKeyStatus => {
+    if (!deps.isMainRendererSender(event)) {
+      return { configured: false, encryptionAvailable: false }
+    }
+    const store = deps.webSessionStore?.() ?? null
+    if (!store) return { configured: false, encryptionAvailable: false }
+    return projectStatus(store.getStatus())
+  })
+
+  ipcMain.handle(MISTRAL_WEB_SESSION_CLEAR_CHANNEL, (event): MistralApiKeyMutationResult => {
+    if (!deps.isMainRendererSender(event)) {
+      return {
+        ok: false,
+        status: { configured: false, encryptionAvailable: false },
+        error: 'clearFailed'
+      }
+    }
+    const store = deps.webSessionStore?.() ?? null
+    if (!store) {
+      return {
+        ok: false,
+        status: { configured: false, encryptionAvailable: false },
+        error: 'clearFailed'
+      }
+    }
+    return projectMutation(store.clear())
   })
 }
-
-import { importMistralWebSession } from '../providers/WebSessionBrowser'
 
 export function unregisterMistralApiKeyHandlers(): void {
   ipcMain.removeHandler(MISTRAL_API_KEY_STATUS_CHANNEL)
   ipcMain.removeHandler(MISTRAL_API_KEY_SET_CHANNEL)
   ipcMain.removeHandler(MISTRAL_API_KEY_CLEAR_CHANNEL)
-  ipcMain.removeHandler('import-mistral-web-session')
+  ipcMain.removeHandler(MISTRAL_WEB_SESSION_IMPORT_CHANNEL)
+  ipcMain.removeHandler(MISTRAL_WEB_SESSION_STATUS_CHANNEL)
+  ipcMain.removeHandler(MISTRAL_WEB_SESSION_CLEAR_CHANNEL)
 }

@@ -97,9 +97,10 @@ export interface MistralQuotaCardViewProps {
   onSaveAdminKey: () => void
   onClearAdminKey: () => void
   onRefreshAdmin: () => void
-  webSessionDraft: string
-  onWebSessionChange: (value: string) => void
+  /** Projection only — the imported cookie itself never reaches the renderer. */
+  webSessionStatus: { configured: boolean; updatedAt?: string } | null
   onImportWebSession: () => void
+  onClearWebSession: () => void
 }
 
 export function MistralQuotaCardView({
@@ -112,9 +113,9 @@ export function MistralQuotaCardView({
   adminKeyDraft,
   adminKeyConfigured,
   adminStatus,
-  webSessionDraft,
-  onWebSessionChange,
+  webSessionStatus,
   onImportWebSession,
+  onClearWebSession,
   busy,
   error,
   onPlanChange,
@@ -231,22 +232,26 @@ export function MistralQuotaCardView({
 
       <div className="settings-provider-auth-divider" />
 
-      <label className="settings-field">
-        <span className="settings-field-label">Mistral Web Session Cookie</span>
-        <input
-          className="settings-input"
-          type="password"
-          autoComplete="off"
-          placeholder={'Session cookie...'}
-          value={webSessionDraft}
-          disabled={busy}
-          onChange={(event) => onWebSessionChange(event.target.value)}
-        />
-      </label>
-      <div className="settings-provider-auth-actions" style={{ marginBottom: '1rem' }}>
-        <PillButton size="compact" onClick={onImportWebSession} disabled={busy}>
-          Import Mistral web session...
-        </PillButton>
+      <div className="settings-field">
+        <span className="settings-field-label">Web session</span>
+        <p className="settings-provider-auth-footnote">
+          {webSessionStatus?.configured
+            ? `Session imported${formatImportedOn(webSessionStatus.updatedAt)}. Both console bars — API usage and Vibe Code usage — refresh from it automatically.`
+            : 'Sign in once and TaskWraith reads both console bars — API usage and Vibe Code usage — for you. The session cookie is kept in the system keychain and never shown.'}
+        </p>
+        <div className="settings-provider-auth-actions settings-web-session-actions">
+          <PillButton size="compact" variant="primary" onClick={onImportWebSession} disabled={busy}>
+            {webSessionStatus?.configured ? 'Re-import web session…' : 'Import web session…'}
+          </PillButton>
+          <PillButton
+            size="compact"
+            variant="danger"
+            onClick={onClearWebSession}
+            disabled={busy || webSessionStatus?.configured !== true}
+          >
+            Clear session
+          </PillButton>
+        </div>
       </div>
 
       <label className="settings-field">
@@ -262,8 +267,8 @@ export function MistralQuotaCardView({
         />
       </label>
       <p className="settings-provider-auth-footnote">
-        Sign into admin.mistral.ai via the web session to automatically track live API usage & Vibe
-        Code usage quotas, or enter an Admin API key if on Enterprise.
+        Enterprise-only alternative to the web session: an Admin API key from backoffice.mistral.ai
+        reads the same usage over Mistral&rsquo;s Admin API.
       </p>
       <div className="settings-provider-auth-actions">
         <PillButton
@@ -308,6 +313,13 @@ function parseAmount(value: string): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+function formatImportedOn(updatedAt: string | undefined): string {
+  if (!updatedAt) return ''
+  const when = new Date(updatedAt)
+  if (Number.isNaN(when.getTime())) return ''
+  return ` ${when.toLocaleDateString()}`
+}
+
 export function MistralQuotaCard(): ReactElement {
   const [plan, setPlan] = useState<MistralCardPlan>('unknown')
   const [allowanceDraft, setAllowanceDraft] = useState('')
@@ -321,18 +333,60 @@ export function MistralQuotaCard(): ReactElement {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [webSessionDraft, setWebSessionDraft] = useState('')
+  const [webSessionStatus, setWebSessionStatus] = useState<{
+    configured: boolean
+    updatedAt?: string
+  } | null>(null)
+
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.getMistralWebSessionStatus !== 'function') return
+    let cancelled = false
+    void api
+      .getMistralWebSessionStatus()
+      .then((status) => {
+        if (!cancelled) setWebSessionStatus(status ?? null)
+      })
+      .catch(() => {
+        // Leave it reading unconfigured — Clear stays disabled, which is the
+        // safe direction.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const importWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.importMistralWebSession !== 'function') return
     setBusy(true)
     setError(null)
     try {
-      const cookie = await window.api.importMistralWebSession()
-      if (cookie) {
-        setWebSessionDraft(cookie)
+      const outcome = await api.importMistralWebSession()
+      if (outcome?.ok) {
+        setWebSessionStatus(outcome.status ?? { configured: true })
+      } else if (outcome && outcome.reason !== 'cancelled') {
+        // Closing the sign-in window without finishing is not an error.
+        setError('Could not import the web session.')
       }
     } catch {
-      setError('Could not import web session.')
+      setError('Could not import the web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const clearWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.clearMistralWebSession !== 'function') return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api.clearMistralWebSession()
+      if (result?.ok) setWebSessionStatus({ configured: false })
+      else setError('Could not clear the web session.')
+    } catch {
+      setError('Could not clear the web session.')
     } finally {
       setBusy(false)
     }
@@ -547,9 +601,9 @@ export function MistralQuotaCard(): ReactElement {
       adminKeyDraft={adminKeyDraft}
       adminKeyConfigured={adminKeyConfigured}
       adminStatus={adminStatus}
-      webSessionDraft={webSessionDraft}
-      onWebSessionChange={setWebSessionDraft}
-      onImportWebSession={importWebSession}
+      webSessionStatus={webSessionStatus}
+      onImportWebSession={() => void importWebSession()}
+      onClearWebSession={() => void clearWebSession()}
       busy={busy}
       error={error}
       onPlanChange={changePlan}

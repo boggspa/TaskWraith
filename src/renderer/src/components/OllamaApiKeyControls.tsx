@@ -6,6 +6,8 @@ const OLLAMA_CLOUD_SETTINGS_URL = 'https://ollama.com/settings'
 export interface OllamaApiKeyStatus {
   apiKeyConfigured: boolean
   encryptionAvailable: boolean
+  webSessionConfigured: boolean
+  webSessionUpdatedAt?: string
 }
 
 export interface OllamaApiKeyControlsViewProps {
@@ -16,9 +18,13 @@ export interface OllamaApiKeyControlsViewProps {
   onDraftChange: (value: string) => void
   onSave: () => void
   onClear: () => void
+  /** Manual paste of the __Secure-session cookie; the imported flow never
+   *  round-trips the cookie through the renderer. */
   webSessionDraft: string
   onWebSessionChange: (value: string) => void
+  onSaveWebSession: () => void
   onImportWebSession: () => void
+  onClearWebSession: () => void
 }
 
 export function OllamaApiKeyControlsView({
@@ -31,9 +37,12 @@ export function OllamaApiKeyControlsView({
   onClear,
   webSessionDraft,
   onWebSessionChange,
-  onImportWebSession
+  onSaveWebSession,
+  onImportWebSession,
+  onClearWebSession
 }: OllamaApiKeyControlsViewProps): React.JSX.Element {
   const configured = status?.apiKeyConfigured === true
+  const webSessionConfigured = status?.webSessionConfigured === true
   return (
     <>
       <div className="settings-pi-upstream-row">
@@ -78,41 +87,52 @@ export function OllamaApiKeyControlsView({
           </PillButton>
         </div>
       </div>
-      <div className="settings-pi-upstream-row" style={{ marginTop: '1rem' }}>
+      <div className="settings-pi-upstream-row">
         <label className="settings-pi-upstream-name" htmlFor="ollama-web-session-cookie">
           <span
-            className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${false ? 'signed-in' : 'not-available'}`} // TODO: bind to configured state
+            className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${webSessionConfigured ? 'signed-in' : 'not-available'}`}
             aria-hidden
           />
-          <strong>Ollama Web Session Cookie</strong>
+          <strong>Ollama web session</strong>
           <span className="settings-pi-upstream-hint">
-            {'Required for tracking 5H and Weekly usage'}
+            {webSessionConfigured
+              ? 'Tracking Session (5H) and Weekly usage'
+              : 'Needed to track Session (5H) and Weekly usage'}
           </span>
         </label>
-        <div className="settings-pi-upstream-controls">
+        <div className="settings-pi-upstream-controls settings-web-session-controls">
           <input
             id="ollama-web-session-cookie"
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder={'Session cookie...'}
+            placeholder={
+              webSessionConfigured ? 'Session stored — replace…' : '__Secure-session cookie…'
+            }
             value={webSessionDraft}
             disabled={busy || status?.encryptionAvailable === false}
             onChange={(event) => onWebSessionChange(event.target.value)}
           />
           <PillButton
             size="compact"
+            disabled={busy || !webSessionDraft.trim() || status?.encryptionAvailable === false}
+            onClick={onSaveWebSession}
+          >
+            Save
+          </PillButton>
+          <PillButton
+            size="compact"
             variant="primary"
             disabled={busy || status?.encryptionAvailable === false}
             onClick={onImportWebSession}
           >
-            Import Ollama web session...
+            Import web session…
           </PillButton>
           <PillButton
             size="compact"
             variant="danger"
-            disabled={busy || !configured}
-            onClick={() => {}} // TODO: bind to clear web session
+            disabled={busy || !webSessionConfigured}
+            onClick={onClearWebSession}
           >
             Clear
           </PillButton>
@@ -126,13 +146,14 @@ export function OllamaApiKeyControlsView({
       )}
       {error && <p className="settings-provider-auth-footnote">{error}</p>}
       <p className="settings-provider-auth-footnote">
-        The key is encrypted with the system keychain and sent only to the direct Ollama Cloud API;
-        local model requests never receive it. Ollama currently exposes exact session and weekly
-        usage only on its{' '}
+        Both secrets are encrypted with the system keychain and never shown again. The API key is
+        sent only to the direct Ollama Cloud API; the web session lets TaskWraith read your exact
+        Session (5H) and Weekly usage from the{' '}
         <a href={OLLAMA_CLOUD_SETTINGS_URL} target="_blank" rel="noreferrer">
           Cloud usage dashboard
-        </a>
-        .
+        </a>{' '}
+        — use Import to sign in, or paste the <code>__Secure-session</code> cookie from your
+        browser&rsquo;s DevTools.
       </p>
     </>
   )
@@ -149,27 +170,16 @@ export function OllamaApiKeyControls({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const importWebSession = useCallback(async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const cookie = await window.api.importOllamaWebSession()
-      if (cookie) {
-        setWebSessionDraft(cookie)
-      }
-    } catch {
-      setError('Could not import web session.')
-    } finally {
-      setBusy(false)
-    }
-  }, [])
-
   const refresh = useCallback(async () => {
     try {
       const next = await window.api.getOllamaAuthStatus()
       setStatus({
         apiKeyConfigured: next.apiKeyConfigured === true,
-        encryptionAvailable: next.encryptionAvailable === true
+        encryptionAvailable: next.encryptionAvailable === true,
+        webSessionConfigured: next.webSessionConfigured === true,
+        ...(typeof next.webSessionUpdatedAt === 'string'
+          ? { webSessionUpdatedAt: next.webSessionUpdatedAt }
+          : {})
       })
     } catch {
       setStatus(null)
@@ -214,6 +224,66 @@ export function OllamaApiKeyControls({
     }
   }, [onChanged, refresh])
 
+  const saveWebSession = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.setOllamaWebSession(webSessionDraft)
+      if (!result.ok) {
+        setError(
+          result.error === 'invalidCookie'
+            ? 'That does not look like a session cookie.'
+            : 'Could not store the web session.'
+        )
+      } else {
+        // Never keep the cookie in renderer state once it is stored.
+        setWebSessionDraft('')
+        await refresh()
+        await onChanged?.()
+      }
+    } catch {
+      setError('Could not store the web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [onChanged, refresh, webSessionDraft])
+
+  const importWebSession = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const outcome = await window.api.importOllamaWebSession()
+      if (outcome?.ok) {
+        setWebSessionDraft('')
+        await refresh()
+        await onChanged?.()
+      } else if (outcome && outcome.reason !== 'cancelled') {
+        // Closing the sign-in window without finishing is not an error.
+        setError('Could not import the web session.')
+      }
+    } catch {
+      setError('Could not import the web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [onChanged, refresh])
+
+  const clearWebSession = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.clearOllamaWebSession()
+      if (!result.ok) setError('Could not clear the web session.')
+      setWebSessionDraft('')
+      await refresh()
+      await onChanged?.()
+    } catch {
+      setError('Could not clear the web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [onChanged, refresh])
+
   return (
     <OllamaApiKeyControlsView
       status={status}
@@ -225,7 +295,9 @@ export function OllamaApiKeyControls({
       onClear={() => void clear()}
       webSessionDraft={webSessionDraft}
       onWebSessionChange={setWebSessionDraft}
+      onSaveWebSession={() => void saveWebSession()}
       onImportWebSession={() => void importWebSession()}
+      onClearWebSession={() => void clearWebSession()}
     />
   )
 }

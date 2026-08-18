@@ -389,6 +389,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mistral-api-key:set',
   'mistral-api-key:clear',
   'mistral-quota:refresh-admin',
+  // Import Web Session mints a signed-in console cookie and stores it; status
+  // and clear govern that credential. Same footing as the keys above.
+  'mistral-web-session:import',
+  'mistral-web-session:get-status',
+  'mistral-web-session:clear',
 
   // Canvas WebContentsView state belongs to the primary window. Popouts and
   // other secondary renderers must not create or reposition an overlay over it.
@@ -564,6 +569,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'clear-kimi-api-key',
   'store-ollama-api-key',
   'clear-ollama-api-key',
+  // Import Web Session mints a signed-in ollama.com cookie and stores it;
+  // set/clear govern that credential. Same footing as the keys around it.
+  'import-ollama-web-session',
+  'set-ollama-web-session',
+  'clear-ollama-web-session',
   'save-gemini-auth-profile',
   'delete-gemini-auth-profile',
   'set-default-gemini-auth-profile',

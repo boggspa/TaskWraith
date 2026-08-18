@@ -32,6 +32,9 @@ function render(overrides: Partial<MistralQuotaCardViewProps> = {}): string {
     onSaveAdminKey: () => {},
     onClearAdminKey: () => {},
     onRefreshAdmin: () => {},
+    webSessionStatus: null,
+    onImportWebSession: () => {},
+    onClearWebSession: () => {},
     ...overrides
   }
   return renderToStaticMarkup(<MistralQuotaCardView {...props} />)
@@ -91,8 +94,26 @@ describe('MistralQuotaCardView', () => {
 
   it('states the Enterprise-only restriction on the admin key up front', () => {
     const html = render()
-    expect(html).toContain('Enterprise')
-    expect(html).toContain('standard Mistral API key will not work')
+    expect(html).toContain('Enterprise-only alternative to the web session')
+    expect(html).toContain('backoffice.mistral.ai')
+  })
+
+  it('offers the web session import without ever rendering a cookie field', () => {
+    const html = render()
+    expect(html).toContain('Import web session…')
+    expect(html).toContain('kept in the system keychain and never shown')
+    // The first cut parked the imported cookie in a password input; the
+    // session must have no input at all now.
+    expect(html).not.toContain('Session cookie')
+  })
+
+  it('acknowledges an imported session and arms Clear', () => {
+    const html = render({
+      webSessionStatus: { configured: true, updatedAt: '2026-08-18T12:00:00.000Z' }
+    })
+    expect(html).toContain('Session imported')
+    expect(html).toContain('Re-import web session…')
+    expect(html).toContain('Clear session')
   })
 
   it('renders the admin key as a password field and never echoes a stored one', () => {

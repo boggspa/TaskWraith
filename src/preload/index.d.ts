@@ -909,7 +909,21 @@ declare global {
       } | null>
       setMistralAdminKey: (apiKey: string) => Promise<{ ok: boolean; error?: string }>
       clearMistralAdminKey: () => Promise<{ ok: boolean; error?: string }>
-      importMistralWebSession: () => Promise<string | null>
+      importMistralWebSession: () => Promise<{
+        ok: boolean
+        reason?: 'cancelled' | 'unavailable' | 'storeFailed'
+        status?: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
+      getMistralWebSessionStatus: () => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      }>
+      clearMistralWebSession: () => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
       getMistralApiKeyStatus: () => Promise<{
         configured: boolean
         encryptionAvailable: boolean
@@ -1156,10 +1170,26 @@ declare global {
       }>
       clearKimiApiKey: () => Promise<void>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
-      importOllamaWebSession: () => Promise<string | null>
+      importOllamaWebSession: () => Promise<{
+        ok: boolean
+        reason?: 'cancelled' | 'unavailable' | 'storeFailed'
+        status?: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
+      setOllamaWebSession: (cookie: string) => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
+      clearOllamaWebSession: () => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
       getOllamaAuthStatus: () => Promise<{
         apiKeyConfigured: boolean
         encryptionAvailable: boolean
+        webSessionConfigured: boolean
+        webSessionUpdatedAt?: string
       }>
       storeOllamaApiKey: (key: string) => Promise<{
         stored: boolean
