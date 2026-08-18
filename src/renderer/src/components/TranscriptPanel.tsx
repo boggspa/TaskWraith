@@ -176,6 +176,7 @@ import {
 import {
   ActivityStack,
   stabilizeThinkingTraceActions,
+  type ActivityTimelineSegmentKind,
   type ThinkingTraceActionsConfig,
   type ThinkingTraceActionsStabilizeCache
 } from './ActivityStack'
@@ -929,6 +930,16 @@ function escapeDomSelectorValue(value: string): string {
  */
 export function toolStackStateKey(message: ChatMessage): string {
   return groupedTranscriptMessageIds(message)[0] || message.id
+}
+
+/**
+ * Storage key for one segment kind's viewport expansion within a stack's
+ * lifted state — the per-kind split of what used to be a single per-stack
+ * boolean. NUL-joined like the other composite transcript keys so a stack
+ * key can never collide with a `<stackKey><kind>` concatenation.
+ */
+export function liveViewportKindKey(stackKey: string, kind: ActivityTimelineSegmentKind): string {
+  return `${stackKey}\u0000${kind}`
 }
 
 /**
@@ -4486,9 +4497,27 @@ export const TranscriptPanel = memo(
               : false
             const activityExpansionIds = activityExpansionByRow.get(rowKey)
             const liveViewportStackKey = isToolActivityStack ? toolStackStateKey(msg) : ''
-            const liveViewportExpanded = liveViewportStackKey
-              ? expandedLiveViewportStacks.has(liveViewportStackKey)
-              : false
+            // Per-segment-kind viewport expansion (thinking/tools/agent split —
+            // each toggle owns only the kind its label names). Stored in the
+            // same lifted Set, keyed stack+kind.
+            const liveViewportExpandedByKind = {
+              thinking: liveViewportStackKey
+                ? expandedLiveViewportStacks.has(
+                    liveViewportKindKey(liveViewportStackKey, 'thinking')
+                  )
+                : false,
+              tools: liveViewportStackKey
+                ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'tools'))
+                : false,
+              agent: liveViewportStackKey
+                ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'agent'))
+                : false
+            }
+            const liveViewportExpandedKey = liveViewportStackKey
+              ? `${liveViewportExpandedByKind.thinking ? '1' : '0'}${
+                  liveViewportExpandedByKind.tools ? '1' : '0'
+                }${liveViewportExpandedByKind.agent ? '1' : '0'}`
+              : ''
             const liveViewportActive = isToolActivityStack && activeLiveRowKeys.has(rowKey)
             // Settled-stack auto-collapse: fold the whole stack into a
             // one-line summary once the conversation has moved past it.
@@ -4770,7 +4799,7 @@ export const TranscriptPanel = memo(
                 : isParallelResultViewportHeader
                   ? expandedParallelResultViewports.has(msg.id)
                   : expandedFanoutResults.has(rowKey),
-              liveViewportExpanded,
+              liveViewportExpandedKey,
               collapsedStackKey,
               superGroupKey,
               pendingPlanChoiceKey,
@@ -5156,9 +5185,12 @@ export const TranscriptPanel = memo(
                       compactDensity={compactDensity}
                       liveActivityViewport={liveActivityViewport}
                       liveActivityViewportActive={false}
-                      liveActivityViewportExpanded={liveViewportExpanded}
-                      onLiveActivityViewportExpandedChange={(expanded) =>
-                        setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                      liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
+                      onLiveActivityViewportExpandedChange={(kind, expanded) =>
+                        setLiveViewportExpandedForStack(
+                          liveViewportKindKey(liveViewportStackKey, kind),
+                          expanded
+                        )
                       }
                       expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                       onExpandedActivityIdsChange={(next) =>
@@ -5183,9 +5215,12 @@ export const TranscriptPanel = memo(
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
                     liveActivityViewportActive={liveViewportActive}
-                    liveActivityViewportExpanded={liveViewportExpanded}
-                    onLiveActivityViewportExpandedChange={(expanded) =>
-                      setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                    liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
+                    onLiveActivityViewportExpandedChange={(kind, expanded) =>
+                      setLiveViewportExpandedForStack(
+                        liveViewportKindKey(liveViewportStackKey, kind),
+                        expanded
+                      )
                     }
                     expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}

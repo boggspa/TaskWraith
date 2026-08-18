@@ -47,7 +47,7 @@ const signature = (
   activityExpansionKey: '',
   subThreadExpanded: false,
   fanoutExpanded: false,
-  liveViewportExpanded: false,
+  liveViewportExpandedKey: '',
   collapsedStackKey: '',
   superGroupKey: '',
   pendingPlanChoiceKey: '',
@@ -118,11 +118,11 @@ describe('transcriptRowRenderCache', () => {
     )
   })
 
-  it('invalidates when the lifted live-viewport expansion toggles', () => {
+  it('invalidates when any per-kind live-viewport expansion toggles', () => {
     expect(
       transcriptRowRenderSignatureEqual(
-        signature({ liveViewportExpanded: false }),
-        signature({ liveViewportExpanded: true })
+        signature({ liveViewportExpandedKey: '000' }),
+        signature({ liveViewportExpandedKey: '010' })
       )
     ).toBe(false)
   })

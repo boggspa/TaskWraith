@@ -130,8 +130,18 @@ interface ActivityStackProps {
   liveActivityViewportExpandLabel?: string
   liveActivityViewportCollapseLabel?: string
   liveActivityViewportJumpLabel?: string
-  liveActivityViewportExpanded?: boolean
-  onLiveActivityViewportExpandedChange?: (expanded: boolean) => void
+  /**
+   * Controlled expansion for the live segment viewports, split BY SEGMENT
+   * KIND: each toggle ("Expand thinking traces" / "Expand activity" /
+   * "Expand agents") owns only its own kind, matching what its label
+   * promises. An absent kind reads collapsed. Omit entirely for local
+   * (uncontrolled) state.
+   */
+  liveActivityViewportExpandedByKind?: Partial<Record<ActivityTimelineSegmentKind, boolean>>
+  onLiveActivityViewportExpandedChange?: (
+    kind: ActivityTimelineSegmentKind,
+    expanded: boolean
+  ) => void
   /**
    * 1.0.6-TV2 — optional controlled expansion. When BOTH are provided
    * the stack's per-row expansion set is owned by the parent instead of
@@ -2986,7 +2996,7 @@ export function ActivityStack({
   liveActivityViewportExpandLabel,
   liveActivityViewportCollapseLabel,
   liveActivityViewportJumpLabel,
-  liveActivityViewportExpanded: controlledLiveViewportExpanded,
+  liveActivityViewportExpandedByKind: controlledLiveViewportExpandedByKind,
   onLiveActivityViewportExpandedChange,
   expandedActivityIds,
   onExpandedActivityIdsChange,
@@ -3120,17 +3130,25 @@ export function ActivityStack({
     }
   }
   const allowMultiOpen = !compactDensity
-  const [localLiveViewportExpanded, setLocalLiveViewportExpanded] = useState(false)
-  const liveViewportExpanded = controlledLiveViewportExpanded ?? localLiveViewportExpanded
+  const [localLiveViewportExpandedByKind, setLocalLiveViewportExpandedByKind] = useState<
+    Partial<Record<ActivityTimelineSegmentKind, boolean>>
+  >({})
+  const liveViewportExpandedByKind =
+    controlledLiveViewportExpandedByKind ?? localLiveViewportExpandedByKind
   const setLiveViewportExpanded = useCallback(
-    (expanded: boolean) => {
-      if (controlledLiveViewportExpanded === undefined) {
-        setLocalLiveViewportExpanded(expanded)
+    (kind: ActivityTimelineSegmentKind, expanded: boolean) => {
+      if (controlledLiveViewportExpandedByKind === undefined) {
+        setLocalLiveViewportExpandedByKind((prev) => ({ ...prev, [kind]: expanded }))
       }
-      onLiveActivityViewportExpandedChange?.(expanded)
+      onLiveActivityViewportExpandedChange?.(kind, expanded)
     },
-    [controlledLiveViewportExpanded, onLiveActivityViewportExpandedChange]
+    [controlledLiveViewportExpandedByKind, onLiveActivityViewportExpandedChange]
   )
+  // The collapsed-tail item cap lifts while ANY segment viewport is open:
+  // the trim drops items from the HEAD of the timeline (oldest segments), so
+  // an expanded viewport must see its full history regardless of which kind
+  // the user opened.
+  const anyLiveViewportExpanded = Object.values(liveViewportExpandedByKind).some(Boolean)
 
   // 1.0.74 — same-tool grouping is unified across single + ensemble
   // (no per-mode split): runs of 2+ consecutive same-family terminal
@@ -3156,7 +3174,7 @@ export function ActivityStack({
   )
   const collapseCapActive =
     liveViewportEnabled &&
-    !liveViewportExpanded &&
+    !anyLiveViewportExpanded &&
     timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
   const timelineSegments = useMemo(
     () =>
@@ -3349,6 +3367,7 @@ export function ActivityStack({
             .filter(Boolean)
             .join(' ')
           const revision = liveActivityRevision(segment.activities)
+          const segmentViewportExpanded = liveViewportExpandedByKind[segment.kind] === true
           const shimmerDisclosure = segment.activities
             .map((activity) =>
               isActivityShimmerStale(activity, shimmerNow) ? `${activity.id}:1` : `${activity.id}:0`
@@ -3362,7 +3381,7 @@ export function ActivityStack({
               : ''
           const reuseKey = liveSegmentChildrenReuseKey({
             revision,
-            liveViewportExpanded,
+            liveViewportExpanded: segmentViewportExpanded,
             hiddenTimelineItemCount: index === 0 ? hiddenTimelineItemCount : 0,
             disclosure: [
               expandedIdsKey,
@@ -3407,8 +3426,8 @@ export function ActivityStack({
               }
               revision={revision}
               collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
-              expanded={liveViewportExpanded}
-              onExpandedChange={setLiveViewportExpanded}
+              expanded={segmentViewportExpanded}
+              onExpandedChange={(next) => setLiveViewportExpanded(segment.kind, next)}
               label={
                 isAgentSegment
                   ? 'Agents'

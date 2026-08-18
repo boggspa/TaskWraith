@@ -14,7 +14,11 @@ import {
   resolveProviderBrandLabel,
   resolveProviderHueClass
 } from '../lib/ollamaDisplayBrand'
-import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
+import {
+  ActivityStack,
+  type ActivityTimelineSegmentKind,
+  type ThinkingTraceActionsConfig
+} from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
@@ -261,7 +265,18 @@ export function EnsembleFanoutResultCard({
       : transcriptParts
   const hiddenTranscriptPartCount = transcriptParts.length - renderedTranscriptParts.length
   const toolViewportLabel = `${role} fan-out tool calls`
-  const controlledToolViewportExpanded = onExpandedChange ? expandedResult : undefined
+  // Lane coupling, deliberately preserved through the per-kind split: the
+  // lane's single expanded state drives EVERY inner segment viewport (a lane
+  // expanded to full height must not keep 168px clamps inside it), and any
+  // inner toggle flips the lane state right back. Whether inner toggles
+  // should instead own their kind independently inside a lane is an open
+  // product question — do not change silently.
+  const controlledToolViewportExpandedByKind = onExpandedChange
+    ? { thinking: expandedResult, tools: expandedResult, agent: expandedResult }
+    : undefined
+  const setLaneViewportExpanded = onExpandedChange
+    ? (_kind: ActivityTimelineSegmentKind, next: boolean) => onExpandedChange(next)
+    : undefined
   const collapsedResult = !expandedResult
   const [localExpandedPartIds, setLocalExpandedPartIds] = useState<Set<string>>(() => new Set())
   const effectiveExpandedActivityIds = expandedActivityIds ?? localExpandedPartIds
@@ -304,8 +319,8 @@ export function EnsembleFanoutResultCard({
         liveActivityViewportExpandLabel="Expand tool calls"
         liveActivityViewportCollapseLabel="Collapse tool calls"
         liveActivityViewportJumpLabel="Jump to latest tool call"
-        liveActivityViewportExpanded={controlledToolViewportExpanded}
-        onLiveActivityViewportExpandedChange={onExpandedChange}
+        liveActivityViewportExpandedByKind={controlledToolViewportExpandedByKind}
+        onLiveActivityViewportExpandedChange={setLaneViewportExpanded}
         expandedActivityIds={expandedActivityIds}
         onExpandedActivityIdsChange={onExpandedActivityIdsChange}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}

@@ -671,6 +671,23 @@ describe('ActivityStack live activity viewport', () => {
     expect(html).toContain('Expand nested tools')
   })
 
+  it('expands segment viewports independently per kind', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeThinkingActivity(), makeWriteActivity()]}
+        provider="codex"
+        liveActivityViewport
+        liveActivityViewportExpandedByKind={{ tools: true }}
+      />
+    )
+
+    // The tool-call viewport opens; the thinking viewport beside it stays
+    // clamped — each segment kind owns its own expansion, matching the
+    // per-segment labels on the toggles.
+    expect(html).toMatch(/is-expanded[^"]*activity-tool-call-viewport/)
+    expect(html).toMatch(/is-collapsed[^"]*activity-thinking-trace-viewport/)
+  })
+
   it('keeps thinking traces as progress notes in compact density so actions are not nested in compact rows', () => {
     const html = renderToStaticMarkup(
       <ActivityStack

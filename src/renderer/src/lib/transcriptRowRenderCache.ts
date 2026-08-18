@@ -29,7 +29,10 @@ export interface TranscriptRowRenderSignature {
   activityExpansionKey: string
   subThreadExpanded: boolean
   fanoutExpanded: boolean
-  liveViewportExpanded: boolean
+  /** Per-segment-kind live viewport expansion, encoded thinking/tools/agent
+   * (e.g. "010" = only the tool-call viewport open); '' when the row has no
+   * live viewport stack. A kind toggle must re-render the cached row. */
+  liveViewportExpandedKey: string
   /** "<autoCollapsible>:<userExpanded>" for the settled-stack collapse row. */
   collapsedStackKey: string
   /** "<leadId>:<size>:<open|closed>:<lead|member>" when this row belongs to a
@@ -263,7 +266,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.activityExpansionKey !== next.activityExpansionKey) return false
   if (prev.subThreadExpanded !== next.subThreadExpanded) return false
   if (prev.fanoutExpanded !== next.fanoutExpanded) return false
-  if (prev.liveViewportExpanded !== next.liveViewportExpanded) return false
+  if (prev.liveViewportExpandedKey !== next.liveViewportExpandedKey) return false
   if (prev.collapsedStackKey !== next.collapsedStackKey) return false
   if (prev.superGroupKey !== next.superGroupKey) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
