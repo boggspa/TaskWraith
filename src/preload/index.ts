@@ -782,6 +782,7 @@ const api = {
   getMistralApiKeyStatus: () => ipcRenderer.invoke('mistral-api-key:get-status'),
   setMistralApiKey: (apiKey: string) => ipcRenderer.invoke('mistral-api-key:set', apiKey),
   clearMistralApiKey: () => ipcRenderer.invoke('mistral-api-key:clear'),
+  importMistralWebSession: () => ipcRenderer.invoke('import-mistral-web-session'),
   refreshMistralAdminUsage: () => ipcRenderer.invoke('mistral-quota:refresh-admin'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
@@ -1078,6 +1079,7 @@ const api = {
   getOllamaAuthStatus: () => ipcRenderer.invoke('get-ollama-auth-status'),
   storeOllamaApiKey: (key: string) => ipcRenderer.invoke('store-ollama-api-key', key),
   clearOllamaApiKey: () => ipcRenderer.invoke('clear-ollama-api-key'),
+  importOllamaWebSession: () => ipcRenderer.invoke('import-ollama-web-session'),
   getGeminiAuthStatus: () => ipcRenderer.invoke('get-gemini-auth-status'),
   listGeminiAuthProfiles: () => ipcRenderer.invoke('list-gemini-auth-profiles'),
   saveGeminiAuthProfile: (profile: any) => ipcRenderer.invoke('save-gemini-auth-profile', profile),

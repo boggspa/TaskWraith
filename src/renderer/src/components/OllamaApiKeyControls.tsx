@@ -16,6 +16,9 @@ export interface OllamaApiKeyControlsViewProps {
   onDraftChange: (value: string) => void
   onSave: () => void
   onClear: () => void
+  webSessionDraft: string
+  onWebSessionChange: (value: string) => void
+  onImportWebSession: () => void
 }
 
 export function OllamaApiKeyControlsView({
@@ -25,7 +28,10 @@ export function OllamaApiKeyControlsView({
   error,
   onDraftChange,
   onSave,
-  onClear
+  onClear,
+  webSessionDraft,
+  onWebSessionChange,
+  onImportWebSession
 }: OllamaApiKeyControlsViewProps): React.JSX.Element {
   const configured = status?.apiKeyConfigured === true
   return (
@@ -90,15 +96,15 @@ export function OllamaApiKeyControlsView({
             autoComplete="off"
             spellCheck={false}
             placeholder={'Session cookie...'}
-            value={''} // TODO: bind to draft state
+            value={webSessionDraft}
             disabled={busy || status?.encryptionAvailable === false}
-            onChange={(event) => {}} // TODO: bind to state update
+            onChange={(event) => onWebSessionChange(event.target.value)}
           />
           <PillButton
             size="compact"
             variant="primary"
             disabled={busy || status?.encryptionAvailable === false}
-            onClick={() => {}} // TODO: bind to save
+            onClick={onImportWebSession}
           >
             Import Ollama web session...
           </PillButton>
@@ -106,7 +112,7 @@ export function OllamaApiKeyControlsView({
             size="compact"
             variant="danger"
             disabled={busy || !configured}
-            onClick={() => {}} // TODO: bind to clear
+            onClick={() => {}} // TODO: bind to clear web session
           >
             Clear
           </PillButton>
@@ -138,8 +144,24 @@ export function OllamaApiKeyControls({
 } = {}): React.JSX.Element {
   const [status, setStatus] = useState<OllamaApiKeyStatus | null>(null)
   const [draft, setDraft] = useState('')
+  const [webSessionDraft, setWebSessionDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const importWebSession = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const cookie = await window.api.importOllamaWebSession()
+      if (cookie) {
+        setWebSessionDraft(cookie)
+      }
+    } catch {
+      setError('Could not import web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -200,6 +222,9 @@ export function OllamaApiKeyControls({
       onDraftChange={setDraft}
       onSave={() => void save()}
       onClear={() => void clear()}
+      webSessionDraft={webSessionDraft}
+      onWebSessionChange={setWebSessionDraft}
+      onImportWebSession={() => void importWebSession()}
     />
   )
 }

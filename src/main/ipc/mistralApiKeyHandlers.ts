@@ -120,10 +120,18 @@ export function registerMistralApiKeyHandlers(deps: MistralApiKeyHandlerDeps): v
     }
     return result
   })
+
+  ipcMain.handle('import-mistral-web-session', async (event) => {
+    if (!deps.isMainRendererSender(event)) return null
+    return await importMistralWebSession()
+  })
 }
+
+import { importMistralWebSession } from '../providers/WebSessionBrowser'
 
 export function unregisterMistralApiKeyHandlers(): void {
   ipcMain.removeHandler(MISTRAL_API_KEY_STATUS_CHANNEL)
   ipcMain.removeHandler(MISTRAL_API_KEY_SET_CHANNEL)
   ipcMain.removeHandler(MISTRAL_API_KEY_CLEAR_CHANNEL)
+  ipcMain.removeHandler('import-mistral-web-session')
 }

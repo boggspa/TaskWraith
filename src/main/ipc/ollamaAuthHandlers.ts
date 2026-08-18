@@ -49,4 +49,10 @@ export function registerOllamaAuthHandlers(deps: OllamaAuthHandlersDeps): void {
     deps.updateSettings({ ollamaApiKey: undefined })
     return true
   })
+
+  ipcMain.handle('import-ollama-web-session', async () => {
+    return await importOllamaWebSession()
+  })
 }
+
+import { importOllamaWebSession } from '../providers/WebSessionBrowser'

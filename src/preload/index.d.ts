@@ -909,6 +909,7 @@ declare global {
       } | null>
       setMistralAdminKey: (apiKey: string) => Promise<{ ok: boolean; error?: string }>
       clearMistralAdminKey: () => Promise<{ ok: boolean; error?: string }>
+      importMistralWebSession: () => Promise<string | null>
       getMistralApiKeyStatus: () => Promise<{
         configured: boolean
         encryptionAvailable: boolean
@@ -1155,6 +1156,7 @@ declare global {
       }>
       clearKimiApiKey: () => Promise<void>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
+      importOllamaWebSession: () => Promise<string | null>
       getOllamaAuthStatus: () => Promise<{
         apiKeyConfigured: boolean
         encryptionAvailable: boolean

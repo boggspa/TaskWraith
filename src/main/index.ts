@@ -1626,6 +1626,8 @@ import {
 } from './mistral/MistralQuotaStore'
 import { configureMistralAdminKeyStore, mistralAdminKeyStore } from './mistral/MistralAdminKeyStore'
 import { configureMistralApiKeyStore, mistralApiKeyStore } from './mistral/MistralApiKeyStore'
+import { configureMistralWebSessionStore } from './mistral/MistralWebSessionStore'
+import { configureOllamaWebSessionStore } from './ollama/OllamaWebSessionStore'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
   convertVendorAmountToUsd,
@@ -43181,6 +43183,8 @@ if (isGeminiMcpBridgeProcess) {
     // Optional Admin API key. Constructed here (post app-ready) so safeStorage
     // has settled on its platform backend, same as the Gemini and Pi stores.
     // Most installs never populate it: the Admin API is Enterprise-only.
+    configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage });
+    configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage });
     configureMistralAdminKeyStore({
       userDataPath: app.getPath('userData'),
       safeStorage

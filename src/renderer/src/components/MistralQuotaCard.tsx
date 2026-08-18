@@ -97,6 +97,9 @@ export interface MistralQuotaCardViewProps {
   onSaveAdminKey: () => void
   onClearAdminKey: () => void
   onRefreshAdmin: () => void
+  webSessionDraft: string
+  onWebSessionChange: (value: string) => void
+  onImportWebSession: () => void
 }
 
 export function MistralQuotaCardView({
@@ -109,6 +112,9 @@ export function MistralQuotaCardView({
   adminKeyDraft,
   adminKeyConfigured,
   adminStatus,
+  webSessionDraft,
+  onWebSessionChange,
+  onImportWebSession,
   busy,
   error,
   onPlanChange,
@@ -232,13 +238,13 @@ export function MistralQuotaCardView({
           type="password"
           autoComplete="off"
           placeholder={'Session cookie...'}
-          value={''} // TODO: bind to state
+          value={webSessionDraft}
           disabled={busy}
-          onChange={(event) => {}} // TODO: bind to state
+          onChange={(event) => onWebSessionChange(event.target.value)}
         />
       </label>
       <div className="settings-provider-auth-actions" style={{ marginBottom: '1rem' }}>
-        <PillButton size="compact" onClick={() => {}} disabled={busy}>
+        <PillButton size="compact" onClick={onImportWebSession} disabled={busy}>
           Import Mistral web session...
         </PillButton>
       </div>
@@ -313,6 +319,23 @@ export function MistralQuotaCard(): ReactElement {
   const [adminStatus, setAdminStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const [webSessionDraft, setWebSessionDraft] = useState('')
+
+  const importWebSession = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const cookie = await window.api.importMistralWebSession()
+      if (cookie) {
+        setWebSessionDraft(cookie)
+      }
+    } catch {
+      setError('Could not import web session.')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   const absorb = useCallback((snapshot: unknown) => {
     const snap = snapshot as { plan?: string; estimate?: Record<string, unknown> } | null
@@ -523,6 +546,9 @@ export function MistralQuotaCard(): ReactElement {
       adminKeyDraft={adminKeyDraft}
       adminKeyConfigured={adminKeyConfigured}
       adminStatus={adminStatus}
+      webSessionDraft={webSessionDraft}
+      onWebSessionChange={setWebSessionDraft}
+      onImportWebSession={importWebSession}
       busy={busy}
       error={error}
       onPlanChange={changePlan}
