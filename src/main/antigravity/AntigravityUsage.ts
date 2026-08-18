@@ -149,8 +149,8 @@ const AGY_USAGE_POOL_WINDOWS: Record<AntigravityUsagePoolType, AgyUsagePoolWindo
     fiveHour: { id: 'agy-gemini-5h', label: 'Gemini 5H' }
   },
   thirdParty: {
-    weekly: { id: 'agy-3p-weekly', label: '3P Weekly' },
-    fiveHour: { id: 'agy-3p-5h', label: '3P 5H' }
+    weekly: { id: 'agy-3p-weekly', label: 'Claude/GPT Weekly' },
+    fiveHour: { id: 'agy-3p-5h', label: 'Claude/GPT 5H' }
   }
 }
 

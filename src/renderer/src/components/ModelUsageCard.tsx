@@ -393,7 +393,7 @@ function isWeeklyWindow(text: string): boolean {
 }
 
 function isThirdPartyAgyWindow(text: string): boolean {
-  return text.includes('agy') && text.includes('3p')
+  return text.includes('agy') && (text.includes('3p') || text.includes('claude/gpt'))
 }
 
 function isAgyThirdPartyWeeklyWindow(text: string): boolean {
@@ -493,8 +493,8 @@ function compactCellsForEntry(
     // agy /usage reports Gemini and CLAUDE/GPT 3P pools as separate sub-limit
     // windows. The Gemini windows map to 5H/WK; the 3P windows map to X1/X2.
     // The same panel now also includes third-party windows; those land on X1/X2.
-    assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
-    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    assign('fiveHour', findCompactWindow(entry, (text) => isFiveHourWindow(text) && !isThirdPartyAgyWindow(text)))
+    assign('weekly', findCompactWindow(entry, (text) => isWeeklyWindow(text) && !isThirdPartyAgyWindow(text)))
     assign('extraOne', findCompactWindow(entry, isAgyThirdPartyFiveHourWindow))
     assign('extraTwo', findCompactWindow(entry, isAgyThirdPartyWeeklyWindow))
     return cells
