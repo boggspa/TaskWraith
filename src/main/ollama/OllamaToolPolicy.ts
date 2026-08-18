@@ -121,7 +121,7 @@ export function ollamaProtectedPathReason(relativePath: string): string | null {
     const protectedNormalized = protectedPath.toLowerCase()
     if (normalized === protectedNormalized || 
         normalized.startsWith(protectedNormalized + '/') ||
-        basename === protectedNormalized) {
+        basename === protectedNormalized || (protectedNormalized === '.env' && basename.startsWith('.env'))) {
       if (protectedPath.includes('.env') || protectedPath === '.env') {
         return 'environment/secret files are protected from direct Ollama modification'
       }

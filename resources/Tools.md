@@ -1050,7 +1050,7 @@ Publish or update a structured goal-step checklist for the current run. Use this
 - Access: read-only (no approval needed)
 - Required args: todos
 - Optional args: merge
-- Example: `{"taskwraith_tool":{"name":"todo_write","arguments":{"todos":[]}}}`
+- Example: `{"taskwraith_tool":{"name":"todo_write","arguments":{"merge":true,"todos":[{"id":"1","content":"Investigate the codebase","status":"completed"},{"id":"2","content":"Implement the feature","status":"in_progress"}]}}}`
 
 ## delegate_to_subthread
 

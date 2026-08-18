@@ -288,7 +288,7 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuetext="High"')
     expect(markup).toContain('--ladder-accent:var(--provider-mistral-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup).toContain('--ladder-fx-strength:1')
+    expect(markup).toContain('--ladder-fx-strength:0.5')
     expect(markup).toContain('composer-combined-picker-ladder-sparkles')
     expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
     expect(markup).not.toContain('data-disabled="true"')

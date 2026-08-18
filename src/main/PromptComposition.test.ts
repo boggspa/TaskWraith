@@ -1834,7 +1834,7 @@ describe('composeRunPrompt ollama workflow-hint intent', () => {
   it('keeps the plan-drafting scout hint for Plan-workflow runs', () => {
     const result = composeRunPrompt({ instructionContext: null, ...base, workflowMode: 'plan' })
     expect(result.contextualPrompt).toContain('TaskWraith local-scout workflow')
-    expect(result.contextualPrompt).toContain('When the plan is ready, ask the user')
+    expect(result.contextualPrompt).toContain('When your investigation is complete, present your findings and wait for further instructions.')
   })
 })
 

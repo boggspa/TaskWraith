@@ -102,7 +102,7 @@ describe('Ollama tool policy', () => {
         args: { path: 'package.json', intent: 'Change the package.' },
         workspacePath: workspace
       })
-    ).toBeNull()
+    ).toMatch(/protected from direct Ollama modification/)
     expect(
       ollamaResolvedToolPolicyError({
         toolName: 'write_file',
