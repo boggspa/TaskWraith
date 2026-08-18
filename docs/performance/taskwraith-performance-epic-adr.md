@@ -664,6 +664,48 @@ not adjudicated.
 
 **Item 6 (utility-process durable write) — committed, outside this ADR's core tranches:** `b745115a1` landed the worker (`src/main/store/PersistenceWriteWorker.ts` + `.test.ts`, `src/main/workers/persistenceWriteWorker.ts`), seam (`src/main/store/index.ts`), durability tests (`src/main/store/persistenceDurability.test.ts`, 14/14), Phase-0 baseline (`src/main/store/persistenceWriteBaseline.bench.test.ts`), and build entry (`electron.vite.config.ts`). Flag dark (`TASKWRAITH_UTILITY_WRITE=1`), no composition-root wiring. ~40 ms (57%) of the ~70 ms large-save block moves off main; serialize (~30 ms) stays. This narrows the freeze window until T4 — it does not replace v2 append-oriented persistence.
 
+**Amendment (2026-08-18, hot-path slices: T5 hot case closed, D1 fsync class, T3a seed batch, item 6 wired):**
+four commits landed on shared `master` at user direction (markers + explicit
+pathspec / private-index commits; same standing position on invariant 6 as the
+08-16 notes — recorded, not adjudicated):
+
+- **T5's hot case is closed** (`3dc82a01c`). Sealed activities in RUNNING runs
+  externalize once their serialized detail crosses 64 KB: the raw trio
+  (`parameters`/`rawUseEvent`/`rawResultEvent`) strips mid-run behind
+  `detailRef`, bounded summaries stay inline until run-terminal so
+  small-payload record readers are unchanged. Each save re-adopts the previous
+  save's ref (seal identity: status+endedAt+durationMs) against the
+  orchestrator's per-flush heavy re-delivery; strips substitute into authored
+  ops so journal replay stays byte-exact, and any strip the ops cannot express
+  rejects the authored chain onto derived diffing exactly as terminal saves
+  always did. The terminal fold verifies the archive covers the inline fields
+  (sync ranged read) before stripping them; drift re-stages a merged detail so
+  raw is never orphaned.
+- **§5.2's D1 class reached the journal append seam** (`28474d644`).
+  Normal-boundary batches whose every op is soft stream data write their bytes
+  synchronously and hand the fsync to the kernel off-thread; user messages,
+  run transitions, content replacements, and every approval/terminal boundary
+  keep the blocking fsync. `checkpointAll` drains pending flushes; a
+  64-pending saturation bound falls back to sync; a failed deferred flush
+  escalates that chat's next append.
+- **T3a's fan-out seed multiplier is gone** (`98da30050`). An N-lane wave
+  seeds through `flushChatOverlay` and persists once (pinned: lane-run growth
+  per save went [1,1,1] → [3]).
+- **Item 6 is wired** (`4480ab827` + `0b94acdd6`). The composition root
+  registers the queue when `TASKWRAITH_UTILITY_WRITE=1` (still dark by
+  default); the queue gains `drainSync()` and will-quit drains before
+  disposing, closing a dispose-drops-queued-barrier-writes quit hazard. T1
+  production instrumentation lands with it: a `monitorEventLoopDelay` meter
+  plus `get-main-perf-snapshot` IPC bundling the store's persistence counters —
+  where G-lag becomes readable outside a harness.
+- **Diagnostic numbers** (dirty-tree, non-authoritative per §7.1; 4 chats × 12
+  interleaved streaming saves, each chat carrying 3×256 KB sealed live
+  activities + a streaming assistant message, orchestrator-style heavy
+  re-delivery per save): mean save 8.57 → 4.16 ms, p95 12.01 → 4.99 ms, max
+  18.74 → 5.22 ms, whole-record checkpoint bytes −94.5% (3.33 MB → 183 KB per
+  4 checkpoints); mutation bytes per save identical (344 B) — replay parity
+  preserved while the walls came down.
+
 ---
 
 ## 9. File ownership matrix (disjoint worktrees)
