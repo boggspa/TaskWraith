@@ -12681,6 +12681,105 @@ Next action:
     ).toBe(false)
   })
 
+  it('settles the round at yield-to-user acceptance instead of waiting for the provider transport', async () => {
+    // Production RunCoordinator resolves deps.dispatch only when the provider
+    // adapter operation settles (process exit + teardown), which can run many
+    // seconds past an explicit ensemble_yield. Model that here: the dispatch
+    // promise stays pending until the test releases it.
+    const releaseDispatchByRunId = new Map<string, () => void>()
+    const harness = makeHarness({
+      dispatch: (payload) =>
+        new Promise((resolve) => {
+          releaseDispatchByRunId.set(payload.appRunId || '', () =>
+            resolve({ dispatched: true, appRunId: payload.appRunId || '' })
+          )
+        })
+    })
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 24
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: '@Worker assess the tree, then yield back to the user.',
+      dmTargetParticipantId: 'codex',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Assessment complete; awaiting user direction.',
+        'user'
+      )
+    )
+
+    // The transport is still winding down (its dispatch promise is pending).
+    // The round must close now rather than sit in "Finalizing turn" limbo for
+    // the rest of the provider process's lifetime.
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.chat.ensemble?.activeRound?.turnTransition).toBeUndefined()
+    const endedAt = harness.chat.ensemble?.activeRound?.endedAt
+
+    // The provider finally settles; the parked serial loop must stay inert —
+    // no second close, no new dispatch, no queue activity.
+    releaseDispatchByRunId.get(harness.dispatched[0].appRunId!)?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
+    expect(harness.chat.ensemble?.activeRound?.endedAt).toBe(endedAt)
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('does not settle a yield-to-user early while a queued user prompt is waiting', async () => {
+    const releaseDispatchByRunId = new Map<string, () => void>()
+    const harness = makeHarness({
+      dispatch: (payload) =>
+        new Promise((resolve) => {
+          releaseDispatchByRunId.set(payload.appRunId || '', () =>
+            resolve({ dispatched: true, appRunId: payload.appRunId || '' })
+          )
+        })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Assess the tree.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('claude')
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+    )
+    releaseDispatchByRunId.get(harness.dispatched[0].appRunId!)?.()
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+
+    // A user prompt lands in the queue while the Worker's turn is live.
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued follow-up from the user.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Yielding to the user.',
+        'user'
+      )
+    )
+
+    // Queued user input outranks the yield-to-user close: the round must stay
+    // open so the queued prompt is absorbed at the ordinary drain boundary.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+
+    releaseDispatchByRunId.get(harness.dispatched[1].appRunId!)?.()
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThanOrEqual(3))
+  })
+
   describe('yield-routing contract v2 regressions', () => {
     it('A: lets a non-authority Worker yield to user without authority_precedence', async () => {
       const harness = makeHarness()

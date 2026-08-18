@@ -5417,6 +5417,57 @@ export class EnsembleOrchestrator {
     this.clearYieldReturnStack(runtime)
   }
 
+  /**
+   * Close the round at the moment a foreground yield-to-user is ACCEPTED
+   * rather than when the yielding provider's transport settles.
+   *
+   * The serial loop is parked on `await this.deps.dispatch(...)` for the
+   * whole provider operation — in production that promise resolves only at
+   * process exit + adapter teardown, which can run many seconds (or, for a
+   * hung provider, forever) past the ensemble_yield call. Every policy hook
+   * already treats an accepted user-yield as terminal ("Round closed." is
+   * printed, wakeups/auto-continue/synthesis are all gated off), so waiting
+   * for the transport leaves the round in a "Finalizing turn" limbo the user
+   * cannot cleanly type into.
+   *
+   * Anything that still legitimately contends for the round keeps today's
+   * deferred close instead: live/reserved fan-out lanes, pending owned
+   * settlements, live opening scouts, a queued user prompt, or a pending
+   * mid-run steering delivery (user input outranks the close — the parked
+   * drain absorbs it once the transport settles). The parked loop resumes
+   * against `ownsRunningRound` fences and stays inert after this close.
+   */
+  private settleRoundForUserYield(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): void {
+    if (!this.ownsRunningRound(runtime)) return
+    if (runtime.activeRunId !== run.runId) return
+    const chat = this.deps.getChat(runtime.chatId)
+    const round = chat?.ensemble?.activeRound
+    if (!chat?.ensemble || !round || round.roundId !== runtime.roundId) return
+    if (
+      roundHasActiveLanes(round) ||
+      (runtime.fanoutReservedParticipantIds?.size || 0) > 0 ||
+      (runtime.activeScoutRunIds?.size || 0) > 0 ||
+      this.hasPendingOwnedFanoutSettlements(runtime.chatId, runtime.roundId)
+    ) {
+      return
+    }
+    // Boss closeout clears its own queue/wakeups before the contention check,
+    // mirroring the drain-path `prepareBossYieldToUserClose` ordering.
+    if (this.isBossParticipant(chat, runtime, run.participant.id)) {
+      this.prepareBossYieldToUserClose(runtime)
+    }
+    const pendingSteeringIds = (
+      this.deps.getPendingMidRunSteeringEntryIds?.(runtime.chatId) || []
+    ).filter(Boolean)
+    if (runtime.queuedPrompts.length > 0 || pendingSteeringIds.length > 0) return
+    // Same delivery boundary the ordinary drain honours: pending external
+    // contributions land inside the round they were approved for.
+    this.deliverExternalSeatTurns(runtime, undefined)
+    if (runtime.remainingParticipants) runtime.remainingParticipants.length = 0
+    runtime.activeRunId = undefined
+    this.finalizeDrainedRound(runtime)
+  }
+
   private finalizeInactiveRunningRoundSnapshot(
     chatId: string,
     roundId: string,
@@ -5883,6 +5934,12 @@ export class EnsembleOrchestrator {
 
     this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
+    // An accepted foreground yield-to-user closes the round now instead of
+    // waiting out the provider transport ("Finalizing turn" limbo); see
+    // settleRoundForUserYield for the contention cases that still defer.
+    if (routing?.ok && routing.action === 'user' && !isFanoutLane && runtime) {
+      this.settleRoundForUserYield(runtime, run)
+    }
     // Path-B Cursor has no TaskWraith MCP completion owner. Once its streamed
     // yield has been accepted (including a routing rejection), release the
     // round first and then terminate this exact child. Otherwise the logical
@@ -12790,11 +12847,16 @@ export class EnsembleOrchestrator {
     const targets: EnsembleParticipant[] = []
     for (const rawTarget of explicitTargets) {
       const target = stripLeadingAt(rawTarget)
-      const participant = resolvePhraseToParticipant(
-        target,
-        participants,
-        new Set([run.participant.id])
-      )
+      const detail = resolveYieldTargetDetail(target, participants, new Set([run.participant.id]))
+      // Same reason-honest self-target refusal as ensemble_fanout above.
+      if (detail.kind === 'self') {
+        return {
+          ok: false,
+          message: `ensemble_fanout_all: target "${rawTarget}" is this seat itself. A lane cannot check or redo its own caller's work — verification counts only when a different seat does it. Pick an uninvolved peer or a reviewer-stage seat.`,
+          error: 'invalid_target'
+        }
+      }
+      const participant = detail.kind === 'resolved' ? detail.participant : null
       if (!participant || !participant.enabled) {
         return {
           ok: false,
@@ -17209,14 +17271,22 @@ export class EnsembleOrchestrator {
 
     // Detached lanes must settle before queue absorb / steering boundary /
     // continuous auto-continue, so BG and fan-out output stay ahead of the
-    // next same-round interjection delivery.
-    if (!runtime.cancelled) this.deliverExternalSeatTurns(runtime, undefined)
+    // next same-round interjection delivery. Both boundary actions are fenced
+    // on live ownership: a yield-to-user can settle the round while this loop
+    // is still parked on the provider transport, and the resumed tail must
+    // not deliver external turns into — or absorb a steer into — that
+    // already-closed round.
+    if (this.ownsRunningRound(runtime)) this.deliverExternalSeatTurns(runtime, undefined)
     if (!runtime.cancelled && this.deferDrainForActiveLanes(runtime)) return
 
     // Absorb one queued prompt at the drain boundary, then grant a same-round
     // seat turn for it. Remaining FIFO entries wait for later boundaries —
     // never finishRound+beginRound from the queue.
-    if (!runtime.cancelled && remaining.length === 0 && runtime.queuedPrompts.length > 0) {
+    if (
+      this.ownsRunningRound(runtime) &&
+      remaining.length === 0 &&
+      runtime.queuedPrompts.length > 0
+    ) {
       this.absorbNextQueuedPromptIntoLiveRound(runtime)
     }
 
@@ -17961,11 +18031,19 @@ export class EnsembleOrchestrator {
     const targets: EnsembleParticipant[] = []
     for (const rawTarget of explicitTargets) {
       const target = stripLeadingAt(rawTarget)
-      const participant = resolvePhraseToParticipant(
-        target,
-        participants,
-        new Set([run.participant.id])
-      )
+      const detail = resolveYieldTargetDetail(target, participants, new Set([run.participant.id]))
+      // A self-target was always structurally blocked, but it fell into the
+      // generic unresolved-name refusal, which reads like a typo — the caller
+      // then retries spelling variants of its own name. Say the real reason,
+      // and say what independent verification actually requires.
+      if (detail.kind === 'self') {
+        return {
+          ok: false,
+          message: `ensemble_fanout: target "${rawTarget}" is this seat itself. A lane cannot check or redo its own caller's work — verification counts only when a different seat does it. Pick an uninvolved peer or a reviewer-stage seat.`,
+          error: 'invalid_target'
+        }
+      }
+      const participant = detail.kind === 'resolved' ? detail.participant : null
       if (!participant || !participant.enabled) {
         return {
           ok: false,
