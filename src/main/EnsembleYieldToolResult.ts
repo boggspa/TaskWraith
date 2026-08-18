@@ -21,7 +21,18 @@ export type EnsembleYieldToolResult = {
 export const ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE =
   'No active Ensemble participant run matches this yield call.'
 export const ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE =
-  'This Ensemble participant run already settled; no further routing action is required.'
+  'This Ensemble participant run already settled — make no further tool calls and end your turn.'
+
+/**
+ * Returned by ensemble control-surface tools when the calling run was
+ * finalized by a host/tool decision (yield accepted, seat skipped or
+ * re-summoned, wakeup scheduled) while its provider process is still
+ * streaming. Without an explicit stop instruction the model flails against
+ * the dead route until the transport reaper cuts it (observed: 2.5 minutes
+ * of retried control calls in ChipTown chat 75d1d780).
+ */
+export const ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE =
+  "This run's turn is already over — the round has moved on. Make no further tool calls and end your turn now."
 
 export function buildEnsembleYieldToolResult(input: {
   outcome: EnsembleYieldOutcome
@@ -97,11 +108,22 @@ export function buildEnsembleYieldToolResult(input: {
   }
 
   if (!routing.ok) {
+    // blocked_status has a host-supported recovery the model cannot guess:
+    // queue the seat for the NEXT pass instead of retrying the yield. Name
+    // both advertised control-tool spellings (same doctrine as the
+    // authority-routing message above) so no profile is stranded.
+    const rejectionGuidance =
+      routing.reason === 'blocked_status'
+        ? ' The target seat is not routable in this pass (disabled, unreachable, mid fan-out, or no longer pending).' +
+          ' To hand work to it anyway, call whichever control tool this session lists — `ensemble_control` or' +
+          ' `ensemble_bossman_control` — with select_participants to queue it for the next pass, then end your turn.' +
+          ' Do not retry the same yield.'
+        : ''
     return {
       ...base,
       ok: false,
       error: routing.reason,
-      message: `Yield target was not routed (${routing.reason}).`,
+      message: `Yield target was not routed (${routing.reason}).${rejectionGuidance}`,
       ...(routing.suggestedAliases?.length
         ? { suggestedAliases: routing.suggestedAliases }
         : {})

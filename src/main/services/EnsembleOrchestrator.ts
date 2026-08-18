@@ -9,6 +9,7 @@ import {
 } from '../../shared/ensembleSeatFailureClear'
 import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import { ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE } from '../EnsembleYieldToolResult'
 import { resolveRuntimeProfileIdForScope } from '../RuntimeProfileResolution'
 import {
   unattendedElevationPresetId,
@@ -505,6 +506,16 @@ const DEFAULT_ACTIVE_FANOUT_AWAIT_REMINDER_TURNS = 3
 const TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS = 2 * 60 * 1000
 const TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT = 256
 
+/**
+ * How long a run's provider transport may outlive the run's terminal decision
+ * before the orchestrator cuts it. A yielded/skipped/re-summoned seat whose
+ * process keeps streaming parks the serial loop for the whole provider
+ * lifetime ("Finalizing turn" limbo) while burning tokens into a discarded
+ * timeline. Healthy post-yield wrap-ups settle in a few seconds; the observed
+ * pathological case ran 2.5 minutes.
+ */
+export const SUPERSEDED_TRANSPORT_REAP_GRACE_MS = 15_000
+
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
 }
@@ -636,6 +647,8 @@ export interface EnsembleOrchestratorDeps {
   shouldPersistProviderSessionForRun?: (runId: string) => boolean
   releaseProviderSessionPersistenceDecision?: (runId: string) => void
   cancelRun: (provider: ProviderId, runId?: string) => Promise<boolean>
+  /** Test override for the superseded-transport reap grace window. */
+  supersededTransportReapGraceMs?: number
   /**
    * Cursor Path-B can terminate its child without delivering the canonical
    * provider `result` event. The orchestrator uses this exact transport
@@ -918,6 +931,16 @@ interface ActiveParticipantRun {
    * so cancellation is repeated after the receipt to close that race.
    */
   dispatchCancellationRequested?: boolean
+  /**
+   * True once this run's `deps.dispatch(...)` promise has settled — the
+   * provider process exited and its adapter teardown finished. A run
+   * finalized while this is false has a lingering transport that nothing
+   * else bounds.
+   */
+  dispatchSettled?: boolean
+  /** Bounded-grace reaper for a transport that outlives its run's terminal
+   * decision. Cleared when the dispatch settles first. */
+  supersededTransportReapTimer?: ReturnType<typeof setTimeout>
   /** Per-owner tail that serializes explicit fan-out dispatch windows. */
   fanoutDispatchQueue?: Promise<void>
   /**
@@ -4256,6 +4279,10 @@ export class EnsembleOrchestrator {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
     }
+    if (run.supersededTransportReapTimer) {
+      clearTimeout(run.supersededTransportReapTimer)
+      run.supersededTransportReapTimer = undefined
+    }
     run.dispatchCancellationRequested = true
     run.suppressOwnedFanoutTranscriptRelease = true
     run.status = 'cancelled'
@@ -6527,6 +6554,16 @@ export class EnsembleOrchestrator {
     return Boolean(this.recentlyTerminalRun(runId))
   }
 
+  /**
+   * A control-surface call from a run the round already finalized must tell
+   * the model to stop, not just that nothing matched: a superseded seat that
+   * keeps retrying control calls burns tokens into a discarded timeline until
+   * the transport reaper cuts it.
+   */
+  private supersededOrNoActiveRunMessage(runId: string | undefined, fallback: string): string {
+    return this.isRecentlyTerminalRun(runId) ? ENSEMBLE_SUPERSEDED_RUN_TOOL_MESSAGE : fallback
+  }
+
   private recentlyTerminalRun(runId: string | undefined): ActiveParticipantRun | undefined {
     if (!runId) return undefined
     const retained = this.runsByRunId.get(runId)
@@ -6625,7 +6662,10 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_bossman_control',
         action,
-        message: 'No active Ensemble participant run matches this Boss control call.',
+        message: this.supersededOrNoActiveRunMessage(
+          runId,
+          'No active Ensemble participant run matches this Boss control call.'
+        ),
         error: 'no_active_run'
       }
     }
@@ -11974,7 +12014,10 @@ export class EnsembleOrchestrator {
     if (!run) {
       return invalid(
         'no_active_run',
-        'ensemble_await: no active Ensemble participant run matches this tool call.'
+        this.supersededOrNoActiveRunMessage(
+          runId,
+          'ensemble_await: no active Ensemble participant run matches this tool call.'
+        )
       )
     }
     const runtime = this.roundsByChatId.get(run.chatId)
@@ -12086,7 +12129,10 @@ export class EnsembleOrchestrator {
     if (!run) {
       return invalid(
         'no_active_run',
-        'ensemble_lane_result: no active Ensemble participant run matches this tool call.'
+        this.supersededOrNoActiveRunMessage(
+          runId,
+          'ensemble_lane_result: no active Ensemble participant run matches this tool call.'
+        )
       )
     }
     const chat = this.deps.getChat(run.chatId)
@@ -12235,7 +12281,10 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_fanout',
         mode,
-        message: 'ensemble_fanout: no active Ensemble participant run matches this tool call.',
+        message: this.supersededOrNoActiveRunMessage(
+          runId,
+          'ensemble_fanout: no active Ensemble participant run matches this tool call.'
+        ),
         error: 'no_active_run'
       }
     }
@@ -12638,7 +12687,10 @@ export class EnsembleOrchestrator {
       return {
         ok: false,
         tool: 'ensemble_fanout_all',
-        message: 'ensemble_fanout_all: no active Ensemble participant run matches this tool call.',
+        message: this.supersededOrNoActiveRunMessage(
+          runId,
+          'ensemble_fanout_all: no active Ensemble participant run matches this tool call.'
+        ),
         error: 'no_active_run'
       }
     }
@@ -12951,7 +13003,10 @@ export class EnsembleOrchestrator {
       return {
         ok: false,
         tool: 'ensemble_send',
-        message: 'ensemble_send: no active Ensemble participant run matches this tool call.',
+        message: this.supersededOrNoActiveRunMessage(
+          runId,
+          'ensemble_send: no active Ensemble participant run matches this tool call.'
+        ),
         error: 'no_active_run'
       }
     }
@@ -16567,6 +16622,8 @@ export class EnsembleOrchestrator {
         run.transportDispatchState = 'unknown'
         await this.requestExactRunCancellation(run).catch(() => false)
         dispatchFailure = classifyDispatchError(error)
+      } finally {
+        this.markRunDispatchSettled(run)
       }
       const dispatchCancellationWon =
         !this.ownsRunningRound(runtime) || run.dispatchCancellationRequested === true
@@ -19211,12 +19268,18 @@ export class EnsembleOrchestrator {
                 { suppliedMessageIds }
               )
             } catch (error) {
-              void handleDispatchRejection(error).finally(settleDispatchStart)
+              void handleDispatchRejection(error).finally(() => {
+                this.markRunDispatchSettled(run)
+                settleDispatchStart()
+              })
               return
             }
             void dispatchOperation
               .then(handleDispatchResult, handleDispatchRejection)
-              .finally(settleDispatchStart)
+              .finally(() => {
+                this.markRunDispatchSettled(run)
+                settleDispatchStart()
+              })
           })
         })()
       )
@@ -20230,6 +20293,42 @@ export class EnsembleOrchestrator {
     }
   }
 
+  private markRunDispatchSettled(run: ActiveParticipantRun): void {
+    run.dispatchSettled = true
+    if (run.supersededTransportReapTimer) {
+      clearTimeout(run.supersededTransportReapTimer)
+      run.supersededTransportReapTimer = undefined
+    }
+  }
+
+  /**
+   * A run can be finalized by a tool/host decision (yield accepted, seat
+   * skipped or re-summoned, wakeup scheduled, watchdog failure) while its
+   * provider process is still streaming. Everything it produces from that
+   * point lands in a discarded timeline, and the serial loop stays parked on
+   * its dispatch until the process exits — observed unbounded. Give the
+   * transport a short grace to wrap up on its own, then cut it with the same
+   * cancellation the Stop path uses; the dispatch continuation then resumes
+   * exactly as it does after a natural provider exit.
+   */
+  private scheduleSupersededTransportReap(run: ActiveParticipantRun): void {
+    if (run.dispatchSettled || run.supersededTransportReapTimer) return
+    const state = run.transportDispatchState
+    // Only a dispatch window that actually opened can linger: an unopened or
+    // adapter-rejected dispatch has no live process behind it.
+    if (state !== 'pending' && state !== 'accepted' && state !== 'unknown') return
+    const grace = this.deps.supersededTransportReapGraceMs ?? SUPERSEDED_TRANSPORT_REAP_GRACE_MS
+    const timer = setTimeout(() => {
+      run.supersededTransportReapTimer = undefined
+      if (run.dispatchSettled) return
+      void Promise.resolve(this.deps.cancelRun(run.participant.provider, run.runId)).catch(
+        () => undefined
+      )
+    }, grace)
+    timer.unref?.()
+    run.supersededTransportReapTimer = timer
+  }
+
   private finalizeRun(
     run: ActiveParticipantRun,
     status: EnsembleParticipantStatus,
@@ -20299,6 +20398,7 @@ export class EnsembleOrchestrator {
     run.terminalFinalized = true
     run.terminalReason = reason
     this.rememberTerminalRun(run)
+    this.scheduleSupersededTransportReap(run)
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime?.roundId === run.roundId && !run.preserveParticipantRoundStatus) {
       this.incrementBossmanBudgetUsage(

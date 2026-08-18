@@ -293,6 +293,7 @@ function makeHarness(
     getProviderRunTransportLiveness?: EnsembleOrchestratorDeps['getProviderRunTransportLiveness']
     hasPendingProviderRunApprovals?: EnsembleOrchestratorDeps['hasPendingProviderRunApprovals']
     cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
+    supersededTransportReapGraceMs?: number
     terminateRunForHistory?: EnsembleOrchestratorDeps['terminateRunForHistory']
     resolveExternalSeats?: EnsembleOrchestratorDeps['resolveExternalSeats']
     externalContributionQueue?: EnsembleOrchestratorDeps['externalContributionQueue']
@@ -453,6 +454,9 @@ function makeHarness(
     getSettings: options.getSettings ?? makeSettings,
     dispatch,
     cancelRun,
+    ...(options.supersededTransportReapGraceMs !== undefined
+      ? { supersededTransportReapGraceMs: options.supersededTransportReapGraceMs }
+      : {}),
     appendMidRunSteering,
     getPendingMidRunSteeringEntryIds,
     ...(options.getProviderRunTransportLiveness
@@ -6707,6 +6711,111 @@ Next action:
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       'Reviewer yielded. Passing to worker.'
     )
+  })
+
+  it('reaps a lingering provider transport after the grace once its run is superseded', async () => {
+    // Production dispatch settles at process exit + adapter teardown, not at
+    // the yield. A seat that yields and then keeps streaming parks the serial
+    // loop for the whole provider lifetime — the "Finalizing turn" limbo,
+    // peer-handoff flavour (ChipTown chat 75d1d780, 2026-08-18: 2.5 minutes).
+    const releaseDispatchByRunId = new Map<string, () => void>()
+    const harness = makeHarness({
+      supersededTransportReapGraceMs: 40,
+      dispatch: (payload) =>
+        new Promise((resolve) => {
+          releaseDispatchByRunId.set(payload.appRunId || '', () =>
+            resolve({ dispatched: true, appRunId: payload.appRunId || '' })
+          )
+        }),
+      cancelRun: async (_provider, runId) => {
+        // A real cancel ends the provider process, which settles its dispatch.
+        releaseDispatchByRunId.get(runId || '')?.()
+        return true
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Split this work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRunId = harness.dispatched[0].appRunId!
+    const firstProvider = harness.dispatched[0].provider
+
+    expectYielded(harness.orchestrator.markYielded(firstRunId, 'Passing to worker.'))
+
+    // The yield is recorded but the transport lingers. The bounded reap must
+    // cut it instead of waiting out the provider process...
+    await vi.waitFor(() =>
+      expect(harness.cancelRun).toHaveBeenCalledWith(firstProvider, firstRunId)
+    )
+    // ...and with the transport gone the round advances to the next seat.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
+  it('tells a superseded run to end its turn instead of a bare no_active_run', async () => {
+    // A finalized-but-still-streaming seat that retries control calls must be
+    // told to stop; the bare "no run matches" text reads as a transient miss
+    // and the model keeps flailing (ChipTown chat 75d1d780, msgs 2026-08-18).
+    const releaseDispatchByRunId = new Map<string, () => void>()
+    const harness = makeHarness({
+      supersededTransportReapGraceMs: 60_000,
+      dispatch: (payload) =>
+        new Promise((resolve) => {
+          releaseDispatchByRunId.set(payload.appRunId || '', () =>
+            resolve({ dispatched: true, appRunId: payload.appRunId || '' })
+          )
+        })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Split this work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRunId = harness.dispatched[0].appRunId!
+
+    expectYielded(harness.orchestrator.markYielded(firstRunId, 'Passing to worker.'))
+
+    // The transport is still live; the model retries a control call anyway.
+    const result = await harness.orchestrator.bossmanControlForRun(firstRunId, {
+      action: 'summon_participant'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('no_active_run')
+    expect(result.message).toBe(
+      "This run's turn is already over — the round has moved on. Make no further tool calls and end your turn now."
+    )
+    releaseDispatchByRunId.get(firstRunId)?.()
+  })
+
+  it('leaves a transport alone when its dispatch settles within the reap grace', async () => {
+    const releaseDispatchByRunId = new Map<string, () => void>()
+    const harness = makeHarness({
+      supersededTransportReapGraceMs: 30,
+      dispatch: (payload) =>
+        new Promise((resolve) => {
+          releaseDispatchByRunId.set(payload.appRunId || '', () =>
+            resolve({ dispatched: true, appRunId: payload.appRunId || '' })
+          )
+        })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Split this work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const firstRunId = harness.dispatched[0].appRunId!
+
+    expectYielded(harness.orchestrator.markYielded(firstRunId, 'Passing to worker.'))
+    // The provider wraps up promptly, as a healthy transport does.
+    releaseDispatchByRunId.get(firstRunId)?.()
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    await new Promise((resolve) => setTimeout(resolve, 90))
+    expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
   it('separates Codex ensemble assistant items instead of collapsing them into one wall', async () => {
