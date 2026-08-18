@@ -49,6 +49,98 @@ export function shouldShowViewportJump(input: {
   return !input.expanded && !input.following
 }
 
+/**
+ * DOM event name for the disclosure→viewport reveal contract. A card that the
+ * user just expanded dispatches this (bubbling) from its detail element; every
+ * `LiveActivityViewport` on the ancestor chain pauses auto-follow and scrolls
+ * the detail into its clamped window. A bubbled DOM event — rather than a
+ * React context/prop — because the dispatchers render inside cached segment
+ * bodies and nested viewports (fan-out lanes) that a prop thread would have to
+ * tunnel through; the DOM already knows the ancestor chain.
+ */
+export const ACTIVITY_REVEAL_EVENT = 'live-activity-reveal'
+
+/**
+ * Space (px) kept visible above a revealed detail so the row header that was
+ * clicked stays on screen — a reveal that shows detail with no label reads as
+ * a jump to unrelated content.
+ */
+export const REVEAL_HEADER_ALLOWANCE_PX = 28
+
+/**
+ * Whether a disclosure state change is the user opening the card. Only the
+ * collapsed→expanded transition reveals: collapse must never scroll, and a
+ * remount that starts expanded (virtualised rows restoring persisted state)
+ * must initialise its previous-state ref to the current value so mounting
+ * never counts as a transition.
+ */
+export function isExpandRevealTransition(previous: boolean, next: boolean): boolean {
+  return next && !previous
+}
+
+/**
+ * `scrollIntoView({ block: 'nearest' })` semantics for ONE scroller, done by
+ * hand: returns the next scrollTop that makes `[targetTop - headerAllowance,
+ * targetBottom]` visible, or null when it already is. Manual math instead of
+ * the platform call because scrollIntoView walks EVERY scrollable ancestor —
+ * including overflow:hidden wrappers between the card and the transcript,
+ * which it would silently shift with no way for the user to shift back. The
+ * viewport applies this to itself only; nested viewports each apply their own
+ * as the event bubbles outward, so lane-in-lane clamps compose.
+ *
+ * The head wins conflicts: a detail taller than the window aligns its top
+ * (plus the header allowance) so the user reads from the beginning.
+ */
+export function revealScrollAdjustment(input: {
+  scrollTop: number
+  clientHeight: number
+  /** Target bounds in the scroller's content coordinate space. */
+  targetTop: number
+  targetBottom: number
+  headerAllowance?: number
+}): number | null {
+  const { scrollTop, clientHeight, targetTop, targetBottom } = input
+  const headerAllowance = input.headerAllowance ?? 0
+  if (
+    !Number.isFinite(scrollTop) ||
+    !Number.isFinite(clientHeight) ||
+    !Number.isFinite(targetTop) ||
+    !Number.isFinite(targetBottom)
+  ) {
+    return null
+  }
+  const effectiveTop = Math.max(0, targetTop - headerAllowance)
+  if (targetBottom - effectiveTop >= clientHeight) return effectiveTop
+  if (effectiveTop < scrollTop) return effectiveTop
+  if (targetBottom > scrollTop + clientHeight) return targetBottom - clientHeight
+  return null
+}
+
+/**
+ * Dispatch the reveal event from a card's freshly-mounted detail element.
+ * Thin DOM shim kept beside the contract constant so dispatchers and the
+ * listener can never drift on the event's shape (bubbles is load-bearing:
+ * nested viewports rely on it).
+ */
+export function dispatchActivityReveal(target: Element | null | undefined): void {
+  if (!target || typeof CustomEvent === 'undefined') return
+  target.dispatchEvent(new CustomEvent(ACTIVITY_REVEAL_EVENT, { bubbles: true }))
+}
+
+/**
+ * Whether a content-driven height change (card expand/collapse, presence
+ * animation, image load — anything that grows scrollHeight without a scroll
+ * or revision) should re-pin the viewport to its live edge. Only while
+ * collapsed AND following: a paused viewport belongs to the user's reading
+ * position, and the expanded view is free-flow with no live edge to hold.
+ */
+export function shouldRepinOnContentGrowth(input: {
+  expanded: boolean
+  following: boolean
+}): boolean {
+  return !input.expanded && input.following
+}
+
 /** Minimum overflow (px) before an edge fade is shown — avoids flicker at rest. */
 export const EDGE_FADE_OVERFLOW_PX = 4
 

@@ -8,9 +8,13 @@ import {
   type ReactNode
 } from 'react'
 import {
+  ACTIVITY_REVEAL_EVENT,
+  REVEAL_HEADER_ALLOWANCE_PX,
   distanceFromBottom,
   edgeFadeState,
   nextAutoFollow,
+  revealScrollAdjustment,
+  shouldRepinOnContentGrowth,
   shouldShowViewportJump
 } from '../lib/LiveActivityViewport'
 
@@ -79,6 +83,14 @@ export function LiveActivityViewport({
   const [following, setFollowing] = useState(true)
   const [fadeTop, setFadeTop] = useState(false)
   const [fadeBottom, setFadeBottom] = useState(false)
+  /**
+   * Consume-once guard for the reveal scroll write below: the write fires a
+   * scroll event asynchronously, and `nextAutoFollow` would re-engage follow
+   * if the revealed detail happens to sit at the live edge — undoing the
+   * deliberate pause the instant it was made. The flag suppresses exactly one
+   * follow evaluation; edge fades still refresh on that event.
+   */
+  const skipFollowOnScrollRef = useRef(false)
 
   const setExpandedState = useCallback(
     (next: boolean | ((current: boolean) => boolean)) => {
@@ -121,18 +133,71 @@ export function LiveActivityViewport({
     refreshEdgeFades()
   }, [expanded, refreshEdgeFades])
 
+  // Observe the CONTENT as well as the clamp box: once content exceeds the
+  // collapsed cap the box never resizes again, so a child-driven height change
+  // (card expand, presence animation, image load) would otherwise leave the
+  // fades stale — advertising "nothing more below" exactly when a freshly
+  // expanded detail is clipped below the fold — and let the live edge drift
+  // while following. Children are observed rather than re-queried per delta:
+  // React reuses the wrapper DOM nodes across renders, so the observed set
+  // only goes stale on remount (which re-runs this effect).
   useEffect(() => {
     const el = scrollRef.current
     if (!el || expanded) return
-    const observer = new ResizeObserver(() => refreshEdgeFades())
+    const observer = new ResizeObserver(() => {
+      if (shouldRepinOnContentGrowth({ expanded, following })) {
+        el.scrollTop = el.scrollHeight
+      }
+      refreshEdgeFades()
+    })
     observer.observe(el)
+    for (const child of Array.from(el.children)) {
+      observer.observe(child)
+    }
     return () => observer.disconnect()
+  }, [expanded, following, refreshEdgeFades])
+
+  // Disclosure→viewport reveal contract: a card the user just expanded
+  // dispatches ACTIVITY_REVEAL_EVENT from its detail element. While collapsed,
+  // pause auto-follow (the user is inspecting — streaming must not yank the
+  // card away; the Jump pill is the way back) and scroll the detail into this
+  // clamp. Each nested viewport on the bubble path adjusts only ITSELF, so
+  // lane-in-lane clamps compose without double-scrolling ancestors.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || expanded) return
+    const onReveal = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      setFollowing(false)
+      const scrollerRect = el.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const targetTop = targetRect.top - scrollerRect.top + el.scrollTop
+      const nextScrollTop = revealScrollAdjustment({
+        scrollTop: el.scrollTop,
+        clientHeight: el.clientHeight,
+        targetTop,
+        targetBottom: targetTop + targetRect.height,
+        headerAllowance: REVEAL_HEADER_ALLOWANCE_PX
+      })
+      if (nextScrollTop !== null && nextScrollTop !== el.scrollTop) {
+        skipFollowOnScrollRef.current = true
+        el.scrollTop = nextScrollTop
+      }
+      refreshEdgeFades()
+    }
+    el.addEventListener(ACTIVITY_REVEAL_EVENT, onReveal)
+    return () => el.removeEventListener(ACTIVITY_REVEAL_EVENT, onReveal)
   }, [expanded, refreshEdgeFades])
 
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el || expanded) return
-    setFollowing((current) => nextAutoFollow(distanceFromBottom(el), current))
+    const skipFollow = skipFollowOnScrollRef.current
+    skipFollowOnScrollRef.current = false
+    if (!skipFollow) {
+      setFollowing((current) => nextAutoFollow(distanceFromBottom(el), current))
+    }
     refreshEdgeFades()
   }
 

@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ACTIVITY_REVEAL_EVENT,
+  REVEAL_HEADER_ALLOWANCE_PX,
   VIEWPORT_STICK_PX,
   distanceFromBottom,
   edgeFadeState,
+  isExpandRevealTransition,
   nextAutoFollow,
+  revealScrollAdjustment,
+  shouldRepinOnContentGrowth,
   shouldShowViewportJump
 } from './LiveActivityViewport'
 
@@ -73,5 +78,120 @@ describe('edgeFadeState', () => {
       top: false,
       bottom: false
     })
+  })
+})
+
+describe('isExpandRevealTransition', () => {
+  it('fires only on a collapsed→expanded transition', () => {
+    expect(isExpandRevealTransition(false, true)).toBe(true)
+    expect(isExpandRevealTransition(true, true)).toBe(false)
+    expect(isExpandRevealTransition(true, false)).toBe(false)
+    expect(isExpandRevealTransition(false, false)).toBe(false)
+  })
+})
+
+describe('ACTIVITY_REVEAL_EVENT', () => {
+  it('pins the DOM event name cards dispatch and viewports listen for', () => {
+    expect(ACTIVITY_REVEAL_EVENT).toBe('live-activity-reveal')
+  })
+})
+
+describe('shouldRepinOnContentGrowth', () => {
+  it('re-pins only while collapsed and following', () => {
+    expect(shouldRepinOnContentGrowth({ expanded: false, following: true })).toBe(true)
+  })
+
+  it('never moves a paused (inspecting) viewport', () => {
+    expect(shouldRepinOnContentGrowth({ expanded: false, following: false })).toBe(false)
+  })
+
+  it('never scrolls the expanded free-flow view', () => {
+    expect(shouldRepinOnContentGrowth({ expanded: true, following: true })).toBe(false)
+    expect(shouldRepinOnContentGrowth({ expanded: true, following: false })).toBe(false)
+  })
+})
+
+describe('revealScrollAdjustment', () => {
+  it('returns null when the target is already fully visible', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 100,
+        clientHeight: 168,
+        targetTop: 120,
+        targetBottom: 200
+      })
+    ).toBeNull()
+  })
+
+  it('bottom-aligns a target that extends below the fold', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 0,
+        clientHeight: 168,
+        targetTop: 150,
+        targetBottom: 300
+      })
+    ).toBe(132)
+  })
+
+  it('top-aligns a target above the window, keeping the header allowance visible', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 400,
+        clientHeight: 168,
+        targetTop: 200,
+        targetBottom: 260,
+        headerAllowance: REVEAL_HEADER_ALLOWANCE_PX
+      })
+    ).toBe(200 - REVEAL_HEADER_ALLOWANCE_PX)
+  })
+
+  it('shows the head of a target taller than the window', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 0,
+        clientHeight: 168,
+        targetTop: 200,
+        targetBottom: 600,
+        headerAllowance: REVEAL_HEADER_ALLOWANCE_PX
+      })
+    ).toBe(200 - REVEAL_HEADER_ALLOWANCE_PX)
+  })
+
+  it('keeps the bottom-aligned header allowance visible for a target that just fits', () => {
+    // span (targetBottom - (targetTop - allowance)) === clientHeight exactly:
+    // bottom-aligning also top-aligns the allowance edge.
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 0,
+        clientHeight: 168,
+        targetTop: 200,
+        targetBottom: 340,
+        headerAllowance: 28
+      })
+    ).toBe(172)
+  })
+
+  it('never scrolls to a negative offset', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: 50,
+        clientHeight: 168,
+        targetTop: 10,
+        targetBottom: 60,
+        headerAllowance: 28
+      })
+    ).toBe(0)
+  })
+
+  it('returns null for non-finite metrics', () => {
+    expect(
+      revealScrollAdjustment({
+        scrollTop: Number.NaN,
+        clientHeight: 168,
+        targetTop: 0,
+        targetBottom: 100
+      })
+    ).toBeNull()
   })
 })

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { ProviderId, ToolActivity } from '../../../main/store/types'
 import { MOTION_DURATIONS, usePresence } from '../hooks/usePanelPresence'
+import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
 import {
   REDACTION_HINT,
@@ -107,6 +108,12 @@ export function CompactToolTrace({
     durationMs: MOTION_DURATIONS.base,
     variant: 'rise'
   })
+  // Gated on presence `mounted` (which trails `expanded` by one effect pass)
+  // so the foldout element exists — with final geometry — when the reveal
+  // event asks the ancestor viewports to scroll it into their clamps.
+  const foldoutRevealRef = useRevealOnExpand<HTMLDivElement>(
+    expanded && hasFoldout && foldoutPresence.mounted
+  )
 
   const toggleExpanded = () => setExpanded((current) => !current)
 
@@ -212,6 +219,7 @@ export function CompactToolTrace({
       </div>
       {foldoutPresence.mounted && hasFoldout && (
         <div
+          ref={foldoutRevealRef}
           className={`compact-tool-trace-foldout${
             foldoutPresence.className ? ` ${foldoutPresence.className}` : ''
           }`}

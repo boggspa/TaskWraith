@@ -41,6 +41,7 @@ import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
+import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
 import {
   resolveYieldTargetParticipant,
@@ -2213,6 +2214,7 @@ function ActivityCompactGroup({
   onOpenFileChangeInWorkbench?: (summary: DiffFileSummary) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const groupRevealRef = useRevealOnExpand<HTMLDivElement>(expanded)
   const searchCount = activities.filter(isSearchActivity).length
   const readCount = activities.filter((a) => a.category === 'read' && !isSearchActivity(a)).length
   const otherCount = activities.length - searchCount - readCount
@@ -2393,7 +2395,7 @@ function ActivityCompactGroup({
         </div>
       )}
       {expanded && (
-        <div className="activity-compact-group-list">
+        <div className="activity-compact-group-list" ref={groupRevealRef}>
           {activities.map((activity, index) => (
             <ActivityRow
               key={`${activity.id}-${index}`}
@@ -3842,6 +3844,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
   // `toggleExpanded`'s fallback branch.
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = isExpanded ?? localExpanded
+  const detailRevealRef = useRevealOnExpand<HTMLDivElement>(expanded)
   const {
     closePreview: closeActivityDiffHoverPreview,
     keepPreviewOpen: keepActivityDiffHoverPreviewOpen,
@@ -4256,7 +4259,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
           )}
 
           {expanded && (
-            <div className="activity-detail">
+            <div className="activity-detail" ref={detailRevealRef}>
               {showDebugWarning && (
                 <div style={{ color: 'var(--warning)' }}>Tool event missing name</div>
               )}
