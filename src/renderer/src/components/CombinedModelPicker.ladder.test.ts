@@ -253,22 +253,24 @@ describe('unavailable reasoning presentation', () => {
       { value: 'max', label: 'Max' }
     ])
 
-    expect(resolveReasoningLadderAvailability('mistral', 'mistral-medium-3.5', mistralLadder)).toEqual({
+    expect(
+      resolveReasoningLadderAvailability('mistral', 'mistral-medium-3.5', mistralLadder)
+    ).toEqual({
       mutable: true
     })
-    expect(resolveReasoningLadderAvailability('pi', 'mistral/mistral-medium-3.5', mistralLadder)).toEqual(
-      {
-        mutable: true
-      }
-    )
+    expect(
+      resolveReasoningLadderAvailability('pi', 'mistral/mistral-medium-3.5', mistralLadder)
+    ).toEqual({
+      mutable: true
+    })
     expect(resolveReasoningLadderAvailability('mistral', 'devstral-small', mistralLadder)).toEqual({
       mutable: true
     })
-    expect(resolveReasoningLadderAvailability('pi', 'mistral/devstral-small', mistralLadder)).toEqual(
-      {
-        mutable: true
-      }
-    )
+    expect(
+      resolveReasoningLadderAvailability('pi', 'mistral/devstral-small', mistralLadder)
+    ).toEqual({
+      mutable: true
+    })
 
     const markup = renderToStaticMarkup(
       createElement(ReasoningLadderSlider, {

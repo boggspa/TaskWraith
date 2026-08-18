@@ -180,14 +180,14 @@ export interface OllamaHarnessGateInput {
   state: OllamaHarnessRunState
   toolName: OllamaToolName | string
   args: Record<string, unknown>
-  requireTodoScaffold?: boolean
+  _requireTodoScaffold?: boolean
 }
 
 export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
   blocked: boolean
   message?: string
 } {
-  const { modelId, state, toolName, args, requireTodoScaffold } = input
+  const { modelId, state, toolName, args } = input
   const needsRetrievalFirst = ollamaEnforcesRetrievalFirst(modelId)
 
   // Retrieve-first policy: explore before read, read before edit
@@ -205,7 +205,9 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
     // Must read before editing
     if (isEditTool(toolName)) {
       const paths = ollamaHarnessTargetPaths(toolName, args, input.workspacePath)
-      const missingReads = paths.filter((p) => !state.readPaths.has(p) && !ollamaReadFileExemptFromRetrievalFirst(p))
+      const missingReads = paths.filter(
+        (p) => !state.readPaths.has(p) && !ollamaReadFileExemptFromRetrievalFirst(p)
+      )
       if (missingReads.length > 0) {
         return {
           blocked: true,
@@ -215,13 +217,13 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
     }
   }
 
-//  // Todo scaffold requirement
-//  if (requireTodoScaffold && !state.publishedTodos) {
-//    return {
-//      blocked: true,
-//      message: ollamaHarnessTodoBlockedMessage()
-//    }
-//  }
+  //  // Todo scaffold requirement
+  //  if (requireTodoScaffold && !state.publishedTodos) {
+  //    return {
+  //      blocked: true,
+  //      message: ollamaHarnessTodoBlockedMessage()
+  //    }
+  //  }
 
   return { blocked: false }
 }

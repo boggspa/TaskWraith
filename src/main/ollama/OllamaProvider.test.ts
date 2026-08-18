@@ -508,7 +508,7 @@ describe('runOllamaProvider streaming', () => {
       }
     )
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(attachedController).toBeDefined()
     expect(requestSignals.get('/api/tags')).toBe(attachedController?.signal)
@@ -543,7 +543,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(requestPaths).toEqual(['/api/tags'])
     expect(errors).toEqual([
@@ -600,7 +600,7 @@ describe('runOllamaProvider streaming', () => {
       admitted = false
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(0)
     expect(unloadCalls).toBe(1)
@@ -661,7 +661,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       }
     })
@@ -743,12 +743,12 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       }
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(1)
     expect(executeTool).not.toHaveBeenCalled()
@@ -805,7 +805,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       }
     })
@@ -817,7 +817,7 @@ describe('runOllamaProvider streaming', () => {
       }
     }
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(1)
     expect(executeTool).not.toHaveBeenCalled()
@@ -965,7 +965,7 @@ describe('runOllamaProvider streaming', () => {
       claimedTerminalStatus: () => 'failed'
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(errors[0]?.error).toContain('cancelled before transport launch')
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
@@ -1009,7 +1009,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1103,7 +1103,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool
@@ -1212,7 +1212,7 @@ describe('runOllamaProvider streaming', () => {
     expect(deps.saveOllamaSessionMemory).toHaveBeenCalledWith(
       'chat-ollama-1',
       expect.objectContaining({
-        modelId: 'gpt_oss_20b',
+        model: 'gpt_oss_20b',
         toolTurnCount: 1
       }),
       'ensemble:lfm-seat'
@@ -1274,7 +1274,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     // The immediate tool response sent back to the live model remains exact.
@@ -1335,7 +1335,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1416,7 +1416,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1558,7 +1558,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(
       lines
@@ -1575,7 +1575,7 @@ describe('runOllamaProvider streaming', () => {
       throw new Error('working telemetry unavailable')
     }
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(lines.at(-1)?.payload).toMatchObject({ type: 'result', status: 'success' })
     expect(exits).toEqual([{ provider: 'ollama', code: 0, route: baseRoute }])
@@ -1606,7 +1606,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(errors).toEqual([{ provider: 'ollama', error: 'model not found', route: baseRoute }])
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
@@ -1643,7 +1643,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(
       lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
@@ -1684,7 +1684,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(2)
     expect(errors).toEqual([])
@@ -1736,7 +1736,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
@@ -1796,7 +1796,7 @@ describe('runOllamaProvider streaming', () => {
       claimedTerminalStatus: () => 'cancelled'
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
@@ -1847,7 +1847,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -1903,13 +1903,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: 'README body' })
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -1973,13 +1973,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: 'README body' })
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2044,7 +2044,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool
@@ -2114,13 +2114,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       },
       executeTool
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2165,7 +2165,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2254,7 +2254,7 @@ describe('runOllamaProvider streaming', () => {
     const { deps, lines } = prepared
     projectedLines = lines
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(createHostCommandProjection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2432,7 +2432,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool,
       settings: {
         ollamaRunProfiles: {
-          'gpt_oss_20b': { protocolMode: 'json_only' }
+          gpt_oss_20b: { protocolMode: 'json_only' }
         }
       }
     })
@@ -2592,7 +2592,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, workingUsage } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(lines.filter((line) => line.payload.tool_name === 'ollama_thinking')).toEqual([])
     expect(
@@ -2693,7 +2693,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool: async () => ({ ok: true, output: '' })
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2745,7 +2745,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).not.toHaveBeenCalled()
     expect(chatCalls).toBe(4)
@@ -2805,7 +2805,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(6)
     expect(chatCalls).toBe(6)
@@ -2870,7 +2870,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(4)
     const contentTexts = lines
@@ -2933,7 +2933,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     // search + fresh read productive; repeat reads: nudge (epoch 0), re-serve
     // (post-compression epoch), nudge, nudge → 4 non-productive turns → ceiling.
@@ -2987,7 +2987,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool: async () => ({ ok: true, output: '' })
     })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatBodies).toHaveLength(1)
     const format = JSON.parse(chatBodies[0]).format
@@ -3102,7 +3102,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({
       fetchMock,
-      settings: { ollamaRunProfiles: { 'gpt_oss_20b': { protocolMode: 'json_only' } } },
+      settings: { ollamaRunProfiles: { gpt_oss_20b: { protocolMode: 'json_only' } } },
       executeTool: async () => ({ ok: true, output: 'src/seat.ts:1: seat marker' })
     })
     deps.getOllamaSessionMemory = (chatId: string, memoryKey?: string) => {
@@ -3195,7 +3195,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     // The invalid call did not execute; the model got a specific repair naming
     // the bad tool + pointing at tool_help.
@@ -4847,7 +4847,7 @@ describe('runOllamaProvider mid-turn steering', () => {
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
     deps.drainPendingSteerText = drainPendingSteerText
 
-    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatBodies).toHaveLength(2)
     // Turn 0 rides the pre-resolved launch-plan request; a drain there would

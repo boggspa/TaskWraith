@@ -122,7 +122,7 @@ describe('OllamaHarnessGates', () => {
       state,
       toolName: 'workspace_search',
       args: { query: 'foo' },
-      requireTodoScaffold: true
+      _requireTodoScaffold: true
     })
     expect(gate.blocked).toBe(false)
   })

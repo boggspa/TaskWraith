@@ -1,5 +1,5 @@
 export const RETRIEVAL_FIRST_FAMILIES = new Set([
-  // The following capable model families were removed from the strict 
+  // The following capable model families were removed from the strict
   // explore->read->edit retrieval-first gate to avoid looping issues
   // (unless QA decides otherwise later):
   // - 'muse_glimmer_30b'
@@ -50,7 +50,9 @@ export const EXEMPT_READ_PATHS = new Set([
 ])
 
 export function ollamaEnforcesRetrievalFirst(modelId?: string | null): boolean {
-  const raw = String(modelId || '').trim().toLowerCase()
+  const raw = String(modelId || '')
+    .trim()
+    .toLowerCase()
   // Normalize both the modelId and family names for matching: replace underscores and hyphens
   const normalizedRaw = raw.replace(/[-_.:]/g, '')
   for (const family of RETRIEVAL_FIRST_FAMILIES) {
