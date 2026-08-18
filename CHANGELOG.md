@@ -34,6 +34,7 @@ to answer.
 
 ### Provider setup and run control
 
+- **Web Session Quota Tracking.** You can now import Mistral and Ollama web sessions into TaskWraith to accurately track API Usage, Vibe Usage, 5H quotas, and Weekly consumption. Cookies are securely encrypted into the OS keychain and never appear in terminal history.
 - **Ollama Cloud.** TaskWraith discovers the cloud models on your Ollama
   account and runs keyed models directly. The API key is held in the operating
   system's secure storage, and if that is unavailable TaskWraith declines to
