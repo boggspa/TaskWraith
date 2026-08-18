@@ -143,14 +143,14 @@ describe('parseAgyUsagePanel', () => {
       },
       {
         id: 'agy-3p-weekly',
-        label: '3P Weekly',
+        label: 'Claude/GPT Weekly',
         remainingPercent: 5,
         usedPercent: 95,
         limitLabel: '5% remaining'
       },
       {
         id: 'agy-3p-5h',
-        label: '3P 5H',
+        label: 'Claude/GPT 5H',
         remainingPercent: 100,
         usedPercent: 0,
         limitLabel: '100% remaining'
@@ -191,8 +191,8 @@ describe('parseAgyUsagePanel', () => {
     expect(parsed.windows).toMatchObject([
       { label: 'Gemini Weekly', remainingPercent: 100 },
       { label: 'Gemini 5H', remainingPercent: 97 },
-      { label: '3P Weekly', remainingPercent: 5 },
-      { label: '3P 5H', remainingPercent: 88 }
+      { label: 'Claude/GPT Weekly', remainingPercent: 5 },
+      { label: 'Claude/GPT 5H', remainingPercent: 88 }
     ])
   })
 
