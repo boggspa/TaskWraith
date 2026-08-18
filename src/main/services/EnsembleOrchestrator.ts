@@ -14869,7 +14869,10 @@ export class EnsembleOrchestrator {
       )
       const toolName = stripToolNamespace(activity.toolName)
       if (toolName === 'ensemble_await') {
-        this.clearFanoutAwaitReminderTurns(runtime, run.participant.id)
+        const runtime = this.roundsByChatId.get(run.chatId)
+        if (runtime) {
+          this.clearFanoutAwaitReminderTurns(runtime, run.participant.id)
+        }
       }
       const upsert = upsertEnsembleToolUseActivity(run, activity)
       if (upsert === 'inserted') {
