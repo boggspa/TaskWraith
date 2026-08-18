@@ -3,14 +3,16 @@ import {
   deriveChatRecordMutationWithProjection,
   estimateChatRecordMutationBytes,
   type AuthoredChatTranscriptMutation,
+  type ChatRecordMutationBatch,
   type DerivedChatRecordMutation
 } from './ChatRecordMutation'
 import type {
+  IncrementalChatAppendDurability,
   IncrementalChatJournal,
   IncrementalChatJournalStats,
   IncrementalChatReplayResult
 } from './IncrementalChatJournal'
-import type { ChatRecord } from './types'
+import type { ChatMessage, ChatRecord } from './types'
 
 export type IncrementalChatPersistenceBoundary = 'normal' | 'approval' | 'terminal'
 
@@ -64,6 +66,52 @@ export interface IncrementalChatPersistenceOptions {
 
 function durableClone(record: ChatRecord): ChatRecord {
   return JSON.parse(JSON.stringify(record)) as ChatRecord
+}
+
+function carriesUserMessage(messages: readonly ChatMessage[]): boolean {
+  return messages.some((message) => message.role === 'user')
+}
+
+/**
+ * ADR §5.2 D1 classifier. A normal-boundary batch may defer its fsync only
+ * when every operation is soft stream data: assistant/tool content deltas,
+ * tool-activity projections, record metadata. Anything the durability ladder
+ * calls D2 — a user message (mid-run steering lands on the normal boundary),
+ * a run transition, a content replacement (user edits arrive as `set.content`)
+ * — keeps the synchronous flush. Conservative by construction: unknown or
+ * ambiguous ops classify as immediate.
+ */
+export function isDeferrableStreamingMutation(batch: ChatRecordMutationBatch): boolean {
+  for (const operation of batch.operations) {
+    switch (operation.type) {
+      case 'runs_splice':
+      case 'run_put':
+        return false
+      case 'messages_splice':
+        if (carriesUserMessage(operation.messages)) return false
+        break
+      case 'message_put':
+        if (operation.message.role === 'user') return false
+        break
+      case 'message_patch':
+        if (
+          Object.prototype.hasOwnProperty.call(operation.set, 'content') ||
+          operation.clear.includes('content')
+        ) {
+          return false
+        }
+        break
+      case 'record_patch':
+      case 'message_content_append':
+      case 'tool_activities_presence':
+      case 'tool_activities_splice':
+      case 'tool_activity_put':
+        break
+      default:
+        return false
+    }
+  }
+  return true
 }
 
 function baselineMismatch(error: unknown): boolean {
@@ -171,7 +219,9 @@ export function createIncrementalChatPersistence(
       )
       const { batch } = derived
       const mutationBytes = estimateChatRecordMutationBytes(batch)
-      journal.append(batch)
+      const durability: IncrementalChatAppendDurability =
+        boundary === 'normal' && isDeferrableStreamingMutation(batch) ? 'deferred' : 'immediate'
+      journal.append(batch, { durability })
       mutationBatchesAppended += 1
       mutationBytesAppended += mutationBytes
 

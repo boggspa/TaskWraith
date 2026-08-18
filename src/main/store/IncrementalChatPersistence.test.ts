@@ -211,4 +211,63 @@ describe('IncrementalChatPersistence', () => {
     persistence.clear()
     expect(fs.existsSync(baseDir)).toBe(false)
   })
+
+  describe('durability classification (ADR §5.2)', () => {
+    function appendDurability(
+      previous: ChatRecord,
+      next: ChatRecord,
+      boundary: 'normal' | 'approval' | 'terminal' = 'normal'
+    ): unknown {
+      const journal = createIncrementalChatJournal(
+        fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-chat-durability-'))
+      )
+      const appendSpy = vi.spyOn(journal, 'append')
+      const instance = createIncrementalChatPersistence({ journal, logger })
+      instance.persist(null, previous, 'normal')
+      instance.persist(previous, next, boundary)
+      expect(appendSpy).toHaveBeenCalledTimes(1)
+      return appendSpy.mock.calls[0][1]
+    }
+
+    it('defers pure assistant/tool streaming batches', () => {
+      const first = chat()
+      const streamed = advance(first, 'initial plus a streamed suffix')
+      expect(appendDurability(first, streamed)).toEqual({ durability: 'deferred' })
+    })
+
+    it('keeps a batch carrying a user message synchronous (D2)', () => {
+      const first = chat()
+      const next = structuredClone(first)
+      next.messages.push({
+        id: 'user-1',
+        role: 'user',
+        content: 'mid-run steering interjection',
+        timestamp: '2026-08-16T00:00:05.000Z'
+      } as ChatMessage)
+      next.persistenceRevision = (first.persistenceRevision ?? 0) + 1
+      expect(appendDurability(first, next)).toEqual({ durability: 'immediate' })
+    })
+
+    it('keeps a batch carrying a run transition synchronous (D2)', () => {
+      const first = chat()
+      const next = structuredClone(first)
+      next.runs = [{ runId: 'run-1', startedAt: '2026-08-16T00:00:01.000Z', status: 'running' }]
+      next.persistenceRevision = (first.persistenceRevision ?? 0) + 1
+      expect(appendDurability(first, next)).toEqual({ durability: 'immediate' })
+    })
+
+    it('keeps a message content replacement synchronous (user edits are D2)', () => {
+      const first = chat()
+      const next = advance(first, 'entirely rewritten, not a stream suffix')
+      expect(appendDurability(first, next)).toEqual({ durability: 'immediate' })
+    })
+
+    it('keeps approval and terminal boundaries synchronous (D2/D3)', () => {
+      const first = chat()
+      const streamedA = advance(first, 'initial plus more')
+      expect(appendDurability(first, streamedA, 'approval')).toEqual({ durability: 'immediate' })
+      const streamedB = advance(first, 'initial plus other')
+      expect(appendDurability(first, streamedB, 'terminal')).toEqual({ durability: 'immediate' })
+    })
+  })
 })

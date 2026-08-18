@@ -41,6 +41,9 @@ export interface IncrementalChatReplayResult {
 
 export interface IncrementalChatJournalStats {
   appends: number
+  deferredAppends: number
+  deferredFsyncFailures: number
+  drainedDeferredFsyncs: number
   mutationBytesWritten: number
   checkpointsWritten: number
   checkpointBytesWritten: number
@@ -48,6 +51,20 @@ export interface IncrementalChatJournalStats {
   skippedDuplicateBatches: number
   tornTailsRecovered: number
   tombstoneRejects: number
+}
+
+/**
+ * ADR §5.2 durability classes at the append seam. `immediate` blocks the
+ * caller until the fsync lands (D2/D3 — user messages, run transitions,
+ * approval/terminal boundaries). `deferred` writes the bytes synchronously
+ * (every same-process reader still sees them) and hands the flush to the
+ * kernel off-thread — the D1 soft-stream contract: a crash may lose the
+ * trailing unflushed window, never ordering, never an acknowledged barrier.
+ */
+export type IncrementalChatAppendDurability = 'immediate' | 'deferred'
+
+export interface IncrementalChatAppendOptions {
+  durability?: IncrementalChatAppendDurability
 }
 
 export interface IncrementalChatJournalOptions {
@@ -59,16 +76,20 @@ export interface IncrementalChatJournalOptions {
   maxJournalReadBytes?: number
   /** Test-only crash-window seam. Throwing leaves checkpoint + journal together. */
   afterCheckpointWrite?: (chatId: string, checkpoint: IncrementalChatCheckpoint) => void
+  /** Deferred-flush seam: production is `fs.fsync`; tests capture and settle. */
+  scheduleFsync?: (fd: number, done: (error?: NodeJS.ErrnoException | null) => void) => void
 }
 
 export interface IncrementalChatJournal {
   initialize(chatId: string, record: ChatRecord): void
-  append(batch: ChatRecordMutationBatch): void
+  append(batch: ChatRecordMutationBatch, options?: IncrementalChatAppendOptions): void
   replay(chatId: string): IncrementalChatReplayResult
   replaceAuthoritativeCheckpoint(chatId: string, record: ChatRecord): void
   checkpoint(chatId: string, reason: IncrementalChatCheckpointReason): boolean
   checkpointIdle(nowMs?: number): number
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
+  /** Synchronously fsync every journal file with an unsettled deferred flush. */
+  drainDeferredDurability(): number
   delete(chatId: string): void
   purge(chatId: string): void
   clear(): void
@@ -190,8 +211,13 @@ export function createIncrementalChatJournal(
     DEFAULT_MAX_JOURNAL_READ_BYTES
   )
   const states = new Map<string, RuntimeState>()
+  const scheduleFsync =
+    options.scheduleFsync ?? ((fd, done) => fs.fsync(fd, (error) => done(error)))
   let writeSequence = 0
   let appends = 0
+  let deferredAppends = 0
+  let deferredFsyncFailures = 0
+  let drainedDeferredFsyncs = 0
   let mutationBytesWritten = 0
   let checkpointsWritten = 0
   let checkpointBytesWritten = 0
@@ -199,6 +225,20 @@ export function createIncrementalChatJournal(
   let skippedDuplicateBatches = 0
   let tornTailsRecovered = 0
   let tombstoneRejects = 0
+
+  /** Unsettled deferred flushes, by journal file. An entry's fd is closed by
+   * its own completion callback exactly once; draining marks entries settled
+   * and flushes via a fresh fd, so the two paths never race on a handle. */
+  interface PendingDeferredFsync {
+    fd: number
+    settled: boolean
+  }
+  const pendingDeferredByPath = new Map<string, Set<PendingDeferredFsync>>()
+  const fsyncEscalatedChatIds = new Set<string>()
+  let pendingDeferredCount = 0
+  /** Backpressure bound: an unbounded queue in front of fsync is how this
+   * layer once produced a 44 GB artifact. Saturation falls back to sync. */
+  const MAX_PENDING_DEFERRED_FSYNCS = 64
 
   fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
 
@@ -272,6 +312,79 @@ export function createIncrementalChatJournal(
       fs.closeSync(fd)
     }
     return Buffer.byteLength(line, 'utf8')
+  }
+
+  /** D1 append: the write is synchronous (ordering + same-process visibility
+   * unchanged); only the disk flush leaves the caller's critical path. */
+  const appendLineDeferred = (filePath: string, line: string, chatId: string): number => {
+    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    const fd = fs.openSync(filePath, 'a', 0o600)
+    let entries = pendingDeferredByPath.get(filePath)
+    if (!entries) {
+      entries = new Set()
+      pendingDeferredByPath.set(filePath, entries)
+    }
+    const entry: PendingDeferredFsync = { fd, settled: false }
+    try {
+      fs.writeSync(fd, line)
+      entries.add(entry)
+      pendingDeferredCount += 1
+      scheduleFsync(fd, (error) => {
+        const wasSettled = entry.settled
+        if (!wasSettled) {
+          entry.settled = true
+          entries!.delete(entry)
+          pendingDeferredCount -= 1
+        }
+        try {
+          fs.closeSync(fd)
+        } catch {
+          /* already closed handles are the only expected failure here */
+        }
+        if (!wasSettled && error) {
+          deferredFsyncFailures += 1
+          fsyncEscalatedChatIds.add(chatId)
+          console.error(`[incremental-chat] deferred journal fsync failed for ${chatId}`, error)
+        }
+      })
+    } catch (error) {
+      // Scheduling itself failed: keep the D1 contract by flushing inline.
+      if (!entry.settled && entries.delete(entry)) pendingDeferredCount -= 1
+      try {
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
+      void error
+    }
+    return Buffer.byteLength(line, 'utf8')
+  }
+
+  const drainDeferredDurability = (): number => {
+    let drained = 0
+    for (const [filePath, entries] of pendingDeferredByPath) {
+      const unsettled = [...entries].filter((entry) => !entry.settled)
+      if (unsettled.length === 0) continue
+      try {
+        const fd = fs.openSync(filePath, 'r')
+        try {
+          fs.fsyncSync(fd)
+        } finally {
+          fs.closeSync(fd)
+        }
+      } catch {
+        // The file is gone (chat deleted/purged mid-flight); nothing to flush.
+        continue
+      }
+      for (const entry of unsettled) {
+        entry.settled = true
+        entries.delete(entry)
+        pendingDeferredCount -= 1
+        drained += 1
+      }
+    }
+    drainedDeferredFsyncs += drained
+    return drained
   }
 
   const readCheckpoint = (chatId: string): IncrementalChatCheckpoint | null => {
@@ -559,7 +672,7 @@ export function createIncrementalChatJournal(
     state.lastAppendAtMs = null
   }
 
-  const append = (batch: ChatRecordMutationBatch): void => {
+  const append = (batch: ChatRecordMutationBatch, appendOptions?: IncrementalChatAppendOptions): void => {
     assertChatId(batch.chatId)
     if (!validMutationBatch(batch, batch.chatId)) throw new Error('Invalid chat mutation batch')
     const state = loadState(batch.chatId)
@@ -576,8 +689,18 @@ export function createIncrementalChatJournal(
           `${state.headRevision} != ${batch.baseRevision}`
       )
     }
+    // A deferred request escalates to sync for exactly one append after a
+    // failed deferred flush (re-establishing durable ground before deferring
+    // again), and whenever the pending set is saturated (backpressure).
+    const deferred =
+      appendOptions?.durability === 'deferred' &&
+      !fsyncEscalatedChatIds.delete(batch.chatId) &&
+      pendingDeferredCount < MAX_PENDING_DEFERRED_FSYNCS
     const line = `${JSON.stringify(batch)}\n`
-    const bytes = appendLine(journalPath(batch.chatId), line)
+    const bytes = deferred
+      ? appendLineDeferred(journalPath(batch.chatId), line, batch.chatId)
+      : appendLine(journalPath(batch.chatId), line)
+    if (deferred) deferredAppends += 1
     appends += 1
     mutationBytesWritten += bytes
     state.headRevision = batch.revision
@@ -636,6 +759,9 @@ export function createIncrementalChatJournal(
   }
 
   const checkpointAll = (reason: IncrementalChatCheckpointReason = 'shutdown'): number => {
+    // A shutdown/manual sweep must not leave D1 appends riding the kernel:
+    // settle the deferred flushes first, then supersede them with checkpoints.
+    drainDeferredDurability()
     let count = 0
     for (const chatId of knownChatIds()) {
       if (checkpoint(chatId, reason)) count += 1
@@ -700,6 +826,9 @@ export function createIncrementalChatJournal(
 
   const stats = (): IncrementalChatJournalStats => ({
     appends,
+    deferredAppends,
+    deferredFsyncFailures,
+    drainedDeferredFsyncs,
     mutationBytesWritten,
     checkpointsWritten,
     checkpointBytesWritten,
@@ -717,6 +846,7 @@ export function createIncrementalChatJournal(
     checkpoint,
     checkpointIdle,
     checkpointAll,
+    drainDeferredDurability,
     delete: deleteChat,
     purge,
     clear,

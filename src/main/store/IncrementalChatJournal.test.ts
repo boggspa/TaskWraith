@@ -49,6 +49,98 @@ describe('IncrementalChatJournal', () => {
     fs.rmSync(baseDir, { recursive: true, force: true })
   })
 
+  describe('deferred durability (D1 streaming appends)', () => {
+    interface CapturedFsync {
+      fd: number
+      done: (error?: NodeJS.ErrnoException | null) => void
+    }
+
+    function deferredJournal(): { journal: IncrementalChatJournal; captured: CapturedFsync[] } {
+      const captured: CapturedFsync[] = []
+      const instance = createIncrementalChatJournal(baseDir, {
+        now: () => nowMs,
+        scheduleFsync: (fd, done) => {
+          captured.push({ fd, done })
+        }
+      })
+      return { journal: instance, captured }
+    }
+
+    it('writes the bytes immediately but leaves the fsync to the scheduler', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const after = advance(before, 'initial streamed')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, after), { durability: 'deferred' })
+
+      // The write is visible to replay before the flush lands…
+      expect(deferred.replay('chat-1').record).toEqual(after)
+      // …and exactly one fsync was scheduled instead of blocking the caller.
+      expect(captured).toHaveLength(1)
+      expect(deferred.stats()).toMatchObject({ deferredAppends: 1, deferredFsyncFailures: 0 })
+      captured[0].done(null)
+    })
+
+    it('keeps default appends synchronously fsynced', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, advance(before, 'barrier state')))
+
+      expect(captured).toHaveLength(0)
+      expect(deferred.stats().deferredAppends).toBe(0)
+    })
+
+    it('drains pending deferred flushes on demand', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const after = advance(before, 'streamed')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, after), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+
+      expect(deferred.drainDeferredDurability()).toBe(1)
+      // Draining again with nothing pending is a no-op.
+      expect(deferred.drainDeferredDurability()).toBe(0)
+      captured[0].done(null)
+      expect(deferred.stats().drainedDeferredFsyncs).toBe(1)
+    })
+
+    it('escalates the next append to a synchronous fsync after a deferred failure', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const second = advance(before, 'streamed one')
+      const third = advance(second, 'streamed one two')
+      const fourth = advance(third, 'streamed one two three')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, second), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+      captured[0].done(Object.assign(new Error('EIO'), { code: 'EIO' }))
+
+      // The failure forces the NEXT deferred request through the sync path…
+      deferred.append(deriveChatRecordMutation(second, third), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+      expect(deferred.stats().deferredFsyncFailures).toBe(1)
+      // …and once that sync write lands, deferral resumes.
+      deferred.append(deriveChatRecordMutation(third, fourth), { durability: 'deferred' })
+      expect(captured).toHaveLength(2)
+      captured[1].done(null)
+    })
+
+    it('drains deferred flushes before a shutdown checkpoint', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const after = advance(before, 'streamed')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, after), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+
+      expect(deferred.checkpointAll('shutdown')).toBe(1)
+      expect(deferred.stats().drainedDeferredFsyncs).toBe(1)
+      captured[0].done(null)
+    })
+  })
+
   it('appends mutation-only JSONL and replays exact state from the checkpoint', () => {
     const before = chat('chat-1', 1, 'x'.repeat(5_000))
     const after = advance(before, `${before.messages[0].content} plus a streamed suffix`)
