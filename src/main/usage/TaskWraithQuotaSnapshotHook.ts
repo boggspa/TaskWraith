@@ -406,18 +406,6 @@ function deepSeekSnapshot(
       })
     )
   }
-  if (spend.runs > 0) {
-    windows.push(
-      estimateWindow({
-        id: 'deepseek-month-estimate',
-        label: 'Estimated this month',
-        amountUsd: spend.currentMonthUsd,
-        totalUsd: billing?.monthlyBudgetUsd,
-        subtitle: 'TaskWraith estimate · not vendor billing',
-        resetAt: spend.nextMonth
-      })
-    )
-  }
   return {
     provider: 'deepseek',
     source: 'taskwraith-native',
@@ -485,28 +473,6 @@ function cerebrasSnapshot(
       })
     )
   }
-  if (!hasCreditAnchor || spend.runs > 0) {
-    windows.push(
-      estimateWindow({
-        id: 'cerebras-month-estimate',
-        label: 'Estimated this month',
-        amountUsd: spend.currentMonthUsd,
-        totalUsd: billing?.monthlyBudgetUsd,
-        subtitle: 'TaskWraith-recorded Cerebras runs · not vendor billing',
-        resetAt: spend.nextMonth
-      })
-    )
-  }
-  if (!hasCreditAnchor) {
-    windows.push(
-      estimateWindow({
-        id: 'cerebras-30d-estimate',
-        label: 'Estimated last 30 days',
-        amountUsd: spend.last30DaysUsd,
-        subtitle: 'TaskWraith-recorded Cerebras runs · not vendor billing'
-      })
-    )
-  }
   return {
     provider: 'cerebras',
     source: 'taskwraith-native',
@@ -566,25 +532,6 @@ function metaSnapshot(
   const convertedBudget = budgetUsd * perUsd
   const windows: QuotaSnapshotHookWindow[] = []
 
-  if (anchoredSpend !== null && anchoredSpend !== undefined) {
-    windows.push(
-      financialWindow({
-        id: 'meta-billing-period-spend',
-        label: 'Spend this billing period',
-        amount: roundMoney(anchoredSpend + localIncrement),
-        total: threshold ?? (convertedBudget > 0 ? convertedBudget : preload),
-        currency,
-        subtitle:
-          localIncrement > 0
-            ? 'Meta console reading plus tracked Muse spend'
-            : billing?.spent !== undefined
-              ? 'Meta console reading'
-              : 'Payment threshold minus remaining balance',
-        resetAt
-      })
-    )
-  }
-
   if (preload !== undefined && effectiveRemaining !== undefined) {
     windows.push(
       financialWindow({
@@ -597,39 +544,6 @@ function metaSnapshot(
           localIncrement > 0
             ? 'Preload minus remaining, advanced by tracked Muse spend'
             : 'Configured preload minus remaining Meta balance'
-      })
-    )
-  }
-
-  if (!billing || windows.length === 0) {
-    windows.push(
-      estimateWindow({
-        id: 'meta-month-estimate',
-        label: 'Estimated this month',
-        amountUsd: spend.currentMonthUsd,
-        totalUsd: billing?.monthlyBudgetUsd ?? monthlyCapUsd,
-        subtitle:
-          (billing?.monthlyBudgetUsd ?? monthlyCapUsd)
-            ? 'TaskWraith soft budget · not vendor billing'
-            : 'TaskWraith estimate · no soft budget configured',
-        resetAt
-      }),
-      estimateWindow({
-        id: 'meta-30d-estimate',
-        label: 'Estimated last 30 days',
-        amountUsd: spend.last30DaysUsd,
-        subtitle: 'Muse session tokens × catalog rates · not vendor billing'
-      })
-    )
-  } else if (windows.length < 2 && spend.runs > 0) {
-    windows.push(
-      estimateWindow({
-        id: 'meta-month-estimate',
-        label: 'Muse estimate this month',
-        amountUsd: spend.currentMonthUsd,
-        totalUsd: billing.monthlyBudgetUsd ?? monthlyCapUsd,
-        subtitle: 'Session tokens × catalog rates · not vendor billing',
-        resetAt
       })
     )
   }
