@@ -96,4 +96,24 @@ describe('startKimiHttpMcpBridge', () => {
     await handle.close()
     handle = null
   })
+
+  it('tracks first authenticated contact and resolves contact waiters', async () => {
+    // The resumed-session surface check keys on this: a session that never
+    // touches its run's bridge is running without the gateway tools.
+    handle = await startKimiHttpMcpBridge({
+      dispatch: async (msg) => ({ jsonrpc: '2.0', id: msg.id, result: {} })
+    })
+    expect(handle.contacted()).toBe(false)
+    const waited = handle.waitForContact(2_000)
+    await post(handle, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    expect(handle.contacted()).toBe(true)
+    await expect(waited).resolves.toBe(true)
+  })
+
+  it('never counts an unauthorized request as contact, and times out false', async () => {
+    handle = await startKimiHttpMcpBridge({ dispatch: async () => null })
+    await post(handle, { jsonrpc: '2.0', id: 1, method: 'ping' }, 'Bearer wrong')
+    expect(handle.contacted()).toBe(false)
+    await expect(handle.waitForContact(40)).resolves.toBe(false)
+  })
 })

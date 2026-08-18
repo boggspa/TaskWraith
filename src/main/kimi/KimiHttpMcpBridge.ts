@@ -38,6 +38,16 @@ export interface KimiHttpMcpBridgeHandle {
   /** The auth header name/value to advertise alongside the URL. */
   headerName: string
   headerValue: string
+  /**
+   * True once Kimi has made any authenticated request to this bridge. A
+   * session that registers the server fetches its tool list immediately, so a
+   * bridge that stays dark past session readiness means the session is
+   * running without this run's gateway surface.
+   */
+  contacted: () => boolean
+  /** Resolve true on first authenticated contact, false when timeoutMs
+   * elapses (or the bridge closes) first. */
+  waitForContact: (timeoutMs: number) => Promise<boolean>
   /** Close the server; safe to call more than once. */
   close: () => Promise<void>
 }
@@ -56,6 +66,14 @@ export async function startKimiHttpMcpBridge(
   // Kimi session per run, so a fixed id is sufficient (StreamableHTTP requires
   // the header round-trip, not multi-session multiplexing here).
   let sessionId: string | null = null
+  let contactSeen = false
+  const contactWaiters = new Set<(value: boolean) => void>()
+  const recordContact = (): void => {
+    if (contactSeen) return
+    contactSeen = true
+    for (const waiter of contactWaiters) waiter(true)
+    contactWaiters.clear()
+  }
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res).catch(() => {
@@ -74,6 +92,9 @@ export async function startKimiHttpMcpBridge(
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'unauthorized' } }))
       return
     }
+    // Any authenticated request counts, including a declined GET stream: only
+    // a client that registered this run's server can present its token.
+    recordContact()
     // Kimi may open a GET stream for server-initiated messages; we never push, so
     // decline it. The client falls back to request/response over POST.
     if (req.method === 'GET') {
@@ -145,6 +166,28 @@ export async function startKimiHttpMcpBridge(
     url: `http://127.0.0.1:${port}/mcp`,
     headerName: 'Authorization',
     headerValue,
+    contacted: () => contactSeen,
+    waitForContact: (timeoutMs: number) =>
+      new Promise<boolean>((resolve) => {
+        if (contactSeen) {
+          resolve(true)
+          return
+        }
+        if (closed) {
+          resolve(false)
+          return
+        }
+        const waiter = (value: boolean): void => {
+          clearTimeout(timer)
+          resolve(value)
+        }
+        const timer = setTimeout(() => {
+          contactWaiters.delete(waiter)
+          resolve(false)
+        }, timeoutMs)
+        timer.unref?.()
+        contactWaiters.add(waiter)
+      }),
     close: () =>
       new Promise<void>((resolve) => {
         if (closed) {
@@ -152,6 +195,8 @@ export async function startKimiHttpMcpBridge(
           return
         }
         closed = true
+        for (const waiter of contactWaiters) waiter(false)
+        contactWaiters.clear()
         server.close(() => resolve())
       })
   }
