@@ -33,7 +33,7 @@ function participant(
   }
 }
 
-function makeChat(participants: EnsembleParticipant[]): ChatRecord {
+function makeChat(participants: EnsembleParticipant[], bossId?: string): ChatRecord {
   return {
     appChatId: 'ensemble-chat',
     chatKind: 'ensemble',
@@ -51,13 +51,14 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
       enabled: true,
       maxParticipants: participants.length,
       fanoutPolicy: 'read_only',
-      participants
+      participants,
+      ...(bossId ? { bossmanParticipantId: bossId } : {})
     }
   } as unknown as ChatRecord
 }
 
-function makeHarness(participants: EnsembleParticipant[]) {
-  let chat = makeChat(participants)
+function makeHarness(participants: EnsembleParticipant[], bossId?: string) {
+  let chat = makeChat(participants, bossId)
   let counter = 0
   const dispatched: AgentRunPayload[] = []
   const orchestrator = new EnsembleOrchestrator({
@@ -118,6 +119,47 @@ describe('fan-out lane brief wrapper', () => {
       expect(lanePrompt).toMatch(/permissions and the active goal/i)
       // The old wording licensed the bounce; it must be gone.
       expect(lanePrompt).not.toContain('Follow your own role, permissions, and active goal first')
+    }
+  )
+})
+
+describe('self-targeted fan-out refusal', () => {
+  it(
+    'says WHY a self-target is invalid instead of feigning an unknown name',
+    { timeout: 30_000 },
+    async () => {
+      // The generic "did not resolve to an enabled participant" reads like a
+      // typo, so the caller retries spelling variants of its own name. The
+      // structural block on self-targeting is fine — the message lied about
+      // the reason.
+      const harness = makeHarness(
+        [participant('lead', 'codex', 'Lead', 1), participant('reviewer', 'claude', 'Reviewer', 2)],
+        'lead'
+      )
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Lead tries to verify its own work.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const boss = harness.dispatched[0].appRunId
+
+      const fanout = await harness.orchestrator.fanoutForRun(boss, {
+        targets: ['Lead'],
+        prompt: 'Verify my earlier migration claim.'
+      })
+      expect(fanout.ok).toBe(false)
+      expect(fanout.error).toBe('invalid_target')
+      expect(fanout.message).toContain('is this seat itself')
+      expect(fanout.message).toContain('different seat')
+
+      const fanoutAll = await harness.orchestrator.fanoutAllForRun(boss, {
+        targets: ['Lead'],
+        prompt: 'Verify my earlier migration claim.'
+      })
+      expect(fanoutAll.ok).toBe(false)
+      expect(fanoutAll.error).toBe('invalid_target')
+      expect(fanoutAll.message).toContain('is this seat itself')
     }
   )
 })

@@ -916,7 +916,21 @@ export function resolveYieldTargetDetail(
     }
   }
   const resolved = resolveMentionPhrase(trimmed, aliasMap, excludeIds)
-  if (!resolved) return { kind: 'unresolved' }
+  if (!resolved) {
+    // The byId branch above already classifies an excluded exact id as
+    // 'self'; an alias deserves the same answer. If the phrase resolves
+    // unambiguously WITHOUT the exclusion and lands on an excluded seat, the
+    // caller named itself — telling it "unresolved" reads as a typo and gets
+    // answered with spelling-variant retries of its own name.
+    if (
+      resolvedAll &&
+      !resolvedAll.ambiguousAmong?.length &&
+      excludeIds?.has(resolvedAll.participant.id)
+    ) {
+      return { kind: 'self' }
+    }
+    return { kind: 'unresolved' }
+  }
   if (resolved.ambiguousAmong && resolved.ambiguousAmong.length > 0) {
     return {
       kind: 'ambiguous',

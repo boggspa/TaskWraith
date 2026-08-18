@@ -14,7 +14,8 @@ import {
   normalizeAlias,
   resolveEnsembleDmTargetForDispatch,
   resolvePhraseToParticipant,
-  resolveSingleEnsembleDmTarget
+  resolveSingleEnsembleDmTarget,
+  resolveYieldTargetDetail
 } from './EnsembleMentionAlias'
 
 /**
@@ -832,8 +833,34 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
       advisoryParticipantId: CLAUDE_WRITE.id
     })
     expect(resolution).toMatchObject({ kind: 'ambiguous' })
-    expect(
-      ensembleDmTargetResolutionError(resolution, [CLAUDE_WRITE, CLAUDE_READ])
-    ).toContain('Use the participant picker or a unique role/model alias.')
+    expect(ensembleDmTargetResolutionError(resolution, [CLAUDE_WRITE, CLAUDE_READ])).toContain(
+      'Use the participant picker or a unique role/model alias.'
+    )
+  })
+})
+
+describe('resolveYieldTargetDetail self detection', () => {
+  const participants = [
+    { id: 'lead', provider: 'codex', enabled: true, role: 'Lead', instructions: '', order: 1 },
+    { id: 'rev', provider: 'claude', enabled: true, role: 'Reviewer', instructions: '', order: 2 }
+  ] as unknown as Parameters<typeof resolveYieldTargetDetail>[1]
+
+  it('classifies an alias of an excluded participant as self, matching the byId path', () => {
+    // The byId branch already returned 'self' for an excluded exact id, but a
+    // ROLE alias of the same seat fell through to 'unresolved' — so a caller
+    // targeting itself by role name was told its own name did not resolve, and
+    // retried spelling variants instead of picking a different seat.
+    const detail = resolveYieldTargetDetail('Lead', participants, new Set(['lead']))
+    expect(detail.kind).toBe('self')
+  })
+
+  it('still resolves the alias when the seat is not excluded', () => {
+    const detail = resolveYieldTargetDetail('Lead', participants, new Set(['rev']))
+    expect(detail.kind).toBe('resolved')
+  })
+
+  it('keeps a genuinely unknown alias unresolved', () => {
+    const detail = resolveYieldTargetDetail('Nobody', participants, new Set(['lead']))
+    expect(detail.kind).toBe('unresolved')
   })
 })

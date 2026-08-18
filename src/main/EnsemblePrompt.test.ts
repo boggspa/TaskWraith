@@ -527,6 +527,26 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Do not absorb peers')
   })
 
+  it('teaches that verification counts only when a different seat does it', () => {
+    // The burn shape: a claim's own author "verifies" it — as a self-review
+    // lane, or a dispatcher routing the check back to the claimant — and the
+    // round books the claim as confirmed on zero independent evidence.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('Verification is evidence only when it is independent')
+    expect(prompt).toContain('never count a seat confirming its own work')
+    // Reconciled with the routed-work rule: an own-work check brief is still
+    // executed, but its result is labelled, not laundered.
+    expect(prompt).toContain('label the result self-review')
+  })
+
   it('teaches Captain that fan-out remains available while Boss is healthy', () => {
     const captain = { ...ensemble.participants[1], stageRole: 'worker' as const }
     const captainConfig: EnsembleConfig = {
@@ -3562,8 +3582,8 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
  */
 describe('computeEnsemblePromptShellStamp', () => {
   it('uses the worker-allocation prompt-shell generation', () => {
-    expect(ENSEMBLE_PROMPT_SHELL_VERSION).toBe('ensemble-shell-v7')
-    expect(computeEnsemblePromptShellStamp(ensemble)).toMatch(/^ensemble-shell-v7:/)
+    expect(ENSEMBLE_PROMPT_SHELL_VERSION).toBe('ensemble-shell-v8')
+    expect(computeEnsemblePromptShellStamp(ensemble)).toMatch(/^ensemble-shell-v8:/)
   })
 
   it('is stable, order-independent, and sensitive to shell-relevant changes', () => {
