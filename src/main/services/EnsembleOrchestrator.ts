@@ -172,6 +172,7 @@ import {
 import { collectExternalPathGrantsFromMetadata } from '../store/ExternalPathGrants'
 import { resolveImagePathsForProvider } from '../ProviderImageAttachmentSupport'
 import { resolveHealthEntryPresentation } from '../../shared/ollamaBrandTable'
+import { OllamaLocalAdmissionPolicy } from '../ollama/OllamaLocalAdmissionPolicy'
 import {
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
   CONTEXT_COMPACTION_MESSAGE_KIND,
@@ -3723,6 +3724,30 @@ export class EnsembleOrchestrator {
 
   /** Failed-run overflow evidence waiting for the seat's settled maintenance seam. */
   private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
+
+  /**
+   * Bounds how many DISTINCT local Ollama models a round loads at once.
+   *
+   * Built lazily so a tree with no local seats never probes, and so the daemon
+   * address is read from live settings rather than captured at construction.
+   * Every decision it makes lives in `OllamaLocalAdmissionPolicy`; this file
+   * only calls it.
+   */
+  private localOllamaAdmission?: OllamaLocalAdmissionPolicy
+
+  private localAdmission(): OllamaLocalAdmissionPolicy {
+    if (!this.localOllamaAdmission) {
+      this.localOllamaAdmission = new OllamaLocalAdmissionPolicy({
+        getBaseUrl: () => this.deps.getSettings().ollamaBaseUrl
+      })
+    }
+    return this.localOllamaAdmission
+  }
+
+  /** Seats of every run the orchestrator still considers live, for reconcile. */
+  private liveRunSeats(): { provider: string; model?: string }[] {
+    return [...this.runsByRunId.values()].map((live) => live.participant)
+  }
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
 
@@ -16369,6 +16394,24 @@ export class EnsembleOrchestrator {
         run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         if (!run.terminalFinalized) this.startCursorCompletionWatchdog(run)
       }
+      // Local seats share one runner and one pool of VRAM, so a round may only
+      // hold as many distinct Ollama models as the host says it holds. Hosted
+      // providers never reach the gate and are not delayed by a byte.
+      try {
+        await this.localAdmission().admit(run.runId, participant)
+      } catch {
+        // The only thing that aborts an admission is this run finalizing while
+        // it was still queued, which is a cancellation before dispatch.
+        if (this.runsByRunId.get(run.runId) === run) {
+          this.finalizeRun(
+            run,
+            'cancelled',
+            'Round cancelled while waiting for local model capacity.'
+          )
+        }
+        runtime.activeRunId = undefined
+        continue
+      }
       run.transportDispatchState = 'pending'
       try {
         dispatchedResult = await this.deps.dispatch(
@@ -17275,7 +17318,18 @@ export class EnsembleOrchestrator {
     let noted = false
     const timeoutMs =
       this.deps.ownedFanoutSettlementTimeoutMs ?? DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS
-    const deadline = Date.now() + timeoutMs
+    const baseDeadline = Date.now() + timeoutMs
+    // A lane still queued behind local model capacity has not started yet, so
+    // the settlement budget must not be running down for it — a timer anchored
+    // at dispatch would report a lane that never got a turn as slow or dead.
+    // Recomputed each wave because a lane that is STILL queued keeps earning
+    // extension. The anchor itself never moves, so a round with no queueing
+    // gets byte-identical timeout behaviour.
+    const deadlineAt = (): number =>
+      this.localAdmission().effectiveDeadline(baseDeadline, [
+        run.runId,
+        ...(run.ownedFanoutRunIds || [])
+      ])
     while (!runtime.cancelled) {
       const settlements = [
         ...(run.pendingFanoutDispatches || []),
@@ -17290,7 +17344,7 @@ export class EnsembleOrchestrator {
           `${participantDisplayName(run.participant)} is waiting for its fan-out lane(s) to return before foreground handoff.`
         )
       }
-      const remainingMs = deadline - Date.now()
+      const remainingMs = deadlineAt() - Date.now()
       if (remainingMs <= 0) {
         run.fanoutTimedOut = true
         const pendingLabels = this.pendingOwnedFanoutLaneLabels(run)
@@ -18850,6 +18904,36 @@ export class EnsembleOrchestrator {
             }
           }
 
+          // The wide-fan-out case this gate exists for. Queueing here is what
+          // turns a sixteen-seat local round from load/evict thrash into a slow
+          // success; a lane past capacity waits its turn rather than failing.
+          try {
+            await this.localAdmission().admit(run.runId, participant)
+          } catch {
+            if (this.runsByRunId.get(run.runId) === run) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                'Fan-out lane cancelled while waiting for local model capacity.'
+              )
+            }
+            return
+          }
+          // Waiting for capacity can take real time, exactly like the worktree
+          // allocation above. Re-check cancellation before handing the payload
+          // to a provider.
+          if (dispatchWasCancelled()) {
+            if (this.runsByRunId.get(run.runId) === run) {
+              this.finalizeRun(
+                run,
+                'cancelled',
+                runtime.cancelled
+                  ? 'Round cancelled before fan-out dispatch.'
+                  : 'Owning participant was skipped before fan-out dispatch.'
+              )
+            }
+            return
+          }
           run.transportDispatchState = 'pending'
           await new Promise<void>((resolveDispatchStart) => {
             let dispatchStartSettled = false
@@ -19976,6 +20060,14 @@ export class EnsembleOrchestrator {
     reason?: string
   ): void {
     this.stopCursorCompletionWatchdog(run)
+    // All 27 terminal call sites funnel through here and this runs ahead of the
+    // `terminalFinalized` early return, so it is the one place a local
+    // admission slot is handed back exactly once — on completion, cancellation,
+    // failure and crash-recovery alike. Reconcile is driven from the live run
+    // registry rather than the gate's own bookkeeping, so a run that died
+    // between admission and release costs one reconcile instead of a
+    // permanently narrowed gate.
+    this.localAdmission().releaseRun(run.runId, this.liveRunSeats())
     const suppressOwnedFanout =
       (status === 'cancelled' || status === 'skipped') && this.hasOwnedFanoutWork(run)
     if (suppressOwnedFanout) {
