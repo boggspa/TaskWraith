@@ -28,9 +28,6 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
   { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' }
 ]
 
-const CEREBRAS_RATE_LIMITS_URL = 'https://inference-docs.cerebras.ai/support/rate-limits'
-const CEREBRAS_PROJECTS_URL = 'https://inference-docs.cerebras.ai/console/projects'
-
 export interface PiKeyCardStatus {
   encryptionAvailable: boolean
   configuredUpstreams: string[]
@@ -101,10 +98,8 @@ export function PiProviderKeysCardView({
         <span>{statusText}</span>
       </div>
       <p>
-        Pi runs models TaskWraith does not host first-party — DeepSeek, GLM, Qwen, MiniMax,
-        Mistral and open-weights serving — with your own API keys. Hosted providers (Claude,
-        GPT, Gemini, Grok, Kimi) stay on their first-party seats and are never reachable
-        through Pi.
+        Your own API keys for Pi&apos;s upstream models — DeepSeek, GLM, Qwen, MiniMax, Mistral,
+        and open-weights serving.
       </p>
       <div className="settings-provider-auth-command">
         <code>npm install -g @earendil-works/pi-coding-agent</code>
@@ -207,31 +202,7 @@ export function PiProviderKeysCardView({
           </PillButton>
         </div>
       </div>
-      <p className="settings-provider-auth-footnote">
-        Cerebras reserves prompt tokens plus Pi&apos;s requested completion budget before each call.
-        Pi&apos;s Cerebras models default to{' '}
-        {PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()} tokens, so an effective 30,000
-        TPM project allocation returns a 429 before usage is recorded. Cerebras checks the API
-        key&apos;s project allocation as well as the organization ceiling, so this can happen even
-        when All Projects shows a higher limit. Apply{' '}
-        {PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS.toLocaleString()} as a conservative
-        starting point; lower it further for unusually large prompts. This cap affects only
-        Pi&apos;s Cerebras models. For the project allocation details and full model ceiling,{' '}
-        <a href={CEREBRAS_PROJECTS_URL} target="_blank" rel="noreferrer">
-          Cerebras explains its two-level project quotas
-        </a>{' '}
-        and{' '}
-        <a href={CEREBRAS_RATE_LIMITS_URL} target="_blank" rel="noreferrer">
-          Cerebras says a first Pay As You Go credit purchase moves an organization to its Developer
-          tier
-        </a>{' '}
-        — adding a card and receiving the initial $5 trial credit is not that purchase.
-      </p>
       {cerebrasCapError && <p className="settings-provider-auth-footnote">{cerebrasCapError}</p>}
-      <p className="settings-provider-auth-footnote">
-        Keys are encrypted with the system keychain and injected only into the matching Pi
-        process — never shown again, never sent anywhere else.
-      </p>
     </article>
   )
 }

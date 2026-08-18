@@ -60,11 +60,6 @@ export function MuseSpendBudgetCard({ monthlySpendCapUsd, onChange }: MuseSpendB
           aria-label="Monthly Muse spend budget in US dollars (soft cap)"
         />
       </label>
-      <p className="settings-provider-auth-footnote">
-        Advisory only: fills the Model Usage spend meter from the 1st of each month and warns as
-        estimated spend approaches the cap. Default is ${DEFAULT_MUSE_MONTHLY_SPEND_CAP_USD}.00.
-        Never blocks a run — set a hard limit in Meta / Model API billing if you need one.
-      </p>
     </div>
   )
 }

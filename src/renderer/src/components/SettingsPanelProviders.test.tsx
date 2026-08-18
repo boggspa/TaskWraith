@@ -290,7 +290,6 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('stable identity/startup/ACP compatibility checks failed')
     expect(html).toContain('Structural ACP admission is always enabled')
     expect(html).toContain('unattested-development')
-    expect(html).toContain('Credentials do not bypass')
     expect(html).not.toContain('reviewed ACP runtime admission')
     expect(html).not.toContain('reviewed runtime admission')
   })
@@ -302,12 +301,9 @@ describe('SettingsPanel provider cards', () => {
     // optional ollama.com cloud auth — local models still need no account.
     expect(html).toContain('settings-provider-auth-card-partial provider-ollama')
     expect(html).toContain('ollama signin')
-    expect(html).toContain('ollama signout')
-    expect(html).toContain('Sign in with the CLI or add an API key')
+    expect(html).toContain('sign in or add a key for Ollama Cloud')
     expect(html).toContain('Open Terminal to sign in')
     expect(html).toContain('Ollama Cloud API key')
-    expect(html).toContain('Cloud usage dashboard')
-    expect(html).toContain('TaskWraith does not import browser cookies')
   })
 
   it('separates authenticated Ollama Cloud models from installed local models', () => {
@@ -417,8 +413,6 @@ describe('SettingsPanel provider cards', () => {
     const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
     expect(card).toContain('Mistral Vibe over managed ACP')
     expect(card).toContain('vibe --setup')
-    expect(card).toContain('Mistral plan')
-    expect(card).toContain('Pi’s metered Mistral API-key route')
     expect(card).toContain('Open Terminal to sign in')
     expect(card).toContain('Upgrade CLI…')
     expect(card).not.toContain('Sign out')
@@ -432,8 +426,8 @@ describe('SettingsPanel provider cards', () => {
     expect(ollamaCard).toBeGreaterThan(-1)
     expect(antigravityCard).toBeGreaterThan(ollamaCard)
     expect(html).toContain('Disabled — explicit consent required')
-    expect(html).toContain('Antigravity Additional Terms')
-    expect(html).toContain('February 2026')
+    expect(html).toContain('ban-risk; requires explicit consent')
+    expect(html).toContain('Accept risk and enable')
   })
 
   it('offers the shared CLI upgrade flow inside the consented AntiGravity lane', () => {

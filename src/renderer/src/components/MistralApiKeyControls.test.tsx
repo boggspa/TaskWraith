@@ -20,7 +20,6 @@ describe('MistralApiKeyControlsView', () => {
     expect(html).toContain('Stored for metered API runs')
     expect(html).toContain('Key stored — replace…')
     expect(html).toContain('settings-provider-auth-status-dot-signed-in')
-    expect(html).toContain('Mistral Large 3, GLM 5.2, Codestral, Devstral 2, and Ministral models')
   })
 
   it('renders unconfigured state with input prompt', () => {

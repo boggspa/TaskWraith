@@ -39,7 +39,6 @@ describe('OllamaApiKeyControlsView', () => {
     expect(html).toContain('Stored for direct Cloud requests')
     expect(html).toContain('Key stored — replace…')
     expect(html).toContain('Ollama web session')
-    expect(html).toContain('Cloud usage dashboard')
     expect(html).toContain('__Secure-session')
   })
 

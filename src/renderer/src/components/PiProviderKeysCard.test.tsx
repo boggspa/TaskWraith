@@ -103,24 +103,18 @@ describe('PiProviderKeysCardView', () => {
     expect(html).toContain('value="typed-draft"')
   })
 
-  it('states the first-party boundary in user-facing copy', () => {
+  it('names the upstreams the keys unlock', () => {
     const html = render()
-    expect(html).toContain('never reachable')
+    expect(html).toContain('upstream models')
+    expect(html).toContain('DeepSeek')
   })
 
-  it('explains Cerebras’s preflight TPM behavior and offers an explicit cap', () => {
+  it('offers an explicit Cerebras completion cap', () => {
     const html = render()
     expect(html).toContain('Cerebras completion cap')
     expect(html).toContain('40,960')
-    expect(html).toContain('30,000 TPM')
-    expect(html).toContain('project allocation')
-    expect(html).toContain('All Projects')
-    expect(html).toContain('16,384')
     expect(html).toContain('Apply cap')
     expect(html).toContain('Use Pi default')
-    expect(html).toContain('Developer tier')
-    expect(html).toContain('inference-docs.cerebras.ai/console/projects')
-    expect(html).toContain('inference-docs.cerebras.ai/support/rate-limits')
 
     const active = render({ cerebrasMaxCompletionTokens: 16_384 })
     expect(active).toContain('Active: 16,384 max output tokens')

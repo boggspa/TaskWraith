@@ -10,22 +10,10 @@ describe('AntigravityOptInCard', () => {
 
     expect(html).toContain('data-provider="antigravity"')
     expect(html).toContain('Disabled — explicit consent required')
-    expect(html).toContain('Using third party software, tools, or services to access the Service')
-    expect(html).toContain('can suspend or terminate your Google account')
-    expect(html).toContain('February 2026')
-    expect(html).toContain('not ToS-approved or ban-safe')
-    expect(html).toContain('TaskWraith never reads, copies, or stores')
-    // The card is the lane's consent document: every local read/write the
-    // adapter performs must stay disclosed here. The settings lease writes a
-    // temporary permission overlay into agy's own settings file each run, and
-    // the hook bridge adds a TaskWraith-named entry to the workspace
-    // hooks.json so agy's confirmations route through TaskWraith's gate.
-    expect(html).toContain('~/.gemini/antigravity-cli/settings.json')
-    expect(html).toContain('restoring your original settings')
-    expect(html).toContain('.agents/hooks.json')
-    expect(html).toContain('removed again with the run')
-    expect(html).toContain('pre-authorized inside')
-    expect(html).toContain('duplicate confirmation layer is skipped')
+    expect(html).toContain('ban-risk; requires explicit consent')
+    // The long ToS/mechanics prose moved out of the card; the consent gate
+    // itself — checkbox plus explicit accept button — is what must remain.
+    expect(html).toContain('may breach Google')
     expect(html).toContain('Accept risk and enable')
     expect(html).toContain('disabled=""')
     expect(html).not.toContain('Open Terminal to sign in')
@@ -65,13 +53,7 @@ describe('AntigravityOptInCard', () => {
     )
 
     expect(html).toContain('Gemini API (BYO key; separate billing)')
-    expect(html).toContain('Gemini-only')
-    expect(html).toContain('separately metered and billed')
-    expect(html).toContain('tier and rate limits')
-    expect(html).toContain('does not consume AntiGravity subscription quota')
-    expect(html).toContain('does not expose AntiGravity Claude or GPT models')
-    expect(html).toContain('Free Tier content may be used to improve Google products')
-    expect(html).toContain('Paid Services content is not used to improve Google products')
+    expect(html).toContain('I understand the separate Gemini API billing')
     expect(html).toContain('type="password"')
     expect(html).not.toContain('apiKey')
   })
@@ -86,9 +68,8 @@ describe('AntigravityOptInCard', () => {
 
     expect(apiSection).toBeDefined()
     expect(apiSection).toContain('BYO key; separate billing')
-    expect(apiSection).toContain('Saving a valid key is sufficient')
     expect(apiSection).not.toContain('Accept risk and enable')
-    expect(apiSection).not.toContain('ban-safe')
+    expect(apiSection).not.toContain('ban-risk')
     expect(apiSection).not.toContain('suspend or terminate')
     expect(apiSection).toContain('I understand the separate Gemini API billing')
   })

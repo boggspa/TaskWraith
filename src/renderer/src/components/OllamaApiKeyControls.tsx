@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { PillButton } from './PillButton'
 
-const OLLAMA_CLOUD_SETTINGS_URL = 'https://ollama.com/settings'
-
 export interface OllamaApiKeyStatus {
   apiKeyConfigured: boolean
   encryptionAvailable: boolean
@@ -145,16 +143,6 @@ export function OllamaApiKeyControlsView({
         </p>
       )}
       {error && <p className="settings-provider-auth-footnote">{error}</p>}
-      <p className="settings-provider-auth-footnote">
-        Both secrets are encrypted with the system keychain and never shown again. The API key is
-        sent only to the direct Ollama Cloud API; the web session lets TaskWraith read your exact
-        Session (5H) and Weekly usage from the{' '}
-        <a href={OLLAMA_CLOUD_SETTINGS_URL} target="_blank" rel="noreferrer">
-          Cloud usage dashboard
-        </a>{' '}
-        — use Import to sign in, or paste the <code>__Secure-session</code> cookie from your
-        browser&rsquo;s DevTools.
-      </p>
     </>
   )
 }

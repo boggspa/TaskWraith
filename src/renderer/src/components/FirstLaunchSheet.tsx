@@ -611,24 +611,9 @@ export function FirstLaunchSheet({
             </li>
           </ul>
           <p className="first-launch-sheet-section-helper">
-            Providers sign in three ways: <strong>Codex</strong> and <strong>Grok</strong> log in
-            through their own CLI in a Terminal;{' '}
-            <strong>Claude</strong> uses in-app OAuth or an API key;{' '}
-            <strong>Kimi</strong> uses its current CLI OAuth login or a provider key configured in
-            its own <code>~/.kimi-code/config.toml</code>; the key saved in TaskWraith Settings is
-            usage-only. TaskWraith always applies structural admission; an unreviewed runtime is
-            labelled <code>unattested-development</code> explicitly. <strong>Ollama</strong>{' '}
-            is local-first: install
-            Ollama and pull a model with no cloud account, or optionally sign in for Ollama Cloud /
-            Turbo and private models. <strong>Cursor</strong> and Grok auth stay inside their CLIs,
-            so TaskWraith may ask you to finish login in Terminal (<code>cursor-agent login</code>
-            / Grok CLI). Cursor runs use the real ~/.cursor login under a contained --sandbox argv.{' '}
-            <strong>Pi</strong> uses the upstream key and model you configure in Settings.{' '}
-            <strong>Mistral</strong> opens Vibe&apos;s own Terminal setup wizard, where you choose
-            your Mistral plan access or a Vibe API key; it stays separate from Pi&apos;s Mistral
-            API-key lane.
-            AntiGravity remains absent until the host confirms that an authorized conditional lane
-            is ready.
+            Most providers sign in through their own CLI in Terminal; Claude signs in in-app, and
+            Pi and Ollama run on keys or local models you set up in Settings. Each card shows what,
+            if anything, its provider still needs.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (

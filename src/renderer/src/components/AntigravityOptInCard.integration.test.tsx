@@ -385,7 +385,6 @@ describe('AntigravityOptInCard header/status lane awareness', () => {
     expect(text).toContain('Official')
     expect(text).toContain('ban-risk; requires explicit consent')
     expect(text).toContain('Accept risk and enable')
-    expect(text).toContain('ban-safe')
   })
 
   it('keeps the AGY-only default state exactly as before when no Gemini API key is configured', async () => {

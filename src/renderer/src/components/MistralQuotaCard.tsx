@@ -151,10 +151,6 @@ export function MistralQuotaCardView({
           ))}
         </select>
       </label>
-      <p className="settings-provider-auth-footnote">
-        Nothing the Vibe CLI sends reports your plan, so the meter cannot detect it. Left unset it
-        assumes the smallest allowance, which warns early rather than late.
-      </p>
 
       <div className="settings-field-row">
         <label className="settings-field">
@@ -195,11 +191,6 @@ export function MistralQuotaCardView({
           </select>
         </label>
       </div>
-      <p className="settings-provider-auth-footnote">
-        Read these off the <strong>Vibe Code budget</strong> bar on your Mistral subscription page,
-        not the shared &ldquo;Included monthly usage&rdquo; bar above it. Vibe Code spends from its
-        own budget, so the shared bar stays still while this seat runs.
-      </p>
 
       <label className="settings-field">
         <span className="settings-field-label">Resets on (optional)</span>
@@ -211,10 +202,6 @@ export function MistralQuotaCardView({
           onChange={(event) => onResetChange(event.target.value)}
         />
       </label>
-      <p className="settings-provider-auth-footnote">
-        Mistral bills on your account&apos;s own anniversary, not the 1st of the month. Without this
-        the meter guesses a month from when it first saw the seat, which can be weeks out.
-      </p>
 
       <div className="settings-provider-auth-actions">
         <PillButton size="compact" onClick={onSave} disabled={busy}>
@@ -234,11 +221,11 @@ export function MistralQuotaCardView({
 
       <div className="settings-field">
         <span className="settings-field-label">Web session</span>
-        <p className="settings-provider-auth-footnote">
-          {webSessionStatus?.configured
-            ? `Session imported${formatImportedOn(webSessionStatus.updatedAt)}. Both console bars — API usage and Vibe Code usage — refresh from it automatically.`
-            : 'Sign in once and TaskWraith reads both console bars — API usage and Vibe Code usage — for you. The session cookie is kept in the system keychain and never shown.'}
-        </p>
+        {webSessionStatus?.configured ? (
+          <p className="settings-provider-auth-footnote">
+            {`Session imported${formatImportedOn(webSessionStatus.updatedAt)}.`}
+          </p>
+        ) : null}
         <div className="settings-provider-auth-actions settings-web-session-actions">
           <PillButton size="compact" variant="primary" onClick={onImportWebSession} disabled={busy}>
             {webSessionStatus?.configured ? 'Re-import web session…' : 'Import web session…'}
@@ -266,10 +253,6 @@ export function MistralQuotaCardView({
           onChange={(event) => onAdminKeyChange(event.target.value)}
         />
       </label>
-      <p className="settings-provider-auth-footnote">
-        Enterprise-only alternative to the web session: an Admin API key from backoffice.mistral.ai
-        reads the same usage over Mistral&rsquo;s Admin API.
-      </p>
       <div className="settings-provider-auth-actions">
         <PillButton
           size="compact"
@@ -293,15 +276,7 @@ export function MistralQuotaCardView({
       {adminStatus ? <p className="settings-provider-auth-footnote">{adminStatus}</p> : null}
 
       {error ? <p className="settings-provider-auth-error">{error}</p> : null}
-      {anchoredSummary ? (
-        <p className="settings-provider-auth-footnote">{anchoredSummary}</p>
-      ) : (
-        <p className="settings-provider-auth-footnote">
-          Open admin.mistral.ai/subscription and copy the two numbers from the &ldquo;Included
-          monthly usage&rdquo; bar. The meter keeps counting locally on top of your reading until
-          you refresh it.
-        </p>
-      )}
+      {anchoredSummary ? <p className="settings-provider-auth-footnote">{anchoredSummary}</p> : null}
     </div>
   )
 }

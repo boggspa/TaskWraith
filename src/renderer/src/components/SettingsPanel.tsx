@@ -4925,7 +4925,7 @@ export function SettingsPanel({
   const cursorAuthSummary = summariseCliProviderEnabled(
     cursorProviderAvailable,
     'Cursor',
-    'Sign in once with `cursor-agent login` in your shell; managed Path-B runs pin the native OS sandbox and attach the governed broker when available.'
+    'Sign in once with `cursor-agent login` in your shell.'
   )
   const grokAuthSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
@@ -5067,6 +5067,10 @@ export function SettingsPanel({
     }
     if (state === 'error') return ' Could not open the upgrade terminal.'
     return ''
+  }
+  const renderProviderUpgradeFootnote = (provider: ProviderId) => {
+    const hint = renderProviderUpgradeHint(provider)
+    return hint ? <p className="settings-provider-auth-footnote">{hint}</p> : null
   }
   const renderProviderPauseControls = (provider: ProviderId): React.JSX.Element => (
     <SettingsProviderPauseControls
@@ -7155,11 +7159,6 @@ export function SettingsPanel({
                     <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                       Provider sign-in
                     </h4>
-                    <p className="settings-hint">
-                      Same provider checklist as first launch. Runtime auth stays with each
-                      provider; TaskWraith stores only explicit API keys or usage sessions you add
-                      here.
-                    </p>
                   </div>
                 </div>
                 <details className="settings-provider-install">
@@ -7271,13 +7270,7 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      This sign-in is separate from the Codex app, so TaskWraith tasks do not enter
-                      the app&apos;s history. Usage import powers meters only and does not sign the
-                      runtime in. Config and native Codex plugins are intentionally independent;
-                      TaskWraith and user MCP servers are attached at launch.
-                      {renderProviderUpgradeHint('codex')}
-                    </p>
+                    {renderProviderUpgradeFootnote('codex')}
                     {renderProviderPauseControls('codex')}
                   </SettingsProviderAuthCard>
 
@@ -7314,10 +7307,7 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      API key and CLI path controls are below.
-                      {renderProviderUpgradeHint('claude')}
-                    </p>
+                    {renderProviderUpgradeFootnote('claude')}
                     {renderProviderPauseControls('claude')}
                   </SettingsProviderAuthCard>
 
@@ -7325,7 +7315,7 @@ export function SettingsPanel({
                     provider="kimi"
                     label="Kimi"
                     summary={kimiSetupSummary}
-                    description="Moonshot Kimi over admitted ACP with a private runtime cwd and governed per-run TaskWraith gateway."
+                    description="Moonshot Kimi over managed ACP."
                     optional
                   >
                     <div className="settings-provider-auth-action-row">
@@ -7354,19 +7344,14 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      Use `kimi login` or a provider key in ~/.kimi-code/config.toml for managed
-                      ACP. The encrypted key below is usage-meter access only. Credentials do not
-                      bypass exact-runtime admission.
-                      {renderProviderUpgradeHint('kimi')}
-                    </p>
+                    {renderProviderUpgradeFootnote('kimi')}
                     {renderProviderPauseControls('kimi')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
                     provider="cursor"
                     label="Cursor"
                     summary={cursorAuthSummary}
-                    description="Cursor Composer 2.5 via managed Path-B: native tools stay inside the OS sandbox, with governed TaskWraith broker tools when attachment succeeds."
+                    description="Cursor Composer 2.5 in a managed sandbox."
                     optional
                   >
                     <div className="settings-provider-auth-command">
@@ -7392,13 +7377,7 @@ export function SettingsPanel({
                       </PillButton>
                       {renderProviderUpgradeButton('cursor')}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      TaskWraith stores no Cursor credential; auth stays inside the Cursor CLI. Runs
-                      use the real ~/.cursor login under a contained --sandbox argv. Eligible runs
-                      attach TaskWraith&apos;s governed broker; setup failure falls back visibly to
-                      sandboxed native tools.
-                      {renderProviderUpgradeHint('cursor')}
-                    </p>
+                    {renderProviderUpgradeFootnote('cursor')}
                     {renderProviderPauseControls('cursor')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
@@ -7433,24 +7412,21 @@ export function SettingsPanel({
                       </PillButton>
                       {renderProviderUpgradeButton('grok')}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      TaskWraith stores no Grok credential; auth stays inside the Grok CLI.
-                      {renderProviderUpgradeHint('grok')}
-                    </p>
+                    {renderProviderUpgradeFootnote('grok')}
                     {renderProviderPauseControls('grok')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
                     provider="ollama"
                     label="Ollama"
                     summary={ollamaAuthSummary}
-                    description="Local Ollama models run with no account. Sign in with the CLI or add an API key to use the separate Ollama Cloud catalog."
+                    description="Local models with no account; sign in or add a key for Ollama Cloud."
                     optional
                   >
                     <div className="settings-provider-auth-command">
                       <code>ollama signin</code>
                       <span>
                         Run once in Terminal to authorize this machine with ollama.com (opens a
-                        browser). Use <code>ollama signout</code> to revoke it.
+                        browser).
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
@@ -7471,11 +7447,6 @@ export function SettingsPanel({
                         Open Terminal to sign out
                       </PillButton>
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      Local models (configured in the Ollama section below) work without signing in
-                      — CLI sign-in keeps auth inside Ollama, while the optional encrypted key uses
-                      Ollama&apos;s direct Cloud API.
-                    </p>
                     <OllamaApiKeyControls
                       onChanged={() => onRefreshProviderMcpStatus?.('ollama')}
                     />
@@ -7485,15 +7456,14 @@ export function SettingsPanel({
                     provider="mistral"
                     label="Mistral"
                     summary={mistralAuthSummary}
-                    description="Mistral Vibe over managed ACP. Set up your Mistral plan (including Free / Pro where Vibe offers it) or Vibe credential in its official wizard; this is separate from Pi’s metered Mistral API-key route."
+                    description="Mistral Vibe over managed ACP."
                     optional
                   >
                     <div className="settings-provider-auth-command">
                       <code>vibe --setup</code>
                       <span>
                         Run once in Terminal to complete Mistral Vibe&apos;s own plan or API-key
-                        setup. Managed TaskWraith runs use the separate <code>vibe-acp</code>{' '}
-                        transport afterwards.
+                        setup.
                       </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
@@ -7510,29 +7480,19 @@ export function SettingsPanel({
                     <MistralApiKeyControls
                       onChanged={() => onRefreshProviderMcpStatus?.('mistral')}
                     />
-                    <p className="settings-provider-auth-footnote">
-                      TaskWraith stores no Mistral plan credential; Vibe owns it. Pi&apos;s Mistral
-                      key remains a distinct metered upstream route. Vibe keeps its credentials
-                      private, so runtime discovery can confirm the CLI but cannot guess whether
-                      setup has finished.
-                      {renderProviderUpgradeHint('mistral')}
-                    </p>
+                    {renderProviderUpgradeFootnote('mistral')}
                     {renderProviderPauseControls('mistral')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
                     provider="muse"
                     label="Muse"
                     summary={museAuthSummary}
-                    description="Muse Code CLI over Meta Model API. Opaque CLI seat — install `muse`, complete Meta login / key setup, then launch from TaskWraith. Projected spend tracks like Mistral/DeepSeek with an optional soft monthly budget."
+                    description="Muse Code CLI over the Meta Model API."
                     optional
                   >
                     <div className="settings-provider-auth-command">
                       <code>muse</code>
-                      <span>
-                        Install the Muse Code CLI and finish Meta Model API login in Terminal.
-                        TaskWraith probes binary + credential fail-closed and does not store the
-                        Meta key in this card.
-                      </span>
+                      <span>Install the Muse Code CLI and finish Meta Model API login in Terminal.</span>
                     </div>
                     <div className="settings-provider-auth-action-row">
                       <PillButton
@@ -7545,11 +7505,7 @@ export function SettingsPanel({
                       </PillButton>
                       {renderProviderUpgradeButton('muse')}
                     </div>
-                    <p className="settings-provider-auth-footnote">
-                      TaskWraith does not store Muse / Meta credentials here. Fail-closed probe
-                      admission requires a resolvable binary and a credential the probe can see.
-                      {renderProviderUpgradeHint('muse')}
-                    </p>
+                    {renderProviderUpgradeFootnote('muse')}
                     <MuseSpendBudgetCard
                       monthlySpendCapUsd={museMonthlySpendCapUsd}
                       onChange={onChange}

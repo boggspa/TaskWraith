@@ -70,20 +70,8 @@ describe('toUsd', () => {
 })
 
 describe('MistralQuotaCardView', () => {
-  it('explains why the plan cannot be detected', () => {
-    const html = render()
-    expect(html).toContain('cannot detect it')
-    expect(html).toContain('warns early rather than late')
-  })
-
-  it('explains why the reset date matters', () => {
-    expect(render()).toContain('anniversary, not the 1st of the month')
-  })
-
-  it('points at the console when no reading has been taken', () => {
-    const html = render()
-    expect(html).toContain('admin.mistral.ai/subscription')
-    expect(html).toContain('Included')
+  it('stays quiet when no reading has been taken', () => {
+    expect(render()).not.toContain('admin.mistral.ai/subscription')
   })
 
   it('summarises the reading in force instead of the instructions', () => {
@@ -92,16 +80,13 @@ describe('MistralQuotaCardView', () => {
     expect(html).not.toContain('admin.mistral.ai/subscription')
   })
 
-  it('states the Enterprise-only restriction on the admin key up front', () => {
-    const html = render()
-    expect(html).toContain('Enterprise-only alternative to the web session')
-    expect(html).toContain('backoffice.mistral.ai')
+  it('points the admin key placeholder at backoffice.mistral.ai', () => {
+    expect(render()).toContain('backoffice.mistral.ai')
   })
 
   it('offers the web session import without ever rendering a cookie field', () => {
     const html = render()
     expect(html).toContain('Import web session…')
-    expect(html).toContain('kept in the system keychain and never shown')
     // The first cut parked the imported cookie in a password input; the
     // session must have no input at all now.
     expect(html).not.toContain('Session cookie')

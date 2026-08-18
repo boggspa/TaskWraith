@@ -101,13 +101,6 @@ export function ApiUsageQuotaCardView({
       <div className="settings-provider-auth-header">
         <span className="settings-provider-auth-title">API usage and credit anchors</span>
       </div>
-      <p>
-        TaskWraith reads DeepSeek&apos;s official balance directly. Cerebras and Meta do not expose
-        equivalent stable usage APIs, so copy the non-secret figures from their billing consoles;
-        TaskWraith keeps adding its own recorded spend on top. API keys stay in the encrypted Pi
-        card above.
-      </p>
-
       <strong>DeepSeek</strong>
       <div className="settings-field-row">
         <MoneyField
@@ -125,9 +118,6 @@ export function ApiUsageQuotaCardView({
           onChange={(value) => onChange('deepseekMonthlyBudgetUsd', value)}
         />
       </div>
-      <p className="settings-provider-auth-footnote">
-        Total topped up minus the live DeepSeek balance produces the credit-used quota meter.
-      </p>
 
       <div className="settings-provider-auth-divider" />
       <strong>Cerebras</strong>
@@ -160,10 +150,6 @@ export function ApiUsageQuotaCardView({
           onChange={(value) => onChange('cerebrasMonthlyBudgetUsd', value)}
         />
       </div>
-      <p className="settings-provider-auth-footnote">
-        Enter purchased and remaining credits together. The separate TaskWraith estimate remains
-        visibly labelled as an estimate, never as a Cerebras invoice.
-      </p>
 
       <div className="settings-provider-auth-divider" />
       <strong>Meta / Muse</strong>
@@ -232,10 +218,6 @@ export function ApiUsageQuotaCardView({
           />
         </label>
       </div>
-      <p className="settings-provider-auth-footnote">
-        Saving a Meta reading starts a new anchor. Later Muse runs recorded by TaskWraith advance
-        spend and remaining-credit meters without another external app.
-      </p>
 
       <div className="settings-provider-auth-actions">
         <PillButton size="compact" onClick={onSave} disabled={busy}>

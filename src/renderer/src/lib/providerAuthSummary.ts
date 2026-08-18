@@ -29,8 +29,7 @@ export function summariseMistralVibeStatus(status: unknown): ProviderAuthSummary
     return {
       variant: 'not-signed-in',
       statusText: 'Mistral setup not checked yet',
-      hint:
-        'Open Terminal to run `vibe --setup`. Mistral Vibe owns the plan or API-key sign-in; TaskWraith does not read or store it.'
+      hint: 'Open Terminal to run `vibe --setup`.'
     }
   }
   if (record.available === false) {
@@ -243,8 +242,7 @@ export function summariseCodexStatus(status: any): ProviderAuthSummary {
     return {
       variant: 'not-signed-in',
       statusText: 'TaskWraith Codex sign-in required',
-      hint:
-        'Open Settings → Providers → Codex to sign in. TaskWraith uses a private Codex home separate from the Codex app.'
+      hint: 'Open Settings → Providers → Codex to sign in.'
     }
   }
   const account = status.account && typeof status.account === 'object' ? status.account : null

@@ -76,11 +76,6 @@ export function MistralApiKeyControlsView({
         </p>
       )}
       {error && <p className="settings-provider-auth-footnote">{error}</p>}
-      <p className="settings-provider-auth-footnote">
-        The key is encrypted with the system keychain and passed to Mistral for direct metered API
-        billing, unlocking Mistral Large 3, GLM 5.2, Codestral, Devstral 2, and Ministral models.
-        When configured, Vibe resolves credentials API-key-first.
-      </p>
     </>
   )
 }

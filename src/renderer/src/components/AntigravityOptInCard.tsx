@@ -327,54 +327,6 @@ export function AntigravityOptInCard({
       <h4 className="settings-antigravity-agy-heading">
         Official <code>agy</code> CLI (ban-risk; requires explicit consent)
       </h4>
-      <p>
-        Google&apos;s Antigravity Additional Terms state: “Using third party software, tools, or
-        services to access the Service (e.g. using OpenClaw with Antigravity OAuth) is a breach of
-        this Agreement. Such actions may be grounds for suspension or termination of your account.”
-      </p>
-      <p className="settings-provider-auth-hint">
-        Using TaskWraith with AntiGravity can therefore breach Google&apos;s terms and can suspend
-        or terminate your Google account. In February 2026, users publicly reported 403 errors and
-        account suspensions after using third-party Antigravity tools or proxies. This is not
-        ToS-approved or ban-safe.
-      </p>
-      <p className="settings-provider-auth-hint">
-        TaskWraith runs the official user-installed <code>agy</code> CLI. Its browser and OS-keyring
-        sign-in stay under your control; TaskWraith never reads, copies, or stores Google or
-        AntiGravity OAuth credentials, and never reads your AntiGravity conversation transcripts.
-      </p>
-      <p className="settings-provider-auth-hint">
-        For completeness, it does a few other things on your machine: enabling this lane runs{' '}
-        <code>agy models</code> to list what your account can use; continuing a conversation reads
-        one non-secret entry from <code>agy</code>&apos;s own cache — the workspace-to-
-        conversation-ID map it writes at <code>~/.gemini/antigravity-cli/cache/</code> — so a
-        follow-up turn resumes instead of starting over; each run temporarily writes this run&apos;s
-        signed permissions into <code>agy</code>&apos;s settings file at{' '}
-        <code>~/.gemini/antigravity-cli/settings.json</code>, restoring your original settings when
-        the run ends (or at the next TaskWraith launch after a crash); and each run temporarily adds
-        one TaskWraith-named entry to the workspace&apos;s <code>.agents/hooks.json</code> —{' '}
-        <code>agy</code>&apos;s official lifecycle-hook file — so the CLI&apos;s own tool
-        confirmations route to TaskWraith&apos;s approval system on this machine, removed again with
-        the run. No credentials and no transcripts are read, and nothing calls out beyond your
-        machine.
-      </p>
-      <p className="settings-provider-auth-hint">
-        With that hook in place, TaskWraith&apos;s permission gate applies to every native{' '}
-        <code>agy</code> tool call — shell commands and file changes alike: read-only inspection
-        commands (<code>git status</code> / <code>git log</code> / <code>git diff</code>,{' '}
-        <code>ls</code>, <code>cat</code>, <code>grep</code>, …) are pre-authorized inside{' '}
-        <code>agy</code>&apos;s sandbox at every permission tier, the Ask tier genuinely asks with
-        an approval card naming the command or the file, and a declined call is reported back to the
-        model instead of ending the turn. That per-edit gate is also what lets a write-capable turn
-        run in your normal checkout: without it — or without a separately selected worktree — the
-        lane stays read-only, and a run that loses the bridge is refused rather than left to write
-        unsupervised. On the Full Access tier — and only there — <code>agy</code>&apos;s own
-        duplicate confirmation layer is skipped (its terminal sandbox stays on, and
-        TaskWraith&apos;s always-ask holds for network egress and recursive deletion still apply).
-        TaskWraith still owns run admission, cancellation and the audit trail, and if you set Shell
-        commands or File changes to <strong>Deny</strong> under Agentic services, this lane launches
-        read-only rather than ignoring you.
-      </p>
 
       {!consentRecorded ? (
         <>
@@ -404,10 +356,7 @@ export function AntigravityOptInCard({
         <>
           <div className="settings-provider-auth-command">
             <code>agy</code>
-            <span>
-              Opens the official CLI&apos;s own browser/keyring sign-in. Completing sign-in does not
-              make this provider ToS-approved or ban-safe.
-            </span>
+            <span>Opens the official CLI&apos;s own browser/keyring sign-in.</span>
           </div>
           <div className="settings-provider-auth-actions">
             <PillButton
@@ -451,22 +400,6 @@ export function AntigravityOptInCard({
         aria-labelledby="antigravity-gemini-api-heading"
       >
         <h4 id="antigravity-gemini-api-heading">Gemini API (BYO key; separate billing)</h4>
-        <p className="settings-provider-auth-hint">
-          Use your own Google project API key to enable Gemini API models. Saving a valid key is
-          sufficient for this Gemini-only mode; it does not enable the separate official{' '}
-          <code>agy</code> CLI lane above.
-        </p>
-        <p className="settings-provider-auth-hint">
-          Gemini-only. This mode uses a Google project API key that you supply for a later official
-          Google API/SDK connection. It is separately metered and billed under that project and is
-          subject to the project&apos;s tier and rate limits. It does not consume AntiGravity
-          subscription quota and does not expose AntiGravity Claude or GPT models.
-        </p>
-        <p className="settings-provider-auth-hint">
-          Gemini API Free Tier content may be used to improve Google products. Paid Services content
-          is not used to improve Google products. TaskWraith cannot determine your tier; verify it
-          in AI Studio.
-        </p>
         <label className="settings-antigravity-gemini-api-disclosure">
           <input
             type="checkbox"
@@ -556,11 +489,6 @@ export function AntigravityOptInCard({
                 aria-label="Monthly Gemini API budget in US dollars (soft cap)"
               />
             </label>
-            <p className="settings-provider-auth-footnote">
-              Advisory only: fills the Model Usage spend meter and warns as estimated spend
-              approaches it — never blocks a run. For a hard limit, set a budget in your Google
-              Cloud billing console.
-            </p>
           </>
         )}
       </section>
