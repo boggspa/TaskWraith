@@ -5185,6 +5185,7 @@ export const TranscriptPanel = memo(
                       compactDensity={compactDensity}
                       liveActivityViewport={liveActivityViewport}
                       liveActivityViewportActive={false}
+                      liveActivityViewportRevealGrowth
                       liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
                       onLiveActivityViewportExpandedChange={(kind, expanded) =>
                         setLiveViewportExpandedForStack(
@@ -5215,6 +5216,7 @@ export const TranscriptPanel = memo(
                     compactDensity={compactDensity}
                     liveActivityViewport={liveActivityViewport}
                     liveActivityViewportActive={liveViewportActive}
+                    liveActivityViewportRevealGrowth
                     liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
                     onLiveActivityViewportExpandedChange={(kind, expanded) =>
                       setLiveViewportExpandedForStack(

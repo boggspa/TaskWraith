@@ -7,8 +7,11 @@ import {
   edgeFadeState,
   isExpandRevealTransition,
   nextAutoFollow,
+  REVEAL_GROWTH_CEILING_PX,
+  revealGrownMaxHeight,
   revealScrollAdjustment,
   shouldRepinOnContentGrowth,
+  shouldResetRevealGrowth,
   shouldShowViewportJump
 } from './LiveActivityViewport'
 
@@ -93,6 +96,39 @@ describe('isExpandRevealTransition', () => {
 describe('ACTIVITY_REVEAL_EVENT', () => {
   it('pins the DOM event name cards dispatch and viewports listen for', () => {
     expect(ACTIVITY_REVEAL_EVENT).toBe('live-activity-reveal')
+  })
+})
+
+describe('revealGrownMaxHeight', () => {
+  it('keeps the base clamp when the detail already fits', () => {
+    expect(
+      revealGrownMaxHeight({ baseMaxHeight: 168, detailHeight: 100, headerAllowance: 28 })
+    ).toBe(168)
+  })
+
+  it('grows to fit detail plus the header allowance', () => {
+    expect(
+      revealGrownMaxHeight({ baseMaxHeight: 168, detailHeight: 300, headerAllowance: 28 })
+    ).toBe(328)
+  })
+
+  it('never exceeds the growth ceiling', () => {
+    expect(
+      revealGrownMaxHeight({ baseMaxHeight: 168, detailHeight: 900, headerAllowance: 28 })
+    ).toBe(REVEAL_GROWTH_CEILING_PX)
+  })
+
+  it('returns the base clamp for non-finite detail heights', () => {
+    expect(
+      revealGrownMaxHeight({ baseMaxHeight: 168, detailHeight: Number.NaN, headerAllowance: 28 })
+    ).toBe(168)
+  })
+})
+
+describe('shouldResetRevealGrowth', () => {
+  it('resets once content fits back inside the base clamp', () => {
+    expect(shouldResetRevealGrowth({ contentHeight: 150, baseMaxHeight: 168 })).toBe(true)
+    expect(shouldResetRevealGrowth({ contentHeight: 400, baseMaxHeight: 168 })).toBe(false)
   })
 })
 

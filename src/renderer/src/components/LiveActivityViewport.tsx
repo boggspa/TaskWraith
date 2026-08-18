@@ -13,8 +13,10 @@ import {
   distanceFromBottom,
   edgeFadeState,
   nextAutoFollow,
+  revealGrownMaxHeight,
   revealScrollAdjustment,
   shouldRepinOnContentGrowth,
+  shouldResetRevealGrowth,
   shouldShowViewportJump
 } from '../lib/LiveActivityViewport'
 
@@ -50,6 +52,14 @@ interface LiveActivityViewportProps {
   onSkip?: () => void
   skipLabel?: string
   skipTitle?: string
+  /**
+   * Opt-in smart growth: when a revealed detail is taller than the collapsed
+   * clamp, the clamp grows to fit it (up to this ceiling) and shrinks back
+   * once content fits again. NEVER set on surfaces that reserve their
+   * collapsed band from the published height (fan-out lanes) — a mid-run
+   * band jump is the ratcheting the reserve exists to prevent.
+   */
+  revealGrowthCeiling?: number
 }
 
 /**
@@ -75,7 +85,8 @@ export function LiveActivityViewport({
   jumpLabel = 'Jump to latest',
   onSkip,
   skipLabel = 'Skip',
-  skipTitle
+  skipTitle,
+  revealGrowthCeiling
 }: LiveActivityViewportProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [localExpanded, setLocalExpanded] = useState(defaultExpanded)
@@ -91,6 +102,15 @@ export function LiveActivityViewport({
    * follow evaluation; edge fades still refresh on that event.
    */
   const skipFollowOnScrollRef = useRef(false)
+  /** Reveal-grown clamp height (smart growth), null while at the base clamp. */
+  const [grownMaxHeight, setGrownMaxHeight] = useState<number | null>(null)
+  const activeCollapsedMaxHeight = grownMaxHeight ?? collapsedMaxHeight
+
+  // Growth is a collapsed-state affordance; entering or leaving the expanded
+  // free-flow view always returns the clamp to base.
+  useEffect(() => {
+    setGrownMaxHeight(null)
+  }, [expanded])
 
   const setExpandedState = useCallback(
     (next: boolean | ((current: boolean) => boolean)) => {
@@ -148,6 +168,14 @@ export function LiveActivityViewport({
       if (shouldRepinOnContentGrowth({ expanded, following })) {
         el.scrollTop = el.scrollHeight
       }
+      // Smart growth shrinks back the moment content fits the base clamp
+      // again (the revealed card was collapsed, or its rows settled away).
+      setGrownMaxHeight((current) =>
+        current !== null &&
+        shouldResetRevealGrowth({ contentHeight: el.scrollHeight, baseMaxHeight: collapsedMaxHeight })
+          ? null
+          : current
+      )
       refreshEdgeFades()
     })
     observer.observe(el)
@@ -155,7 +183,7 @@ export function LiveActivityViewport({
       observer.observe(child)
     }
     return () => observer.disconnect()
-  }, [expanded, following, refreshEdgeFades])
+  }, [expanded, following, collapsedMaxHeight, refreshEdgeFades])
 
   // Disclosure→viewport reveal contract: a card the user just expanded
   // dispatches ACTIVITY_REVEAL_EVENT from its detail element. While collapsed,
@@ -173,6 +201,19 @@ export function LiveActivityViewport({
       const scrollerRect = el.getBoundingClientRect()
       const targetRect = target.getBoundingClientRect()
       const targetTop = targetRect.top - scrollerRect.top + el.scrollTop
+      // Opt-in smart growth: fit the revealed detail (bounded) before the
+      // scroll adjustment. The DOM grows next frame, so the adjustment below
+      // still computes against current geometry — the grown window only ever
+      // shows MORE of the detail than the math guaranteed.
+      if (revealGrowthCeiling !== undefined) {
+        const grown = revealGrownMaxHeight({
+          baseMaxHeight: collapsedMaxHeight,
+          detailHeight: targetRect.height,
+          headerAllowance: REVEAL_HEADER_ALLOWANCE_PX,
+          ceiling: revealGrowthCeiling
+        })
+        setGrownMaxHeight(grown > collapsedMaxHeight ? grown : null)
+      }
       const nextScrollTop = revealScrollAdjustment({
         scrollTop: el.scrollTop,
         clientHeight: el.clientHeight,
@@ -188,7 +229,7 @@ export function LiveActivityViewport({
     }
     el.addEventListener(ACTIVITY_REVEAL_EVENT, onReveal)
     return () => el.removeEventListener(ACTIVITY_REVEAL_EVENT, onReveal)
-  }, [expanded, refreshEdgeFades])
+  }, [expanded, collapsedMaxHeight, revealGrowthCeiling, refreshEdgeFades])
 
   const handleScroll = () => {
     const el = scrollRef.current
@@ -242,8 +283,8 @@ export function LiveActivityViewport({
           expanded
             ? undefined
             : ({
-                maxHeight: collapsedMaxHeight,
-                '--live-activity-collapsed-height': `${collapsedMaxHeight}px`
+                maxHeight: activeCollapsedMaxHeight,
+                '--live-activity-collapsed-height': `${activeCollapsedMaxHeight}px`
               } as CSSProperties)
         }
         onScroll={handleScroll}

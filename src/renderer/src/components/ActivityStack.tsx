@@ -41,6 +41,7 @@ import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
+import { REVEAL_GROWTH_CEILING_PX } from '../lib/LiveActivityViewport'
 import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
 import {
@@ -142,6 +143,11 @@ interface ActivityStackProps {
     kind: ActivityTimelineSegmentKind,
     expanded: boolean
   ) => void
+  /** Opt-in reveal-driven clamp growth for the segment viewports. Main
+   * transcript stacks set this; fan-out lane stacks MUST NOT (their reserved
+   * band reads the published collapsed height — see
+   * fanoutLaneViewportReserveCss.test.ts). */
+  liveActivityViewportRevealGrowth?: boolean
   /**
    * 1.0.6-TV2 — optional controlled expansion. When BOTH are provided
    * the stack's per-row expansion set is owned by the parent instead of
@@ -3084,6 +3090,7 @@ export function ActivityStack({
   liveActivityViewportJumpLabel,
   liveActivityViewportExpandedByKind: controlledLiveViewportExpandedByKind,
   onLiveActivityViewportExpandedChange,
+  liveActivityViewportRevealGrowth = false,
   expandedActivityIds,
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
@@ -3524,6 +3531,9 @@ export function ActivityStack({
               }
               revision={revision}
               collapsedMaxHeight={liveActivityViewportCollapsedMaxHeight}
+              revealGrowthCeiling={
+                liveActivityViewportRevealGrowth ? REVEAL_GROWTH_CEILING_PX : undefined
+              }
               expanded={segmentViewportExpanded}
               onExpandedChange={(next) => setLiveViewportExpanded(segment.kind, next)}
               label={

@@ -141,6 +141,44 @@ export function shouldRepinOnContentGrowth(input: {
   return !input.expanded && input.following
 }
 
+/**
+ * Ceiling for reveal-driven clamp growth. High enough to fit one fully
+ * expanded detail card (foldout bodies clamp at 320px + tab/chrome), low
+ * enough that a grown viewport still reads as a bounded band rather than
+ * swallowing the transcript.
+ */
+export const REVEAL_GROWTH_CEILING_PX = 420
+
+/**
+ * Grown collapsed-clamp height for a revealed detail: fit the detail plus
+ * the row-header allowance, never below the base clamp, never above the
+ * ceiling. Surfaces that RESERVE their collapsed band from the published
+ * height (fan-out lanes) must never opt into growth — a mid-run band jump
+ * is exactly the ratcheting the reserve exists to kill.
+ */
+export function revealGrownMaxHeight(input: {
+  baseMaxHeight: number
+  detailHeight: number
+  headerAllowance: number
+  ceiling?: number
+}): number {
+  const ceiling = input.ceiling ?? REVEAL_GROWTH_CEILING_PX
+  if (!Number.isFinite(input.detailHeight) || !Number.isFinite(input.baseMaxHeight)) {
+    return input.baseMaxHeight
+  }
+  const needed = input.detailHeight + input.headerAllowance
+  if (needed <= input.baseMaxHeight) return input.baseMaxHeight
+  return Math.min(needed, ceiling)
+}
+
+/** Growth resets the moment content fits back inside the base clamp. */
+export function shouldResetRevealGrowth(input: {
+  contentHeight: number
+  baseMaxHeight: number
+}): boolean {
+  return input.contentHeight <= input.baseMaxHeight
+}
+
 /** Minimum overflow (px) before an edge fade is shown — avoids flicker at rest. */
 export const EDGE_FADE_OVERFLOW_PX = 4
 
