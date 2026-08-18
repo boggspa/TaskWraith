@@ -1679,6 +1679,103 @@
   margin-top: auto;
 }
 
+/*
+ * A card with SEVERAL actions blocks (the Mistral quota card has three) must
+ * not let each of them claim an `auto` top margin — grid-stretch free space
+ * would be split between them, spreading the sections apart mid-card. Only a
+ * card-final actions block keeps the bottom-pinning behaviour.
+ */
+.settings-provider-auth-card .settings-provider-auth-actions:not(:last-child) {
+  margin-top: 0;
+}
+
+/* ── Import Web Session era additions ────────────────────────────────────────
+ * The classes below shipped with the in-house Limit Counter port referencing
+ * rules that did not exist — inputs fell back to the browser's intrinsic
+ * ~173px width and refused to shrink, and the long nowrap "Import … web
+ * session" pills painted straight through the card border. These are their
+ * first definitions. */
+
+.settings-provider-auth-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-provider-auth-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-auth-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+.settings-provider-auth-error {
+  margin: 0;
+  color: var(--color-danger, #f85149);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+/* Fields that sit side by side while they fit, wrapping instead of clipping. */
+.settings-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-field-row .settings-field {
+  min-width: 0;
+}
+
+/* The base .settings-select carries `min-width: 160px`, wider than a
+ * field-row track — inside a row it must yield to the track instead. */
+.settings-field-row .settings-select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+/* Text twin of `.settings-field .settings-select`, same chrome as the
+ * provider-auth field inputs. `width: 100%` + `min-width: 0` is the pair that
+ * lets it shrink inside a grid track instead of forcing the column wide. */
+.settings-input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary, transparent);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+/* Web-session action pairs sit in a wrapping row (compact pills), not the
+ * stacked full-width grid the shared -actions class renders. */
+.settings-provider-auth-actions.settings-web-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The Ollama web-session row carries an input plus three pills — more
+ * min-content than the half-width card can ever offer on one line, so this
+ * row (and only this row) is allowed to wrap. */
+.settings-pi-upstream-controls.settings-web-session-controls {
+  flex-wrap: wrap;
+}
+
 .settings-provider-pause {
   display: grid;
   gap: 8px;
