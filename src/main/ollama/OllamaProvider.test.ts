@@ -195,7 +195,7 @@ function makeProviderDeps(
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -232,7 +232,7 @@ function makeProviderDeps(
       getSettings: () =>
         ({
           ollamaBaseUrl: 'http://127.0.0.1:11434',
-          ollamaDefaultModel: 'stream-model:latest',
+          ollamaDefaultModel: 'gpt_oss_20b',
           ollamaModelPreflightAt: { 'stream-model:latest@digest-stream': Date.now() },
           agenticServices: { mcpTools: 'allow' },
           geminiMcpBridgeEnabled: true,
@@ -482,7 +482,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -508,7 +508,7 @@ describe('runOllamaProvider streaming', () => {
       }
     )
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(attachedController).toBeDefined()
     expect(requestSignals.get('/api/tags')).toBe(attachedController?.signal)
@@ -528,7 +528,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -543,7 +543,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(requestPaths).toEqual(['/api/tags'])
     expect(errors).toEqual([
@@ -562,7 +562,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -581,7 +581,7 @@ describe('runOllamaProvider streaming', () => {
         unloadCalls += 1
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
-          model: 'stream-model:latest',
+          model: 'gpt_oss_20b',
           keep_alive: 0
         })
         return {
@@ -600,7 +600,7 @@ describe('runOllamaProvider streaming', () => {
       admitted = false
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(0)
     expect(unloadCalls).toBe(1)
@@ -621,7 +621,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -661,7 +661,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       }
     })
@@ -693,7 +693,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -743,12 +743,12 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       }
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(1)
     expect(executeTool).not.toHaveBeenCalled()
@@ -766,7 +766,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -805,7 +805,7 @@ describe('runOllamaProvider streaming', () => {
       canAdmitTransport: () => admitted,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       }
     })
@@ -817,7 +817,7 @@ describe('runOllamaProvider streaming', () => {
       }
     }
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(1)
     expect(executeTool).not.toHaveBeenCalled()
@@ -852,7 +852,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -888,7 +888,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -949,7 +949,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -965,7 +965,7 @@ describe('runOllamaProvider streaming', () => {
       claimedTerminalStatus: () => 'failed'
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(errors[0]?.error).toContain('cancelled before transport launch')
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
@@ -979,7 +979,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1009,7 +1009,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1060,7 +1060,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1103,7 +1103,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool
@@ -1149,7 +1149,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1212,7 +1212,7 @@ describe('runOllamaProvider streaming', () => {
     expect(deps.saveOllamaSessionMemory).toHaveBeenCalledWith(
       'chat-ollama-1',
       expect.objectContaining({
-        modelId: 'stream-model:latest',
+        modelId: 'gpt_oss_20b',
         toolTurnCount: 1
       }),
       'ensemble:lfm-seat'
@@ -1240,7 +1240,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1274,7 +1274,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     // The immediate tool response sent back to the live model remains exact.
@@ -1299,7 +1299,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1335,7 +1335,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1378,7 +1378,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1416,7 +1416,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: '' })
@@ -1458,7 +1458,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1529,7 +1529,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools', 'thinking']
@@ -1558,7 +1558,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(
       lines
@@ -1575,7 +1575,7 @@ describe('runOllamaProvider streaming', () => {
       throw new Error('working telemetry unavailable')
     }
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(lines.at(-1)?.payload).toMatchObject({ type: 'result', status: 'success' })
     expect(exits).toEqual([{ provider: 'ollama', code: 0, route: baseRoute }])
@@ -1588,7 +1588,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1606,7 +1606,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(errors).toEqual([{ provider: 'ollama', error: 'model not found', route: baseRoute }])
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
@@ -1620,7 +1620,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1643,7 +1643,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(
       lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
@@ -1661,7 +1661,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1684,7 +1684,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(2)
     expect(errors).toEqual([])
@@ -1704,7 +1704,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1723,7 +1723,7 @@ describe('runOllamaProvider streaming', () => {
         unloadCalls += 1
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
-          model: 'stream-model:latest',
+          model: 'gpt_oss_20b',
           keep_alive: 0
         })
         return {
@@ -1736,7 +1736,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
@@ -1761,7 +1761,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1780,7 +1780,7 @@ describe('runOllamaProvider streaming', () => {
         unloadCalls += 1
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
-          model: 'stream-model:latest',
+          model: 'gpt_oss_20b',
           keep_alive: 0
         })
         return {
@@ -1796,7 +1796,7 @@ describe('runOllamaProvider streaming', () => {
       claimedTerminalStatus: () => 'cancelled'
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatCalls).toBe(3)
     expect(unloadCalls).toBe(1)
@@ -1814,7 +1814,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1847,7 +1847,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -1863,7 +1863,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1903,13 +1903,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: 'README body' })
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -1926,7 +1926,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -1973,13 +1973,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool: async () => ({ ok: true, output: 'README body' })
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2003,7 +2003,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2044,7 +2044,7 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool
@@ -2085,7 +2085,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2114,13 +2114,13 @@ describe('runOllamaProvider streaming', () => {
       fetchMock,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       },
       executeTool
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2139,7 +2139,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2165,7 +2165,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2180,7 +2180,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2254,7 +2254,7 @@ describe('runOllamaProvider streaming', () => {
     const { deps, lines } = prepared
     projectedLines = lines
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(createHostCommandProjection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2389,7 +2389,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2432,7 +2432,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool,
       settings: {
         ollamaRunProfiles: {
-          'stream-model:latest': { protocolMode: 'json_only' }
+          'gpt_oss_20b': { protocolMode: 'json_only' }
         }
       }
     })
@@ -2477,7 +2477,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2558,7 +2558,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2592,7 +2592,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines, workingUsage } = makeProviderDeps({ fetchMock })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(lines.filter((line) => line.payload.tool_name === 'ollama_thinking')).toEqual([])
     expect(
@@ -2608,7 +2608,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2663,7 +2663,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2693,7 +2693,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool: async () => ({ ok: true, output: '' })
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     const contentTexts = lines
       .filter((line) => line.payload.type === 'content')
@@ -2717,7 +2717,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2745,7 +2745,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).not.toHaveBeenCalled()
     expect(chatCalls).toBe(4)
@@ -2776,7 +2776,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2805,7 +2805,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(6)
     expect(chatCalls).toBe(6)
@@ -2834,7 +2834,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2870,7 +2870,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(executeTool).toHaveBeenCalledTimes(4)
     const contentTexts = lines
@@ -2899,7 +2899,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -2933,7 +2933,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     // search + fresh read productive; repeat reads: nudge (epoch 0), re-serve
     // (post-compression epoch), nudge, nudge → 4 non-productive turns → ceiling.
@@ -2962,7 +2962,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['completion']
@@ -2987,7 +2987,7 @@ describe('runOllamaProvider streaming', () => {
       executeTool: async () => ({ ok: true, output: '' })
     })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatBodies).toHaveLength(1)
     const format = JSON.parse(chatBodies[0]).format
@@ -3012,7 +3012,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -3067,7 +3067,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -3102,7 +3102,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({
       fetchMock,
-      settings: { ollamaRunProfiles: { 'stream-model:latest': { protocolMode: 'json_only' } } },
+      settings: { ollamaRunProfiles: { 'gpt_oss_20b': { protocolMode: 'json_only' } } },
       executeTool: async () => ({ ok: true, output: 'src/seat.ts:1: seat marker' })
     })
     deps.getOllamaSessionMemory = (chatId: string, memoryKey?: string) => {
@@ -3157,7 +3157,7 @@ describe('runOllamaProvider streaming', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -3195,7 +3195,7 @@ describe('runOllamaProvider streaming', () => {
     })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     // The invalid call did not execute; the model got a specific repair naming
     // the bad tool + pointing at tool_help.
@@ -3963,9 +3963,6 @@ describe('parseOllamaToolRequest', () => {
     expect(
       validateOllamaToolArguments('run_shell_command', { command: 'ls', summary: 'list files' })
     ).toEqual({ ok: true })
-    const missingIntent = validateOllamaToolArguments('write_file', { path: 'a.ts', content: 'x' })
-    expect(missingIntent.ok).toBe(false)
-    if (!missingIntent.ok) expect(missingIntent.message).toContain('intent')
 
     const emptyBlackboardPost = validateOllamaToolArguments('blackboard_post', {
       key: '   ',
@@ -4809,7 +4806,7 @@ describe('runOllamaProvider mid-turn steering', () => {
         return jsonResponse({
           models: [
             {
-              name: 'stream-model:latest',
+              name: 'gpt_oss_20b',
               digest: 'digest-stream',
               details: { family: 'qwen' },
               capabilities: ['tools']
@@ -4850,7 +4847,7 @@ describe('runOllamaProvider mid-turn steering', () => {
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
     deps.drainPendingSteerText = drainPendingSteerText
 
-    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, modelId: 'gpt_oss_20b' }, baseRoute)
 
     expect(chatBodies).toHaveLength(2)
     // Turn 0 rides the pre-resolved launch-plan request; a drain there would

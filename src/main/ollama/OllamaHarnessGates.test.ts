@@ -59,7 +59,7 @@ describe('OllamaHarnessGates', () => {
   it('blocks read_file until explore tools run for retrieval-first models', () => {
     const state = createOllamaHarnessRunState()
     const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt-oss:20b',
+      modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'read_file',
@@ -73,7 +73,7 @@ describe('OllamaHarnessGates', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'list_directory', { path: 'src' }, true)
     const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt-oss:20b',
+      modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'read_file',
@@ -86,7 +86,7 @@ describe('OllamaHarnessGates', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'find_files', { pattern: '*.ts' }, true)
     const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt-oss:20b',
+      modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'read_file',
@@ -99,7 +99,7 @@ describe('OllamaHarnessGates', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'workspace_search', { query: 'Foo' }, true)
     const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt-oss:20b',
+      modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'replace',
@@ -117,7 +117,7 @@ describe('OllamaHarnessGates', () => {
   it('does not require todo_write before other tools when scaffold is enabled', () => {
     const state = createOllamaHarnessRunState()
     const gate = evaluateOllamaHarnessGate({
-      modelId: 'gpt-oss:20b',
+      modelId: 'gpt_oss_20b',
       tier: 'approved_edits',
       state,
       toolName: 'workspace_search',
