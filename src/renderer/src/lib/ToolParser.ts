@@ -809,6 +809,58 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
   }
 }
 
+/**
+ * The "replaced this text with that text" pair, under every spelling a provider
+ * has been observed to use: snake_case (Claude/Codex/Ollama/broker MCP tools),
+ * camelCase (Mistral Vibe serializes its ACP arguments through a `to_camel`
+ * pydantic alias generator), and AntiGravity's TitleCase.
+ *
+ * Shared by `estimateLineChanges` and `deriveToolDiffSummary` on purpose: when
+ * only the former knew the aliases, a camelCase edit was counted correctly and
+ * then mislabelled `source: 'content'`, which in turn read as `confidence:
+ * 'exact'` and dropped the `~` marker the identical snake_case edit shows.
+ *
+ * An EMPTY string deliberately does not qualify (the `&&` chain skips it), which
+ * matches the original behaviour: a pure insertion (`old_string: ''`) reports no
+ * stats rather than a misleading `-1`.
+ */
+function resolveReplacedText(parameters: Record<string, unknown>): string | undefined {
+  return (
+    (typeof parameters.old_string === 'string' && parameters.old_string) ||
+    (typeof parameters.oldString === 'string' && parameters.oldString) ||
+    (typeof parameters.old_text === 'string' && parameters.old_text) ||
+    (typeof parameters.oldText === 'string' && parameters.oldText) ||
+    (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
+    (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
+    (typeof parameters.target_content === 'string' && parameters.target_content) ||
+    (typeof parameters.old === 'string' && parameters.old) ||
+    undefined
+  )
+}
+
+function resolveReplacementText(parameters: Record<string, unknown>): string | undefined {
+  return (
+    (typeof parameters.new_string === 'string' && parameters.new_string) ||
+    (typeof parameters.newString === 'string' && parameters.newString) ||
+    (typeof parameters.new_text === 'string' && parameters.new_text) ||
+    (typeof parameters.newText === 'string' && parameters.newText) ||
+    (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
+    (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
+    (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
+    (typeof parameters.new === 'string' && parameters.new) ||
+    undefined
+  )
+}
+
+/** True when the parameters describe a text-for-text replacement, in any spelling. */
+function looksLikeStringReplacement(parameters?: Record<string, unknown>): boolean {
+  if (!parameters) return false
+  return (
+    resolveReplacedText(parameters) !== undefined &&
+    resolveReplacementText(parameters) !== undefined
+  )
+}
+
 export function estimateLineChanges(parameters?: Record<string, unknown>): {
   additions?: number
   deletions?: number
@@ -838,26 +890,8 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
         explicitDeletions !== undefined && !Number.isNaN(explicitDeletions) ? explicitDeletions : 0
     }
   }
-  const oldString =
-    (typeof parameters.old_string === 'string' && parameters.old_string) ||
-    (typeof parameters.oldString === 'string' && parameters.oldString) ||
-    (typeof parameters.old_text === 'string' && parameters.old_text) ||
-    (typeof parameters.oldText === 'string' && parameters.oldText) ||
-    (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
-    (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
-    (typeof parameters.target_content === 'string' && parameters.target_content) ||
-    (typeof parameters.old === 'string' && parameters.old) ||
-    undefined
-  const newString =
-    (typeof parameters.new_string === 'string' && parameters.new_string) ||
-    (typeof parameters.newString === 'string' && parameters.newString) ||
-    (typeof parameters.new_text === 'string' && parameters.new_text) ||
-    (typeof parameters.newText === 'string' && parameters.newText) ||
-    (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
-    (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
-    (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
-    (typeof parameters.new === 'string' && parameters.new) ||
-    undefined
+  const oldString = resolveReplacedText(parameters)
+  const newString = resolveReplacementText(parameters)
   if (typeof oldString === 'string' && typeof newString === 'string') {
     const oldLines = oldString.split('\n').length
     const newLines = newString.split('\n').length
@@ -1080,10 +1114,7 @@ export function deriveToolDiffSummary(
   const replacement = estimateLineChanges(parameters)
   if (replacement.additions !== undefined || replacement.deletions !== undefined) {
     const path = parameters ? getPathFromRecord(parameters) : undefined
-    const source =
-      typeof parameters?.old_string === 'string' && typeof parameters?.new_string === 'string'
-        ? 'string_replace'
-        : 'content'
+    const source = looksLikeStringReplacement(parameters) ? 'string_replace' : 'content'
     return {
       additions: replacement.additions || 0,
       deletions: replacement.deletions || 0,

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { computeInlineStats, inlineStatsForActivity } from './ActivityInlineStats'
+import {
+  computeInlineStats,
+  inlineStatsForActivity,
+  sumActivityDiffTotals
+} from './ActivityInlineStats'
 import type { ToolActivity } from '../../../main/store/types'
 
 describe('ActivityInlineStats', () => {
@@ -241,6 +245,91 @@ describe('ActivityInlineStats', () => {
         }
       }
       expect(inlineStatsForActivity(activity).visible).toBe(false)
+    })
+  })
+
+  /**
+   * Mistral Vibe sends its ACP tool arguments in camelCase (`to_camel` pydantic
+   * aliases), so an edit arrives as `{filePath, oldString, newString}`. The
+   * aliases that make this work landed inside an AntiGravity commit and were
+   * never pinned by a Vibe fixture — leaving every Mistral "Edited N files" row
+   * one plausible cleanup away from losing its `+N -N` pill again.
+   */
+  describe('Mistral Vibe (ACP camelCase) inline stats', () => {
+    const vibeEdit = (
+      id: string,
+      filePath: string,
+      oldString: string,
+      newString: string
+    ): ToolActivity => ({
+      id,
+      toolName: `Edit ${filePath}`,
+      displayName: `Edit ${filePath}`,
+      category: 'write',
+      status: 'success',
+      parameters: { filePath, oldString, newString, replaceAll: false }
+    })
+
+    it('shows the odometer for a camelCase edit', () => {
+      const result = computeInlineStats({
+        toolName: 'Edit main.py',
+        status: 'success',
+        parameters: { filePath: 'src/main.py', oldString: 'a\nb', newString: 'a\nb\nc' }
+      })
+
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(3)
+      expect(result.deletions).toBe(2)
+    })
+
+    it('shows an additions-only odometer for a camelCase whole-file write', () => {
+      const result = inlineStatsForActivity({
+        id: 'w1',
+        toolName: 'Write notes.md',
+        displayName: 'Write notes.md',
+        category: 'write',
+        status: 'success',
+        parameters: { filePath: 'notes.md', content: 'one\ntwo\nthree' }
+      })
+
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(3)
+      expect(result.deletions).toBe(0)
+    })
+
+    it('totals a folded run of Vibe edits — the "Edited 2 files +N -N" group row', () => {
+      // What the collapsed group header sums. Losing the aliases makes this
+      // return null, which is precisely how the pill vanishes from the row.
+      const totals = sumActivityDiffTotals([
+        vibeEdit('e1', 'src/a.ts', 'a\nb', 'a\nb\nc'),
+        vibeEdit('e2', 'src/b.ts', 'x', 'x\ny')
+      ])
+
+      // `estimated: true` is the point, not an accident: a line-counted
+      // replacement is an estimate, so the group row earns the same `~` marker
+      // an identical snake_case edit has always shown. Reading these arguments
+      // as whole-file `content` instead would claim `exact` and drop it.
+      expect(totals).toEqual({ additions: 5, deletions: 3, estimated: true })
+    })
+
+    it('counts camelCase text aliases inside a MultiEdit edits[] payload', () => {
+      // `old_text`/`oldText` inside edits[] were added separately (5a16e6b4e)
+      // and were likewise unpinned.
+      const result = computeInlineStats({
+        toolName: 'multiedit',
+        status: 'success',
+        parameters: {
+          file_path: 'src/a.ts',
+          edits: [
+            { oldText: 'a', newText: 'a\nb' },
+            { old_text: 'c', new_text: 'c\nd' }
+          ]
+        }
+      })
+
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(4)
+      expect(result.deletions).toBe(2)
     })
   })
 })

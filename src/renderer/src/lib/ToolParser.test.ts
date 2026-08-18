@@ -797,6 +797,75 @@ describe('ToolParser', () => {
     })
   })
 
+  /**
+   * Mistral Vibe (`vibe-acp`) serializes its native tool arguments through a
+   * pydantic model whose alias generator is `to_camel`, so an edit arrives as
+   * `{filePath, oldString, newString}` — NOT the snake_case this parser was
+   * originally written for. Support for those aliases arrived incidentally,
+   * inside a commit about AntiGravity, with no Vibe fixture of its own; a
+   * plausible "tidy the alias list" change would silently blank every Mistral
+   * edit's `+N -N` pill again. These cases exist to make that change loud.
+   */
+  describe('Mistral Vibe (ACP camelCase) argument shapes', () => {
+    it('counts a camelCase string-replace edit', () => {
+      expect(estimateLineChanges({ oldString: 'a\nb', newString: 'a\nb\nc' })).toEqual({
+        additions: 3,
+        deletions: 2
+      })
+    })
+
+    it('derives a string_replace summary with the camelCase path', () => {
+      const summary = deriveToolDiffSummary('Edit main.py', {
+        filePath: 'src/main.py',
+        oldString: 'a\nb',
+        newString: 'a\nb\nc',
+        replaceAll: false
+      })
+
+      expect(summary).toMatchObject({
+        additions: 3,
+        deletions: 2,
+        // A replacement pair IS a string replace however it was spelled. Reading
+        // this as 'content' also mislabels confidence as 'exact', dropping the
+        // `~` estimate marker that the identical snake_case edit shows.
+        source: 'string_replace',
+        confidence: 'estimated',
+        files: [{ path: 'src/main.py', additions: 3, deletions: 2, status: 'modified' }]
+      })
+    })
+
+    it('counts a camelCase whole-file write as additions-only', () => {
+      expect(
+        deriveToolDiffSummary('Write notes.md', {
+          filePath: 'notes.md',
+          content: 'one\ntwo\nthree'
+        })
+      ).toMatchObject({
+        additions: 3,
+        deletions: 0,
+        files: [{ path: 'notes.md', additions: 3, deletions: 0 }]
+      })
+    })
+
+    it('lights the pill end-to-end from a Vibe tool_use event', () => {
+      // The exact shape `applyMistralRunEvent` forwards: a freeform ACP title
+      // for the tool name, the canonical kind, and rawInput as parameters.
+      const activity = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'call_1',
+        tool_name: 'Edit main.py',
+        tool_kind: 'edit',
+        parameters: { filePath: 'src/main.py', oldString: 'a\nb', newString: 'a\nb\nc' },
+        provider: 'mistral'
+      })
+
+      expect(activity.category).toBe('write')
+      expect(activity.filePath).toBe('src/main.py')
+      expect(activity.diffSummary?.additions).toBe(3)
+      expect(activity.diffSummary?.deletions).toBe(2)
+    })
+  })
+
   describe('unwrapMcpEnvelope', () => {
     it('returns the empty / non-string input untouched (no-op)', () => {
       expect(unwrapMcpEnvelope('')).toBe('')
