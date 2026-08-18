@@ -91,7 +91,31 @@ export function LiveActivityViewport({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [localExpanded, setLocalExpanded] = useState(defaultExpanded)
   const expanded = controlledExpanded ?? localExpanded
-  const [following, setFollowing] = useState(true)
+  const [following, setFollowingState] = useState(true)
+  /**
+   * Mirror of `following` readable from stable callbacks. The content-growth
+   * ResizeObserver MUST see a reveal's pause in the same frame it was made:
+   * live verification caught the stale-closure version re-pinning to the
+   * bottom off the revealed detail's own growth, whose scroll event then
+   * re-engaged follow — undoing the pause the instant it was made. Writers go
+   * through `setFollowing` so ref and state can never drift.
+   */
+  const followingRef = useRef(true)
+  const setFollowing = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      setFollowingState((current) => {
+        const resolved = typeof next === 'function' ? next(current) : next
+        followingRef.current = resolved
+        return resolved
+      })
+      if (typeof next === 'boolean') {
+        // Synchronous for plain writes — the reveal handler's pause must be
+        // visible to observer callbacks that fire before React commits.
+        followingRef.current = next
+      }
+    },
+    []
+  )
   const [fadeTop, setFadeTop] = useState(false)
   const [fadeBottom, setFadeBottom] = useState(false)
   /**
@@ -165,7 +189,7 @@ export function LiveActivityViewport({
     const el = scrollRef.current
     if (!el || expanded) return
     const observer = new ResizeObserver(() => {
-      if (shouldRepinOnContentGrowth({ expanded, following })) {
+      if (shouldRepinOnContentGrowth({ expanded, following: followingRef.current })) {
         el.scrollTop = el.scrollHeight
       }
       // Smart growth shrinks back the moment content fits the base clamp
@@ -183,7 +207,9 @@ export function LiveActivityViewport({
       observer.observe(child)
     }
     return () => observer.disconnect()
-  }, [expanded, following, collapsedMaxHeight, refreshEdgeFades])
+    // `following` is read via followingRef so a follow flip does not churn
+    // the observer subscription (and pauses are visible pre-commit).
+  }, [expanded, collapsedMaxHeight, refreshEdgeFades])
 
   // Disclosure→viewport reveal contract: a card the user just expanded
   // dispatches ACTIVITY_REVEAL_EVENT from its detail element. While collapsed,
