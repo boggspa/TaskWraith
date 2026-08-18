@@ -429,13 +429,23 @@ export const MAX_APPROVAL_LEDGER_HISTORY = 1000
  * ends — both are flipped to a terminal `expired` status (cappable) by the
  * expiry/recovery sweeps when they die, so an `approved` session/workspace row
  * here is by definition still live.
+ *
+ * EXCEPT the per-call auto-allow audit trail. Those rows are minted once per
+ * auto-allowed tool call and ride the scope of the grant they exercised
+ * (decisionSource 'workspace_grant'), but they are a usage log, not the grant:
+ * the row created by the user's acceptForWorkspace / acceptForSession click is
+ * what records the standing permission. Counting audits as live made them
+ * immortal — 2,978 of 3,005 workspace rows in a measured 11.3 MB ledger were
+ * decision:'autoAllow', and the file is rewritten synchronously on the main
+ * thread on every approval event (2026-08-18). Ageing an audit row can at
+ * worst trim history, never permissions: enforcement lives in
+ * PermissionService, and a dropped grant row fails closed to a re-prompt.
  */
 export function isLiveApprovalLedgerRecord(record: ApprovalLedgerRecord): boolean {
   if (record.status === 'pending') return true
-  return (
-    record.status === 'approved' &&
-    (record.grantedScope === 'session' || record.grantedScope === 'workspace')
-  )
+  if (record.status !== 'approved') return false
+  if (record.grantedScope !== 'session' && record.grantedScope !== 'workspace') return false
+  return record.decision !== 'autoAllow'
 }
 
 function approvalLedgerRecencyMs(record: ApprovalLedgerRecord): number {
@@ -444,19 +454,51 @@ function approvalLedgerRecencyMs(record: ApprovalLedgerRecord): number {
   return Number.isFinite(ms) ? ms : 0
 }
 
+/**
+ * Backstop ceiling on live grants themselves, in case a future scope or
+ * liveness change re-opens the hole the autoAllow exclusion above closes.
+ * Generous by two orders of magnitude — the profile that motivated it held 27
+ * real grants. Pending rows are never dropped here (they are already bounded
+ * by the 24h pending TTL sweep); shedding the oldest grant fails closed to a
+ * re-prompt, never an auto-allow.
+ */
+export const MAX_APPROVAL_LEDGER_LIVE_GRANTS = 500
+
 export function capApprovalLedgerRecords(
   records: ApprovalLedgerRecord[],
-  maxHistory = MAX_APPROVAL_LEDGER_HISTORY
+  maxHistory = MAX_APPROVAL_LEDGER_HISTORY,
+  maxLiveGrants = MAX_APPROVAL_LEDGER_LIVE_GRANTS
 ): ApprovalLedgerRecord[] {
   const history = records.filter((record) => !isLiveApprovalLedgerRecord(record))
-  if (history.length <= maxHistory) return records
-  const keepHistoryIds = new Set(
-    [...history]
-      .sort((a, b) => approvalLedgerRecencyMs(b) - approvalLedgerRecencyMs(a))
-      .slice(0, maxHistory)
-      .map((record) => record.id)
+  const liveGrants = records.filter(
+    (record) => isLiveApprovalLedgerRecord(record) && record.status === 'approved'
   )
-  return records.filter(
-    (record) => isLiveApprovalLedgerRecord(record) || keepHistoryIds.has(record.id)
-  )
+  const historyOver = history.length > maxHistory
+  const liveGrantsOver = liveGrants.length > maxLiveGrants
+  if (!historyOver && !liveGrantsOver) return records
+  const newestFirst = (a: ApprovalLedgerRecord, b: ApprovalLedgerRecord): number =>
+    approvalLedgerRecencyMs(b) - approvalLedgerRecencyMs(a)
+  const keepHistoryIds = historyOver
+    ? new Set(
+        [...history]
+          .sort(newestFirst)
+          .slice(0, maxHistory)
+          .map((record) => record.id)
+      )
+    : null
+  const keepLiveGrantIds = liveGrantsOver
+    ? new Set(
+        [...liveGrants]
+          .sort(newestFirst)
+          .slice(0, maxLiveGrants)
+          .map((record) => record.id)
+      )
+    : null
+  return records.filter((record) => {
+    if (isLiveApprovalLedgerRecord(record)) {
+      if (record.status !== 'approved') return true
+      return !keepLiveGrantIds || keepLiveGrantIds.has(record.id)
+    }
+    return !keepHistoryIds || keepHistoryIds.has(record.id)
+  })
 }

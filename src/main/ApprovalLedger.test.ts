@@ -351,4 +351,89 @@ describe('ApprovalLedger', () => {
     expect(result.records[0].title).toBe('Approve Claude file write')
     expect(result.staleRowsAfter).toEqual([])
   })
+
+  /**
+   * 2026-08-18: the June cap resurfaced through a scope change. Per-call
+   * auto-allow AUDIT rows now ride the scope of the grant they exercised
+   * (decisionSource 'workspace_grant', grantedScope 'workspace'), which made
+   * every one of them "live" and therefore uncappable — measured 2,978 of
+   * 3,005 workspace rows in an 11.3 MB ledger were decision:'autoAllow', and
+   * the whole file is rewritten synchronously on every approval event. An
+   * audit row is a usage log of a grant, not the grant: the row minted by the
+   * user's acceptForWorkspace/acceptForSession click is what must survive.
+   * Ageing an audit row can at worst trim history, never permissions —
+   * enforcement lives in PermissionService, and a dropped grant row fails
+   * closed to a re-prompt.
+   */
+  it('treats per-call autoAllow audit rows as history even when they carry the grant scope', () => {
+    const make = (approvalId: string, requestedAt: string) =>
+      createApprovalLedgerRecord({ ...baseRequest, approvalId, id: approvalId }, requestedAt)
+
+    const realWorkspaceGrant = resolveApprovalLedgerRecord(
+      make('ws-real', '2020-01-01T00:00:00.000Z'),
+      'acceptForWorkspace',
+      '2020-01-01T00:00:00.000Z'
+    )
+    const realSessionGrant = resolveApprovalLedgerRecord(
+      make('sess-real', '2020-01-01T00:00:00.000Z'),
+      'acceptForSession',
+      '2020-01-01T00:00:00.000Z'
+    )
+    const pending = make('pending-live', '2020-01-01T00:00:00.000Z')
+
+    const base = Date.parse('2026-06-01T00:00:00.000Z')
+    const audits = Array.from({ length: MAX_APPROVAL_LEDGER_HISTORY + 5 }, (_, i) => {
+      const ts = new Date(base + i * 1000).toISOString()
+      return {
+        ...make(`ws-auto-${i}`, ts),
+        status: 'approved',
+        decision: 'autoAllow',
+        decisionSource: 'workspace_grant',
+        grantedScope: 'workspace',
+        respondedAt: ts
+      } as unknown as ReturnType<typeof make>
+    })
+
+    const capped = capApprovalLedgerRecords([...audits, realWorkspaceGrant, realSessionGrant, pending])
+    const ids = new Set(capped.map((record) => record.approvalId))
+
+    // The user's actual grants and the pending request are untouchable.
+    expect(ids.has('ws-real')).toBe(true)
+    expect(ids.has('sess-real')).toBe(true)
+    expect(ids.has('pending-live')).toBe(true)
+    // Audit rows age like any other history: newest MAX kept, oldest shed.
+    expect(capped.filter((record) => record.decision === 'autoAllow')).toHaveLength(
+      MAX_APPROVAL_LEDGER_HISTORY
+    )
+    expect(ids.has('ws-auto-0')).toBe(false)
+    expect(ids.has(`ws-auto-${MAX_APPROVAL_LEDGER_HISTORY + 4}`)).toBe(true)
+  })
+
+  /**
+   * Backstop for the next liveness hole: even genuinely-live grants get a
+   * generous ceiling (500 — the real profile that motivated this held 27).
+   * Newest survive, pending requests are never dropped. Fails closed: a shed
+   * grant re-prompts, it never auto-allows.
+   */
+  it('caps runaway live grants to the newest 500 while never dropping pending rows', () => {
+    const make = (approvalId: string, requestedAt: string) =>
+      createApprovalLedgerRecord({ ...baseRequest, approvalId, id: approvalId }, requestedAt)
+
+    const base = Date.parse('2026-06-01T00:00:00.000Z')
+    const grants = Array.from({ length: 505 }, (_, i) => {
+      const ts = new Date(base + i * 1000).toISOString()
+      return resolveApprovalLedgerRecord(make(`grant-${i}`, ts), 'acceptForWorkspace', ts)
+    })
+    const pendingOld = make('pending-old', '2019-01-01T00:00:00.000Z')
+
+    const capped = capApprovalLedgerRecords([...grants, pendingOld])
+    const ids = new Set(capped.map((record) => record.approvalId))
+
+    expect(ids.has('pending-old')).toBe(true)
+    expect(capped.filter((record) => record.status === 'approved')).toHaveLength(500)
+    expect(ids.has('grant-0')).toBe(false)
+    expect(ids.has('grant-4')).toBe(false)
+    expect(ids.has('grant-5')).toBe(true)
+    expect(ids.has('grant-504')).toBe(true)
+  })
 })
