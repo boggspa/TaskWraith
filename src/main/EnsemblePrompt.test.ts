@@ -3652,7 +3652,12 @@ describe('dynamic ensemble-state snapshots', () => {
   it('is deterministic over the full enabled stable roster and carries all five tombstones', () => {
     const base = chat()
     const snapshot = buildEnsembleDynamicStateSnapshot(base, ensemble)
-    expect(snapshot.block).toContain('Active goal: <none>')
+    // The empty-goal tombstone must name the creating action: seats otherwise
+    // reach for set_round_plan (field literally named `goal`), see it succeed,
+    // and conclude the thread goal is user-only (2026-08-18 ChipTown stall).
+    expect(snapshot.block).toContain('Active goal: <none')
+    expect(snapshot.block).toContain('"set_goal"')
+    expect(snapshot.block).toContain('set_round_plan does not create it')
     expect(snapshot.block).toContain('Boss/Captain control state: <none>')
     expect(snapshot.block).toContain('Recent session events: <none>')
     expect(snapshot.block).toContain('Prior round summary: <none>')

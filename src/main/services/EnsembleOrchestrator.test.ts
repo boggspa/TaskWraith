@@ -45,7 +45,10 @@ import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetCont
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
 import { MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS } from '../EnsembleAuthorityRouting'
-import { ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX } from '../antigravity/AntigravityGoalLifecycleFallback'
+import {
+  ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX,
+  ANTIGRAVITY_GOAL_SET_FALLBACK_PREFIX
+} from '../antigravity/AntigravityGoalLifecycleFallback'
 
 function expectYielded(outcome: EnsembleYieldOutcome): void {
   expect(outcome.kind).toBe('yielded')
@@ -120,6 +123,10 @@ function antigravityGoalCompletionSignal(
   return `${ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX}${JSON.stringify({
     summary
   })}`
+}
+
+function antigravityGoalSetSignal(objective: string): string {
+  return `${ANTIGRAVITY_GOAL_SET_FALLBACK_PREFIX}${JSON.stringify({ objective })}`
 }
 
 function makeAntigravityGoalChat(
@@ -1144,7 +1151,7 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.chat.activeGoal?.status).toBe('active')
     expect(
       harness.chat.messages.some((message) =>
-        message.content.includes('only the assigned Boss, or the single acting Captain')
+        message.content.includes('only the assigned Boss or a configured Captain may manage')
       )
     ).toBe(true)
   })
@@ -1210,6 +1217,229 @@ describe('EnsembleOrchestrator', () => {
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.chat.activeGoal?.status).toBe('active')
+  })
+
+  // ---- Managed-goal access for Captain seats + goal-toolless lanes ----------
+  // Live incident 2026-08-18 (ChipTown ensemble): the Boss delegated goal
+  // creation to a Captain seat, whose set attempt was refused with
+  // second_in_command_standby; the Boss itself reached for set_round_plan
+  // (whose param is literally named `goal`), which succeeded WITHOUT touching
+  // the TaskWraith goal; and the official-agy Captain could not act at all
+  // because that lane has no goal tools and only a completion fallback. The
+  // fleet concluded goal creation was user-owned and the user had to set the
+  // goal by hand. Goal set/update is now a shared Boss/Captain power (fan-out
+  // precedent); clear_goal stays Boss-primary.
+  const startCaptainGoalHarness = async (options: { activeGoal?: ActiveGoal } = {}) => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      { ...chat.ensemble!.participants[0], order: 2 }, // claude = Boss (2nd)
+      { ...chat.ensemble!.participants[1], order: 1 } // codex = Captain (1st ⇒ the caller run)
+    ]
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.ensemble!.secondInCommandParticipantId = 'codex'
+    if (options.activeGoal) chat.activeGoal = options.activeGoal
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    return { harness, captainRunId: harness.dispatched[0].appRunId }
+  }
+
+  it('lets a configured Captain set the TaskWraith goal while the Boss is available', async () => {
+    const { harness, captainRunId } = await startCaptainGoalHarness()
+
+    const result = await harness.orchestrator.bossmanControlForRun(captainRunId, {
+      action: 'set_goal',
+      goal: 'Ship the camera viewport with a green build.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(harness.chat.activeGoal?.objective).toBe('Ship the camera viewport with a green build.')
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    expect(harness.chat.activeGoal?.objectiveSource).toBe('agent')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Captain set the TaskWraith goal')
+      )
+    ).toBe(true)
+  })
+
+  it('lets a configured Captain update the goal lifecycle while the Boss is available', async () => {
+    const { harness, captainRunId } = await startCaptainGoalHarness({
+      activeGoal: buildActiveGoal('goal-captain-update')
+    })
+
+    const result = await harness.orchestrator.bossmanControlForRun(captainRunId, {
+      action: 'update_goal',
+      goalStatus: 'paused',
+      reason: 'Waiting on the review gate.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(harness.chat.activeGoal?.status).toBe('paused')
+  })
+
+  it('keeps clear_goal standby-gated for Captains while the Boss is available', async () => {
+    const { harness, captainRunId } = await startCaptainGoalHarness({
+      activeGoal: buildActiveGoal('goal-captain-clear')
+    })
+
+    const result = await harness.orchestrator.bossmanControlForRun(captainRunId, {
+      action: 'clear_goal',
+      reason: 'Trying to clear as standby Captain.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('second_in_command_standby')
+    expect(harness.chat.activeGoal?.id).toBe('goal-captain-clear')
+  })
+
+  it('says set_round_plan did not create the TaskWraith goal when none is set', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan the round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_round_plan',
+      goal: 'Phase 1 foundation slices.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('did NOT create or change the TaskWraith active goal')
+    expect(result.message).toContain('set_goal')
+    expect(harness.chat.activeGoal).toBeUndefined()
+  })
+
+  it('keeps the short set_round_plan message while an unfinished goal is set', async () => {
+    const chat = makeChat()
+    chat.ensemble!.bossmanParticipantId = 'claude'
+    chat.activeGoal = buildActiveGoal('goal-round-plan')
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan the round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'set_round_plan',
+      goal: 'Phase 1 foundation slices.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.message).not.toContain('did NOT create or change')
+  })
+
+  it('lets an official-agy authority seat create the goal through the host-bound set fallback', async () => {
+    const initialChat = makeAntigravityGoalChat()
+    delete initialChat.activeGoal
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Establish the runtime goal for this phase.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const dispatched = harness.dispatched[0]
+    expect(dispatched.prompt).toContain('TASKWRAITH_GOAL_SET')
+    expect(dispatched.prompt).not.toContain('TASKWRAITH_GOAL_COMPLETE ')
+
+    const route = { appRunId: dispatched.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: `Plan agreed.\n${antigravityGoalSetSignal('Ship Phase 1 foundation slices.')}`
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.chat.activeGoal?.objective).toBe('Ship Phase 1 foundation slices.')
+    )
+    expect(harness.chat.activeGoal?.status).toBe('active')
+    expect(harness.chat.activeGoal?.objectiveSource).toBe('agent')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('host-bound official-agy goal-set fallback')
+      )
+    ).toBe(true)
+  })
+
+  it('keeps the completion instruction (not set) while the goal is active, and ignores a stray set line', async () => {
+    const harness = makeHarness({ initialChat: makeAntigravityGoalChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const dispatched = harness.dispatched[0]
+    expect(dispatched.prompt).toContain('TASKWRAITH_GOAL_COMPLETE ')
+    expect(dispatched.prompt).not.toContain('TASKWRAITH_GOAL_SET')
+
+    const route = { appRunId: dispatched.appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: antigravityGoalSetSignal('Replace the user objective.')
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.chat.activeGoal?.objective).toBe('Objective goal-antigravity-fallback')
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('host-bound official-agy goal-set fallback')
+      )
+    ).toBe(false)
+  })
+
+  it('accepts an official-agy Captain goal-completion fallback while the Boss is available', async () => {
+    const initialChat = makeAntigravityGoalChat({ bossmanParticipantId: 'codex-worker' })
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      captainParticipantIds: ['antigravity']
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Verify the result and close the goal only when complete.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const route = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'content',
+      text: `All requested checks pass.\n${antigravityGoalCompletionSignal()}`
+    })
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    await vi.waitFor(() => expect(harness.chat.activeGoal?.status).toBe('completed'))
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('host-bound official-agy goal-completion fallback')
+      )
+    ).toBe(true)
   })
 
   it('retries one unsupported AntiGravity permission refusal after process exit, then bounds recovery', async () => {

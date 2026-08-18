@@ -44,7 +44,10 @@ import {
   isUnsupportedAntigravityPermissionClaim,
   qualifyUnsupportedAntigravityPermissionClaim
 } from '../antigravity/AntigravityPermissionClaimEvidence'
-import { parseAntigravityGoalCompletionFallback } from '../antigravity/AntigravityGoalLifecycleFallback'
+import {
+  parseAntigravityGoalCompletionFallback,
+  parseAntigravityGoalSetFallback
+} from '../antigravity/AntigravityGoalLifecycleFallback'
 import { resolveEnsemblePromptTransportProfile } from '../antigravity/AntigravityEnsemblePromptProfile'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import {
@@ -198,6 +201,7 @@ import {
 } from '../WorkspaceChurn'
 import {
   createActiveGoal,
+  isUnfinishedActiveGoal,
   normalizeActiveGoalObjective,
   shouldMintFreshGoalIdentity,
   updateActiveGoalLifecycle
@@ -6709,7 +6713,12 @@ export class EnsembleOrchestrator {
     if (action === 'submit_review_verdict') {
       return this.submitReviewVerdictForCaller(chat, runtime, caller, input)
     }
-    const authority = this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
+    // Goal set/update rides the shared Boss/Captain goal authority; every
+    // other control keeps the Boss-primary standby rule.
+    const authority =
+      action === 'set_goal' || action === 'update_goal'
+        ? this.resolveGoalAuthorityForCaller(chat, runtime, caller.participant.id)
+        : this.resolveBossAuthorityForCaller(chat, runtime, caller.participant.id)
     if (!authority.ok) {
       const statusReason =
         authority.error === 'bossman_not_configured'
@@ -9706,12 +9715,22 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `${authorityLabel} set the round plan: ${goal}`
       )
+      // The `goal` field name makes this action read like the goal-setter
+      // (live incident 2026-08-18: both Boss and Captain used it to "create"
+      // the thread goal, saw ok:true, then read goal_read → null and concluded
+      // goal creation was user-owned). When no unfinished goal exists, say
+      // outright that this call did not touch it and name the action that does.
+      const activeGoalUntouchedNote = isUnfinishedActiveGoal(
+        this.deps.getChat(runtime.chatId)?.activeGoal
+      )
+        ? ''
+        : ' Note: this did NOT create or change the TaskWraith active goal — none is currently set. Use action "set_goal" to create it.'
       return {
         ok: true,
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: `${authorityLabel} set the round plan.`
+        message: `${authorityLabel} set the round plan.${activeGoalUntouchedNote}`
       }
     }
 
@@ -13460,11 +13479,49 @@ export class EnsembleOrchestrator {
   }
 
   /**
+   * Goal set/update is a shared Boss/Captain power, like fan-out below: any
+   * configured Captain may establish or transition the TaskWraith goal even
+   * while the Boss stays available. The 2026-08-18 ChipTown incident showed
+   * why standby-gating it strands fleets: the Boss delegated goal creation to
+   * its Captain, the Captain was refused with second_in_command_standby, and
+   * the round concluded goal creation was user-owned. This is also parity, not
+   * a widening: the standalone goal_update/goal_complete/goal_blocked MCP
+   * tools already let ANY seat transition an existing goal. clear_goal stays
+   * standby-gated — deleting the user-owned objective remains Boss-primary.
+   */
+  private resolveGoalAuthorityForCaller(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    callerParticipantId: string
+  ): ReturnType<EnsembleOrchestrator['resolveBossAuthorityForCaller']> {
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, callerParticipantId)
+    if (authority.ok) return authority
+    if (authority.error === 'second_in_command_standby' && authority.bossmanParticipantId) {
+      return {
+        ok: true,
+        role: 'second_in_command',
+        bossmanParticipantId: authority.bossmanParticipantId,
+        captainParticipantIds: authority.captainParticipantIds || [],
+        secondInCommandParticipantId: authority.secondInCommandParticipantId,
+        rosterGuardParticipantId: authority.bossmanParticipantId
+      }
+    }
+    if (authority.error === 'not_bossman') {
+      return {
+        ...authority,
+        message: 'only the assigned Boss or a configured Captain may manage the TaskWraith goal'
+      }
+    }
+    return authority
+  }
+
+  /**
    * Fan-out is a deliberately shared Boss/Captain power. Unlike controlling
-   * authority, roster mutation, approvals, and goal closure, it does not put
+   * authority, roster mutation, approvals, and goal clearing, it does not put
    * Captain on standby while Boss is healthy: either configured seat may
    * dispatch parallel work, subject to the same policy, scope, budget, and
-   * user-targeted-round boundaries.
+   * user-targeted-round boundaries. (Goal set/update shares the same shape —
+   * see resolveGoalAuthorityForCaller above.)
    */
   private fanoutAuthorityRoleForCaller(
     chat: ChatRecord,
@@ -14796,7 +14853,12 @@ export class EnsembleOrchestrator {
     const chat = this.deps.getChat(run.chatId)
     if (!chat?.activeGoal || chat.activeGoal.status !== 'active') return
 
-    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+    // Shared goal authority (not the Boss-primary standby rule): a configured
+    // Captain's completion signal counts while the Boss is still available —
+    // the standby refusal here is what produced "TaskWraith ignored an
+    // AntiGravity goal-completion fallback … Captains remain standby" in the
+    // 2026-08-18 round.
+    const authority = this.resolveGoalAuthorityForCaller(chat, runtime, run.participant.id)
     if (!authority.ok) {
       this.appendRoundStatus(
         run.chatId,
@@ -14822,6 +14884,59 @@ export class EnsembleOrchestrator {
         run.chatId,
         runtime.roundId,
         `TaskWraith accepted ${callerLabel}'s host-bound official-agy goal-completion fallback.`
+      )
+    }
+  }
+
+  /**
+   * Goal-SET twin of the completion fallback for the goal-toolless official
+   * agy lane. Applies only while NO unfinished goal exists — the instruction
+   * is offered under the same condition, and a stray set line while a goal is
+   * active must never clobber the live objective. Runs BEFORE the completion
+   * apply so a turn that legitimately sets then completes resolves in order.
+   */
+  private applyAntigravityGoalSetFallback(run: ActiveParticipantRun): void {
+    if (
+      run.participant.provider !== 'antigravity' ||
+      resolveEnsemblePromptTransportProfile(run.participant.provider, run.participant.model) !==
+        'antigravity-official-agy'
+    ) {
+      return
+    }
+    const signal = parseAntigravityGoalSetFallback(run.content)
+    if (!signal) return
+
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || runtime.cancelled || runtime.roundId !== run.roundId) return
+    const callerLabel = run.participant.role || providerLabel(run.participant.provider)
+    const chat = this.deps.getChat(run.chatId)
+    if (!chat || isUnfinishedActiveGoal(chat.activeGoal)) return
+
+    const authority = this.resolveGoalAuthorityForCaller(chat, runtime, run.participant.id)
+    if (!authority.ok) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith ignored an AntiGravity goal-set fallback from ${callerLabel}: ${authority.message}.`
+      )
+      return
+    }
+
+    const result = this.structuredBossmanControl(
+      runtime,
+      {
+        action: 'set_goal',
+        roundId: runtime.roundId,
+        goal: signal.objective
+      },
+      run.participant,
+      authority.role
+    )
+    if (result.ok) {
+      this.appendRoundStatus(
+        run.chatId,
+        runtime.roundId,
+        `TaskWraith accepted ${callerLabel}'s host-bound official-agy goal-set fallback.`
       )
     }
   }
@@ -15177,6 +15292,7 @@ export class EnsembleOrchestrator {
       const emptyAfterProviderDiagnostic =
         Boolean(run.providerDiagnostic) && run.content.trim().length === 0
       if (!failed && !emptyAfterProviderDiagnostic) {
+        this.applyAntigravityGoalSetFallback(run)
         this.applyAntigravityGoalCompletionFallback(run)
       }
       // A provider-authored permission blocker with no denied tool result is

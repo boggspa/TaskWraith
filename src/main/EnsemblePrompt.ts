@@ -94,7 +94,10 @@ import {
   resolveEnsemblePromptTransportProfile,
   type EnsemblePromptTransportProfile
 } from './antigravity/AntigravityEnsemblePromptProfile'
-import { buildAntigravityGoalCompletionFallbackInstruction } from './antigravity/AntigravityGoalLifecycleFallback'
+import {
+  buildAntigravityGoalCompletionFallbackInstruction,
+  buildAntigravityGoalSetFallbackInstruction
+} from './antigravity/AntigravityGoalLifecycleFallback'
 import { qualifyUnsupportedAntigravityPermissionClaim } from './antigravity/AntigravityPermissionClaimEvidence'
 import { buildOllamaEnsemblePromptCapsuleProjection } from './ollama/OllamaEnsemblePromptProfile'
 import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/SkillPromptInjection'
@@ -948,9 +951,13 @@ export function buildEnsembleDynamicStateSnapshot(
 ): EnsembleDynamicStateSnapshot {
   const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config)
   const activeGoal = resolveActiveGoalForEnsemble(chat.activeGoal)
+  // The empty tombstone names the creating action. Without it, seats that
+  // want a goal reach for set_round_plan (its field is literally `goal`),
+  // watch it succeed without touching the thread goal, and conclude goal
+  // creation is user-only — the 2026-08-18 ChipTown stall.
   const activeGoalSlot = shouldInjectActiveGoal(activeGoal)
     ? ['Active goal:', formatActiveGoalPromptBlock(activeGoal)].join('\n')
-    : 'Active goal: <none>'
+    : 'Active goal: <none — a Boss/Captain seat may create one via ensemble_control action "set_goal"; set_round_plan does not create it>'
   const bossmanSlot =
     formatBossmanControlStanza(config, stableParticipants, chat.activeGoal) ||
     'Boss/Captain control state: <none>'
@@ -1084,19 +1091,21 @@ export function buildEnsembleParticipantPromptProjection(
   })()
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-  const antigravityGoalCompletionFallback = (() => {
-    if (
-      promptTransportProfile !== 'antigravity-official-agy' ||
-      input.chat.activeGoal?.status !== 'active'
-    ) {
-      return undefined
-    }
+  const antigravityGoalLifecycleFallback = (() => {
+    if (promptTransportProfile !== 'antigravity-official-agy') return undefined
     const authority = normalizeEnsembleAuthority(input.config)
     const isConfiguredAuthority =
       authority.bossmanParticipantId === input.participant.id ||
       authority.captainParticipantIds.includes(input.participant.id)
     if (!authority.bossmanParticipantId || !isConfiguredAuthority) return undefined
-    return buildAntigravityGoalCompletionFallbackInstruction()
+    const goal = input.chat.activeGoal
+    // ACTIVE goal → offer completion. No goal (or a completed prior goal) →
+    // offer the SET line so this goal-toolless lane can establish the thread
+    // goal at all. Paused/blocked goals offer neither: reactivating something
+    // the user paused should not be prompted for.
+    if (goal?.status === 'active') return buildAntigravityGoalCompletionFallbackInstruction()
+    if (!goal || goal.status === 'completed') return buildAntigravityGoalSetFallbackInstruction()
+    return undefined
   })()
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
   const hasWriteIntentLane = Boolean(
@@ -1449,7 +1458,7 @@ export function buildEnsembleParticipantPromptProjection(
         transcript,
         permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
         yieldExecutionCheck,
-        goalCompletionFallback: antigravityGoalCompletionFallback
+        goalLifecycleFallback: antigravityGoalLifecycleFallback
       },
       {
         ...(input.currentPromptMessageId
