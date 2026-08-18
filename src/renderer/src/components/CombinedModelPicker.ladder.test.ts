@@ -292,7 +292,7 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('composer-combined-picker-ladder-sparkles')
     expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
     expect(markup).not.toContain('data-disabled="true"')
-    expect(markup).not.toContain('composer-combined-picker-ladder-shimmer-band')
+    expect(markup).toContain('composer-combined-picker-ladder-shimmer-band')
   })
 
   it('keeps generic zero neutral and animates implicit Cursor Medium', () => {

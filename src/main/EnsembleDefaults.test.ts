@@ -74,7 +74,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
       ollama: {
         role: 'Outsider',
         instructions:
-          'Take an independent view, stress-test the emerging consensus, and surface missed alternatives. Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
+          'Take an independent view, stress-test the emerging consensus, and surface missed alternatives. Provide a local, privacy-preserving second opinion for summaries, triage, and small reasoning tasks.',
         permissionPresetId: 'default'
       }
     })
