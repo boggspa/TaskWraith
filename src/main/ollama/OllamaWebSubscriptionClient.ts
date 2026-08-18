@@ -31,22 +31,30 @@ export async function fetchOllamaWebSubscription(
     })
     if (!res.ok) return null
     const html = await res.text()
-    if (html.includes('Sign in to Ollama') || (html.includes('/login') && !html.includes('Session usage') && !html.includes('Weekly usage'))) {
+    if (
+      html.includes('Sign in to Ollama') ||
+      (html.includes('/login') && !html.includes('Session usage') && !html.includes('Weekly usage'))
+    ) {
       return null
     }
 
-    const sessionIdx = html.toLowerCase().indexOf('session usage') !== -1 
-      ? html.toLowerCase().indexOf('session usage')
-      : html.toLowerCase().indexOf('session')
-      
-    const weeklyIdx = html.toLowerCase().indexOf('weekly usage') !== -1
-      ? html.toLowerCase().indexOf('weekly usage')
-      : html.toLowerCase().indexOf('weekly')
+    const sessionIdx =
+      html.toLowerCase().indexOf('session usage') !== -1
+        ? html.toLowerCase().indexOf('session usage')
+        : html.toLowerCase().indexOf('session')
+
+    const weeklyIdx =
+      html.toLowerCase().indexOf('weekly usage') !== -1
+        ? html.toLowerCase().indexOf('weekly usage')
+        : html.toLowerCase().indexOf('weekly')
 
     let sessionSpent: number | undefined
     let sessionResetDescription: string | undefined
     if (sessionIdx !== -1) {
-      const endIdx = weeklyIdx !== -1 && weeklyIdx > sessionIdx ? weeklyIdx : Math.min(html.length, sessionIdx + 1000)
+      const endIdx =
+        weeklyIdx !== -1 && weeklyIdx > sessionIdx
+          ? weeklyIdx
+          : Math.min(html.length, sessionIdx + 1000)
       const chunk = html.slice(sessionIdx, endIdx)
       sessionSpent = extractPercent(chunk)
       sessionResetDescription = extractResetDesc(chunk)

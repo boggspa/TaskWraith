@@ -699,7 +699,7 @@ describe('ModelUsageCard', () => {
   it('adds the AGY column only when an antigravity quota snapshot exists', () => {
     const withAgy = renderToStaticMarkup(
       <CompactModelUsageGrid
-          quotaEntries={[
+        quotaEntries={[
           quotaEntry({
             provider: 'antigravity',
             windows: [

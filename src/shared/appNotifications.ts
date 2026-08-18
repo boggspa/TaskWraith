@@ -201,11 +201,13 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             name: 'Devstral Small',
-            blurb: 'New configurable Effort options for a faster, lower-cost default or deeper reasoning.'
+            blurb:
+              'New configurable Effort options for a faster, lower-cost default or deeper reasoning.'
           },
           {
             name: 'Mistral 3.5 Medium',
-            blurb: 'Configurable Effort tuning now available, balancing latency and reasoning depth.'
+            blurb:
+              'Configurable Effort tuning now available, balancing latency and reasoning depth.'
           },
           {
             name: 'Mistral Large 3',
@@ -225,11 +227,13 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           },
           {
             name: 'Mistral Small 4',
-            blurb: 'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
+            blurb:
+              'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
           },
           {
             name: 'Devstral 2',
-            blurb: 'A faster default path with broader instruction coverage and lower per-token cost.'
+            blurb:
+              'A faster default path with broader instruction coverage and lower per-token cost.'
           },
           {
             name: 'Leanstral 1.5 (Labs)',
@@ -246,7 +250,8 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           },
           {
             name: 'Ministral 3 (14B)',
-            blurb: 'Ministral 3 (14B) balances throughput and coding depth on the same family stack.'
+            blurb:
+              'Ministral 3 (14B) balances throughput and coding depth on the same family stack.'
           },
           {
             name: 'Ministral 3 (8B)',
@@ -266,8 +271,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             name: 'Gemma 4 (31B-MLX)',
-            blurb:
-              'Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.',
+            blurb: 'Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.',
             accentProvider: 'google'
           },
           {

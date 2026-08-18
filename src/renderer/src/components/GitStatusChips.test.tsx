@@ -28,7 +28,9 @@ function snapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepository
 
 describe('GitSyncChip', () => {
   it('renders repository commit total when a branch has no upstream', () => {
-    const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot({ upstream: undefined, totalCommits: 4 })} />)
+    const html = renderToStaticMarkup(
+      <GitSyncChip snapshot={snapshot({ upstream: undefined, totalCommits: 4 })} />
+    )
 
     expect(html).toContain('git-status-no-upstream')
     expect(html).not.toContain('N/A')

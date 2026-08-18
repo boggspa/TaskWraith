@@ -34,7 +34,7 @@ describe('composer steer gesture (solo live steering lane)', () => {
     // The button class and the glyph import are both gone.
     expect(composerSource).not.toContain('composer-action-btn steer-btn')
     expect(composerSource).not.toContain('<SteerSymbolIcon />')
-    expect(composerSource).not.toContain(", SteerSymbolIcon,")
+    expect(composerSource).not.toContain(', SteerSymbolIcon,')
     // Stop keeps its edge slot and is still disabled while a steer is in flight.
     const stopBtn = composerSource.indexOf('stop-btn', cluster)
     expect(stopBtn).toBeGreaterThan(cluster)

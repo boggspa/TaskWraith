@@ -43,7 +43,10 @@ export async function fetchMistralWebSubscription(
     })
     if (!res.ok) return null
     const html = await res.text()
-    if (html.includes('Sign in to your account') || (html.includes('/login') && !html.includes('API usage'))) {
+    if (
+      html.includes('Sign in to your account') ||
+      (html.includes('/login') && !html.includes('API usage'))
+    ) {
       return null
     }
 
@@ -93,7 +96,7 @@ export async function fetchMistralWebSubscription(
       if (paygoIdx !== -1) endLimit = Math.min(endLimit, paygoIdx)
       if (estIdx !== -1) endLimit = Math.min(endLimit, estIdx)
       if (endLimit === html.length) endLimit = Math.min(html.length, start + 1200)
-      
+
       const chunk = html.slice(start, endLimit)
       const amounts = extractCurrencyAmounts(chunk)
       if (amounts.length >= 2) {

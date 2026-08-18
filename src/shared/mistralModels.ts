@@ -46,7 +46,9 @@ export const MISTRAL_THINKING_CAPABLE_MODEL_IDS = new Set<string>([
  * levels.
  */
 export function isMistralThinkingCapableModel(modelId: string | null | undefined): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
   return MISTRAL_THINKING_CAPABLE_MODEL_IDS.has(id)
 }
 
@@ -55,7 +57,9 @@ export function isMistralThinkingCapableModel(modelId: string | null | undefined
  * configurable Thinking levels when routed through the Pi BYOK lane.
  */
 export function isPiMistralThinkingCapableModel(modelId: string | null | undefined): boolean {
-  const id = String(modelId || '').trim().toLowerCase()
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
   if (!id.startsWith('mistral/')) return false
   return isMistralThinkingCapableModel(id.slice('mistral/'.length))
 }
@@ -68,7 +72,9 @@ export function normalizeMistralReasoningEffort(
   value: string | null | undefined,
   fallback: string = MISTRAL_DEFAULT_REASONING_EFFORT
 ): string {
-  const effort = String(value || '').trim().toLowerCase()
+  const effort = String(value || '')
+    .trim()
+    .toLowerCase()
   const validEfforts = MISTRAL_REASONING_EFFORTS.map((effortOption) => effortOption.reasoningEffort)
   return validEfforts.includes(effort as any) ? effort : fallback
 }

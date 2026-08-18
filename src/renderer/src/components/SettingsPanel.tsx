@@ -6324,10 +6324,13 @@ export function SettingsPanel({
                     { value: 'steer', label: 'Steer' },
                     { value: 'queue', label: 'Queue' }
                   ]}
-                  onValueChange={(value) => onChange({ midRunInputBehavior: value as 'queue' | 'steer' })}
+                  onValueChange={(value) =>
+                    onChange({ midRunInputBehavior: value as 'queue' | 'steer' })
+                  }
                 />
                 <p className="settings-hint">
-                  Controls whether submitting a message while a run is active immediately steers the agent, or queues the message.
+                  Controls whether submitting a message while a run is active immediately steers the
+                  agent, or queues the message.
                 </p>
               </div>
 

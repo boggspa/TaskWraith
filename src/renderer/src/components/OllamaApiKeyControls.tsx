@@ -120,7 +120,8 @@ export function OllamaApiKeyControlsView({
       </div>
       {status?.encryptionAvailable === false && (
         <p className="settings-provider-auth-footnote">
-          System keychain encryption is unavailable, so the web session cookie cannot be stored here.
+          System keychain encryption is unavailable, so the web session cookie cannot be stored
+          here.
         </p>
       )}
       {error && <p className="settings-provider-auth-footnote">{error}</p>}

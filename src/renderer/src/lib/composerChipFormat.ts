@@ -14,7 +14,10 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
-import { isMistralThinkingCapableModel, isPiMistralThinkingCapableModel } from '../../../shared/mistralModels'
+import {
+  isMistralThinkingCapableModel,
+  isPiMistralThinkingCapableModel
+} from '../../../shared/mistralModels'
 import {
   cursorGrokBaseModelId,
   isCursorGrokModelId,
@@ -353,16 +356,10 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   // Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
   // (off, low, medium, high, max). Use the stored reasoning effort for these models.
   const modelId = ctx.modelId.trim().toLowerCase()
-  if (
-    provider === 'mistral' &&
-    isMistralThinkingCapableModel(modelId)
-  ) {
+  if (provider === 'mistral' && isMistralThinkingCapableModel(modelId)) {
     return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
-  if (
-    provider === 'pi' &&
-    isPiMistralThinkingCapableModel(modelId)
-  ) {
+  if (provider === 'pi' && isPiMistralThinkingCapableModel(modelId)) {
     return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
 

@@ -48,12 +48,7 @@ export function antigravityEffortForModelId(modelId: string): AntigravityReasoni
 function collectDisplayNameTokens(modelId: string): string[] {
   const normalized = modelId.trim().toLowerCase()
   const fixedEffort = FIXED_REASONING_MODELS[normalized]
-  const suffixToStrip =
-    fixedEffort === 'on'
-      ? '-thinking'
-      : fixedEffort
-        ? `-${fixedEffort}`
-        : ''
+  const suffixToStrip = fixedEffort === 'on' ? '-thinking' : fixedEffort ? `-${fixedEffort}` : ''
   const baseId =
     suffixToStrip && normalized.endsWith(suffixToStrip)
       ? normalized.slice(0, -suffixToStrip.length)
@@ -125,8 +120,10 @@ interface CatalogueOptionLike {
  * id still comes out readable. */
 export function antigravityDisplayName(baseId: string): string {
   const normalized = baseId.trim().toLowerCase()
-  if (normalized === 'claude-sonnet-4-6' || normalized === 'claude-sonnet-4-6-thinking') return 'Sonnet 4.6'
-  if (normalized === 'claude-opus-4-6' || normalized === 'claude-opus-4-6-thinking') return 'Opus 4.6'
+  if (normalized === 'claude-sonnet-4-6' || normalized === 'claude-sonnet-4-6-thinking')
+    return 'Sonnet 4.6'
+  if (normalized === 'claude-opus-4-6' || normalized === 'claude-opus-4-6-thinking')
+    return 'Opus 4.6'
   if (normalized.startsWith('gpt-oss-120b')) return 'GPT-OSS (120B Param)'
   return collectDisplayNameTokens(baseId).join(' ')
 }

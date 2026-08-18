@@ -115,13 +115,16 @@ export function ollamaProtectedPathReason(relativePath: string): string | null {
   const normalized = relativePath.replace(/\\/g, '/').toLowerCase()
   const parts = normalized.split('/')
   const basename = parts[parts.length - 1]
-  
+
   // Direct matches against protected workspace paths
   for (const protectedPath of OLLAMA_PROTECTED_WORKSPACE_PATHS) {
     const protectedNormalized = protectedPath.toLowerCase()
-    if (normalized === protectedNormalized || 
-        normalized.startsWith(protectedNormalized + '/') ||
-        basename === protectedNormalized || (protectedNormalized === '.env' && basename.startsWith('.env'))) {
+    if (
+      normalized === protectedNormalized ||
+      normalized.startsWith(protectedNormalized + '/') ||
+      basename === protectedNormalized ||
+      (protectedNormalized === '.env' && basename.startsWith('.env'))
+    ) {
       if (protectedPath.includes('.env') || protectedPath === '.env') {
         return 'environment/secret files are protected from direct Ollama modification'
       }
@@ -134,17 +137,17 @@ export function ollamaProtectedPathReason(relativePath: string): string | null {
       return 'protected workspace configuration'
     }
   }
-  
+
   // Special pattern: .github/workflows
   if (normalized.includes('.github/workflows') || normalized.includes('.github/workflows/')) {
     return 'CI/workflow configuration is protected from direct Ollama modification'
   }
-  
+
   // Special pattern: certs/ credentials
-  if (parts.some(p => p.includes('cert') || p.includes('credential') || p.includes('key'))) {
+  if (parts.some((p) => p.includes('cert') || p.includes('credential') || p.includes('key'))) {
     return 'credential material is protected from direct Ollama modification'
   }
-  
+
   return null
 }
 

@@ -262,7 +262,8 @@ export function MistralQuotaCardView({
         />
       </label>
       <p className="settings-provider-auth-footnote">
-        Sign into admin.mistral.ai via the web session to automatically track live API usage & Vibe Code usage quotas, or enter an Admin API key if on Enterprise.
+        Sign into admin.mistral.ai via the web session to automatically track live API usage & Vibe
+        Code usage quotas, or enter an Admin API key if on Enterprise.
       </p>
       <div className="settings-provider-auth-actions">
         <PillButton

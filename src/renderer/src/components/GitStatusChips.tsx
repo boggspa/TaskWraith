@@ -264,7 +264,7 @@ export function GitSyncChip({
                 if (event.key !== 'Enter' && event.key !== ' ') return
                 event.preventDefault()
                 open()
-            }
+              }
             : undefined
         }
       >

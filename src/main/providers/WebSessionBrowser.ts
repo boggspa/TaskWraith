@@ -24,8 +24,16 @@ export async function importMistralWebSession(): Promise<string | null> {
       try {
         const cookies = await win.webContents.session.cookies.get({ domain: '.mistral.ai' })
         const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-        if (cookies.some(c => c.name.includes('session') || c.name.includes('auth') || c.name.includes('mistral'))) {
-          if (win.webContents.getURL().includes('/subscription') || win.webContents.getURL().includes('admin.mistral.ai')) {
+        if (
+          cookies.some(
+            (c) =>
+              c.name.includes('session') || c.name.includes('auth') || c.name.includes('mistral')
+          )
+        ) {
+          if (
+            win.webContents.getURL().includes('/subscription') ||
+            win.webContents.getURL().includes('admin.mistral.ai')
+          ) {
             clearInterval(interval)
             resolve(cookieStr)
             win.close()
@@ -62,7 +70,7 @@ export async function importOllamaWebSession(): Promise<string | null> {
       try {
         const cookies = await win.webContents.session.cookies.get({ domain: '.ollama.com' })
         const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-        if (cookies.some(c => c.name.includes('session') || c.name.includes('auth'))) {
+        if (cookies.some((c) => c.name.includes('session') || c.name.includes('auth'))) {
           clearInterval(interval)
           resolve(cookieStr)
           win.close()

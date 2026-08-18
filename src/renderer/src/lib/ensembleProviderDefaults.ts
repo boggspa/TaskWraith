@@ -26,7 +26,11 @@ import type {
   CombinedModelPickerReasoningOption
 } from './combinedModelPickerTypes'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
-import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel, mistralReasoningDisplayLabel } from './composerChipFormat'
+import {
+  codexReasoningDisplayLabel,
+  claudeReasoningDisplayLabel,
+  mistralReasoningDisplayLabel
+} from './composerChipFormat'
 import {
   isMistralThinkingCapableModel,
   isPiMistralThinkingCapableModel

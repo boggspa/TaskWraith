@@ -105,10 +105,10 @@ function canonicalVibeTaskWraithToolName(machineName: unknown): string | null {
       const lowerAlias = alias.toLowerCase()
       const doubleUnderscorePrefix = `${lowerAlias}__`
       const singleUnderscorePrefix = `${lowerAlias}_`
-      const prefixLength =
-        normalizedName.startsWith(doubleUnderscorePrefix) ? lowerAlias.length + 2
+      const prefixLength = normalizedName.startsWith(doubleUnderscorePrefix)
+        ? lowerAlias.length + 2
         : normalizedName.startsWith(singleUnderscorePrefix) &&
-          normalizedName.charAt(lowerAlias.length) === '_'
+            normalizedName.charAt(lowerAlias.length) === '_'
           ? lowerAlias.length + 1
           : 0
       if (!prefixLength) continue
@@ -222,10 +222,7 @@ export function normalizeMistralVibePermissionRequest(
       }
     }
   }
-  if (
-    Object.keys(rawToolCallPatch).length === 0 &&
-    Object.keys(rawInputPatch).length === 0
-  ) {
+  if (Object.keys(rawToolCallPatch).length === 0 && Object.keys(rawInputPatch).length === 0) {
     return request
   }
   const nextRawInput =
