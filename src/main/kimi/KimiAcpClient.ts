@@ -46,6 +46,13 @@ export interface KimiAcpRunOptions {
   fs?: KimiAcpFs
   /** MCP servers advertised to session/new or session/resume. */
   mcpServers?: unknown[]
+  /**
+   * Post-resume surface check (see AcpTurnClient). Kimi production wires this
+   * to the per-run gateway bridge's first-contact probe: every native fs/exec
+   * tool is deny-walled, so a resumed session that never touches the bridge
+   * has ZERO usable tools and must be reminted with session/new instead.
+   */
+  confirmResumedSession?: () => Promise<boolean>
   onEvent: (event: AcpRunEvent) => void
   onProcess?: (child: AcpChildProcess) => void
   beforeInitialize?: (child: AcpChildProcess) => Promise<void>
@@ -97,6 +104,7 @@ export function runKimiAcpTurn(options: KimiAcpRunOptions): KimiAcpRunHandle {
     spawnProcess: options.spawnProcess,
     initializeParams: options.initializeParams ?? buildKimiProductionInitializeParams('1.0.6'),
     mcpServers: options.mcpServers,
+    confirmResumedSession: options.confirmResumedSession,
     onEvent: options.onEvent,
     onProcess: options.onProcess,
     beforeInitialize: options.beforeInitialize,

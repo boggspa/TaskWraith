@@ -269,6 +269,102 @@ describe('runAcpTurn — neutral core', () => {
     ])
   })
 
+  it('falls back to a fresh session when the resumed session fails surface confirmation', async () => {
+    // Observed live (ChipTown chat 75d1d780, Kimi 0.29.2): a natively resumed
+    // session can come up without the per-run gateway MCP tools while every
+    // native tool is deny-walled — a seat with zero usable tools. When the
+    // caller's surface check says the resumed session is dark, mint a fresh
+    // session with the cold-start prompt instead of prompting into it.
+    const child = new FakeAcpChild()
+    const ready: Array<{ sessionId: string; resumed: boolean; fallbackFromResume: boolean }> = []
+    const { events } = baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-existing',
+      resumeFallbackPrompt: 'full cold-start context',
+      confirmResumedSession: async () => false,
+      onSessionReady: (session) => ready.push(session)
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(child.sent()[2]).toMatchObject({ id: 2, method: 'session/new' })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-fresh' } })
+    expect(child.sent()[3]).toMatchObject({
+      id: 3,
+      method: 'session/prompt',
+      params: {
+        sessionId: 'session-fresh',
+        prompt: [{ type: 'text', text: 'full cold-start context' }]
+      }
+    })
+    expect(ready).toEqual([
+      { sessionId: 'session-fresh', resumed: false, fallbackFromResume: true }
+    ])
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP resumed session did not confirm its tool surface; starting a fresh session with the cold-start prompt.'
+    })
+  })
+
+  it('keeps a resumed session when surface confirmation passes', async () => {
+    const child = new FakeAcpChild()
+    const ready: Array<{ sessionId: string; resumed: boolean; fallbackFromResume: boolean }> = []
+    baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-existing',
+      resumeFallbackPrompt: 'full cold-start context',
+      confirmResumedSession: async () => true,
+      onSessionReady: (session) => ready.push(session)
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(child.sent()[2]).toMatchObject({
+      id: 3,
+      method: 'session/prompt',
+      params: {
+        sessionId: 'session-existing',
+        prompt: [{ type: 'text', text: 'slim follow-up' }]
+      }
+    })
+    expect(ready).toEqual([
+      { sessionId: 'session-existing', resumed: true, fallbackFromResume: false }
+    ])
+  })
+
+  it('keeps a resumed session when the surface confirmation itself fails', async () => {
+    // Fail open: a broken probe must not cost a healthy session its history.
+    const child = new FakeAcpChild()
+    baseOptions(child, {
+      prompt: 'slim follow-up',
+      resumeSessionId: 'session-existing',
+      resumeFallbackPrompt: 'full cold-start context',
+      confirmResumedSession: async () => {
+        throw new Error('probe died')
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { agentCapabilities: { sessionCapabilities: { resume: {} } } }
+    })
+    child.emit({ jsonrpc: '2.0', id: 4, result: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(child.sent()[2]).toMatchObject({
+      id: 3,
+      method: 'session/prompt',
+      params: { sessionId: 'session-existing' }
+    })
+  })
+
   it('re-asserts advertised model and thinking selections before a resumed prompt', () => {
     const child = new FakeAcpChild()
     baseOptions(child, {

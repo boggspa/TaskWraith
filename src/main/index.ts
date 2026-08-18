@@ -105,7 +105,7 @@ import {
 } from './providers/CliProviderThinking'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import { kimiAcpEnabled } from './kimiGate'
-import { startKimiHttpMcpBridge } from './kimi/KimiHttpMcpBridge'
+import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './kimi/KimiHttpMcpBridge'
 import { createKimiMcpDispatch, type KimiMcpDispatchTimeout } from './kimi/KimiMcpDispatch'
 import { flushKimiThinkingChunks, queueKimiThinkingChunk } from './kimi/KimiThinkingBatcher'
 import {
@@ -24945,6 +24945,12 @@ async function runKimiAcpProvider(
 
     let handle: ReturnType<typeof runKimiAcpTurn>
     let providerTransportLaunchAttempted = false
+    // How long a natively resumed session may leave this run's gateway bridge
+    // dark before the resume is judged surface-less and reminted. Healthy
+    // resumes register the server and fetch tools around the resume result
+    // itself (a localhost round-trip); only a broken resume pays this wait.
+    const KIMI_RESUMED_SESSION_GATEWAY_CONTACT_GRACE_MS = 2_000
+    let productionGatewayBridge: KimiHttpMcpBridgeHandle | null = null
     try {
       const launched = await launchKimiProductionAcp({
         taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised !== false,
@@ -24976,6 +24982,7 @@ async function runKimiAcpProvider(
                 mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
             })
           })
+          productionGatewayBridge = bridge
           try {
             assertKimiSpawnAuthority(() =>
               providerTransportLaunchAuthorized('kimi', payload, route)
@@ -25047,6 +25054,20 @@ async function runKimiAcpProvider(
             cwd: production.cwd,
             initializeParams: production.initializeParams,
             mcpServers: production.mcpServers,
+            // Every native fs/exec tool on a Kimi seat is deny-walled; the
+            // per-run gateway bridge is its ONLY tool surface. A resumed
+            // session that never contacts the bridge is running toolless
+            // (observed live: a compaction-minted session resumed with zero
+            // gateway tools, ChipTown chat 75d1d780) — remint it as a fresh
+            // session with the cold-start prompt instead of prompting into it.
+            // The compaction launch below deliberately does NOT get this
+            // probe: its whole point is resuming the fat native session, and
+            // it works from transcript history, not gateway tools.
+            confirmResumedSession: async () => {
+              const bridge = productionGatewayBridge
+              if (!bridge) return true
+              return bridge.waitForContact(KIMI_RESUMED_SESSION_GATEWAY_CONTACT_GRACE_MS)
+            },
             spawnProcess: () => {
               // Build the CLI model arg the same way every other Kimi path does:
               // kimiCliModelArg omits `--model` for the default (kimi-code uses its

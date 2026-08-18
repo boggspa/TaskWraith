@@ -150,6 +150,15 @@ export interface AcpTurnOptions {
   initializeParams: Record<string, unknown>
   /** MCP servers advertised to session/new (per-run TaskWraith bridge). */
   mcpServers?: unknown[]
+  /**
+   * Called after session/resume succeeds and before config/prompt. Resolve
+   * true to keep the resumed session; false to abandon it and mint a fresh
+   * session/new instead (the resume-fallback prompt rides it, exactly as when
+   * resume is not advertised). A rejected promise keeps the resumed session —
+   * a broken probe must not cost a healthy session its history. Absent →
+   * resumed sessions are always kept.
+   */
+  confirmResumedSession?: () => Promise<boolean>
   /** Normalized run events: content / thinking / init / result / tool / warning. */
   onEvent: (event: AcpRunEvent) => void
   onProcess?: (child: AcpChildProcess) => void
@@ -994,9 +1003,38 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         continue
       }
       if (message.id === ACP_ID.sessionResume && message.result && resumeRpcSent) {
-        sessionId = requestedResumeSessionId
-        fallbackFromResume = false
-        sessionReady(true, message.result)
+        const resumeResult = message.result
+        const acceptResumedSession = (): void => {
+          sessionId = requestedResumeSessionId
+          fallbackFromResume = false
+          sessionReady(true, resumeResult)
+        }
+        if (!options.confirmResumedSession) {
+          acceptResumedSession()
+          continue
+        }
+        // The confirmation is async (e.g. waiting for the per-run gateway
+        // bridge's first contact); the prompt is not sent until it settles.
+        void Promise.resolve()
+          .then(() => options.confirmResumedSession!())
+          .then(
+            (keep) => {
+              if (closed || cancelRequested) return
+              if (keep) {
+                acceptResumedSession()
+                return
+              }
+              options.onEvent({
+                type: 'provider_warning',
+                text: 'ACP resumed session did not confirm its tool surface; starting a fresh session with the cold-start prompt.'
+              })
+              sendSessionNew(true)
+            },
+            () => {
+              // Fail open: a broken probe must not cost a healthy session.
+              if (!closed && !cancelRequested) acceptResumedSession()
+            }
+          )
         continue
       }
       if (
