@@ -2253,6 +2253,7 @@ function App(): React.JSX.Element {
   // empty or deadline-missed network read must not blank those meters.
   const lastQuotaSnapshotHookRef = useRef<QuotaSnapshotHookSnapshot[]>([])
   const lastAntigravityQuotaSnapshotRef = useRef<NormalizedProviderUsageSnapshot | null>(null)
+  const lastOllamaQuotaSnapshotRef = useRef<NormalizedProviderUsageSnapshot | null>(null)
   const usageRecordsSignatureRef = useRef('')
   const usageRecordsInitializedRef = useRef(false)
   const usageRunAggregatesRef = useRef<ModelUsageAggregate[]>([])
@@ -8929,6 +8930,7 @@ function App(): React.JSX.Element {
       kimiSnap,
       cursorSnap,
       antigravitySnap,
+      ollamaSnap,
       hookSnapshots,
       allUsageRecords
     ] =
@@ -8942,6 +8944,7 @@ function App(): React.JSX.Element {
         loadQuotaInBackground(() =>
           window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
         ),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('ollama', quotaRefreshOptions)),
         typeof window.api.getQuotaSnapshotHook === 'function'
           ? loadQuotaInBackground(() => window.api.getQuotaSnapshotHook())
           : Promise.resolve([]),
@@ -9198,6 +9201,37 @@ function App(): React.JSX.Element {
           effectiveAntigravitySnapshot
         )
       )
+    }
+
+    // Ollama — Session (5H) + Weekly usage read from the imported ollama.com
+    // web session (Settings → Providers). Main always answers with a
+    // structured snapshot (configured:false tombstone when no session is
+    // stored), so a null strictly means a missed UI deadline and last-known
+    // retention applies — same semantics as the AntiGravity lane above.
+    const hasOllamaSnapshot =
+      ollamaSnap !== null && ollamaSnap !== undefined && typeof ollamaSnap === 'object'
+    const effectiveOllamaSnapshot = retainQuotaSnapshotOnDeadlineMiss(
+      lastOllamaQuotaSnapshotRef.current,
+      hasOllamaSnapshot ? (ollamaSnap as NormalizedProviderUsageSnapshot) : null
+    )
+    const ollamaFresh = (
+      Array.isArray(effectiveOllamaSnapshot?.windows) ? effectiveOllamaSnapshot.windows : []
+    )
+      .map((w: any, i: number) => normalizeQuotaWindow('ollama', w, `ollama-quota-${i}`))
+      .filter((w): w is UsageWindowAggregate => Boolean(w))
+    const ollamaWindows = effectiveOllamaSnapshot
+      ? ollamaFresh
+      : resolveWithCache('ollama', ollamaFresh)
+    if (hasOllamaSnapshot) {
+      lastOllamaQuotaSnapshotRef.current = effectiveOllamaSnapshot
+      lastUsageWindowsByProviderRef.current.ollama = ollamaFresh
+    }
+    if (
+      ollamaWindows.length > 0 ||
+      (effectiveOllamaSnapshot?.configured === true &&
+        typeof effectiveOllamaSnapshot.error === 'string')
+    ) {
+      ordered.push(buildQuotaAggregate('ollama', ollamaWindows, effectiveOllamaSnapshot))
     }
 
     // DeepSeek, Cerebras, and Meta are projected by main from TaskWraith-owned

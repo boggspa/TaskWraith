@@ -153,6 +153,22 @@ export interface MistralQuotaReport {
     readonly spent: number
     readonly currency: string
   }
+  /**
+   * The console's separate "API usage" bar, when the reading carried one (the
+   * web-session lane reads both bars; the Admin API reports no such split).
+   * Display-only: this seat spends from the Vibe Code budget, so these figures
+   * never join the metered spend/ceiling — see the pool-split doctrine above.
+   */
+  readonly apiUsage?: {
+    readonly spentUsd: number
+    readonly allowanceUsd?: number
+    /** The raw console figures, before conversion — the UI quotes these. */
+    readonly declared?: {
+      readonly spent: number
+      readonly allowance?: number
+      readonly currency: string
+    }
+  }
 }
 
 /**
@@ -326,6 +342,24 @@ export interface MistralQuotaEstimate {
   readonly label: string
   /** ISO timestamp the cycle is assumed to reset. */
   readonly cycleResetsAt: string
+  /**
+   * The console's "API usage" bar, surfaced verbatim when the latest report
+   * carried one. A second display window beside the Vibe meter — never merged
+   * into it, because the seat does not spend from that pool.
+   */
+  readonly apiUsage?: {
+    /** Present only when the reading carried an allowance to divide by. */
+    readonly usedPercent?: number
+    readonly spentUsd: number
+    readonly allowanceUsd?: number
+    readonly declared?: {
+      readonly spent: number
+      readonly allowance?: number
+      readonly currency: string
+    }
+    /** When the underlying reading was fetched. */
+    readonly asOf: string
+  }
 }
 
 /**
@@ -721,6 +755,27 @@ export function estimateQuota(
     isVendorReportedConfidence(spentConfidence) &&
     isVendorReportedConfidence(ceilingSource.confidence)
 
+  const reportedApiUsage = cycle.report?.apiUsage
+  const apiUsage: MistralQuotaEstimate['apiUsage'] = reportedApiUsage
+    ? {
+        spentUsd: reportedApiUsage.spentUsd,
+        ...(reportedApiUsage.allowanceUsd && reportedApiUsage.allowanceUsd > 0
+          ? {
+              allowanceUsd: reportedApiUsage.allowanceUsd,
+              usedPercent: Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round((reportedApiUsage.spentUsd / reportedApiUsage.allowanceUsd) * 100)
+                )
+              )
+            }
+          : {}),
+        ...(reportedApiUsage.declared ? { declared: reportedApiUsage.declared } : {}),
+        asOf: cycle.report?.fetchedAt ?? now.toISOString()
+      }
+    : undefined
+
   return {
     band,
     usedPercent: Math.max(0, Math.min(100, Math.round(fraction * 100))),
@@ -738,6 +793,7 @@ export function estimateQuota(
       ceilingSource.confidence,
       locallyEstimatedSinceReadingUsd > 0
     ),
-    cycleResetsAt: resolveResetAt(cycle, now).toISOString()
+    cycleResetsAt: resolveResetAt(cycle, now).toISOString(),
+    ...(apiUsage ? { apiUsage } : {})
   }
 }

@@ -366,6 +366,35 @@ describe('applyReport — the Admin API answered', () => {
     expect(e.label).toContain('(estimated)')
   })
 
+  it("surfaces the web reading's API-usage bar verbatim without touching the metered figures", () => {
+    // The web-session lane reads BOTH console bars; the API bar is display
+    // only, because this seat spends from the Vibe Code budget.
+    const c = applyReport(startCycle(T0), {
+      spentUsd: 5,
+      allowanceUsd: 50,
+      fetchedAt: '2026-07-21T00:00:00.000Z',
+      apiUsage: {
+        spentUsd: 1,
+        allowanceUsd: 10,
+        declared: { spent: 0.92, allowance: 9.2, currency: 'EUR' }
+      }
+    })
+    const e = estimateQuota(c, 'pro', T0)
+    expect(e.apiUsage).toEqual({
+      spentUsd: 1,
+      allowanceUsd: 10,
+      usedPercent: 10,
+      declared: { spent: 0.92, allowance: 9.2, currency: 'EUR' },
+      asOf: '2026-07-21T00:00:00.000Z'
+    })
+    // The metered half is untouched by the API bar.
+    expect(e.spentUsd).toBe(5)
+    expect(e.estimatedCeilingUsd).toBe(50)
+    expect(e.ceilingConfidence).toBe('reported')
+    // And a report without the bar surfaces nothing.
+    expect(estimateQuota(applyReport(startCycle(T0), REPORT), 'pro', T0).apiUsage).toBeUndefined()
+  })
+
   it('uses the entitlement when the response does carry one', () => {
     const e = estimateQuota(applyReport(startCycle(T0), { ...REPORT, allowanceUsd: 50 }), 'pro', T0)
     expect(e.estimatedCeilingUsd).toBe(50)

@@ -66,4 +66,56 @@ describe('parseMistralSubscriptionHtml', () => {
   it('returns null when neither usage section is present', () => {
     expect(parseMistralSubscriptionHtml('<html><body>maintenance</body></html>', NOW)).toBeNull()
   })
+
+  // The next three pin the failure modes observed LIVE against Limit Counter's
+  // parser (same contract, diagnosed 2026-08-18): Mistral's console is a
+  // Next.js app, so the server HTML is NOT the rendered DOM — landmarks are
+  // duplicated into the RSC flight payload inside <script> tags, React emits
+  // <!-- --> separators inside interpolated text, and tooltip copy renders
+  // inline. Raw-markup scanning half-parses that page: API extracts, Vibe
+  // silently returns nil, deterministically.
+
+  it('is not fooled by landmarks duplicated inside the RSC script payload', () => {
+    // The FIRST "Vibe Code usage" occurrence sits in a script, immediately
+    // followed by pay-as-you-go copy — a raw scan anchors there and clips the
+    // chunk before any amount. The real section follows later in the body.
+    const page = `
+      <script>self.__next_f.push([1,"Vibe Code usage ... Pay-as-you-go for Vibe Code ..."])</script>
+      <main>
+        <h3>API usage</h3><p>€0.28 of €25.50</p><p>Resets in 4 days</p>
+        <h3>Vibe Code usage</h3><p>€21.30 of €255.00</p><p>Resets in 4 days</p>
+        <div>PAY-AS-YOU-GO</div>
+      </main>`
+    const result = parseMistralSubscriptionHtml(page, NOW)
+    expect(result?.vibeSpent).toBe(21.3)
+    expect(result?.vibeAllowance).toBe(255)
+  })
+
+  it('reads amounts split by React comment separators and markup between symbol and digits', () => {
+    const page = `
+      <div>API usage</div>
+      <p>€<!-- -->0.28<!-- --> of <span>€</span><span>25.50</span></p>
+      <div>Vibe Code usage</div>
+      <p>€<!-- -->21.30<!-- --> of €<b>255.00</b></p>`
+    const result = parseMistralSubscriptionHtml(page, NOW)
+    expect(result?.apiSpent).toBe(0.28)
+    expect(result?.apiAllowance).toBe(25.5)
+    expect(result?.vibeSpent).toBe(21.3)
+    expect(result?.vibeAllowance).toBe(255)
+  })
+
+  it('does not let inline pay-as-you-go tooltip copy clip the Vibe amounts', () => {
+    // Tooltip text mentioning pay-as-you-go renders between the heading and
+    // the figures; the end boundary must not swallow the amounts with it.
+    const page = `
+      <div>API usage</div><p>€0.28 of €25.50</p>
+      <div>Vibe Code usage
+        <span role="tooltip">Enable Pay-as-you-go for Vibe Code to keep going past your budget.</span>
+      </div>
+      <p>€21.30 of €255.00</p>
+      <div>ESTIMATED PRICE</div><p>€99.99</p>`
+    const result = parseMistralSubscriptionHtml(page, NOW)
+    expect(result?.vibeSpent).toBe(21.3)
+    expect(result?.vibeAllowance).toBe(255)
+  })
 })

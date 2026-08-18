@@ -2,13 +2,23 @@
  * Reads the two usage bars off admin.mistral.ai/subscription using an imported
  * web-session cookie header (see MistralWebSessionStore).
  *
- * This is an HTML scrape of an authenticated page — the same contract Limit
- * Counter ships (its `parseSubscriptionHTML`), ported verbatim so the two apps
- * read identical numbers: slice the page at the "API usage" and "Vibe Code
- * usage" headings, take the first two currency amounts in each slice as
- * spent/allowance, and the "Resets in N days/hours" phrase as the period end.
- * A markup change on Mistral's side breaks both apps the same way; the parser
- * fails closed to null rather than guessing.
+ * This is an HTML scrape of an authenticated page, same contract as Limit
+ * Counter's `parseSubscriptionHTML` — but hardened past it, because LC's
+ * raw-markup scan was observed HALF-PARSING the live page (2026-08-18): API
+ * extracted, Vibe deterministically nil. The console is a Next.js app, so the
+ * server HTML is not the rendered DOM — landmarks are duplicated into the RSC
+ * flight payload inside <script> tags, React emits `<!-- -->` separators
+ * inside interpolated text (splitting `€` from its digits), and tooltip copy
+ * ("Pay-as-you-go for Vibe Code…") renders inline where LC used it as a chunk
+ * boundary, clipping the Vibe amounts out of their own section.
+ *
+ * So this parser (1) reduces the page to its VISIBLE TEXT first — scripts,
+ * styles, comments, and tags stripped — which removes the RSC duplicates and
+ * rejoins split amounts; (2) slices at the "API usage" / "Vibe Code usage"
+ * headings with boundaries scoped after the section start; and (3) prefers
+ * the exact `<spent> of <allowance>` currency pair the bar renders, which
+ * tooltip prose and the pay-as-you-go block's own figures never match. It
+ * still fails closed to null rather than guessing.
  */
 
 export interface MistralWebSubscriptionResult {
@@ -29,9 +39,36 @@ const BROWSER_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 } as const
 
+/**
+ * Server HTML → the visible text a browser would render, near enough for
+ * landmark and amount scanning. Comments are removed WITHOUT padding (React's
+ * `<!-- -->` separators sit inside amounts); tags become single spaces.
+ */
+function htmlToVisibleText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script[^>]*>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style[^>]*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+}
+
+const CURRENCY_AMOUNT = /(?:€|\$|£|EUR|USD|GBP)\s*([0-9]+(?:\.[0-9]+)?)/gi
+/** The bar's own text: "€21.30 of €255.00". Tooltip prose and the
+ *  pay-as-you-go block's standalone figures never form this pair. */
+const CURRENCY_PAIR =
+  /(?:€|\$|£|EUR|USD|GBP)\s*([0-9]+(?:\.[0-9]+)?)\s+of\s+(?:€|\$|£|EUR|USD|GBP)\s*([0-9]+(?:\.[0-9]+)?)/i
+
 function extractCurrencyAmounts(chunk: string): number[] {
-  const regex = /(?:€|\$|£|EUR|USD|GBP)\s*([0-9]+(?:\.[0-9]+)?)/gi
-  const matches = [...chunk.matchAll(regex)]
+  const pair = chunk.match(CURRENCY_PAIR)
+  if (pair) {
+    const spent = Number(pair[1])
+    const allowance = Number(pair[2])
+    if (Number.isFinite(spent) && Number.isFinite(allowance)) return [spent, allowance]
+  }
+  const matches = [...chunk.matchAll(CURRENCY_AMOUNT)]
   return matches.map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
 }
 
@@ -55,6 +92,8 @@ export function parseMistralSubscriptionHtml(
   html: string,
   now = new Date()
 ): MistralWebSubscriptionResult | null {
+  // The login-wall heuristics run on the RAW markup: '/login' lives in href
+  // attributes, which the visible-text reduction strips.
   if (
     html.includes('Sign in to your account') ||
     (html.includes('/login') && !html.includes('API usage'))
@@ -62,16 +101,19 @@ export function parseMistralSubscriptionHtml(
     return null
   }
 
+  const text = htmlToVisibleText(html)
+  const lowerText = text.toLowerCase()
+
   let currency = 'EUR'
-  if (html.includes('€')) currency = 'EUR'
-  else if (html.includes('$')) currency = 'USD'
-  else if (html.includes('£')) currency = 'GBP'
+  if (text.includes('€')) currency = 'EUR'
+  else if (text.includes('$')) currency = 'USD'
+  else if (text.includes('£')) currency = 'GBP'
 
   let planName: string | undefined = undefined
-  const planMatch = html.match(/CURRENT PLAN[\s\S]*?(Pro|Team|Enterprise|Free)/i)
+  const planMatch = text.match(/CURRENT PLAN[\s\S]*?(Pro|Team|Enterprise|Free)/i)
   if (planMatch) {
     planName = planMatch[1]
-  } else if (/Pro/i.test(html)) {
+  } else if (/Pro/i.test(text)) {
     planName = 'Pro'
   }
 
@@ -79,12 +121,12 @@ export function parseMistralSubscriptionHtml(
   let apiAllowance: number | undefined = undefined
   let apiResetDate: Date | undefined = undefined
 
-  const apiIdx = html.toLowerCase().indexOf('api usage')
+  const apiIdx = lowerText.indexOf('api usage')
   if (apiIdx !== -1) {
     const start = apiIdx
-    const vibeIdx = html.toLowerCase().indexOf('vibe code usage', start)
-    const endLimit = vibeIdx !== -1 ? vibeIdx : Math.min(html.length, start + 1200)
-    const chunk = html.slice(start, endLimit)
+    const vibeIdx = lowerText.indexOf('vibe code usage', start)
+    const endLimit = vibeIdx !== -1 ? vibeIdx : Math.min(text.length, start + 1200)
+    const chunk = text.slice(start, endLimit)
     const amounts = extractCurrencyAmounts(chunk)
     if (amounts.length >= 2) {
       apiSpent = amounts[0]
@@ -99,17 +141,17 @@ export function parseMistralSubscriptionHtml(
   let vibeAllowance: number | undefined = undefined
   let vibeResetDate: Date | undefined = undefined
 
-  const vibeIdx = html.toLowerCase().indexOf('vibe code usage')
+  const vibeIdx = lowerText.indexOf('vibe code usage')
   if (vibeIdx !== -1) {
     const start = vibeIdx
-    const paygoIdx = html.toLowerCase().indexOf('pay-as-you-go', start)
-    const estIdx = html.toLowerCase().indexOf('estimated price', start)
-    let endLimit = html.length
-    if (paygoIdx !== -1) endLimit = Math.min(endLimit, paygoIdx)
-    if (estIdx !== -1) endLimit = Math.min(endLimit, estIdx)
-    if (endLimit === html.length) endLimit = Math.min(html.length, start + 1200)
+    // Boundary: the estimated-price block only. LC also cut at
+    // 'pay-as-you-go', and the tooltip mentioning it mid-section is exactly
+    // what clipped the Vibe amounts on the live page; the pair-first
+    // extraction keeps the pay-as-you-go block's own figures out instead.
+    const estIdx = lowerText.indexOf('estimated price', start)
+    const endLimit = estIdx !== -1 ? estIdx : Math.min(text.length, start + 1200)
 
-    const chunk = html.slice(start, endLimit)
+    const chunk = text.slice(start, endLimit)
     const amounts = extractCurrencyAmounts(chunk)
     if (amounts.length >= 2) {
       vibeSpent = amounts[0]

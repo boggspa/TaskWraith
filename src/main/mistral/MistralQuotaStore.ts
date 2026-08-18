@@ -203,6 +203,7 @@ function decodeReport(value: unknown): MistralQuotaReport | null {
   const declared = decodeDeclared(record.declared, ['spent'])
   const allowance = record.allowanceUsd
   const localSpentUsdAtReport = record.localSpentUsdAtReport
+  const apiUsage = decodeReportApiUsage(record.apiUsage)
   return {
     spentUsd: record.spentUsd,
     fetchedAt: record.fetchedAt,
@@ -215,6 +216,40 @@ function decodeReport(value: unknown): MistralQuotaReport | null {
           declared: {
             spent: declared.spent as number,
             currency: (declared.currency as string).trim()
+          }
+        }
+      : {}),
+    ...(apiUsage ? { apiUsage } : {})
+  }
+}
+
+/** Optional-field decoder for the report's API-usage bar: malformed shapes are
+ *  dropped rather than repaired, same posture as every other sub-decoder. */
+function decodeReportApiUsage(value: unknown): NonNullable<MistralQuotaReport['apiUsage']> | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (!finiteAtLeastZero(record.spentUsd)) return null
+  const allowance = record.allowanceUsd
+  const declaredRecord =
+    record.declared && typeof record.declared === 'object'
+      ? (record.declared as Record<string, unknown>)
+      : null
+  const declaredValid =
+    declaredRecord &&
+    finiteAtLeastZero(declaredRecord.spent) &&
+    typeof declaredRecord.currency === 'string' &&
+    declaredRecord.currency.trim()
+  return {
+    spentUsd: record.spentUsd,
+    ...(finiteAtLeastZero(allowance) && allowance > 0 ? { allowanceUsd: allowance } : {}),
+    ...(declaredValid
+      ? {
+          declared: {
+            spent: declaredRecord.spent as number,
+            ...(finiteAtLeastZero(declaredRecord.allowance) && (declaredRecord.allowance as number) > 0
+              ? { allowance: declaredRecord.allowance as number }
+              : {}),
+            currency: (declaredRecord.currency as string).trim()
           }
         }
       : {})
@@ -323,13 +358,23 @@ export class MistralQuotaStore {
   }
 
   /**
-   * Record an Admin API answer. No-op without a cycle: unlike an anchor, a
-   * report is a background fetch rather than a deliberate user action, so it
-   * must not conjure a meter for a seat that has never been run.
+   * Record a vendor usage answer (Admin API, or the imported web session).
+   *
+   * By default a no-op without a cycle: a background fetch must not conjure a
+   * meter for a seat that has never been run. `startCycleIfMissing` is for the
+   * web-session lane, where the user DELIBERATELY imported their console login
+   * to see these numbers — that import is the same kind of intentional act as
+   * typing an anchor, which also starts a cycle.
    */
-  async setReport(report: MistralQuotaReport): Promise<void> {
+  async setReport(
+    report: MistralQuotaReport,
+    options: { startCycleIfMissing?: boolean } = {}
+  ): Promise<void> {
     await this.ensureLoaded()
-    if (!this.cycle) return
+    if (!this.cycle) {
+      if (!options.startCycleIfMissing) return
+      this.cycle = startCycle(this.now())
+    }
     this.cycle = applyReport(this.cycle, report)
     this.markDirty()
   }
@@ -497,8 +542,11 @@ export async function clearMistralQuotaAnchor(): Promise<void> {
   await singleton?.clearAnchor()
 }
 
-export async function setMistralQuotaReport(report: MistralQuotaReport): Promise<void> {
-  await singleton?.setReport(report)
+export async function setMistralQuotaReport(
+  report: MistralQuotaReport,
+  options: { startCycleIfMissing?: boolean } = {}
+): Promise<void> {
+  await singleton?.setReport(report, options)
 }
 
 export async function flushMistralQuotaStore(): Promise<void> {

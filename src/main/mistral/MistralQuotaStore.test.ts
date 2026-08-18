@@ -175,6 +175,44 @@ describe('MistralQuotaStore — debounced flush', () => {
     expect(snapshot?.estimate.vendorReported).toBe(false)
     expect(snapshot?.totalTokens).toBe(30)
   })
+
+  it('starts a cycle for a deliberate web reading, and round-trips its API bar', async () => {
+    const first = makeStore()
+    // A background report on a never-run seat stays a no-op…
+    await first.setReport({ spentUsd: 3, fetchedAt: T0.toISOString() })
+    expect(await first.currentEstimate()).toBeNull()
+
+    // …while the web-session import may start the cycle, carrying the
+    // display-only API bar with it.
+    await first.setReport(
+      {
+        spentUsd: 21.3,
+        allowanceUsd: 255,
+        fetchedAt: T0.toISOString(),
+        declared: { spent: 21.3, currency: 'EUR' },
+        apiUsage: {
+          spentUsd: 0.3,
+          allowanceUsd: 27.7,
+          declared: { spent: 0.28, allowance: 25.5, currency: 'EUR' }
+        }
+      },
+      { startCycleIfMissing: true }
+    )
+    await first.flush()
+
+    const second = makeStore()
+    const snapshot = await second.currentEstimate()
+    expect(snapshot?.estimate.confidence).toBe('reported')
+    expect(snapshot?.estimate.ceilingConfidence).toBe('reported')
+    expect(snapshot?.estimate.vendorReported).toBe(true)
+    expect(snapshot?.estimate.apiUsage).toEqual({
+      spentUsd: 0.3,
+      allowanceUsd: 27.7,
+      usedPercent: 1,
+      declared: { spent: 0.28, allowance: 25.5, currency: 'EUR' },
+      asOf: T0.toISOString()
+    })
+  })
 })
 
 describe('MistralQuotaStore — rollover on load', () => {

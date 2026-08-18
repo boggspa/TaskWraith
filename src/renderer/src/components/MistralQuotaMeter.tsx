@@ -91,6 +91,25 @@ const MISTRAL_QUOTA_REFRESH_INTERVAL_MS = 30_000
  *  win a race with the quota store's async first load. */
 const MISTRAL_QUOTA_USAGE_SETTLE_MS = 250
 
+/**
+ * Console-exact money for the API-usage row. Limit Counter renders Mistral
+ * currency figures with extra precision so a tiny API spend (€0.0004) does not
+ * round to a lying €0.00; this keeps that property while trimming the padding
+ * zeros LC's fixed four decimals would show on ordinary amounts.
+ */
+function formatDeclaredAmount(amount: number, currency: string, locale?: string): string {
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
+    }).format(amount)
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`
+  }
+}
+
 /** Where each half of a vendor-sourced reading came from, stated plainly. */
 function sourcePhrase(source: MistralQuotaFigureSource): string {
   const origin =
@@ -199,6 +218,53 @@ export function MistralQuotaMeterView({
         </span>
       </div>
       <div className="model-usage-window-list">
+        {estimate.apiUsage ? (
+          // The console's shared "API usage" bar (Studio / Vibe Code / API),
+          // read verbatim from the imported web session. Display-only: the
+          // seat spends from the Vibe Code budget metered below, so this row
+          // never joins the estimate's spend or ceiling.
+          <div
+            className="model-usage-window mistral-quota-window mistral-quota-window--api"
+            title={[
+              'API usage read from your Mistral console' +
+                (estimate.apiUsage.asOf &&
+                !Number.isNaN(new Date(estimate.apiUsage.asOf).getTime())
+                  ? ` (${new Date(estimate.apiUsage.asOf).toLocaleString()}).`
+                  : '.'),
+              'Shared across Studio, Vibe Code, and the API; this seat spends from the Vibe Code budget below.'
+            ].join(' ')}
+          >
+            <div className="model-usage-window-row">
+              <span className="model-usage-window-label">API usage</span>
+              <span className="model-usage-window-percent">
+                {estimate.apiUsage.declared
+                  ? [
+                      formatDeclaredAmount(
+                        estimate.apiUsage.declared.spent,
+                        estimate.apiUsage.declared.currency,
+                        locale
+                      ),
+                      estimate.apiUsage.declared.allowance
+                        ? `of ${formatDeclaredAmount(
+                            estimate.apiUsage.declared.allowance,
+                            estimate.apiUsage.declared.currency,
+                            locale
+                          )}`
+                        : null
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                  : money(estimate.apiUsage.spentUsd)}
+              </span>
+            </div>
+            {typeof estimate.apiUsage.usedPercent === 'number' ? (
+              <QuotaProgressBar
+                fraction={Math.max(0, Math.min(1, estimate.apiUsage.usedPercent / 100))}
+                accent="var(--provider-mistral-color)"
+              />
+            ) : null}
+          </div>
+        ) : null}
         <div
           className="model-usage-window mistral-quota-window"
           title={title}

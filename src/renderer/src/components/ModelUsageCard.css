@@ -561,6 +561,10 @@
   --compact-quota-color: var(--provider-grok-color);
 }
 
+.model-usage-compact-cell.provider-ollama {
+  --compact-quota-color: var(--provider-ollama-color);
+}
+
 .model-usage-compact-cell.provider-mistral {
   --compact-quota-color: var(--provider-mistral-color);
 }

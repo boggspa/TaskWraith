@@ -1634,6 +1634,8 @@ import {
   configureOllamaWebSessionStore,
   ollamaWebSessionStore
 } from './ollama/OllamaWebSessionStore'
+import { createMistralWebUsageLane } from './mistral/MistralWebUsage'
+import { createOllamaWebUsageFetcher } from './ollama/OllamaWebUsage'
 import { registerMistralApiKeyHandlers } from './ipc/mistralApiKeyHandlers'
 import {
   convertVendorAmountToUsd,
@@ -43197,6 +43199,15 @@ if (isGeminiMcpBridgeProcess) {
     // Same post-app-ready construction so safeStorage has settled.
     configureMistralWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
     configureOllamaWebSessionStore({ userDataPath: app.getPath('userData'), safeStorage })
+    // The lanes that turn those sessions into quota readings. Both read the
+    // stores lazily, so construction order here is not load-bearing.
+    const mistralWebUsageLane = createMistralWebUsageLane({
+      loadCookie: () => mistralWebSessionStore()?.loadCookie() ?? { status: 'missing' },
+      setReport: (report, options) => setMistralQuotaReport(report, options)
+    })
+    const fetchOllamaWebUsageSnapshot = createOllamaWebUsageFetcher({
+      loadCookie: () => ollamaWebSessionStore()?.loadCookie() ?? { status: 'missing' }
+    })
     const mistralApiKeyStoreInst = configureMistralApiKeyStore({
       userDataPath: app.getPath('userData'),
       safeStorage
@@ -43208,7 +43219,12 @@ if (isGeminiMcpBridgeProcess) {
         managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
         requestRemoteProviderModelsRefresh()
       },
-      webSessionStore: () => mistralWebSessionStore()
+      webSessionStore: () => mistralWebSessionStore(),
+      // The capture is already validated and parsed — absorb it straight into
+      // the quota store so the meter reflects the console immediately.
+      onWebSessionImported: (summary) => {
+        void mistralWebUsageLane.absorbSummary(summary)
+      }
     })
     const bridgeApnsPusher = buildBridgeApnsPusherFromSettings()
 
@@ -54916,6 +54932,9 @@ if (isGeminiMcpBridgeProcess) {
         // Cursor has no CLI usage command — read the editor dashboard token
         // and hit Cursor's period-usage RPC (same path as Limit Counter).
         if (provider === 'cursor') return fetchCursorUsageSnapshot({ force })
+        // Ollama's Session (5H) + Weekly meters come from the imported
+        // ollama.com web session; unconfigured returns an explicit tombstone.
+        if (provider === 'ollama') return fetchOllamaWebUsageSnapshot({ force })
         if (provider !== 'codex') return null
         return withUnownedCodexClientLifecycle(
           'rate-limit-snapshot',
@@ -54933,6 +54952,11 @@ if (isGeminiMcpBridgeProcess) {
     // endpoint, so this reads the locally accumulated cycle. Resolves null until
     // the seat has actually run, which is what gates the sidebar meter.
     ipcMain.handle('mistral-quota:get', async (): Promise<MistralQuotaSnapshot | null> => {
+      // Opportunistic web-session refresh: fire-and-forget with its own TTL,
+      // so the renderer's ordinary 30s poll keeps an imported console reading
+      // fresh without a main-side timer. This read returns the CURRENT
+      // estimate; an absorbed refresh shows up on the next poll.
+      mistralWebUsageLane.maybeRefresh()
       return currentMistralQuotaEstimate()
     })
 
@@ -55290,7 +55314,9 @@ if (isGeminiMcpBridgeProcess) {
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
       encryptApiKey,
       isMainRendererSender,
-      webSessionStore: () => ollamaWebSessionStore()
+      webSessionStore: () => ollamaWebSessionStore(),
+      // A fresh session must not sit behind the previous session's TTL.
+      onWebSessionImported: () => fetchOllamaWebUsageSnapshot.invalidate()
     })
 
     registerGeminiAuthHandlers({

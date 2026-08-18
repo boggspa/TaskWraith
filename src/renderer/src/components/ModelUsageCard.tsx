@@ -217,6 +217,7 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   kimi: 'Kimi',
   cursor: 'Cursor',
   grok: 'Grok',
+  ollama: 'Ollama',
   antigravity: 'AGY',
   mistral: 'Mistral',
   muse: 'Muse',
@@ -512,6 +513,14 @@ function compactCellsForEntry(
     return cells
   }
 
+  if (provider === 'ollama') {
+    // 'Session usage' matches the 5H predicate, 'Weekly usage' the weekly one
+    // — the same shape Limit Counter renders from ollama.com/settings.
+    assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
+    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    return cells
+  }
+
   if (provider === 'cursor') {
     assign(
       'extraOne',
@@ -663,8 +672,14 @@ export function CompactModelUsageGrid({
   const antigravityCells = compactCellsForEntry('antigravity', entriesByProvider.get('antigravity'))
   const hasAntigravityCells = Object.keys(antigravityCells).length > 0
   const antigravityReason = quotaReasonOnlyText(entriesByProvider.get('antigravity'))
+  // Ollama joins on the same terms as AGY: a column once the imported web
+  // session has produced Session/Weekly data, or an explained-empty lane.
+  const ollamaCells = compactCellsForEntry('ollama', entriesByProvider.get('ollama'))
+  const hasOllamaCells = Object.keys(ollamaCells).length > 0
+  const ollamaReason = quotaReasonOnlyText(entriesByProvider.get('ollama'))
   const providers: ModelUsageProviderId[] = [
     ...COMPACT_USAGE_BASE_PROVIDERS,
+    ...(hasOllamaCells || ollamaReason ? (['ollama'] as const) : []),
     ...(hasAntigravityCells || antigravityReason ? (['antigravity'] as const) : []),
     ...(mistralCell ? (['mistral'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
@@ -728,7 +743,9 @@ export function CompactModelUsageGrid({
                     // the expanded card shows, so the two never disagree.
                     (provider === 'antigravity' && antigravityReason
                       ? `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: ${antigravityReason}`
-                      : `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`)
+                      : provider === 'ollama' && ollamaReason
+                        ? `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: ${ollamaReason}`
+                        : `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`)
                   }
                 >
                   {cell?.value || '--'}
