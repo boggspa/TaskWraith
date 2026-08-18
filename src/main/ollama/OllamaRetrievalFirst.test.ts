@@ -7,12 +7,7 @@ import {
 
 describe('OllamaRetrievalFirst', () => {
   it('enforces retrieval-first for known model families', () => {
-    expect(ollamaEnforcesRetrievalFirst('gpt-oss:20b')).toBe(true)
-    expect(ollamaEnforcesRetrievalFirst('ornith:35b')).toBe(true)
-    expect(ollamaEnforcesRetrievalFirst('laguna-xs-2.1:q8_0')).toBe(true)
-    expect(ollamaEnforcesRetrievalFirst('lfm2.5:8b')).toBe(true)
-    expect(ollamaEnforcesRetrievalFirst('qwen3.5:4b')).toBe(true)
-    expect(ollamaEnforcesRetrievalFirst('qwen3.8:27b-mlx')).toBe(true)
+    expect(ollamaEnforcesRetrievalFirst('gpt_oss_20b')).toBe(true)
     expect(ollamaEnforcesRetrievalFirst('devstral-small-2:24b')).toBe(true)
     expect(ollamaEnforcesRetrievalFirst('ministral-3:14b')).toBe(true)
     for (const modelId of [

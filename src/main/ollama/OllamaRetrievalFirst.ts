@@ -52,9 +52,9 @@ export const EXEMPT_READ_PATHS = new Set([
 export function ollamaEnforcesRetrievalFirst(modelId?: string | null): boolean {
   const raw = String(modelId || '').trim().toLowerCase()
   // Normalize both the modelId and family names for matching: replace underscores and hyphens
-  const normalizedRaw = raw.replace(/[-_]/g, '')
+  const normalizedRaw = raw.replace(/[-_.:]/g, '')
   for (const family of RETRIEVAL_FIRST_FAMILIES) {
-    const normalizedFamily = family.toLowerCase().replace(/[-_]/g, '')
+    const normalizedFamily = family.toLowerCase().replace(/[-_.:]/g, '')
     if (normalizedRaw.includes(normalizedFamily)) return true
   }
   return false

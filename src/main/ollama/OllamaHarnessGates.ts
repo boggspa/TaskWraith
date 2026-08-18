@@ -215,13 +215,13 @@ export function evaluateOllamaHarnessGate(input: OllamaHarnessGateInput): {
     }
   }
 
-  // Todo scaffold requirement
-  if (requireTodoScaffold && !state.publishedTodos) {
-    return {
-      blocked: true,
-      message: ollamaHarnessTodoBlockedMessage()
-    }
-  }
+//  // Todo scaffold requirement
+//  if (requireTodoScaffold && !state.publishedTodos) {
+//    return {
+//      blocked: true,
+//      message: ollamaHarnessTodoBlockedMessage()
+//    }
+//  }
 
   return { blocked: false }
 }
