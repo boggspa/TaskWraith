@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PROVIDER_RUN_FAILURE_METADATA_KIND,
   STALE_RUN_SETTLEMENT_HINT,
+  STALE_RUN_SETTLEMENT_HINT_PLURAL,
   buildBridgeRunFailureMetadata,
   buildStaleRunSettlementNotice,
   describeUnexplainedBridgeRunFailure,
@@ -80,8 +81,7 @@ describe('runFailureNoticeCopyText', () => {
 describe('buildStaleRunSettlementNotice', () => {
   const notice = buildStaleRunSettlementNotice({
     chatId: 'chat-1',
-    run: run(),
-    previousStatus: 'running',
+    settlements: [{ run: run(), previousStatus: 'running' }],
     reason: REASON,
     settledAt: NOW
   })
@@ -122,14 +122,80 @@ describe('buildStaleRunSettlementNotice', () => {
   it('survives a run with no provider and no exit code', () => {
     const bare = buildStaleRunSettlementNotice({
       chatId: 'c',
-      run: run({ provider: undefined, exitCode: undefined }),
-      previousStatus: 'queued',
+      settlements: [
+        { run: run({ provider: undefined, exitCode: undefined }), previousStatus: 'queued' }
+      ],
       reason: REASON,
       settledAt: NOW
     })
     expect(bare.metadata).toMatchObject({ headline: 'Provider run interrupted' })
     expect(bare.metadata).not.toHaveProperty('provider')
     expect(bare.metadata).not.toHaveProperty('exitCode')
+  })
+
+  it('throws rather than emit a card that explains nothing', () => {
+    expect(() =>
+      buildStaleRunSettlementNotice({
+        chatId: 'c',
+        settlements: [],
+        reason: REASON,
+        settledAt: NOW
+      })
+    ).toThrow()
+  })
+
+  describe('grouped settlements', () => {
+    const grouped = buildStaleRunSettlementNotice({
+      chatId: 'chat-1',
+      settlements: [
+        { run: run({ runId: 'run-a' }), previousStatus: 'running' },
+        { run: run({ runId: 'run-b' }), previousStatus: 'running' },
+        { run: run({ runId: 'run-c' }), previousStatus: 'running' },
+        { run: run({ runId: 'run-d' }), previousStatus: 'running' }
+      ],
+      reason: REASON,
+      settledAt: NOW
+    })
+
+    it('collapses a wave of settlements into ONE card', () => {
+      // 13 seats orphaned by one crash must not become 13 byte-identical
+      // cards replayed on every chat open — one row carries the whole batch.
+      expect(grouped.metadata).toMatchObject({
+        kind: PROVIDER_RUN_FAILURE_METADATA_KIND,
+        provider: 'ollama',
+        headline: 'Ollama · 4 runs interrupted',
+        hint: STALE_RUN_SETTLEMENT_HINT_PLURAL
+      })
+      expect(grouped.content).toContain('4 runs were still marked running')
+      expect(grouped.content).toContain(REASON)
+    })
+
+    it('binds the row to the batch newest run so insertion anchors correctly', () => {
+      expect(grouped.runId).toBe('run-d')
+      expect(grouped.id).toBe(staleRunSettlementNoticeId('chat-1', 'run-d'))
+    })
+
+    it('names the first ids and summarises the rest', () => {
+      expect(grouped.content).toContain('Runs: run-a, run-b, run-c +1 more')
+    })
+
+    it('claims a provider / status / exit code only when the whole batch agrees', () => {
+      const mixed = buildStaleRunSettlementNotice({
+        chatId: 'chat-1',
+        settlements: [
+          { run: run({ runId: 'run-a', provider: 'ollama' }), previousStatus: 'running' },
+          { run: run({ runId: 'run-b', provider: 'codex', exitCode: 7 }), previousStatus: 'queued' }
+        ],
+        reason: REASON,
+        settledAt: NOW
+      })
+      // A shared headline/hue would let one seat speak for the other.
+      expect(mixed.metadata).toMatchObject({ headline: '2 runs interrupted' })
+      expect(mixed.metadata).not.toHaveProperty('provider')
+      expect(mixed.metadata).not.toHaveProperty('exitCode')
+      expect(mixed.content).toContain('2 runs were still marked active')
+      expect(mixed.content).toContain('Providers: Ollama, Codex.')
+    })
   })
 })
 

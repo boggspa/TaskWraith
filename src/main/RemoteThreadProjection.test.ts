@@ -2364,14 +2364,18 @@ describe('RemoteThreadProjection', () => {
     it('projects a main-authored settlement notice as the same card', () => {
       const notice = buildStaleRunSettlementNotice({
         chatId: THREAD,
-        run: {
-          runId: '1753700000000-abc',
-          provider: 'ollama',
-          startedAt: '2026-05-28T11:00:00.000Z',
-          status: 'failed',
-          exitCode: 1
-        },
-        previousStatus: 'running',
+        settlements: [
+          {
+            run: {
+              runId: '1753700000000-abc',
+              provider: 'ollama',
+              startedAt: '2026-05-28T11:00:00.000Z',
+              status: 'failed',
+              exitCode: 1
+            },
+            previousStatus: 'running'
+          }
+        ],
         reason: 'Interrupted with no live RunManager session.',
         settledAt: '2026-05-28T11:59:00.000Z'
       })

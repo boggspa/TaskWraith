@@ -303,31 +303,53 @@ describe('reconcileStaleChatRuns', () => {
   })
 
   describe('settlement transcript notice', () => {
-    it('appends an explanatory error row for every settled run', () => {
+    it('collapses every run the sweep settles into ONE explanatory error row', () => {
       const result = reconcileStaleChatRuns(
         [
           chat('c1', [
             run({ runId: 'stale-1', status: 'running', provider: 'ollama' }),
-            run({ runId: 'stale-2', status: 'queued', provider: 'ollama' })
+            run({ runId: 'stale-2', status: 'running', provider: 'ollama' })
           ])
         ],
         () => false,
         NOW
       )
       const messages = result.chats[0].messages
-      expect(messages.map((m) => m.id)).toEqual([
-        staleRunSettlementNoticeId('c1', 'stale-1'),
-        staleRunSettlementNoticeId('c1', 'stale-2')
-      ])
-      expect(messages.every((m) => m.role === 'error')).toBe(true)
-      expect(messages[0].runId).toBe('stale-1')
+      // A crash that orphans a whole fan-out wave is one event: one card, not
+      // one byte-identical card per seat replayed on every chat open.
+      expect(messages.map((m) => m.id)).toEqual([staleRunSettlementNoticeId('c1', 'stale-2')])
+      expect(messages[0].role).toBe('error')
+      expect(messages[0].runId).toBe('stale-2')
       // The card kind both platforms already render (desktop
       // ProviderRunFailureCard / iOS ProviderRunFailureCard).
       expect(messages[0].metadata?.kind).toBe('providerRunFailure')
+      expect(messages[0].metadata?.headline).toBe('Ollama · 2 runs interrupted')
       expect(messages[0].content).toContain('stale-1')
-      expect(messages[0].content).toContain('still marked running')
+      expect(messages[0].content).toContain('stale-2')
+      expect(messages[0].content).toContain('2 runs were still marked running')
       expect(messages[0].content).toContain(CHAT_RUN_STALE_REASON)
-      expect(messages[1].content).toContain('still marked queued')
+      // Both runs still settle individually — only the narration is shared.
+      expect(result.settlements.map((s) => s.runId)).toEqual(['stale-1', 'stale-2'])
+    })
+
+    it('anchors the grouped row to the run whose transcript rows are NEWEST', () => {
+      const messages: ChatMessage[] = [
+        { id: 'u1', role: 'user', content: 'seat b prompt', timestamp: OLD, runId: 'stale-b' },
+        { id: 'u2', role: 'user', content: 'seat a prompt', timestamp: OLD, runId: 'stale-a' }
+      ]
+      const result = reconcileStaleChatRuns(
+        // runs[] order says a-then-b; the transcript says b-then-a. The
+        // transcript wins, or the notice would land above stale-a's rows and
+        // drag its completion card up the thread.
+        [chat('c1', [run({ runId: 'stale-a' }), run({ runId: 'stale-b' })], { messages })],
+        () => false,
+        NOW
+      )
+      expect(result.chats[0].messages.map((m) => m.id)).toEqual([
+        'u1',
+        'u2',
+        staleRunSettlementNoticeId('c1', 'stale-a')
+      ])
     })
 
     it('inserts after the settled run own last row, not at the tail', () => {

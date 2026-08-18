@@ -129,44 +129,127 @@ export function staleRunSettlementNoticeId(chatId: string, runId: string): strin
 export const STALE_RUN_SETTLEMENT_HINT =
   'No result will arrive for this run. Re-send the prompt to try again.'
 
-export interface StaleRunSettlementNoticeInput {
-  chatId: string
+/** Plural sibling of the hint above. A wave settlement collapses into ONE
+ * notice, so the hint must not claim there is a single run to re-send. */
+export const STALE_RUN_SETTLEMENT_HINT_PLURAL =
+  'No results will arrive for these runs. Re-send the prompt to try again.'
+
+/** How many run ids a grouped notice names before it summarises the rest —
+ * enough to correlate the card with the durable run-event log without turning
+ * it into a wall of ids. */
+const STALE_RUN_SETTLEMENT_NAMED_IDS = 3
+
+export interface StaleRunSettlementEntry {
   /** The run AFTER settlement (carries the stamped exitCode/endedAt). */
   run: ChatRun
   /** Status the run projected as before the sweep ('running', 'queued', …). */
   previousStatus: string
+}
+
+export interface StaleRunSettlementNoticeInput {
+  chatId: string
+  /**
+   * Every run this sweep settled in the chat, ordered so the LAST entry is the
+   * batch's newest (the reconciler sorts by transcript position). One notice
+   * covers the whole batch on purpose: a fan-out round that loses its GPU
+   * orphans every seat at the same instant, and thirteen byte-identical cards
+   * are not thirteen times the information — they are the same sentence read
+   * thirteen times, on every chat open, forever. A LATER sweep settling a
+   * LATER crash still writes its own notice, so a genuine series of crashes
+   * still reads as a series.
+   */
+  settlements: readonly StaleRunSettlementEntry[]
   /** `CHAT_RUN_STALE_REASON` — the same string the durable run-event carries. */
   reason: string
   settledAt: string
 }
 
 /**
- * The transcript row for a reconciler settlement: names the run, the status it
- * was wedged in, and the reason the sweep gave up on it.
+ * The one value every settled run agrees on, or undefined when they differ.
+ * A grouped notice may only claim a provider / status / exit code that holds
+ * for the WHOLE batch: the card's headline and provider hue are read as
+ * describing every run in it, so a value borrowed from one seat would speak
+ * for all of them.
+ */
+function sharedSettlementValue<T>(values: readonly T[]): T | undefined {
+  const first = values[0]
+  return values.every((value) => value === first) ? first : undefined
+}
+
+const describeSettledRunIds = (runIds: readonly string[]): string => {
+  const named = runIds.slice(0, STALE_RUN_SETTLEMENT_NAMED_IDS)
+  const rest = runIds.length - named.length
+  return `Runs: ${named.join(', ')}${rest > 0 ? ` +${rest} more` : ''}`
+}
+
+const describeSettledProviders = (providers: ReadonlyArray<ProviderId | undefined>): string => {
+  const labels: string[] = []
+  for (const provider of providers) {
+    const label = runFailureProviderLabel(provider)
+    if (!labels.includes(label)) labels.push(label)
+  }
+  return labels.join(', ')
+}
+
+/**
+ * The transcript row for a reconciler sweep's settlements in one chat: names
+ * the runs, the status they were wedged in, and the reason the sweep gave up
+ * on them. A single settlement renders exactly as it always did.
  */
 export function buildStaleRunSettlementNotice(input: StaleRunSettlementNoticeInput): ChatMessage {
-  const label = runFailureProviderLabel(input.run.provider)
-  const headline = `${label} run interrupted`
+  const settlements = input.settlements.filter((entry) => Boolean(entry?.run?.runId))
+  if (settlements.length === 0) {
+    throw new Error('buildStaleRunSettlementNotice needs at least one settled run')
+  }
+  // The batch's newest run owns the row: the reconciler inserts the notice
+  // after that run's last transcript row, so binding `runId` to it keeps the
+  // row's identity consistent with where it lands.
+  const anchor = settlements[settlements.length - 1].run
+  const count = settlements.length
+
+  const providers = settlements.map((entry) => entry.run.provider)
+  const sharedProvider = sharedSettlementValue(providers)
+  const sharedStatus = sharedSettlementValue(settlements.map((entry) => entry.previousStatus))
+  const sharedExitCode = sharedSettlementValue(settlements.map((entry) => entry.run.exitCode))
+
+  const label = runFailureProviderLabel(sharedProvider)
+  const headline =
+    count === 1
+      ? `${label} run interrupted`
+      : sharedProvider
+        ? `${label} · ${count} runs interrupted`
+        : `${count} runs interrupted`
+
   const lines: RunFailureNoticeLine[] = [
     {
-      text: `Run ${input.run.runId} was still marked ${input.previousStatus} with no live process owner, so TaskWraith settled it as failed.`,
+      text:
+        count === 1
+          ? `Run ${anchor.runId} was still marked ${sharedStatus} with no live process owner, so TaskWraith settled it as failed.`
+          : `${count} runs were still marked ${sharedStatus ?? 'active'} with no live process owner, so TaskWraith settled them as failed.`,
       timestamp: input.settledAt
-    },
-    ...runFailureNoticeLines(input.reason)
-  ].slice(0, RUN_FAILURE_MAX_LINES)
+    }
+  ]
+  if (count > 1) {
+    lines.push({ text: describeSettledRunIds(settlements.map((entry) => entry.run.runId)) })
+    if (!sharedProvider) lines.push({ text: `Providers: ${describeSettledProviders(providers)}.` })
+  }
+  lines.push(...runFailureNoticeLines(input.reason))
+
+  const hint = count === 1 ? STALE_RUN_SETTLEMENT_HINT : STALE_RUN_SETTLEMENT_HINT_PLURAL
+  const bounded = lines.slice(0, RUN_FAILURE_MAX_LINES)
   return {
-    id: staleRunSettlementNoticeId(input.chatId, input.run.runId),
+    id: staleRunSettlementNoticeId(input.chatId, anchor.runId),
     role: 'error',
-    content: runFailureNoticeCopyText(headline, lines, STALE_RUN_SETTLEMENT_HINT),
+    content: runFailureNoticeCopyText(headline, bounded, hint),
     timestamp: input.settledAt,
-    runId: input.run.runId,
+    runId: anchor.runId,
     metadata: buildRunFailureNoticeMetadata({
-      ...(input.run.provider ? { provider: input.run.provider } : {}),
+      ...(sharedProvider ? { provider: sharedProvider } : {}),
       headline,
-      ...(typeof input.run.exitCode === 'number' ? { exitCode: input.run.exitCode } : {}),
+      ...(typeof sharedExitCode === 'number' ? { exitCode: sharedExitCode } : {}),
       failureAt: input.settledAt,
-      lines,
-      hint: STALE_RUN_SETTLEMENT_HINT
+      lines: bounded,
+      hint
     })
   }
 }

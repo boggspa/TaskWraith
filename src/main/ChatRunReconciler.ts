@@ -24,6 +24,7 @@
 
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
 import { buildStaleRunSettlementNotice } from './RunFailureNotice'
+import type { StaleRunSettlementEntry } from './RunFailureNotice'
 
 /** Terminal status stamped onto a ChatRun settled by this reconciler. */
 export const CHAT_RUN_STALE_SETTLEMENT_STATUS = 'failed' as const
@@ -218,38 +219,67 @@ export function terminalChatRunSealFromExactSession(
 }
 
 /**
- * Insert each settlement's transcript row unless the chat already carries it.
- * Without this the run just flips to 'failed' with an empty tail, and both the
- * desktop run-complete card and the iOS TaskCompleteCard tell the user to
+ * Order a sweep's settlements by where each run's LAST transcript row sits, so
+ * the batch's anchor — the notice's `runId`, and the row it is inserted after —
+ * is the newest of them. `chat.runs` order is not a reliable clock (a run can
+ * be appended out of order), and binding the notice to a run whose rows sit
+ * ABOVE the insertion point would drag that run's completion card down the
+ * transcript, the exact regression the insertion rule below exists to prevent.
+ * Runs with no rows of their own sort first and keep discovery order — the
+ * common fan-out crash, where no seat got far enough to write anything.
+ */
+function orderSettlementsByTranscriptPosition(
+  messages: readonly ChatMessage[],
+  settlements: readonly StaleRunSettlementEntry[]
+): StaleRunSettlementEntry[] {
+  const lastRowIndex = new Map<string, number>()
+  for (let i = 0; i < messages.length; i += 1) {
+    const runId = messages[i]?.runId
+    if (typeof runId === 'string') lastRowIndex.set(runId, i)
+  }
+  return [...settlements].sort(
+    (a, b) => (lastRowIndex.get(a.run.runId) ?? -1) - (lastRowIndex.get(b.run.runId) ?? -1)
+  )
+}
+
+/**
+ * Insert the sweep's ONE settlement notice unless the chat already carries it.
+ * Without a notice the runs just flip to 'failed' with an empty tail, and both
+ * the desktop run-complete card and the iOS TaskCompleteCard tell the user to
  * "see the transcript above for details" when there is nothing above to see.
+ *
+ * ONE row per sweep, not one per run: a fan-out round that loses its GPU
+ * orphans every seat at the same instant, and the per-run rows that produced
+ * (thirteen identical cards, re-read on every chat open) buried the transcript
+ * without adding a thirteenth fact. A later sweep settling a later crash still
+ * writes its own row, so a real series of crashes still reads as a series.
  *
  * Id-keyed rather than blindly appended so a re-run over a partially written
  * chat can never stack duplicate notices.
  *
- * Positioned AFTER the run's own last row, not at the tail: a chat can carry a
- * run wedged in an earlier session behind newer completed ones, and iOS anchors
- * a run's completion card to that run's LAST row — a tail-appended notice would
- * drag the old run's card to the bottom of the transcript.
+ * Positioned AFTER the newest row belonging to ANY run in the batch, not at
+ * the tail: a chat can carry a run wedged in an earlier session behind newer
+ * completed ones, and iOS anchors a run's completion card to that run's LAST
+ * row — a tail-appended notice would drag the old run's card to the bottom of
+ * the transcript. The notice binds to the batch's newest run, so landing at or
+ * after that run's last row is where its own card belongs, and every other
+ * settled run's last row is left exactly where it was.
  */
-function withStaleRunSettlementNotices(
+function withStaleRunSettlementNotice(
   chat: ChatRecord,
-  notices: readonly ChatMessage[]
+  notice: ChatMessage,
+  coveredRunIds: ReadonlySet<string>
 ): ChatMessage[] {
   const base = Array.isArray(chat.messages) ? chat.messages : []
-  const existing = new Set(base.map((message) => message?.id))
-  let next = base
-  for (const notice of notices) {
-    if (existing.has(notice.id)) continue
-    let insertAfter = -1
-    for (let i = 0; i < next.length; i += 1) {
-      if (next[i]?.runId === notice.runId) insertAfter = i
-    }
-    next =
-      insertAfter >= 0
-        ? [...next.slice(0, insertAfter + 1), notice, ...next.slice(insertAfter + 1)]
-        : [...next, notice]
+  if (base.some((message) => message?.id === notice.id)) return base
+  let insertAfter = -1
+  for (let i = 0; i < base.length; i += 1) {
+    const runId = base[i]?.runId
+    if (typeof runId === 'string' && coveredRunIds.has(runId)) insertAfter = i
   }
-  return next
+  return insertAfter >= 0
+    ? [...base.slice(0, insertAfter + 1), notice, ...base.slice(insertAfter + 1)]
+    : [...base, notice]
 }
 
 /**
@@ -279,7 +309,7 @@ export function reconcileStaleChatRuns(
     if (runs.length === 0) continue
 
     let changed = false
-    const notices: ChatMessage[] = []
+    const settled: StaleRunSettlementEntry[] = []
     const nextRuns = runs.map((run) => {
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
       // Older desktop runs could be persisted before their renderer-side
@@ -323,23 +353,31 @@ export function reconcileStaleChatRuns(
         runId: run.runId,
         previousStatus
       })
-      const settled = settleStaleChatRun(run, nowIso)
-      notices.push(
-        buildStaleRunSettlementNotice({
-          chatId: chat.appChatId,
-          run: settled,
-          previousStatus,
-          reason: CHAT_RUN_STALE_REASON,
-          settledAt: nowIso
-        })
-      )
-      return settled
+      const settledRun = settleStaleChatRun(run, nowIso)
+      settled.push({ run: settledRun, previousStatus })
+      return settledRun
     })
 
     if (changed) {
+      const base = Array.isArray(chat.messages) ? chat.messages : []
+      // A pass that only RECOVERED a terminal run explains nothing new — the
+      // run sealed with its real status, so there is no settlement to narrate.
+      const ordered = orderSettlementsByTranscriptPosition(base, settled)
       out.push({
         ...chat,
-        messages: withStaleRunSettlementNotices(chat, notices),
+        messages:
+          ordered.length > 0
+            ? withStaleRunSettlementNotice(
+                chat,
+                buildStaleRunSettlementNotice({
+                  chatId: chat.appChatId,
+                  settlements: ordered,
+                  reason: CHAT_RUN_STALE_REASON,
+                  settledAt: nowIso
+                }),
+                new Set(ordered.map((entry) => entry.run.runId))
+              )
+            : base,
         runs: nextRuns,
         updatedAt: updatedAtMs
       })
