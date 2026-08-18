@@ -61,8 +61,20 @@ function abortError(): Error {
 }
 
 export class OllamaLocalAdmissionGate {
-  /** Model id -> how many live tickets are sharing that model's slot. */
-  private readonly held = new Map<string, number>()
+  /**
+   * Model id -> the live tickets sharing that model's slot.
+   *
+   * Identity tokens rather than a count, because this gate is a counter that
+   * dispatch increments and completion decrements — exactly the shape
+   * `EnsembleFanoutConcurrency` refuses for the wave cap, and for the same
+   * reason: it has to be right on every cancel, failure, timeout and restart
+   * path, and a leaked slot wedges the round shut for good. `reconcile()` is
+   * the answer, and it only works if a ticket can be told apart from its
+   * slot. With a bare refcount a late release from a dead holder would
+   * decrement whoever inherited the model, evicting live work; with tokens it
+   * finds nothing to give back and does nothing.
+   */
+  private readonly held = new Map<string, Set<symbol>>()
   private readonly waiters: Waiter[] = []
   private capacity?: number
 
@@ -131,17 +143,46 @@ export class OllamaLocalAdmissionGate {
     return this.held.size < this.capacity
   }
 
+  /**
+   * Re-derive held slots from authoritative state.
+   *
+   * `activeModels` is what is genuinely still running, read from the caller's
+   * durable record (lane status, active runs) rather than from this gate's own
+   * bookkeeping. Any slot not named there is reclaimed, so a run that died
+   * between admission and release — crash, kill, restart, a path that simply
+   * forgot — costs one reconcile rather than a permanently narrowed gate.
+   *
+   * Safe to call on a timer or after any round transition: it only ever frees
+   * slots the caller says are dead, and never touches a live one.
+   */
+  reconcile(activeModels: Iterable<string>): void {
+    const live = new Set(activeModels)
+    let reclaimed = false
+    for (const model of [...this.held.keys()]) {
+      if (live.has(model)) continue
+      this.held.delete(model)
+      reclaimed = true
+    }
+    if (reclaimed) this.drain()
+  }
+
   private admit(model: string): OllamaLocalAdmissionTicket {
-    this.held.set(model, (this.held.get(model) ?? 0) + 1)
+    const token = Symbol('ollama-admission')
+    const tokens = this.held.get(model) ?? new Set<symbol>()
+    tokens.add(token)
+    this.held.set(model, tokens)
     let released = false
     return {
       model,
       release: () => {
         if (released) return
         released = true
-        const remaining = (this.held.get(model) ?? 1) - 1
-        if (remaining > 0) this.held.set(model, remaining)
-        else this.held.delete(model)
+        const current = this.held.get(model)
+        // Reconciled away already: this ticket's slot is gone and any slot
+        // under the same model id now belongs to someone else. Give nothing
+        // back, or we evict a live lane on behalf of a dead one.
+        if (!current?.delete(token)) return
+        if (current.size === 0) this.held.delete(model)
         this.drain()
       }
     }

@@ -160,3 +160,66 @@ describe('OllamaLocalAdmissionGate', () => {
     expect(gate.inFlight).toBe(0)
   })
 })
+
+describe('OllamaLocalAdmissionGate.reconcile', () => {
+  it('reclaims a slot whose holder died without releasing', async () => {
+    const gate = new OllamaLocalAdmissionGate({ capacity: 2 })
+    await gate.acquire('qwen')
+    await gate.acquire('granite')
+    let admitted = false
+    void gate.acquire('llama').then(() => {
+      admitted = true
+    })
+    await settle()
+    expect(admitted).toBe(false)
+
+    // 'granite' crashed: its run is gone but release() never ran.
+    gate.reconcile(['qwen'])
+    await settle()
+
+    expect(admitted).toBe(true)
+    expect(gate.inFlight).toBe(2)
+  })
+
+  it('does not disturb slots that are still genuinely live', async () => {
+    const gate = new OllamaLocalAdmissionGate({ capacity: 2 })
+    const qwen = await gate.acquire('qwen')
+    await gate.acquire('granite')
+    gate.reconcile(['qwen', 'granite'])
+    expect(gate.inFlight).toBe(2)
+
+    // The surviving ticket still releases correctly after a reconcile.
+    qwen.release()
+    expect(gate.inFlight).toBe(1)
+  })
+
+  it('makes a stale ticket release a no-op instead of freeing a live slot', async () => {
+    const gate = new OllamaLocalAdmissionGate({ capacity: 2 })
+    const stale = await gate.acquire('qwen')
+    gate.reconcile([])
+    expect(gate.inFlight).toBe(0)
+
+    // A later lane legitimately takes qwen's slot.
+    await gate.acquire('qwen')
+    expect(gate.inFlight).toBe(1)
+
+    // The dead run's late release must not evict the new holder.
+    stale.release()
+    expect(gate.inFlight).toBe(1)
+  })
+
+  it('drops every slot when authoritative state says nothing is running', async () => {
+    const gate = new OllamaLocalAdmissionGate({ capacity: 1 })
+    await gate.acquire('qwen')
+    let admitted = false
+    void gate.acquire('granite').then(() => {
+      admitted = true
+    })
+    await settle()
+    expect(admitted).toBe(false)
+
+    gate.reconcile([])
+    await settle()
+    expect(admitted).toBe(true)
+  })
+})
