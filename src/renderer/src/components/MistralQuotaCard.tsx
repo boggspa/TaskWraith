@@ -226,7 +226,25 @@ export function MistralQuotaCardView({
       <div className="settings-provider-auth-divider" />
 
       <label className="settings-field">
-        <span className="settings-field-label">Admin API key (Enterprise only)</span>
+        <span className="settings-field-label">Mistral Web Session Cookie</span>
+        <input
+          className="settings-input"
+          type="password"
+          autoComplete="off"
+          placeholder={'Session cookie...'}
+          value={''} // TODO: bind to state
+          disabled={busy}
+          onChange={(event) => {}} // TODO: bind to state
+        />
+      </label>
+      <div className="settings-provider-auth-actions" style={{ marginBottom: '1rem' }}>
+        <PillButton size="compact" onClick={() => {}} disabled={busy}>
+          Import Mistral web session...
+        </PillButton>
+      </div>
+
+      <label className="settings-field">
+        <span className="settings-field-label">Mistral Admin API key (optional)</span>
         <input
           className="settings-input"
           type="password"
@@ -238,10 +256,7 @@ export function MistralQuotaCardView({
         />
       </label>
       <p className="settings-provider-auth-footnote">
-        With an Admin API key the meter reads your real spend from Mistral instead of estimating it.
-        The Admin API is in Preview and available on <strong>Enterprise plans only</strong> — a
-        standard Mistral API key will not work. On Free, Pro and Team, leave this empty and use the
-        console reading above.
+        Sign into admin.mistral.ai via the web session to automatically track live API usage & Vibe Code usage quotas, or enter an Admin API key if on Enterprise.
       </p>
       <div className="settings-provider-auth-actions">
         <PillButton

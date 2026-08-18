@@ -72,9 +72,49 @@ export function OllamaApiKeyControlsView({
           </PillButton>
         </div>
       </div>
+      <div className="settings-pi-upstream-row" style={{ marginTop: '1rem' }}>
+        <label className="settings-pi-upstream-name" htmlFor="ollama-web-session-cookie">
+          <span
+            className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${false ? 'signed-in' : 'not-available'}`} // TODO: bind to configured state
+            aria-hidden
+          />
+          <strong>Ollama Web Session Cookie</strong>
+          <span className="settings-pi-upstream-hint">
+            {'Required for tracking 5H and Weekly usage'}
+          </span>
+        </label>
+        <div className="settings-pi-upstream-controls">
+          <input
+            id="ollama-web-session-cookie"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={'Session cookie...'}
+            value={''} // TODO: bind to draft state
+            disabled={busy || status?.encryptionAvailable === false}
+            onChange={(event) => {}} // TODO: bind to state update
+          />
+          <PillButton
+            size="compact"
+            variant="primary"
+            disabled={busy || status?.encryptionAvailable === false}
+            onClick={() => {}} // TODO: bind to save
+          >
+            Import Ollama web session...
+          </PillButton>
+          <PillButton
+            size="compact"
+            variant="danger"
+            disabled={busy || !configured}
+            onClick={() => {}} // TODO: bind to clear
+          >
+            Clear
+          </PillButton>
+        </div>
+      </div>
       {status?.encryptionAvailable === false && (
         <p className="settings-provider-auth-footnote">
-          System keychain encryption is unavailable, so the API key cannot be stored here.
+          System keychain encryption is unavailable, so the web session cookie cannot be stored here.
         </p>
       )}
       {error && <p className="settings-provider-auth-footnote">{error}</p>}
@@ -85,8 +125,7 @@ export function OllamaApiKeyControlsView({
         <a href={OLLAMA_CLOUD_SETTINGS_URL} target="_blank" rel="noreferrer">
           Cloud usage dashboard
         </a>
-        , not through a supported API, CLI, or local-daemon quota endpoint. TaskWraith does not
-        import browser cookies to scrape that page.
+        .
       </p>
     </>
   )
