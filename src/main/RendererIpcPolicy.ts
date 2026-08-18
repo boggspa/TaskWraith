@@ -317,6 +317,10 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // the existing fail-closed boundary without widening secondary access.
   'steering:inject',
   'steering:cancel',
+  // Main-process perf diagnostics (event-loop lag + persistence counters) are
+  // a process-global observability surface for the primary app renderer; the
+  // handler itself also gates on isMainRendererSender and returns null.
+  'get-main-perf-snapshot',
   // Host commands and receipt correlation are currently presented only by
   // the primary app surface. Read-only projection continuity is safe above.
   'host-projection:command-submit',
