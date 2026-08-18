@@ -18717,16 +18717,25 @@ export class EnsembleOrchestrator {
     // The seedParticipantRun helper takes care of building the
     // ChatRun + ActiveParticipantRun + registry entry + chat save.
     //
-    // Re-fetch chat per seed so each save sees the LATEST chat —
-    // important because `appendRoundStatus` above mutated
-    // `chat.messages` via `deps.saveChat`, and `seedParticipantRun`
-    // spreads its `chat` parameter to compose the next save. Using
-    // the stale `chat` would clobber the status note we just
-    // appended.
-    const laneRuns: ActiveParticipantRun[] = lanePlans.map(
-      ({ participant: freshParticipant, laneIntent, approvedWriteScopes }) => {
-        const freshChat = this.deps.getChat(runtime.chatId) || chat
-        return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
+    // The whole wave seeds through ONE composed save (perf-epic T3a
+    // remainder): each per-lane seed used to run the full save pipeline —
+    // normalize, mutation append, fsync, index entry, broadcast — so an
+    // N-lane dispatch cost N sequential pipelines on one tick. Seeding
+    // inside the flush overlay batches every lane's run row + lane record
+    // into a single saveChatWithCheckpoint, the same mechanism
+    // flushScheduledRuns already uses for sibling seat flushes. Seeds still
+    // compose sequentially: the overlay plays the role the per-seed
+    // `deps.getChat` re-fetch used to (each seed sees the status note above
+    // and every earlier lane), and the finally persists whatever composed
+    // even when a later seed throws, so a registered run is never left out
+    // of the durable record.
+    const seedBase = this.deps.getChat(runtime.chatId) || chat
+    const priorSeedOverlay = this.flushChatOverlay
+    this.flushChatOverlay = { chatId: runtime.chatId, chat: seedBase }
+    let laneRuns: ActiveParticipantRun[]
+    try {
+      laneRuns = lanePlans.map(({ participant: freshParticipant, laneIntent, approvedWriteScopes }) =>
+        this.seedParticipantRun(this.flushChatOverlay!.chat, runtime, freshParticipant, {
           laneId: this.nextLaneId(runtime, freshParticipant),
           laneIntent,
           ...(fanoutWaveId ? { fanoutWaveId } : {}),
@@ -18735,8 +18744,14 @@ export class EnsembleOrchestrator {
           preserveParticipantRoundStatus: options.preserveParticipantRoundStatus,
           approvedWriteScopes: laneIntent === 'read' ? undefined : approvedWriteScopes
         })
+      )
+    } finally {
+      const composedSeedChat = this.flushChatOverlay.chat
+      this.flushChatOverlay = priorSeedOverlay
+      if (composedSeedChat !== seedBase) {
+        this.saveChatWithCheckpoint(composedSeedChat, 'participant-updated')
       }
-    )
+    }
     for (const run of laneRuns) {
       runtime.activeScoutRunIds.add(run.runId)
     }
@@ -19420,40 +19435,45 @@ export class EnsembleOrchestrator {
     }
     this.runsByRunId.set(runId, activeRun)
     const updatedRuns = [...chat.runs, run]
-    this.saveChatWithCheckpoint(
-      {
-        ...chat,
-        runs: updatedRuns,
-        ensemble: {
-          ...chat.ensemble!,
-          activeRound: addLaneToRound(
-            options.preserveParticipantRoundStatus
-              ? chat.ensemble!.activeRound
-              : projectRoundParticipantFromChatRun(chat.ensemble!.activeRound, run, {
-                  setActive: !options.laneId
+    const composedChat: ChatRecord = {
+      ...chat,
+      runs: updatedRuns,
+      ensemble: {
+        ...chat.ensemble!,
+        activeRound: addLaneToRound(
+          options.preserveParticipantRoundStatus
+            ? chat.ensemble!.activeRound
+            : projectRoundParticipantFromChatRun(chat.ensemble!.activeRound, run, {
+                setActive: !options.laneId
+              }),
+          options.laneId
+            ? transitionLane(
+                createLane({
+                  laneId: options.laneId,
+                  participantId: participant.id,
+                  provider: participant.provider,
+                  intent: options.laneIntent || 'read',
+                  approvedWriteScopes: options.approvedWriteScopes,
+                  runId,
+                  providerSessionId: participant.linkedProviderSessionId || null,
+                  nowIso: startedAt
                 }),
-            options.laneId
-              ? transitionLane(
-                  createLane({
-                    laneId: options.laneId,
-                    participantId: participant.id,
-                    provider: participant.provider,
-                    intent: options.laneIntent || 'read',
-                    approvedWriteScopes: options.approvedWriteScopes,
-                    runId,
-                    providerSessionId: participant.linkedProviderSessionId || null,
-                    nowIso: startedAt
-                  }),
-                  { status: 'running', nowIso: startedAt }
-                )
-              : undefined
-          ),
-          updatedAt: startedAt
-        },
-        updatedAt: this.deps.now()
+                { status: 'running', nowIso: startedAt }
+              )
+            : undefined
+        ),
+        updatedAt: startedAt
       },
-      'participant-updated'
-    )
+      updatedAt: this.deps.now()
+    }
+    // Same overlay-or-save fork as flushRun's tail: while a wave dispatch (or
+    // a sibling flush) holds the chat's overlay, seeding composes in memory
+    // and the overlay owner persists once for everyone.
+    if (this.flushChatOverlay?.chatId === chat.appChatId) {
+      this.flushChatOverlay.chat = composedChat
+    } else {
+      this.saveChatWithCheckpoint(composedChat, 'participant-updated')
+    }
     return activeRun
   }
 
