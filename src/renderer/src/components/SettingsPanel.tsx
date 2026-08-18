@@ -98,6 +98,7 @@ import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 // Paired-device workspace access is configured per workspace via
 // `WorkspaceRemoteAccessToggle` in Settings → Workspaces.
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
+import { ReleaseLeasePanel } from './ReleaseLeasePanel'
 import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsPanel'
 import { SkillsSettingsPanelHost } from './SkillsSettingsPanel'
 import { InstructionsSettingsPanelHost } from './InstructionsSettingsPanel'
@@ -11527,6 +11528,9 @@ export function SettingsPanel({
           })()}
 
         {/* ── Approvals (Phase E2 + admin grants) ──────────────────────── */}
+        {activeTab === 'approval-ledger' && (
+          <ReleaseLeasePanel currentWorkspacePath={currentWorkspace?.path ?? null} />
+        )}
         {activeTab === 'approval-ledger' && (
           <ApprovalLedgerPanel
             workspaceGrants={agenticWorkspaceGrants}
