@@ -77,6 +77,11 @@ describe('FleetWaveCard', () => {
     expect(html).toContain('audit_css done')
     expect(html).toContain('audit_tests working')
     expect(html).toContain('Fleet · 6 agents')
+    // The ghost strip fills/accents per agent at EVERY tier, not only 21+.
+    expect(html).toContain('fleet-wave-card-density')
+    expect(html).toContain('fleet-wave-card-cell status-completed')
+    expect(html).toContain('fleet-wave-card-cell status-working')
+    expect(html).toContain('fleet-wave-card-cell status-pending')
   })
 
   it('chips 7–20 agents without status suffix text or multi-agent state class', () => {
@@ -97,6 +102,10 @@ describe('FleetWaveCard', () => {
     expect(html).not.toContain('chip-1 working')
     expect(html).not.toContain('chip-2 done')
     expect(html).toContain('Fleet · 8 agents')
+    // Chips drop the text suffix, but the ghost strip still carries status.
+    expect(html).toContain('fleet-wave-card-density')
+    expect(html).toContain('fleet-wave-card-cell status-completed')
+    expect(html).toContain('fleet-wave-card-cell status-working')
   })
 
   it('aggregates 21+ agents with density strip, rollup, named exceptions, and healthy others', () => {
@@ -128,11 +137,14 @@ describe('FleetWaveCard', () => {
     expect(html).toContain('Fleet · 21 agents')
   })
 
-  it('does not render the density strip below the aggregate tier', () => {
+  it('renders the ghost density strip at every tier, workers row intact', () => {
+    // 2026-08-19: the strip used to be aggregate-only (21+), so the common
+    // 8-agent wave showed text chips with no ghosts — the intended design has
+    // the little ghosts filling/changing accent as agents settle at ANY size.
     const html = renderToStaticMarkup(
       <FleetWaveCard telemetry={telemetry({ agents: agents(20) })} />
     )
-    expect(html).not.toContain('fleet-wave-card-density')
+    expect(html).toContain('fleet-wave-card-density')
     expect(html).toContain('data-testid="fleet-wave-workers"')
   })
 

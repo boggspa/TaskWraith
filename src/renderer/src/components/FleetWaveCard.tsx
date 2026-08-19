@@ -44,6 +44,10 @@ const FLEET_WAVE_GHOST_PATHS = (
 /**
  * Fourth NativeOrchestrationCard adapter — ephemeral/durable fleet progress.
  * Density ladder: ≤6 enumerate, 7–20 chips, 21+ aggregate (exceptions named).
+ * The ghost density strip renders at EVERY tier — the little ghosts filling /
+ * changing accent as agents settle are the card's progress read; only the
+ * text treatment around them changes with density (2026-08-19: it was
+ * aggregate-only, so the common ≤20-agent wave had no ghosts at all).
  * Claude keeps the app accent (`useProviderAccent={!isClaude}`).
  */
 export function FleetWaveCard({
@@ -168,6 +172,7 @@ export function FleetWaveCard({
       </>
     ) : (
       <>
+        <FleetWaveDensityStrip agents={agents} settled={settled} total={count} />
         <div className="fleet-wave-card-workers" data-testid="fleet-wave-workers">
           {agents.map((agent) => renderAgentChip(agent, 'worker', tier === 'enumerate'))}
         </div>
