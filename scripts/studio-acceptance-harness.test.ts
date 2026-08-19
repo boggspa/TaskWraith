@@ -803,7 +803,7 @@ describe('Studio acceptance harness', () => {
     8_000
   )
 
-  it('refuses arbitrary coordinator commands, scripts, tokens, and path overrides', () => {
+  it.runIf(process.platform !== 'win32')('refuses arbitrary coordinator commands, scripts, tokens, and path overrides', () => {
     const request = {
       schemaVersion: 1,
       kind: 'taskwraith-studio-acceptance-detached-start',
@@ -1581,7 +1581,7 @@ describe('Studio acceptance harness', () => {
     15_000
   )
 
-  it('is plan-only by default and uses the sanctioned isolated profile posture', () => {
+  it.runIf(process.platform !== 'win32')('is plan-only by default and uses the sanctioned isolated profile posture', () => {
     const plan = buildStudioAcceptancePlan({
       instanceId: 'studioPlan01',
       repoRoot: '/virtual/repo',
@@ -1776,7 +1776,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('shadows the interactive Grok usage probe inside the disposable HOME', async () => {
+  it.runIf(process.platform !== 'win32')('shadows the interactive Grok usage probe inside the disposable HOME', async () => {
     const root = await temporaryRoot('studio-acceptance-provider-guard-')
     const home = path.join(root, 'home')
 
@@ -1792,7 +1792,7 @@ describe('Studio acceptance harness', () => {
     )
   })
 
-  it('finds a reparented group from an exact disposable-home command even when its leader hides the path', () => {
+  it.runIf(process.platform !== 'win32')('finds a reparented group from an exact disposable-home command even when its leader hides the path', () => {
     const home = '/virtual/acceptance/prior/home'
     const rows = parseProcessTable(
       [
@@ -1883,7 +1883,7 @@ describe('Studio acceptance harness', () => {
     }
   )
 
-  it('refuses a detached group that contains an exact pre-launch baseline member', () => {
+  it.runIf(process.platform !== 'win32')('refuses a detached group that contains an exact pre-launch baseline member', () => {
     const home = '/private/var/folders/acceptance/home'
     const baseline = {
       pid: 7001,
@@ -1913,7 +1913,7 @@ describe('Studio acceptance harness', () => {
     ])
   })
 
-  it('does not confuse a reused pid with its changed process-row identity', () => {
+  it.runIf(process.platform !== 'win32')('does not confuse a reused pid with its changed process-row identity', () => {
     const home = '/private/var/folders/acceptance/home'
     const result = classifyDetachedArtifactGroups({
       rows: [
@@ -1943,7 +1943,7 @@ describe('Studio acceptance harness', () => {
     ])
   })
 
-  it('refuses an installed TaskWraith group even when another member references the disposable home', () => {
+  it.runIf(process.platform !== 'win32')('refuses an installed TaskWraith group even when another member references the disposable home', () => {
     const home = '/private/var/folders/acceptance/home'
     const result = classifyDetachedArtifactGroups({
       rows: [
@@ -2470,7 +2470,7 @@ describe('Studio acceptance harness', () => {
     }
   )
 
-  it('refuses a trusted prior receipt when a detached process group still references that artifact home', async () => {
+  it.runIf(process.platform !== 'win32')('refuses a trusted prior receipt when a detached process group still references that artifact home', async () => {
     const receiptPath = '/virtual/acceptance/prior/watchdog-receipt.json'
     const priorHome = '/virtual/acceptance/prior/home'
     const execFile = vi.fn(async (_file: string, args: string[]) => {
@@ -2509,7 +2509,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/artifact-bound.*still alive|detached/i)
   })
 
-  it('excludes the owner installed TaskWraith Studio group from a legacy pgid collision without signaling it', async () => {
+  it.runIf(process.platform !== 'win32')('excludes the owner installed TaskWraith Studio group from a legacy pgid collision without signaling it', async () => {
     const installedPgid = 93870
     const execFile = vi.fn(async () => ({
       stdout: [
@@ -2552,7 +2552,7 @@ describe('Studio acceptance harness', () => {
     expect(execFile).toHaveBeenCalledWith('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='])
   })
 
-  it('does not exempt a Studio-looking descendant unless the exact installed app owns the group', async () => {
+  it.runIf(process.platform !== 'win32')('does not exempt a Studio-looking descendant unless the exact installed app owns the group', async () => {
     const acceptancePgid = 93871
 
     await expect(
@@ -2583,7 +2583,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/still alive/)
   })
 
-  it('fails closed when a prior watchdog receipt cannot be read', async () => {
+  it.runIf(process.platform !== 'win32')('fails closed when a prior watchdog receipt cannot be read', async () => {
     const root = await temporaryRoot('studio-acceptance-orphan-malformed-')
     const acceptanceRoot = path.join(root, 'acceptance')
     await fsPromises.mkdir(path.join(acceptanceRoot, 'studioPrior03'), { recursive: true })
@@ -2597,7 +2597,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/could not be read/)
   })
 
-  it.each([
+  it.runIf(process.platform !== 'win32').each([
     [
       'wrong kind',
       {
@@ -2644,7 +2644,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/could not be read/)
   })
 
-  it('does not trust a non-terminal v2 receipt merely because it claims group verification', async () => {
+  it.runIf(process.platform !== 'win32')('does not trust a non-terminal v2 receipt merely because it claims group verification', async () => {
     await expect(
       assertNoPriorStudioOrphans(
         { artifactRoot: '/virtual/acceptance/studioNow05' },
@@ -3425,7 +3425,7 @@ describe('Studio acceptance harness', () => {
     )
   })
 
-  it('runs the Swift driver from a bounded request file and validates its receipt', async () => {
+  it.runIf(process.platform !== 'win32')('runs the Swift driver from a bounded request file and validates its receipt', async () => {
     const root = await temporaryRoot('studio-acceptance-driver-request-')
     const target = {
       companion: {
@@ -3718,7 +3718,7 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('rejects malformed A/V and CoreAudio measurement receipts with raw evidence', async () => {
+  it.runIf(process.platform !== 'win32')('rejects malformed A/V and CoreAudio measurement receipts with raw evidence', async () => {
     const root = await temporaryRoot('studio-acceptance-measurement-receipt-')
     const target = {
       companion: {
@@ -3879,7 +3879,7 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('rejects missing, duplicate, mismatched, and malformed tm1 action receipts', async () => {
+  it.runIf(process.platform !== 'win32')('rejects missing, duplicate, mismatched, and malformed tm1 action receipts', async () => {
     const root = await temporaryRoot('studio-acceptance-tm1-receipt-')
     const target = {
       companion: {
@@ -4841,7 +4841,7 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('builds the exact resolver-preferred debug products before selecting them', async () => {
+  it.runIf(process.platform !== 'win32')('builds the exact resolver-preferred debug products before selecting them', async () => {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = []
     const result = await runStudioAcceptanceBuild({
       repoRoot: '/virtual/repo',

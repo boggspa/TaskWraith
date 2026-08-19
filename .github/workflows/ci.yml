@@ -86,6 +86,16 @@ jobs:
       # (preinstalled on GitHub macOS runners), so this step is gated to the
       # macOS legs of the matrix and skipped on Linux/Windows. `swift test`
       # exits non-zero on failure, which fails this job.
+      # Pin the same Xcode the ios job and the ship toolchain use. The runner
+      # default is newer, and Swift 6.3 promotes region-isolation sending
+      # diagnostics to ERRORS that 6.2 only warns on -- so an unpinned lane
+      # fails on latent concurrency debt in TaskWraithStudioCore rather than on
+      # a regression, and tests a compiler we do not ship with.
+      - name: Select Xcode 26.0 (Swift 6.2 - matches ship toolchain)
+        if: runner.os == 'macOS'
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26.0'
       - name: Swift bridge tests (macOS only)
         if: runner.os == 'macOS'
         run: |

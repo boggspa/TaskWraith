@@ -46,7 +46,7 @@ describe('persist / load round trip', () => {
     expect(loaded?.backfill).toEqual(watermark)
   })
 
-  it('writes with owner-only permissions', async () => {
+  it.runIf(process.platform !== 'win32')('writes with owner-only permissions', async () => {
     await persistDailyUsageRollup(rollupPath, file())
     const stat = await fs.stat(rollupPath)
     expect(stat.mode & 0o777).toBe(0o600)
