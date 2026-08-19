@@ -2,6 +2,7 @@ import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import { planTrustedSessionElevation } from '../lib/trustedSessionElevation'
+import { createWindowDragSession } from '../lib/windowDragSession'
 import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
@@ -983,7 +984,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     )
     let liveHeight = startHeight
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
+    const handleMouseMove = (moveEvent: MouseEvent): void => {
       // Re-measured per move, not frozen at drag start: in a docked chat the
       // composer rises as the pane grows, which lifts the ceiling with it.
       const { min, max } = terminalHeightRange()
@@ -997,16 +998,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       transcriptRoot.style.setProperty('--workspace-terminal-height', `${liveHeight}px`)
     }
 
-    const handleMouseUp = () => {
-      document.body.classList.remove('is-resizing-workspace-terminal')
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-      setTerminalHeight(clampWorkspaceTerminalHeight(liveHeight))
-    }
-
     document.body.classList.add('is-resizing-workspace-terminal')
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
+    terminalResizeSessionRef.current.begin({
+      onMove: handleMouseMove,
+      onEnd: () => {
+        document.body.classList.remove('is-resizing-workspace-terminal')
+        setTerminalHeight(clampWorkspaceTerminalHeight(liveHeight))
+      }
+    })
   }
 
   const handleTerminalResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1633,6 +1632,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const imageDragCounterRef = useRef(0)
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
   const sendConfirmationRafRef = useRef<number | null>(null)
+  // Terminal-divider drag. Held per instance so unmount can abandon a drag
+  // that never got its mouseup — see the cleanup effect below.
+  const terminalResizeSessionRef = useRef(createWindowDragSession(window))
 
   useEffect(() => {
     latestPromptRef.current = prompt
@@ -1753,17 +1755,23 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   // unmount mid-animation (the focus-steal swaps the focused cell from
   // <ChatViewPane> to the inline render within the 620ms window), and
   // setIsSendConfirming must not fire on an unmounted <Composer> instance.
-  useEffect(
-    () => () => {
+  //
+  // The terminal-divider drag has the same exposure with a worse failure mode:
+  // its window listeners only detached on mouseup, so a pane unmounting
+  // mid-drag left them attached forever, holding this component's closure.
+  useEffect(() => {
+    const terminalResizeSession = terminalResizeSessionRef.current
+    return () => {
       if (sendConfirmationTimeoutRef.current) {
         window.clearTimeout(sendConfirmationTimeoutRef.current)
       }
       if (sendConfirmationRafRef.current) {
         window.cancelAnimationFrame(sendConfirmationRafRef.current)
       }
-    },
-    []
-  )
+      terminalResizeSession.dispose()
+      document.body.classList.remove('is-resizing-workspace-terminal')
+    }
+  }, [])
 
   const handleComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
