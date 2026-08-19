@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -536,6 +536,45 @@ describe('AntigravityPermissionLeaseCoordinator MCP overlay', () => {
     expect(await readFile(configPath, 'utf8')).toBe(unreadable)
     await lease.release()
     expect(await readFile(configPath, 'utf8')).toBe(unreadable)
+  })
+
+  it('opens agy layer-1 for MCP only alongside the registration AND the hook', async () => {
+    // Live-measured 2026-08-19: agy headless auto-denies call_mcp_tool with no
+    // allow rule, stranding the whole registered TaskWraith surface. mcp(*) is
+    // the only spelling the binary carries; the hook is the per-call gate, so
+    // the rule must never install without it.
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const withHook = await coordinator.acquire({
+      settingsPath,
+      workspacePath: resolve('/Users/test/Project'),
+      allowShell: false,
+      allowWrite: false,
+      hookOverlay: {
+        hooksPath: join(dirname(settingsPath), 'hooks.json'),
+        hookName: 'taskwraith-approval-bridge',
+        namedHook: { PreToolUse: [] }
+      },
+      mcpOverlay: { configPath, registration }
+    })
+    const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(installed.permissions.allow).toContain('mcp(*)')
+    await withHook.release()
+    const restored = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(JSON.stringify(restored)).not.toContain('mcp(*)')
+
+    // Registration without the arbitrating hook: tools stay dark, layer-1
+    // stays shut — the run is exactly as capable as before the feature.
+    const withoutHook = await coordinator.acquire({
+      settingsPath,
+      workspacePath: resolve('/Users/test/Project'),
+      allowShell: false,
+      allowWrite: false,
+      mcpOverlay: { configPath, registration }
+    })
+    const bare = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(JSON.stringify(bare.permissions?.allow ?? [])).not.toContain('mcp(*)')
+    await withoutHook.release()
   })
 
   it('installs once for concurrent holders and withdraws with the last', async () => {

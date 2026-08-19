@@ -257,6 +257,18 @@ function workspaceRules(input: AntigravityPermissionLeaseRequest): string[] {
   if (input.allowShell || input.hookOverlay) {
     rules.push('command(*)')
   }
+  // Live-measured 2026-08-19: with the TaskWraith server registered AND
+  // discovered, headless agy still auto-denied `call_mcp_tool` because no
+  // allow rule admitted MCP — the seat could see the gateway surface and not
+  // call one tool of it. `mcp(*)` is the only rule spelling the shipped
+  // binary carries, so scoping happens at the PreToolUse hook instead: it
+  // routes TaskWraith-server calls to the broker's own server-side gate,
+  // approval-gates foreign servers, and denies unattributable calls. The rule
+  // therefore installs only when BOTH the registration and that arbitrating
+  // hook ride this lease — a registration alone must not open agy-native MCP.
+  if (input.mcpOverlay && input.hookOverlay) {
+    rules.push('mcp(*)')
+  }
   return rules
 }
 
