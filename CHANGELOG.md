@@ -6,7 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## 1.9.6 - 2026-08-17
+## 1.9.6 - 2026-08-19
 
 ### TaskWraith Studio
 
@@ -63,6 +63,25 @@ to answer.
   Gemini 3.7 Flash with Low, Medium, and High reasoning. TaskWraith groups the
   exact variants under one picker row, retains them in the consent-gated
   fallback, and leads New Additions with the new family.
+- **Local models are trusted to do the work.** Ollama seats no longer meet a
+  retrieval-first hard gate or get told to defer work they are capable of
+  doing, and a first tool result carries a single todo-scaffolding tip rather
+  than repeated nagging. Local lanes are admitted against a real capacity
+  probe, so distinct models queue instead of oversubscribing the machine, and
+  a local lane's deadline starts when it is admitted rather than when it was
+  dispatched.
+- **AntiGravity seats reach TaskWraith's own tools.** The official `agy` lane
+  now carries the TaskWraith MCP gateway surface, with its permission layer
+  open while the hook gate rides and its tool transport gated at that bridge.
+  `agy` lanes also run in parallel rather than single-file, and a lane no
+  longer reports that no hook is attached when one is.
+- **Kimi sessions resumed natively keep their tools.** A session resumed by
+  the provider whose gateway bridge came back dark is reminted rather than
+  left toolless for the rest of the run.
+- **Quota snapshots for more providers.** DeepSeek, Meta, and Cerebras join
+  the snapshot, imported web sessions are metered directly (Mistral dual
+  bars, Ollama 5H and Weekly), and DeepSeek balance checks name what failed
+  instead of reporting a bare mismatch.
 
 ### Permissions and approvals
 
@@ -76,6 +95,14 @@ to answer.
   posture rather than the seat's nominal one, and approval and question
   timeouts are doubled so a prompt does not lapse while you are reading it.
 - **Auto-approvals stop elevating when a seat cannot be identified.** Ensemble auto-approvals depend on knowing which authorities are external people, because an external never receives an approval prompt. When that list cannot be read — a degraded Channels launch, or a channel whose recovery has not completed — TaskWraith now asks you instead of approving on an authority it could not verify. You may see an approval prompt where a run previously proceeded unattended.
+- **A session release-authorization lease.** Releasing is an explicit,
+  time-bounded grant with its own control in Approvals & Grants, rather than
+  something a seat can reach through an unguarded route. Previously dead
+  approval routes are wired, and `git_push` carries an explicit refspec
+  instead of pushing whatever the branch points at.
+- **The approvals ledger stops growing without bound.** Per-call auto-allow
+  audit rows age out, with live grants backstopped so an aged row cannot
+  revoke a grant still in force.
 
 ### Ensembles and fan-out
 
@@ -95,6 +122,25 @@ to answer.
 - **Honest between-turn status.** The gap between two seats now says what is
   actually happening and who owns the turn, on desktop and on iPhone, instead
   of showing an idle transcript while work is in flight.
+- **Routed work belongs to the seat that received it.** A seat handed work by
+  routing no longer bounces it back on a role boundary, and verification only
+  counts when a different seat does it. Managed goals are open to Captain
+  seats and to lanes without goal tools.
+- **Rounds settle when you get control back.** A round now closes at
+  yield-to-user instead of waiting out the provider transport, an authority
+  routing checkpoint is bounded so an unresolvable one cannot spin the round,
+  and a superseded run's lingering transport is reaped on a grace timer.
+- **Sub-thread returns no longer start runs on their own.** A delegate's
+  return is recorded and delivered as context rather than auto-dispatching a
+  fresh round, so a wave that finishes hands control back to you instead of
+  continuing unattended.
+- **Delegate waves report their own completion.** A parent polling a delegate
+  wave can see it finish, and returns reach the parent in the order the
+  producer sent them, so a clustered set of sibling returns no longer
+  rewrites the transcript out of order.
+- **Fan-out backpressure says what it is.** When a fan-out is capped by local
+  capacity, the refusal names that cause rather than reading as a generic
+  limit.
 
 ### Transcript, export, and review
 
@@ -104,6 +150,30 @@ to answer.
 - **Traceable commits.** Commit hashes preview in place, and a revision review
   sidebar loads historical commit and PR revisions for review without leaving
   the transcript.
+- **Expanded cards you can actually read.** The compact trace gets an
+  expanded-card redesign, trace expansion and compact-group/spawn-block
+  disclosure move into the panel's own state, live viewport expansion is
+  split per segment kind, and a revealed detail grows the collapsed clamp to
+  fit instead of being cut off.
+- **One tool card per call.** Claude, Kimi, and Ollama calls brokered through
+  MCP no longer render a second, duplicate card.
+- **Truthful edit labels.** A camelCase replacement is labelled as a string
+  replacement, and file-edit diffs still read when an agent omits the raw
+  input.
+- **Stale-run cards collapse.** A sweep now leaves one card per chat rather
+  than one per run.
+- **Commit receipts survive detail offload.** Close-out commit receipts stay
+  harvestable when tool detail is externalized, and tombstone repair is armed
+  on the real record rather than its summary row, so a thread's Commits card
+  fills in on open instead of staying empty.
+- **One transcript answers a keyboard scroll.** In Multiview, PageUp or End
+  now acts on the focused pane alone instead of disengaging follow in every
+  pane at once, and a terminal-resize drag is released when its pane
+  unmounts.
+- **The sub-thread status strip is gone.** Fleet activity reads from the ghost
+  strip, which now renders at every density tier rather than only on large
+  waves, so a wave of twenty agents or fewer is no longer silent. Provider
+  cards in Settings are trimmed to controls rather than explainer prose.
 
 ### Performance on long threads
 
@@ -119,6 +189,23 @@ to answer.
   longer pays for all of them up front.
 - **Paged history.** Unpushed commit reads and historical transcript pages are
   bounded rather than read whole.
+- **Saves stop re-sending the whole thread.** The producer envelope rides the
+  save input itself and chat updaters honour a no-op contract, so a thread
+  that has not changed no longer pushes a full snapshot roughly once a
+  second. Ensemble identity stays stable across no-change streaming flushes.
+- **The chat list stops rewriting itself.** The chat-list index no longer
+  appends on every write door, and tool-output signature strings are not
+  rebuilt from scratch on each flush.
+- **Less work per save.** Journal writes are tiered by how much durability
+  they need, sealed jumbo tool detail is externalized mid-run rather than
+  held, and a fan-out wave is seeded through one composed save instead of
+  many.
+- **Multiview panes do less work per frame.** Pane top-left chrome is no
+  longer rebuilt every render and the per-pane live file-change projection is
+  memoized.
+- **Main-process health is observable.** An event-loop lag meter and a
+  pollable performance snapshot are written from a utility process, so a
+  stall can be seen rather than inferred.
 
 ### Channels and collaboration
 
