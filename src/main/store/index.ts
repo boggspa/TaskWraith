@@ -7351,10 +7351,14 @@ export class AppStore {
       }
     }
     // Many main-owned mutation paths intentionally ignore the return value and
-    // broadcast the object they passed in. Stamp only the server-owned token
-    // back onto that object so those existing broadcasts still hand renderers
-    // the exact revision that was persisted.
+    // broadcast the object they passed in. Stamp the server-owned revision AND
+    // the producer envelope onto that object too: the delivery coordinator
+    // resolves the envelope from the exact object it is handed, so an
+    // envelope-less input broadcast forces a full-record snapshot — and one
+    // such save inside a delivery window breaks the delta chain for the whole
+    // window (2026-08-19: 3,202 snapshots, 0 patches, renderer OOM at 5.25 GB).
     attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
+    attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
     chat.persistenceRevision = normalizedChat.persistenceRevision
     return normalizedChat
   }
