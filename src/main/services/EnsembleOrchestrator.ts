@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
+import { plainDataEqual } from '../../shared/chatUpdateTransport'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
 import { buildEnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
 import { BOSS_APPROVAL_REVIEW_TIMEOUT_MS } from '../../shared/interactionTimeouts'
@@ -21041,7 +21042,9 @@ export class EnsembleOrchestrator {
     const persistProviderSession =
       this.deps.shouldPersistProviderSessionForRun?.(run.runId) !== false
     const shouldMergeTerminalTokenTotals = effectiveFinal && !run.terminalTokenTotalsApplied
-    const participants = (chat.ensemble.participants || []).map((participant) => {
+    const priorParticipants = chat.ensemble.participants || []
+    let participantsChanged = false
+    const participants = priorParticipants.map((participant) => {
       if (participant.id !== run.participant.id) return participant
       const tokenTotals = shouldMergeTerminalTokenTotals
         ? mergeTokenTotals(participant.tokenTotals, run.stats)
@@ -21063,8 +21066,11 @@ export class EnsembleOrchestrator {
       } else if (shouldPersistDynamicStateReceipt) {
         next.promptDynamicStateVersion = run.promptDynamicStateVersion
       }
+      if (plainDataEqual(next, participant)) return participant
+      participantsChanged = true
       return next
     })
+    const nextParticipants = participantsChanged ? participants : priorParticipants
     const projectedParticipantRun = runs.find((existingRun) => existingRun.runId === run.runId)
     const participantRound = run.preserveParticipantRoundStatus
       ? chat.ensemble.activeRound
@@ -21100,17 +21106,31 @@ export class EnsembleOrchestrator {
       run.injectedBlackboardEntryIds || [],
       run.participant.id
     )
+    // Every producer above preserves object identity when its slice did not
+    // actually change, so identity is the "did the ensemble move" signal. A
+    // reused ensemble keeps `ensemble` out of the save's record delta (the
+    // mutation differ short-circuits on Object.is), which is what lets the
+    // renderer retain chat-chrome identity across pure transcript streaming.
+    // `updatedAt` therefore stamps only on real ensemble transitions — an
+    // unconditional stamp made every flush a content change (2026-08-19:
+    // 100% snapshot deliveries on a 16.7 MB ensemble chat, renderer OOM).
+    const ensembleChanged =
+      nextParticipants !== priorParticipants ||
+      activeRound !== chat.ensemble.activeRound ||
+      blackboard !== chat.ensemble.blackboard
     const nextChat: ChatRecord = {
       ...chat,
       messages,
       runs,
-      ensemble: {
-        ...chat.ensemble,
-        participants,
-        activeRound,
-        ...(blackboard !== chat.ensemble.blackboard ? { blackboard } : {}),
-        updatedAt: timestamp
-      },
+      ensemble: ensembleChanged
+        ? {
+            ...chat.ensemble,
+            participants: nextParticipants,
+            activeRound,
+            ...(blackboard !== chat.ensemble.blackboard ? { blackboard } : {}),
+            updatedAt: timestamp
+          }
+        : chat.ensemble,
       updatedAt: this.deps.now()
     }
     if (this.flushChatOverlay?.chatId === run.chatId) {
@@ -22652,15 +22672,19 @@ function updateLaneInRound(
           : participantStatus === 'idle'
             ? 'pending'
             : participantStatus
+  const nextLane = transitionLane(round.lanes[laneId], {
+    status: laneStatus,
+    reason,
+    nowIso
+  })
+  // transitionLane returns the same lane when nothing changed; keep the round
+  // identity too so streaming flushes read as "ensemble unchanged".
+  if (nextLane === round.lanes[laneId]) return round
   return {
     ...round,
     lanes: {
       ...round.lanes,
-      [laneId]: transitionLane(round.lanes[laneId], {
-        status: laneStatus,
-        reason,
-        nowIso
-      })
+      [laneId]: nextLane
     }
   }
 }

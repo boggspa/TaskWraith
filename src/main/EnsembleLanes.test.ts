@@ -511,3 +511,16 @@ describe('formatFanoutWaveCompletionStatus', () => {
     ).toBe('Fan-out wave complete · returning to serial writer step.')
   })
 })
+
+describe('transitionLane identity', () => {
+  it('returns the same lane object when a repeat transition changes nothing', () => {
+    const running = transitionLane(
+      createLane({ laneId: 'lane-1', participantId: 'pid', provider: 'codex', nowIso: NOW }),
+      { status: 'running', nowIso: NOW }
+    )
+    // Streaming flushes re-assert 'running' on every event; the flush save
+    // pipeline uses lane identity to detect "ensemble actually changed".
+    const repeat = transitionLane(running, { status: 'running', nowIso: LATER })
+    expect(repeat).toBe(running)
+  })
+})

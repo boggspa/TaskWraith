@@ -1,3 +1,4 @@
+import { plainDataEqual } from '../shared/chatUpdateTransport'
 import type {
   ChatRun,
   EnsembleParticipantStatus,
@@ -74,19 +75,34 @@ export function projectRoundParticipantFromChatRun(
 
   const setActive = options.setActive !== false
   const exposeRunId = options.exposeRunId !== false
+  const nextActiveParticipantId =
+    setActive && status === 'running'
+      ? participantId
+      : round.activeParticipantId === participantId
+        ? undefined
+        : round.activeParticipantId
+  const nextTurnTransition = setActive && status === 'running' ? undefined : round.turnTransition
+  let participantsChanged = false
+  const participants = round.participants.map((participant) => {
+    if (participant.participantId !== participantId) return participant
+    const projected = projectParticipantAttempt(participant, run, status, exposeRunId)
+    if (plainDataEqual(projected, participant)) return participant
+    participantsChanged = true
+    return projected
+  })
+  // Streaming flushes re-project the same running attempt on every event;
+  // round identity is what lets the flush save detect real transitions.
+  if (
+    !participantsChanged &&
+    nextActiveParticipantId === round.activeParticipantId &&
+    nextTurnTransition === round.turnTransition
+  ) {
+    return round
+  }
   return {
     ...round,
-    activeParticipantId:
-      setActive && status === 'running'
-        ? participantId
-        : round.activeParticipantId === participantId
-          ? undefined
-          : round.activeParticipantId,
-    turnTransition: setActive && status === 'running' ? undefined : round.turnTransition,
-    participants: round.participants.map((participant) =>
-      participant.participantId === participantId
-        ? projectParticipantAttempt(participant, run, status, exposeRunId)
-        : participant
-    )
+    activeParticipantId: nextActiveParticipantId,
+    turnTransition: nextTurnTransition,
+    participants: participantsChanged ? participants : round.participants
   }
 }

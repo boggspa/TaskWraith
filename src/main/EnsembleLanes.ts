@@ -24,6 +24,7 @@
  * `lane-${roundId}-${participantId}-${attempt+1}`).
  */
 
+import { plainDataEqual } from '../shared/chatUpdateTransport'
 import type {
   ConcurrentLane,
   ConcurrentLaneIntent,
@@ -137,6 +138,9 @@ export function transitionLane(lane: ConcurrentLane, input: TransitionLaneInput)
   if (isTerminalLaneStatus(input.status)) {
     next.endedAt = input.nowIso
   }
+  // Streaming flushes re-assert the current status on every event; identity
+  // is what lets the flush save detect "ensemble actually changed".
+  if (plainDataEqual(next, lane)) return lane
   return next
 }
 

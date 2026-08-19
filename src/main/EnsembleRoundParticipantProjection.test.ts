@@ -129,3 +129,14 @@ describe('projectRoundParticipantFromChatRun', () => {
     expect(projected.participants[0].lastFailureReason).toBeUndefined()
   })
 })
+
+describe('projection identity on repeat flushes', () => {
+  it('returns the same round object when a repeat projection changes nothing', () => {
+    const before = round()
+    const first = projectRoundParticipantFromChatRun(before, run())!
+    // Streaming flushes re-project the same running attempt on every event;
+    // the flush save pipeline uses round identity to detect real transitions.
+    const second = projectRoundParticipantFromChatRun(first, run())
+    expect(second).toBe(first)
+  })
+})

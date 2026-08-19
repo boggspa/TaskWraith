@@ -256,8 +256,11 @@ export type ApplyChatUpdateResult =
  * Strict structural equality for the persisted plain-data message shape.
  * False negatives only make a patch larger; false positives would corrupt the
  * reconstructed chat, so every structural difference returns false.
+ * Exported for producers that reuse object identity when a rebuild lands on
+ * identical content (ensemble flush projections) — a false negative there
+ * only costs one allocation, never correctness.
  */
-function plainDataEqual(a: unknown, b: unknown): boolean {
+export function plainDataEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') {
     return false
