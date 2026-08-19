@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import {
+  agyMcpConfigNeedsUpdate,
+  buildAgyMcpConfigDocument,
+  parseAgyMcpConfigDocument,
+  serializeAgyMcpConfigDocument,
+  type AgyMcpServerRegistration
+} from './AntigravityMcpConfig'
 
 const RECEIPT_SCHEMA_VERSION = 1
 const MAX_SETTINGS_BYTES = 1024 * 1024
@@ -110,12 +117,30 @@ export interface AntigravityPermissionLeaseRequest {
     readonly hookName: string
     readonly namedHook: JsonObject
   }
+  /**
+   * Optional TaskWraith MCP registration for agy's GLOBAL server map
+   * (`<gemini-root>/config/mcp_config.json`). agy has no per-run
+   * `--mcp-config-file` equivalent, so the only way to keep a registration out
+   * of the user's own agy sessions is to install it for the run and restore
+   * the original document on release, exactly as the settings lease does.
+   *
+   * Installing is best-effort by design: a config this lease cannot parse
+   * belongs to someone else, so the run proceeds with no TaskWraith tools
+   * rather than failing or clobbering it.
+   */
+  readonly mcpOverlay?: {
+    readonly configPath: string
+    readonly registration: AgyMcpServerRegistration
+  }
   readonly signal?: AbortSignal
 }
 
 export interface AntigravityPermissionLease {
   readonly leaseId: string
   readonly settingsPath: string
+  /** True only when agy will actually see TaskWraith's MCP server this run.
+   * The prompt layer must not promise tools this is false for. */
+  readonly mcpRegistered: boolean
   release(): Promise<void>
 }
 
@@ -460,6 +485,136 @@ export async function recoverInterruptedAntigravityHookLease(hooksPath: string):
   return true
 }
 
+interface AntigravityMcpLeaseReceipt {
+  readonly schemaVersion: 1
+  readonly configPath: string
+  readonly originalExists: boolean
+  readonly originalContentBase64: string
+  readonly originalSha256: string
+  readonly installedSha256: string
+}
+
+function mcpReceiptPathFor(configPath: string): string {
+  return join(dirname(configPath), '.taskwraith-mcp-lease.json')
+}
+
+async function readMcpReceipt(receiptPath: string): Promise<AntigravityMcpLeaseReceipt | null> {
+  const content = await readOptionalRegularFile(receiptPath, MAX_RECEIPT_BYTES)
+  if (content === null) return null
+  const parsed = parseSettings(content, 'AntiGravity TaskWraith MCP receipt')
+  if (
+    parsed.schemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    typeof parsed.configPath !== 'string' ||
+    typeof parsed.originalExists !== 'boolean' ||
+    typeof parsed.originalContentBase64 !== 'string' ||
+    typeof parsed.originalSha256 !== 'string' ||
+    typeof parsed.installedSha256 !== 'string'
+  ) {
+    throw new Error('AntiGravity TaskWraith MCP receipt is malformed.')
+  }
+  return parsed as unknown as AntigravityMcpLeaseReceipt
+}
+
+async function cleanMcpReceipt(
+  configPath: string,
+  receiptPath: string,
+  receipt: AntigravityMcpLeaseReceipt
+): Promise<void> {
+  if (resolve(receipt.configPath) !== resolve(configPath)) {
+    throw new Error('AntiGravity MCP receipt belongs to a different config path.')
+  }
+  const originalContent = Buffer.from(receipt.originalContentBase64, 'base64').toString('utf8')
+  if (sha256(originalContent) !== receipt.originalSha256) {
+    throw new Error('AntiGravity MCP receipt original-content hash does not match.')
+  }
+  const currentContent = await readOptionalRegularFile(configPath)
+  if (currentContent === null || sha256(currentContent) === receipt.originalSha256) {
+    await unlink(receiptPath)
+    return
+  }
+  if (sha256(currentContent) === receipt.installedSha256) {
+    // agy creates this file byte-empty at migration, so "no original" restores
+    // to an empty file rather than removing a path agy expects to exist.
+    if (receipt.originalExists) await writeAtomic(configPath, originalContent)
+    else await writeAtomic(configPath, '')
+    await unlink(receiptPath)
+    return
+  }
+  // The user (or agy's own TUI writer) changed the document mid-run. Withdraw
+  // only TaskWraith's registration and leave every other server untouched; a
+  // document we can no longer parse is left exactly as found.
+  const parsed = parseAgyMcpConfigDocument(currentContent)
+  if (parsed.status === 'ok') {
+    const withdrawn = buildAgyMcpConfigDocument({ existing: parsed.document })
+    await writeAtomic(configPath, serializeAgyMcpConfigDocument(withdrawn))
+  }
+  await unlink(receiptPath)
+}
+
+export async function recoverInterruptedAntigravityMcpLease(configPath: string): Promise<boolean> {
+  const receiptPath = mcpReceiptPathFor(configPath)
+  const receipt = await readMcpReceipt(receiptPath)
+  if (!receipt) return false
+  await cleanMcpReceipt(configPath, receiptPath, receipt)
+  return true
+}
+
+/**
+ * Install TaskWraith's MCP registration for one run.
+ *
+ * Returns `registered: false` rather than throwing when the existing document
+ * cannot be parsed: that file is the user's, and a run without TaskWraith
+ * tools is strictly better than a clobbered config or a refused launch. When
+ * the projected document already matches what is on disk the registration is
+ * honoured with NO receipt, so release leaves a user-owned registration alone.
+ */
+async function installMcpOverlay(
+  overlay: NonNullable<AntigravityPermissionLeaseRequest['mcpOverlay']>,
+  signal?: AbortSignal
+): Promise<{ registered: boolean; release?: () => Promise<void> }> {
+  const configPath = resolve(overlay.configPath)
+  throwIfPermissionLeaseAborted(signal)
+  await recoverInterruptedAntigravityMcpLease(configPath)
+  throwIfPermissionLeaseAborted(signal)
+  let existingOriginalContent: string | null = null
+  try {
+    existingOriginalContent = await readOptionalRegularFile(configPath)
+  } catch {
+    return { registered: false }
+  }
+  const parsed = parseAgyMcpConfigDocument(existingOriginalContent)
+  if (parsed.status === 'unreadable') return { registered: false }
+  const projected = buildAgyMcpConfigDocument({
+    existing: parsed.status === 'ok' ? parsed.document : null,
+    taskWraith: overlay.registration
+  })
+  if (!agyMcpConfigNeedsUpdate(parsed, projected)) return { registered: true }
+
+  const originalContent = existingOriginalContent ?? ''
+  const installedContent = serializeAgyMcpConfigDocument(projected)
+  const receipt: AntigravityMcpLeaseReceipt = {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    configPath,
+    originalExists: existingOriginalContent !== null,
+    originalContentBase64: Buffer.from(originalContent, 'utf8').toString('base64'),
+    originalSha256: sha256(originalContent),
+    installedSha256: sha256(installedContent)
+  }
+  const receiptPath = mcpReceiptPathFor(configPath)
+  try {
+    await writeAtomic(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, signal)
+    await writeAtomic(configPath, installedContent, signal)
+    throwIfPermissionLeaseAborted(signal)
+  } catch (error) {
+    await cleanMcpReceipt(configPath, receiptPath, receipt).catch(() => undefined)
+    throw error
+  }
+  return {
+    registered: true,
+    release: () => cleanMcpReceipt(configPath, receiptPath, receipt)
+  }
+}
+
 async function installHookOverlay(
   overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>,
   signal?: AbortSignal
@@ -584,6 +739,8 @@ export class AntigravityPermissionLeaseCoordinator {
 
     let receipt: AntigravityPermissionLeaseReceipt | undefined
     let hookRelease: (() => Promise<void>) | undefined
+    let mcpRelease: (() => Promise<void>) | undefined
+    let mcpRegistered = false
     try {
       receipt = await installPermissionLease(input)
       throwIfPermissionLeaseAborted(input.signal)
@@ -591,12 +748,31 @@ export class AntigravityPermissionLeaseCoordinator {
         hookRelease = (await installHookOverlay(input.hookOverlay, input.signal)).release
       }
       throwIfPermissionLeaseAborted(input.signal)
+      if (input.mcpOverlay) {
+        // The MCP registration is an enhancement, never a launch precondition:
+        // a failure here costs the run its TaskWraith tools, which is what
+        // every agy run had before this existed. Only an abort propagates.
+        try {
+          const installed = await installMcpOverlay(input.mcpOverlay, input.signal)
+          mcpRegistered = installed.registered
+          mcpRelease = installed.release
+        } catch (error) {
+          if (input.signal?.aborted) throw error
+          mcpRegistered = false
+        }
+      }
+      throwIfPermissionLeaseAborted(input.signal)
     } catch (error) {
       let cleanupError: unknown
       try {
-        await hookRelease?.()
+        await mcpRelease?.()
       } catch (releaseError) {
         cleanupError = releaseError
+      }
+      try {
+        await hookRelease?.()
+      } catch (releaseError) {
+        cleanupError ??= releaseError
       }
       if (receipt) {
         try {
@@ -615,11 +791,16 @@ export class AntigravityPermissionLeaseCoordinator {
     return Object.freeze({
       leaseId: receipt.leaseId,
       settingsPath: receipt.settingsPath,
+      mcpRegistered,
       release: () => {
         if (!releaseOperation) {
           // Hook overlay first: once it is gone no further tool call can reach
-          // the bridge, so the settings restore never races a late hook.
+          // the bridge, so the settings restore never races a late hook. The
+          // MCP registration is withdrawn next; it only decides what agy
+          // discovers at STARTUP, so an already-connected server is unaffected
+          // either way and ordering here is about leaving the disk clean.
           releaseOperation = (hookRelease ? hookRelease() : Promise.resolve())
+            .then(() => (mcpRelease ? mcpRelease() : Promise.resolve()))
             .then(() =>
               cleanReceipt(receipt.settingsPath, receiptPathFor(receipt.settingsPath), receipt)
             )

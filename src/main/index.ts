@@ -1773,6 +1773,7 @@ import {
   parseAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './antigravity/AntigravityConversationReceipt'
+import { agyGlobalMcpConfigPath } from './antigravity/AntigravityMcpConfig'
 import {
   dispatchAntigravityCombinedMode,
   isAntigravityGeminiApiModelCandidate
@@ -34384,6 +34385,57 @@ async function runAntigravityAgyProvider(
       agyHookBridge = null
     }
   }
+  // TaskWraith MCP registration for this run. agy discovers servers from its
+  // GLOBAL config file at startup (it has no per-run --mcp-config-file), so
+  // the document is installed by the permission lease below and withdrawn on
+  // release; the live authority — socket, broker token, route, MCP profile —
+  // reaches the child only through this environment slice. Both halves are
+  // best-effort: without either, agy simply lists no TaskWraith tools, which
+  // is the posture every agy run had before this existed.
+  const agyMcpBridgeCommand = taskwraithMcpBridgeCommandStatus()
+  const agyMcpConfigPath = agyGlobalMcpConfigPath()
+  let agyMcpBridgeEnv: Record<string, string> | null = null
+  if (agyMcpBridgeCommand.available && payload.workspace) {
+    try {
+      agyMcpBridgeEnv = mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
+        route,
+        parentProvider: 'antigravity',
+        workspacePath: payload.workspace,
+        profile: {
+          // The signed posture decides the surface, exactly as it does for the
+          // broker-backed lanes: a read-only seat never sees write tools.
+          safeSubset: payload.effectivePermissions?.readOnly === true,
+          planSubset:
+            payload.effectivePermissions?.readOnly === true &&
+            payload.effectivePermissions?.presetId === 'plan',
+          coreSubset: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          // agy injects every discovered tool into its system prompt on every
+          // turn, so this lane always takes the compact gateway surface;
+          // hidden tools stay reachable via capability_search/capability_invoke.
+          gatewaySubset: true,
+          portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
+          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
+          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
+          auditSubset: Boolean(payload.auditRun)
+        },
+        isolatedInstanceId:
+          instanceLaunchPosture.kind === 'packaged-isolated'
+            ? instanceLaunchPosture.instanceId
+            : undefined
+      })
+    } catch {
+      agyMcpBridgeEnv = null
+    }
+  }
+
   let launch: Awaited<ReturnType<typeof prepareAntigravityProviderLaunch>>
   try {
     launch = await prepareAntigravityProviderLaunch({
@@ -34400,6 +34452,7 @@ async function runAntigravityAgyProvider(
       // plan-only.
       isolatedMutationWorkspace,
       perToolApprovalBridge: agyHookBridge !== null,
+      ...(agyMcpBridgeEnv ? { mcpBridgeEnv: agyMcpBridgeEnv } : {}),
       conversationId: payload.providerSessionId
     })
   } catch (error) {
@@ -34632,6 +34685,20 @@ async function runAntigravityAgyProvider(
         allowShell,
         allowWrite,
         ...(hookOverlay ? { hookOverlay } : {}),
+        // Only register when this run actually carries live bridge authority;
+        // a document without a matching child environment would leave agy
+        // trying to reach a broker that was never routed for it.
+        ...(agyMcpBridgeEnv
+          ? {
+              mcpOverlay: {
+                configPath: agyMcpConfigPath,
+                registration: {
+                  command: agyMcpBridgeCommand.command,
+                  args: taskwraithMcpBridgeStaticRegistrationArgs()
+                }
+              }
+            }
+          : {}),
         signal: payload.providerSetupAbortSignal
       })
     } catch (error) {

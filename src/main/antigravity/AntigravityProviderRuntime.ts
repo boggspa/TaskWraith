@@ -32,6 +32,14 @@ export interface PrepareAntigravityProviderLaunchInput {
   reasoningEffort?: string | null
   approvalMode?: string | null
   /**
+   * Live TaskWraith MCP bridge authority for THIS run, from
+   * `buildProviderRunMcpBridgeEnv`. agy's registration file is static by
+   * design, so the socket, broker token, route, and MCP profile reach the
+   * child only through here. Omit it and agy simply discovers no TaskWraith
+   * server, which is the lane's historical posture.
+   */
+  mcpBridgeEnv?: Readonly<Record<string, string>> | null
+  /**
    * Post-clamp workflow discriminator. Ask and Plan share `approvalMode: plan`
    * and `readOnly: true`; only the signed normal/read_only tuple identifies an
    * attended Ask turn whose native writes may be opened behind the live hook.
@@ -204,12 +212,14 @@ export async function prepareAntigravityProviderLaunch(
     args,
     // Every launch uses the central S2 sanitizer. No runtime profile, secret,
     // OAuth token, or credential selector is consulted or forwarded here.
-    env: (deps.createEnv ?? createAgyCliEnv)(
-      input.inheritedEnv,
-      input.workspaceLockOwnerId
+    env: (deps.createEnv ?? createAgyCliEnv)(input.inheritedEnv, {
+      // The bridge env is layered UNDER the lock-owner stamp so a malformed
+      // route can never displace workspace-lock identity.
+      ...(input.mcpBridgeEnv ?? {}),
+      ...(input.workspaceLockOwnerId
         ? { TASKWRAITH_LOCK_OWNER_ID: input.workspaceLockOwnerId }
-        : undefined
-    ),
+        : {})
+    }),
     mode
   }
 }
@@ -340,18 +350,13 @@ export async function getAntigravityProviderStatus(
 export function getAntigravityProviderMcpStatus(): Record<string, unknown> {
   return {
     provider: 'antigravity',
-    available: false,
-    enabled: false,
-    source: 'unsupported',
-    serverName: null,
+    available: true,
+    enabled: true,
+    source: 'bridge',
+    serverName: 'TaskWraith',
     tools: [],
     sections: [],
-    // Accurate as of the hook bridge shipping: this lane still carries no
-    // TaskWraith MCP tools (agy reads its servers from the global
-    // `config/mcp_config.json`, which TaskWraith does not register into), but
-    // it is no longer true that nothing is attached — a write-capable run
-    // installs a temporary PreToolUse approval hook and removes it on release.
     message:
-      'AntiGravity S3 uses the official agy print-mode transport, which carries no TaskWraith MCP tools. Write-capable runs install a temporary PreToolUse approval hook so TaskWraith gates every native tool call, and it is removed when the run ends.'
+      'TaskWraith registers its gateway MCP surface into the official agy server map (`config/mcp_config.json`) for the duration of a run and withdraws it on release, and write-capable runs also install a temporary PreToolUse approval hook so every native tool call is gated. Both are per-run and best-effort: a run without live bridge authority proceeds with agy native tools only.'
   }
 }

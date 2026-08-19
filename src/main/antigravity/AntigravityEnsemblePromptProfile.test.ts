@@ -51,6 +51,36 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(prompt).not.toContain('Recent tagged transcript:')
   })
 
+  it('describes the MCP tool surface conditionally, never as flatly absent', () => {
+    // TaskWraith now registers its MCP server into agy's global config for the
+    // duration of a run, so the old flat denial ("blackboard_read and other
+    // TaskWraith tools are not available on this transport") would send a seat
+    // that HAS the tools off to delegate its work to a peer — the exact
+    // behaviour that surfaced this whole defect. The registration is still
+    // best-effort, so the capsule must not promise them either.
+    const prompt = buildAntigravityOfficialAgyPromptCapsule({
+      participantLabel: 'AntiGravity / Work3 #p8',
+      roundId: 'round-2',
+      roleInstructions: 'Seal the borders.',
+      currentPrompt: 'Stitch the eastern gate.',
+      roster: '1. AntiGravity / Work3',
+      authorityLines: [],
+      roleBoundaryLines: [],
+      roundPolicy: 'Turn-bound round.',
+      parallelPolicy: 'Serial.',
+      dynamicState: 'Active goal: seal the borders.',
+      blackboardSnapshot: 'decision: route3-east is the left gate.',
+      transcript: '[Codex / Worker] prior context',
+      permissionRule: 'Use only the tools listed by this run.',
+      yieldExecutionCheck: 'Lifecycle handoff check: use only a listed tool.'
+    })
+
+    expect(prompt).not.toContain('are not available on this transport')
+    expect(prompt).not.toContain('has no TaskWraith MCP bridge')
+    expect(prompt).toContain('when the registration is live')
+    expect(prompt).toContain('only if your runtime actually lists them')
+  })
+
   it('preserves row identity through keep-tail and outer capsule bounds', () => {
     const repeatedRow = '[User]\nIDENTICAL STEERING TEXT'
     const filler = 'older context '.repeat(500)

@@ -50,8 +50,18 @@ describe('ProviderCapabilities', () => {
     // the copy must keep saying so rather than reading as a general bypass.
     expect(notes).toContain('only under a signed non-read-only Full Access posture')
     expect(notes).toContain('isolated worktree')
-    expect(contract.mcp.state).toBe('unavailable')
-    expect(contract.tools.mcpTools.state).toBe('unavailable')
+    // agy reads its server map from the global `config/mcp_config.json`, which
+    // TaskWraith now registers into for the duration of a run. Reporting this
+    // surface as unsupported is what let an ensemble seat conclude it had no
+    // TaskWraith tools and delegate its blackboard write to a peer.
+    expect(contract.mcp.state).toBe('available')
+    expect(contract.mcp.tools.length).toBeGreaterThan(0)
+    // 'gated' rather than 'available': the tools exist and are callable, and
+    // each call still goes through the ordinary approval gate. The point is
+    // that it is no longer 'unavailable'.
+    expect(contract.tools.mcpTools.state).toBe('gated')
+    // Delegation stays out: sub-threads are still not reachable from the
+    // print-mode transport.
     expect(contract.tools.delegate.state).toBe('unavailable')
   })
 

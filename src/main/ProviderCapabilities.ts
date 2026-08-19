@@ -1094,15 +1094,21 @@ export function buildProviderCapabilityContract({
       'Pi’s narrow Ensemble extension does not include sub-thread delegation.'
     )
   } else if (provider === 'antigravity') {
+    // agy reads its server map from the GLOBAL `config/mcp_config.json` and
+    // has no per-run equivalent, so TaskWraith registers the gateway surface
+    // there for the duration of a run and withdraws it on release. Reporting
+    // this as unsupported is what let an ensemble seat conclude it had no
+    // TaskWraith tools and hand its work to a peer.
     mcp = {
-      state: 'unavailable',
-      source: 'unsupported',
-      available: false,
-      enabled: false,
-      installed: false,
-      tools: [],
+      state: 'available',
+      source: 'bridge',
+      available: true,
+      enabled: true,
+      installed: true,
+      serverName: 'TaskWraith',
+      tools: [...GATEWAY_MCP_ADVERTISE_TOOLS],
       message:
-        'AntiGravity S3 uses only the official agy print-mode transport; TaskWraith does not attach MCP servers, plugins, or hooks.'
+        'TaskWraith registers its gateway MCP surface into the official agy server map for the duration of a run and withdraws it on release. Tool calls are executed by TaskWraith behind the ordinary approval gate; a run without live bridge authority, or a server map TaskWraith cannot parse, proceeds without the tools.'
     }
     shellCommands = delegatedCapability(
       'shellCommands',
@@ -1122,10 +1128,15 @@ export function buildProviderCapabilityContract({
       ['official_agy_sandbox'],
       'AntiGravity publishing behavior remains provider-managed inside the official sandboxed CLI transport.'
     )
-    mcpTools = unavailableCapability(
+    // The registered gateway surface IS callable now; the PreToolUse hook
+    // remains a separate seam that arbitrates agy's own native tool calls and
+    // adds no callable tool of its own.
+    mcpTools = serviceCapability(
       'mcpTools',
-      'provider',
-      'No TaskWraith MCP tools are exposed to the AntiGravity print-mode transport. The temporary PreToolUse approval hook is an approval seam only — it arbitrates agy native tool calls and adds no callable tool.'
+      services.mcpTools,
+      'taskwraith',
+      mcp.tools,
+      mcp.message
     )
     elicit = unavailableCapability(
       'elicit',

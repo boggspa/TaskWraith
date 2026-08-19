@@ -7,6 +7,7 @@ import {
   AntigravityPermissionLeaseAbortedError,
   AntigravityPermissionLeaseCoordinator,
   recoverInterruptedAntigravityHookLease,
+  recoverInterruptedAntigravityMcpLease,
   recoverInterruptedAntigravityPermissionLease
 } from './AntigravityPermissionLease'
 import { isReadOnlyGitShellCommand } from '../ReadOnlyGitShellCommand'
@@ -371,5 +372,155 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     expect(installed.permissions.allow).not.toContain('command(*)')
     expect(installed).not.toHaveProperty('toolPermission')
     await second.release()
+  })
+})
+
+describe('AntigravityPermissionLeaseCoordinator MCP overlay', () => {
+  const registration = {
+    command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+    args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env']
+  }
+
+  async function makeLaneFixture(mcpContent: string | null): Promise<{
+    settingsPath: string
+    configPath: string
+  }> {
+    const directory = await mkdtemp(join(tmpdir(), 'taskwraith-agy-mcp-'))
+    tempDirectories.push(directory)
+    const settingsPath = join(directory, 'settings.json')
+    await writeFile(settingsPath, `${JSON.stringify({ model: 'gemini-3.1-pro-high' }, null, 2)}\n`)
+    const configDirectory = join(directory, 'config')
+    await mkdir(configDirectory, { recursive: true })
+    const configPath = join(configDirectory, 'mcp_config.json')
+    if (mcpContent !== null) await writeFile(configPath, mcpContent, 'utf8')
+    return { settingsPath, configPath }
+  }
+
+  function acquire(
+    coordinator: AntigravityPermissionLeaseCoordinator,
+    settingsPath: string,
+    configPath: string
+  ) {
+    return coordinator.acquire({
+      settingsPath,
+      workspacePath: resolve('/Users/test/Project'),
+      allowShell: false,
+      allowWrite: false,
+      mcpOverlay: { configPath, registration }
+    })
+  }
+
+  it('registers into the byte-empty file agy ships and restores it empty', async () => {
+    // The measured real-world state: agy creates mcp_config.json 0-byte at
+    // migration. If that did not install, the fix would miss exactly the
+    // machines that need it.
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await acquire(coordinator, settingsPath, configPath)
+
+    expect(lease.mcpRegistered).toBe(true)
+    const installed = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(installed.mcpServers.TaskWraith).toMatchObject({ command: registration.command })
+    expect(installed.mcpServers.TaskWraith.env).toEqual({
+      TASKWRAITH_PARENT_PROVIDER: 'antigravity'
+    })
+
+    await lease.release()
+    expect(await readFile(configPath, 'utf8')).toBe('')
+  })
+
+  it('keeps the user own servers through install and release', async () => {
+    const { settingsPath, configPath } = await makeLaneFixture(
+      `${JSON.stringify({ mcpServers: { 'sqlite-helper': { command: 'sqlite-mcp-server' } } }, null, 2)}\n`
+    )
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await acquire(coordinator, settingsPath, configPath)
+
+    const installed = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(Object.keys(installed.mcpServers)).toEqual(['sqlite-helper', 'TaskWraith'])
+
+    await lease.release()
+    const restored = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(restored.mcpServers).toEqual({ 'sqlite-helper': { command: 'sqlite-mcp-server' } })
+  })
+
+  it('declines an unreadable config instead of clobbering it, and still launches', async () => {
+    const unreadable = '{ this is not json'
+    const { settingsPath, configPath } = await makeLaneFixture(unreadable)
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await acquire(coordinator, settingsPath, configPath)
+
+    // The run proceeds with no TaskWraith tools — exactly the posture every
+    // agy run had before this existed — and the user's bytes are untouched.
+    expect(lease.mcpRegistered).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe(unreadable)
+    await lease.release()
+    expect(await readFile(configPath, 'utf8')).toBe(unreadable)
+  })
+
+  it('honours an identical user-owned registration without taking it away on release', async () => {
+    const userOwned = `${JSON.stringify(
+      {
+        mcpServers: {
+          TaskWraith: {
+            command: registration.command,
+            args: registration.args,
+            env: { TASKWRAITH_PARENT_PROVIDER: 'antigravity' }
+          }
+        }
+      },
+      null,
+      2
+    )}\n`
+    const { settingsPath, configPath } = await makeLaneFixture(userOwned)
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await acquire(coordinator, settingsPath, configPath)
+
+    expect(lease.mcpRegistered).toBe(true)
+    await lease.release()
+    const after = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(after.mcpServers.TaskWraith).toMatchObject({ command: registration.command })
+  })
+
+  it('withdraws only its own key when the document changed mid-run', async () => {
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await acquire(coordinator, settingsPath, configPath)
+
+    const live = JSON.parse(await readFile(configPath, 'utf8'))
+    live.mcpServers['added-during-run'] = { serverUrl: 'https://mcp.example.com/sse' }
+    await writeFile(configPath, `${JSON.stringify(live, null, 2)}\n`, 'utf8')
+
+    await lease.release()
+    const restored = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(restored.mcpServers).toEqual({
+      'added-during-run': { serverUrl: 'https://mcp.example.com/sse' }
+    })
+  })
+
+  it('recovers a registration stranded by a crash before the next run', async () => {
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    await acquire(coordinator, settingsPath, configPath)
+    // No release: simulate the process dying mid-run.
+
+    expect(await recoverInterruptedAntigravityMcpLease(configPath)).toBe(true)
+    expect(await readFile(configPath, 'utf8')).toBe('')
+    expect(await recoverInterruptedAntigravityMcpLease(configPath)).toBe(false)
+  })
+
+  it('leaves the config alone entirely when no overlay is requested', async () => {
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await coordinator.acquire({
+      settingsPath,
+      workspacePath: resolve('/Users/test/Project'),
+      allowShell: false,
+      allowWrite: false
+    })
+
+    expect(lease.mcpRegistered).toBe(false)
+    expect(await readFile(configPath, 'utf8')).toBe('')
+    await lease.release()
   })
 })
