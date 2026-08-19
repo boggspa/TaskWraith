@@ -161,7 +161,8 @@
   ),
 .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
   > :not(.composer-workspace-above-row--primary),
-.composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
+:is(.composer-surface, .composer-textarea-wrap)
+  > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
   max-height: 96rem;
   max-block-size: 96rem;
   visibility: visible;
@@ -189,7 +190,7 @@
   .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
   > :not(.composer-workspace-above-row--primary),
 .composer-area--above-rows-minimized
-  .composer-surface
+  :is(.composer-surface, .composer-textarea-wrap)
   > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
   min-height: 0 !important;
   min-block-size: 0 !important;
@@ -240,7 +241,8 @@
     ),
   .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
     > :not(.composer-workspace-above-row--primary),
-  .composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
+  :is(.composer-surface, .composer-textarea-wrap)
+    > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
   .composer-above-rows-toggle-glyph {
     transition-duration: 1ms;
   }
@@ -260,7 +262,7 @@
   .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
   > :not(.composer-workspace-above-row--primary),
 [data-reduce-motion='true']
-  .composer-surface
+  :is(.composer-surface, .composer-textarea-wrap)
   > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
 [data-reduce-motion='true'] .composer-above-rows-toggle-glyph {
   transition-duration: 1ms;

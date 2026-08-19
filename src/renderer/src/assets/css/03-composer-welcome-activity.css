@@ -7058,6 +7058,46 @@ button.composer-run-timecode.is-open {
   margin-left: auto;
 }
 
+/* Attachments stack at the TOP of the input container, ABOVE the draft
+ * text (the Claude-prompt idiom) rather than on the outer
+ * `.composer-surface` frame. In the capsule shells (cursor / chatgpt /
+ * gemini) that frame is a transparent vertical shell and the visible box
+ * IS `.composer-textarea-wrap`, so a tray parked on the surface read as
+ * thumbnails floating OUTSIDE the composer entirely.
+ *
+ * The wrap becomes a two-row grid only while a tray is actually present,
+ * so an empty composer keeps every shell's flex/block capsule byte-for-
+ * byte as it was. The class is doubled purely for specificity: the shell
+ * rules that set `display: flex` on this element (shard 10 cursor /
+ * chatgpt, shard 07 gemini) score the same (0,2,0) and load later. */
+.composer-textarea-wrap.composer-textarea-wrap:has(> .composer-attachment-tray) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: stretch;
+}
+
+.composer-textarea-wrap > .composer-attachment-tray {
+  grid-row: 1;
+  grid-column: 1;
+  /* Tighter than the surface-level tray: this now sits inside the
+   * capsule's own padding, so it only needs to clear the rounded rim. */
+  padding: 6px 8px 2px;
+}
+
+/* `.composer-textarea-highlight` is `position: absolute; inset: 0`, so
+ * left alone it would mirror the WHOLE wrap and paint every glyph one
+ * tray-height above the real caret. An abspos grid child WITH a grid
+ * placement takes that grid area as its containing block, which here is
+ * exactly the textarea's box — no JS metric sync needed.
+ * `.composer-voice-overlay` deliberately gets no placement: it stays
+ * anchored to the wrap's padding box, exactly as before. */
+.composer-textarea-wrap:has(> .composer-attachment-tray) > .composer-textarea,
+.composer-textarea-wrap:has(> .composer-attachment-tray) > .composer-textarea-highlight {
+  grid-row: 2;
+  grid-column: 1;
+}
+
 .composer-image-tile {
   position: relative;
   width: 72px;

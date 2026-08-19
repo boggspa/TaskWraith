@@ -75,10 +75,14 @@ describe('Composer permission-picker admission while running', () => {
   })
 
   it('keeps next-turn draft controls available during a solo run', () => {
+    // The tray now renders INSIDE `.composer-textarea-wrap`, so the old
+    // `.composer-inner-module` end-marker no longer follows it. Bound the
+    // region on the comment that opens the highlight-overlay block instead —
+    // it isolates exactly the tray element, same as before.
     const attachmentRegion = sourceRegion(
       composerSource,
       '<ComposerAttachmentTray',
-      '<div className="composer-inner-module">'
+      '{/* A ghost suggestion needs the overlay'
     )
     expect(attachmentRegion).not.toContain('disabled={isCurrentComposerLocked}')
 

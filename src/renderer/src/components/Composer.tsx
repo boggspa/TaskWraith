@@ -2865,14 +2865,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 so it does not read like a day-to-day action chip.
               */}
 
-              <ComposerAttachmentTray
-                attachments={imageAttachments}
-                discordContextSelection={currentDiscordContextSelection}
-                workspacePath={composerGitActionBasePath || currentWorkspace?.path}
-                onRemoveAttachment={handleRemoveImageAttachment}
-                onClearDiscordContext={handleClearDiscordContext}
-              />
-
               {/*
                 Console redesign — INNER MODULE. The textarea + the
                 two bottom-control rows are the actual *input*, so they
@@ -2940,6 +2932,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     <div
                       className={`composer-textarea-wrap${voiceCaptureState.isRecording ? ' is-voice-recording' : ''}`}
                     >
+                      {/*
+                        Attachments stack at the TOP of the input container,
+                        above the draft text. They used to sit on the OUTER
+                        `.composer-surface` frame; in the capsule shells
+                        (cursor / chatgpt / gemini) that frame is a transparent
+                        vertical shell and the visible box IS this wrap, so the
+                        thumbnails read as floating outside the composer
+                        entirely. The wrap turns into a two-row grid only while
+                        a tray is present (shard 03) — an empty composer keeps
+                        every shell's existing flex/block capsule untouched.
+                      */}
+                      <ComposerAttachmentTray
+                        attachments={imageAttachments}
+                        discordContextSelection={currentDiscordContextSelection}
+                        workspacePath={composerGitActionBasePath || currentWorkspace?.path}
+                        onRemoveAttachment={handleRemoveImageAttachment}
+                        onClearDiscordContext={handleClearDiscordContext}
+                      />
                       {/* A ghost suggestion needs the overlay even with no
                           mention to highlight. Safe to mount without the
                           `has-mention-overlay` class in that case: a ghost is
