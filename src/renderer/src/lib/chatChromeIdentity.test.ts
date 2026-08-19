@@ -91,3 +91,19 @@ describe('chatChromeIdentityEqual', () => {
     expect(shouldRetainReactChatOnFlush(first, empty)).toBe(false)
   })
 })
+
+describe('persistenceRevision churn', () => {
+  it('retains chrome identity when only the persistence bookkeeping advanced with the stream', () => {
+    const previous = baseChat({ persistenceRevision: 41 })
+    const next = {
+      ...previous,
+      persistenceRevision: 42,
+      messages: [message('m1', 'hi'), message('m2', 'stream')],
+      updatedAt: previous.updatedAt + 10
+    }
+    // Every main-side save increments persistenceRevision; a patch delivery
+    // carries it on every flush. Chrome must not re-render for bookkeeping.
+    expect(chatChromeIdentityEqual(previous, next)).toBe(true)
+    expect(shouldRetainReactChatOnFlush(previous, next)).toBe(true)
+  })
+})

@@ -4,8 +4,15 @@ import type { ChatRecord } from '../../../main/store/types'
  * Fields that stream flushes update every frame without changing App chrome.
  * When only these differ, React may keep the previous chat object identity so
  * sidebar/composer do not re-render; ChatTranscriptStore notifies the panel.
+ * `persistenceRevision` is main's save counter — it rides every patch
+ * delivery, so leaving it out forced a full chrome commit per flush.
  */
-const TRANSCRIPT_STREAM_FIELDS = new Set(['messages', 'runs', 'updatedAt'])
+const TRANSCRIPT_STREAM_FIELDS = new Set([
+  'messages',
+  'runs',
+  'updatedAt',
+  'persistenceRevision'
+])
 
 /**
  * True when two chat records are equal for App chrome purposes — every own

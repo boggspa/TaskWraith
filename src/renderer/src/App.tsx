@@ -5776,6 +5776,14 @@ function App(): React.JSX.Element {
       }
 
       const updated = updater(base)
+      // No-op contract: an updater that returns its input unchanged (same
+      // reference) asked for nothing — skip the React flush AND the debounced
+      // saveChat re-arm. Ensemble chats hit this on every streamed event
+      // (their transcripts are orchestrator-canonical), and each skipped
+      // re-arm is one fewer full-record saveChat IPC of a multi-MB chat.
+      // Every updater returns a new object when it intends a change
+      // (audited 2026-08-19: none mutate the base in place).
+      if (updated === base) return updated
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
@@ -5896,6 +5904,10 @@ function App(): React.JSX.Element {
           : null)
       if (!base || isChatSummaryRecord(base)) return null
       const updated = updater(base)
+      // Same no-op contract as updateChatById: a same-reference return means
+      // "nothing to do" — skip both setState calls (including the list
+      // insertion, whose no-op paths are all genuine nothing-to-do branches).
+      if (updated === base) return updated
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
@@ -11913,6 +11925,9 @@ function App(): React.JSX.Element {
       }
 
       let finalizedTerminalChat: ChatRecord | null = null
+      // Runs that never emit run_finished (cancel, crash, provider exit) still
+      // seal here — drop their live stream-metrics entry too.
+      runStreamMetricsByRunIdRef.current.delete(completedRunId)
       updateChatById(completedRunChatId, (source) => {
         const updated = { ...source }
 
@@ -14848,9 +14863,11 @@ function App(): React.JSX.Element {
           const sidecarProjection = projectRunItemAssistantDelta(itemEvent)
           if (sidecarProjection && sidecarProjection.chatId === runChatId) {
             updateChatById(runChatId, (source) => {
+              // Same-reference returns are the no-op signal: no flush, no
+              // saveChat re-arm. Never spread before these guards.
+              if (source.chatKind === 'ensemble') return source
+              if (steerSuppressionChatIdsRef.current.has(runChatId)) return source
               const updated = { ...source }
-              if (updated.chatKind === 'ensemble') return updated
-              if (steerSuppressionChatIdsRef.current.has(runChatId)) return updated
               if (isVisibleRunChat()) setIsThinking(false)
               const providerModelMetadata = providerModelMetadataForAssistantDelta(
                 updated,
@@ -14858,7 +14875,7 @@ function App(): React.JSX.Element {
                 itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
               )
               const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
-              if (!projection) return updated
+              if (!projection) return source
               updated.messages = applyAssistantDelta(updated.messages, projection.input, {
                 createMessageId,
                 now: () => new Date().toISOString()
@@ -14881,8 +14898,10 @@ function App(): React.JSX.Element {
               }
             })
             updateChatById(runChatId, (source) => {
+              // Same-reference return = no-op (no flush, no saveChat re-arm);
+              // ensemble transcripts are orchestrator-canonical.
+              if (source.chatKind === 'ensemble') return source
               const updated = { ...source }
-              if (updated.chatKind === 'ensemble') return updated
               // The assistant-delta handler hides the Working indicator while
               // the bubble streams; tool traffic after the bubble seals means
               // the run is still live, so re-arm it or the transcript shows
@@ -15073,11 +15092,13 @@ function App(): React.JSX.Element {
               event.type === 'assistant_message_complete') &&
             steerSuppressionChatIdsRef.current.has(runChatId)
           if (isSteerSuppressed) {
-            return updated
+            // Same-reference return = no-op: no flush, no saveChat re-arm.
+            return source
           }
 
           if (event.type === 'user_message') {
-            // Handled manually before run
+            // Handled manually before run — nothing changes here.
+            return source
           } else if (event.type === 'assistant_message_delta') {
             // Ensemble transcripts are materialised by EnsembleOrchestrator
             // (`flushRun` → chat-updated). Provider compat lines still reach
@@ -15087,9 +15108,9 @@ function App(): React.JSX.Element {
             // message). Skip transcript mutation; orchestrator is canonical.
             // Also leave `isThinking` alone — compat deltas are noise for
             // ensemble rounds and were clearing the indicator until the next
-            // user turn.
+            // user turn. Same-reference return = no flush, no saveChat re-arm.
             if (updated.chatKind === 'ensemble') {
-              return updated
+              return source
             }
             if (isVisibleRunChat()) setIsThinking(false)
             // Interleaving-preserving routing. A content delta continues
@@ -15380,9 +15401,9 @@ function App(): React.JSX.Element {
                   Date.now()
                 )
               : runStreamMetricsByRunIdRef.current.get(currentRunId)
-            if (streamMetrics) {
-              runStreamMetricsByRunIdRef.current.set(currentRunId, streamMetrics)
-            }
+            // Terminal: the merged metrics ride the persisted run stats below;
+            // drop the live entry so long sessions don't retain one per run.
+            runStreamMetricsByRunIdRef.current.delete(currentRunId)
             const finishedStats = streamMetrics
               ? { ...(event.stats || {}), streamMetrics }
               : event.stats
@@ -15492,8 +15513,9 @@ function App(): React.JSX.Element {
             // would append a second local tool message for the same provider
             // compat event, which is especially visible for ensemble_yield
             // because yield activities intentionally stay inline.
+            // Same-reference return = no flush, no saveChat re-arm.
             if (updated.chatKind === 'ensemble') {
-              return updated
+              return source
             }
             // Mirrors the run-item lane above: text deltas hide the Working
             // indicator, so trailing tool activity must re-arm it.

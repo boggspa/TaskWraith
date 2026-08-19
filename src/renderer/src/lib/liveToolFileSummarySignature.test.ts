@@ -92,3 +92,25 @@ describe('buildLiveToolFileSummarySignature', () => {
     expect(buildLiveToolFileSummarySignature([closeout, empty])).toEqual('')
   })
 })
+
+describe('identity-keyed digest cache contract', () => {
+  // The WeakMap caches are sound ONLY while no renderer code mutates a
+  // ToolActivity in place: the structured-clone IPC boundary hands the
+  // renderer fresh identities, and renderer-side identity reuse is
+  // deepEqual-gated. This test DOCUMENTS that contract. If it ever fails,
+  // some renderer code started mutating activities in place — fix that code
+  // (frozen file summaries are the symptom), do not weaken this test.
+  it('treats an in-place activity mutation as invisible (identity-cached by contract)', () => {
+    const shared = activity('a1', 'original output')
+    const messages = [toolMessage('m1', [shared])]
+    const before = buildLiveToolFileSummarySignature(messages)
+
+    ;(shared as { resultSummary?: string }).resultSummary = 'mutated in place'
+    expect(buildLiveToolFileSummarySignature(messages)).toBe(before)
+
+    // A replacement object — the sanctioned way to change an activity — is
+    // seen immediately.
+    const replaced = [toolMessage('m1', [activity('a1', 'mutated in place')])]
+    expect(buildLiveToolFileSummarySignature(replaced)).not.toBe(before)
+  })
+})
