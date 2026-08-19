@@ -34,6 +34,19 @@ afterEach(async () => {
   )
 })
 
+/** Resolves only if `pending` settles on its own — a FIFO would park it. */
+async function settleWithin<T>(pending: Promise<T>, ms: number): Promise<T> {
+  const sentinel = Symbol('still-pending')
+  const outcome = await Promise.race([
+    pending,
+    new Promise<typeof sentinel>((resolveRace) => setTimeout(() => resolveRace(sentinel), ms))
+  ])
+  if (outcome === sentinel) {
+    throw new Error(`acquire did not settle within ${ms}ms — a FIFO is serializing leases`)
+  }
+  return outcome
+}
+
 describe('AntigravityPermissionLeaseCoordinator', () => {
   it('installs only signed workspace rules and restores the exact original bytes', async () => {
     const { settingsPath, original } = await makeSettings({
@@ -327,8 +340,19 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('serializes incompatible global overlays and lets a queued cancellation leave cleanly', async () => {
-    const { settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+  /**
+   * 2026-08-19, direct user directive: the coordinator's run-length FIFO is
+   * DELETED. Whether parallel agy lanes are safe is the user's composer-level
+   * decision (isolation / parallel dispatch) — nothing in this module may make
+   * one run wait for another run to finish. What remains is refcounted
+   * bookkeeping only: the first holder installs and captures the user's
+   * original bytes, joiners union in whatever is missing, releases shrink to
+   * what the survivors still need, and the LAST holder restores.
+   */
+  it('grants concurrent leases for different workspaces without queueing', async () => {
+    const { directory, settingsPath, original } = await makeSettings({
+      model: 'gemini-3.1-pro-high'
+    })
     const coordinator = new AntigravityPermissionLeaseCoordinator()
     const firstWorkspacePath = resolve('/Users/test/First')
     const secondWorkspacePath = resolve('/Users/test/Second')
@@ -338,40 +362,96 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       allowShell: true,
       allowWrite: false
     })
-    const controller = new AbortController()
-    const cancelled = coordinator.acquire({
-      settingsPath,
-      workspacePath: '/Users/test/Cancelled',
-      allowShell: true,
-      allowWrite: false,
-      signal: controller.signal
-    })
-    controller.abort()
-    await expect(cancelled).rejects.toBeInstanceOf(AntigravityPermissionLeaseAbortedError)
-
-    let secondSettled = false
-    const secondPending = coordinator
-      .acquire({
+    const second = await settleWithin(
+      coordinator.acquire({
         settingsPath,
         workspacePath: secondWorkspacePath,
         allowShell: false,
         allowWrite: false
-      })
-      .then((lease) => {
-        secondSettled = true
-        return lease
-      })
-    await Promise.resolve()
-    expect(secondSettled).toBe(false)
+      }),
+      400
+    )
 
+    const union = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(union.permissions.allow).toContain(`read_file(${firstWorkspacePath})`)
+    expect(union.permissions.allow).toContain(`read_file(${secondWorkspacePath})`)
+
+    // An early release shrinks the document to what the survivor still needs.
     await first.release()
-    const second = await secondPending
-    const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
-    expect(installed.permissions.allow).toContain(`read_file(${secondWorkspacePath})`)
-    expect(installed.permissions.allow).not.toContain(`read_file(${firstWorkspacePath})`)
-    expect(installed.permissions.allow).not.toContain('command(*)')
-    expect(installed).not.toHaveProperty('toolPermission')
+    const shrunk = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(shrunk.permissions.allow).toContain(`read_file(${secondWorkspacePath})`)
+    expect(shrunk.permissions.allow).not.toContain(`read_file(${firstWorkspacePath})`)
+    expect(shrunk.permissions.allow).not.toContain('command(*)')
+    expect(shrunk).not.toHaveProperty('toolPermission')
+
     await second.release()
+    expect(await readFile(settingsPath, 'utf8')).toBe(original)
+    await expect(
+      readFile(join(directory, '.taskwraith-permission-lease.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('shares one install between same-workspace holders and restores on the last release', async () => {
+    const { settingsPath, original } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const workspacePath = resolve('/Users/test/Shared')
+    const input = { settingsPath, workspacePath, allowShell: true, allowWrite: true }
+    const first = await coordinator.acquire(input)
+    const afterFirst = await readFile(settingsPath, 'utf8')
+
+    const second = await settleWithin(coordinator.acquire(input), 400)
+    expect(await readFile(settingsPath, 'utf8')).toBe(afterFirst)
+
+    // The joiner still holds the identical grant — nothing narrows under it.
+    await first.release()
+    expect(await readFile(settingsPath, 'utf8')).toBe(afterFirst)
+
+    await second.release()
+    expect(await readFile(settingsPath, 'utf8')).toBe(original)
+  })
+
+  it('hands the shared hook entry to a surviving holder on early release', async () => {
+    const { directory, settingsPath } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const hooksPath = join(directory, 'hooks.json')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const workspacePath = resolve('/Users/test/Shared')
+    const overlayFor = (token: string) => ({
+      hooksPath,
+      hookName: 'taskwraith-agy-approval',
+      namedHook: { hooks: [{ command: `curl --token ${token}` }] }
+    })
+    const readHook = async (): Promise<string> =>
+      JSON.parse(await readFile(hooksPath, 'utf8'))['taskwraith-agy-approval'].hooks[0].command
+
+    const first = await coordinator.acquire({
+      settingsPath,
+      workspacePath,
+      allowShell: true,
+      allowWrite: true,
+      hookOverlay: overlayFor('token-aaaa')
+    })
+    const second = await settleWithin(
+      coordinator.acquire({
+        settingsPath,
+        workspacePath,
+        allowShell: true,
+        allowWrite: true,
+        hookOverlay: overlayFor('token-bbbb')
+      }),
+      400
+    )
+
+    // One live entry: the first holder's token, while it runs.
+    expect(await readHook()).toContain('token-aaaa')
+
+    // The owner leaving early hands the entry to a survivor whose bridge
+    // registration is still alive — an unknown token at the bridge is a
+    // fail-closed deny, so a dead token must never be left installed.
+    await first.release()
+    expect(await readHook()).toContain('token-bbbb')
+
+    await second.release()
+    await expect(readFile(hooksPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
@@ -456,6 +536,32 @@ describe('AntigravityPermissionLeaseCoordinator MCP overlay', () => {
     expect(await readFile(configPath, 'utf8')).toBe(unreadable)
     await lease.release()
     expect(await readFile(configPath, 'utf8')).toBe(unreadable)
+  })
+
+  it('installs once for concurrent holders and withdraws with the last', async () => {
+    const { settingsPath, configPath } = await makeLaneFixture('')
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const first = await acquire(coordinator, settingsPath, configPath)
+    const second = await settleWithin(
+      coordinator.acquire({
+        settingsPath,
+        workspacePath: resolve('/Users/test/OtherProject'),
+        allowShell: false,
+        allowWrite: false,
+        mcpOverlay: { configPath, registration }
+      }),
+      400
+    )
+
+    expect(first.mcpRegistered).toBe(true)
+    expect(second.mcpRegistered).toBe(true)
+
+    await first.release()
+    const held = JSON.parse(await readFile(configPath, 'utf8'))
+    expect(held.mcpServers.TaskWraith).toMatchObject({ command: registration.command })
+
+    await second.release()
+    expect(await readFile(configPath, 'utf8')).toBe('')
   })
 
   it('honours an identical user-owned registration without taking it away on release', async () => {

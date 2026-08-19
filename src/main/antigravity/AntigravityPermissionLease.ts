@@ -618,7 +618,7 @@ async function installMcpOverlay(
 async function installHookOverlay(
   overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>,
   signal?: AbortSignal
-): Promise<{ release: () => Promise<void> }> {
+): Promise<AntigravityHookLeaseReceipt> {
   const hooksPath = resolve(overlay.hooksPath)
   if (!overlay.hookName || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(overlay.hookName)) {
     throw new Error('AntiGravity hook overlay requires a namespaced hook name.')
@@ -650,9 +650,7 @@ async function installHookOverlay(
     await cleanHookReceipt(hooksPath, receiptPath, receipt).catch(() => undefined)
     throw error
   }
-  return {
-    release: () => cleanHookReceipt(hooksPath, receiptPath, receipt)
-  }
+  return receipt
 }
 
 async function installPermissionLease(
@@ -691,71 +689,397 @@ async function installPermissionLease(
   return receipt
 }
 
-function waitForTurn(previous: Promise<void>, signal?: AbortSignal): Promise<void> {
-  if (!signal) return previous
-  if (signal.aborted) return Promise.reject(new AntigravityPermissionLeaseAbortedError())
-  return new Promise((resolveWait, rejectWait) => {
-    const abort = (): void => rejectWait(new AntigravityPermissionLeaseAbortedError())
-    signal.addEventListener('abort', abort, { once: true })
-    previous.then(
-      () => {
-        signal.removeEventListener('abort', abort)
-        resolveWait()
-      },
-      (error) => {
-        signal.removeEventListener('abort', abort)
-        rejectWait(error)
-      }
-    )
-  })
+// ── Concurrent grant registries — the run-length FIFO is deliberately GONE ──
+// (2026-08-19, direct user directive.) Whether parallel agy lanes are safe is
+// the user's call, made in the composer (isolation / parallel dispatch); this
+// module must never make one run wait for another run to finish. What remains
+// is only the bookkeeping that keeps concurrent holders of agy's shared config
+// files from corrupting each other:
+//   - per-FILE micro-transactions: millisecond op chains around each
+//     install/extend/shrink/restore write — atomicity of the bookkeeping,
+//     never serialization of runs;
+//   - refcounts: the first holder installs and captures the user's original
+//     bytes, joiners union in whatever rules are missing, an early release
+//     shrinks the document to what the survivors still need, and the LAST
+//     holder restores the original;
+//   - crash recovery runs only on the first-holder path, so a second acquire
+//     can never roll back a sibling's live grant;
+//   - the per-workspace hook file carries ONE live entry: the first holder's
+//     token while it runs, handed to a survivor's token when the owner
+//     releases early (an unknown token at the bridge is a fail-closed deny,
+//     so a dead token must never be left installed). Cross-lane consequences
+//     of sharing one workspace's hook are part of the user's parallelism
+//     decision, not gated here.
+
+interface SettingsHolderNeeds {
+  readonly rules: readonly string[]
+  readonly toolPermission: boolean
+  readonly artifactReviewPolicy: boolean
 }
 
-/**
- * Official agy reads one global settings file and offers no per-run config
- * path. Serialize these short-lived overlays so two workspaces can never see
- * each other's native allow rules. Provider admission remains unchanged.
- */
+interface SettingsGrantState {
+  receipt: AntigravityPermissionLeaseReceipt
+  readonly originalAllow: readonly string[]
+  readonly holders: Map<string, SettingsHolderNeeds>
+  /** Every rule this coordinator ever added to the live document, in first-
+   * appearance order. The receipt keeps the FULL history so the last-out
+   * three-way merge can strip anything of ours that an interrupted shrink
+   * left behind. */
+  readonly addedRuleHistory: string[]
+  lastInstalledSha: string
+}
+
+interface HookGrantState {
+  receipt: AntigravityHookLeaseReceipt
+  readonly hooksPath: string
+  readonly hookName: string
+  readonly holders: Map<string, JsonObject>
+  order: string[]
+  activeLeaseId: string
+  lastInstalledSha: string
+}
+
+interface McpGrantState {
+  readonly holders: Set<string>
+  readonly registered: boolean
+  readonly release?: () => Promise<void>
+}
+
+function settingsHolderNeeds(input: AntigravityPermissionLeaseRequest): SettingsHolderNeeds {
+  return {
+    rules: workspaceRules(input),
+    toolPermission: Boolean(input.allowShell || input.hookOverlay),
+    artifactReviewPolicy: input.allowWrite
+  }
+}
+
+function originalAllowOf(receipt: AntigravityPermissionLeaseReceipt): string[] {
+  const original = parseSettings(
+    Buffer.from(receipt.originalContentBase64, 'base64').toString('utf8') || '{}',
+    'Original AntiGravity settings'
+  )
+  const permissions = isRecord(original.permissions) ? original.permissions : undefined
+  return Array.isArray(permissions?.allow)
+    ? permissions.allow.filter((entry): entry is string => typeof entry === 'string')
+    : []
+}
+
 export class AntigravityPermissionLeaseCoordinator {
-  private tail: Promise<void> = Promise.resolve()
+  private readonly settingsGrants = new Map<string, SettingsGrantState>()
+  private readonly hookGrants = new Map<string, HookGrantState>()
+  private readonly mcpGrants = new Map<string, McpGrantState>()
+  /** Per-file bookkeeping chains. These serialize the WRITES around one path
+   * for the milliseconds they take — they never hold across a run. */
+  private readonly fileOps = new Map<string, Promise<unknown>>()
+
+  private runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.fileOps.get(key) ?? Promise.resolve()
+    const next = previous.then(fn, fn)
+    this.fileOps.set(
+      key,
+      next.then(
+        () => undefined,
+        () => undefined
+      )
+    )
+    return next
+  }
+
+  private async joinSettings(
+    settingsPath: string,
+    leaseId: string,
+    input: AntigravityPermissionLeaseRequest
+  ): Promise<void> {
+    const needs = settingsHolderNeeds(input)
+    const state = this.settingsGrants.get(settingsPath)
+    if (!state) {
+      // First holder: crash recovery is safe here precisely because no
+      // in-process holder is live for this path. Pass `input` through intact —
+      // installPermissionLease resolves the path itself, and callers may hand
+      // us getter-backed signal properties that a spread would flatten.
+      const receipt = await installPermissionLease(input)
+      this.settingsGrants.set(settingsPath, {
+        receipt,
+        originalAllow: originalAllowOf(receipt),
+        holders: new Map([[leaseId, needs]]),
+        addedRuleHistory: [...receipt.addedAllowRules],
+        lastInstalledSha: receipt.installedSha256
+      })
+      return
+    }
+    state.holders.set(leaseId, needs)
+    await this.extendSettingsDocument(settingsPath, state, input.signal)
+  }
+
+  /** Bring the live document up to the union of every holder's needs. */
+  private async extendSettingsDocument(
+    settingsPath: string,
+    state: SettingsGrantState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const currentContent = await readOptionalRegularFile(settingsPath)
+    const document = parseSettings(currentContent ?? '{}', 'Installed AntiGravity settings')
+    const permissionsValue = document.permissions
+    if (permissionsValue !== undefined && !isRecord(permissionsValue)) {
+      throw new Error('AntiGravity settings permissions must be a JSON object.')
+    }
+    const permissions = isRecord(permissionsValue) ? cloneObject(permissionsValue) : {}
+    const allowValue = permissions.allow
+    if (allowValue !== undefined && !Array.isArray(allowValue)) {
+      throw new Error('AntiGravity settings permissions.allow must be an array.')
+    }
+    const allow = Array.isArray(allowValue)
+      ? allowValue.filter((entry): entry is string => typeof entry === 'string')
+      : []
+    if (Array.isArray(allowValue) && allow.length !== allowValue.length) {
+      throw new Error('AntiGravity settings permissions.allow may contain only strings.')
+    }
+
+    let changed = false
+    let needTool = false
+    let needArtifact = false
+    const newHistory: string[] = []
+    for (const holder of state.holders.values()) {
+      needTool ||= holder.toolPermission
+      needArtifact ||= holder.artifactReviewPolicy
+      for (const rule of holder.rules) {
+        if (!allow.includes(rule)) {
+          allow.push(rule)
+          changed = true
+          if (!state.originalAllow.includes(rule) && !state.addedRuleHistory.includes(rule)) {
+            newHistory.push(rule)
+          }
+        }
+      }
+    }
+    const installedScalars = { ...state.receipt.installedScalars }
+    if (needTool && document.toolPermission !== 'proceed-in-sandbox') {
+      document.toolPermission = 'proceed-in-sandbox'
+      installedScalars.toolPermission = 'proceed-in-sandbox'
+      changed = true
+    }
+    if (needArtifact && document.artifactReviewPolicy !== 'always-proceed') {
+      document.artifactReviewPolicy = 'always-proceed'
+      installedScalars.artifactReviewPolicy = 'always-proceed'
+      changed = true
+    }
+    if (!changed) return
+
+    permissions.allow = allow
+    document.permissions = permissions
+    const content = `${JSON.stringify(document, null, 2)}\n`
+    state.addedRuleHistory.push(...newHistory)
+    const nextReceipt: AntigravityPermissionLeaseReceipt = {
+      ...state.receipt,
+      addedAllowRules: state.addedRuleHistory.filter(
+        (rule) => !state.originalAllow.includes(rule)
+      ),
+      installedSha256: sha256(content),
+      installedScalars
+    }
+    await writeAtomic(
+      receiptPathFor(settingsPath),
+      `${JSON.stringify(nextReceipt, null, 2)}\n`,
+      signal
+    )
+    await writeAtomic(settingsPath, content, signal)
+    state.receipt = nextReceipt
+    state.lastInstalledSha = nextReceipt.installedSha256
+  }
+
+  private async leaveSettings(settingsPath: string, leaseId: string): Promise<void> {
+    const state = this.settingsGrants.get(settingsPath)
+    if (!state || !state.holders.has(leaseId)) return
+    state.holders.delete(leaseId)
+    if (state.holders.size === 0) {
+      this.settingsGrants.delete(settingsPath)
+      await cleanReceipt(settingsPath, receiptPathFor(settingsPath), state.receipt)
+      return
+    }
+    // Shrink to what the survivors still need. If the document was edited out
+    // from under us (user or agy's own writer), leave it alone — the receipt
+    // keeps the full added-rule history, so the last-out merge still strips
+    // everything of ours.
+    const currentContent = await readOptionalRegularFile(settingsPath)
+    if (currentContent === null || sha256(currentContent) !== state.lastInstalledSha) return
+    const document = parseSettings(currentContent, 'Installed AntiGravity settings')
+    const needed = new Set<string>()
+    let needTool = false
+    let needArtifact = false
+    for (const holder of state.holders.values()) {
+      for (const rule of holder.rules) needed.add(rule)
+      needTool ||= holder.toolPermission
+      needArtifact ||= holder.artifactReviewPolicy
+    }
+    let changed = false
+    const permissions = isRecord(document.permissions) ? cloneObject(document.permissions) : {}
+    if (Array.isArray(permissions.allow)) {
+      const allow = permissions.allow.filter((entry): entry is string => typeof entry === 'string')
+      const kept = allow.filter(
+        (rule) => needed.has(rule) || state.originalAllow.includes(rule)
+      )
+      if (kept.length !== allow.length) {
+        permissions.allow = kept
+        document.permissions = permissions
+        changed = true
+      }
+    }
+    for (const [key, requiredValue, stillNeeded] of [
+      ['toolPermission', 'proceed-in-sandbox', needTool],
+      ['artifactReviewPolicy', 'always-proceed', needArtifact]
+    ] as const) {
+      const installedValue = state.receipt.installedScalars[key]
+      if (stillNeeded || installedValue === undefined) continue
+      if (document[key] !== installedValue || installedValue !== requiredValue) continue
+      const original = parseSettings(
+        Buffer.from(state.receipt.originalContentBase64, 'base64').toString('utf8') || '{}',
+        'Original AntiGravity settings'
+      )
+      if (Object.prototype.hasOwnProperty.call(original, key)) document[key] = original[key]
+      else delete document[key]
+      changed = true
+    }
+    if (!changed) return
+    const content = `${JSON.stringify(document, null, 2)}\n`
+    const nextReceipt: AntigravityPermissionLeaseReceipt = {
+      ...state.receipt,
+      installedSha256: sha256(content)
+    }
+    await writeAtomic(receiptPathFor(settingsPath), `${JSON.stringify(nextReceipt, null, 2)}\n`)
+    await writeAtomic(settingsPath, content)
+    state.receipt = nextReceipt
+    state.lastInstalledSha = nextReceipt.installedSha256
+  }
+
+  private async joinHook(
+    hooksKey: string,
+    leaseId: string,
+    overlay: NonNullable<AntigravityPermissionLeaseRequest['hookOverlay']>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const state = this.hookGrants.get(hooksKey)
+    if (!state) {
+      const receipt = await installHookOverlay(overlay, signal)
+      this.hookGrants.set(hooksKey, {
+        receipt,
+        hooksPath: hooksKey,
+        hookName: overlay.hookName,
+        holders: new Map([[leaseId, cloneObject(overlay.namedHook)]]),
+        order: [leaseId],
+        activeLeaseId: leaseId,
+        lastInstalledSha: receipt.installedSha256
+      })
+      return
+    }
+    if (state.hookName !== overlay.hookName) {
+      throw new Error('The agy hook lease supports one named hook per hooks file.')
+    }
+    state.holders.set(leaseId, cloneObject(overlay.namedHook))
+    state.order.push(leaseId)
+  }
+
+  private async leaveHook(hooksKey: string, leaseId: string): Promise<void> {
+    const state = this.hookGrants.get(hooksKey)
+    if (!state || !state.holders.has(leaseId)) return
+    state.holders.delete(leaseId)
+    state.order = state.order.filter((id) => id !== leaseId)
+    if (state.holders.size === 0) {
+      this.hookGrants.delete(hooksKey)
+      await cleanHookReceipt(state.hooksPath, hookReceiptPathFor(state.hooksPath), state.receipt)
+      return
+    }
+    if (state.activeLeaseId !== leaseId) return
+    // The token owner left while survivors run: hand the entry to the eldest
+    // survivor, whose bridge registration is still alive.
+    const survivorId = state.order[0]
+    const survivorHook = state.holders.get(survivorId)
+    if (!survivorHook) return
+    const currentContent = await readOptionalRegularFile(state.hooksPath)
+    const untouched =
+      currentContent !== null && sha256(currentContent) === state.lastInstalledSha
+    const base = untouched
+      ? parseSettings(
+          Buffer.from(state.receipt.originalContentBase64, 'base64').toString('utf8') || '{}',
+          'AntiGravity hooks configuration'
+        )
+      : parseSettings(currentContent ?? '{}', 'Changed AntiGravity hooks configuration')
+    const installed = cloneObject(base)
+    installed[state.hookName] = cloneObject(survivorHook)
+    const content = `${JSON.stringify(installed, null, 2)}\n`
+    const nextReceipt: AntigravityHookLeaseReceipt = {
+      ...state.receipt,
+      installedSha256: sha256(content)
+    }
+    await writeAtomic(
+      hookReceiptPathFor(state.hooksPath),
+      `${JSON.stringify(nextReceipt, null, 2)}\n`
+    )
+    await writeAtomic(state.hooksPath, content)
+    state.receipt = nextReceipt
+    state.lastInstalledSha = nextReceipt.installedSha256
+    state.activeLeaseId = survivorId
+  }
+
+  private async joinMcp(
+    mcpKey: string,
+    leaseId: string,
+    overlay: NonNullable<AntigravityPermissionLeaseRequest['mcpOverlay']>,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    const state = this.mcpGrants.get(mcpKey)
+    if (state) {
+      // The registration content is static (same command + args for every
+      // run; per-run routing rides the child environment), so joiners simply
+      // share whatever the first holder achieved.
+      state.holders.add(leaseId)
+      return state.registered
+    }
+    const installed = await installMcpOverlay(overlay, signal)
+    this.mcpGrants.set(mcpKey, {
+      holders: new Set([leaseId]),
+      registered: installed.registered,
+      release: installed.release
+    })
+    return installed.registered
+  }
+
+  private async leaveMcp(mcpKey: string, leaseId: string): Promise<void> {
+    const state = this.mcpGrants.get(mcpKey)
+    if (!state || !state.holders.has(leaseId)) return
+    state.holders.delete(leaseId)
+    if (state.holders.size > 0) return
+    this.mcpGrants.delete(mcpKey)
+    await state.release?.()
+  }
 
   async acquire(input: AntigravityPermissionLeaseRequest): Promise<AntigravityPermissionLease> {
-    const previous = this.tail.catch(() => undefined)
-    let releaseQueue!: () => void
-    const queueGate = new Promise<void>((resolveGate) => {
-      releaseQueue = resolveGate
-    })
-    this.tail = previous.then(() => queueGate)
-
-    try {
-      await waitForTurn(previous, input.signal)
-    } catch (error) {
-      releaseQueue()
-      throw error
-    }
-    if (input.signal?.aborted) {
-      releaseQueue()
-      throw new AntigravityPermissionLeaseAbortedError()
-    }
-
-    let receipt: AntigravityPermissionLeaseReceipt | undefined
-    let hookRelease: (() => Promise<void>) | undefined
-    let mcpRelease: (() => Promise<void>) | undefined
+    throwIfPermissionLeaseAborted(input.signal)
+    const leaseId = randomUUID()
+    const settingsPath = resolve(input.settingsPath)
+    const hooksKey = input.hookOverlay ? resolve(input.hookOverlay.hooksPath) : null
+    const mcpKey = input.mcpOverlay ? resolve(input.mcpOverlay.configPath) : null
+    const undo: Array<() => Promise<void>> = []
     let mcpRegistered = false
     try {
-      receipt = await installPermissionLease(input)
+      await this.runExclusive(settingsPath, () => this.joinSettings(settingsPath, leaseId, input))
+      undo.push(() => this.runExclusive(settingsPath, () => this.leaveSettings(settingsPath, leaseId)))
       throwIfPermissionLeaseAborted(input.signal)
-      if (input.hookOverlay) {
-        hookRelease = (await installHookOverlay(input.hookOverlay, input.signal)).release
+      if (input.hookOverlay && hooksKey) {
+        const overlay = input.hookOverlay
+        await this.runExclusive(hooksKey, () => this.joinHook(hooksKey, leaseId, overlay, input.signal))
+        undo.push(() => this.runExclusive(hooksKey, () => this.leaveHook(hooksKey, leaseId)))
+        throwIfPermissionLeaseAborted(input.signal)
       }
-      throwIfPermissionLeaseAborted(input.signal)
-      if (input.mcpOverlay) {
+      if (input.mcpOverlay && mcpKey) {
+        const overlay = input.mcpOverlay
         // The MCP registration is an enhancement, never a launch precondition:
         // a failure here costs the run its TaskWraith tools, which is what
         // every agy run had before this existed. Only an abort propagates.
         try {
-          const installed = await installMcpOverlay(input.mcpOverlay, input.signal)
-          mcpRegistered = installed.registered
-          mcpRelease = installed.release
+          mcpRegistered = await this.runExclusive(mcpKey, () =>
+            this.joinMcp(mcpKey, leaseId, overlay, input.signal)
+          )
+          undo.push(() => this.runExclusive(mcpKey, () => this.leaveMcp(mcpKey, leaseId)))
         } catch (error) {
           if (input.signal?.aborted) throw error
           mcpRegistered = false
@@ -763,48 +1087,33 @@ export class AntigravityPermissionLeaseCoordinator {
       }
       throwIfPermissionLeaseAborted(input.signal)
     } catch (error) {
-      let cleanupError: unknown
-      try {
-        await mcpRelease?.()
-      } catch (releaseError) {
-        cleanupError = releaseError
+      for (const step of undo.reverse()) {
+        await step().catch(() => undefined)
       }
-      try {
-        await hookRelease?.()
-      } catch (releaseError) {
-        cleanupError ??= releaseError
-      }
-      if (receipt) {
-        try {
-          await recoverInterruptedAntigravityPermissionLease(receipt.settingsPath)
-        } catch (releaseError) {
-          cleanupError ??= releaseError
-        }
-      }
-      releaseQueue()
       if (input.signal?.aborted) throw new AntigravityPermissionLeaseAbortedError()
-      if (cleanupError) throw cleanupError
       throw error
     }
 
     let releaseOperation: Promise<void> | undefined
     return Object.freeze({
-      leaseId: receipt.leaseId,
-      settingsPath: receipt.settingsPath,
+      leaseId,
+      settingsPath,
       mcpRegistered,
       release: () => {
         if (!releaseOperation) {
-          // Hook overlay first: once it is gone no further tool call can reach
-          // the bridge, so the settings restore never races a late hook. The
-          // MCP registration is withdrawn next; it only decides what agy
-          // discovers at STARTUP, so an already-connected server is unaffected
-          // either way and ordering here is about leaving the disk clean.
-          releaseOperation = (hookRelease ? hookRelease() : Promise.resolve())
-            .then(() => (mcpRelease ? mcpRelease() : Promise.resolve()))
-            .then(() =>
-              cleanReceipt(receipt.settingsPath, receiptPathFor(receipt.settingsPath), receipt)
-            )
-            .finally(releaseQueue)
+          // Hook first: once this run's claim on the hook entry is resolved
+          // (handed over or removed), no late tool call of ours races the
+          // settings shrink. The MCP registration only decides what agy
+          // discovers at STARTUP, so its ordering is about a clean disk.
+          releaseOperation = (async () => {
+            if (hooksKey) {
+              await this.runExclusive(hooksKey, () => this.leaveHook(hooksKey, leaseId))
+            }
+            if (mcpKey) {
+              await this.runExclusive(mcpKey, () => this.leaveMcp(mcpKey, leaseId))
+            }
+            await this.runExclusive(settingsPath, () => this.leaveSettings(settingsPath, leaseId))
+          })()
         }
         return releaseOperation
       }
