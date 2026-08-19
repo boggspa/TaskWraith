@@ -11,11 +11,11 @@ function sourceBetween(startMarker: string, endMarker: string): string {
   return indexSource.slice(start, end)
 }
 
-describe('sub-thread mailbox main-process integration', () => {
-  it('durably enqueues before transcript dedupe can return', () => {
+describe('sub-thread return main-process integration (ledger + projection, no auto-dispatch)', () => {
+  it('durably ledgers the return before transcript dedupe can bail', () => {
     const producer = sourceBetween(
       'async function maybePropagateLinkedChildResult(',
-      'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
+      'function subThreadJoinTimerKey('
     )
     const enqueue = producer.indexOf('AppStore.enqueueSubThreadMailboxEvent({')
     const existingReturn = producer.indexOf('if (existingReturnForAssistant)')
@@ -34,76 +34,62 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(producer).toContain('mailboxResult.event.join')
   })
 
-  it('claims before dispatch, then acknowledges success or releases failure', () => {
-    const drain = sourceBetween(
-      'async function maybeDrainParentSubThreadMailbox(',
-      'function recoverPendingSubThreadMailboxes()'
-    )
-    const claim = drain.indexOf('AppStore.claimSubThreadMailboxEvents(')
-    const dispatch = drain.indexOf('dispatchRunWithProviderPauseRef(payload, { sender })')
-    const acknowledge = drain.indexOf('AppStore.acknowledgeSubThreadMailboxDelivery(')
-
-    expect(claim).toBeGreaterThanOrEqual(0)
-    expect(dispatch).toBeGreaterThan(claim)
-    expect(acknowledge).toBeGreaterThan(dispatch)
-    expect(drain).toContain('AppStore.releaseSubThreadMailboxDelivery(')
-    expect(drain).toContain('createSubThreadMailboxDeliveryRunId(')
-    expect(drain).toContain('sessionTrust: false')
-    // Solo drain must not flip ensembles through shouldAutoResumeParent —
-    // ensemble parents branch to maybeDrainEnsembleSubThreadMailbox first.
-    expect(drain).toContain("parent.chatKind === 'ensemble'")
-    expect(drain).toContain('maybeDrainEnsembleSubThreadMailbox(parentChatId)')
+  it('has no auto-dispatch leg: a return can never start or ride a parent run', () => {
+    // 2026-08-19 Cambridge regression: the user cancelled a round and the
+    // mailbox drain immediately started another. The removal is structural —
+    // none of the delivery machinery may exist, in any spelling. Agent-side
+    // visibility is the pending-result context block at prompt composition
+    // plus the list_subthreads({waveId}) poll and read_subthread_result.
+    expect(indexSource).not.toContain('maybeDrainParentSubThreadMailbox')
+    expect(indexSource).not.toContain('maybeDrainEnsembleSubThreadMailbox')
+    expect(indexSource).not.toContain('dispatchParentRunWithPendingSubThreadMailbox')
+    expect(indexSource).not.toContain('shouldAutoResumeParent')
+    expect(indexSource).not.toContain('shouldDrainEnsembleMailbox')
+    expect(indexSource).not.toContain('resolveAuthoritySeat')
+    expect(indexSource).not.toContain('buildSubThreadMailboxContinuationPrompt')
+    expect(indexSource).not.toContain('attachSubThreadMailboxToParentPrompt')
+    expect(indexSource).not.toContain('claimSubThreadMailboxEvents')
+    expect(indexSource).not.toContain('acknowledgeSubThreadMailboxDelivery')
+    expect(indexSource).not.toContain('releaseSubThreadMailboxDelivery')
+    expect(indexSource).not.toContain('createSubThreadMailboxDeliveryRunId')
+    expect(indexSource).not.toContain('subThreadMailboxDeliveriesInFlight')
   })
 
-  it('keeps delivery under the hood and wires terminal/startup replay seams', () => {
-    const drain = sourceBetween(
-      'async function maybeDrainParentSubThreadMailbox(',
-      'function recoverPendingSubThreadMailboxes()'
+  it('keeps the join deadline reaper alive without a delivery leg', () => {
+    const timer = sourceBetween(
+      'function scheduleSubThreadJoinEvaluation(',
+      'async function failHungEphemeralFleetWorkersOnJoinDeadline('
     )
+    expect(timer).toContain('ensureSubThreadJoinDeadlineEvent(parentChatId, current)')
+    expect(timer).toContain('failHungEphemeralFleetWorkersOnJoinDeadline(parentChatId, groupId)')
 
-    expect(drain).not.toContain('autoresume-prompt-')
-    expect(drain).not.toContain('AUTO_RESUME_CONTINUATION_KIND')
-    expect(indexSource).toContain('void maybeDrainParentSubThreadMailbox(event.session.appChatId)')
-    expect(indexSource).toContain('recoverPendingSubThreadMailboxes()')
-    expect(indexSource).toContain('async function maybeDrainEnsembleSubThreadMailbox(')
-  })
+    const reaper = sourceBetween(
+      'async function failHungEphemeralFleetWorkersOnJoinDeadline(',
+      'function recoverSubThreadControlPlane()'
+    )
+    expect(reaper).toContain('selectHungEphemeralFleetWorkers(')
+    // Stamp `cancelled` on the persisted row BEFORE aborting (flusher contract).
+    expect(reaper).toContain("status: 'cancelled' as const")
+    expect(reaper).toContain('settleSubThreadWorkerRun(subThreadId, runId')
+    expect(reaper).toContain("outcome: 'cancelled'")
 
-  it('attaches pending events to the next ordinary parent dispatch without bypassing main', () => {
-    const attachment = sourceBetween(
-      'async function dispatchParentRunWithPendingSubThreadMailbox(',
+    // Startup recovery keeps its orphan-run settle + worker-queue + join-timer
+    // legs (renamed — the old name advertised the deleted drain leg).
+    expect(indexSource).toContain('recoverSubThreadControlPlane()')
+    expect(indexSource).not.toContain('recoverPendingSubThreadMailboxes')
+    const recovery = sourceBetween(
+      'function recoverSubThreadControlPlane()',
       '/**\n * Surface a sub-thread-dispatch failure'
     )
-
-    expect(attachment).toContain("parentPrompt.trimStart().startsWith('/')")
-    expect(attachment).toContain('buildSubThreadMailboxContinuationPrompt(claimed.events)')
-    expect(attachment).toContain('attachSubThreadMailboxToParentPrompt(parentPrompt, mailboxPrompt)')
-    expect(attachment).toContain('originalPostureWasValid')
-    expect(attachment).toContain('verifyRunPosture(')
-    expect(attachment).toContain('runPostureContextFromPayload(mailboxPayload)')
-    expect(attachment).toContain('await dispatch(mailboxPayload, event, observer)')
-    expect(attachment).toContain('AppStore.acknowledgeSubThreadMailboxDelivery(')
-    expect(attachment).toContain('AppStore.releaseSubThreadMailboxDelivery(')
-    expect(attachment).not.toContain('taskWraithMcpProfileId:')
-  })
-
-  it('wraps the normal dispatch facade instead of creating a parallel runtime path', () => {
-    expect(indexSource).toContain(
-      'const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)'
-    )
-    expect(indexSource).toContain('dispatchParentRunWithPendingSubThreadMailbox(')
-    const runtimeProfile = sourceBetween(
-      'function applyRuntimeProfileToPayload(',
-      'async function getCliProviderStatus('
-    )
-    expect(runtimeProfile).toContain('const resolution = resolveTaskWraithMcpProfile({')
-    expect(runtimeProfile).toContain('const providerSeat = applyProviderSeatGeneration({')
-    expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = providerSeat.profileId')
+    expect(recovery).toContain('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    expect(recovery).toContain('recoverSubThreadWorkerQueues()')
+    expect(recovery).toContain('scheduleSubThreadJoinEvaluation(')
   })
 
   it('broadcasts the parent in the same synchronous turn as its save (wave-return ordering)', () => {
     const producer = sourceBetween(
       'async function maybePropagateLinkedChildResult(',
-      'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
+      'function subThreadJoinTimerKey('
     )
     const saveParent = producer.indexOf('AppStore.saveChat(updatedParent)')
     const broadcastParent = producer.indexOf('broadcastChatUpdated(updatedParent)')
@@ -124,7 +110,7 @@ describe('sub-thread mailbox main-process integration', () => {
   it('settles ephemeral fleet worktrees before archive, including empty done', () => {
     const producer = sourceBetween(
       'async function maybePropagateLinkedChildResult(',
-      'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
+      'function subThreadJoinTimerKey('
     )
     const helper = sourceBetween(
       'async function settleEphemeralFleetWriterIfNeeded(input: {',
@@ -150,23 +136,11 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(repairMark).toBeGreaterThan(repairSettle)
   })
 
-  it('gates automatic wake by durable join readiness and preserves worker trust caps', () => {
-    const drain = sourceBetween(
-      'async function maybeDrainParentSubThreadMailbox(',
-      'function recoverPendingSubThreadMailboxes()'
-    )
-    const ensembleDrain = sourceBetween(
-      'async function maybeDrainEnsembleSubThreadMailbox(',
-      'async function maybeDrainParentSubThreadMailbox('
-    )
+  it('keeps delegation worker trust caps and join scheduling on the spawn path', () => {
     const delegation = sourceBetween(
       "} else if (toolName === 'delegate_to_subthread') {",
       'const finalRichResult = richResult as McpToolExecutionResult | null'
     )
-
-    expect(drain).toContain('deliverableSubThreadMailboxEvents(parentChatId, pending)')
-    expect(ensembleDrain).toContain('deliverableSubThreadMailboxEvents(parentChatId, pending)')
-    expect(ensembleDrain).toContain('shouldDrainEnsembleMailbox({')
     expect(indexSource).toContain('scheduleSubThreadJoinEvaluation(')
     expect(indexSource).toContain("outcome: 'requires_action'")
     expect(delegation).toContain('joinPolicy')
@@ -174,5 +148,12 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(delegation).toContain('resolveSubThreadWorkerPermissions({')
     expect(delegation).toContain("presetId: 'read_only'")
     expect(indexSource).toContain('child.delegationContext?.workerControl?.events')
+  })
+
+  it('dispatches through the run facade with no mailbox attachment tail', () => {
+    // The facade wrapper survives for its history-clear gate and solo-wakeup
+    // cancel; only its mailbox attachment tail is gone (absence pinned above).
+    expect(indexSource).toContain('createRunDispatchFacade(runDispatchFacadeDeps)')
+    expect(indexSource).toContain('return baseDispatchRunWithProviderPause(payload, event, observer)')
   })
 })

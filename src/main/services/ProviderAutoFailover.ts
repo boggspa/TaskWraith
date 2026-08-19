@@ -275,7 +275,7 @@ export async function runProviderAutoFailover(
     ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
   }
   // Sign for the (current) failed provider as a defensive baseline; the seam
-  // re-signs for the rerouted target. Mirrors maybeAutoResumeParentAgent.
+  // re-signs for the rerouted target.
   payload.effectivePermissionsSignature = deps.signPosture(payload.approvalMode, payload.effectivePermissions, {
     provider: payload.provider,
     scope: payload.scope,

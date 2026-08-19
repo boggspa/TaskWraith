@@ -41,12 +41,7 @@ import {
   enqueueSubThreadWorkerEvent,
   failClaimedSubThreadWorkerEvent
 } from '../SubThreadWorkerControl'
-import {
-  acknowledgeSubThreadMailboxDelivery,
-  claimPendingSubThreadMailboxEvents,
-  enqueueSubThreadMailboxEvent,
-  releaseSubThreadMailboxDelivery
-} from '../SubThreadMailbox'
+import { enqueueSubThreadMailboxEvent } from '../SubThreadMailbox'
 import { setScopedPathAccessTestHookForTests } from '../ScopedPathAccess'
 
 function makeDeps(
@@ -1717,7 +1712,7 @@ describe('subthread workspace tools', () => {
       outcome: 'done',
       content: 'Sensitive sibling result'
     }).mailbox
-    const thirdMailbox = enqueueSubThreadMailboxEvent(secondMailbox, {
+    const mailbox = enqueueSubThreadMailboxEvent(secondMailbox, {
       parentChatId: 'parent-1',
       subThreadId: 'child-1',
       subThreadProvider: 'codex',
@@ -1726,26 +1721,6 @@ describe('subthread workspace tools', () => {
       outcome: 'requires_action',
       content: 'Sensitive blocked result'
     }).mailbox
-    const claimedMailbox = claimPendingSubThreadMailboxEvents(thirdMailbox, {
-      deliveryRunId: 'mailbox-run-coalesced',
-      eventIds: [thirdMailbox.events[0].id, thirdMailbox.events[1].id],
-      claimedAt: '2026-07-11T12:00:02.000Z'
-    }).mailbox
-    const deliveredMailbox = acknowledgeSubThreadMailboxDelivery(
-      claimedMailbox,
-      'mailbox-run-coalesced',
-      { processedAt: '2026-07-11T12:00:03.000Z' }
-    ).mailbox
-    const blockedMailboxClaim = claimPendingSubThreadMailboxEvents(deliveredMailbox, {
-      deliveryRunId: 'mailbox-run-blocked',
-      eventIds: [deliveredMailbox.events[2].id],
-      claimedAt: '2026-07-11T12:00:04.000Z'
-    }).mailbox
-    const mailbox = releaseSubThreadMailboxDelivery(
-      blockedMailboxClaim,
-      'mailbox-run-blocked',
-      { failedAt: '2026-07-11T12:00:05.000Z', error: 'Sensitive delivery failure' }
-    ).mailbox
     const chat = {
       appChatId: 'child-1',
       parentChatId: 'parent-1',
@@ -1818,19 +1793,19 @@ describe('subthread workspace tools', () => {
       blockedWorkerCount: 1,
       mailbox: {
         retainedEvents: 3,
-        pending: 1,
-        processed: 2,
-        blocked: 1,
-        delivery: { batches: 1, coalescedBatches: 1, coalescedWakeupsAvoided: 1 }
+        pending: 0,
+        processed: 3,
+        blocked: 0,
+        delivery: { batches: 3, coalescedBatches: 0, coalescedWakeupsAvoided: 0 }
       }
     })
     expect(listed.subthreads[0]).toMatchObject({
       mailbox: {
         retainedEvents: 2,
-        pending: 1,
-        processed: 1,
-        blocked: 1,
-        delivery: { batches: 1, coalescedBatches: 1, coalescedWakeupsAvoided: 0 }
+        pending: 0,
+        processed: 2,
+        blocked: 0,
+        delivery: { batches: 2, coalescedBatches: 0, coalescedWakeupsAvoided: 0 }
       },
       workerActions: {
         inspect: { tool: 'read_subthread_result', depth: 'events-only' },
@@ -1862,7 +1837,6 @@ describe('subthread workspace tools', () => {
     expect(serialized).not.toContain('Sensitive sibling result')
     expect(serialized).not.toContain('Sensitive blocked result')
     expect(serialized).not.toContain('Sensitive worker failure')
-    expect(serialized).not.toContain('Sensitive delivery failure')
     expect(serialized).not.toContain('sensitive-system-fingerprint')
     expect(serialized).not.toContain('sensitive-tools-fingerprint')
   })

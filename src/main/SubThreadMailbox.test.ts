@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS,
-  acknowledgeSubThreadMailboxDelivery,
-  claimPendingSubThreadMailboxEvents,
-  createSubThreadMailboxDeliveryRunId,
   createSubThreadMailboxEventId,
   enqueueSubThreadMailboxEvent,
   normalizeSubThreadMailbox,
   normalizeSubThreadMailboxLedger,
-  pendingSubThreadMailboxEvents,
-  releaseSubThreadMailboxDelivery,
   summarizeSubThreadMailbox
 } from './SubThreadMailbox'
 
@@ -53,19 +48,28 @@ describe('SubThreadMailbox', () => {
     expect(different).not.toBe(first)
   })
 
-  it('derives a stable delivery run id from the ordered mailbox batch', () => {
-    expect(createSubThreadMailboxDeliveryRunId(parentChatId, ['event-1', 'event-2'])).toBe(
-      createSubThreadMailboxDeliveryRunId(parentChatId, ['event-1', 'event-2'])
-    )
-    expect(createSubThreadMailboxDeliveryRunId(parentChatId, ['event-1', 'event-2'])).toMatch(
-      /^subthread-mailbox-[0-9a-f]{32}$/
-    )
-    expect(createSubThreadMailboxDeliveryRunId(parentChatId, ['event-1'])).not.toBe(
-      createSubThreadMailboxDeliveryRunId(parentChatId, ['event-2'])
-    )
+  it('stamps events processed at enqueue — the ledger has no delivery leg', () => {
+    const { mailbox, event, inserted } = enqueueSubThreadMailboxEvent(undefined, {
+      parentChatId: 'parent-1',
+      subThreadId: 'child-1',
+      subThreadTitle: 'Ledger check',
+      sourceAssistantMessageId: 'assistant-1',
+      outcome: 'done',
+      required: true,
+      priority: 'normal',
+      content: 'Ledgered result.'
+    })
+    expect(inserted).toBe(true)
+    expect(event.processedAt).toBe(event.createdAt)
+    expect(event.deliveryRunId).toBeUndefined()
+    const summary = summarizeSubThreadMailbox(mailbox)
+    expect(summary.pending).toBe(0)
+    expect(summary.claimed).toBe(0)
+    expect(summary.blocked).toBe(0)
+    expect(summary.processed).toBe(1)
   })
 
-  it('enqueues ordered pending events with processedAt=null and deduplicates by id', () => {
+  it('enqueues ordered ledger events and deduplicates by id', () => {
     const first = enqueueSubThreadMailboxEvent(undefined, eventInput(), {
       now: '2026-07-11T12:00:00.000Z'
     })
@@ -79,7 +83,7 @@ describe('SubThreadMailbox', () => {
     )
 
     expect(first.inserted).toBe(true)
-    expect(first.event).toMatchObject({ sequence: 1, processedAt: null })
+    expect(first.event).toMatchObject({ sequence: 1, processedAt: '2026-07-11T12:00:00.000Z' })
     expect(duplicate.inserted).toBe(false)
     expect(duplicate.mailbox.events).toHaveLength(1)
     expect(second.event.sequence).toBe(2)
@@ -125,80 +129,11 @@ describe('SubThreadMailbox', () => {
     expect(result.event.payload).toMatchObject({ truncated: true, originalChars: content.length })
   })
 
-  it('claims pending events once in sequence order under a stable delivery run id', () => {
-    const first = enqueueSubThreadMailboxEvent(undefined, eventInput()).mailbox
-    const mailbox = enqueueSubThreadMailboxEvent(
-      first,
-      eventInput({ sourceAssistantMessageId: 'assistant-2' })
-    ).mailbox
-    const claimed = claimPendingSubThreadMailboxEvents(mailbox, {
-      deliveryRunId: 'mailbox-run-1',
-      claimedAt: '2026-07-11T12:03:00.000Z'
-    })
-    const competing = claimPendingSubThreadMailboxEvents(claimed.mailbox, {
-      deliveryRunId: 'mailbox-run-2',
-      claimedAt: '2026-07-11T12:04:00.000Z'
-    })
-
-    expect(claimed.events.map((event) => event.sequence)).toEqual([1, 2])
-    expect(claimed.events.every((event) => event.deliveryRunId === 'mailbox-run-1')).toBe(true)
-    expect(claimed.events.every((event) => event.deliveryAttempts === 1)).toBe(true)
-    expect(competing.events).toHaveLength(0)
-  })
-
-  it('acknowledges only events claimed by the matching delivery run', () => {
-    const mailbox = enqueueSubThreadMailboxEvent(undefined, eventInput()).mailbox
-    const claimed = claimPendingSubThreadMailboxEvents(mailbox, {
-      deliveryRunId: 'mailbox-run-1',
-      claimedAt: '2026-07-11T12:03:00.000Z'
-    }).mailbox
-    const wrong = acknowledgeSubThreadMailboxDelivery(claimed, 'other-run', {
-      processedAt: '2026-07-11T12:04:00.000Z'
-    })
-    const acknowledged = acknowledgeSubThreadMailboxDelivery(wrong.mailbox, 'mailbox-run-1', {
-      processedAt: '2026-07-11T12:05:00.000Z'
-    })
-
-    expect(wrong.acknowledgedEventIds).toEqual([])
-    expect(acknowledged.acknowledgedEventIds).toEqual([claimed.events[0].id])
-    expect(acknowledged.mailbox.events[0]).toMatchObject({
-      deliveryRunId: 'mailbox-run-1',
-      processedAt: '2026-07-11T12:05:00.000Z'
-    })
-    expect(pendingSubThreadMailboxEvents(acknowledged.mailbox)).toHaveLength(0)
-  })
-
-  it('releases a failed claim for retry without losing delivery-attempt history', () => {
-    const mailbox = enqueueSubThreadMailboxEvent(undefined, eventInput()).mailbox
-    const claimed = claimPendingSubThreadMailboxEvents(mailbox, {
-      deliveryRunId: 'mailbox-run-1',
-      claimedAt: '2026-07-11T12:03:00.000Z'
-    }).mailbox
-    const released = releaseSubThreadMailboxDelivery(claimed, 'mailbox-run-1', {
-      failedAt: '2026-07-11T12:04:00.000Z',
-      error: 'preflight declined'
-    })
-    const retried = claimPendingSubThreadMailboxEvents(released.mailbox, {
-      deliveryRunId: 'mailbox-run-2',
-      claimedAt: '2026-07-11T12:05:00.000Z'
-    })
-
-    expect(released.releasedEventIds).toHaveLength(1)
-    expect(released.mailbox.events[0]).toMatchObject({
-      deliveryAttempts: 1,
-      lastDeliveryError: {
-        at: '2026-07-11T12:04:00.000Z',
-        message: 'preflight declined'
-      }
-    })
-    expect(released.mailbox.events[0].deliveryRunId).toBeUndefined()
-    expect(retried.events[0].deliveryAttempts).toBe(2)
-  })
-
-  it('summarizes retained delivery state and coalesced wakes without payload content', () => {
+  it('summarizes the processed ledger without payload content', () => {
     const first = enqueueSubThreadMailboxEvent(
       undefined,
-      eventInput({ content: 'Sensitive first result' })
+      eventInput({ content: 'Sensitive first result' }),
+      { now: '2026-07-11T12:01:00.000Z' }
     ).mailbox
     const second = enqueueSubThreadMailboxEvent(
       first,
@@ -207,7 +142,8 @@ describe('SubThreadMailbox', () => {
         sourceAssistantMessageId: 'assistant-2',
         outcome: 'failed',
         content: 'Sensitive second result'
-      })
+      }),
+      { now: '2026-07-11T12:02:00.000Z' }
     ).mailbox
     const third = enqueueSubThreadMailboxEvent(
       second,
@@ -215,56 +151,32 @@ describe('SubThreadMailbox', () => {
         sourceAssistantMessageId: 'assistant-3',
         outcome: 'requires_action',
         content: 'Sensitive blocked result'
-      })
+      }),
+      { now: '2026-07-11T12:03:00.000Z' }
     ).mailbox
-    const delivered = claimPendingSubThreadMailboxEvents(third, {
-      deliveryRunId: 'mailbox-run-coalesced',
-      eventIds: [third.events[0].id, third.events[1].id],
-      claimedAt: '2026-07-11T12:03:00.000Z'
-    }).mailbox
-    const acknowledged = acknowledgeSubThreadMailboxDelivery(
-      delivered,
-      'mailbox-run-coalesced',
-      { processedAt: '2026-07-11T12:04:00.000Z' }
-    ).mailbox
-    const blockedClaim = claimPendingSubThreadMailboxEvents(acknowledged, {
-      deliveryRunId: 'mailbox-run-blocked',
-      eventIds: [acknowledged.events[2].id],
-      claimedAt: '2026-07-11T12:05:00.000Z'
-    }).mailbox
-    const blocked = releaseSubThreadMailboxDelivery(blockedClaim, 'mailbox-run-blocked', {
-      failedAt: '2026-07-11T12:06:00.000Z',
-      error: 'Sensitive delivery failure'
-    }).mailbox
 
-    const parentSummary = summarizeSubThreadMailbox(blocked)
-    const childSummary = summarizeSubThreadMailbox(blocked, { subThreadId: 'child-1' })
+    const parentSummary = summarizeSubThreadMailbox(third)
+    const childSummary = summarizeSubThreadMailbox(third, { subThreadId: 'child-1' })
     expect(parentSummary).toEqual({
       retainedEvents: 3,
-      pending: 1,
+      pending: 0,
       claimed: 0,
-      processed: 2,
-      blocked: 1,
+      processed: 3,
+      blocked: 0,
       outcomes: { done: 1, requires_action: 1, failed: 1, cancelled: 0 },
       delivery: {
-        processedEvents: 2,
-        batches: 1,
-        coalescedBatches: 1,
-        coalescedWakeupsAvoided: 1,
-        lastProcessedAt: '2026-07-11T12:04:00.000Z'
+        processedEvents: 3,
+        batches: 3,
+        coalescedBatches: 0,
+        coalescedWakeupsAvoided: 0,
+        lastProcessedAt: '2026-07-11T12:03:00.000Z'
       }
     })
     expect(childSummary).toMatchObject({
       retainedEvents: 2,
-      pending: 1,
-      processed: 1,
-      blocked: 1,
-      delivery: {
-        processedEvents: 1,
-        batches: 1,
-        coalescedBatches: 1,
-        coalescedWakeupsAvoided: 0
-      }
+      pending: 0,
+      processed: 2,
+      blocked: 0
     })
     expect(JSON.stringify(parentSummary)).not.toContain('Sensitive')
     expect(JSON.stringify(childSummary)).not.toContain('Sensitive')
@@ -326,6 +238,8 @@ describe('SubThreadMailbox', () => {
     expect(normalized.parentChatId).toBe(parentChatId)
     expect(normalized.events.map((event) => event.id)).toEqual(['event-1', 'event-2'])
     expect(normalized.nextSequence).toBe(3)
+    // Legacy pre-removal pending rows are stamped processed at read.
+    expect(normalized.events.every((event) => event.processedAt === event.createdAt)).toBe(true)
   })
 
   it('normalizes ledger keys without allowing prototype mutation', () => {

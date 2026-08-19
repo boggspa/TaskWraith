@@ -110,8 +110,8 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'broadcastRemoteProjectionSnapshot()')
     // Universal settle runs before sub-thread worker control recovery.
     const recoverPending = sourceBetween(
-      'function recoverPendingSubThreadMailboxes(): void {',
-      'function dispatchParentRunWithPendingSubThreadMailbox('
+      'function recoverSubThreadControlPlane(): void {',
+      '/**\n * Surface a sub-thread-dispatch failure'
     )
     expect(
       recoverPending.indexOf('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')

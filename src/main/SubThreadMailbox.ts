@@ -17,7 +17,10 @@ export interface SubThreadMailboxEvent {
   parentChatId: string
   kind: 'subthread_result'
   createdAt: string
-  /** Managed-event acknowledgement: null until a parent delivery accepts it. */
+  /** Ledger stamp. New events are processed at enqueue (the transcript
+   * projection is the only delivery), and normalize stamps legacy pre-removal
+   * rows at read — so this is never null after decode; the type stays
+   * nullable only for the raw persisted shape. */
   processedAt: string | null
   outcome: SubThreadMailboxOutcome
   required: boolean
@@ -45,7 +48,8 @@ export interface SubThreadMailboxEvent {
     truncated?: boolean
     originalChars?: number
   }
-  /** Stable parent run that currently owns delivery of this event. */
+  /** Legacy delivery-leg fields: retained so pre-removal persisted events
+   * still parse. Never written for new events. */
   deliveryRunId?: string
   claimedAt?: string
   deliveryAttempts: number
@@ -185,7 +189,10 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
     ? (event.outcome as SubThreadMailboxOutcome)
     : 'done'
   const createdAt = nonEmptyString(event.createdAt) || new Date(0).toISOString()
-  const processedAt = nonEmptyString(event.processedAt) || null
+  // Legacy migration (2026-08-19): the delivery legs are gone, so a null
+  // stamp can never be serviced. Pre-removal pending rows are stamped at
+  // creation time on read, keeping summaries quiet and retention caps live.
+  const processedAt = nonEmptyString(event.processedAt) || createdAt
   const provider = PROVIDERS.has(source.subThreadProvider as ProviderId)
     ? (source.subThreadProvider as ProviderId)
     : undefined
@@ -338,17 +345,6 @@ export function createSubThreadMailboxEventId(
   return `subthread-result-${hash}`
 }
 
-export function createSubThreadMailboxDeliveryRunId(
-  parentChatId: string,
-  orderedEventIds: readonly string[]
-): string {
-  const hash = createHash('sha256')
-    .update(`${parentChatId}\0${orderedEventIds.join('\0')}`)
-    .digest('hex')
-    .slice(0, 32)
-  return `subthread-mailbox-${hash}`
-}
-
 export function enqueueSubThreadMailboxEvent(
   current: SubThreadMailbox | undefined,
   input: SubThreadMailboxEventInput,
@@ -367,14 +363,18 @@ export function enqueueSubThreadMailboxEvent(
 
   const originalContent = String(input.content || '')
   const content = originalContent.slice(0, MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS)
+  const createdAt = input.createdAt || options.now || new Date().toISOString()
   const event: SubThreadMailboxEvent = {
     schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
     id,
     sequence: mailbox.nextSequence,
     parentChatId: input.parentChatId,
     kind: 'subthread_result',
-    createdAt: input.createdAt || options.now || new Date().toISOString(),
-    processedAt: null,
+    createdAt,
+    // Ledger semantics: the transcript projection is the delivery. Nothing
+    // claims or drains events any more, so an event is processed the moment
+    // it is durably recorded (2026-08-19 auto-dispatch removal).
+    processedAt: createdAt,
     outcome: input.outcome,
     required: input.required !== false,
     priority: input.priority === 'interrupt' ? 'interrupt' : 'normal',
@@ -405,16 +405,6 @@ export function enqueueSubThreadMailboxEvent(
     event,
     inserted: true
   }
-}
-
-export function pendingSubThreadMailboxEvents(
-  mailbox: SubThreadMailbox | undefined
-): SubThreadMailboxEvent[] {
-  return mailbox
-    ? [...mailbox.events]
-        .filter((event) => event.processedAt === null)
-        .sort((a, b) => a.sequence - b.sequence)
-    : []
 }
 
 function processedMailboxBatchKey(event: SubThreadMailboxEvent): string {
@@ -475,86 +465,4 @@ export function summarizeSubThreadMailbox(
       ...(lastProcessedAt ? { lastProcessedAt } : {})
     }
   }
-}
-
-export function claimPendingSubThreadMailboxEvents(
-  current: SubThreadMailbox,
-  input: {
-    deliveryRunId: string
-    claimedAt?: string
-    eventIds?: string[]
-    limit?: number
-  }
-): { mailbox: SubThreadMailbox; events: SubThreadMailboxEvent[] } {
-  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
-  const eventIdSet = input.eventIds?.length ? new Set(input.eventIds) : null
-  const limit = Math.max(1, Math.floor(input.limit || Number.MAX_SAFE_INTEGER))
-  const candidates = mailbox.events
-    .filter(
-      (event) =>
-        event.processedAt === null &&
-        (!eventIdSet || eventIdSet.has(event.id)) &&
-        (!event.deliveryRunId || event.deliveryRunId === input.deliveryRunId)
-    )
-    .slice(0, limit)
-  const candidateIds = new Set(candidates.map((event) => event.id))
-  const claimedAt = input.claimedAt || new Date().toISOString()
-  const events = mailbox.events.map((event) => {
-    if (!candidateIds.has(event.id) || event.deliveryRunId === input.deliveryRunId) return event
-    return {
-      ...event,
-      deliveryRunId: input.deliveryRunId,
-      claimedAt,
-      deliveryAttempts: event.deliveryAttempts + 1,
-      lastDeliveryError: undefined
-    }
-  })
-  const nextMailbox = { ...mailbox, events }
-  return {
-    mailbox: nextMailbox,
-    events: candidates.map(
-      (candidate) => events.find((event) => event.id === candidate.id) || candidate
-    )
-  }
-}
-
-export function acknowledgeSubThreadMailboxDelivery(
-  current: SubThreadMailbox,
-  deliveryRunId: string,
-  options: { processedAt?: string } = {}
-): { mailbox: SubThreadMailbox; acknowledgedEventIds: string[] } {
-  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
-  const processedAt = options.processedAt || new Date().toISOString()
-  const acknowledgedEventIds: string[] = []
-  const events = mailbox.events.map((event) => {
-    if (event.processedAt !== null || event.deliveryRunId !== deliveryRunId) return event
-    acknowledgedEventIds.push(event.id)
-    return { ...event, processedAt }
-  })
-  return {
-    mailbox: { ...mailbox, events: capMailboxEvents(events) },
-    acknowledgedEventIds
-  }
-}
-
-export function releaseSubThreadMailboxDelivery(
-  current: SubThreadMailbox,
-  deliveryRunId: string,
-  options: { failedAt?: string; error: string }
-): { mailbox: SubThreadMailbox; releasedEventIds: string[] } {
-  const mailbox = normalizeSubThreadMailbox(current, current.parentChatId)
-  const failedAt = options.failedAt || new Date().toISOString()
-  const message = options.error.trim() || 'Mailbox delivery failed.'
-  const releasedEventIds: string[] = []
-  const events = mailbox.events.map((event) => {
-    if (event.processedAt !== null || event.deliveryRunId !== deliveryRunId) return event
-    releasedEventIds.push(event.id)
-    const {
-      deliveryRunId: _deliveryRunId,
-      claimedAt: _claimedAt,
-      ...rest
-    } = event
-    return { ...rest, lastDeliveryError: { at: failedAt, message } }
-  })
-  return { mailbox: { ...mailbox, events }, releasedEventIds }
 }

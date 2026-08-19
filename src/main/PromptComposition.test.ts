@@ -275,16 +275,48 @@ describe('buildPendingSubThreadResultContextBlock', () => {
     expect(block).toBe('')
   })
 
-  it('does not replay mailbox-owned UI projections', () => {
+  it('surfaces mailbox-era projections — no delivery leg exists to replay them', () => {
+    // 2026-08-19: the mailbox auto-dispatch legs were removed (a drain started
+    // a round the user had just cancelled). This context block is now the only
+    // in-prompt path for returns, so projection-only cards must be included.
     const block = buildPendingSubThreadResultContextBlock(
       [
         message({ role: 'assistant', content: 'Delegated.' }),
-        subThreadReturn('Delivered exactly once.', { mailboxEventId: 'mailbox-event-1' })
+        subThreadReturn('Delivered via context block.', { mailboxEventId: 'mailbox-event-1' })
       ],
       'continue'
     )
 
-    expect(block).toBe('')
+    expect(block).toContain('Result from Codex sub-thread "Build check"')
+    expect(block).toContain('Delivered via context block.')
+    expect(block).toContain('list_subthreads')
+    expect(block).toContain('read_subthread_result')
+  })
+
+  it('discloses overflow beyond the cap and keeps the newest results', () => {
+    const returns = Array.from({ length: 7 }, (_, index) =>
+      message({
+        id: `sub-return-${index}`,
+        role: 'tool',
+        content: `Result ${index}`,
+        metadata: {
+          kind: 'subThreadReturn',
+          subThreadId: `sub-${index}`,
+          subThreadProvider: 'codex',
+          subThreadTitle: `Worker ${index}`,
+          mailboxEventId: `event-${index}`,
+          providerContextVisibility: 'projection-only' as const
+        }
+      })
+    )
+    const block = buildPendingSubThreadResultContextBlock(
+      [message({ role: 'assistant', content: 'Delegated.' }), ...returns],
+      'continue'
+    )
+
+    expect(block).toContain('Result 6')
+    expect(block).not.toContain('Result 0')
+    expect(block).toContain('2 earlier sub-thread results not shown')
   })
 })
 
@@ -382,14 +414,17 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
   })
 
-  it('keeps mailbox-owned return cards out of resumed provider prompts', () => {
+  it('injects mailbox-era return cards into resumed provider prompts — nothing else delivers them', () => {
+    // Inverted 2026-08-19 with the auto-dispatch removal: a resumed session
+    // has never seen this return (no mailbox continuation exists), so the
+    // pending-result block must ride the resumed prompt like any other.
     const result = composeRunPrompt({
       instructionContext: null,
       provider: 'codex',
       finalPrompt: 'Continue.',
       messages: [
         message({ role: 'assistant', content: 'Delegated.' }),
-        subThreadReturn('Delivered exactly once.', { mailboxEventId: 'mailbox-event-1' })
+        subThreadReturn('Delivered via context block.', { mailboxEventId: 'mailbox-event-1' })
       ],
       chatContextTurns: 6,
       resumeSessionId: 'codex-session-1',
@@ -399,9 +434,9 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Codex'
     })
 
-    expect(result.contextualPrompt).toMatch(/Continue\.$/)
-    expect(result.contextualPrompt).not.toContain('Delivered exactly once.')
-    expect(result.contextualPrompt).not.toContain('Pending sub-thread result context')
+    expect(result.contextualPrompt).toContain('Pending sub-thread result context')
+    expect(result.contextualPrompt).toContain('Delivered via context block.')
+    expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
   })
 
   it('replays compact Codex history when no app-server thread can be resumed', () => {

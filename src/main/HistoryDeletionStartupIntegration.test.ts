@@ -130,7 +130,7 @@ describe('history deletion startup integration', () => {
       wakeupRecovery
     )
     const mailboxRecovery = indexSource.indexOf(
-      'recoverPendingSubThreadMailboxes()',
+      'recoverSubThreadControlPlane()',
       wakeupRecovery
     )
     const mailboxGuard = lastGateIndexAtOrBefore(indexSource, mailboxRecovery)

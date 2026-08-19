@@ -572,12 +572,13 @@ export function sanitizeContextText(value: string, maxLength: number): string {
 }
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
-  return (
-    message.metadata?.kind === 'subThreadReturn' &&
-    message.metadata.providerContextVisibility !== 'projection-only' &&
-    typeof message.metadata.mailboxEventId !== 'string' &&
-    Boolean(message.content?.trim())
-  )
+  // Mailbox-era cards (projection-only + mailboxEventId) are deliberately
+  // INCLUDED since 2026-08-19: the mailbox auto-dispatch legs were removed
+  // (a drain could start a round the user had just cancelled), so this
+  // context block is the only in-prompt path for a return. Old transcripts
+  // cannot double-deliver — anything the mailbox once delivered sits before
+  // a later assistant turn, and this block only reads past the last one.
+  return message.metadata?.kind === 'subThreadReturn' && Boolean(message.content?.trim())
 }
 
 const MAX_PENDING_SUBTHREAD_RESULTS = 5
@@ -629,10 +630,9 @@ export function buildPendingSubThreadResultContextBlock(
     }
     return -1
   })()
-  const pending = messages
-    .slice(lastAssistantIndex + 1)
-    .filter(isSubThreadReturnMessage)
-    .slice(-MAX_PENDING_SUBTHREAD_RESULTS)
+  const eligible = messages.slice(lastAssistantIndex + 1).filter(isSubThreadReturnMessage)
+  const pending = eligible.slice(-MAX_PENDING_SUBTHREAD_RESULTS)
+  const omitted = eligible.length - pending.length
   if (pending.length === 0) return ''
 
   const lines = [
@@ -652,6 +652,13 @@ export function buildPendingSubThreadResultContextBlock(
       '</subthread_result>'
     )
   }
+  lines.push(
+    '',
+    ...(omitted > 0
+      ? [`${omitted} earlier sub-thread result${omitted === 1 ? '' : 's'} not shown here.`]
+      : []),
+    'All results stay readable on demand: poll a wave with list_subthreads({waveId}) and read any worker with read_subthread_result(subThreadId).'
+  )
   return lines.join('\n')
 }
 

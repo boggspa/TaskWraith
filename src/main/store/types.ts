@@ -2779,15 +2779,12 @@ export interface AppSettings {
    * `invoke_agent`, etc.) versus TaskWraith durable sub-threads. When
    * unset, the runtime asks on the first observable native request. */
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
-  /** When true (default), a parent chat is automatically continued after an
-   * opted-in linked child (delegated sub-thread or explicit side-chat return)
-   * finishes and its terminal result enters the durable parent mailbox.
-   * Without this, the back-propagated result just
-   * sits in the parent transcript until the user manually types
-   * something — the agent has no event to wake up on. See
-   * `src/main/AutoResumeParent.ts` for the gating logic and
-   * `maybePropagateLinkedChildResult` in `src/main/index.ts` for the
-   * dispatch site. */
+  /** RETIRED 2026-08-19: the mailbox auto-dispatch legs were removed — a
+   * child return never starts a parent run any more (the user cancelled a
+   * round and the drain started another). The field survives so persisted
+   * settings keep parsing; nothing in main reads it. Returns reach the
+   * parent agent through the pending-result prompt context block and the
+   * list_subthreads / read_subthread_result poll. */
   autoResumeParentOnSubThreadCompletion: boolean
   geminiMcpBridgeEnabled: boolean
   geminiMcpBridgeLastStatus?: GeminiMcpBridgeStatus

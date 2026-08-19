@@ -64,7 +64,8 @@ describe('AppStore sub-thread mailbox ledger', () => {
     expect(first.inserted).toBe(true)
     expect(duplicate.inserted).toBe(false)
     expect(mailbox.events.map((event) => event.sequence)).toEqual([1, 2])
-    expect(mailbox.events.every((event) => event.processedAt === null)).toBe(true)
+    // Ledger semantics: processed at enqueue — no delivery leg exists.
+    expect(mailbox.events.every((event) => event.processedAt === event.createdAt)).toBe(true)
     expect(fs.existsSync(join(userDataPath, 'subthread-mailboxes.json'))).toBe(true)
     expect(fs.existsSync(join(userDataPath, 'chats', 'parent-1.json'))).toBe(false)
   })
@@ -92,72 +93,16 @@ describe('AppStore sub-thread mailbox ledger', () => {
     expect(AppStore.getChat(child.appChatId)?.delegationContext?.joinPolicy).toEqual(joinPolicy)
   })
 
-  it('persists claim, release, retry, and acknowledgement transitions', () => {
-    AppStore.enqueueSubThreadMailboxEvent(eventInput())
-    const claimed = AppStore.claimSubThreadMailboxEvents('parent-1', {
-      deliveryRunId: 'delivery-1',
-      claimedAt: '2026-07-11T12:02:00.000Z'
-    })
-    expect(claimed.events).toHaveLength(1)
-
-    AppStore.releaseSubThreadMailboxDelivery('parent-1', 'delivery-1', {
-      failedAt: '2026-07-11T12:03:00.000Z',
-      error: 'dispatch unavailable'
-    })
-    const retried = AppStore.claimSubThreadMailboxEvents('parent-1', {
-      deliveryRunId: 'delivery-2',
-      claimedAt: '2026-07-11T12:04:00.000Z'
-    })
-    expect(retried.events[0].deliveryAttempts).toBe(2)
-
-    const acknowledged = AppStore.acknowledgeSubThreadMailboxDelivery(
-      'parent-1',
-      'delivery-2',
-      { processedAt: '2026-07-11T12:05:00.000Z' }
-    )
-    expect(acknowledged.acknowledgedEventIds).toHaveLength(1)
-    expect(AppStore.getPendingSubThreadMailboxes()).toEqual([])
-    expect(AppStore.getSubThreadMailbox('parent-1').events[0].processedAt).toBe(
-      '2026-07-11T12:05:00.000Z'
-    )
-  })
-
-  it('lists only parents with unprocessed events', () => {
-    AppStore.enqueueSubThreadMailboxEvent(eventInput('assistant-1'))
-    AppStore.enqueueSubThreadMailboxEvent({
-      ...eventInput('assistant-2'),
-      parentChatId: 'parent-2'
-    })
-    const claim = AppStore.claimSubThreadMailboxEvents('parent-2', {
-      deliveryRunId: 'delivery-2'
-    })
-    AppStore.acknowledgeSubThreadMailboxDelivery('parent-2', 'delivery-2')
-
-    expect(claim.events).toHaveLength(1)
-    expect(AppStore.getPendingSubThreadMailboxes().map((mailbox) => mailbox.parentChatId)).toEqual([
-      'parent-1'
-    ])
-  })
-
-  it('fences delivery acknowledgement on a prepared (uncommitted) deletion of the parent', () => {
+  it('fences ledger enqueue on a prepared (uncommitted) deletion of the parent', () => {
     saveParent()
-    AppStore.enqueueSubThreadMailboxEvent(eventInput())
-    AppStore.claimSubThreadMailboxEvents('parent-1', {
-      deliveryRunId: 'delivery-frozen',
-      claimedAt: '2026-07-21T12:00:00.000Z'
-    })
     AppStore.prepareHistoryDeletion({ kind: 'chat', rootChatId: 'parent-1' })
 
-    // The acknowledge writer must observe the durable fence exactly like
-    // enqueue/claim/release: no processedAt write into a frozen mailbox.
-    expect(() =>
-      AppStore.acknowledgeSubThreadMailboxDelivery('parent-1', 'delivery-frozen', {
-        processedAt: '2026-07-21T12:01:00.000Z'
-      })
-    ).toThrow(HistoryDeletionMutationBlockedError)
-    expect(
-      AppStore.getSubThreadMailbox('parent-1').events.some((event) => event.processedAt)
-    ).toBe(false)
+    // The one surviving mailbox writer must observe the durable fence:
+    // no ledger write into a frozen parent.
+    expect(() => AppStore.enqueueSubThreadMailboxEvent(eventInput())).toThrow(
+      HistoryDeletionMutationBlockedError
+    )
+    expect(AppStore.getSubThreadMailbox('parent-1').events).toEqual([])
   })
 
   it('deletes a parent mailbox with the parent chat and clears all ledgers with chat history', () => {

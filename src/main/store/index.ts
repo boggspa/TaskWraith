@@ -321,13 +321,9 @@ import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
 import {
-  acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
-  claimPendingSubThreadMailboxEvents,
   emptySubThreadMailbox,
   enqueueSubThreadMailboxEvent as enqueueMailboxEvent,
   normalizeSubThreadMailboxLedger,
-  pendingSubThreadMailboxEvents,
-  releaseSubThreadMailboxDelivery as releaseMailboxDelivery,
   type SubThreadMailbox,
   type SubThreadMailboxEventInput,
   type SubThreadMailboxLedger
@@ -8538,13 +8534,6 @@ export class AppStore {
     return ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
   }
 
-  static getPendingSubThreadMailboxes(): SubThreadMailbox[] {
-    const ledger = readSubThreadMailboxLedger()
-    return Object.values(ledger.mailboxes)
-      .filter((mailbox) => pendingSubThreadMailboxEvents(mailbox).length > 0)
-      .sort((a, b) => a.parentChatId.localeCompare(b.parentChatId))
-  }
-
   static enqueueSubThreadMailboxEvent(
     input: SubThreadMailboxEventInput,
     options: { now?: string } = {}
@@ -8573,68 +8562,6 @@ export class AppStore {
     )
     if (result.inserted) {
       ledger.mailboxes[input.parentChatId] = result.mailbox
-      writeSubThreadMailboxLedger(ledger)
-    }
-    return result
-  }
-
-  static claimSubThreadMailboxEvents(
-    parentChatId: string,
-    input: Parameters<typeof claimPendingSubThreadMailboxEvents>[1]
-  ): ReturnType<typeof claimPendingSubThreadMailboxEvents> {
-    this.assertHistoryMutationAllowed({
-      operation: 'Sub-thread mailbox delivery claim',
-      chatIds: [parentChatId],
-      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
-      runIds: [input.deliveryRunId]
-    })
-    const ledger = readSubThreadMailboxLedger()
-    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
-    const result = claimPendingSubThreadMailboxEvents(mailbox, input)
-    if (result.events.length > 0) {
-      ledger.mailboxes[parentChatId] = result.mailbox
-      writeSubThreadMailboxLedger(ledger)
-    }
-    return result
-  }
-
-  static acknowledgeSubThreadMailboxDelivery(
-    parentChatId: string,
-    deliveryRunId: string,
-    options: Parameters<typeof acknowledgeMailboxDelivery>[2] = {}
-  ): ReturnType<typeof acknowledgeMailboxDelivery> {
-    this.assertHistoryMutationAllowed({
-      operation: 'Sub-thread mailbox delivery acknowledge',
-      chatIds: [parentChatId],
-      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
-      runIds: [deliveryRunId]
-    })
-    const ledger = readSubThreadMailboxLedger()
-    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
-    const result = acknowledgeMailboxDelivery(mailbox, deliveryRunId, options)
-    if (result.acknowledgedEventIds.length > 0) {
-      ledger.mailboxes[parentChatId] = result.mailbox
-      writeSubThreadMailboxLedger(ledger)
-    }
-    return result
-  }
-
-  static releaseSubThreadMailboxDelivery(
-    parentChatId: string,
-    deliveryRunId: string,
-    options: Parameters<typeof releaseMailboxDelivery>[2]
-  ): ReturnType<typeof releaseMailboxDelivery> {
-    this.assertHistoryMutationAllowed({
-      operation: 'Sub-thread mailbox delivery release',
-      chatIds: [parentChatId],
-      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
-      runIds: [deliveryRunId]
-    })
-    const ledger = readSubThreadMailboxLedger()
-    const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
-    const result = releaseMailboxDelivery(mailbox, deliveryRunId, options)
-    if (result.releasedEventIds.length > 0) {
-      ledger.mailboxes[parentChatId] = result.mailbox
       writeSubThreadMailboxLedger(ledger)
     }
     return result
