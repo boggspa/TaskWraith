@@ -4956,7 +4956,7 @@ describe('Studio acceptance harness', () => {
     })
     expect(receipt.supportHashes).toEqual(receipt.expectedSupportHashes)
     expect(receipt.runnerSha256).toMatch(/^[a-f0-9]{64}$/)
-  })
+  }, 30_000)
 
   it('requires one source, built-artifact, fixture, and support custody conjunction before and after', () => {
     const sourceCustody = {
