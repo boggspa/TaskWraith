@@ -229,8 +229,8 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: 'e6b3ebda721bdf5fe1dc89dcabb9ee760a09680a475a723e9a288dca967c85ec',
-  sourceCount: 2278,
+  sourceDigest: '763749bb468eee81c87ac34e41a28671377bf6e88c247440633d5a64bee8b9a5',
+  sourceCount: 2268,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
@@ -670,6 +670,14 @@ function isStudioAcceptanceTestSource(relativePath) {
   return /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relativePath)
 }
 
+// Finder metadata and dependency/build caches are not custody source. They are
+// untracked, exist only on a developer machine, and change when tests run --
+// so counting them makes the pinned digest unmatchable in CI and stale locally.
+function isStudioAcceptanceCustodyNoise(relativePath) {
+  const segments = String(relativePath).split('/')
+  return segments.includes('node_modules') || segments[segments.length - 1] === '.DS_Store'
+}
+
 function isStudioAcceptanceBuildInputPath(relativePath) {
   const candidate = normalizeStudioAcceptanceCustodyPath(relativePath)
   return (
@@ -818,9 +826,14 @@ async function measureStudioAcceptanceSource(repoRoot) {
     ...(await collectStudioAcceptanceCustodyEntries(
       repoRoot,
       'src',
-      (relativePath) => !isStudioAcceptanceTestSource(relativePath)
+      (relativePath) =>
+        !isStudioAcceptanceTestSource(relativePath) && !isStudioAcceptanceCustodyNoise(relativePath)
     )),
-    ...(await collectStudioAcceptanceCustodyEntries(repoRoot, 'swift/TaskWraithBridge/Sources'))
+    ...(await collectStudioAcceptanceCustodyEntries(
+      repoRoot,
+      'swift/TaskWraithBridge/Sources',
+      (relativePath) => !isStudioAcceptanceCustodyNoise(relativePath)
+    ))
   ]
   for (const relativePath of STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS) {
     entries.push(...(await collectStudioAcceptanceCustodyEntries(repoRoot, relativePath)))

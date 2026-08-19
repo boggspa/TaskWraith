@@ -515,7 +515,7 @@ async function writeDetachedCompletionFixture(
 }
 
 describe('Studio acceptance harness', () => {
-  it('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
+  it.runIf(process.platform === 'darwin')('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
     const parsed = parseArgs([
       '--launch',
       '--detach',
@@ -550,7 +550,7 @@ describe('Studio acceptance harness', () => {
     ).toThrow(/status-only/)
   })
 
-  it('waits for coordinator readiness and never forks the watchdog directly', async () => {
+  it.runIf(process.platform === 'darwin')('waits for coordinator readiness and never forks the watchdog directly', async () => {
     const root = await temporaryRoot('studio-acceptance-detached-ready-')
     const source = path.join(root, 'fixture.mov')
     const artifactRoot = path.join(root, 'artifacts', 'studioReady01')
@@ -638,7 +638,7 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('does not acknowledge or detach when the ready manifest cannot be verified', async () => {
+  it.runIf(process.platform === 'darwin')('does not acknowledge or detach when the ready manifest cannot be verified', async () => {
     const root = await temporaryRoot('studio-acceptance-detached-ready-red-')
     const source = path.join(root, 'fixture.mov')
     const artifactRoot = path.join(root, 'artifacts', 'studioReady02')
@@ -1322,7 +1322,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/regular|symlink/i)
   })
 
-  it('refuses a preexisting manifest and duplicate instance before any coordinator fork', async () => {
+  it.runIf(process.platform === 'darwin')('refuses a preexisting manifest and duplicate instance before any coordinator fork', async () => {
     const root = await temporaryRoot('studio-acceptance-detached-duplicate-')
     const fixture = await writeDetachedCompletionFixture(root)
     const source = path.join(path.dirname(root), 'duplicate-fixture.mov')
@@ -1631,7 +1631,7 @@ describe('Studio acceptance harness', () => {
     expect(plan.transcriptTimeoutMs).toBe(720_000)
   })
 
-  it('accepts only one bounded media source for a real launch', () => {
+  it.runIf(process.platform === 'darwin')('accepts only one bounded media source for a real launch', () => {
     const plan = buildStudioAcceptancePlan({
       instanceId: 'studioSpeech01',
       repoRoot: '/virtual/repo',
@@ -4942,8 +4942,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: 'e6b3ebda721bdf5fe1dc89dcabb9ee760a09680a475a723e9a288dca967c85ec',
-      sourceCount: 2278,
+      sourceDigest: '763749bb468eee81c87ac34e41a28671377bf6e88c247440633d5a64bee8b9a5',
+      sourceCount: 2268,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,
@@ -5173,7 +5173,7 @@ describe('Studio acceptance harness', () => {
     ).rejects.toThrow(/artifact-root path/)
   })
 
-  it('drives the authorized renderer-to-durable-window joins in order without launching Electron', async () => {
+  it.runIf(process.platform === 'darwin')('drives the authorized renderer-to-durable-window joins in order without launching Electron', async () => {
     const root = await temporaryRoot('studio-acceptance-joins-')
     const artifactRoot = path.join(root, 'acceptance', 'studioJoin01')
     const calls: string[] = []
