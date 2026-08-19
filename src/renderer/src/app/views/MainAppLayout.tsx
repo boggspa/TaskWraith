@@ -1320,6 +1320,13 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   // Feeds the pane cell's identity-preserving chrome composer. Built inline it
   // was a fresh fragment per render, which defeated that composer (and with it
   // every mounted pane's memo) for the host-projection pane.
+  // Resting panes never answer document-root keyboard scroll; the grid routes
+  // the focused pane through renderFocusedChatCell instead.
+  const renderViewerPaneCell = useCallback(
+    (chatId: string, paneIndex: number) =>
+      renderMultiviewPaneCell(chatId, paneIndex, { ownsRootKeyboardScroll: false }),
+    [renderMultiviewPaneCell]
+  )
   const focusedPaneTopLeftChrome = useMemo(
     () => (
       <>
@@ -1887,11 +1894,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   onClose={() => multiview.setPaneMedia(paneIndex, null)}
                 />
               )}
-              renderViewerCell={renderMultiviewPaneCell}
+              renderViewerCell={renderViewerPaneCell}
               renderFocusedChatCell={(chatId, paneIndex) =>
                 renderMultiviewPaneCell(chatId, paneIndex, {
                   topLeftChromeExtra:
-                    chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined
+                    chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined,
+                  // Document-root keys reach every mounted transcript, so only
+                  // the focused pane acts on them — and not even that one while
+                  // the host runtime is stacked over it and owns them instead.
+                  ownsRootKeyboardScroll: !focusedHostOverlayRequired
                 })
               }
               showFocusedHostOverlay={focusedHostOverlayRequired}

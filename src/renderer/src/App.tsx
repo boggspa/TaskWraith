@@ -28901,7 +28901,7 @@ function App(): React.JSX.Element {
   const renderMultiviewPaneCell = (
     viewerChatId: string,
     viewerPaneIndex: number,
-    options: { topLeftChromeExtra?: ReactNode } = {}
+    options: { topLeftChromeExtra?: ReactNode; ownsRootKeyboardScroll?: boolean } = {}
   ): ReactNode => {
     const viewerChat = chatByIdRef.current.get(viewerChatId)
     if (!viewerChat) {
@@ -29392,6 +29392,7 @@ function App(): React.JSX.Element {
           options.topLeftChromeExtra,
           workspaceSidebarToggleButton
         )}
+        ownsRootKeyboardScroll={options.ownsRootKeyboardScroll === true}
         topRightChromeActions={viewerChromeActions}
         pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
         pendingAgentQuestions={

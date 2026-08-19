@@ -119,6 +119,18 @@ describe('chatViewPanePropsEqual', () => {
     ).toBe(false)
   })
 
+  it('re-renders when root keyboard-scroll ownership moves to another pane', () => {
+    // Focus moves between panes without touching their content, so this is the
+    // only prop that changes — if the comparator skipped it the newly focused
+    // pane would keep ignoring PageUp/End.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ ownsRootKeyboardScroll: false }),
+        makeProps({ ownsRootKeyboardScroll: true })
+      )
+    ).toBe(false)
+  })
+
   it('skips re-render when only the high-churn shared arrays change identity', () => {
     // The whole point: a token in another pane re-creates chats/runningChatIds
     // every frame, but this pane's own messages are unchanged -> no reconcile.

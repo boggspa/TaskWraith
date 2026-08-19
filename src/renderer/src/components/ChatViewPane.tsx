@@ -117,6 +117,12 @@ export interface ChatViewPaneProps extends Omit<
   topRightChrome?: ReactNode
   /** Focused-only legacy chrome that has not yet moved into a pane action. */
   topLeftChromeExtra?: ReactNode
+  /**
+   * Whether this pane answers keyboard scroll aimed at the document root.
+   * Every mounted transcript sees those events, so the grid grants this to the
+   * focused pane alone — otherwise one PageUp disengages follow in every pane.
+   */
+  ownsRootKeyboardScroll?: boolean
   topLeftChromeAction?: ChatViewPaneChromeAction
   topRightChromeActions?: ChatViewPaneChromeAction[]
   onDeleteMessage?: (paneIndex: number, chatId: string, messageId: string) => void
@@ -285,6 +291,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
     a.topLeftChromeExtra === b.topLeftChromeExtra &&
+    a.ownsRootKeyboardScroll === b.ownsRootKeyboardScroll &&
     chatViewPaneChromeActionEqual(a.topLeftChromeAction, b.topLeftChromeAction) &&
     chatViewPaneChromeActionsEqual(a.topRightChromeActions, b.topRightChromeActions) &&
     // Transcript handlers (the composer's own handlers moved into <Composer>).
@@ -524,6 +531,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     runCompleteNotice: props.runCompleteNotice,
     transcriptMounted: !props.isWelcomeChat,
     streamingActive: props.isThinking,
+    ownsRootKeyboardScroll: props.ownsRootKeyboardScroll === true,
     transcriptScrollRef: props.refs.scrollRef,
     transcriptContentRef: props.refs.contentRef,
     autoFollowRef: props.refs.autoFollowRef,

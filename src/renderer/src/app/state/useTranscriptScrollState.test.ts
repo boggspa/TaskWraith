@@ -217,6 +217,74 @@ describe('useTranscriptScrollState', () => {
     expect(autoFollowStateSetter).toHaveBeenCalledWith(false)
   })
 
+  it('ignores document-root key intent in a pane that does not own root scroll', () => {
+    // Multiview mounts this hook per pane and every instance listens on the
+    // window, so one PageUp with transcript prose focused (target = the
+    // document root) disengaged follow in EVERY pane at once. Only the pane
+    // the grid focused should act on a root-targeted key.
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true,
+      ownsRootKeyboardScroll: false
+    })
+
+    hookHarness.effectFactories[2]?.()
+    const autoFollowStateSetter = hookHarness.stateSetters[0]
+
+    hookHarness.windowListeners.get('keydown')?.({ key: 'PageUp', target: null })
+    hookHarness.windowListeners.get('keydown')?.({
+      key: 'End',
+      target: null,
+      preventDefault: vi.fn()
+    })
+
+    expect(autoFollowStateSetter).not.toHaveBeenCalled()
+  })
+
+  it('still answers keys aimed at its own scroller when it does not own root scroll', () => {
+    // Ownership gates only the ambiguous document-root event. A key genuinely
+    // targeted inside this pane's transcript is unambiguously its own.
+    class FakeNode {}
+    const ownTarget = new FakeNode()
+    vi.stubGlobal('Node', FakeNode)
+    ;(hookHarness.scroller as unknown as { contains: (node: unknown) => boolean }).contains = (
+      node
+    ) => node === ownTarget
+
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true,
+      ownsRootKeyboardScroll: false
+    })
+
+    hookHarness.effectFactories[2]?.()
+    const autoFollowStateSetter = hookHarness.stateSetters[0]
+
+    hookHarness.windowListeners.get('keydown')?.({ key: 'PageUp', target: ownTarget })
+
+    expect(autoFollowStateSetter).toHaveBeenCalledWith(false)
+  })
+
+  it('owns root key intent by default so the single-pane transcript is unchanged', () => {
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    hookHarness.effectFactories[2]?.()
+    const autoFollowStateSetter = hookHarness.stateSetters[0]
+
+    hookHarness.windowListeners.get('keydown')?.({ key: 'PageUp', target: null })
+
+    expect(autoFollowStateSetter).toHaveBeenCalledWith(false)
+  })
+
   it('releases follow from an unclassified native scrollbar scroll before the next transcript update', () => {
     const now = 1_700_000_000_000
     vi.spyOn(Date, 'now').mockReturnValue(now)

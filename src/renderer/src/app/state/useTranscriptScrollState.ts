@@ -43,6 +43,14 @@ interface UseTranscriptScrollStateBaseInput {
    *  jump-to-latest pill visible when follow is off even though text growth
    *  inside one bubble never bumps the message-count-based unread number. */
   streamingActive?: boolean
+  /**
+   * Whether this transcript answers keyboard scroll aimed at the document root
+   * (transcript prose is not focusable, so clicking it leaves the root
+   * focused). Every mounted transcript sees those events, so in a Multiview
+   * split they must not all act: the grid gives this to the focused pane only.
+   * Defaults true, which is the single-pane behaviour.
+   */
+  ownsRootKeyboardScroll?: boolean
   /** Optional pane-owned refs. Stable Multiview panes supply these so their
    * reader position and follow ownership survive transcript remounts. */
   transcriptScrollRef?: RefObject<HTMLDivElement | null>
@@ -76,6 +84,7 @@ export function useTranscriptScrollState({
   runCompleteNotice,
   transcriptMounted = true,
   streamingActive,
+  ownsRootKeyboardScroll = true,
   transcriptScrollRef: providedTranscriptScrollRef,
   transcriptContentRef: providedTranscriptContentRef,
   autoFollowRef: providedAutoFollowRef,
@@ -344,6 +353,12 @@ export function useTranscriptScrollState({
 
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
+
+  // Read through a ref so changing focus re-aims the listeners without
+  // rebinding the whole intent effect (which would drop the scrollbar-pointer
+  // latch mid-gesture).
+  const ownsRootKeyboardScrollRef = useRef(ownsRootKeyboardScroll)
+  ownsRootKeyboardScrollRef.current = ownsRootKeyboardScroll
 
   const clearProgrammaticScrollTarget = useCallback(() => {
     programmaticScrollTargetRef.current = null
@@ -800,13 +815,22 @@ export function useTranscriptScrollState({
       if (isEditableTranscriptKeyTarget(event.target)) return
       const target = event.target
       const isNodeTarget = typeof Node !== 'undefined' && target instanceof Node
-      if (
-        isNodeTarget &&
-        target !== document.body &&
-        target !== document.documentElement &&
-        !scroller.contains(target)
-      ) {
-        return
+      // A key aimed inside this transcript is unambiguously ours, whoever owns
+      // the document root.
+      const ownedByThisScroller = isNodeTarget && scroller.contains(target)
+      if (!ownedByThisScroller) {
+        if (
+          isNodeTarget &&
+          target !== document.body &&
+          target !== document.documentElement
+        ) {
+          return
+        }
+        // Document-root (and target-less) keys are seen by EVERY mounted
+        // transcript, so in a split each pane would answer the same keystroke:
+        // one PageUp disengaged follow in all of them and one End jumped all
+        // of them to the latest. Exactly one transcript owns that event.
+        if (!ownsRootKeyboardScrollRef.current) return
       }
       if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
         handleScrollIntent(-1)
