@@ -9251,9 +9251,9 @@ async function maybePropagateLinkedChildResult(
   const syntheticMessage: ChatMessage = {
     id: `linked-child-return-${linkedChild.appChatId}-${returnedAt}`,
     // Tool role keeps child-agent output out of system authority. The
-    // renderer keys off metadata.kind for the custom card, and the
-    // auto-resume path carries the payload in a user-role continuation
-    // prompt with the same untrusted-data wrapper.
+    // renderer keys off metadata.kind for the custom card, and prompt
+    // composition surfaces the payload in the pending-result context block
+    // with the same untrusted-data wrapper.
     role: 'tool',
     content: buildLinkedChildReturnContent({
       relation: decision.relation,
