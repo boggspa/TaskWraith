@@ -538,6 +538,21 @@ function resolveEmitProtocolVersion(
   return CHAT_UPDATE_PROTOCOL_V1
 }
 
+/**
+ * Out-param filled by buildChatUpdateDelivery. Never on the wire.
+ *
+ * Recovering a broken producer chain by baseline diff (instead of sending the
+ * whole record) removes the renderer OOM, but it also means the snapshot/patch
+ * ratio can no longer see the break: a producer that stopped deriving deltas
+ * reads as a healthy stream of patches. These flags keep the CAUSE countable.
+ */
+export interface ChatUpdateDeliveryDiagnostics {
+  /** A baseline was held, but the producer evidence was absent or did not chain. */
+  producerDeltaMissing: boolean
+  /** The change was recovered by diffing the baseline rather than sending the record. */
+  spliceRecovery: boolean
+}
+
 export function buildChatUpdateDelivery(input: {
   deliveryId: string
   revision: number
@@ -554,8 +569,15 @@ export function buildChatUpdateDelivery(input: {
    * coordinator flag) to emit compact field-mask patches.
    */
   protocolVersion?: ChatUpdateProtocolVersion
+  /** Optional out-param; mutated in place so the caller can count degradations. */
+  diagnostics?: ChatUpdateDeliveryDiagnostics
 }): ChatUpdateDelivery {
   const { baseline, chat, deliveryId, revision } = input
+  const diagnostics = input.diagnostics
+  if (diagnostics) {
+    diagnostics.producerDeltaMissing = false
+    diagnostics.spliceRecovery = false
+  }
   const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
   const producerDelta = input.producerDelta
   const candidateState = producerDelta ?? input.producerState
@@ -605,10 +627,21 @@ export function buildChatUpdateDelivery(input: {
     }
   }
 
-  // The v2 hot path is producer-only. If a caller skipped a mutation, revisions
-  // do not chain, or an insertion/reorder cannot be represented by the public
-  // append/update/delete vocabulary, one full snapshot repairs the baseline.
-  // Never rediscover the change by walking every historical message here.
+  // The v2 hot path is producer-only: an exact delta, already derived at the
+  // mutation seam, that needs no transcript walk at all. When a caller skips a
+  // mutation, revisions do not chain, or the change escapes the public
+  // append/update/delete vocabulary, the change is STILL recoverable without
+  // the whole record — the renderer's baseline is in hand, so diff it.
+  //
+  // Shipping the full record here instead was the 2026-08-19 renderer OOM: a
+  // producer that yields no delta (a swallowed incremental-persistence failure
+  // returns `delta: null`) degraded EVERY delivery to a snapshot, and on a
+  // 10k-message / 19 MB chat under seven concurrent runs that was 531
+  // snapshots and 0 patches in 17 minutes, filling V8's 3.76 GB renderer
+  // ceiling until SIGTRAP. Walking the transcript costs O(messages) on MAIN,
+  // which carries no such ceiling, at most once per delivery at 10 Hz — the
+  // side of the boundary that can afford it. A snapshot is still owed when
+  // there is no baseline to diff, or when the diff is no smaller than one.
   if (
     !producerDelta ||
     producerDelta.chatId !== chat.appChatId ||
@@ -617,7 +650,27 @@ export function buildChatUpdateDelivery(input: {
     producerDelta.transcriptOps === null ||
     producerDelta.changedMessageCount > replacementLimit
   ) {
-    return snapshot()
+    if (diagnostics) diagnostics.producerDeltaMissing = true
+    const recovered = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
+    if (recovered.deleteCount + recovered.items.length > replacementLimit) return snapshot()
+    if (diagnostics) diagnostics.spliceRecovery = true
+    const record = buildChatRecordDelta(
+      chatRecordWithoutMessages(baseline.chat),
+      chatRecordWithoutMessages(chat)
+    )
+    return {
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
+      kind: 'patch',
+      deliveryId,
+      chatId: chat.appChatId,
+      baseRevision: baseline.revision,
+      revision,
+      recordMask: record.recordMask,
+      recordDelta: record.recordDelta,
+      ...(record.recordCleared.length ? { recordCleared: record.recordCleared } : {}),
+      messages: recovered,
+      ...sub
+    }
   }
 
   const patch: ChatUpdatePatchDeliveryV2 = {

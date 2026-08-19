@@ -287,11 +287,13 @@ describe('chat update transport', () => {
     expect(applyChatTranscriptOps(messages, [])).toBe(messages)
   })
 
-  it('uses a recovery snapshot when producer ops cannot express a reorder', () => {
+  it('recovers a reorder by splice, and snapshots only once it outgrows the record', () => {
     const first = chat(1, [message('a', 'A'), message('b', 'B')])
     const next = chat(2, [message('b', 'B'), message('a', 'A')])
+    // A reorder still escapes the append/update/delete vocabulary...
     expect(buildChatTranscriptOps(first.messages, next.messages)).toBeNull()
 
+    // ...but it is small, so the baseline diff carries it instead of the record.
     const delivery = buildChatUpdateDelivery({
       deliveryId: 'reorder',
       revision: 2,
@@ -300,17 +302,26 @@ describe('chat update transport', () => {
       producerDelta: producerDelta(first, next),
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2
     })
-    expect(delivery.kind).toBe('snapshot')
-    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toEqual({
+    expect(delivery.kind).toBe('patch')
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
       ok: true,
-      baseline: {
-        revision: 2,
-        chat: next,
-        ensembleRevision: delivery.kind === 'snapshot' ? delivery.ensembleRevision : undefined,
-        runsRevision: delivery.kind === 'snapshot' ? delivery.runsRevision : undefined,
-        recordHash: delivery.kind === 'snapshot' ? delivery.recordHash : undefined
-      }
+      baseline: { revision: 2, chat: next }
     })
+
+    // A reversal rewrites every row: the splice is now worth no less than the
+    // whole record, which is the one case a snapshot is still the cheaper wire.
+    const history = Array.from({ length: 200 }, (_, index) => message(`m${index}`, `body ${index}`))
+    const wide = chat(1, history)
+    const reversed = chat(2, [...history].reverse())
+    const wideDelivery = buildChatUpdateDelivery({
+      deliveryId: 'reorder-wide',
+      revision: 2,
+      chat: reversed,
+      baseline: { revision: 1, chat: wide },
+      producerDelta: producerDelta(wide, reversed),
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(wideDelivery.kind).toBe('snapshot')
   })
 
   it('composes consecutive producer deltas without re-reading either transcript', () => {
@@ -348,30 +359,89 @@ describe('chat update transport', () => {
     })
   })
 
-  it('recovers with a snapshot when v2 producer evidence is missing or discontinuous', () => {
+  it('owes a snapshot only when there is no baseline to recover the change from', () => {
     const first = chat(1, [message('a', 'A')])
     const next = chat(2, [message('a', 'B')])
+
+    // No baseline: nothing to diff against, so the whole record is genuinely owed.
     expect(
       buildChatUpdateDelivery({
-        deliveryId: 'missing',
+        deliveryId: 'no-baseline',
         revision: 2,
         chat: next,
-        baseline: { revision: 1, chat: first },
         protocolVersion: CHAT_UPDATE_PROTOCOL_V2
       }).kind
     ).toBe('snapshot')
 
-    const discontinuous = { ...producerDelta(first, next), basePersistenceRevision: 99 }
+    // A baseline for a DIFFERENT chat is not a baseline for this one.
     expect(
       buildChatUpdateDelivery({
-        deliveryId: 'gap',
+        deliveryId: 'foreign-baseline',
         revision: 2,
         chat: next,
-        baseline: { revision: 1, chat: first },
-        producerDelta: discontinuous,
+        baseline: { revision: 1, chat: chat(1, [message('a', 'A')], { appChatId: 'chat-2' }) },
         protocolVersion: CHAT_UPDATE_PROTOCOL_V2
       }).kind
     ).toBe('snapshot')
+  })
+
+  it('recovers a bounded splice, not the whole transcript, when the producer delta is missing', () => {
+    // 2026-08-19 renderer OOM: a producer that yields no delta degraded EVERY
+    // delivery to a full-record snapshot. On a 10k-message / 19 MB chat under
+    // seven concurrent runs that shipped 531 snapshots and 0 patches in 17
+    // minutes, filling V8's 3.76 GB renderer ceiling until SIGTRAP. While the
+    // renderer's baseline is still held, the change is recoverable by diffing
+    // it — the whole record is only owed when there is no baseline at all.
+    const history = Array.from({ length: 5_000 }, (_, index) =>
+      message(`m${index}`, `body ${index}`)
+    )
+    const first = chat(1, history)
+    const next = chat(2, [...history, message('tail', 'one more')])
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'no-producer-delta',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected a v2 patch')
+    }
+    // The payload carries the one appended row, never the 5,001-row transcript.
+    expect(delivery.messages).toEqual({
+      start: 5_000,
+      deleteCount: 0,
+      items: [message('tail', 'one more')]
+    })
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
+  })
+
+  it('recovers a bounded splice when the producer delta is discontinuous', () => {
+    const history = Array.from({ length: 200 }, (_, index) => message(`m${index}`, `body ${index}`))
+    const first = chat(1, history)
+    const next = chat(2, [...history, message('tail', 'one more')])
+    const discontinuous = { ...producerDelta(first, next), basePersistenceRevision: 99 }
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'gap',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      producerDelta: discontinuous,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
   })
 
   it('builds a producer-backed patch without iterating either transcript', () => {

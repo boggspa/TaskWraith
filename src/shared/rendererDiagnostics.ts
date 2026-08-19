@@ -36,6 +36,10 @@ export interface RendererDiagnosticChatUpdateCounters {
   mainSnapshots: number
   mainPatches: number
   mainBaselineDrops: number
+  /** Baseline held, producer delta unusable — the cause a snapshot/patch ratio cannot see. */
+  mainProducerDeltaMissing: number
+  /** Deliveries the transport recovered by diffing the baseline instead of sending the record. */
+  mainSpliceRecoveries: number
   mainTrackedChats: number
   mainInFlight: number
   mainPending: number

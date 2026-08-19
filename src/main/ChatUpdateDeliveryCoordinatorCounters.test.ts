@@ -129,6 +129,34 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
     expect(counters.snapshots).toBeGreaterThanOrEqual(2)
   })
 
+  it('keeps a broken producer visible even though the delivery now patches', () => {
+    // 2026-08-19: a producer that yields no delta used to degrade every
+    // delivery to a full-record snapshot, and snapshots-vs-patches was the
+    // only signal. Recovering by baseline diff removes the OOM but would also
+    // make a broken producer read as HEALTHY on those two counters — the
+    // regression would go quiet rather than get fixed. These count the cause.
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first] = projectSequence(chat(1, ['one']))
+    coordinator.enqueue(sink, first)
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    expect(coordinator.protocolCounters()).toMatchObject({ producerDeltaMissing: 0 })
+
+    // Exactly the shipped failure: a save path broadcasts with no producer
+    // envelope at all, so there is no delta to chain from.
+    coordinator.enqueue(sink, chat(2, ['one', 'two']))
+
+    const latest = sink.deliveries[sink.deliveries.length - 1]
+    expect(latest.kind).toBe('patch')
+    const counters = coordinator.protocolCounters()
+    expect(counters.producerDeltaMissing).toBe(1)
+    expect(counters.spliceRecoveries).toBe(1)
+  })
+
   it('keeps counting across targets so a fan-out window sees every delivery', () => {
     const a = target(21)
     const b = target(22)

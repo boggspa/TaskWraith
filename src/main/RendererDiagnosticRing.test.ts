@@ -43,6 +43,8 @@ function sample(index: number): RendererDiagnosticSample {
       mainSnapshots: 0,
       mainPatches: 0,
       mainBaselineDrops: 0,
+      mainProducerDeltaMissing: 0,
+      mainSpliceRecoveries: 0,
       mainTrackedChats: 0,
       mainInFlight: 0,
       mainPending: 0,
@@ -123,7 +125,13 @@ describe('RendererDiagnosticRing', () => {
         retainedMessages: 90,
         retainedBaselineBytes: 4_096
       }),
-      getChatUpdateProtocolCounters: () => ({ snapshots: 3, patches: 12, baselineDrops: 1 })
+      getChatUpdateProtocolCounters: () => ({
+        snapshots: 3,
+        patches: 12,
+        baselineDrops: 1,
+        producerDeltaMissing: 4,
+        spliceRecoveries: 4
+      })
     })
     const target: RendererDiagnosticTarget = {
       windowId: 7,
@@ -160,6 +168,10 @@ describe('RendererDiagnosticRing', () => {
         mainSnapshots: 3,
         mainPatches: 12,
         mainBaselineDrops: 1,
+        // A broken producer that now recovers by splice reads as a healthy
+        // patch stream on mainPatches alone; these carry the cause to triage.
+        mainProducerDeltaMissing: 4,
+        mainSpliceRecoveries: 4,
         mainRetainedBytes: 4_096
       }
     })

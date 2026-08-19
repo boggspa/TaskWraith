@@ -5,6 +5,7 @@ import {
   CHAT_UPDATE_PROTOCOL_V2,
   buildChatUpdateDelivery,
   chatUpdateProducerEnvelopeFor,
+  type ChatUpdateDeliveryDiagnostics,
   composeChatUpdateProducerDeltas,
   computeChatSubRevisions,
   estimateChatRecordBytes,
@@ -86,6 +87,17 @@ export interface ChatUpdateProtocolCounters {
   patches: number
   /** Times an acknowledged baseline was dropped (nack or ACK timeout). */
   baselineDrops: number
+  /**
+   * Deliveries where a baseline was held but the producer had no usable delta.
+   *
+   * This is the cause the other counters cannot see. It used to present as a
+   * snapshot flood (2026-08-19: 531 snapshots, 0 patches in 17 minutes, ending
+   * in a renderer OOM); those deliveries now recover as bounded patches, so
+   * without this counter a broken producer reads as a healthy patch stream.
+   */
+  producerDeltaMissing: number
+  /** Deliveries the transport recovered by diffing the baseline. */
+  spliceRecoveries: number
 }
 
 export interface ChatUpdateDeliveryCoordinatorOptions {
@@ -188,7 +200,9 @@ export class ChatUpdateDeliveryCoordinator {
   private readonly counters: ChatUpdateProtocolCounters = {
     snapshots: 0,
     patches: 0,
-    baselineDrops: 0
+    baselineDrops: 0,
+    producerDeltaMissing: 0,
+    spliceRecoveries: 0
   }
 
   constructor(options: ChatUpdateDeliveryCoordinatorOptions = {}) {
@@ -419,6 +433,10 @@ export class ChatUpdateDeliveryCoordinator {
       state.acknowledged && state.baselineChat
         ? toPatchBaseline(state.acknowledged, state.baselineChat)
         : undefined
+    const diagnostics: ChatUpdateDeliveryDiagnostics = {
+      producerDeltaMissing: false,
+      spliceRecovery: false
+    }
     const delivery: ChatUpdateDelivery = buildChatUpdateDelivery({
       deliveryId,
       revision: next.revision,
@@ -426,7 +444,8 @@ export class ChatUpdateDeliveryCoordinator {
       baseline,
       producerState: next.producer?.state,
       producerDelta: next.producer?.delta ?? undefined,
-      protocolVersion: this.emitProtocolVersion
+      protocolVersion: this.emitProtocolVersion,
+      diagnostics
     })
     const deliveryRecordHash = 'recordHash' in delivery ? delivery.recordHash : undefined
     const deliveryEnsembleRevision =
@@ -449,6 +468,8 @@ export class ChatUpdateDeliveryCoordinator {
     }
     if (delivery.kind === 'snapshot') this.counters.snapshots += 1
     else this.counters.patches += 1
+    if (diagnostics.producerDeltaMissing) this.counters.producerDeltaMissing += 1
+    if (diagnostics.spliceRecovery) this.counters.spliceRecoveries += 1
     state.inFlight = { ...next, deliveryId, recordHash, compactBaseline }
     // Drop the patch-base chat once the next full payload is in flight so we
     // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.
