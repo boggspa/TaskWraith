@@ -37,6 +37,12 @@ export interface NativeOrchestrationCardProps {
   name: string
   /** Meta line segments, joined with ' · '. */
   metaParts: string[]
+  /**
+   * Optional rich element opening the meta line, ahead of `metaParts` — for an
+   * adapter that must name WHO rather than describe what (the fleet card's
+   * caller seat). Omitting it leaves the meta line byte-identical.
+   */
+  metaLead?: ReactNode
   /** Tint chrome + glyph with `--provider-<id>-color`. Claude passes false to
    * keep the app's global `--accent` (its historical look). */
   useProviderAccent: boolean
@@ -80,6 +86,7 @@ export function NativeOrchestrationCard({
   glyph,
   name,
   metaParts,
+  metaLead,
   useProviderAccent,
   progressFraction,
   currentLine,
@@ -140,7 +147,17 @@ export function NativeOrchestrationCard({
         )}
       </button>
 
-      <div className="claude-workflow-card-meta">{metaParts.join(' · ')}</div>
+      <div
+        className={`claude-workflow-card-meta${metaLead ? ' has-meta-lead' : ''}`}
+      >
+        {metaLead}
+        {metaLead && metaParts.length > 0 ? (
+          <span className="claude-workflow-card-meta-sep" aria-hidden>
+            ·
+          </span>
+        ) : null}
+        {metaParts.join(' · ')}
+      </div>
 
       <div
         className={`claude-workflow-card-progress status-${status}`}

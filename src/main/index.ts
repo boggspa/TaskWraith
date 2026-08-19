@@ -40326,6 +40326,11 @@ async function executeGeminiMcpTool(
             role: 'system',
             content: `↪ Fleet · ${children.length} agents (${lifecycle})`,
             timestamp: new Date().toISOString(),
+            // The calling run, so the transcript can name the SEAT that called
+            // the wave. Only the pointer is stamped, never the seat itself:
+            // this projector holds no participant, and the run records the
+            // snapshot in full (see seatFromChatRun).
+            ...(context.appRunId ? { runId: context.appRunId } : {}),
             metadata: {
               kind: 'fleetWave',
               waveId,

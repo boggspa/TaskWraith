@@ -3754,11 +3754,12 @@ export const TranscriptPanel = memo(
     }, [displayMessages, pendingAgentQuestions])
 
     /**
-     * The seat behind each RUN, so a question card can name the participant that
-     * asked instead of its provider.
+     * The seat behind each RUN, so a card can name the participant that acted
+     * instead of its provider. Read by the question surfaces and by the fleet
+     * wave card, which names the seat that called the wave.
      *
-     * Keyed by run rather than by marker because the two question surfaces reach
-     * it from different directions: an anchored card has the marker row (and its
+     * Keyed by run rather than by marker because the surfaces reach it from
+     * different directions: an anchored card has the marker row (and its
      * `runId`), while the tail fallback has only the pending question's
      * `appRunId`. The run is the thing they share.
      *
@@ -3767,7 +3768,7 @@ export const TranscriptPanel = memo(
      * write time would leave every question already in the transcript still
      * saying "Claude asked". See `seatFromChatRun`.
      */
-    const agentQuestionSeatsByRunId = useMemo(() => {
+    const seatsByRunId = useMemo(() => {
       const byRunId = new Map<string, SeatChangeSeatState>()
       for (const run of currentChat?.runs || []) {
         const seat = seatFromChatRun(run)
@@ -4668,12 +4669,14 @@ export const TranscriptPanel = memo(
             const pendingAgentQuestionsKey = pendingQuestionsForRow
               .map((question) => `${question.questionId}:${question.askedAt}`)
               .join('\u0000')
-            // The seat that asked, for whichever question surface this row
-            // carries. Resolved only for question rows — this loop runs per
-            // message, and every other row would pay the lookup for nothing.
+            // The seat that acted, for whichever seat-naming surface this row
+            // carries — a question card, or the fleet wave card's caller.
+            // Resolved only for those rows: this loop runs per message, and
+            // every other row would pay the lookup for nothing.
             const agentQuestionSeat =
-              (questionTombstone || pendingQuestionsForRow.length > 0) && msg.runId
-                ? (agentQuestionSeatsByRunId.get(msg.runId) ?? null)
+              (questionTombstone || pendingQuestionsForRow.length > 0 || isFleetWaveCard) &&
+              msg.runId
+                ? (seatsByRunId.get(msg.runId) ?? null)
                 : null
             // The stored line names the provider, because the writer knows
             // nothing else. Where a seat resolves the transcript does know, and
@@ -4968,6 +4971,10 @@ export const TranscriptPanel = memo(
                           ? (msg.metadata.parentProvider as ProviderId)
                           : undefined
                       }
+                      // Named from the RUN that called the wave, not from this
+                      // row — the projector writes the card, so it never holds
+                      // the participant a seat snapshot is derived from.
+                      callerSeat={msg.runId ? (seatsByRunId.get(msg.runId) ?? null) : null}
                       onOpenSubThread={onOpenSubThread}
                       onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
                       onAllowOnce={
@@ -6105,7 +6112,7 @@ export const TranscriptPanel = memo(
                   // No marker row to read the run off here — that is the whole
                   // reason this fallback exists — so the pending question's own
                   // `appRunId` is the way in.
-                  seat={agentQuestionSeatsByRunId.get(question.appRunId) ?? null}
+                  seat={seatsByRunId.get(question.appRunId) ?? null}
                 />
               </div>
             ))}

@@ -3414,6 +3414,46 @@
   line-height: 1;
 }
 
+/* Caller identity — the seat that called the wave, in the same element the
+ * fan-out lane card, sub-thread return and close-out table use. The meta line
+ * is plain text for every other adapter, so it only becomes a flex row when an
+ * adapter actually passes a lead element. */
+.claude-workflow-card-meta.has-meta-lead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.claude-workflow-card-meta-sep {
+  opacity: 0.55;
+}
+.fleet-wave-card-caller {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+.fleet-wave-card-caller-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fleet-wave-card-caller-provider {
+  color: var(--text-secondary);
+}
+.fleet-wave-card-caller-logo .sidebar-provider-icon,
+.fleet-wave-card-caller-logo.sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+
 /* Worker chips — same lifecycle-tint contract as .multi-agent-card-agent. */
 .fleet-wave-card-workers {
   display: flex;
@@ -3431,6 +3471,17 @@
   font-size: calc(var(--font-size-xs) - 1px);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+/* A wave may be multi-provider, so each chip carries its own mark. Sized off
+ * the chip's own text so it tracks the density-tier font, and never shrinks. */
+.fleet-wave-card-worker-logo.sidebar-provider-icon,
+.fleet-wave-card-worker-logo .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
 }
 .fleet-wave-card-worker.status-working {
   color: color-mix(in srgb, var(--tool-running) 70%, var(--text-primary) 30%);

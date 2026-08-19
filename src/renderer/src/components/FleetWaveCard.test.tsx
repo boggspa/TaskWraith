@@ -38,12 +38,17 @@ describe('FleetWaveCard', () => {
   })
 
   describe('provider accent', () => {
-    it('keeps Claude on the global accent (no provider tint)', () => {
+    it('tints Claude with its own brand accent like every other caller', () => {
+      // Owner call 2026-08-19: the fleet card read as generic app-blue and gave
+      // no clue whose fleet it was. It now inherits the CALLER's accent, so the
+      // old `useProviderAccent={!isClaude}` exception is deliberately inverted
+      // here — do not restore it (same shape as the ghost-strip pin).
       const html = renderToStaticMarkup(
         <FleetWaveCard telemetry={telemetry({ parentProvider: 'claude' })} provider="claude" />
       )
       expect(html).toContain('data-provider="claude"')
-      expect(html).not.toContain('--provider-accent')
+      expect(html).toContain('--provider-accent')
+      expect(html).toContain('var(--provider-claude-color')
     })
 
     it('renders a non-Claude provider with a brand accent', () => {
@@ -218,6 +223,64 @@ describe('FleetWaveCard', () => {
     )
     expect(html).toContain('Fleet · 4 agents')
     expect(html).toContain('claude-workflow-card-name')
+  })
+
+  describe('caller identity', () => {
+    const callerSeat = {
+      provider: 'claude',
+      model: 'Claude Fable 5',
+      role: 'SolBoss',
+      seatNumber: 1,
+      authority: 'boss' as const,
+      permissionPresetId: 'workspace_write'
+    }
+
+    it('names the caller with the shared seat element, not a bare provider id', () => {
+      // The meta line used to read a raw lowercase "claude", which named
+      // neither the caller nor the workers' providers unambiguously.
+      const html = renderToStaticMarkup(
+        <FleetWaveCard telemetry={telemetry()} provider="claude" callerSeat={callerSeat} />
+      )
+      expect(html).toContain('seat-state-chips')
+      expect(html).toContain('fleet-wave-card-caller')
+      expect(html).toContain('SolBoss')
+      expect(html).not.toMatch(/claude-workflow-card-meta[^>]*>claude/)
+    })
+
+    it('falls back to the provider label when the caller run records no seat', () => {
+      // Solo turns genuinely have no seat; naming one would be a lie, but the
+      // raw id is still not what a reader should see.
+      const html = renderToStaticMarkup(
+        <FleetWaveCard telemetry={telemetry({ parentProvider: 'mistral' })} provider="mistral" />
+      )
+      expect(html).toContain('fleet-wave-card-caller')
+      expect(html).toContain('Mistral')
+      expect(html).not.toContain('seat-state-chips')
+    })
+
+    it('gives every worker chip its own provider logo', () => {
+      // A multi-provider fleet is the whole reason allowMultiProvider exists —
+      // the chip has to say which provider ran it.
+      const html = renderToStaticMarkup(
+        <FleetWaveCard
+          telemetry={telemetry({
+            allowMultiProvider: true,
+            agents: [
+              agent(1, { provider: 'mistral', label: 'CAM7-market-v2' }),
+              agent(2, { provider: 'codex', label: 'CAM8-inn-v2' })
+            ]
+          })}
+          provider="claude"
+        />
+      )
+      expect(html).toContain('data-provider-logo="mistral"')
+      expect(html).toContain('data-provider-logo="codex"')
+    })
+
+    it('omits the chip logo when an agent records no provider', () => {
+      const html = renderToStaticMarkup(<FleetWaveCard telemetry={telemetry()} provider="claude" />)
+      expect(html).not.toContain('fleet-wave-card-worker-logo')
+    })
   })
 
   it('opens a worker sub-thread from a chip without bubbling', () => {

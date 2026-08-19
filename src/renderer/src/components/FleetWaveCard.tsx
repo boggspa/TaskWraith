@@ -1,5 +1,6 @@
 import { useId, type CSSProperties, type MouseEvent } from 'react'
 import type { ProviderId } from '../../../main/store/types'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import {
   canAllowAllPendingApprovals,
   fleetWaveDensityTier,
@@ -10,10 +11,22 @@ import {
   type FleetWaveTelemetry
 } from '../../../shared/fleetWave'
 import { NativeOrchestrationCard } from './NativeOrchestrationCard'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { composedSeatRole } from '../lib/transcriptSeat'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 
 export interface FleetWaveCardProps {
   telemetry: FleetWaveTelemetry
   provider?: ProviderId
+  /**
+   * The seat that called the wave, resolved from the caller's RUN by the
+   * transcript (never stamped on the card — see `seatFromChatRun`). Null on a
+   * solo turn, which genuinely has no seat: the card then names the provider
+   * rather than inventing one.
+   */
+  callerSeat?: SeatChangeSeatState | null
   onOpenSubThread?: (subThreadId: string) => void
   onOpenSubThreadInSidePanel?: (subThreadId: string) => void
   onAllowOnce?: (approvalId: string) => void
@@ -48,11 +61,16 @@ const FLEET_WAVE_GHOST_PATHS = (
  * changing accent as agents settle are the card's progress read; only the
  * text treatment around them changes with density (2026-08-19: it was
  * aggregate-only, so the common ≤20-agent wave had no ghosts at all).
- * Claude keeps the app accent (`useProviderAccent={!isClaude}`).
+ *
+ * The card wears the CALLER's provider accent — Claude included. It used to
+ * keep the app accent, which left the commonest fleet reading as generic
+ * app-blue with a bare lowercase provider id for a byline, naming neither the
+ * caller nor the (possibly mixed) worker providers. Owner call 2026-08-19.
  */
 export function FleetWaveCard({
   telemetry,
   provider,
+  callerSeat,
   onOpenSubThread,
   onOpenSubThreadInSidePanel,
   onAllowOnce,
@@ -73,7 +91,7 @@ export function FleetWaveCard({
         : telemetry.status === 'completed' || (settled === count && count > 0)
           ? 'completed'
           : 'running'
-  const isClaude = (provider || telemetry.parentProvider) === 'claude'
+  const callerProvider = (provider || telemetry.parentProvider) as ProviderId | undefined
   const exceptions = fleetWaveExceptions(agents)
   const rollup = fleetWaveRoleRollup(agents)
   const progressFraction = count > 0 ? settled / count : undefined
@@ -111,6 +129,17 @@ export function FleetWaveCard({
     const openable = canOpen && Boolean(agent.id)
     const className = `fleet-wave-card-${kind} status-${agent.status}${openable ? ' clickable' : ''}`
     const label = withStatusSuffix ? `${agent.label} ${agentStatusSuffix(agent)}` : agent.label
+    // A wave may be multi-provider, so the chip says which one ran it rather
+    // than leaving the card's single caller accent to imply them all.
+    const logo = agent.provider ? (
+      <ProviderBrandLogoIcon
+        provider={agent.provider as ProviderId}
+        wrapperClassName="fleet-wave-card-worker-logo"
+      />
+    ) : null
+    const chipTitle = agent.provider
+      ? `${providerDisplayName(agent.provider)} · ${agent.label}`
+      : agent.label
 
     if (openable) {
       return (
@@ -119,10 +148,11 @@ export function FleetWaveCard({
           type="button"
           className={className}
           style={chipButtonStyle}
-          title={`Open ${agent.label}`}
-          aria-label={`Open ${agent.label}`}
+          title={`Open ${chipTitle}`}
+          aria-label={`Open ${chipTitle}`}
           onClick={(event) => handleChipClick(event, agent.id)}
         >
+          {logo}
           <span>{label}</span>
           <span className="fleet-wave-card-open" aria-hidden="true">
             ↗
@@ -132,11 +162,52 @@ export function FleetWaveCard({
     }
 
     return (
-      <span key={agent.id} className={className}>
-        {label}
+      <span key={agent.id} className={className} title={chipTitle}>
+        {logo}
+        <span>{label}</span>
       </span>
     )
   }
+
+  // Who called the fleet. The seat element is the same one the fan-out lane
+  // card, sub-thread return, close-out table and question card use, so one
+  // reading skill covers every "who" in the transcript. A seatless caller
+  // (solo turn) keeps the provider label + mark — an unknown seat is not a
+  // default one.
+  const callerRole = composedSeatRole(callerSeat)
+  const callerLead = callerSeat ? (
+    <span className="fleet-wave-card-caller">
+      {callerRole ? (
+        <strong
+          className="fleet-wave-card-caller-role"
+          style={{ color: seatAccentVar(callerSeat) }}
+          title={
+            [participantRoleIconTitle(callerSeat.authority, callerSeat.stageRole), callerRole]
+              .filter(Boolean)
+              .join(' · ') || undefined
+          }
+        >
+          <ParticipantRoleIcon
+            authority={callerSeat.authority}
+            stageRole={callerSeat.stageRole}
+            className="seat-role-icon"
+          />
+          {callerRole}
+        </strong>
+      ) : null}
+      <SeatStateChips seat={callerSeat} className="fleet-wave-card-caller-seat" />
+    </span>
+  ) : callerProvider ? (
+    <span className="fleet-wave-card-caller">
+      <ProviderBrandLogoIcon
+        provider={callerProvider}
+        wrapperClassName="fleet-wave-card-caller-logo"
+      />
+      <span className="fleet-wave-card-caller-provider">
+        {providerDisplayName(callerProvider)}
+      </span>
+    </span>
+  ) : null
 
   const elevationRow =
     pendingApprovals.length > 0 ? (
@@ -195,7 +266,7 @@ export function FleetWaveCard({
       }
       statusLabel={statusLabel}
       isRunning={status === 'running' || status === 'needs_approval'}
-      useProviderAccent={!isClaude}
+      useProviderAccent
       glyph={
         <span className="fleet-wave-card-glyph" aria-hidden="true">
           {/* Mini ghost mark; stroke 7 user units ≈ 1.2px at the 14px slot
@@ -217,9 +288,9 @@ export function FleetWaveCard({
         </span>
       }
       name={count ? `Fleet · ${count} agents` : 'Fleet'}
+      metaLead={callerLead}
       metaParts={
         [
-          telemetry.parentProvider,
           count ? `${settled} of ${count} returned` : undefined,
           telemetry.durationMs != null ? `${Math.round(telemetry.durationMs / 1000)}s` : undefined
         ].filter(Boolean) as string[]
