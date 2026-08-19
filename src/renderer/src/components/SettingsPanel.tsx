@@ -365,10 +365,6 @@ interface SettingsPanelProps {
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
-  /** When true (default), TaskWraith auto-dispatches a continuation run
-   * on the parent chat once a sub-thread the parent delegated to (with
-   * `returnResultToParent: true`) finishes. See AutoResumeParent.ts. */
-  autoResumeParentOnSubThreadCompletion: boolean
   agenticWorkspaceGrantCount: number
   agenticWorkspaceGrants: AgenticWorkspaceGrant[]
   activeProvider: ProviderId
@@ -500,7 +496,6 @@ interface SettingsPanelProps {
     agenticServices?: AgenticServicesSettings
     nativeSubAgentRequests?: NativeSubAgentRequestPolicy
     userMcpServers?: AppSettings['userMcpServers']
-    autoResumeParentOnSubThreadCompletion?: boolean
     geminiMcpBridgeEnabled?: boolean
     codexSandboxFallback?: CodexSandboxFallbackMode
     funFxEnabled?: boolean
@@ -3932,7 +3927,6 @@ export function SettingsPanel({
   auditOrchestration,
   agenticServices,
   nativeSubAgentRequests = 'ask',
-  autoResumeParentOnSubThreadCompletion,
   agenticWorkspaceGrantCount,
   agenticWorkspaceGrants,
   activeProvider,
@@ -7809,23 +7803,6 @@ export function SettingsPanel({
                     <select className="settings-select" value="deny" disabled>
                       <option value="deny">Denied (coming soon)</option>
                     </select>
-                  </label>
-
-                  <label className="settings-service-row">
-                    <span>
-                      Auto-resume parent when sub-thread completes
-                      <small>
-                        When a sub-thread you delegated to finishes, automatically continue the
-                        parent agent so it can read the result without a manual nudge.
-                      </small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={autoResumeParentOnSubThreadCompletion}
-                      onChange={(e) =>
-                        onChange({ autoResumeParentOnSubThreadCompletion: e.target.checked })
-                      }
-                    />
                   </label>
 
                   <label className="settings-service-row">

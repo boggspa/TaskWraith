@@ -66,7 +66,6 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     ollamaDefaultModel: 'gpt-oss:20b',
     agenticServices: DEFAULT_AGENTIC_SERVICES,
     nativeSubAgentRequests: 'ask',
-    autoResumeParentOnSubThreadCompletion: true,
     agenticWorkspaceGrantCount: 0,
     agenticWorkspaceGrants: [],
     activeProvider: 'codex',
@@ -997,6 +996,21 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toMatch(
       /<label class="settings-service-row"><span>Network access<\/span><select class="settings-select" disabled="">/
     )
+  })
+
+  it('does not render the retired auto-resume parent toggle', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'providers' })} />
+    )
+
+    // The sub-thread mailbox auto-dispatch legs were deleted in f3bedae3d, so
+    // this switch drove nothing: a child return never starts a parent run now.
+    // The SETTINGS FIELD survives for parse compatibility — only the row is
+    // retired, and the rows that surrounded it stay put.
+    expect(html).not.toContain('Auto-resume parent when sub-thread completes')
+    expect(html).not.toContain('automatically continue the')
+    expect(html).toContain('Media recording')
+    expect(html).toMatch(/<label class="settings-service-row"><span>Network access<\/span>/)
   })
 
   it('keeps update controls out of General and tucks maintenance behind a disclosure', () => {

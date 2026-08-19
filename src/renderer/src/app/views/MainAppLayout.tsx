@@ -159,7 +159,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   getMainTranscriptUserScrollGestureLive,
   markSideTranscriptProgrammaticScroll,
   getSideTranscriptUserScrollGestureLive,
-  autoResumeParentOnSubThreadCompletion,
   autoUpdateEnabled,
   auditBundleVerificationResult,
   beginManualMainTranscriptJump,
@@ -1590,7 +1589,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               auditOrchestration={settings?.auditOrchestration}
               agenticServices={agenticServices}
               nativeSubAgentRequests={settings?.nativeSubAgentRequests ?? 'ask'}
-              autoResumeParentOnSubThreadCompletion={autoResumeParentOnSubThreadCompletion}
               agenticWorkspaceGrantCount={agenticWorkspaceGrantCount}
               agenticWorkspaceGrants={agenticWorkspaceGrants}
               activeProvider={currentProvider}

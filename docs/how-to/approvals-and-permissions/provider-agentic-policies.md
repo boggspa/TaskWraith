@@ -19,9 +19,8 @@ TaskWraith-mediated calls, while native Cursor actions remain provider-owned.
 1. Open **Settings → AI & Providers → Providers** and scroll to the **Agentic services** group.
 2. For each service — **Shell commands**, **File changes**, **Provider tools**, **Sub-thread delegation**, **Canvas interaction**, **Media editing**, **Network access** — pick a policy from its dropdown: **Ask, then allow workspace** (prompt once, then auto-allow for that workspace), **Ask every time**, **Always allow**, or **Block**. Network access only offers **Allow** or **Block**.
 3. Leave **Media recording** as is — it's denied and disabled (microphone/camera capture isn't shipped yet).
-4. Optionally toggle **Auto-resume parent when sub-thread completes** so a delegating agent continues automatically once the sub-thread it spawned finishes.
-5. Check the grant count hint below the list to see how many durable workspace permissions are currently saved; manage or revoke them from the Approval Ledger.
-6. To audit your overall posture instead of editing it, go to **Settings → Data → Safety & Privacy** — it flags "Always allow" rows as risk and "Ask, then allow workspace" rows as watch items, and links to **Edit policies** to come back here.
+4. Check the grant count hint below the list to see how many durable workspace permissions are currently saved; manage or revoke them from the Approval Ledger.
+5. To audit your overall posture instead of editing it, go to **Settings → Data → Safety & Privacy** — it flags "Always allow" rows as risk and "Ask, then allow workspace" rows as watch items, and links to **Edit policies** to come back here.
 
 ## Tips & related
 - [Approval Ledger](approval-ledger.md) — review past decisions and revoke saved workspace grants.

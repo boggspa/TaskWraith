@@ -1910,8 +1910,6 @@ function App(): React.JSX.Element {
   >({})
   const [agenticServices, setAgenticServices] =
     useState<AgenticServicesSettings>(DEFAULT_AGENTIC_SERVICES)
-  const [autoResumeParentOnSubThreadCompletion, setAutoResumeParentOnSubThreadCompletion] =
-    useState(true)
   const [agenticWorkspaceGrants, setAgenticWorkspaceGrants] = useState<AgenticWorkspaceGrant[]>([])
   const [agenticWorkspaceGrantCount, setAgenticWorkspaceGrantCount] = useState(0)
   const [geminiMcpBridgeEnabled, setGeminiMcpBridgeEnabledState] = useState(false)
@@ -7103,11 +7101,6 @@ function App(): React.JSX.Element {
     setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434')
     setOllamaDefaultModel(s.ollamaDefaultModel || '')
     setAgenticServices({ ...DEFAULT_AGENTIC_SERVICES, ...(s.agenticServices || {}) })
-    setAutoResumeParentOnSubThreadCompletion(
-      typeof s.autoResumeParentOnSubThreadCompletion === 'boolean'
-        ? s.autoResumeParentOnSubThreadCompletion
-        : true
-    )
     setAgenticWorkspaceGrants(
       Array.isArray(s.agenticWorkspaceGrants) ? s.agenticWorkspaceGrants : []
     )
@@ -7680,11 +7673,6 @@ function App(): React.JSX.Element {
     if (next.userMcpServers !== undefined) {
       settingsPatch.userMcpServers = next.userMcpServers
     }
-    if (next.autoResumeParentOnSubThreadCompletion !== undefined) {
-      setAutoResumeParentOnSubThreadCompletion(next.autoResumeParentOnSubThreadCompletion)
-      settingsPatch.autoResumeParentOnSubThreadCompletion =
-        next.autoResumeParentOnSubThreadCompletion
-    }
     if (next.geminiMcpBridgeEnabled !== undefined) {
       const enabled = Boolean(next.geminiMcpBridgeEnabled)
       setGeminiMcpBridgeEnabledState(enabled)
@@ -7739,11 +7727,6 @@ function App(): React.JSX.Element {
   const applyAgenticWorkspaceGrantSettings = (nextSettings: AppSettings) => {
     setSettings(nextSettings)
     setAgenticServices({ ...DEFAULT_AGENTIC_SERVICES, ...(nextSettings.agenticServices || {}) })
-    setAutoResumeParentOnSubThreadCompletion(
-      typeof nextSettings.autoResumeParentOnSubThreadCompletion === 'boolean'
-        ? nextSettings.autoResumeParentOnSubThreadCompletion
-        : true
-    )
     setAgenticWorkspaceGrants(
       Array.isArray(nextSettings.agenticWorkspaceGrants) ? nextSettings.agenticWorkspaceGrants : []
     )
@@ -30931,7 +30914,6 @@ function App(): React.JSX.Element {
     getMainTranscriptUserScrollGestureLive,
     markSideTranscriptProgrammaticScroll,
     getSideTranscriptUserScrollGestureLive,
-    autoResumeParentOnSubThreadCompletion,
     autoUpdateEnabled,
     auditBundleVerificationResult,
     beginManualMainTranscriptJump,
