@@ -50,7 +50,7 @@ public final class StudioAudioTrack {
     public static func load(
         url: URL,
         maxSampleCount: Int = defaultMaxSampleCount
-    ) async throws -> StudioAudioTrack {
+    ) async throws -> sending StudioAudioTrack {
         let asset = AVURLAsset(url: url)
         let tracks: [AVAssetTrack]
         do {

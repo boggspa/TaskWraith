@@ -392,7 +392,7 @@ public enum StudioMediaSourceLoader {
         device: MTLDevice,
         maxSampleCount: Int = defaultMaxSampleCount,
         requireAllSyncSamples: Bool = false
-    ) async throws -> (source: StudioVideoFrameSource, media: StudioLoadedMedia) {
+    ) async throws -> sending (source: StudioVideoFrameSource, media: StudioLoadedMedia) {
         let media: StudioLoadedMedia
         do {
             media = try await load(
@@ -423,7 +423,7 @@ public enum StudioMediaSourceLoader {
         device: MTLDevice,
         payloadCacheLimit: Int = 240,
         requireAllSyncSamples: Bool = false
-    ) async throws -> (source: StudioVideoFrameSource, media: StudioLoadedMedia) {
+    ) async throws -> sending (source: StudioVideoFrameSource, media: StudioLoadedMedia) {
         let media = try await loadBounded(
             asset: asset,
             payloadCacheLimit: payloadCacheLimit,
