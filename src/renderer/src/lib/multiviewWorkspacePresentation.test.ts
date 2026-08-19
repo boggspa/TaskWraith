@@ -103,8 +103,14 @@ describe('Multiview focused workspace presentation', () => {
     expect(composerIndex).toBeGreaterThan(chatIndex)
     expect(layoutSource).toContain('renderFocusedChatCell={')
     expect(layoutSource).toContain('const focusedHostOverlayRequired = Boolean(')
+    // The host chrome still reaches only the host-projection pane — but via a
+    // memoized element, because building it inline made a new node every
+    // render and defeated every pane's memo (see lib/paneTopLeftChrome).
     expect(layoutSource).toMatch(
-      /chatId === currentChatAppChatId \? \(\s*<>\s*\{humanCollaborationControls\}/
+      /chatId === currentChatAppChatId \? focusedPaneTopLeftChrome : undefined/
+    )
+    expect(layoutSource).toMatch(
+      /const focusedPaneTopLeftChrome = useMemo\(\s*\(\) => \(\s*<>\s*\{humanCollaborationControls\}/
     )
     expect(layoutSource).toContain('{!focusedHostOverlayRequired && channelMemberControl}')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')

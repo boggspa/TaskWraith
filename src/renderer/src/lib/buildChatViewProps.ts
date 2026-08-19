@@ -100,14 +100,100 @@ function evidencePathKey(path: string, workspacePath?: string): string {
   return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : normalized
 }
 
-function paneFileChangePresentation(input: BuildChatViewPropsInput): {
+interface PaneFileChangePresentation {
   summaries: TranscriptPanelProps['displayFileChangeSummaries']
   roundSummaries: NonNullable<TranscriptPanelProps['roundFileChangeSummaries']>
   text: string
   shouldShowStats: boolean
   additions: number
   deletions: number
-} {
+}
+
+/**
+ * Memo for the pane file-change projection.
+ *
+ * `getLiveToolFileDiffSummaries` parses a run's streamed tool activities, and
+ * this builder ran it raw inside the pane render — once per mounted pane, on
+ * every App render, at ensemble flush rates. The focused transcript has had a
+ * signature+cache in front of the same call since the 2026-08-18 renderer OOM
+ * work; the pane path never got one, so its cost scaled with both pane count
+ * and run length.
+ *
+ * The entry validates every value `paneFileChangePresentation` reads, by
+ * identity, so a stale projection is not representable: any real change misses
+ * and recomputes. `ensemble.activeRound` is only identity-stable across
+ * no-change flushes because of the ensemble-identity work in 9aa368362 — this
+ * memo would still be correct without it, just colder.
+ *
+ * Keyed per (chat, run, workspace) rather than a single entry so two panes on
+ * the same chat cannot evict each other, and bounded so closed panes and
+ * switched chats cannot accumulate.
+ */
+interface PaneFileChangeMemoEntry {
+  messages: BuildChatViewPropsInput['messages']
+  chatKind: unknown
+  activeRound: unknown
+  runs: unknown
+  currentRun: unknown
+  hasRunCompleteNotice: boolean
+  value: PaneFileChangePresentation
+}
+
+const paneFileChangeMemo = new Map<string, PaneFileChangeMemoEntry>()
+const PANE_FILE_CHANGE_MEMO_LIMIT = 24
+// Workspace paths may contain spaces, so a space cannot separate the key parts
+// unambiguously. Built via fromCharCode: writing the escape inline here landed
+// a literal NUL byte in this file, which turns it binary to git while tsc and
+// the tests both still pass. See the repo control-byte guard.
+const PANE_FILE_CHANGE_KEY_SEPARATOR = String.fromCharCode(1)
+
+function paneFileChangeMemoKey(input: BuildChatViewPropsInput): string {
+  return [
+    input.chat?.appChatId || '',
+    input.currentRun?.runId || '',
+    input.currentWorkspacePath || ''
+  ].join(PANE_FILE_CHANGE_KEY_SEPARATOR)
+}
+
+function paneFileChangePresentation(input: BuildChatViewPropsInput): PaneFileChangePresentation {
+  const key = paneFileChangeMemoKey(input)
+  const chatKind = input.chat?.chatKind
+  const activeRound = input.chat?.chatKind === 'ensemble' ? input.chat.ensemble?.activeRound : null
+  const runs = input.chat?.runs
+  const hasRunCompleteNotice = Boolean(input.runCompleteNotice)
+  const cached = paneFileChangeMemo.get(key)
+  if (
+    cached &&
+    cached.messages === input.messages &&
+    cached.chatKind === chatKind &&
+    cached.activeRound === activeRound &&
+    cached.runs === runs &&
+    cached.currentRun === input.currentRun &&
+    cached.hasRunCompleteNotice === hasRunCompleteNotice
+  ) {
+    return cached.value
+  }
+  const value = computePaneFileChangePresentation(input)
+  paneFileChangeMemo.delete(key)
+  paneFileChangeMemo.set(key, {
+    messages: input.messages,
+    chatKind,
+    activeRound,
+    runs,
+    currentRun: input.currentRun,
+    hasRunCompleteNotice,
+    value
+  })
+  if (paneFileChangeMemo.size > PANE_FILE_CHANGE_MEMO_LIMIT) {
+    const oldestKey = paneFileChangeMemo.keys().next().value
+    if (oldestKey !== undefined) paneFileChangeMemo.delete(oldestKey)
+  }
+  return value
+}
+
+function computePaneFileChangePresentation(
+  input: BuildChatViewPropsInput
+): PaneFileChangePresentation {
   const runDiff = input.currentRun?.runDiff
   const exactSummaries = runDiff
     ? [...runDiff.createdFiles, ...runDiff.modifiedFiles, ...runDiff.deletedFiles]
@@ -134,9 +220,9 @@ function paneFileChangePresentation(input: BuildChatViewPropsInput): {
     const owners = ownersByPath.get(evidencePathKey(summary.path, input.currentWorkspacePath))
     return summary.owners?.length || !owners ? summary : { ...summary, owners }
   })
-  const currentRunSummaries = (
-    hasExactSummaries ? exactSummariesWithOwners : liveSummaries
-  ).filter((summary) => !summary.isNoise)
+  const currentRunSummaries = (hasExactSummaries ? exactSummariesWithOwners : liveSummaries).filter(
+    (summary) => !summary.isNoise
+  )
   const roundRunIds = input.runCompleteNotice
     ? selectCompletionRunIds(input.chat, input.currentRun)
     : new Set<string>()
@@ -158,8 +244,7 @@ function paneFileChangePresentation(input: BuildChatViewPropsInput): {
     input.currentWorkspacePath,
     { preferDisplayEvidence: roundRunIds.size <= 1 }
   )
-  const completionRoundSummaries =
-    roundSummaries.length > 0 ? summaries : EMPTY_FILE_SUMMARIES
+  const completionRoundSummaries = roundSummaries.length > 0 ? summaries : EMPTY_FILE_SUMMARIES
   const summariesAreEstimated =
     !hasExactSummaries || (roundSummaries.length > 0 && roundRunIds.size > 1)
   if (summaries.length === 0) {
