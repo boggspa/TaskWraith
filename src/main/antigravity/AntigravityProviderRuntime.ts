@@ -346,7 +346,12 @@ export function getAntigravityProviderMcpStatus(): Record<string, unknown> {
     serverName: null,
     tools: [],
     sections: [],
+    // Accurate as of the hook bridge shipping: this lane still carries no
+    // TaskWraith MCP tools (agy reads its servers from the global
+    // `config/mcp_config.json`, which TaskWraith does not register into), but
+    // it is no longer true that nothing is attached — a write-capable run
+    // installs a temporary PreToolUse approval hook and removes it on release.
     message:
-      'AntiGravity S3 uses only the official agy print-mode transport; no TaskWraith MCP bridge, plugin, or hook is attached.'
+      'AntiGravity S3 uses the official agy print-mode transport, which carries no TaskWraith MCP tools. Write-capable runs install a temporary PreToolUse approval hook so TaskWraith gates every native tool call, and it is removed when the run ends.'
   }
 }
