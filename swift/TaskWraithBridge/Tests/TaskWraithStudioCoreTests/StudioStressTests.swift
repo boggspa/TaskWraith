@@ -167,6 +167,12 @@ final class StudioStressTests: XCTestCase {
     // MARK: - S1: looped playback
 
     func testLoopedPlaybackIsStable() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let url = try await makeClip(frames: 30)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -205,6 +211,12 @@ final class StudioStressTests: XCTestCase {
     /// Deliberately scattered rather than sequential, because a forward scan
     /// hits the decoder's happy path and would exercise almost nothing.
     func testOneHundredScatteredSeeksAreStable() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let url = try await makeClip(frames: 60)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -319,6 +331,12 @@ final class StudioStressTests: XCTestCase {
     /// glyph atlas and the texture caches. If any of those survived teardown,
     /// ten cycles would show it.
     func testTenViewerCloseReopenCyclesAreStable() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let url = try await makeClip(frames: 12)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -462,6 +480,12 @@ final class StudioStressTests: XCTestCase {
     /// Toggling versions repeatedly is the review workflow, and it is the newest
     /// and least-exercised allocation path in the stack.
     func testRepeatedReviewTogglingIsStable() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let currentUrl = try await makeClip(frames: 24, level: 40)
         let insertUrl = try await makeClip(frames: 12, level: 200)
@@ -547,6 +571,12 @@ final class StudioStressTests: XCTestCase {
     /// half is measured separately in StudioMemoryCalibrationTests, not asserted
     /// in a comment here.
     func testTheRendererResourceInstrumentIsLiveAndBounded() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let url = try await makeClip(frames: 40)
         defer { try? FileManager.default.removeItem(at: url) }

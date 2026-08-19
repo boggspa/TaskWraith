@@ -160,6 +160,12 @@ final class StudioMemoryCalibrationTests: XCTestCase {
     /// slightly by process history, but the integrated verdict must reject the
     /// live-set growth independently of that noise.
     func testAllocationClassVerdictRejectsAGrowingIOSurfaceLeak() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device available on this machine")
         }
