@@ -52,6 +52,35 @@ const GROUP_ORDER: NonNullable<SidebarOverflowMenuItem['group']>[] = [
 ]
 
 /**
+ * Decide whether a capture-phase scroll event should dismiss an open menu.
+ *
+ * The popover is `position: fixed`, anchored to the trigger's bounding rect,
+ * so it only goes stale when the trigger itself moves — that is, when a
+ * scroll container the trigger lives INSIDE scrolls (the sidebar list, or the
+ * document). A scroll anywhere else leaves the anchor exactly where it was
+ * and must be ignored.
+ *
+ * This matters because the listener has to capture from `window` to see
+ * nested scrolls at all, which also hands it every unrelated one. The
+ * transcript pane pins itself to the live edge on every streaming delta, so
+ * an unfiltered dismissal closed the menu roughly as fast as it could be
+ * opened — the sidebar menus were usable only on a silent thread.
+ *
+ * Duck-types `contains` rather than testing `instanceof Node`: the same check
+ * then covers `Document` (page-level scroll) and `Element` (container scroll)
+ * alike, and stays callable in the renderer's DOM-less test environment.
+ */
+export function scrollDismissesMenu(
+  scrollTarget: EventTarget | null,
+  trigger: Node | null
+): boolean {
+  if (!scrollTarget || !trigger) return false
+  const container = scrollTarget as { contains?: (node: Node) => boolean }
+  if (typeof container.contains !== 'function') return false
+  return container.contains(trigger)
+}
+
+/**
  * Sidebar tile overflow menu. Tap the `…` glyph to open a popover with the
  * tile's actions; tap outside or press Escape to dismiss.
  *
@@ -147,9 +176,18 @@ export function SidebarOverflowMenu({
   // Close on ancestor scroll (sidebar lists scroll, and we'd otherwise leave
   // a stale popover floating where the trigger used to be). Reposition on
   // viewport resize so the menu tracks layout changes.
+  //
+  // The scroll listener is registered with `capture: true` because scroll
+  // events do not bubble — capturing from `window` is the only way to observe
+  // a scroll inside a nested container. The cost is that it observes EVERY
+  // scroll container in the app, so the dismissal has to be filtered down to
+  // the ones that actually move this trigger (see `scrollDismissesMenu`).
   useEffect(() => {
     if (!open) return
-    const handleScroll = () => setOpen(false)
+    const handleScroll = (event: Event) => {
+      if (!scrollDismissesMenu(event.target, triggerRef.current)) return
+      setOpen(false)
+    }
     const handleResize = () => updatePosition()
     window.addEventListener('scroll', handleScroll, true)
     window.addEventListener('resize', handleResize)
