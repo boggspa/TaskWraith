@@ -269,9 +269,15 @@ function DiffHoverPreviewLine({ line }: { line: ParsedDiffLine }) {
   )
 }
 
-export function useDiffHoverPreviewDismiss(
-  preview: DiffHoverPreviewState | null,
-  closePreview: () => void
+/**
+ * Dismiss a hover bubble on Escape, resize, or a scroll that is not inside the
+ * bubble itself. `bubbleSelector` names the bubble so a scroll within it does
+ * not close it; surfaces other than the diff preview pass their own.
+ */
+export function useDiffHoverPreviewDismiss<T>(
+  preview: T | null,
+  closePreview: () => void,
+  bubbleSelector = '.diff-hover-preview'
 ) {
   useEffect(() => {
     if (!preview) return
@@ -280,8 +286,8 @@ export function useDiffHoverPreviewDismiss(
     }
     const closePreviewOnScroll = (event: Event) => {
       const target = event.target
-      if (target instanceof Element && target.closest('.diff-hover-preview')) return
-      if (typeof document !== 'undefined' && document.querySelector('.diff-hover-preview:hover')) return
+      if (target instanceof Element && target.closest(bubbleSelector)) return
+      if (typeof document !== 'undefined' && document.querySelector(`${bubbleSelector}:hover`)) return
       closePreview()
     }
     window.addEventListener('scroll', closePreviewOnScroll, true)
@@ -292,14 +298,22 @@ export function useDiffHoverPreviewDismiss(
       window.removeEventListener('resize', closePreview)
       window.removeEventListener('keydown', closePreviewOnEscape)
     }
-  }, [closePreview, preview])
+  }, [bubbleSelector, closePreview, preview])
 }
 
-export function useDiffHoverPreviewState(
+/**
+ * Hover open/close timing + the currently shown preview.
+ *
+ * Generic over the preview payload so a surface whose bubble is not a diff can
+ * share the same dwell behaviour — the Task-complete Sub-threads rows show an
+ * Agent Invocation. `DiffHoverPreviewState` stays the default, so every
+ * existing call site is unchanged.
+ */
+export function useDiffHoverPreviewState<T = DiffHoverPreviewState>(
   delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELAY_MS,
   openDelayMs = 0
 ) {
-  const [preview, setPreview] = useState<DiffHoverPreviewState | null>(null)
+  const [preview, setPreview] = useState<T | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const openTimerRef = useRef<number | null>(null)
 
@@ -322,7 +336,7 @@ export function useDiffHoverPreviewState(
   }, [cancelScheduledShow, keepPreviewOpen])
 
   const showPreview = useCallback(
-    (nextPreview: DiffHoverPreviewState) => {
+    (nextPreview: T) => {
       cancelScheduledShow()
       keepPreviewOpen()
       setPreview(nextPreview)
@@ -335,7 +349,7 @@ export function useDiffHoverPreviewState(
   // scroll or unmount during the wait — return null to abort). A currently
   // open preview stays visible until the new one replaces it.
   const scheduleShowPreview = useCallback(
-    (produce: () => DiffHoverPreviewState | null) => {
+    (produce: () => T | null) => {
       cancelScheduledShow()
       keepPreviewOpen()
       if (openDelayMs <= 0 || typeof window === 'undefined') {

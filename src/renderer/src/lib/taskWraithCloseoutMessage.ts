@@ -1649,8 +1649,51 @@ function formatParticipantTokenCell(totalTokens: number, estimated = false): str
   return `${estimated ? '~' : ''}${formatContextTokens(totalTokens)}`
 }
 
-/** Visible sub-thread rows in the Task-complete epic stack (metadata may keep more). */
+/** Sub-thread rows shown before the reader asks for more. */
 export const CLOSEOUT_SUBAGENT_TABLE_LIMIT = 8
+/** Rows revealed per "Show more" press. */
+export const CLOSEOUT_SUBAGENT_PAGE_SIZE = 16
+
+export interface CloseoutSubagentWindow<T> {
+  items: T[]
+  visibleCount: number
+  canShowMore: boolean
+  canShowFewer: boolean
+  /** How many the next press reveals — the button says this number. */
+  nextShowCount: number
+  nextCount: number
+  hiddenCount: number
+}
+
+/**
+ * Paging window for the Task-complete Sub-threads table.
+ *
+ * The card used to slice to `CLOSEOUT_SUBAGENT_TABLE_LIMIT` and print "N more
+ * not shown", which told the reader that evidence existed and then refused to
+ * show it — the File changes card in the same stack has always been expandable.
+ * Unlike that one this has NO absolute ceiling: sub-thread counts are bounded
+ * by the wave size a human authorised, so every row can be reached.
+ */
+export function buildCloseoutSubagentWindow<T>(
+  rows: readonly T[],
+  requestedVisibleCount = CLOSEOUT_SUBAGENT_TABLE_LIMIT
+): CloseoutSubagentWindow<T> {
+  const totalCount = rows.length
+  const visibleCount = Math.min(
+    Math.max(CLOSEOUT_SUBAGENT_TABLE_LIMIT, Math.floor(requestedVisibleCount) || 0),
+    totalCount
+  )
+  const nextCount = Math.min(visibleCount + CLOSEOUT_SUBAGENT_PAGE_SIZE, totalCount)
+  return {
+    items: rows.slice(0, visibleCount),
+    visibleCount,
+    canShowMore: nextCount > visibleCount,
+    canShowFewer: visibleCount > CLOSEOUT_SUBAGENT_TABLE_LIMIT,
+    nextShowCount: Math.max(0, nextCount - visibleCount),
+    nextCount,
+    hiddenCount: Math.max(0, totalCount - visibleCount)
+  }
+}
 
 export type CloseoutSubagentDelegationStatus =
   | 'created'

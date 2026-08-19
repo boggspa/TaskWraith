@@ -1,14 +1,20 @@
-import { useCallback, useRef, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { SeatChangeLink } from '../../../shared/seatChange'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
+  buildCloseoutSubagentWindow,
   CLOSEOUT_COMMIT_TABLE_LIMIT,
   CLOSEOUT_SUBAGENT_TABLE_LIMIT,
   type CloseoutCommit,
   type CloseoutParticipantTable,
   type CloseoutSubagentDelegation
 } from '../lib/taskWraithCloseoutMessage'
+import {
+  SUBAGENT_INVOCATION_TOOLTIP_ID,
+  SubagentInvocationHoverCard,
+  type SubagentInvocationHoverState
+} from './SubagentInvocationHoverCard'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SeatChangeInlineStrip } from './SeatChangeRow'
@@ -150,6 +156,10 @@ function commitFileTotals(commit: CloseoutCommit): {
 /** Commit hover open delay — matches TranscriptPanel's file-change hover delay. */
 const COMMIT_FILES_HOVER_OPEN_DELAY_MS = 900
 const COMMIT_FILES_HOVER_CLOSE_DELAY_MS = 1400
+// Matched to the commit pill: a deliberate dwell before the bubble appears,
+// and a slow close so crossing into it mid-read never snaps it away.
+const SUBAGENT_INVOCATION_HOVER_OPEN_DELAY_MS = 900
+const SUBAGENT_INVOCATION_HOVER_CLOSE_DELAY_MS = 1400
 
 export interface CommitFilePreviewLoadResult {
   files: NonNullable<CloseoutCommit['files']>
@@ -183,6 +193,7 @@ export function RunCompleteEpicStack({
   fileChanges,
   loadCommitFiles,
   commitRowLimit = CLOSEOUT_COMMIT_TABLE_LIMIT,
+  subagentRowLimit = CLOSEOUT_SUBAGENT_TABLE_LIMIT,
   commitAttributionLabel = 'Seat',
   commitAttributionFallback,
   commitNumbering = false,
@@ -197,6 +208,8 @@ export function RunCompleteEpicStack({
   loadCommitFiles?: (commit: CloseoutCommit) => Promise<CommitFilePreviewLoadResult | null>
   /** `null` renders the complete stack; Task Complete keeps its bounded default. */
   commitRowLimit?: number | null
+  /** null renders every sub-thread and hides the expander (inspector surfaces). */
+  subagentRowLimit?: number | null
   commitAttributionLabel?: string
   commitAttributionFallback?: (commit: CloseoutCommit) => CommitAttributionFallback | null
   commitNumbering?: boolean
@@ -206,8 +219,29 @@ export function RunCompleteEpicStack({
 }): ReactNode {
   const rows = participantTable?.rows || []
   const allSubagentRows = Array.isArray(subagentDelegations) ? subagentDelegations : []
-  const subagentRows = allSubagentRows.slice(0, CLOSEOUT_SUBAGENT_TABLE_LIMIT)
-  const subagentOverflow = Math.max(0, allSubagentRows.length - subagentRows.length)
+  // Expandable, like the File changes card in this same stack. The old hard
+  // slice printed "N more not shown", which named evidence the reader then had
+  // no way to reach.
+  const [subagentVisibleCount, setSubagentVisibleCount] = useState(
+    subagentRowLimit ?? CLOSEOUT_SUBAGENT_TABLE_LIMIT
+  )
+  const subagentWindow = useMemo(
+    () =>
+      subagentRowLimit === null
+        ? null
+        : buildCloseoutSubagentWindow(allSubagentRows, subagentVisibleCount),
+    [allSubagentRows, subagentRowLimit, subagentVisibleCount]
+  )
+  const subagentRows = subagentWindow ? subagentWindow.items : allSubagentRows
+  const showMoreSubagents = useCallback(() => {
+    setSubagentVisibleCount(
+      (current) =>
+        buildCloseoutSubagentWindow(allSubagentRows, current).nextCount
+    )
+  }, [allSubagentRows])
+  const showFewerSubagents = useCallback(() => {
+    setSubagentVisibleCount(CLOSEOUT_SUBAGENT_TABLE_LIMIT)
+  }, [])
   const allCommitRows = Array.isArray(commits) ? commits : []
   const commitRows =
     commitRowLimit === null
@@ -229,6 +263,39 @@ export function RunCompleteEpicStack({
   } = useDiffHoverPreviewState(COMMIT_FILES_HOVER_CLOSE_DELAY_MS, COMMIT_FILES_HOVER_OPEN_DELAY_MS)
 
   useDiffHoverPreviewDismiss(commitFilesPill, closeCommitFilesPill)
+
+  // ── Sub-thread Agent-Invocation bubble ───────────────────────────────
+  // Same dwell contract as the commit pill beside it, over the row the
+  // reader is already looking at.
+  const {
+    closePreview: closeSubagentCard,
+    keepPreviewOpen: keepSubagentCardOpen,
+    preview: subagentCard,
+    scheduleClosePreview: scheduleCloseSubagentCard,
+    scheduleShowPreview: scheduleShowSubagentCard
+  } = useDiffHoverPreviewState<SubagentInvocationHoverState>(
+    SUBAGENT_INVOCATION_HOVER_CLOSE_DELAY_MS,
+    SUBAGENT_INVOCATION_HOVER_OPEN_DELAY_MS
+  )
+  useDiffHoverPreviewDismiss(subagentCard, closeSubagentCard, '.subagent-invocation-hover-card')
+
+  const openSubagentCard = useCallback(
+    (event: { currentTarget: HTMLElement }, row: CloseoutSubagentDelegation) => {
+      const element = event.currentTarget
+      // Measured when the timer fires, not when it is scheduled: the row can
+      // scroll or unmount during the dwell (same rule as the commit pill).
+      scheduleShowSubagentCard(() => {
+        if (!element.isConnected) return null
+        return {
+          anchor: element.getBoundingClientRect(),
+          boundary: diffHoverPreviewBoundaryForElement(element),
+          row
+        }
+      })
+    },
+    [scheduleShowSubagentCard]
+  )
+
   const hoveredCommitHashRef = useRef<string | null>(null)
   const commitFileCacheRef = useRef<Map<string, CommitFilePreviewCacheEntry>>(new Map())
 
@@ -419,7 +486,21 @@ export function RunCompleteEpicStack({
               const statusLabel = subagentStatusLabel(row.status)
               const glyphKey = subagentStatusGlyphKey(row.status)
               return (
-                <div className="run-complete-epic-row" role="row" key={row.subThreadId}>
+                <div
+                  className="run-complete-epic-row has-subagent-invocation"
+                  role="row"
+                  key={row.subThreadId}
+                  tabIndex={0}
+                  aria-describedby={
+                    subagentCard?.row.subThreadId === row.subThreadId
+                      ? SUBAGENT_INVOCATION_TOOLTIP_ID
+                      : undefined
+                  }
+                  onMouseEnter={(event) => openSubagentCard(event, row)}
+                  onMouseLeave={scheduleCloseSubagentCard}
+                  onFocus={(event) => openSubagentCard(event, row)}
+                  onBlur={scheduleCloseSubagentCard}
+                >
                   <span className="run-complete-epic-seat" role="cell">
                     <span
                       className="run-complete-epic-subagent"
@@ -445,13 +526,26 @@ export function RunCompleteEpicStack({
                 </div>
               )
             })}
-            {subagentOverflow > 0 && (
-              <div className="run-complete-epic-row is-overflow" role="row">
-                <span role="cell" className="run-complete-epic-overflow">
-                  {subagentOverflow} more sub-thread{subagentOverflow === 1 ? '' : 's'} not shown.
-                </span>
-              </div>
-            )}
+            {subagentWindow?.canShowMore ? (
+              <button
+                className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
+                type="button"
+                aria-label={`Show ${subagentWindow.nextShowCount} more sub-threads`}
+                onClick={showMoreSubagents}
+              >
+                Show {subagentWindow.nextShowCount} more sub-thread
+                {subagentWindow.nextShowCount === 1 ? '' : 's'}
+              </button>
+            ) : subagentWindow?.canShowFewer ? (
+              <button
+                className="run-complete-epic-row is-overflow run-complete-epic-subagent-more"
+                type="button"
+                aria-label="Show fewer sub-threads"
+                onClick={showFewerSubagents}
+              >
+                Show fewer sub-threads
+              </button>
+            ) : null}
           </div>
         </section>
       )}
@@ -603,6 +697,16 @@ export function RunCompleteEpicStack({
           onMouseEnter={keepCommitFilesPillOpen}
           onMouseLeave={scheduleCloseCommitFilesPill}
           preview={commitFilesPill}
+        />
+      )}
+
+      {hasSubagents && (
+        <SubagentInvocationHoverCard
+          onFocus={keepSubagentCardOpen}
+          onBlur={scheduleCloseSubagentCard}
+          onMouseEnter={keepSubagentCardOpen}
+          onMouseLeave={scheduleCloseSubagentCard}
+          preview={subagentCard}
         />
       )}
     </div>

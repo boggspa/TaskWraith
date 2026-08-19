@@ -4845,6 +4845,42 @@ input:disabled, select:disabled, textarea:disabled {
   outline-offset: -1px;
 }
 
+/* Sub-thread rows carry the Agent-Invocation bubble; same affordance as the
+ * commit rows that carry the files pill. */
+.run-complete-epic-row.has-subagent-invocation {
+  cursor: default;
+}
+
+.run-complete-epic-row.has-subagent-invocation:hover,
+.run-complete-epic-row.has-subagent-invocation:focus-visible,
+.run-complete-epic-row.has-subagent-invocation:focus-within {
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
+.run-complete-epic-row.has-subagent-invocation:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
+  outline-offset: -1px;
+}
+
+/* Expander button. It sits in the row grid, so it must reset the button
+ * chrome rather than inherit the platform default. */
+.run-complete-epic-subagent-more {
+  grid-column: 1 / -1;
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-complete-epic-subagent-more:hover,
+.run-complete-epic-subagent-more:focus-visible {
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  text-decoration: underline;
+}
+
 .run-complete-epic-row:first-child {
   border-top: none;
 }
@@ -5524,6 +5560,106 @@ input:disabled, select:disabled, textarea:disabled {
   background: var(--surface-elevated, var(--surface-base));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* ── Agent-Invocation bubble (Task-complete Sub-threads rows) ──────────
+ * Shares the diff preview's glass so the two hover surfaces in this card
+ * read as one family; content is an invocation, not a diff. */
+.subagent-invocation-hover-card {
+  position: fixed;
+  z-index: 10080;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 90%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 18%, transparent),
+    0 18px 42px color-mix(in srgb, #000 36%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: auto;
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  isolation: isolate;
+}
+
+:root[data-reduce-transparency="true"] .subagent-invocation-hover-card {
+  background: var(--surface-elevated, var(--surface-base));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.subagent-invocation-hover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subagent-invocation-hover-status {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.subagent-invocation-hover-status.status-failed,
+.subagent-invocation-hover-status.status-cancelled {
+  color: color-mix(in srgb, var(--danger) 76%, var(--text-primary) 24%);
+}
+
+.subagent-invocation-hover-status.status-returned,
+.subagent-invocation-hover-status.status-completed {
+  color: color-mix(in srgb, var(--success) 76%, var(--text-primary) 24%);
+}
+
+.subagent-invocation-hover-identity,
+.subagent-invocation-hover-route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subagent-invocation-hover-name {
+  font-weight: 600;
+}
+
+.subagent-invocation-hover-title,
+.subagent-invocation-hover-route-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-invocation-hover-logo.sidebar-provider-icon,
+.subagent-invocation-hover-logo .sidebar-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+
+.subagent-invocation-hover-prompt {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-invocation-hover-prompt.is-empty {
+  font-style: italic;
+  opacity: 0.75;
 }
 
 .diff-hover-preview-header {

@@ -127,7 +127,10 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('run-complete-epic-subagent')
   })
 
-  it('caps visible sub-threads and notes the overflow', () => {
+  it('collapses sub-threads to a reachable window instead of a dead overflow note', () => {
+    // Was: "2 more sub-threads not shown." — a line that told the reader
+    // evidence existed and then refused to show it. The File changes card in
+    // this same stack has always been expandable; this one now matches.
     const rows = Array.from({ length: 10 }, (_, index) => ({
       subThreadId: `child-${index}`,
       identitySeed: `child-${index}`,
@@ -139,7 +142,46 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('Worker 1')
     expect(html).toContain('Worker 8')
     expect(html).not.toContain('Worker 9')
-    expect(html).toContain('2 more sub-threads not shown.')
+    expect(html).not.toContain('not shown.')
+    expect(html).toContain('Show 2 more sub-threads')
+    expect(html).toContain('run-complete-epic-subagent-more')
+  })
+
+  it('renders every sub-thread when the host opts out of the window', () => {
+    const rows = Array.from({ length: 10 }, (_, index) => ({
+      subThreadId: `child-${index}`,
+      identitySeed: `child-${index}`,
+      title: `Worker ${index + 1}`,
+      provider: 'codex' as const,
+      status: 'created' as const
+    }))
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack subagentDelegations={rows} subagentRowLimit={null} />
+    )
+    expect(html).toContain('Worker 10')
+    expect(html).not.toContain('Show 2 more sub-threads')
+  })
+
+  it('gives each sub-thread row an invocation hover affordance', () => {
+    const html = renderToStaticMarkup(
+      <RunCompleteEpicStack
+        subagentDelegations={[
+          {
+            subThreadId: 'child-a',
+            identitySeed: 'child-a',
+            title: 'Worker A',
+            provider: 'codex',
+            parentProvider: 'claude',
+            status: 'returned',
+            promptPreview: 'Audit the CSS for the market map'
+          }
+        ]}
+      />
+    )
+    // The row is focusable and describes itself by the shared hover tooltip,
+    // the same contract the commit-files pill row uses.
+    expect(html).toContain('has-subagent-invocation')
+    expect(html).toContain('tabindex="0"')
   })
 
   it('caps visible commits and notes the overflow', () => {
