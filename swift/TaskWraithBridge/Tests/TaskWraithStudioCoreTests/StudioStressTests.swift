@@ -246,6 +246,12 @@ final class StudioStressTests: XCTestCase {
     // MARK: - S3: 20 source switches
 
     func testTwentySourceSwitchesAreStable() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let first = try await makeClip(frames: 12, level: 40)
         let second = try await makeClip(frames: 12, level: 200)
@@ -393,6 +399,12 @@ final class StudioStressTests: XCTestCase {
     /// it simply measures the previous architecture. A green suite gives no
     /// signal that the ground moved, so the new path needs its own instrument.
     func testTenRouteHideShowCyclesReleaseResourcesOnARetainedRenderer() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         let device = try makeDevice()
         let url = try await makeClip(frames: 12)
         defer { try? FileManager.default.removeItem(at: url) }

@@ -29,6 +29,12 @@ final class StudioWorkspaceWindowTests: XCTestCase {
   }
 
   func testOneWorkspaceWindowOwnsBothExistingRoutePresentations() throws {
+    if ProcessInfo.processInfo.environment["CI"] != nil {
+        throw XCTSkip(
+            "needs a real GPU and window server; hosted CI runners are headless "
+            + "and their Paravirtual Metal device allocates differently"
+        )
+    }
     let workspace = try makeWorkspace()
 
     let review = try XCTUnwrap(workspace.reviewController)

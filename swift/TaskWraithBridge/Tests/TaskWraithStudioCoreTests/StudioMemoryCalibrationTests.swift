@@ -85,6 +85,12 @@ final class StudioMemoryCalibrationTests: XCTestCase {
     /// only layer at which VideoToolbox's pool could be recycling underneath us,
     /// and ruling that out is the entire reason the control exists.
     func testFootprintIsBlindToDistinctIOSurfaces() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip(
+                "needs a real GPU and window server; hosted CI runners are headless "
+                + "and their Paravirtual Metal device allocates differently"
+            )
+        }
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw XCTSkip("no Metal device available on this machine")
         }
