@@ -1,4 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import {
   EMPTY_CHAT_MESSAGES,
   EMPTY_TRANSCRIPT_FILE_SUMMARIES,
@@ -1273,12 +1280,23 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   //     !isChatPopoutWindow, so top-right is free there and nothing occludes it.
   //     This was in fact the only place the button worked before the move, so it
   //     must keep working — hence the floating wrapper rather than dropping it.
-  const humanCollaborationControls =
-    currentChat && !isWelcomeChat ? (
-      <div className="human-collaboration-header">
-        <ChannelHostPanel chatId={currentChat.appChatId} chatTitle={currentChat.title || 'Chat'} />
-      </div>
-    ) : null
+  // Memoized on the two fields it actually reads, not on `currentChat` itself:
+  // the chat record gets a new identity on every stream flush, and a fresh
+  // element here would churn the pane chrome composer downstream.
+  const humanCollaborationChatId = currentChat && !isWelcomeChat ? currentChat.appChatId : null
+  const humanCollaborationChatTitle = currentChat?.title || 'Chat'
+  const humanCollaborationControls = useMemo(
+    () =>
+      humanCollaborationChatId ? (
+        <div className="human-collaboration-header">
+          <ChannelHostPanel
+            chatId={humanCollaborationChatId}
+            chatTitle={humanCollaborationChatTitle}
+          />
+        </div>
+      ) : null,
+    [humanCollaborationChatId, humanCollaborationChatTitle]
+  )
 
   // The pane-owned focused renderer is the normal split-mode path. A small set
   // of genuinely host-only, user-invoked overlays may temporarily cover that
@@ -1295,7 +1313,22 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       visibleAuditRun ||
       threadSearchVisible
   )
-  const channelMemberControl = isChatPopoutWindow ? null : <ChannelMemberPanel />
+  const channelMemberControl = useMemo(
+    () => (isChatPopoutWindow ? null : <ChannelMemberPanel />),
+    [isChatPopoutWindow]
+  )
+  // Feeds the pane cell's identity-preserving chrome composer. Built inline it
+  // was a fresh fragment per render, which defeated that composer (and with it
+  // every mounted pane's memo) for the host-projection pane.
+  const focusedPaneTopLeftChrome = useMemo(
+    () => (
+      <>
+        {humanCollaborationControls}
+        {!focusedHostOverlayRequired && channelMemberControl}
+      </>
+    ),
+    [humanCollaborationControls, channelMemberControl, focusedHostOverlayRequired]
+  )
 
   return (
       <div
@@ -1858,12 +1891,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               renderFocusedChatCell={(chatId, paneIndex) =>
                 renderMultiviewPaneCell(chatId, paneIndex, {
                   topLeftChromeExtra:
-                    chatId === currentChatAppChatId ? (
-                      <>
-                        {humanCollaborationControls}
-                        {!focusedHostOverlayRequired && channelMemberControl}
-                      </>
-                    ) : undefined
+                    chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined
                 })
               }
               showFocusedHostOverlay={focusedHostOverlayRequired}

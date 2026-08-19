@@ -932,6 +932,7 @@ import {
   ChatSurfaceComposerRuntime,
   ChatSurfaceComposerRuntimeRegistry
 } from './lib/chatSurfaceComposerRuntime'
+import { createPaneTopLeftChromeComposer } from './lib/paneTopLeftChrome'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
 import {
   executionAppendSubmissionKey,
@@ -28873,6 +28874,30 @@ function App(): React.JSX.Element {
     },
     [multiview.isMultiview, multiview.setLayout]
   )
+  // Every pane trails this button onto its top-left chrome. It must keep its
+  // identity across renders or `chatViewPanePropsEqual` can never bail — see
+  // lib/paneTopLeftChrome. `setShowWorkspaceSidebar` is a stable setState.
+  const workspaceSidebarToggleButton = useMemo(
+    () => (
+      <button
+        type="button"
+        className="chat-corner-btn"
+        title={`${showWorkspaceSidebar ? 'Hide' : 'Show'} workspace sidebar`}
+        aria-label="Toggle workspace sidebar"
+        onClick={(event) => {
+          event.stopPropagation()
+          setShowWorkspaceSidebar((current) => !current)
+        }}
+      >
+        <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
+      </button>
+    ),
+    [showWorkspaceSidebar]
+  )
+  // One composer for the whole grid: only the host-projection pane ever passes
+  // chrome, so a single-entry cache never thrashes. Panes that pass nothing get
+  // `workspaceSidebarToggleButton` itself back, allocation-free.
+  const composePaneTopLeftChrome = useMemo(() => createPaneTopLeftChromeComposer(), [])
   const renderMultiviewPaneCell = (
     viewerChatId: string,
     viewerPaneIndex: number,
@@ -29363,23 +29388,10 @@ function App(): React.JSX.Element {
         dashboardWorkspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
         dashboardProvidersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
         dashboardAutoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
-        topLeftChromeExtra={
-          <>
-            {options.topLeftChromeExtra}
-            <button
-              type="button"
-              className="chat-corner-btn"
-              title={`${showWorkspaceSidebar ? 'Hide' : 'Show'} workspace sidebar`}
-              aria-label="Toggle workspace sidebar"
-              onClick={(event) => {
-                event.stopPropagation()
-                setShowWorkspaceSidebar((current) => !current)
-              }}
-            >
-              <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
-            </button>
-          </>
-        }
+        topLeftChromeExtra={composePaneTopLeftChrome(
+          options.topLeftChromeExtra,
+          workspaceSidebarToggleButton
+        )}
         topRightChromeActions={viewerChromeActions}
         pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
         pendingAgentQuestions={

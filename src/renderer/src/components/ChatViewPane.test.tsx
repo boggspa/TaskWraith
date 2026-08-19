@@ -98,6 +98,27 @@ describe('chatViewPanePropsEqual', () => {
     expect(chatViewPanePropsEqual(makeProps(), makeProps())).toBe(true)
   })
 
+  it('bails on the LIVE chrome shape App actually passes, and only that shape', () => {
+    // Regression: App built `topLeftChromeExtra` as a fresh JSX fragment per
+    // pane per render, so this comparator returned false for every pane on
+    // every render and its ~60 other clauses were unreachable. `makeProps`
+    // omitted the prop, so the equality test above passed vacuously —
+    // supplying the live shape is what makes this guard real.
+    const stableChrome = <button type="button">sidebar</button>
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ topLeftChromeExtra: stableChrome }),
+        makeProps({ topLeftChromeExtra: stableChrome })
+      )
+    ).toBe(true)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ topLeftChromeExtra: <button type="button">sidebar</button> }),
+        makeProps({ topLeftChromeExtra: <button type="button">sidebar</button> })
+      )
+    ).toBe(false)
+  })
+
   it('skips re-render when only the high-churn shared arrays change identity', () => {
     // The whole point: a token in another pane re-creates chats/runningChatIds
     // every frame, but this pane's own messages are unchanged -> no reconcile.
