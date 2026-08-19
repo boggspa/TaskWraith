@@ -243,10 +243,7 @@ export class ChatUpdateDeliveryCoordinator {
         // The late arrival is the pending delta's missing base link: splice it
         // in FRONT so the composed chain still patches from the renderer's
         // baseline instead of falling back to a stale-content snapshot.
-        const healed = composeChatUpdateProducerDeltas(
-          producer.delta,
-          state.pending.producer.delta
-        )
+        const healed = composeChatUpdateProducerDeltas(producer.delta, state.pending.producer.delta)
         if (healed) {
           state.pending = {
             ...state.pending,

@@ -3447,9 +3447,7 @@ export function ActivityStack({
         {childThreads.length >= 2 && (
           <ChildAgentSpawnBlock
             threads={childThreads}
-            isExpanded={
-              !expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
-            }
+            isExpanded={!expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))}
             onToggleExpand={() =>
               toggleDisclosureExpansionId(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
             }
@@ -3577,16 +3575,14 @@ export function ActivityStack({
     <div className="activity-timeline" style={activityAccentStyle}>
       {header}
       {childThreads.length >= 2 && (
-          <ChildAgentSpawnBlock
-            threads={childThreads}
-            isExpanded={
-              !expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
-            }
-            onToggleExpand={() =>
-              toggleDisclosureExpansionId(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
-            }
-          />
-        )}
+        <ChildAgentSpawnBlock
+          threads={childThreads}
+          isExpanded={!expandedIds.has(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))}
+          onToggleExpand={() =>
+            toggleDisclosureExpansionId(spawnBlockCollapsedExpansionId(childThreads[0]?.id ?? ''))
+          }
+        />
+      )}
       {timelineNodes}
     </div>
   )

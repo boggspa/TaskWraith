@@ -227,8 +227,7 @@ export function MistralQuotaMeterView({
             className="model-usage-window mistral-quota-window mistral-quota-window--api"
             title={[
               'API usage read from your Mistral console' +
-                (estimate.apiUsage.asOf &&
-                !Number.isNaN(new Date(estimate.apiUsage.asOf).getTime())
+                (estimate.apiUsage.asOf && !Number.isNaN(new Date(estimate.apiUsage.asOf).getTime())
                   ? ` (${new Date(estimate.apiUsage.asOf).toLocaleString()}).`
                   : '.'),
               'Shared across Studio, Vibe Code, and the API; this seat spends from the Vibe Code budget below.'

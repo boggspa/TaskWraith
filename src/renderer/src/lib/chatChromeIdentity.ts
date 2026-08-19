@@ -7,12 +7,7 @@ import type { ChatRecord } from '../../../main/store/types'
  * `persistenceRevision` is main's save counter — it rides every patch
  * delivery, so leaving it out forced a full chrome commit per flush.
  */
-const TRANSCRIPT_STREAM_FIELDS = new Set([
-  'messages',
-  'runs',
-  'updatedAt',
-  'persistenceRevision'
-])
+const TRANSCRIPT_STREAM_FIELDS = new Set(['messages', 'runs', 'updatedAt', 'persistenceRevision'])
 
 /**
  * True when two chat records are equal for App chrome purposes — every own

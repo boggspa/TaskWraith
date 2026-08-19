@@ -511,9 +511,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         provider: 'meta',
         configured: true,
         windows: [],
-        balances: [
-          expect.objectContaining({ label: 'Payment threshold', amount: 20, unit: 'USD' })
-        ]
+        balances: [expect.objectContaining({ label: 'Payment threshold', amount: 20, unit: 'USD' })]
       })
     )
   })

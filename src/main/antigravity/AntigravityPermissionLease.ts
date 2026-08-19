@@ -883,9 +883,7 @@ export class AntigravityPermissionLeaseCoordinator {
     state.addedRuleHistory.push(...newHistory)
     const nextReceipt: AntigravityPermissionLeaseReceipt = {
       ...state.receipt,
-      addedAllowRules: state.addedRuleHistory.filter(
-        (rule) => !state.originalAllow.includes(rule)
-      ),
+      addedAllowRules: state.addedRuleHistory.filter((rule) => !state.originalAllow.includes(rule)),
       installedSha256: sha256(content),
       installedScalars
     }
@@ -927,9 +925,7 @@ export class AntigravityPermissionLeaseCoordinator {
     const permissions = isRecord(document.permissions) ? cloneObject(document.permissions) : {}
     if (Array.isArray(permissions.allow)) {
       const allow = permissions.allow.filter((entry): entry is string => typeof entry === 'string')
-      const kept = allow.filter(
-        (rule) => needed.has(rule) || state.originalAllow.includes(rule)
-      )
+      const kept = allow.filter((rule) => needed.has(rule) || state.originalAllow.includes(rule))
       if (kept.length !== allow.length) {
         permissions.allow = kept
         document.permissions = permissions
@@ -1007,8 +1003,7 @@ export class AntigravityPermissionLeaseCoordinator {
     const survivorHook = state.holders.get(survivorId)
     if (!survivorHook) return
     const currentContent = await readOptionalRegularFile(state.hooksPath)
-    const untouched =
-      currentContent !== null && sha256(currentContent) === state.lastInstalledSha
+    const untouched = currentContent !== null && sha256(currentContent) === state.lastInstalledSha
     const base = untouched
       ? parseSettings(
           Buffer.from(state.receipt.originalContentBase64, 'base64').toString('utf8') || '{}',
@@ -1074,11 +1069,15 @@ export class AntigravityPermissionLeaseCoordinator {
     let mcpRegistered = false
     try {
       await this.runExclusive(settingsPath, () => this.joinSettings(settingsPath, leaseId, input))
-      undo.push(() => this.runExclusive(settingsPath, () => this.leaveSettings(settingsPath, leaseId)))
+      undo.push(() =>
+        this.runExclusive(settingsPath, () => this.leaveSettings(settingsPath, leaseId))
+      )
       throwIfPermissionLeaseAborted(input.signal)
       if (input.hookOverlay && hooksKey) {
         const overlay = input.hookOverlay
-        await this.runExclusive(hooksKey, () => this.joinHook(hooksKey, leaseId, overlay, input.signal))
+        await this.runExclusive(hooksKey, () =>
+          this.joinHook(hooksKey, leaseId, overlay, input.signal)
+        )
         undo.push(() => this.runExclusive(hooksKey, () => this.leaveHook(hooksKey, leaseId)))
         throwIfPermissionLeaseAborted(input.signal)
       }

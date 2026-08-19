@@ -77,9 +77,7 @@ export function buildMistralWebReport(
       : undefined
   return {
     spentUsd: convertToUsd(vibeSpent as number, currency),
-    ...(vibeAllowance !== undefined
-      ? { allowanceUsd: convertToUsd(vibeAllowance, currency) }
-      : {}),
+    ...(vibeAllowance !== undefined ? { allowanceUsd: convertToUsd(vibeAllowance, currency) } : {}),
     fetchedAt: fetchedAt.toISOString(),
     ...(summary.periodEnd && !Number.isNaN(summary.periodEnd.getTime())
       ? { periodEnd: summary.periodEnd.toISOString() }

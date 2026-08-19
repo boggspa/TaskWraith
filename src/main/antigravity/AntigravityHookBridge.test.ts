@@ -171,13 +171,23 @@ describe('startAgyHookBridgeServer', () => {
 
     await post(
       server.port,
-      { toolCall: { name: 'call_mcp_tool', args: { ServerName: 'TaskWraith', ToolName: 'goal_read' } } },
+      {
+        toolCall: {
+          name: 'call_mcp_tool',
+          args: { ServerName: 'TaskWraith', ToolName: 'goal_read' }
+        }
+      },
       token
     )
     // agy 1.1.12-style JSON-quoted scalars decode exactly one layer.
     await post(
       server.port,
-      { toolCall: { name: 'call_mcp_tool', args: { server_name: '"sqlite-helper"', tool_name: '"query"' } } },
+      {
+        toolCall: {
+          name: 'call_mcp_tool',
+          args: { server_name: '"sqlite-helper"', tool_name: '"query"' }
+        }
+      },
       token
     )
     // A serverless call still reaches the handler; attribution is its job.

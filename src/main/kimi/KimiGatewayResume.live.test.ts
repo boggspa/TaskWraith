@@ -149,7 +149,10 @@ async function startEchoBridge(label: string): Promise<{
         const params = message.params as
           | { name?: unknown; arguments?: { text?: unknown } }
           | undefined
-        const call = { name: String(params?.name ?? ''), text: String(params?.arguments?.text ?? '') }
+        const call = {
+          name: String(params?.name ?? ''),
+          text: String(params?.arguments?.text ?? '')
+        }
         toolCalls.push(call)
         return {
           jsonrpc: '2.0',
@@ -191,8 +194,10 @@ async function runLiveTurn(options: {
   const capture: LiveTurnCapture = { session: null, wirePrompts: [], warnings: [], answer: '' }
   await new Promise<void>((resolveTurn) => {
     let settled = false
-    const timers: { cancel?: ReturnType<typeof setTimeout>; close?: ReturnType<typeof setTimeout> } =
-      {}
+    const timers: {
+      cancel?: ReturnType<typeof setTimeout>
+      close?: ReturnType<typeof setTimeout>
+    } = {}
     const done = (): void => {
       if (settled) return
       settled = true
@@ -378,8 +383,7 @@ describe.skipIf(!ENABLED)(
             'with exactly: NO-PROBE-TOOL',
           resumeSessionId: mintedSessionId,
           resumeFallbackPrompt: 'RECOVERY SEED — must not be used on a healthy resume.',
-          confirmResumedSession: () =>
-            act.bridge.waitForContact(PRODUCTION_RESUME_CONTACT_GRACE_MS)
+          confirmResumedSession: () => act.bridge.waitForContact(PRODUCTION_RESUME_CONTACT_GRACE_MS)
         })
         const contacted = act.bridge.contacted()
         await act.bridge.close()

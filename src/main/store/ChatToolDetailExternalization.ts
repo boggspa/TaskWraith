@@ -119,7 +119,9 @@ function isTerminalRun(run: ChatRun, hasLaterRun: boolean): boolean {
  */
 function isSealedToolActivity(activity: ToolActivity): boolean {
   return (
-    (activity.status === 'success' || activity.status === 'warning' || activity.status === 'error') &&
+    (activity.status === 'success' ||
+      activity.status === 'warning' ||
+      activity.status === 'error') &&
     Boolean(activity.endedAt)
   )
 }
@@ -206,10 +208,7 @@ function buildCommitEvidence(activity: ToolActivity): ToolActivityCommitEvidence
   let kind: 'dedicated' | 'shell' | null = null
   if (catalogTool === 'git_commit') {
     kind = 'dedicated'
-  } else if (
-    catalogTool === 'run_shell_command' ||
-    activity.category?.toLowerCase() === 'shell'
-  ) {
+  } else if (catalogTool === 'run_shell_command' || activity.category?.toLowerCase() === 'shell') {
     kind = 'shell'
   } else {
     const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()

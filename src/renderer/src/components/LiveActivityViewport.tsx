@@ -101,21 +101,18 @@ export function LiveActivityViewport({
    * through `setFollowing` so ref and state can never drift.
    */
   const followingRef = useRef(true)
-  const setFollowing = useCallback(
-    (next: boolean | ((current: boolean) => boolean)) => {
-      setFollowingState((current) => {
-        const resolved = typeof next === 'function' ? next(current) : next
-        followingRef.current = resolved
-        return resolved
-      })
-      if (typeof next === 'boolean') {
-        // Synchronous for plain writes — the reveal handler's pause must be
-        // visible to observer callbacks that fire before React commits.
-        followingRef.current = next
-      }
-    },
-    []
-  )
+  const setFollowing = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    setFollowingState((current) => {
+      const resolved = typeof next === 'function' ? next(current) : next
+      followingRef.current = resolved
+      return resolved
+    })
+    if (typeof next === 'boolean') {
+      // Synchronous for plain writes — the reveal handler's pause must be
+      // visible to observer callbacks that fire before React commits.
+      followingRef.current = next
+    }
+  }, [])
   const [fadeTop, setFadeTop] = useState(false)
   const [fadeBottom, setFadeBottom] = useState(false)
   /**
@@ -196,7 +193,10 @@ export function LiveActivityViewport({
       // again (the revealed card was collapsed, or its rows settled away).
       setGrownMaxHeight((current) =>
         current !== null &&
-        shouldResetRevealGrowth({ contentHeight: el.scrollHeight, baseMaxHeight: collapsedMaxHeight })
+        shouldResetRevealGrowth({
+          contentHeight: el.scrollHeight,
+          baseMaxHeight: collapsedMaxHeight
+        })
           ? null
           : current
       )

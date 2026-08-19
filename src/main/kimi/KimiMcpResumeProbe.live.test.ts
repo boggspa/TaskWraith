@@ -135,7 +135,11 @@ async function startProbeBridge(
       if (!authOk) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(
-          JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'unauthorized' } })
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32001, message: 'unauthorized' }
+          })
         )
         return
       }
@@ -434,7 +438,10 @@ async function rawAcpTurn(options: {
             jsonrpc: '2.0',
             id: ID.prompt,
             method: 'session/prompt',
-            params: { sessionId: result.sessionId, prompt: [{ type: 'text', text: options.prompt }] }
+            params: {
+              sessionId: result.sessionId,
+              prompt: [{ type: 'text', text: options.prompt }]
+            }
           })
           continue
         }
@@ -637,7 +644,10 @@ describe.skipIf(!ENABLED)('Kimi mcpServers-on-resume live probe', () => {
 
       // T5 — mint S3, minimal catalogue, NO tool use (compaction-mint shape).
       const bridgeE = await startProbeBridge('E', [
-        { name: 'probe_echo', description: 'Echo the provided text back. Wiring probe for TaskWraith.' }
+        {
+          name: 'probe_echo',
+          description: 'Echo the provided text back. Wiring probe for TaskWraith.'
+        }
       ])
       home = await prepare()
       const t5 = await rawAcpTurn({
@@ -661,7 +671,10 @@ describe.skipIf(!ENABLED)('Kimi mcpServers-on-resume live probe', () => {
       // resume-side bridge advertises probe_echo plus a tool the mint bridge
       // never had. Force the NEW tool and the OLD tool.
       const bridgeF = await startProbeBridge('F', [
-        { name: 'probe_echo', description: 'Echo the provided text back. Wiring probe for TaskWraith.' },
+        {
+          name: 'probe_echo',
+          description: 'Echo the provided text back. Wiring probe for TaskWraith.'
+        },
         { name: 'probe_canvas', description: 'Echo the provided text back from the canvas probe.' }
       ])
       home = await prepare()

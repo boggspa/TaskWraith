@@ -672,7 +672,10 @@ export function createIncrementalChatJournal(
     state.lastAppendAtMs = null
   }
 
-  const append = (batch: ChatRecordMutationBatch, appendOptions?: IncrementalChatAppendOptions): void => {
+  const append = (
+    batch: ChatRecordMutationBatch,
+    appendOptions?: IncrementalChatAppendOptions
+  ): void => {
     assertChatId(batch.chatId)
     if (!validMutationBatch(batch, batch.chatId)) throw new Error('Invalid chat mutation batch')
     const state = loadState(batch.chatId)

@@ -415,9 +415,9 @@ describe('authored mutation substitution', () => {
   it('returns the same object when nothing matches', () => {
     const input = authored(liveActivity({ id: 'other' }))
     const stripped = liveActivity()
-    expect(substituteToolActivitiesInAuthoredMutation(input, new Map([['tool-live', stripped]]))).toBe(
-      input
-    )
+    expect(
+      substituteToolActivitiesInAuthoredMutation(input, new Map([['tool-live', stripped]]))
+    ).toBe(input)
   })
 
   it('reports whether authored ops mention every required activity id', () => {
@@ -521,7 +521,9 @@ describe('commit evidence survives detail stripping', () => {
     const activity = result.chat.messages[0].toolActivities![0]
     expect(activity.parameters).toBeUndefined()
     expect(activity.commitEvidence?.command).toBe('git commit -m "feat: F2 camera viewport"')
-    expect(activity.commitEvidence?.receiptText).toContain('[main f2f118e] feat: F2 camera viewport')
+    expect(activity.commitEvidence?.receiptText).toContain(
+      '[main f2f118e] feat: F2 camera viewport'
+    )
     expect(activity.commitEvidence!.receiptText.length).toBeLessThanOrEqual(
       COMMIT_EVIDENCE_RECEIPT_LIMIT
     )

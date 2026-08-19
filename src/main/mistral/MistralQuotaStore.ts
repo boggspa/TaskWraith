@@ -246,7 +246,8 @@ function decodeReportApiUsage(value: unknown): NonNullable<MistralQuotaReport['a
       ? {
           declared: {
             spent: declaredRecord.spent as number,
-            ...(finiteAtLeastZero(declaredRecord.allowance) && (declaredRecord.allowance as number) > 0
+            ...(finiteAtLeastZero(declaredRecord.allowance) &&
+            (declaredRecord.allowance as number) > 0
               ? { allowance: declaredRecord.allowance as number }
               : {}),
             currency: (declaredRecord.currency as string).trim()

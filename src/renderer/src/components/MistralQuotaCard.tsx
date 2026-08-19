@@ -276,7 +276,9 @@ export function MistralQuotaCardView({
       {adminStatus ? <p className="settings-provider-auth-footnote">{adminStatus}</p> : null}
 
       {error ? <p className="settings-provider-auth-error">{error}</p> : null}
-      {anchoredSummary ? <p className="settings-provider-auth-footnote">{anchoredSummary}</p> : null}
+      {anchoredSummary ? (
+        <p className="settings-provider-auth-footnote">{anchoredSummary}</p>
+      ) : null}
     </div>
   )
 }

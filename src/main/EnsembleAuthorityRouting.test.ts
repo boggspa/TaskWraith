@@ -200,7 +200,9 @@ describe('Continuous Boss ownership helpers', () => {
     ).toBe(false)
     // Omitted attempts stay backwards-compatible with pre-bound callers.
     expect(authorityRoutingCheckpointExhausted(undefined)).toBe(false)
-    expect(authorityRoutingCheckpointExhausted(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS)).toBe(true)
+    expect(authorityRoutingCheckpointExhausted(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS)).toBe(
+      true
+    )
   })
 
   it('distinguishes a goal terminalized during this round from stale terminal context', () => {

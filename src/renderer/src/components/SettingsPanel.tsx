@@ -7492,7 +7492,9 @@ export function SettingsPanel({
                   >
                     <div className="settings-provider-auth-command">
                       <code>muse</code>
-                      <span>Install the Muse Code CLI and finish Meta Model API login in Terminal.</span>
+                      <span>
+                        Install the Muse Code CLI and finish Meta Model API login in Terminal.
+                      </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
                       <PillButton
