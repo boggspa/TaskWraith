@@ -9,8 +9,14 @@ describe('MainAppLayout Channel integration', () => {
     expect(layoutSource).toContain(
       "import { ChannelHostPanel } from '../../components/ChannelHostPanel'"
     )
+    // Mounted from the chat's id/title held as their own values: the element
+    // is memoized, and depending on `currentChat` itself would rebuild it on
+    // every stream flush (which defeats the pane chrome memo downstream).
+    expect(layoutSource).toMatch(
+      /<ChannelHostPanel\s+chatId=\{humanCollaborationChatId\}\s+chatTitle=\{humanCollaborationChatTitle\}\s*\/>/
+    )
     expect(layoutSource).toContain(
-      "<ChannelHostPanel chatId={currentChat.appChatId} chatTitle={currentChat.title || 'Chat'} />"
+      "const humanCollaborationChatTitle = currentChat?.title || 'Chat'"
     )
 
     // The legacy People header controls are retired; the Channel panel owns
@@ -25,8 +31,8 @@ describe('MainAppLayout Channel integration', () => {
     expect(layoutSource).toContain(
       "import { ChannelMemberPanel } from '../../components/ChannelMemberPanel'"
     )
-    expect(layoutSource).toContain(
-      'const channelMemberControl = isChatPopoutWindow ? null : <ChannelMemberPanel />'
+    expect(layoutSource).toMatch(
+      /const channelMemberControl = useMemo\(\s*\(\) => \(isChatPopoutWindow \? null : <ChannelMemberPanel \/>\)/
     )
     expect(layoutSource.match(/<ChannelMemberPanel \/>/g)).toHaveLength(1)
     expect(layoutSource).toContain('{!focusedHostOverlayRequired && channelMemberControl}')
@@ -38,9 +44,14 @@ describe('MainAppLayout Channel integration', () => {
   })
 
   it('inherits the existing main, popout, and focused-pane mounting surfaces', () => {
-    expect(layoutSource).toContain('const humanCollaborationControls =')
-    expect(layoutSource).toContain('currentChat && !isWelcomeChat ? (')
-    expect(layoutSource).toContain('chatId === currentChatAppChatId ? (')
+    expect(layoutSource).toContain('const humanCollaborationControls = useMemo(')
+    expect(layoutSource).toContain(
+      'const humanCollaborationChatId = currentChat && !isWelcomeChat ? currentChat.appChatId : null'
+    )
+    // Still only the host-projection pane, now through the memoized element.
+    expect(layoutSource).toContain(
+      'chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined'
+    )
     expect(layoutSource).toContain('{humanCollaborationControls}')
     expect(layoutSource).toContain('isChatPopoutWindow && humanCollaborationControls && (')
   })
