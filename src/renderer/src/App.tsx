@@ -25534,6 +25534,12 @@ function App(): React.JSX.Element {
     const chat = currentChat
     const chatId = chat?.appChatId
     if (!chat || !chatId || isWelcomeChat) return
+    // A freshly opened chat arrives as its summary-only list row first (the
+    // transcript loads behind it). Marking that partial fire as attempted
+    // would permanently skip the real record, so wait for a record that
+    // actually carries messages before spending the one-shot.
+    const summaryOnly = (chat as ChatRecord & { summaryOnly?: boolean }).summaryOnly === true
+    if (summaryOnly || !Array.isArray(chat.messages) || chat.messages.length === 0) return
     if (closeoutCommitRepairAttemptedRef.current.has(chatId)) return
     closeoutCommitRepairAttemptedRef.current.add(chatId)
     const targets = findCloseoutCommitRepairTargets(chat)
@@ -25543,11 +25549,15 @@ function App(): React.JSX.Element {
       for (const ref of target.refs) refsByKey.set(`${ref.runId}\n${ref.activityId}`, ref)
     }
     const refs = Array.from(refsByKey.values()).slice(0, 512)
-    let cancelled = false
+    // No cancellation on effect cleanup: currentChat identity churns while a
+    // chat streams in, and dropping the in-flight hydration on the first churn
+    // (with the chat already marked attempted) lost the repair for the whole
+    // session. The late write is safe — updateChatById targets the chat by id
+    // and the tombstone upsert is idempotent.
     void window.api
       .getToolActivityDetails(refs)
       .then((details) => {
-        if (cancelled || !Array.isArray(details) || details.length === 0) return
+        if (!Array.isArray(details) || details.length === 0) return
         updateChatById(chatId, (source) => repairCloseoutCommitTombstones(source, details) || source)
       })
       .catch(() => {
@@ -25555,9 +25565,6 @@ function App(): React.JSX.Element {
         // close-out as-is; the next session may retry.
         closeoutCommitRepairAttemptedRef.current.delete(chatId)
       })
-    return () => {
-      cancelled = true
-    }
   }, [currentChat, isWelcomeChat, updateChatById])
   // Kick off the on-device AI close-out summary for a just-finished run/round.
   // Fire-and-forget with single-flight per closeout id; 'unavailable' (older
