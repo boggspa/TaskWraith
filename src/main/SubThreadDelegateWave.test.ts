@@ -695,6 +695,10 @@ describe('SubThreadDelegateWave pure helpers', () => {
     if (!outcome.ok) return
     expect(outcome.result.waveId).toBe('wave-skip-approval')
     expect(outcome.result.children).toHaveLength(2)
+    // The receipt must teach the poll loop — a push delivery is never the
+    // agent's only path to wave results (Cambridge fleet blindness, 08-19).
+    expect(outcome.text).toContain('list_subthreads({waveId: "wave-skip-approval"})')
+    expect(outcome.text).toMatch(/read_subthread_result/)
   })
 
   it('authority card-skip still honors subThreadDelegation deny (no spawn)', async () => {
@@ -1031,6 +1035,7 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(outcome.text).toMatch(/wave-parent-earlier/)
     expect(outcome.text).toMatch(/1 of 4 returned/)
     expect(outcome.text).toMatch(/caps concurrent fleets, not workers/i)
+    expect(outcome.text).toContain('list_subthreads({waveId: "wave-parent-earlier"})')
     // Refused BEFORE budget/approval/spawn — nothing consumed, nothing asked.
     expect(budget.consumed).toBe(0)
     expect(approvalAsked).toBe(false)

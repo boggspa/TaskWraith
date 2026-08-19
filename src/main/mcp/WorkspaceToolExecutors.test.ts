@@ -2648,3 +2648,177 @@ describe('git history workspace tools', () => {
     })
   })
 })
+
+describe('delegate wave visibility', () => {
+  const WAVE_ID = 'wave-parent-1-777'
+  const FUTURE_DEADLINE = '2099-01-01T00:00:00.000Z'
+
+  function waveChild(input: {
+    id: string
+    role?: string
+    label?: string
+    settled?: boolean
+    running?: boolean
+    deadlineAt?: string
+  }) {
+    const returnedAtMs = Date.parse('2026-08-19T02:05:00.000Z')
+    return {
+      appChatId: input.id,
+      parentChatId: 'parent-1',
+      provider: 'mistral',
+      title: `Worker ${input.id}`,
+      archived: input.settled === true,
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: `${input.id}-final`,
+          role: 'assistant',
+          content: `${input.id} findings`,
+          timestamp: '2026-08-19T02:00:00.000Z'
+        }
+      ],
+      runs: [
+        {
+          runId: `${input.id}-run`,
+          provider: 'mistral',
+          startedAt: 't',
+          status: input.running ? 'running' : 'success'
+        }
+      ],
+      delegationContext: {
+        createdAt: 1,
+        parentProvider: 'claude',
+        delegationPrompt: `Investigate ${input.id}`,
+        returnResultToParent: true,
+        lifecycle: 'ephemeral',
+        ...(input.role ? { role: input.role } : {}),
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.settled ? { resultReturnedAt: returnedAtMs } : {}),
+        joinPolicy: {
+          schemaVersion: 1,
+          groupId: WAVE_ID,
+          required: true,
+          debounceMs: 250,
+          armedAt: '2026-08-19T01:55:00.000Z',
+          deadlineAt: input.deadlineAt ?? FUTURE_DEADLINE
+        }
+      }
+    } as any
+  }
+
+  function durableNonWaveChild() {
+    return {
+      appChatId: 'plain-child',
+      parentChatId: 'parent-1',
+      provider: 'codex',
+      title: 'Plain child',
+      archived: false,
+      createdAt: 0,
+      updatedAt: 1,
+      messages: [],
+      runs: [{ runId: 'plain-run', provider: 'codex', startedAt: 't', status: 'success' }],
+      delegationContext: {
+        createdAt: 0,
+        parentProvider: 'claude',
+        delegationPrompt: 'Plain task',
+        returnResultToParent: false
+      }
+    } as any
+  }
+
+  function depsWith(children: any[]) {
+    const deps = makeDeps(async () => commandResult(''))
+    deps.store.getChildChats = () => children
+    deps.store.getChat = (chatId) => children.find((chat) => chat.appChatId === chatId)
+    return deps
+  }
+
+  const context = {
+    scope: 'workspace' as const,
+    cwd: '/tmp/ws',
+    workspacePath: '/tmp/ws',
+    appChatId: 'parent-1'
+  }
+
+  it('waveId poll lists archived die-on-return workers and a settled rollup', () => {
+    const children = [
+      waveChild({ id: 'w1', role: 'scout', label: 'CAM7-market', settled: true }),
+      waveChild({ id: 'w2', role: 'scout', settled: true }),
+      waveChild({ id: 'w3', role: 'reviewer', running: true }),
+      durableNonWaveChild()
+    ]
+    const result = executeListSubthreads(depsWith(children), context, { waveId: WAVE_ID }) as any
+
+    expect(result.count).toBe(3)
+    expect(result.subthreads.map((subthread: any) => subthread.id)).toEqual(['w1', 'w2', 'w3'])
+    expect(result.subthreads[0]).toMatchObject({
+      waveId: WAVE_ID,
+      role: 'scout',
+      label: 'CAM7-market',
+      archived: true,
+      status: 'returned',
+      readyToRead: true
+    })
+    expect(result.waves).toEqual([
+      expect.objectContaining({
+        waveId: WAVE_ID,
+        lifecycle: 'ephemeral',
+        total: 3,
+        settled: 2,
+        returned: 2,
+        running: 1,
+        allSettled: false,
+        live: true,
+        deadlineAt: FUTURE_DEADLINE
+      })
+    ])
+  })
+
+  it('default listing hides archived returns but discloses them via archivedHidden + waves', () => {
+    const children = [
+      waveChild({ id: 'w1', settled: true }),
+      waveChild({ id: 'w2', settled: true }),
+      waveChild({ id: 'w3', running: true }),
+      durableNonWaveChild()
+    ]
+    const result = executeListSubthreads(depsWith(children), context, {}) as any
+
+    expect(result.subthreads.map((subthread: any) => subthread.id).sort()).toEqual([
+      'plain-child',
+      'w3'
+    ])
+    expect(result.archivedHidden).toBe(2)
+    expect(result.waves).toEqual([
+      expect.objectContaining({ waveId: WAVE_ID, total: 3, settled: 2, allSettled: false })
+    ])
+  })
+
+  it('a fully returned wave stays visible: allSettled rollup + readable archived results', () => {
+    const children = [
+      waveChild({ id: 'w1', settled: true }),
+      waveChild({ id: 'w2', settled: true, deadlineAt: '2000-01-01T00:00:00.000Z' })
+    ]
+    const deps = depsWith(children)
+    const listed = executeListSubthreads(deps, context, {}) as any
+    expect(listed.subthreads).toEqual([])
+    expect(listed.archivedHidden).toBe(2)
+    expect(listed.waves).toEqual([
+      expect.objectContaining({
+        waveId: WAVE_ID,
+        total: 2,
+        settled: 2,
+        allSettled: true,
+        live: false
+      })
+    ])
+
+    const polled = executeListSubthreads(deps, context, { waveId: WAVE_ID }) as any
+    expect(polled.count).toBe(2)
+    expect(polled.subthreads.every((subthread: any) => subthread.readyToRead)).toBe(true)
+
+    const read = executeReadSubthreadResult(deps, context, { subThreadId: 'w1' }) as any
+    expect(read.result).toBe('w1 findings')
+    expect(read.waveId).toBe(WAVE_ID)
+  })
+})

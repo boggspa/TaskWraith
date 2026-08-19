@@ -5,6 +5,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
+import { isEphemeralFleetChildSettled } from '../SubThreadEphemeralFleet'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
 import { summarizeSubThreadMailbox, type SubThreadMailbox } from '../SubThreadMailbox'
 import {
@@ -2122,6 +2123,78 @@ function summarizeSubThreadWorkerActions(
   }
 }
 
+/**
+ * Per-wave settled rollup across ALL children, archived included. A
+ * die-on-return fleet archives its finished workers, so an unarchived-only
+ * listing cannot distinguish "wave finished" from "no wave ever ran"; the
+ * rollup keeps settled waves visible to the polling parent agent.
+ */
+function summarizeSubThreadWaves(
+  deps: WorkspaceToolExecutorDependencies,
+  children: readonly ChatRecord[],
+  options: { waveId?: string; nowMs?: number } = {}
+) {
+  const nowMs = options.nowMs ?? Date.now()
+  const byWave = new Map<
+    string,
+    {
+      waveId: string
+      lifecycle: 'ephemeral' | 'durable'
+      deadlineAt?: string
+      total: number
+      settled: number
+      returned: number
+      completed: number
+      running: number
+      failed: number
+      cancelled: number
+      live: boolean
+    }
+  >()
+  for (const chat of children) {
+    const groupId = chat.delegationContext?.joinPolicy?.groupId?.trim()
+    if (!groupId) continue
+    if (options.waveId && groupId !== options.waveId) continue
+    const entry = byWave.get(groupId) ?? {
+      waveId: groupId,
+      lifecycle:
+        chat.delegationContext?.lifecycle === 'ephemeral'
+          ? ('ephemeral' as const)
+          : ('durable' as const),
+      deadlineAt: chat.delegationContext?.joinPolicy?.deadlineAt,
+      total: 0,
+      settled: 0,
+      returned: 0,
+      completed: 0,
+      running: 0,
+      failed: 0,
+      cancelled: 0,
+      live: false
+    }
+    entry.total += 1
+    if (isEphemeralFleetChildSettled(chat)) {
+      entry.settled += 1
+    } else {
+      // Same fail-open deadline reading as findLiveEphemeralFleetWave: an
+      // unparseable deadline claims nothing, so a crashed wave reads settled-
+      // pending rather than live forever.
+      const deadlineMs = Date.parse(chat.delegationContext?.joinPolicy?.deadlineAt || '')
+      if (Number.isFinite(deadlineMs) && deadlineMs > nowMs) entry.live = true
+    }
+    const state = subThreadLifecycle(deps, chat).state
+    if (state === 'returned') entry.returned += 1
+    else if (state === 'completed') entry.completed += 1
+    else if (state === 'running') entry.running += 1
+    else if (state === 'failed') entry.failed += 1
+    else if (state === 'cancelled') entry.cancelled += 1
+    byWave.set(groupId, entry)
+  }
+  return [...byWave.values()].map((wave) => ({
+    ...wave,
+    allSettled: wave.settled >= wave.total
+  }))
+}
+
 export function executeListSubthreads(
   deps: WorkspaceToolExecutorDependencies,
   context: WorkspaceToolContext,
@@ -2131,13 +2204,21 @@ export function executeListSubthreads(
   if (!parentChatId || parentChatId !== context.appChatId) {
     throw new Error('list_subthreads can only read sub-threads for the active parent chat.')
   }
-  const includeArchived = args.includeArchived === true
+  const waveIdFilter = optionalString(args.waveId)
+  // A waveId poll is a completion question — die-on-return fleets archive
+  // their finished workers, so the poll must see archived returns.
+  const includeArchived = args.includeArchived === true || Boolean(waveIdFilter)
   const includePrompt = args.includePrompt === true
   const parentMailboxState = deps.store.getSubThreadMailbox(parentChatId)
   const parentMailbox = summarizeSubThreadMailbox(parentMailboxState)
-  const subthreads = deps.store
-    .getChildChats(parentChatId)
-    .filter((chat) => includeArchived || !chat.archived)
+  const allChildren = deps.store.getChildChats(parentChatId)
+  const scopedChildren = waveIdFilter
+    ? allChildren.filter((chat) => chat.delegationContext?.joinPolicy?.groupId === waveIdFilter)
+    : allChildren
+  const visibleChildren = scopedChildren.filter((chat) => includeArchived || !chat.archived)
+  const archivedHidden = scopedChildren.length - visibleChildren.length
+  const waves = summarizeSubThreadWaves(deps, allChildren, { waveId: waveIdFilter })
+  const subthreads = visibleChildren
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((chat) => {
       const lifecycle = subThreadLifecycle(deps, chat)
@@ -2158,6 +2239,11 @@ export function executeListSubthreads(
         provider: chat.provider,
         status: lifecycle.state,
         lifecycle,
+        ...(chat.delegationContext?.joinPolicy?.groupId
+          ? { waveId: chat.delegationContext.joinPolicy.groupId }
+          : {}),
+        ...(chat.delegationContext?.role ? { role: chat.delegationContext.role } : {}),
+        ...(chat.delegationContext?.label ? { label: chat.delegationContext.label } : {}),
         readyToRead:
           lifecycle.resultAvailable &&
           (lifecycle.state === 'completed' || lifecycle.state === 'returned'),
@@ -2177,6 +2263,7 @@ export function executeListSubthreads(
               returnResultToParent: chat.delegationContext.returnResultToParent,
               resultReturnedAt: chat.delegationContext.resultReturnedAt,
               dispatchError: chat.delegationContext.dispatchError,
+              lifecycle: chat.delegationContext.lifecycle,
               delegationPromptPreview: chat.delegationContext.delegationPrompt.slice(0, 500),
               ...(includePrompt
                 ? { delegationPrompt: chat.delegationContext.delegationPrompt }
@@ -2196,6 +2283,8 @@ export function executeListSubthreads(
     blockedWorkerCount: subthreads.filter(
       (subthread) => (subthread.workerControl?.blocked || 0) > 0
     ).length,
+    ...(archivedHidden > 0 ? { archivedHidden } : {}),
+    ...(waves.length > 0 ? { waves } : {}),
     ...(parentMailbox.retainedEvents > 0 ? { mailbox: parentMailbox } : {}),
     subthreads
   }
@@ -2243,6 +2332,11 @@ export function executeReadSubthreadResult(
     provider: chat.provider,
     status: lifecycle.state,
     lifecycle,
+    ...(chat.delegationContext?.joinPolicy?.groupId
+      ? { waveId: chat.delegationContext.joinPolicy.groupId }
+      : {}),
+    ...(chat.delegationContext?.role ? { role: chat.delegationContext.role } : {}),
+    ...(chat.delegationContext?.label ? { label: chat.delegationContext.label } : {}),
     depth,
     readyToRead:
       lifecycle.resultAvailable &&
@@ -2260,7 +2354,8 @@ export function executeReadSubthreadResult(
           parentProvider: chat.delegationContext.parentProvider,
           returnResultToParent: chat.delegationContext.returnResultToParent,
           resultReturnedAt: chat.delegationContext.resultReturnedAt,
-          dispatchError: chat.delegationContext.dispatchError
+          dispatchError: chat.delegationContext.dispatchError,
+          lifecycle: chat.delegationContext.lifecycle
         }
       : undefined,
     latestRun: summarizeChatRun(latestChatRun(chat)),

@@ -559,15 +559,23 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // ttlMinutes gained `null` as a permitted type and blackboard_post's
     // description was corrected to state the 24h default, taking it back UP 35.
     // Net +2 against the pre-1.9.6 figure.
+    // Re-measured 2026-08-19 after wave visibility landed on the delegation
+    // surface: list_subthreads documents the waveId poll (+schema property)
+    // and delegate_wave points its no-fleet_await sentence at that poll. The
+    // Cambridge fleet blindness showed a settled die-on-return wave was
+    // indistinguishable from "no wave ever ran" without these. All three
+    // gateway transports grow by the same +175; full grows +574 (the full
+    // surface also carries the uncompacted prose). Fresh keeps 1,823 chars of
+    // 40k headroom, mesh 781; the over-ceiling inventory is unchanged.
     //
     // Growth is the direction this guard exists to question, so it is justified
     // rather than absorbed: both fresh profiles remain under the 40k ceiling
     // asserted below, which is the real budget — these exact pins are the
     // tripwire that forces someone to look.
-    // expect(fullChars).toBe(146_617)
-    // expect(gatewayChars).toBe(43_548)
-    // expect(freshGatewayChars).toBe(38_002)
-    // expect(freshMeshGatewayChars).toBe(39_044)
+    // expect(fullChars).toBe(147_191)
+    // expect(gatewayChars).toBe(43_723)
+    // expect(freshGatewayChars).toBe(38_177)
+    // expect(freshMeshGatewayChars).toBe(39_219)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     // expect(freshGatewayChars).toBeLessThan(40_000)
     // expect(freshMeshGatewayChars).toBeLessThan(40_000)

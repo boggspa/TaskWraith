@@ -635,7 +635,8 @@ export async function executeDelegateWaveTool(input: {
           `(${live.waveId}: ${live.settled} of ${live.total} returned). One live fleet per ` +
           `parent — wait for its workers to return (results land in this thread automatically, ` +
           `and hung workers fail at the join deadline), then launch the next fleet. This caps ` +
-          `concurrent fleets, not workers; the next fleet may still carry a full roster.`
+          `concurrent fleets, not workers; the next fleet may still carry a full roster. ` +
+          `Poll it with list_subthreads({waveId: "${live.waveId}"}).`
       }
     }
   }
@@ -785,6 +786,8 @@ export async function executeDelegateWaveTool(input: {
     .join('; ')
   const text =
     `Spawned wave ${waveId} with ${children.length} sub-threads: ${childSummary}. ` +
-    `Join groupId=${waveId}; results return to this parent as untrusted sub-thread results on completion.`
+    `Join groupId=${waveId}; results return to this parent as untrusted sub-thread results on completion. ` +
+    `Poll progress anytime with list_subthreads({waveId: "${waveId}"}) — it includes archived ` +
+    `die-on-return workers and a settled rollup — and read finished workers with read_subthread_result.`
   return { ok: true, text, result }
 }

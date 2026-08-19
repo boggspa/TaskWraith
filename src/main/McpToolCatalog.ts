@@ -1448,7 +1448,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'list_subthreads',
       description:
-        'List lifecycle-aware sub-threads under the active parent chat, including readiness to read results.',
+        'List lifecycle-aware sub-threads under the active parent chat, including readiness to read results. ' +
+        'Pass waveId to poll a delegate_wave: archived die-on-return workers included, settled rollup in waves.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1460,7 +1461,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           parentChatId: { type: 'string' },
           includeArchived: { type: 'boolean' },
-          includePrompt: { type: 'boolean' }
+          includePrompt: { type: 'boolean' },
+          waveId: { type: 'string' }
         }
       }
     },
@@ -3599,7 +3601,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). ' +
         'Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. ' +
         'Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. ' +
-        'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await). ' +
+        'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). ' +
         'One approval covers the wave; capped by Settings → General → Max Wave Agents.',
       annotations: {
         readOnlyHint: false,
