@@ -179,7 +179,8 @@ import type {
   AuditRunRecord,
   ActiveGoal,
   ActiveGoalStatus,
-  TranscriptMediaRef
+  TranscriptMediaRef,
+  ToolActivityDetailRef
 } from '../../main/store/types'
 import type { NormalizedProviderUsageSnapshot } from '../../main/ProviderQuotaSnapshots'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
@@ -897,6 +898,10 @@ import {
   childChatsForCloseout,
   closeoutSubagentRefreshFingerprint
 } from './lib/closeoutSubagentRefresh'
+import {
+  findCloseoutCommitRepairTargets,
+  repairCloseoutCommitTombstones
+} from './lib/closeoutCommitRepair'
 import {
   buildRoundCloseoutSummaryDigest,
   buildRunCloseoutSummaryDigest
@@ -25496,6 +25501,42 @@ function App(): React.JSX.Element {
     updateChatById,
     visibleRunCompleteNotice
   ])
+  // One-shot per chat per session: close-outs written while tool details were
+  // already stripped but before commit evidence existed harvested zero commits
+  // and tombstoned none. Their receipts still live in the run-artifact archive,
+  // so hydrate just the stripped git-commit activities and write the missing
+  // tombstones. Repair touches close-out metadata only — the transcript record
+  // stays stripped.
+  const closeoutCommitRepairAttemptedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const chat = currentChat
+    const chatId = chat?.appChatId
+    if (!chat || !chatId || isWelcomeChat) return
+    if (closeoutCommitRepairAttemptedRef.current.has(chatId)) return
+    closeoutCommitRepairAttemptedRef.current.add(chatId)
+    const targets = findCloseoutCommitRepairTargets(chat)
+    if (targets.length === 0) return
+    const refsByKey = new Map<string, ToolActivityDetailRef>()
+    for (const target of targets) {
+      for (const ref of target.refs) refsByKey.set(`${ref.runId}\n${ref.activityId}`, ref)
+    }
+    const refs = Array.from(refsByKey.values()).slice(0, 512)
+    let cancelled = false
+    void window.api
+      .getToolActivityDetails(refs)
+      .then((details) => {
+        if (cancelled || !Array.isArray(details) || details.length === 0) return
+        updateChatById(chatId, (source) => repairCloseoutCommitTombstones(source, details) || source)
+      })
+      .catch(() => {
+        // Archive unavailable (pruned artifacts, dead run scope) — leave the
+        // close-out as-is; the next session may retry.
+        closeoutCommitRepairAttemptedRef.current.delete(chatId)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentChat, isWelcomeChat, updateChatById])
   // Kick off the on-device AI close-out summary for a just-finished run/round.
   // Fire-and-forget with single-flight per closeout id; 'unavailable' (older
   // macOS, daemon off, Foundation Models missing) simply leaves the

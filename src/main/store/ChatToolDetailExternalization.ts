@@ -1,4 +1,12 @@
-import type { ChatMessage, ChatRecord, ChatRun, ToolActivity, ToolActivityDetailRef } from './types'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ChatRun,
+  ToolActivity,
+  ToolActivityCommitEvidence,
+  ToolActivityDetailRef
+} from './types'
+import { resolveCatalogToolName } from '../../shared/canonicalToolCoalesce'
 import type {
   AuthoredChatTranscriptMutation,
   ChatTranscriptMutationOperation
@@ -134,7 +142,7 @@ export function compactToolActivityWithDetailRef(
   activity: ToolActivity,
   detailRef: ToolActivityDetailRef
 ): ToolActivity {
-  const compact = { ...activity, detailRef }
+  const compact = { ...withCommitEvidence(activity), detailRef }
   for (const field of HEAVY_TOOL_ACTIVITY_FIELDS) delete compact[field]
   return compact
 }
@@ -143,9 +151,96 @@ function stripLiveToolDetail(
   activity: ToolActivity,
   detailRef: ToolActivityDetailRef
 ): ToolActivity {
-  const stripped = { ...activity, detailRef }
+  const stripped = { ...withCommitEvidence(activity), detailRef }
   for (const field of LIVE_TOOL_DETAIL_FIELDS) delete stripped[field]
   return stripped
+}
+
+/** Caps for the receipt lift — a command line plus git's receipt and --stat
+ * block; anything larger is not commit output. */
+export const COMMIT_EVIDENCE_COMMAND_LIMIT = 4 * 1024
+export const COMMIT_EVIDENCE_RECEIPT_LIMIT = 32 * 1024
+
+/** `git … commit` within one pipeline segment (chain separators end the search
+ * so `git add x && git commit` matches on its own segment). */
+const SHELL_GIT_COMMIT_COMMAND_RE = /\bgit\b[^\n|&;]{0,200}?\bcommit\b/
+
+function activityParameterString(activity: ToolActivity, keys: readonly string[]): string | null {
+  const containers: unknown[] = [activity.parameters]
+  const rawUse =
+    activity.rawUseEvent && typeof activity.rawUseEvent === 'object'
+      ? (activity.rawUseEvent as Record<string, unknown>)
+      : null
+  containers.push(rawUse?.input, rawUse?.args, rawUse?.parameters)
+  for (const container of containers) {
+    if (!container || typeof container !== 'object') continue
+    for (const key of keys) {
+      const value = (container as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) return value
+    }
+  }
+  return null
+}
+
+function collectReceiptFragments(value: unknown, fragments: string[], depth = 0): void {
+  if (value === null || value === undefined || depth > 4 || fragments.length > 80) return
+  if (typeof value === 'string') {
+    if (value.trim()) fragments.push(value)
+    return
+  }
+  if (typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    for (const item of value) collectReceiptFragments(item, fragments, depth + 1)
+    return
+  }
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    collectReceiptFragments(entry, fragments, depth + 1)
+  }
+}
+
+function buildCommitEvidence(activity: ToolActivity): ToolActivityCommitEvidence | null {
+  // Mirror the close-out harvester's activity classification exactly
+  // (closeoutCommitActivityKind in taskWraithCloseoutMessage.ts): the catalog
+  // tool decides first, the shell category second, loose text last.
+  const catalogTool = resolveCatalogToolName(activity.toolName || '')
+  let kind: 'dedicated' | 'shell' | null = null
+  if (catalogTool === 'git_commit') {
+    kind = 'dedicated'
+  } else if (
+    catalogTool === 'run_shell_command' ||
+    activity.category?.toLowerCase() === 'shell'
+  ) {
+    kind = 'shell'
+  } else {
+    const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()
+    kind = text.includes('git_commit') || text.includes('git commit') ? 'dedicated' : null
+  }
+  if (!kind) return null
+  const command = activityParameterString(activity, ['command', 'cmd', 'script'])
+  if (kind === 'shell' && (!command || !SHELL_GIT_COMMIT_COMMAND_RE.test(command))) return null
+
+  const fragments: string[] = []
+  collectReceiptFragments(activity.resultSummary, fragments)
+  collectReceiptFragments(activity.outputPreview, fragments)
+  collectReceiptFragments(activity.rawResultEvent, fragments)
+  const receiptText = fragments.join('\n').slice(0, COMMIT_EVIDENCE_RECEIPT_LIMIT)
+  if (!receiptText.trim()) return null
+
+  const cwd = activityParameterString(activity, ['cwd', 'workdir', 'workingDirectory'])
+  return {
+    ...(command ? { command: command.slice(0, COMMIT_EVIDENCE_COMMAND_LIMIT) } : {}),
+    ...(cwd ? { cwd } : {}),
+    receiptText
+  }
+}
+
+/** Lift commit receipts into a bounded survivor field before stripping deletes
+ * the payloads they live in. Idempotent: already-stamped evidence is kept, so
+ * re-strips of a stripped form (no raw fields left) cannot erase it. */
+function withCommitEvidence(activity: ToolActivity): ToolActivity {
+  if (activity.commitEvidence) return activity
+  const evidence = buildCommitEvidence(activity)
+  return evidence ? { ...activity, commitEvidence: evidence } : activity
 }
 
 /**

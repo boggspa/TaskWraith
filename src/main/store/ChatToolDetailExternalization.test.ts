@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  COMMIT_EVIDENCE_RECEIPT_LIMIT,
   LIVE_TOOL_DETAIL_EXTERNALIZE_BYTES,
   TOOL_DETAIL_EXTERNALIZATION_GENERATION,
   authoredMutationMentionsActivityIds,
@@ -435,5 +436,123 @@ describe('estimateLiveToolActivityDetailBytes', () => {
     expect(
       estimateLiveToolActivityDetailBytes(liveActivity({ rawResultEvent: { output: 'hello' } }))
     ).toBeLessThan(LIVE_TOOL_DETAIL_EXTERNALIZE_BYTES)
+  })
+})
+
+describe('commit evidence survives detail stripping', () => {
+  const RECEIPT_OUTPUT =
+    '[main a048ce5] feat: ChipTown interiors (lab + mart)\n' +
+    ' 2 files changed, 478 insertions(+), 0 deletions(-)\n' +
+    ' create mode 100644 ChipTown/Maps/lab.json'
+
+  function commitChat(activity: ToolActivity, runStatus = 'success'): ChatRecord {
+    const chat = record(runStatus)
+    chat.messages[0].toolActivities = [activity]
+    return chat
+  }
+
+  it('stamps evidence on a dedicated git_commit activity at terminal strip', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    const result = externalizeTerminalToolActivityDetails(
+      commitChat({
+        id: 'tool-commit',
+        toolName: 'mcp__TaskWraith__git_commit',
+        displayName: 'git_commit',
+        category: 'write',
+        status: 'success',
+        endedAt: '2026-08-16T00:00:30.000Z',
+        parameters: { message: 'feat: ChipTown interiors (lab + mart)' },
+        resultSummary: 'Committed a048ce5',
+        outputPreview: RECEIPT_OUTPUT,
+        rawResultEvent: { output: RECEIPT_OUTPUT }
+      }),
+      sink
+    )
+    const activity = result.chat.messages[0].toolActivities![0]
+    expect(activity.outputPreview).toBeUndefined()
+    expect(activity.commitEvidence?.receiptText).toContain(
+      '[main a048ce5] feat: ChipTown interiors (lab + mart)'
+    )
+    expect(activity.commitEvidence?.receiptText).toContain('2 files changed, 478 insertions(+)')
+  })
+
+  it('keeps the shell command and cwd alongside the receipt for shell commits', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    const result = externalizeTerminalToolActivityDetails(
+      commitChat({
+        id: 'tool-shell-commit',
+        toolName: 'run_shell_command',
+        displayName: 'Ran command',
+        category: 'shell',
+        status: 'success',
+        endedAt: '2026-08-16T00:00:30.000Z',
+        parameters: { command: 'git commit -F /tmp/msg -- src/a.ts', cwd: '/workspace' },
+        rawResultEvent: { output: RECEIPT_OUTPUT }
+      }),
+      sink
+    )
+    const activity = result.chat.messages[0].toolActivities![0]
+    expect(activity.parameters).toBeUndefined()
+    expect(activity.commitEvidence).toMatchObject({
+      command: 'git commit -F /tmp/msg -- src/a.ts',
+      cwd: '/workspace'
+    })
+    expect(activity.commitEvidence?.receiptText).toContain('[main a048ce5]')
+  })
+
+  it('stamps no evidence on non-commit activities', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    const result = externalizeTerminalToolActivityDetails(record(), sink)
+    expect(result.chat.messages[0].toolActivities![0].commitEvidence).toBeUndefined()
+  })
+
+  it('stamps evidence when a sealed jumbo shell commit strips mid-run', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    const result = externalizeToolActivityDetails(
+      liveRecord(
+        liveActivity({
+          parameters: { command: 'git commit -m "feat: F2 camera viewport"' },
+          rawResultEvent: { output: `[main f2f118e] feat: F2 camera viewport\n${JUMBO_OUTPUT}` }
+        })
+      ),
+      sink,
+      {}
+    )
+    const activity = result.chat.messages[0].toolActivities![0]
+    expect(activity.parameters).toBeUndefined()
+    expect(activity.commitEvidence?.command).toBe('git commit -m "feat: F2 camera viewport"')
+    expect(activity.commitEvidence?.receiptText).toContain('[main f2f118e] feat: F2 camera viewport')
+    expect(activity.commitEvidence!.receiptText.length).toBeLessThanOrEqual(
+      COMMIT_EVIDENCE_RECEIPT_LIMIT
+    )
+  })
+
+  it('preserves previously stamped evidence through the terminal fold', () => {
+    const evidence = { command: 'git commit -m x', receiptText: '[main 1234abc] x' }
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    const chat = commitChat({
+      id: 'tool-folded',
+      toolName: 'run_shell_command',
+      displayName: 'Ran command',
+      category: 'shell',
+      status: 'success',
+      endedAt: '2026-08-16T00:00:30.000Z',
+      detailRef: ref('run-1', 'tool-folded'),
+      resultSummary: 'committed',
+      commitEvidence: evidence
+    })
+    const result = externalizeToolActivityDetails(chat, sink, {
+      readArchivedDetail: () => ({
+        id: 'tool-folded',
+        toolName: 'run_shell_command',
+        displayName: 'Ran command',
+        category: 'shell',
+        status: 'success',
+        resultSummary: 'committed'
+      })
+    })
+    const activity = result.chat.messages[0].toolActivities![0]
+    expect(activity.resultSummary).toBeUndefined()
+    expect(activity.commitEvidence).toEqual(evidence)
   })
 })

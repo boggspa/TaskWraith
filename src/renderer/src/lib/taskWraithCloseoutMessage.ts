@@ -75,7 +75,7 @@ export type CloseoutFileChange = {
   owners?: DiffFileSummaryOwner[]
 }
 
-function isMessageInRunWindow(
+export function isMessageInRunWindow(
   message: ChatMessage,
   run: Pick<ChatRun, 'runId' | 'startedAt' | 'endedAt'>
 ): boolean {
@@ -2054,7 +2054,7 @@ function formatCommitStats(raw: string): string {
   return filePart
 }
 
-function closeoutCommitActivityKind(activity: ToolActivity): 'dedicated' | 'shell' | null {
+export function closeoutCommitActivityKind(activity: ToolActivity): 'dedicated' | 'shell' | null {
   const catalogTool = resolveCatalogToolName(activity.toolName || '')
   if (catalogTool === 'git_commit') return 'dedicated'
   if (catalogTool === 'run_shell_command' || activity.category?.toLowerCase() === 'shell') {
@@ -2072,6 +2072,9 @@ function extractCommitsFromActivity(
   collectCommitTextFragments(activity.resultSummary, fragments)
   collectCommitTextFragments(activity.outputPreview, fragments)
   collectCommitTextFragments(activity.rawResultEvent, fragments)
+  // Stripped activities keep their receipt in the bounded survivor field the
+  // store stamps before externalization deletes the payloads above.
+  collectCommitTextFragments(activity.commitEvidence?.receiptText, fragments)
   return extractCommitsFromText(fragments.join('\n'), requireGitReceipt)
 }
 
@@ -2143,6 +2146,12 @@ function shellActivityString(activity: ToolActivity, keys: string[]): string | n
       const value = (container as Record<string, unknown>)[key]
       if (typeof value === 'string' && value.trim()) return value
     }
+  }
+
+  const evidence = activity.commitEvidence
+  if (evidence) {
+    if (keys.includes('command') && evidence.command?.trim()) return evidence.command
+    if (keys.includes('cwd') && evidence.cwd?.trim()) return evidence.cwd
   }
   return null
 }

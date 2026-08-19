@@ -6299,6 +6299,19 @@ export interface ToolActivityDetailRef {
   sha256: string
 }
 
+/**
+ * Bounded git-commit receipt lifted out of the heavy payloads before detail
+ * stripping deletes them. Close-out and Inspector commit harvesting fall back
+ * to this once the raw trio lives behind `detailRef`.
+ */
+export interface ToolActivityCommitEvidence {
+  /** Shell command line that produced the receipt; absent for dedicated git tools. */
+  command?: string
+  cwd?: string
+  /** Receipt-bearing output fragments (`[branch hash] subject`, --stat lines). */
+  receiptText: string
+}
+
 export interface ToolActivity {
   id: string
   toolName: string
@@ -6317,6 +6330,8 @@ export interface ToolActivity {
   rawResultEvent?: unknown
   /** Full parameters/result/raw fields live at this authenticated byte range. */
   detailRef?: ToolActivityDetailRef
+  /** Survives detail stripping, unlike the fields it is harvested from. */
+  commitEvidence?: ToolActivityCommitEvidence
   /** If this tool call was emitted by a sub-agent, the tool_use id of the parent Task / Agent call that spawned it. */
   parentToolCallId?: string
   /** 1.0.4-AG — optional attribution metadata. `provider` names the

@@ -818,6 +818,113 @@ describe('taskWraithCloseoutMessage', () => {
     ])
   })
 
+  it('harvests commits from a stripped dedicated git_commit activity via commitEvidence', () => {
+    const run: ChatRun = {
+      runId: 'run-stripped-dedicated',
+      provider: 'claude',
+      startedAt: '2026-08-18T22:00:00.000Z',
+      endedAt: '2026-08-18T22:03:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('stripped-dedicated', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'mcp__TaskWraith__git_commit',
+                displayName: 'git_commit',
+                category: 'write',
+                detailRef: {
+                  schemaVersion: 1,
+                  storage: 'run_event_artifact',
+                  runId: run.runId,
+                  activityId: 'tool-1',
+                  offset: 0,
+                  byteLength: 512,
+                  sha256: 'a'.repeat(64)
+                },
+                commitEvidence: {
+                  receiptText:
+                    '[main a048ce5] feat: ChipTown interiors (lab + mart)\n 2 files changed, 212 insertions(+), 157 deletions(-)'
+                }
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toEqual([
+      {
+        hash: 'a048ce5',
+        subject: 'feat: ChipTown interiors (lab + mart)',
+        stats: '2 files, +212 −157'
+      }
+    ])
+  })
+
+  it('harvests a stripped shell commit through commitEvidence command and cwd', () => {
+    const run: ChatRun = {
+      runId: 'run-stripped-shell',
+      provider: 'codex',
+      startedAt: '2026-08-18T22:00:00.000Z',
+      endedAt: '2026-08-18T22:03:00.000Z',
+      status: 'success',
+      effectiveWorkspacePath: '/repo'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        workspacePath: '/repo',
+        messages: [
+          {
+            ...message('stripped-shell', 'tool', ''),
+            runId: run.runId,
+            toolActivities: [
+              activity({
+                toolName: 'run_shell_command',
+                detailRef: {
+                  schemaVersion: 1,
+                  storage: 'run_event_artifact',
+                  runId: run.runId,
+                  activityId: 'tool-1',
+                  offset: 0,
+                  byteLength: 512,
+                  sha256: 'b'.repeat(64)
+                },
+                commitEvidence: {
+                  command: 'git commit -m "fix: keep commits visible" -- src/closeout.ts',
+                  cwd: '/repo',
+                  receiptText:
+                    'Exit code: 0\n\nstdout:\n[main a16d0b9e2] fix: keep commits visible\n 2 files changed, 24 insertions(+), 3 deletions(-)'
+                }
+              })
+            ]
+          }
+        ],
+        runs: [run]
+      }),
+      run,
+      completedAt: run.endedAt!,
+      exitCode: 0
+    })
+
+    expect(closeout.metadata?.closeoutCommits).toEqual([
+      {
+        hash: 'a16d0b9e2',
+        subject: 'fix: keep commits visible',
+        stats: '2 files, +24 −3'
+      }
+    ])
+  })
+
   it('accepts a commit targeted at the run effective worktree', () => {
     const run: ChatRun = {
       runId: 'run-shell-worktree-commit',
