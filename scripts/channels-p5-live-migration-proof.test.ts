@@ -27,7 +27,7 @@ const proof = require('./channels-p5-live-migration-proof.cjs') as LiveProofModu
 describe('Channels P5 disposable-profile live migration proof', () => {
   it('accepts only the private evidence override', () => {
     expect(proof.parseArgs([]).evidencePath).toContain(
-      '.local-only/channels-p5-live-migration-evidence.json'
+      join('.local-only', 'channels-p5-live-migration-evidence.json')
     )
     expect(proof.parseArgs(['--evidence', './evidence.json']).evidencePath).toMatch(
       /evidence\.json$/

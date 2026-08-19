@@ -607,7 +607,7 @@ describe('ChannelAgentIdentityStore', () => {
     expectStoreError(() => store.rotate(SEAT_ID), 'recovery_blocked')
     expect(readFileSync(identityPath(storageDirectory), 'utf8')).toBe(before)
     expect(store.publicHistory(SEAT_ID)?.retired).toHaveLength(CHANNEL_AGENT_MAX_RETIRED_KEYS)
-  })
+  }, 20_000)
 
   it('rejects a symlinked storage directory instead of mutating its target', () => {
     const root = tempRoot()

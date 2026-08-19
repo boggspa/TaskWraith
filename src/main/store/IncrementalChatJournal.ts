@@ -366,7 +366,11 @@ export function createIncrementalChatJournal(
       const unsettled = [...entries].filter((entry) => !entry.settled)
       if (unsettled.length === 0) continue
       try {
-        const fd = fs.openSync(filePath, 'r')
+        // 'r+' rather than 'r': Windows FlushFileBuffers requires write access,
+        // so fsync on a read-only handle fails with EPERM. That error landed in
+        // the catch below, which assumes a deleted file, so every deferred
+        // append silently went unflushed on Windows and the drain reported 0.
+        const fd = fs.openSync(filePath, 'r+')
         try {
           fs.fsyncSync(fd)
         } finally {

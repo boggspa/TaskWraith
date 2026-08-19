@@ -67,7 +67,7 @@ describe('StudioProductionLifecycle', () => {
     expect(
       resolveStudioCompanionBinaryPath({
         developmentRoot: '/repo',
-        pathExists: (path) => path.includes('/debug/')
+        pathExists: (path) => path.split(nodePath.sep).includes('debug')
       })
     ).toBe(
       nodePath.join(

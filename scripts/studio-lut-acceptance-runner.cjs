@@ -52,7 +52,12 @@ const runnerPath = __filename
 // The launch runner plus the five pinned Studio support scripts must be committed;
 // unrelated tracked dirt is recorded separately and cannot alter the pinned artifact.
 const studioCustodyScriptPaths = Object.freeze([
-  path.relative(repoRoot, runnerPath),
+  // Git reports paths with forward slashes on every platform, and the other
+  // entries below are forward-slash literals. path.relative() yields
+  // backslashes on Windows, so without normalising, the runner fails to
+  // recognise its own file as protected and tracked dirt in it is misclassified
+  // as foreign instead of blocking the run.
+  path.relative(repoRoot, runnerPath).split(path.sep).join('/'),
   ...Object.keys(expectedSupportHashes).filter((relativePath) =>
     relativePath.startsWith('scripts/studio-')
   )

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import {
   AGY_TASKWRAITH_MCP_SERVER_NAME,
   agyGlobalMcpConfigPath,
@@ -20,7 +21,7 @@ describe('agyGlobalMcpConfigPath', () => {
     // <root>/settings.json (Gemini CLI's legacy location) while agy read
     // config/mcp_config.json and found nothing.
     expect(agyGlobalMcpConfigPath({}, '/Users/example')).toBe(
-      '/Users/example/.gemini/config/mcp_config.json'
+      join('/Users/example', '.gemini', 'config', 'mcp_config.json')
     )
   })
 
@@ -29,10 +30,10 @@ describe('agyGlobalMcpConfigPath', () => {
     // agy child; writing a hard-coded ~/.gemini would register into a file the
     // child never opens.
     expect(agyGlobalMcpConfigPath({ GEMINI_CLI_HOME: '/opt/agy' }, '/Users/example')).toBe(
-      '/opt/agy/.gemini/config/mcp_config.json'
+      join('/opt/agy', '.gemini', 'config', 'mcp_config.json')
     )
     expect(agyGlobalMcpConfigPath({ GEMINI_HOME: '/opt/agy/.custom' }, '/Users/example')).toBe(
-      '/opt/agy/.custom/config/mcp_config.json'
+      join('/opt/agy/.custom', 'config', 'mcp_config.json')
     )
   })
 })
