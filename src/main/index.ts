@@ -9325,6 +9325,12 @@ async function maybePropagateLinkedChildResult(
     updatedAt: Date.now()
   }
   AppStore.saveChat(updatedParent)
+  // The parent broadcast must stay in the same synchronous turn as its save:
+  // the awaited settle below yields the event loop, and a sibling wave child
+  // returning inside that window saves + broadcasts a fresher parent revision
+  // first — a deferred broadcast here is then a stale out-of-order rebroadcast
+  // that regresses the transcript and breaks the patch chain into snapshots.
+  broadcastChatUpdated(updatedParent)
   const primarySettle = await settleEphemeralFleetWriterIfNeeded({
     linkedChild,
     parent,
@@ -9368,10 +9374,8 @@ async function maybePropagateLinkedChildResult(
   } catch {
     // Best-effort — the propagation itself already succeeded.
   }
-  // Notify the renderer so both the parent and linked child re-render
-  // with the new state (parent has the synthetic message; linked child
-  // shows the "returned" timestamp).
-  broadcastChatUpdated(updatedParent)
+  // Notify the renderer so the linked child re-renders with the "returned"
+  // timestamp (the parent broadcast rode its save before the settle above).
   broadcastChatUpdated(updatedLinkedChild)
   // Drain the durable mailbox. Busy parents simply retain processedAt=null;
   // their terminal run event (or startup recovery) replays this drain later.

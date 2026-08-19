@@ -328,3 +328,92 @@ describe('default emit protocol', () => {
     }
   })
 })
+
+describe('out-of-order producer broadcasts (delegate-wave return burst)', () => {
+  /**
+   * Two wave children return near-simultaneously. Child A's propagation saves
+   * the parent (rev 2) but its broadcast is deferred across an awaited fleet
+   * worktree settle; child B saves (rev 3) and broadcasts first. The renderer
+   * therefore sees rev 3, then a stale rev-2 rebroadcast. The stale delivery
+   * must never make the transcript lose B's already-delivered return card, and
+   * must not poison the patch baseline into a snapshot pair.
+   */
+  it('drops a stale rebroadcast that arrives after a fresher revision was delivered', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [seed, staleReturnA, freshReturnB] = projectSequence(
+      chat(1, ['prompt']),
+      chat(2, ['prompt', 'return A']),
+      chat(3, ['prompt', 'return A', 'return B'])
+    )
+
+    coordinator.enqueue(sink, seed)
+    let applied = applyChatUpdateDelivery(sink.deliveries[0])
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+
+    coordinator.enqueue(sink, freshReturnB)
+    coordinator.enqueue(sink, staleReturnA)
+    expect(sink.deliveries).toHaveLength(2)
+    const fresh = applyChatUpdateDelivery(sink.deliveries[1], applied.baseline)
+    expect(fresh.ok).toBe(true)
+    if (!fresh.ok) throw new Error(fresh.reason)
+    applied = fresh
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+
+    for (const delivery of sink.deliveries.slice(2)) {
+      const next = applyChatUpdateDelivery(delivery, applied.baseline)
+      expect(next.ok).toBe(true)
+      if (!next.ok) throw new Error(next.reason)
+      applied = next
+      coordinator.acknowledge(sink.id, { deliveryId: delivery.deliveryId, applied: true })
+    }
+
+    // The transcript the user reads must still hold child B's return card.
+    expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain('return B')
+  })
+
+  it('heals an out-of-order pair sitting in the compose window instead of losing the fresher record', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [seed, staleReturnA, freshReturnB] = projectSequence(
+      chat(1, ['prompt']),
+      chat(2, ['prompt', 'return A']),
+      chat(3, ['prompt', 'return A', 'return B'])
+    )
+
+    coordinator.enqueue(sink, seed)
+    // Both broadcasts land while the seed delivery is still awaiting its ACK,
+    // in reversed order: fresher B first, then the deferred stale A.
+    coordinator.enqueue(sink, freshReturnB)
+    coordinator.enqueue(sink, staleReturnA)
+
+    const applied = applyChatUpdateDelivery(sink.deliveries[0])
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+
+    expect(sink.deliveries).toHaveLength(2)
+    const second = sink.deliveries[1]
+    const next = applyChatUpdateDelivery(second, applied.baseline)
+    expect(next.ok).toBe(true)
+    if (!next.ok) throw new Error(next.reason)
+    // Both return cards survive: the late stale delta is spliced in FRONT of
+    // the fresher pending delta, so nothing regresses and nothing is lost.
+    expect(next.baseline.chat.messages.map((entry) => entry.content)).toEqual([
+      'prompt',
+      'return A',
+      'return B'
+    ])
+    // And the healed chain still rides the patch protocol — an out-of-order
+    // burst must not degrade the multi-MB parent chat to snapshot deliveries.
+    expect(second.kind).toBe('patch')
+  })
+})

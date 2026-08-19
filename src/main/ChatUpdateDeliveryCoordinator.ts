@@ -132,6 +132,23 @@ function resolveEmitProtocolVersion(
   return CHAT_UPDATE_PROTOCOL_V2
 }
 
+/**
+ * Newest persisted revision this state already knows about, in freshness
+ * order: pending (newest enqueued) → in flight → the retained patch-base chat.
+ * The enqueue guard keeps pending ≥ inFlight ≥ baseline, so first-defined is
+ * the maximum. Undefined when nothing comparable is held.
+ */
+function newestKnownPersistenceRevision(state: TargetChatState): number | undefined {
+  const pendingRevision = state.pending?.producer?.state.persistenceRevision
+  if (pendingRevision !== undefined) return pendingRevision
+  const inFlightRevision = state.inFlight?.producer?.state.persistenceRevision
+  if (inFlightRevision !== undefined) return inFlightRevision
+  const baselineRevision = state.baselineChat?.persistenceRevision
+  return Number.isSafeInteger(baselineRevision) && (baselineRevision ?? -1) >= 0
+    ? baselineRevision!
+    : undefined
+}
+
 function toPatchBaseline(
   acknowledged: CompactChatUpdateBaseline,
   baselineChat: ChatRecord
@@ -202,8 +219,46 @@ export class ChatUpdateDeliveryCoordinator {
     }
     state.target = target
     state.lastTouchedAt = this.now()
-    state.nextRevision += 1
     const producer = chatUpdateProducerEnvelopeFor(chat)
+    // A producer that saves, awaits, then broadcasts (the delegate-wave return
+    // path awaits a fleet-worktree settle between the two) can rebroadcast an
+    // OLDER persisted revision after a sibling already broadcast a fresher one.
+    // persistenceRevision is store-owned and strictly monotonic per chat, so
+    // lower always means stale: replacing fresher queued content would regress
+    // the transcript and break the producer-delta chain, degrading a multi-MB
+    // chat to a snapshot pair. Envelope-less broadcasts (no revision to
+    // compare) keep latest-enqueued-wins semantics.
+    const incomingRevision = producer?.state.persistenceRevision
+    const newestKnownRevision = newestKnownPersistenceRevision(state)
+    if (
+      incomingRevision !== undefined &&
+      newestKnownRevision !== undefined &&
+      incomingRevision < newestKnownRevision
+    ) {
+      if (
+        state.pending?.producer?.delta &&
+        producer?.delta &&
+        producer.delta.persistenceRevision === state.pending.producer.delta.basePersistenceRevision
+      ) {
+        // The late arrival is the pending delta's missing base link: splice it
+        // in FRONT so the composed chain still patches from the renderer's
+        // baseline instead of falling back to a stale-content snapshot.
+        const healed = composeChatUpdateProducerDeltas(
+          producer.delta,
+          state.pending.producer.delta
+        )
+        if (healed) {
+          state.pending = {
+            ...state.pending,
+            producer: { state: state.pending.producer.state, delta: healed }
+          }
+        }
+      }
+      this.maybeSend(state)
+      this.pruneTarget(target.id)
+      return
+    }
+    state.nextRevision += 1
     const retainedBytes = producer?.state.retainedBytes ?? estimateChatRecordBytes(chat)
     if (state.pending) {
       const composedDelta =

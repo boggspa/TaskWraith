@@ -100,6 +100,27 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(runtimeProfile).toContain('applied.taskWraithMcpProfileId = providerSeat.profileId')
   })
 
+  it('broadcasts the parent in the same synchronous turn as its save (wave-return ordering)', () => {
+    const producer = sourceBetween(
+      'async function maybePropagateLinkedChildResult(',
+      'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
+    )
+    const saveParent = producer.indexOf('AppStore.saveChat(updatedParent)')
+    const broadcastParent = producer.indexOf('broadcastChatUpdated(updatedParent)')
+    const primarySettle = producer.indexOf(
+      'const primarySettle = await settleEphemeralFleetWriterIfNeeded('
+    )
+    expect(saveParent).toBeGreaterThanOrEqual(0)
+    expect(broadcastParent).toBeGreaterThan(saveParent)
+    expect(primarySettle).toBeGreaterThan(broadcastParent)
+    // No awaited gap between the parent save and its broadcast: a sibling wave
+    // child returning inside such a gap saves + broadcasts a FRESHER parent
+    // revision first, turning this broadcast into a stale out-of-order
+    // rebroadcast that regresses the transcript and degrades the patch chain
+    // to full snapshots during return bursts.
+    expect(producer.slice(saveParent, broadcastParent)).not.toContain('await ')
+  })
+
   it('settles ephemeral fleet worktrees before archive, including empty done', () => {
     const producer = sourceBetween(
       'async function maybePropagateLinkedChildResult(',
