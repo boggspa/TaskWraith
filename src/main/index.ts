@@ -1773,7 +1773,10 @@ import {
   parseAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './antigravity/AntigravityConversationReceipt'
-import { agyGlobalMcpConfigPath } from './antigravity/AntigravityMcpConfig'
+import {
+  agyGlobalMcpConfigPath,
+  isTaskWraithOwnedAgyMcpServerName
+} from './antigravity/AntigravityMcpConfig'
 import {
   dispatchAntigravityCombinedMode,
   isAntigravityGeminiApiModelCandidate
@@ -34574,6 +34577,60 @@ async function runAntigravityAgyProvider(
             {},
             decision.decision === 'allow' ? 'success' : 'error',
             decision.decision === 'allow' ? 'TaskWraith allowed this command.' : decision.reason
+          )
+          return decision
+        }
+        if (kind === 'mcp') {
+          // agy routes every MCP call through one `call_mcp_tool` transport.
+          // Measured 2026-08-19: with no allow rule, headless agy auto-denies
+          // that transport before this hook's answer matters, so the lease
+          // opens `mcp(*)` while the TaskWraith registration and this hook are
+          // both live — which makes this branch the entire per-call gate.
+          const server = toolCall.mcpServerName?.trim() || ''
+          if (server && isTaskWraithOwnedAgyMcpServerName(server)) {
+            // TaskWraith's own broker arbitrates each brokered tool server-side
+            // (approval gate, workspace guards, write locks, audit identity),
+            // and its execution path emits the transcript rows — a hook-side
+            // row here would duplicate them. This is routing, not approval.
+            return { decision: 'allow' }
+          }
+          if (!server) {
+            return {
+              decision: 'deny',
+              reason:
+                'TaskWraith could not attribute this MCP call to a server while the leased agy permission layer is open, so it was denied rather than run unreviewed. Name the server explicitly and retry.'
+            }
+          }
+          const toolId = `agy-mcp-${Date.now()}-${++toolSeq}`
+          emitAgyHookToolEvent(toolId, 'tool_use', toolCall.name, {
+            server,
+            ...(toolCall.mcpToolName ? { tool: toolCall.mcpToolName } : {})
+          })
+          const allowed = await requestAgenticServiceApproval(
+            event.sender,
+            'antigravity',
+            'mcpTools',
+            workspacePath,
+            {
+              method: 'agy_native_mcp',
+              title: 'AntiGravity MCP tool',
+              body: `${server}${toolCall.mcpToolName ? ` · ${toolCall.mcpToolName}` : ''}`,
+              runId: route.appRunId
+            }
+          )
+          const decision: AgyHookBridgeDecision = allowed
+            ? { decision: 'allow' }
+            : {
+                decision: 'deny',
+                reason: 'TaskWraith declined this MCP call under the current permission tier.'
+              }
+          emitAgyHookToolEvent(
+            toolId,
+            'tool_result',
+            toolCall.name,
+            {},
+            decision.decision === 'allow' ? 'success' : 'error',
+            decision.decision === 'allow' ? 'TaskWraith allowed this MCP call.' : decision.reason
           )
           return decision
         }

@@ -102,6 +102,17 @@ describe('classifyAgyHookTool', () => {
     }
   })
 
+  it('routes the MCP transport to the mcp gate, never the write heuristic', () => {
+    // agy carries every MCP call through one transport tool; the inner tool
+    // name rides the args. Classifying it 'other' was measured to strand the
+    // whole registered TaskWraith surface behind agy's headless auto-deny.
+    expect(classifyAgyHookTool('call_mcp_tool')).toBe('mcp')
+    expect(classifyAgyHookTool('use_mcp_tool')).toBe('mcp')
+    expect(classifyAgyHookTool('CALL_MCP_TOOL')).toBe('mcp')
+    // Non-transport MCP-ish names keep their ordinary classification.
+    expect(classifyAgyHookTool('list_resources')).toBe('other')
+  })
+
   it('leaves the observed read tools to the agy-native flow', () => {
     for (const name of ['view_file', 'list_dir', 'grep_search', 'codebase_search', 'Read']) {
       expect(classifyAgyHookTool(name), name).toBe('other')
@@ -146,6 +157,35 @@ describe('startAgyHookBridgeServer', () => {
       { name: 'write_to_file', path: '/repo/src/a.ts' },
       { name: 'view_file', path: '/repo/src/b.ts' },
       { name: 'write_to_file', path: '/repo/c.ts' }
+    ])
+  })
+
+  it('surfaces the MCP server and inner tool so the decision layer can route', async () => {
+    const server = await startServer()
+    const token = createAgyHookBridgeToken()
+    const seen: Array<{ server: string | null; tool: string | null }> = []
+    server.registerRun(token, async (toolCall) => {
+      seen.push({ server: toolCall.mcpServerName ?? null, tool: toolCall.mcpToolName ?? null })
+      return { decision: 'allow' }
+    })
+
+    await post(
+      server.port,
+      { toolCall: { name: 'call_mcp_tool', args: { ServerName: 'TaskWraith', ToolName: 'goal_read' } } },
+      token
+    )
+    // agy 1.1.12-style JSON-quoted scalars decode exactly one layer.
+    await post(
+      server.port,
+      { toolCall: { name: 'call_mcp_tool', args: { server_name: '"sqlite-helper"', tool_name: '"query"' } } },
+      token
+    )
+    // A serverless call still reaches the handler; attribution is its job.
+    await post(server.port, { toolCall: { name: 'call_mcp_tool', args: {} } }, token)
+    expect(seen).toEqual([
+      { server: 'TaskWraith', tool: 'goal_read' },
+      { server: 'sqlite-helper', tool: 'query' },
+      { server: null, tool: null }
     ])
   })
 

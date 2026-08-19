@@ -59,6 +59,9 @@ export interface AgyHookToolCall {
   newString?: string
   content?: string
   patch?: string
+  /** MCP routing, when the call is agy's call_mcp_tool transport. */
+  mcpServerName?: string | null
+  mcpToolName?: string | null
 }
 
 /**
@@ -72,16 +75,23 @@ export interface AgyHookToolCall {
  * external binary and its tool namespace is not ours to enumerate. Shipping a
  * matcher of exactly `run_command` is what let `Edit` through to that fate.
  */
-export type AgyHookToolKind = 'shell' | 'write' | 'other'
+export type AgyHookToolKind = 'shell' | 'write' | 'mcp' | 'other'
 
 const SHELL_TOOL_RE = /(?:^|_)(?:run_?)?(?:command|terminal|shell|bash)(?:$|_)/i
 const WRITE_TOOL_RE = /(?:write|edit|create|replace|delete|remove|rename|move|patch|insert)/i
 /** Read-side names that would otherwise trip the write heuristic. */
 const READ_TOOL_RE = /^(?:read|view_file|list_dir|list_directory|.*search.*|grep.*)$/i
 
+const MCP_TOOL_RE = /^(?:call|use)_mcp_tool$/i
+
 export function classifyAgyHookTool(name: string): AgyHookToolKind {
   const trimmed = String(name || '').trim()
   if (!trimmed) return 'other'
+  // MCP calls are classified BEFORE the write heuristic: the inner tool name
+  // rides the args, not the tool name, so `call_mcp_tool` itself never looks
+  // like a mutation — but keeping the branch explicit means a future rename
+  // that does ("invoke_mcp_write"?) cannot silently reclassify the transport.
+  if (MCP_TOOL_RE.test(trimmed)) return 'mcp'
   if (SHELL_TOOL_RE.test(trimmed)) return 'shell'
   if (READ_TOOL_RE.test(trimmed)) return 'other'
   return WRITE_TOOL_RE.test(trimmed) ? 'write' : 'other'
@@ -112,6 +122,21 @@ const TARGET_PATH_KEYS = [
  * AGY mutation argument keys that carry diff-relevant content.
  * These are extracted and forwarded so bridgeToolDiffStats can derive +N/-N chips.
  */
+/** agy's call_mcp_tool argument spellings for the target server and inner
+ * tool. Every observed casing is accepted; a missing server never blocks the
+ * hook — the gate still runs, it just cannot attribute the call, and the
+ * decision layer fails closed on exactly that case. */
+const MCP_SERVER_ARG_KEYS = [
+  'ServerName',
+  'server_name',
+  'serverName',
+  'Server',
+  'server',
+  'McpServer',
+  'mcp_server'
+]
+const MCP_TOOL_ARG_KEYS = ['ToolName', 'tool_name', 'toolName', 'Tool', 'tool']
+
 const MUTATION_ARG_KEYS: ReadonlyArray<{
   key: string
   canonical: keyof Pick<AgyHookToolCall, 'oldString' | 'newString' | 'content' | 'patch'>
@@ -248,11 +273,29 @@ function extractToolCall(body: unknown): AgyHookToolCall | null {
       mutationArgs[canonical] = value
     }
   }
+  let mcpServerName: string | null = null
+  for (const key of MCP_SERVER_ARG_KEYS) {
+    const value = decodeAgyHookScalar(argRecord?.[key])
+    if (value?.trim()) {
+      mcpServerName = value.trim()
+      break
+    }
+  }
+  let mcpToolName: string | null = null
+  for (const key of MCP_TOOL_ARG_KEYS) {
+    const value = decodeAgyHookScalar(argRecord?.[key])
+    if (value?.trim()) {
+      mcpToolName = value.trim()
+      break
+    }
+  }
   return {
     name,
     command: commandLine,
     targetPath,
-    ...mutationArgs
+    ...mutationArgs,
+    mcpServerName,
+    mcpToolName
   }
 }
 
