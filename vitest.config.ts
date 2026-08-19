@@ -7,6 +7,14 @@ const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 // Swift<->Node driver is opt-in via RUN_SWIFT_INTEROP.
 export default defineConfig({
   test: {
+    // The Windows CI runner is materially slower than the other legs -- the same
+    // suite takes ~505s there against ~150s elsewhere -- and tests that are
+    // nowhere near the limit locally intermittently blow vitest's 5s default.
+    // Six unrelated files timed out in a single run, all on timing rather than
+    // on any assertion, which is noise that reads as a red matrix. Raised for
+    // win32 only, so a genuine hang on the platforms we develop on still fails
+    // fast rather than being masked.
+    testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
     // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
     // records a measured baseline without imposing a threshold or PR ratchet.
     coverage: {
