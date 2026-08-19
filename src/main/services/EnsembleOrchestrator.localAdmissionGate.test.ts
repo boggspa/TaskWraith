@@ -183,6 +183,15 @@ describe('local Ollama admission gate, wired into dispatch', () => {
       // The invariant that protects every big-GPU user: no declaration means
       // no opinion, and no opinion means the code path from before this gate
       // existed. A guessed ceiling here would serialise a rack of H100s.
+      //
+      // "Declares no ceiling" is a premise, not a default, and it must be
+      // pinned: the policy reads process.env, and a dev machine may genuinely
+      // export OLLAMA_MAX_LOADED_MODELS to every process (this repo's does,
+      // launchd-wide, since the 2026-08-18 GPU panic). Inherit that and the
+      // wave bounds to the machine's ceiling — the third lane queues behind a
+      // completion this test never sends, and the awaited fan-out never
+      // returns.
+      vi.stubEnv('OLLAMA_MAX_LOADED_MODELS', undefined)
       stubReachableOllama()
       const harness = makeHarness(localTrio())
       harness.orchestrator.startRound({
