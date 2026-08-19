@@ -476,11 +476,11 @@ Check whether completion-style language in a planned final answer is backed by t
 
 ## list_subthreads
 
-List lifecycle-aware sub-threads under the active parent chat, including readiness to read results.
+List lifecycle-aware sub-threads under the active parent chat, including readiness to read results. Pass waveId to poll a delegate_wave: archived die-on-return workers included, settled rollup in waves.
 
 - Access: read-only (no approval needed)
 - Required args: none
-- Optional args: parentChatId, includeArchived, includePrompt
+- Optional args: parentChatId, includeArchived, includePrompt, waveId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"list_subthreads","arguments":{"parentChatId":"text"}}}}`
 
 ## read_subthread_result
@@ -1063,7 +1063,7 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await). One approval covers the wave; capped by Settings → General → Max Wave Agents.
+Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). One approval covers the wave; capped by Settings → General → Max Wave Agents.
 
 - Access: governed by your run permission role
 - Required args: workers
