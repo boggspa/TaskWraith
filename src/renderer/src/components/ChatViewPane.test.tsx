@@ -379,35 +379,6 @@ describe('ChatViewPane shared composer', () => {
     expect(html).toContain('data-ci-status="pending"')
   })
 
-  it('mounts SubThreadStatusTicker above the transcript for a parent with a running child', () => {
-    const parent = {
-      appChatId: 'parent-1',
-      provider: 'claude',
-      title: 'Parent'
-    } as unknown as ChatViewPaneProps['chat']
-    const child = {
-      appChatId: 'child-1',
-      parentChatId: 'parent-1',
-      parentChatRelation: 'subThread',
-      provider: 'codex',
-      title: 'Child'
-    } as unknown as ChatViewPaneProps['chats'][number]
-
-    const html = renderToStaticMarkup(
-      <ChatViewPane
-        {...makeProps({
-          chat: parent,
-          chats: [parent as ChatViewPaneProps['chats'][number], child],
-          runningChatIds: ['child-1'],
-          composerProps: stubComposerProps()
-        })}
-      />
-    )
-
-    expect(html).toContain('subthread-status-ticker')
-    expect(html).toContain('sub-thread active')
-  })
-
   it('renders no composer when composerProps is absent (read-only fallback)', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane

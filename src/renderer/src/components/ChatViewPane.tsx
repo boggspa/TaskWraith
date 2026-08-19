@@ -2,7 +2,6 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'rea
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
-import { SubThreadStatusTicker } from './SubThreadStatusTicker'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
 import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
@@ -237,9 +236,12 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
-    // Sub-thread status ticker depends on which child chats are running.
-    // Compare by content signature so identity churn from other panes still
-    // skips, while an active-child start/stop reconciles this pane.
+    // The transcript's sub-thread rendering (fleet chips, sub-thread cards
+    // routed through buildChatViewProps) depends on which child chats are
+    // running. Compare by content signature so identity churn from other
+    // panes still skips, while an active-child start/stop reconciles this
+    // pane. (The old SubThreadStatusTicker was removed 2026-08-19; this
+    // clause serves the transcript, not the ticker.)
     transcriptRunningChatIdsSignature(a.runningChatIds) ===
       transcriptRunningChatIdsSignature(b.runningChatIds) &&
     // Fleet elevated approvals — head/queue content + respond handler identity.
@@ -626,12 +628,6 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       )}
       {!props.isWelcomeChat && (
         <div className="multiview-pane-content">
-          <SubThreadStatusTicker
-            currentChat={props.chat}
-            chats={props.chats}
-            runningChatIds={props.runningChatIds}
-            onOpenSubThread={props.onOpenSubThread}
-          />
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,
