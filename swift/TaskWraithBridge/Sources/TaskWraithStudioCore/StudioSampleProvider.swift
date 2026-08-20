@@ -228,7 +228,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         // be silently off by that difference. Wrong pictures at correct-looking
         // timestamps is the failure class this whole arc has been chasing, so a
         // mismatch is an error rather than a best effort.
-        let observed = CMSampleBufferGetPresentationTimeStamp(finalBuffer)
+        let observed = CMSampleBufferGetOutputPresentationTimeStamp(finalBuffer)
         guard CMTimeCompare(observed, startTime) == 0 else {
             throw StudioMediaLoadError.readFailed(
                 "scoped reader started at \(observed.seconds)s, expected "
@@ -266,7 +266,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
             // rather than a caller-side estimate.
             payloadReadCount += 1
             if CMSampleBufferGetDataBuffer(buffer) != nil,
-                CMSampleBufferGetPresentationTimeStamp(buffer).isValid
+                CMSampleBufferGetOutputPresentationTimeStamp(buffer).isValid
             {
                 return buffer
             }

@@ -85,6 +85,21 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
         XCTAssertEqual(resolved.value, 20)
         XCTAssertEqual(resolved.timescale, 600)
 
+        let reordered = try StudioMediaSourceLoader.resolveFrameDuration(
+            minFrameDuration: .invalid,
+            presentationTimes: [
+                CMTime(value: 0, timescale: 600),
+                CMTime(value: 40, timescale: 600),
+                CMTime(value: 20, timescale: 600),
+                CMTime(value: 20, timescale: 600),
+            ]
+        )
+        XCTAssertEqual(
+            reordered,
+            CMTime(value: 20, timescale: 600),
+            "decode-order B frames and duplicate instants must not double the frame duration"
+        )
+
         XCTAssertThrowsError(
             try StudioMediaSourceLoader.resolveFrameDuration(
                 minFrameDuration: .invalid,
@@ -235,6 +250,129 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
                 "inter-coded frame \(index) must be brighter than \(index - 1): \(greens)"
             )
         }
+    }
+
+    /// MP4 edit lists can place compressed packets two frames into the media
+    /// timeline while mapping their decoded output back to frame zero. The
+    /// viewer must address and verify the OUTPUT presentation timestamp; using
+    /// the packet PTS makes every decoded frame look like the wrong neighbour.
+    func testEditedOutputTimelineDecodesAtPresentedFrameZero() throws {
+        let device = try makeDevice()
+        let levels: [UInt8] = [32, 96, 160, 224]
+        let encoded = try StudioTestMedia.encodeFlatFrames(lumaLevels: levels)
+        let packetOffset = CMTime(value: 2, timescale: 30)
+        let editedSamples = try encoded.samples.map { sample in
+            var timing = CMSampleTimingInfo()
+            XCTAssertEqual(
+                CMSampleBufferGetSampleTimingInfo(
+                    sample.sampleBuffer,
+                    at: 0,
+                    timingInfoOut: &timing
+                ),
+                noErr
+            )
+            let outputPresentationTime = timing.presentationTimeStamp
+            timing.presentationTimeStamp = timing.presentationTimeStamp + packetOffset
+            var shifted: CMSampleBuffer?
+            XCTAssertEqual(
+                CMSampleBufferCreateCopyWithNewTiming(
+                    allocator: kCFAllocatorDefault,
+                    sampleBuffer: sample.sampleBuffer,
+                    sampleTimingEntryCount: 1,
+                    sampleTimingArray: &timing,
+                    sampleBufferOut: &shifted
+                ),
+                noErr
+            )
+            let buffer = try XCTUnwrap(shifted)
+            XCTAssertEqual(
+                CMSampleBufferSetOutputPresentationTimeStamp(
+                    buffer,
+                    newValue: outputPresentationTime
+                ),
+                noErr
+            )
+            XCTAssertNotEqual(
+                CMSampleBufferGetPresentationTimeStamp(buffer),
+                CMSampleBufferGetOutputPresentationTimeStamp(buffer)
+            )
+            return StudioCompressedSample(
+                frameIndex: sample.frameIndex,
+                isSyncSample: sample.isSyncSample,
+                sampleBuffer: buffer
+            )
+        }
+
+        let source = try StudioVideoFrameSource(
+            formatDescription: encoded.formatDescription,
+            samples: editedSamples,
+            device: device
+        )
+        defer { source.invalidate() }
+        let renderer = try StudioVideoFrameRenderer(device: device)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: size,
+            height: size
+        )
+
+        var greens: [Int] = []
+        for frame in 0..<levels.count {
+            let textures = try source.textures(forFrameIndex: Int64(frame))
+            try renderer.render(frame: textures, to: target)
+            greens.append(
+                Int(try StudioTestPatternRenderer.readPixel(from: target, x: 64, y: 64).green)
+            )
+        }
+        for index in 1..<greens.count {
+            XCTAssertGreaterThan(greens[index], greens[index - 1])
+        }
+    }
+
+    func testBoundedProviderSeeksOnAnEditedMp4OutputTimeline() async throws {
+        let device = try makeDevice()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("studio-edited-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await StudioTestMedia.writeMovingMovie(
+            frameCount: 90,
+            to: url,
+            fileType: .mp4
+        )
+        let media = try await StudioMediaSourceLoader.loadBounded(
+            asset: asset(at: url),
+            payloadCacheLimit: 8
+        )
+
+        var observedEditMapping = false
+        for index in 0..<min(30, media.sampleProvider.sampleCount) {
+            let buffer = try media.sampleProvider.sampleBuffer(atDecodeIndex: index)
+            let packetTime = CMSampleBufferGetPresentationTimeStamp(buffer)
+            let outputTime = CMSampleBufferGetOutputPresentationTimeStamp(buffer)
+            if CMTimeCompare(packetTime, outputTime) != 0 {
+                observedEditMapping = true
+            }
+            XCTAssertEqual(
+                media.sampleProvider.metadata(atDecodeIndex: index).presentationTime,
+                outputTime
+            )
+        }
+        XCTAssertTrue(
+            observedEditMapping,
+            "the MP4 fixture must contain a real packet/output edit mapping"
+        )
+
+        let loaded = try await StudioMediaSourceLoader.makeBoundedFrameSource(
+            asset: asset(at: url),
+            device: device,
+            payloadCacheLimit: 8
+        )
+        defer { loaded.source.invalidate() }
+        for frame in [Int64(0), 1, 30, 2, 60] {
+            _ = try loaded.source.textures(forFrameIndex: frame)
+        }
+        XCTAssertGreaterThan(loaded.source.decodeCount, 0)
+        XCTAssertEqual(loaded.source.diagnostics.failedDecodeCount, 0)
     }
 
     /// Strict mode still exists for callers that genuinely need all-intra input.

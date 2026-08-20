@@ -394,7 +394,8 @@ enum StudioTestMedia {
         width: Int = defaultWidth,
         height: Int = defaultHeight,
         frameRate: Int32 = 30,
-        forceKeyFrames: Bool = false
+        forceKeyFrames: Bool = false,
+        fileType: AVFileType = .mov
     ) async throws {
         try await writeMovie(
             frameCount: frameCount,
@@ -403,6 +404,7 @@ enum StudioTestMedia {
             height: height,
             forceKeyFrames: false,
             compressionProperties: nil,
+            fileType: fileType,
             presentationTime: { CMTime(value: Int64($0), timescale: frameRate) }
         ) { index in
             try movingPixelBuffer(frameIndex: index, width: width, height: height)
@@ -454,10 +456,11 @@ enum StudioTestMedia {
         height: Int,
         forceKeyFrames: Bool,
         compressionProperties: [String: Any]?,
+        fileType: AVFileType = .mov,
         presentationTime: (Int) -> CMTime,
         makeFrame: (Int) throws -> CVPixelBuffer
     ) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let writer = try AVAssetWriter(outputURL: url, fileType: fileType)
         var outputSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,

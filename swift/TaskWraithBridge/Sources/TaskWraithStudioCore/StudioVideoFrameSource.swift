@@ -20,7 +20,11 @@ public struct StudioCompressedSample {
     }
 
     public var presentationTime: CMTime {
-        CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        // The output timeline is the one VideoToolbox reports after container
+        // edits and decode trimming. Ordinary MP4/H.264 can carry a packet PTS
+        // two frames later than the picture's output PTS; comparing against the
+        // packet timestamp rejects every correctly decoded frame as a mismatch.
+        CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
     }
 }
 
