@@ -811,13 +811,16 @@ async function capturePlayableSample(
   adapters = {},
   options = {}
 ) {
-  acceptanceSession.assertWindowServerSessionAvailable(index, 'before-capture')
+  const assertWindowServer =
+    adapters.assertWindowServerSessionAvailable ||
+    acceptanceSession.assertWindowServerSessionAvailable
+  assertWindowServer(index, 'before-capture')
   const capture = await (adapters.captureNative || acceptanceSession.captureNative)(
     plan,
     target,
     options.captureName || 'diagnostics-' + String(index)
   )
-  acceptanceSession.assertWindowServerSessionAvailable(index, 'after-capture')
+  assertWindowServer(index, 'after-capture')
   const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
   const observed = parseVisibleHud(hud, target.asset.sha256, {
     matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset

@@ -43,6 +43,8 @@ function digestFor(seed: unknown) {
   return require('node:crypto').createHash('sha256').update(String(seed)).digest('hex')
 }
 
+const availableWindowServer = () => ({ windowServerEvidenceAvailable: true })
+
 function diagnosticsWorkspace(frame: Record<string, number>) {
   const element = (
     identifier: string,
@@ -1088,6 +1090,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     let ocrCount = 0
     const comparedFrames: Array<Record<string, number>> = []
     const adapters = {
+      assertWindowServerSessionAvailable: availableWindowServer,
       runStudioUiDriver: async () => ({
         actions: [
           {
@@ -1173,6 +1176,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     const asset = 'A'.repeat(43)
     let captures = 0
     const adapters = {
+      assertWindowServerSessionAvailable: availableWindowServer,
       runStudioUiDriver: async () => ({
         actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
       }),
@@ -1217,6 +1221,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       0,
       null,
       {
+        assertWindowServerSessionAvailable: availableWindowServer,
         runStudioUiDriver: async () => ({
           actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
         }),
@@ -1256,6 +1261,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         0,
         previous,
         {
+          assertWindowServerSessionAvailable: availableWindowServer,
           runStudioUiDriver: async () => ({
             actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
           }),
@@ -1285,6 +1291,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         0,
         null,
         {
+          assertWindowServerSessionAvailable: availableWindowServer,
           runStudioUiDriver: async () => ({
             actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
           }),
