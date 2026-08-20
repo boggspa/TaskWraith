@@ -318,6 +318,33 @@ final class StudioViewerAccessibilityTests: XCTestCase {
                 is StudioActionAccessibilityElement)
     }
 
+    func testRouteResourceDetailIsASeparateStableAccessibilityOnlyValue() throws {
+        let (view, _) = try makeViewer()
+        let shared = "res1 dec=1 cap=6 surf=1 ids=0000002A"
+        var route =
+            "rr1 route=source active=1 retained=0 cap=6 surf=1 ids=0000002A"
+        view.resourceDetailProvider = { shared }
+        view.routeResourceDetailProvider = { route }
+        view.renderCurrentFrame()
+
+        let children = try labeledChildren(of: view)
+        let sharedElement = try child(children, labeled: "Resource detail")
+        let routeElement = try child(children, labeled: "Route resource detail")
+        XCTAssertEqual(sharedElement.accessibilityRole(), .staticText)
+        XCTAssertEqual(sharedElement.accessibilityValue() as? String, shared)
+        XCTAssertEqual(routeElement.accessibilityRole(), .staticText)
+        XCTAssertEqual(routeElement.accessibilityValue() as? String, route)
+        XCTAssertFalse(routeElement is StudioActionAccessibilityElement)
+
+        route = "rr1 route=source active=1 retained=1 cap=6 surf=1 ids=0000002A"
+        view.renderCurrentFrame()
+        let updated = try child(
+            labeledChildren(of: view), labeled: "Route resource detail")
+        XCTAssertTrue(updated === routeElement)
+        XCTAssertEqual(updated.accessibilityValue() as? String, route)
+        XCTAssertEqual(sharedElement.accessibilityValue() as? String, shared)
+    }
+
     /// ASSERTION 1 — the tree a client sees.
     func testTheViewerExposesAnAccessibilityTreeToAClient() throws {
         let (view, _) = try makeViewer()

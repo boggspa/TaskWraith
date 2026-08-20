@@ -74,6 +74,7 @@ final class StudioViewerView: NSView {
     /// leaves it bound so there is still exactly one transport authority.
     var playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding()
     var resourceDetailProvider: (() -> String?)?
+    var routeResourceDetailProvider: (() -> String?)?
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
@@ -880,7 +881,8 @@ final class StudioViewerView: NSView {
                         ? 0
                         : (audioPlayer.isAttached ? 1 : 0))
             ),
-            resourceDetail: resourceDetailProvider?()
+            resourceDetail: resourceDetailProvider?(),
+            routeResourceDetail: routeResourceDetailProvider?()
         )
         // ROUTE-SPECIFIC CONTENT. Source/Audition previews the selected asset
         // "independently of the timeline" (briefing) — so ghosts and the
@@ -1687,6 +1689,7 @@ final class StudioViewerWindowController {
     /// briefing requires exactly that, and one shared renderer could not
     /// deliver it.
     let renderer: StudioViewerRenderer
+    private var routeResourceSnapshotProvider: () -> StudioRouteResourceSnapshot
 
     convenience init(
         renderer: StudioViewerRenderer,
@@ -1751,6 +1754,15 @@ final class StudioViewerWindowController {
     ) {
         self.route = route
         self.renderer = renderer
+        self.routeResourceSnapshotProvider = {
+            StudioRouteResourceSnapshot(
+                route: route,
+                activeSourceCount: renderer.activeSourceCount,
+                retainedFrameCount: renderer.retainedFrameCount,
+                capacity: renderer.liveIOSurfaceCapacity,
+                surfaceIDs: renderer.liveIOSurfaceIDs
+            )
+        }
         self.window = window
         self.presentationHost = presentationHost
         self.presentWindow = presentWindow
@@ -1827,8 +1839,28 @@ final class StudioViewerWindowController {
         view.resourceDetailProvider = provider
     }
 
+    func setRouteResourceDetailProvider(_ provider: @escaping () -> String?) {
+        view.routeResourceDetailProvider = provider
+    }
+
     var currentResourceDetailForTesting: String? {
         view.resourceDetailProvider?()
+    }
+
+    var currentRouteResourceDetailForTesting: String? {
+        view.routeResourceDetailProvider?()
+    }
+
+    var routeResourceSnapshot: StudioRouteResourceSnapshot {
+        routeResourceSnapshotProvider()
+    }
+
+    var routeResourceDetail: String { routeResourceSnapshot.diagnosticsExportText }
+
+    func replaceRouteResourceSnapshotProviderForTesting(
+        _ provider: @escaping () -> StudioRouteResourceSnapshot
+    ) {
+        routeResourceSnapshotProvider = provider
     }
 
     func attachPresentation() {
@@ -2057,6 +2089,14 @@ final class StudioViewerAppState {
         }
         controller.setResourceDetailProvider(resourceProvider)
         reviewController?.setResourceDetailProvider(resourceProvider)
+        controller.setRouteResourceDetailProvider { [weak controller] in
+            controller?.routeResourceDetail
+        }
+        if let reviewController {
+            reviewController.setRouteResourceDetailProvider { [weak reviewController] in
+                reviewController?.routeResourceDetail
+            }
+        }
         controller.onPresentationDetached = { [weak self] in
             self?.attachment.detach()
         }

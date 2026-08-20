@@ -128,6 +128,94 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertTrue(sourceDetail?.hasPrefix("res1 dec=") == true)
   }
 
+  func testSourceAndReviewRouteResourceProvidersReadOnlyTheirOwnRenderer() throws {
+    let workspace = try makeWorkspace()
+    let review = try XCTUnwrap(workspace.reviewController)
+    _ = StudioViewerAppState(
+      controller: workspace.sourceController,
+      renderer: workspace.sourceController.renderer,
+      reviewController: review,
+      workspaceController: workspace
+    )
+
+    let defaultSource = try StudioRouteResourceSnapshot(
+      diagnosticsExportText: try XCTUnwrap(
+        workspace.sourceController.currentRouteResourceDetailForTesting
+      )
+    )
+    let defaultReview = try StudioRouteResourceSnapshot(
+      diagnosticsExportText: try XCTUnwrap(
+        review.currentRouteResourceDetailForTesting
+      )
+    )
+
+    XCTAssertEqual(defaultSource.route, .source)
+    XCTAssertEqual(
+      defaultSource.activeSourceCount,
+      workspace.sourceController.renderer.activeSourceCount
+    )
+    XCTAssertEqual(
+      defaultSource.retainedFrameCount,
+      workspace.sourceController.renderer.retainedFrameCount
+    )
+    XCTAssertEqual(
+      defaultSource.capacity,
+      workspace.sourceController.renderer.liveIOSurfaceCapacity
+    )
+    XCTAssertEqual(
+      defaultSource.surfaceIDs,
+      workspace.sourceController.renderer.liveIOSurfaceIDs
+    )
+    XCTAssertEqual(defaultReview.route, .review)
+    XCTAssertEqual(defaultReview.activeSourceCount, review.renderer.activeSourceCount)
+    XCTAssertEqual(defaultReview.retainedFrameCount, review.renderer.retainedFrameCount)
+    XCTAssertEqual(defaultReview.capacity, review.renderer.liveIOSurfaceCapacity)
+    XCTAssertEqual(defaultReview.surfaceIDs, review.renderer.liveIOSurfaceIDs)
+    XCTAssertEqual(
+      defaultReview.diagnosticsExportText,
+      "rr1 route=review active=0 retained=0 cap=0 surf=0 ids=-",
+      "an empty hidden Review renderer must not inherit Source or shared-pool resources"
+    )
+
+    workspace.sourceController.replaceRouteResourceSnapshotProviderForTesting {
+      StudioRouteResourceSnapshot(
+        route: .source,
+        activeSourceCount: 1,
+        retainedFrameCount: 1,
+        capacity: 4,
+        surfaceIDs: [0x0A]
+      )
+    }
+    review.replaceRouteResourceSnapshotProviderForTesting {
+      StudioRouteResourceSnapshot(
+        route: .review,
+        activeSourceCount: 2,
+        retainedFrameCount: 0,
+        capacity: 8,
+        surfaceIDs: [0x0B, 0x0C]
+      )
+    }
+    let source = try StudioRouteResourceSnapshot(
+      diagnosticsExportText: try XCTUnwrap(
+        workspace.sourceController.currentRouteResourceDetailForTesting
+      )
+    )
+    let reviewSnapshot = try StudioRouteResourceSnapshot(
+      diagnosticsExportText: try XCTUnwrap(
+        review.currentRouteResourceDetailForTesting
+      )
+    )
+    XCTAssertEqual(source.surfaceIDs, [0x0A])
+    XCTAssertEqual(source.activeSourceCount, 1)
+    XCTAssertEqual(source.retainedFrameCount, 1)
+    XCTAssertEqual(source.capacity, 4)
+    XCTAssertEqual(reviewSnapshot.surfaceIDs, [0x0B, 0x0C])
+    XCTAssertEqual(reviewSnapshot.activeSourceCount, 2)
+    XCTAssertEqual(reviewSnapshot.retainedFrameCount, 0)
+    XCTAssertEqual(reviewSnapshot.capacity, 8)
+    XCTAssertNotEqual(source.diagnosticsExportText, reviewSnapshot.diagnosticsExportText)
+  }
+
   func testVisibleSourceHostOccupiesPositiveAreaInsideWorkspaceContent() throws {
     let workspace = try makeWorkspace()
     workspace.update(
