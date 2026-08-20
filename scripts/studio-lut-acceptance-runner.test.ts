@@ -589,7 +589,10 @@ describe('studio LUT acceptance runner contract', () => {
     'scripts/studio-generate-speech-fixture.cjs',
     'scripts/studio-acceptance-session.cjs',
     'scripts/studio-bounded-diagnostics-runner.cjs',
-    'scripts/studio-bounded-lifecycle-runner.cjs'
+    'scripts/studio-bounded-lifecycle-runner.cjs',
+    'scripts/studio-av-endurance-runner.cjs',
+    'scripts/studio-av-endurance-acceptance-runner.cjs',
+    'scripts/studio-av-endurance-live-runner.cjs'
   ])('rejects tracked dirt in protected Studio script %s', (relativePath) => {
     const trackedStatus = ` M ${relativePath}\0`
     const dirt = classifyTrackedDirt(trackedStatus, () => 'c'.repeat(64))

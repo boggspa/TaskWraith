@@ -44,6 +44,12 @@ const expectedSupportHashes = Object.freeze({
     '9b1b59898a6708864c5e4ffdf28f9c930a94992303c0537b3dcf22869ab67266',
   'scripts/studio-bounded-lifecycle-runner.cjs':
     'f5c7a7c4c5b59d7f1fbbf93ed2319e92555eb55f84a5fe17af58f4fed77f7d8c',
+  'scripts/studio-av-endurance-runner.cjs':
+    'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
+  'scripts/studio-av-endurance-acceptance-runner.cjs':
+    '8cee302bf6325a2febe264e8f5ec984a442605b01f1142b9c25bb96215cd03d7',
+  'scripts/studio-av-endurance-live-runner.cjs':
+    '7b81ad0baff8d9c425da3822c9ff4243b181ff166dcf5f6c1605650d1ea3be3b',
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':
