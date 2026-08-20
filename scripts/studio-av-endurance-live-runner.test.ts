@@ -98,7 +98,7 @@ function fakeJourneyAdapters(log: string[], finalTerminalPaused = true) {
         }
       }
     },
-    waitForFreshPlayableSample: async (
+    waitForFreshRawPlayableSample: async (
       _plan: any,
       _target: any,
       _census: any,

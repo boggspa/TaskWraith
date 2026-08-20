@@ -789,6 +789,60 @@ function normalizeSample(
   }
 }
 
+function sealRawSampleReceipt(raw, planEntry, expectedAssetId, artifactRoot) {
+  requireExactKeys(
+    raw,
+    ['current', 'peak', 'resource', 'capture'],
+    `sample ${planEntry.index} adapter receipt`
+  )
+  requireExactKeys(
+    raw.capture,
+    [
+      'screenshotPath',
+      'screenshotSha256',
+      'windowBounds',
+      'sourceHostFrame',
+      'hudOverlayHeight',
+      'rawOcrText',
+      'rawOcrSha256'
+    ],
+    `sample ${planEntry.index} raw capture`
+  )
+  ensureSafeRegularPath(
+    raw.capture.screenshotPath,
+    artifactRoot,
+    `sample ${planEntry.index} screenshotPath`,
+    MAX_CAPTURE_BYTES
+  )
+  if (sha256File(raw.capture.screenshotPath) !== raw.capture.screenshotSha256) {
+    throw new Error(
+      `sample ${planEntry.index} observed screenshot bytes do not match their SHA-256`
+    )
+  }
+  exactFiniteGeometry(
+    raw.capture.windowBounds,
+    ['x', 'y', 'width', 'height'],
+    `sample ${planEntry.index} windowBounds`
+  )
+  exactFiniteGeometry(
+    raw.capture.sourceHostFrame,
+    ['x', 'y', 'width', 'height'],
+    `sample ${planEntry.index} sourceHostFrame`
+  )
+  if (!Number.isInteger(raw.capture.hudOverlayHeight) || raw.capture.hudOverlayHeight < 0) {
+    throw new Error(`sample ${planEntry.index} hudOverlayHeight is invalid`)
+  }
+  parseBoundOcr(raw.capture.rawOcrText, raw.capture.rawOcrSha256, expectedAssetId, planEntry.index)
+  const current = endurance.parseAvSyncCurrentExport(raw.current)
+  const peak = endurance.parseAvSyncPeakExport(raw.peak)
+  if (!current.ok)
+    throw new Error(`sample ${planEntry.index} current avc1 receipt is invalid: ${current.reason}`)
+  if (!peak.ok)
+    throw new Error(`sample ${planEntry.index} peak av1 receipt is invalid: ${peak.reason}`)
+  normalizeResource(raw.resource, planEntry.index)
+  return deepFreezeEvidence(cloneJson(raw, `sample ${planEntry.index} sealed cadence receipt`))
+}
+
 function acceptanceIntegrityFailures(samples, resources) {
   const failures = []
   const list = Array.isArray(samples) ? samples : []
@@ -1338,6 +1392,7 @@ async function runAvEnduranceAcceptance(options = {}, adapters = {}) {
   const currentSamples = []
   const peakSamples = []
   const resources = []
+  const pendingSamples = []
   for (const planEntry of plan) {
     if (planEntry.index > 0) await waitUntil(planEntry.plannedAtMs, planEntry)
     const before = planEntry.index === 0 ? anchor : runnerClock.read()
@@ -1346,29 +1401,37 @@ async function runAvEnduranceAcceptance(options = {}, adapters = {}) {
       runnerClockSource: runnerClock.source
     })
     const after = runnerClock.read()
-    const authorizedCapture = authorizeCaptureReference(
-      raw.capture,
-      artifactRoot,
-      sourceAsset,
-      expectedAssetId,
-      sourcePtsCensus,
-      referenceAuthority,
-      planEntry.index
-    )
-    const normalized = normalizeSample(
-      { ...raw, capture: authorizedCapture },
+    const sealedRaw = sealRawSampleReceipt(raw, planEntry, expectedAssetId, artifactRoot)
+    pendingSamples.push({
       planEntry,
-      expectedAssetId,
-      artifactRoot,
-      sourceAsset,
-      sourcePtsCensus,
-      clock,
-      {
+      raw: sealedRaw,
+      timing: {
         beforeMonotonicNs: before.monotonicNs,
         afterMonotonicNs: after.monotonicNs,
         beforeWallTimeMs: before.wallTimeMs,
         afterWallTimeMs: after.wallTimeMs
       }
+    })
+  }
+  for (const pending of pendingSamples) {
+    const authorizedCapture = authorizeCaptureReference(
+      pending.raw.capture,
+      artifactRoot,
+      sourceAsset,
+      expectedAssetId,
+      sourcePtsCensus,
+      referenceAuthority,
+      pending.planEntry.index
+    )
+    const normalized = normalizeSample(
+      { ...pending.raw, capture: authorizedCapture },
+      pending.planEntry,
+      expectedAssetId,
+      artifactRoot,
+      sourceAsset,
+      sourcePtsCensus,
+      clock,
+      pending.timing
     )
     samples.push(normalized.sample)
     currentSamples.push(normalized.currentEntry)

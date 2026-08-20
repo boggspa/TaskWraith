@@ -17,7 +17,7 @@ const acceptanceSession = require('./studio-acceptance-session.cjs')
 const diagnostics = require('./studio-bounded-diagnostics-runner.cjs')
 const avAcceptance = require('./studio-av-endurance-acceptance-runner.cjs')
 const avCore = require('./studio-av-endurance-runner.cjs')
-const { compareWindowCaptureToReference } = require('./studio-pixel-evidence-verifier.cjs')
+const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS } = require('./studio-pixel-evidence-verifier.cjs')
 
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000
 const AUDIO_PROBE_SECONDS = 2
@@ -305,6 +305,99 @@ async function readSampleUi(plan, target, bounds, index, options = {}, adapters 
   return result
 }
 
+async function captureRawPlayableSample(
+  plan,
+  target,
+  census,
+  bounds,
+  index,
+  previousPtsSeconds,
+  adapters = {},
+  options = {}
+) {
+  const workspaceObservation = await (
+    adapters.readSourceWorkspaceObservation || diagnostics.readSourceWorkspaceObservation
+  )(plan, target, bounds, adapters)
+  const capture = await (adapters.captureNative || acceptanceSession.captureNative)(
+    plan,
+    target,
+    options.captureName || `diagnostics-${String(index)}-raw`
+  )
+  const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
+  const observed = diagnostics.parseVisibleHud(hud, target.asset.sha256, {
+    matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset
+  })
+  const maximumPtsSeconds = census.values.at(-1) + 1
+  const playable = diagnostics.isPlayableSample(observed, previousPtsSeconds, {
+    maximumPtsSeconds
+  })
+  return {
+    index,
+    sourceHostFrame: workspaceObservation.sourceHostFrame,
+    capture,
+    hud,
+    observed,
+    playable,
+    workspaceObservation
+  }
+}
+
+async function waitForFreshRawPlayableSample(
+  plan,
+  target,
+  census,
+  bounds,
+  index,
+  previousPtsSeconds,
+  adapters = {},
+  options = {}
+) {
+  const timeoutMs = options.timeoutMs ?? 30_000
+  const intervalMs = options.intervalMs ?? 500
+  const deadline = Date.now() + timeoutMs
+  const attempts = []
+  let attempt = 0
+  while (Date.now() <= deadline) {
+    const sample = await captureRawPlayableSample(
+      plan,
+      target,
+      census,
+      bounds,
+      index,
+      previousPtsSeconds,
+      adapters,
+      { captureName: `diagnostics-${String(index)}-attempt-${String(attempt).padStart(2, '0')}` }
+    )
+    attempts.push({
+      attempt,
+      reasons: sample.playable.reasons,
+      observed: sample.observed,
+      sourceHostFrame: sample.sourceHostFrame,
+      capture: { path: sample.capture.path, sha256: sample.capture.sha256 }
+    })
+    if (sample.playable.valid) {
+      return { ...sample, retry: { attemptCount: attempts.length, attempts } }
+    }
+    if (
+      sample.playable.reasons.length === 0 ||
+      sample.playable.reasons.some((reason) => !diagnostics.RETRYABLE_SAMPLE_REASONS.has(reason))
+    ) {
+      throw new Error(
+        `live endurance raw sample ${index} failed non-retryably: ${JSON.stringify({
+          attempt,
+          reasons: sample.playable.reasons,
+          observed: sample.observed
+        })}`
+      )
+    }
+    attempt += 1
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  throw new Error(
+    `live endurance raw sample ${index} readiness timed out: ${JSON.stringify(attempts)}`
+  )
+}
+
 async function captureTerminalSample(
   plan,
   target,
@@ -314,73 +407,36 @@ async function captureTerminalSample(
   previousPtsSeconds,
   adapters = {}
 ) {
-  const workspaceObservation = await (
-    adapters.readSourceWorkspaceObservation || diagnostics.readSourceWorkspaceObservation
-  )(plan, target, bounds, adapters)
-  const capture = await (adapters.captureNative || acceptanceSession.captureNative)(
+  const sample = await captureRawPlayableSample(
     plan,
     target,
-    `diagnostics-${String(index)}-terminal`
+    census,
+    bounds,
+    index,
+    previousPtsSeconds,
+    adapters,
+    { captureName: `diagnostics-${String(index)}-terminal` }
   )
-  const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
-  const observed = diagnostics.parseVisibleHud(hud, target.asset.sha256, {
-    matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset
-  })
-  const playable = diagnostics.isPlayableSample(observed, previousPtsSeconds)
   const terminalPaused =
-    observed.state === 'PAUSE' &&
-    Number.isFinite(observed.contentPtsSeconds) &&
-    observed.assetMatch?.matched === true &&
+    sample.observed.state === 'PAUSE' &&
+    Number.isFinite(sample.observed.contentPtsSeconds) &&
+    sample.observed.assetMatch?.matched === true &&
     Number.isFinite(previousPtsSeconds) &&
-    observed.contentPtsSeconds > previousPtsSeconds &&
-    observed.contentPtsSeconds <= diagnostics.describeFixtureContract().durationSeconds
+    sample.observed.contentPtsSeconds > previousPtsSeconds &&
+    sample.observed.contentPtsSeconds <= census.values.at(-1) + 1
   invariant(
-    playable.valid || terminalPaused,
-    `live endurance terminal sample was not exact: ${JSON.stringify({ observed, playable })}`
-  )
-  const exactSourcePtsSeconds = diagnostics.resolveExactSourcePts(
-    census.values,
-    observed.contentPtsSeconds
-  )
-  const referencePath = path.join(
-    plan.artifactRoot,
-    `diagnostics-reference-${String(index)}-terminal.png`
-  )
-  const runExact = adapters.runExact || acceptanceSession.runExact
-  const command = diagnostics.buildReferenceExtractCommand({
-    assetPath: target.asset.assetPath,
-    exactSourcePtsSeconds,
-    referencePath
-  })
-  const referenceReceipt = runExact(acceptanceSession.resolveMediaTool('ffmpeg'), command, {
-    timeout: 60_000,
-    maxBuffer: 8 * 1024 * 1024
-  })
-  const reference = {
-    path: referencePath,
-    sha256: acceptanceSession.sha256File(referencePath),
-    exactSourcePtsSeconds,
-    command: referenceReceipt.command
-  }
-  const materialPixels = (
-    adapters.compareWindowCaptureToReference || compareWindowCaptureToReference
-  )(capture.path, reference.path, bounds, { sourceHostFrame: workspaceObservation.sourceHostFrame })
-  invariant(
-    materialPixels.clean === true,
-    `live endurance terminal pixel comparison failed: ${JSON.stringify(materialPixels.metrics)}`
+    sample.playable.valid || terminalPaused,
+    `live endurance terminal sample was not exact: ${JSON.stringify({
+      observed: sample.observed,
+      playable: sample.playable
+    })}`
   )
   return {
-    index,
-    sourceHostFrame: workspaceObservation.sourceHostFrame,
-    capture,
-    hud,
-    observed,
-    playable: terminalPaused ? { valid: true, reasons: ['terminal-paused-at-end'] } : playable,
-    terminalPaused,
-    exactSourcePtsSeconds,
-    reference,
-    materialPixels,
-    workspaceObservation
+    ...sample,
+    playable: terminalPaused
+      ? { valid: true, reasons: ['terminal-paused-at-end'] }
+      : sample.playable,
+    terminalPaused
   }
 }
 
@@ -482,7 +538,7 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
               previousPtsSeconds,
               adapters
             )
-          : await (adapters.waitForFreshPlayableSample || diagnostics.waitForFreshPlayableSample)(
+          : await (adapters.waitForFreshRawPlayableSample || waitForFreshRawPlayableSample)(
               plan,
               target,
               census,
@@ -515,7 +571,7 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
           screenshotSha256: fresh.capture.sha256,
           windowBounds: bounds,
           sourceHostFrame: fresh.sourceHostFrame,
-          hudOverlayHeight: fresh.materialPixels.registration.logicalHudOverlayHeight,
+          hudOverlayHeight: DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS,
           rawOcrText,
           rawOcrSha256: sha256Text(rawOcrText)
         }
@@ -648,6 +704,8 @@ module.exports = {
   DEFAULT_TIMEOUT_MS,
   assertAssetInsideArtifactRoot,
   buildPtsCensus,
+  captureRawPlayableSample,
+  captureTerminalSample,
   defaultArtifactRoot,
   main,
   normalizeRunOptions,
@@ -658,5 +716,6 @@ module.exports = {
   runLiveAcceptance,
   runOutcome5Journey,
   sha256Text,
-  validatePostStopPausedState
+  validatePostStopPausedState,
+  waitForFreshRawPlayableSample
 }

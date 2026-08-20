@@ -327,6 +327,61 @@ describe('Studio AV endurance acceptance orchestration', () => {
     expect(result.evidence.sourcePtsCensus.count).toBe(18_000)
   })
 
+  it('collects all cadence receipts before deferred reference generation', async () => {
+    const root = freshRoot('deferred-references')
+    const adapters = truthfulAdapters(root)
+    const events: string[] = []
+    const sampleAt = adapters.sampleAt
+    adapters.sampleAt = async (entry: Record<string, any>) => {
+      events.push(`sample-${entry.index}`)
+      return sampleAt(entry)
+    }
+    const generate: any = adapters.testOnlyReferenceAuthority.generate
+    adapters.testOnlyReferenceAuthority.generate = (...args: any[]) => {
+      events.push(`reference-${args[3].index}`)
+      return generate(...args)
+    }
+    await runAvEnduranceAcceptance(acceptanceOptions(root), adapters)
+    expect(events.slice(0, 21)).toEqual(Array.from({ length: 21 }, (_, index) => `sample-${index}`))
+    expect(events.slice(21)).toEqual(Array.from({ length: 21 }, (_, index) => `reference-${index}`))
+  })
+
+  it('seals cadence objects immediately and detects deferred screenshot replacement', async () => {
+    const objectRoot = freshRoot('sealed-object')
+    const objectAdapters = truthfulAdapters(objectRoot)
+    const objectSampleAt = objectAdapters.sampleAt
+    let firstRaw: Record<string, any> | null = null
+    objectAdapters.sampleAt = async (entry: Record<string, any>) => {
+      if (entry.index === 1 && firstRaw) {
+        firstRaw.current = 'forged after return'
+        firstRaw.capture.rawOcrText = '[]'
+        firstRaw.capture.rawOcrSha256 = sha256Text('[]')
+      }
+      const raw = await objectSampleAt(entry)
+      if (entry.index === 0) firstRaw = raw
+      return raw
+    }
+    const sealed = await runAvEnduranceAcceptance(acceptanceOptions(objectRoot), objectAdapters)
+    expect(sealed.evidence.samples[0].rawAvc1).toBe(currentText)
+    expect(sealed.evidence.samples[0].hud.state).toBe('PLAY')
+
+    const fileRoot = freshRoot('sealed-file')
+    const fileAdapters = truthfulAdapters(fileRoot)
+    const fileSampleAt = fileAdapters.sampleAt
+    let firstScreenshotPath: string | null = null
+    fileAdapters.sampleAt = async (entry: Record<string, any>) => {
+      const raw = await fileSampleAt(entry)
+      if (entry.index === 0) firstScreenshotPath = raw.capture.screenshotPath
+      if (entry.index === 1 && firstScreenshotPath) {
+        writeFileSync(firstScreenshotPath, Buffer.from('replaced after observation'))
+      }
+      return raw
+    }
+    await expect(
+      runAvEnduranceAcceptance(acceptanceOptions(fileRoot), fileAdapters)
+    ).rejects.toThrow(/screenshot bytes do not match/i)
+  })
+
   it('keeps the physical-audibility blocker and refuses synthetic timing as live proof', async () => {
     const root = freshRoot('truthful')
     const result = await runAvEnduranceAcceptance(acceptanceOptions(root), truthfulAdapters(root))
