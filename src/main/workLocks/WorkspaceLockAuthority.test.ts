@@ -123,6 +123,40 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
   })
 
+  it('does not replay the full WAL for self-authored transitions and verification', async () => {
+    const h = harness()
+    const readEvents = vi.spyOn(h.persistence, 'readEvents')
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    const readsAfterOpen = readEvents.mock.calls.length
+    const operationOwner = owner({ lockOwnerId: 'cached-owner', runId: 'cached-run' })
+    const acquired = await authority.acquire(
+      operationOwner,
+      {
+        workspacePath: h.workspace,
+        kind: 'file',
+        targetPath: path.join(h.workspace, 'src', 'a.ts')
+      },
+      { transitionId: 'cached-acquisition' }
+    )
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+
+    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
+    expect(
+      await authority.verifyAcquisitionForMutation(operationOwner, acquired.transitionId)
+    ).toMatchObject({ ok: true })
+    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
+    expect(
+      await authority.releaseAcquisition(operationOwner.runId, acquired.transitionId)
+    ).toMatchObject({
+      ok: true
+    })
+    expect(readEvents).toHaveBeenCalledTimes(readsAfterOpen)
+    authority.dispose()
+  }, 30_000)
+
   it('acquires deterministic batches atomically and permits the exact owner to continue', async () => {
     const h = harness()
     const authority = await WorkspaceLockAuthority.open({

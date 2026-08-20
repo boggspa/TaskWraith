@@ -134,6 +134,7 @@ export class WorkspaceLockAuthority {
   private bootFence: WorkspaceLockAuthorityFence | null = null
   private state: WorkspaceLockWalState = decodeWorkspaceLockWal('')
   private walRevision: string | null = null
+  private walByteLength = 0
   private markerRenewalTimer: ReturnType<typeof setTimeout> | null = null
 
   private constructor(options: WorkspaceLockAuthorityOptions) {
@@ -1357,10 +1358,7 @@ export class WorkspaceLockAuthority {
   }
 
   snapshot(): WorkspaceLockSnapshot {
-    const revision = this.persistence.readEventsRevision?.()
-    if (!revision || revision !== this.walRevision) {
-      this.state = this.readWal(false).state
-    }
+    this.readWal(false)
     return this.snapshotFromState()
   }
 
@@ -1493,13 +1491,21 @@ export class WorkspaceLockAuthority {
     state: WorkspaceLockWalState
     byteLength: number
   } {
+    const observedRevision = this.persistence.readEventsRevision?.()
+    if (observedRevision && observedRevision === this.walRevision) {
+      return { state: this.state, byteLength: this.walByteLength }
+    }
     let snapshot = this.persistence.readEvents()
     if (snapshot.raw && !snapshot.raw.endsWith('\n')) {
       const lastNewline = snapshot.raw.lastIndexOf('\n')
       const prefix = lastNewline < 0 ? '' : snapshot.raw.slice(0, lastNewline + 1)
       const state = decodeWorkspaceLockWal(prefix)
       if (!repairTail) {
-        this.walRevision = snapshot.revision
+        // Do not cache an unrepaired torn tail: a later fenced read must see
+        // and truncate it even when the file metadata has not changed.
+        this.state = state
+        this.walByteLength = snapshot.byteLength
+        this.walRevision = null
         return { state, byteLength: snapshot.byteLength }
       }
       const repairedLength = this.persistence.repairTornEventTail(snapshot.byteLength, prefix)
@@ -1508,16 +1514,17 @@ export class WorkspaceLockAuthority {
         throw new Error('Workspace-lock WAL changed during torn-tail repair.')
       }
     }
+    const state = decodeWorkspaceLockWal(snapshot.raw)
+    this.state = state
+    this.walByteLength = snapshot.byteLength
     this.walRevision = snapshot.revision
-    return { state: decodeWorkspaceLockWal(snapshot.raw), byteLength: snapshot.byteLength }
+    return { state, byteLength: snapshot.byteLength }
   }
 
   private appendWalEvent(serializedLineWithNewline: string, expectedByteLength: number): number {
     try {
-      const byteLength = this.persistence.appendEvent(
-        serializedLineWithNewline,
-        expectedByteLength
-      )
+      const byteLength = this.persistence.appendEvent(serializedLineWithNewline, expectedByteLength)
+      this.walByteLength = byteLength
       this.walRevision = this.persistence.readEventsRevision?.() ?? null
       return byteLength
     } catch (error) {
