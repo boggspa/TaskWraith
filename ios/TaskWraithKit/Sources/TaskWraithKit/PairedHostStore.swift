@@ -64,6 +64,11 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
     /// static shared secret from it (+ the phone's identity seed) to decrypt this
     /// host's rich pushes. Optional: nil before registration / on older records.
     public let macAgreePub: String?
+    /// Project-operated Tier-2 APNs gateway advertised by this authenticated
+    /// host. The phone registers its own device token there; no credential or
+    /// message content is stored in this record. Optional for direct-APNs-only
+    /// hosts and records written before the gateway path existed.
+    public let pushGatewayUrl: String?
 
     /// Stable identity for SwiftUI `ForEach` / `Identifiable`.
     public var id: String { macIdentityPubKey }
@@ -75,7 +80,8 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
         relayUrls: [String]? = nil,
         hostPlatform: String? = nil,
         pairedAt: String? = nil,
-        macAgreePub: String? = nil
+        macAgreePub: String? = nil,
+        pushGatewayUrl: String? = nil
     ) {
         self.relayUrl = relayUrl
         self.relayUrls = relayUrls
@@ -84,6 +90,7 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
         self.hostPlatform = hostPlatform
         self.pairedAt = pairedAt
         self.macAgreePub = macAgreePub
+        self.pushGatewayUrl = pushGatewayUrl
     }
 
     /// A copy with the host's push-agreement public key set — used when the host
@@ -96,7 +103,23 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
             relayUrls: relayUrls,
             hostPlatform: hostPlatform,
             pairedAt: pairedAt,
-            macAgreePub: key)
+            macAgreePub: key,
+            pushGatewayUrl: pushGatewayUrl)
+    }
+
+    /// A copy with the authenticated host's current project-gateway route.
+    /// Passing nil deliberately clears a retired gateway without disturbing
+    /// pairing identity or the rich-push agreement key.
+    public func withPushGatewayUrl(_ url: String?) -> PairedHostRecord {
+        PairedHostRecord(
+            relayUrl: relayUrl,
+            macIdentityPubKey: macIdentityPubKey,
+            macDisplayName: macDisplayName,
+            relayUrls: relayUrls,
+            hostPlatform: hostPlatform,
+            pairedAt: pairedAt,
+            macAgreePub: macAgreePub,
+            pushGatewayUrl: url)
     }
 }
 

@@ -497,8 +497,19 @@ final class StreamingPublishGate {
     }
 }
 
+public enum CompletionPushGatewayStatus: Equatable, Sendable {
+    case directOnly
+    case registering(totalHosts: Int)
+    case registered(hosts: Int)
+    case optedOut(hosts: Int)
+    case partial(registered: Int, total: Int, enabled: Bool)
+    case failed
+}
+
 @MainActor
 public final class RemoteSessionModel: ObservableObject {
+    private static let notifyFinishedTurnsDefaultsKey =
+        "taskwraith.notifications.finishedTurns.projectGateway.v1"
     @Published public private(set) var phase: SessionPhase = .idle
     /// True while the offline DEMO session is showing (App Review / first-look):
     /// no network client, canned data, inert actions. Drives the demo banner.
@@ -775,6 +786,15 @@ public final class RemoteSessionModel: ObservableObject {
     private var pendingApnsToken: (hex: String, env: String)? = nil
     private var apnsTokenRegistrationInFlight = false
     private var apnsTokenRetryTask: Task<Void, Never>? = nil
+    /// Device-wide completion-push preference for the project-operated Tier-2
+    /// gateway. Default true preserves the pre-toggle behavior. The signed
+    /// registration carries the value, so the relay can enforce it while the
+    /// app is force-quit.
+    @Published public private(set) var notifyFinishedTurns = true
+    @Published public private(set) var completionPushGatewayStatus: CompletionPushGatewayStatus =
+        .directOnly
+    private var pushGatewayApnsToken: (hex: String, env: String)? = nil
+    private var pushGatewayRegistrationTask: Task<Void, Never>? = nil
 
     /// Whichever env the app delegate last reported. A Live Activity token has
     /// to be registered against the SAME gateway as the device token or the Mac
@@ -796,8 +816,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// Called by the app delegate when iOS delivers the device token.
     public func handleApnsToken(_ hex: String, env: String) {
         pendingApnsToken = (hex, env)
+        pushGatewayApnsToken = (hex, env)
         lastReportedApnsEnv = env
         sendPendingApnsTokenIfReady()
+        registerWithProjectPushGatewaysIfReady()
     }
 
     private func sendPendingApnsTokenIfReady() {
@@ -838,28 +860,48 @@ public final class RemoteSessionModel: ObservableObject {
             },
             onAckResult: { [weak self] accepted, ack in
                 guard let self, accepted, let ack else { return }
-                self.storeMacAgreePubFromAck(ack, expectedHostId: expectedHostId)
+                self.storePushRegistrationFromAck(ack, expectedHostId: expectedHostId)
             })
     }
 
-    /// Persist the Mac's push-agreement public key (from the `registerApnsToken`
-    /// ack) onto the paired record of the host the registration was SENT to, so
-    /// the Notification Service Extension can derive the static shared secret to
-    /// decrypt that host's rich pushes while the app is backgrounded/closed.
-    private func storeMacAgreePubFromAck(_ ack: AckResult, expectedHostId: String?) {
+    /// Persist the authenticated Mac's push-agreement key and its optional
+    /// project-gateway route onto the host the registration was SENT to. The
+    /// former feeds NSE decryption; the latter lets this phone author the signed
+    /// relay registration needed for force-quit completion banners.
+    private func storePushRegistrationFromAck(_ ack: AckResult, expectedHostId: String?) {
         guard let data = ack.result,
             let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
-            let macAgreePub = actionAck.data?.macAgreePub, !macAgreePub.isEmpty
+            let ackData = actionAck.data
         else { return }
         // Key the record by the host captured at send time — never re-derive from
         // live state here, or a host switch between send and ack could store this
         // Mac's key onto a different host (→ the NSE would try the wrong secret).
         guard let hostId = expectedHostId,
-            let host = pairingStore.find(macIdentityPubKey: hostId),
-            host.macAgreePub != macAgreePub
+            let host = pairingStore.find(macIdentityPubKey: hostId)
         else { return }
-        pairingStore.upsert(host.withMacAgreePub(macAgreePub))
-        pairedHosts = pairingStore.list()
+        let macAgreePub = ackData.macAgreePub?.isEmpty == false
+            ? ackData.macAgreePub : host.macAgreePub
+        let pushGatewayUrl: String?
+        if ackData.pushGatewayConfigured == false {
+            pushGatewayUrl = nil
+        } else if ackData.pushGatewayConfigured == true {
+            let candidate = ackData.pushGatewayUrl?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            pushGatewayUrl = candidate?.isEmpty == false ? candidate : nil
+        } else {
+            // Older Macs do not carry either gateway field. Preserve the last
+            // authenticated route rather than erasing it during compatibility
+            // reconnects; its relay-side token row remains TTL-bounded.
+            pushGatewayUrl = host.pushGatewayUrl
+        }
+        let updated = host
+            .withMacAgreePub(macAgreePub)
+            .withPushGatewayUrl(pushGatewayUrl)
+        if updated != host {
+            pairingStore.upsert(updated)
+            pairedHosts = pairingStore.list()
+        }
+        registerWithProjectPushGatewaysIfReady()
     }
 
     private func scheduleApnsTokenRetry() {
@@ -869,6 +911,85 @@ public final class RemoteSessionModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.sendPendingApnsTokenIfReady() }
+        }
+    }
+
+    public func setNotifyFinishedTurns(_ enabled: Bool) {
+        notifyFinishedTurns = enabled
+        pushGatewayDefaults.set(enabled, forKey: Self.notifyFinishedTurnsDefaultsKey)
+        registerWithProjectPushGatewaysIfReady()
+    }
+
+    public func retryProjectPushGatewayRegistration() {
+        registerWithProjectPushGatewaysIfReady()
+    }
+
+    private func registerWithProjectPushGatewaysIfReady() {
+        guard identitySeed.count == 32, let token = pushGatewayApnsToken else { return }
+        let targets = pairingStore.list().compactMap { host -> (String, String)? in
+            guard let rawUrl = host.pushGatewayUrl?.trimmingCharacters(
+                in: .whitespacesAndNewlines), !rawUrl.isEmpty
+            else { return nil }
+            return (rawUrl, host.macIdentityPubKey)
+        }
+        pushGatewayRegistrationTask?.cancel()
+        guard !targets.isEmpty else {
+            completionPushGatewayStatus = .directOnly
+            return
+        }
+        completionPushGatewayStatus = .registering(totalHosts: targets.count)
+        let client = pushGatewayClient
+        let seed = identitySeed
+        let enabled = notifyFinishedTurns
+        pushGatewayRegistrationTask = Task { @MainActor [weak self] in
+            var registered = 0
+            for (gatewayUrl, macIdentityPubKey) in targets {
+                guard !Task.isCancelled else { return }
+                do {
+                    _ = try await client.register(
+                        gatewayUrl: gatewayUrl,
+                        macIdentityPubKey: macIdentityPubKey,
+                        identitySeed: seed,
+                        deviceTokenHex: token.hex,
+                        env: token.env,
+                        notifyFinishedTurns: enabled)
+                    registered += 1
+                } catch {
+                    // Continue: one stale/offline host must not prevent another
+                    // paired host from receiving its signed registration.
+                }
+            }
+            guard !Task.isCancelled, let self else { return }
+            if registered == targets.count {
+                self.completionPushGatewayStatus =
+                    enabled ? .registered(hosts: registered) : .optedOut(hosts: registered)
+            } else if registered > 0 {
+                self.completionPushGatewayStatus = .partial(
+                    registered: registered, total: targets.count, enabled: enabled)
+            } else {
+                self.completionPushGatewayStatus = .failed
+            }
+        }
+    }
+
+    private func deregisterFromProjectPushGateways(_ hosts: [PairedHostRecord]) {
+        guard identitySeed.count == 32 else { return }
+        let targets = hosts.compactMap { host -> (String, String)? in
+            guard let rawUrl = host.pushGatewayUrl?.trimmingCharacters(
+                in: .whitespacesAndNewlines), !rawUrl.isEmpty
+            else { return nil }
+            return (rawUrl, host.macIdentityPubKey)
+        }
+        guard !targets.isEmpty else { return }
+        let client = pushGatewayClient
+        let seed = identitySeed
+        Task {
+            for (gatewayUrl, macIdentityPubKey) in targets {
+                _ = try? await client.deregister(
+                    gatewayUrl: gatewayUrl,
+                    macIdentityPubKey: macIdentityPubKey,
+                    identitySeed: seed)
+            }
         }
     }
 
@@ -1131,6 +1252,8 @@ public final class RemoteSessionModel: ObservableObject {
     private var identitySeed: Data
     private let identityStore: IdentitySeedStore
     private let pairingStore: PairedHostStore
+    private let pushGatewayClient: PushGatewayRegistrationClient
+    private let pushGatewayDefaults: UserDefaults
     public let hostProjection: PairedHostSessionController
     private var client: RelayTransportClient?
     private var eventTask: Task<Void, Never>?
@@ -1147,10 +1270,19 @@ public final class RemoteSessionModel: ObservableObject {
     public init(
         identityStore: IdentitySeedStore,
         pairingStore: PairedHostStore = UserDefaultsPairedHostStore(),
-        hostSnapshotStore: any PairedHostSnapshotStore = UserDefaultsPairedHostSnapshotStore()
+        hostSnapshotStore: any PairedHostSnapshotStore = UserDefaultsPairedHostSnapshotStore(),
+        pushGatewayClient: PushGatewayRegistrationClient = PushGatewayRegistrationClient(),
+        pushGatewayDefaults: UserDefaults = .standard
     ) {
         self.identityStore = identityStore
         self.hostProjection = PairedHostSessionController(snapshotStore: hostSnapshotStore)
+        self.pushGatewayClient = pushGatewayClient
+        self.pushGatewayDefaults = pushGatewayDefaults
+        if let storedPreference = pushGatewayDefaults.object(
+            forKey: Self.notifyFinishedTurnsDefaultsKey) as? Bool
+        {
+            self.notifyFinishedTurns = storedPreference
+        }
         var seed = Data()
         var loadError: String? = nil
         do {
@@ -2839,8 +2971,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// until the user revokes this phone there.
     public func forgetHost(macIdentityPubKey id: String) {
         let wasActive = (id == selectedHostId)
+        if let forgotten = pairingStore.find(macIdentityPubKey: id) {
+            deregisterFromProjectPushGateways([forgotten])
+        }
         pairingStore.remove(macIdentityPubKey: id)
         refreshPairedHostsPublished()
+        registerWithProjectPushGatewaysIfReady()
         guard wasActive else { return }
         pinnedMacIdentityB64 = nil
         relayUrl = nil
@@ -2864,8 +3000,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// empty v2 document so the legacy single-host blob can't resurrect a host.
     public func forgetAllHosts() {
         let forgottenHostIds = pairedHosts.map(\.macIdentityPubKey)
+        deregisterFromProjectPushGateways(pairedHosts)
         pairingStore.clearAll()
         refreshPairedHostsPublished()
+        registerWithProjectPushGatewaysIfReady()
         pinnedMacIdentityB64 = nil
         relayUrl = nil
         lastRelayUrls = nil
@@ -2982,7 +3120,8 @@ public final class RemoteSessionModel: ObservableObject {
                 // ONE pairing then reconnects from home Wi-Fi or cellular
                 // alike; `relayUrl` holds the door that last worked.
                 relayUrls: lastRelayUrls, hostPlatform: hostPlatform, pairedAt: pairedAt,
-                macAgreePub: existing?.macAgreePub))
+                macAgreePub: existing?.macAgreePub,
+                pushGatewayUrl: existing?.pushGatewayUrl))
         // The host we just connected to is the active one.
         pairingStore.setSelectedHostId(macId)
         refreshPairedHostsPublished()
