@@ -104,6 +104,7 @@ import {
   cliProviderThinkingSegmentToolId,
   shouldBreakThinkingChronology
 } from './providers/CliProviderThinking'
+import { shouldPersistCompatProviderRawEvent } from './providers/ProviderCompatRunEventPolicy'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
 import { kimiAcpEnabled } from './kimiGate'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './kimi/KimiHttpMcpBridge'
@@ -26198,19 +26199,25 @@ function sendAgentCompatLine(
       : payload?.type === 'compaction_event'
         ? 'context_compaction'
         : 'provider_raw'
-  appendDurableRunEventForRoute(
-    provider,
-    routed,
-    durableKind,
-    'raw',
-    !transcriptVisible && payload?.tool_name === 'ollama_thinking'
-      ? 'Ollama thinking trace'
-      : payload?.type === 'compaction_event' && payload?.compaction?.telemetry
-        ? formatContextCompactionSummary(payload.compaction)
-        : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
-    payload,
-    'provider'
-  )
+  const shouldPersistProviderOutput =
+    durableKind !== 'provider_raw' ||
+    !transcriptVisible ||
+    shouldPersistCompatProviderRawEvent(payload, AppStore.getSettings().storeRawEvents === true)
+  if (shouldPersistProviderOutput) {
+    appendDurableRunEventForRoute(
+      provider,
+      routed,
+      durableKind,
+      'raw',
+      !transcriptVisible && payload?.tool_name === 'ollama_thinking'
+        ? 'Ollama thinking trace'
+        : payload?.type === 'compaction_event' && payload?.compaction?.telemetry
+          ? formatContextCompactionSummary(payload.compaction)
+          : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
+      payload,
+      'provider'
+    )
+  }
   if (!transcriptVisible) return
   // Chronological thinking segmentation (1.0.7): any transcript-visible,
   // non-reasoning line marks a chronology break on the emitting CLI stream
