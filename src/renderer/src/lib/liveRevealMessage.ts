@@ -1,4 +1,5 @@
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, EnsembleRoundState } from '../../../main/store/types'
+import { isEnsembleRoundPresentationLive } from '../../../shared/ensembleRoundLifecycle'
 import {
   ensembleFanoutParticipantId,
   isEnsembleFanoutResultMessage
@@ -82,8 +83,18 @@ export function resolveLiveToolMessageId(
 
 /**
  * Tool stacks that should keep a stable `:live` measurement slot while the
- * chat runs: every stack with a running/pending activity, plus the list-tail
- * tool candidate (Kimi success-status thinking that still grows).
+ * chat runs: every stack with a running/pending activity, plus the NEWEST tool
+ * candidate of the in-flight turn (Kimi success-status thinking that still
+ * grows — and, more importantly, the stack the next tool call will land in).
+ *
+ * That last one deliberately does NOT depend on list-tail position, for the
+ * same reason `resolveLiveFanoutMessageIds` doesn't: a working seat's stack
+ * settles between two tool calls, so a tail-anchored rule stopped calling it
+ * live the moment anything landed below it — a steer row, an orchestrator
+ * notice, another seat's turn. The settled-stack fold reads this set as
+ * `isLiveRow`, so the row folded into its one-liner and re-expanded on the
+ * next call, once per tool call, for the rest of the turn (reported
+ * 2026-08-19 as the transcript "flashing" right after a steer).
  */
 export function resolveLiveToolMessageIds(
   messages: readonly ChatMessage[],
@@ -101,9 +112,12 @@ export function resolveLiveToolMessageIds(
     if (!isLiveToolMessageCandidate(message, options.revealRunId)) continue
     if (toolMessageHasActiveActivity(message)) push(message.id)
   }
-  const lastMessage = messages[messages.length - 1]
-  if (isLiveToolMessageCandidate(lastMessage, options.revealRunId)) {
-    push(lastMessage.id)
+  // Only the NEWEST candidate — every older stack of the same turn still folds
+  // as the conversation moves past it, which is the whole point of the fold.
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!isLiveToolMessageCandidate(messages[index], options.revealRunId)) continue
+    push(messages[index].id)
+    break
   }
   return ids
 }
@@ -139,6 +153,29 @@ export function resolveLiveFanoutMessageIds(
     if (participantId && working.has(participantId)) ids.push(message.id)
   }
   return ids
+}
+
+/**
+ * Whether the transcript should treat its chat as having a turn in flight.
+ *
+ * `runningChatIds` is renderer-owned and does NOT reliably contain Ensemble
+ * chats: rounds are orchestrated in main, so a round can run start to finish
+ * without the chat ever entering that set. `deriveChatIsRunning` carries its
+ * own round clause for exactly this reason; without the same clause here every
+ * live-row signal below (`resolveLiveMeasurementMessageIds` and therefore the
+ * panel's `activeLiveRowKeys`) is empty for the whole round, which leaves the
+ * settled-stack fold with list-tail position as its only guard.
+ */
+export function resolveTranscriptChatIsRunning(input: {
+  chatId: string | null | undefined
+  runningChatIds: readonly string[] | null | undefined
+  activeRound?: EnsembleRoundState | null
+}): boolean {
+  if (!input.chatId) return false
+  if (Array.isArray(input.runningChatIds) && input.runningChatIds.includes(input.chatId)) {
+    return true
+  }
+  return isEnsembleRoundPresentationLive(input.activeRound)
 }
 
 /**

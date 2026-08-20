@@ -8,7 +8,8 @@ import {
   resolveLiveMeasurementMessageIds,
   resolveLiveRevealMessageId,
   resolveLiveToolMessageId,
-  resolveLiveToolMessageIds
+  resolveLiveToolMessageIds,
+  resolveTranscriptChatIsRunning
 } from './liveRevealMessage'
 
 function msg(overrides: Partial<ChatMessage> & { id: string }): ChatMessage {
@@ -201,5 +202,100 @@ describe('liveRevealMessage', () => {
         workingFanoutParticipantIds: new Set(['p-a'])
       })
     ).toEqual([])
+  })
+  it('keeps the newest tool stack of an in-flight turn live once a later row sits below it', () => {
+    // The settled-stack fold reads "is this row live" from this set. A working
+    // seat's stack settles between two tool calls, so if liveness depended on
+    // list-tail position the row would fold the moment anything landed below
+    // it (a steer row, an orchestrator notice) and unfold on the next call —
+    // once per tool call, for the rest of the turn.
+    const messages = [
+      msg({
+        id: 'tool-settled',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't1', status: 'success' } as any]
+      }),
+      msg({ id: 'steer', role: 'user', runId: 'run-1', content: 'also check the drop target' })
+    ]
+
+    expect(
+      resolveLiveToolMessageIds(messages, { revealChatIsRunning: true, revealRunId: 'run-1' })
+    ).toEqual(['tool-settled'])
+  })
+
+  it('holds only the newest tool stack of the turn, not every earlier settled one', () => {
+    const messages = [
+      msg({
+        id: 'tool-old',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't1', status: 'success' } as any]
+      }),
+      msg({ id: 'prose', role: 'assistant', runId: 'run-1', content: 'thinking it over' }),
+      msg({
+        id: 'tool-new',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't2', status: 'success' } as any]
+      }),
+      msg({ id: 'note', role: 'system', runId: 'run-1', content: 'note' })
+    ]
+
+    expect(
+      resolveLiveToolMessageIds(messages, { revealChatIsRunning: true, revealRunId: 'run-1' })
+    ).toEqual(['tool-new'])
+  })
+
+  it('does not hold a settled stack live once the turn is over', () => {
+    const messages = [
+      msg({
+        id: 'tool-settled',
+        role: 'tool',
+        runId: 'run-1',
+        toolActivities: [{ id: 't1', status: 'success' } as any]
+      }),
+      msg({ id: 'note', role: 'system', runId: 'run-1', content: 'note' })
+    ]
+
+    expect(
+      resolveLiveToolMessageIds(messages, { revealChatIsRunning: false, revealRunId: 'run-1' })
+    ).toEqual([])
+  })
+
+  it('counts a live Ensemble round as running even when the renderer set omits the chat', () => {
+    // Ensemble rounds are orchestrated in main and often never land in the
+    // renderer's runningChatIds — which is why deriveChatIsRunning carries its
+    // own round clause. Without the same clause here every live-row signal in
+    // the transcript is empty for the whole round.
+    expect(
+      resolveTranscriptChatIsRunning({
+        chatId: 'chat-1',
+        runningChatIds: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          participants: [{ participantId: 'p-a', status: 'running' }]
+        } as any
+      })
+    ).toBe(true)
+
+    expect(
+      resolveTranscriptChatIsRunning({ chatId: 'chat-1', runningChatIds: ['chat-1'] })
+    ).toBe(true)
+
+    expect(
+      resolveTranscriptChatIsRunning({
+        chatId: 'chat-1',
+        runningChatIds: ['chat-2'],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'completed',
+          participants: [{ participantId: 'p-a', status: 'done' }]
+        } as any
+      })
+    ).toBe(false)
+
+    expect(resolveTranscriptChatIsRunning({ chatId: null, runningChatIds: ['chat-1'] })).toBe(false)
   })
 })

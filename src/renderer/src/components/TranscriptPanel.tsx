@@ -130,7 +130,8 @@ import {
 } from '../lib/transcriptRowRenderCache'
 import {
   resolveLiveMeasurementMessageIds,
-  resolveLiveRevealMessageId
+  resolveLiveRevealMessageId,
+  resolveTranscriptChatIsRunning
 } from '../lib/liveRevealMessage'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
@@ -3357,6 +3358,17 @@ export const TranscriptPanel = memo(
     const revealChatId = currentChat?.appChatId ?? null
     const revealChatIsRunning =
       revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
+    // Liveness for MEASUREMENT / live-row purposes only — deliberately NOT the
+    // reveal gate above, which owns the typewriter and must keep its existing
+    // (renderer-run) scope. Ensemble rounds frequently never enter
+    // `runningChatIds` because main owns the round, so without the round clause
+    // every live-row signal below was empty for a whole live round, leaving the
+    // settled-stack fold with list-tail position as its only guard.
+    const liveMeasurementChatIsRunning = resolveTranscriptChatIsRunning({
+      chatId: revealChatId,
+      runningChatIds,
+      activeRound: currentChat?.ensemble?.activeRound ?? null
+    })
     const revealRunId = currentRun?.runId ?? currentChat?.runs?.find((run) => !run.endedAt)?.runId
     const liveRevealMessageId = useMemo(
       () =>
@@ -3371,14 +3383,14 @@ export const TranscriptPanel = memo(
       () =>
         resolveLiveMeasurementMessageIds(displayMessages, {
           revealEnabled,
-          revealChatIsRunning,
+          revealChatIsRunning: liveMeasurementChatIsRunning,
           revealRunId,
           workingFanoutParticipantIds: workingLaneParticipantIds
         }),
       [
         displayMessages,
         revealEnabled,
-        revealChatIsRunning,
+        liveMeasurementChatIsRunning,
         revealRunId,
         workingLaneParticipantIds
       ]
@@ -3435,15 +3447,21 @@ export const TranscriptPanel = memo(
       }
       return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
     }, [displayMessages, projectedRows])
+    // Shared by the row-level live check (via `activeLiveRowKeys`) and the
+    // super-group membership pass, so the two can never disagree about which
+    // rows are still live.
+    const liveMeasurementMessageIdSet = useMemo(
+      () => new Set(liveMeasurementMessageIds),
+      [liveMeasurementMessageIds]
+    )
     const activeLiveRowKeys = useMemo(() => {
-      if (liveMeasurementMessageIds.length === 0) return EMPTY_LIVE_ROW_KEYS
-      const idSet = new Set(liveMeasurementMessageIds)
+      if (liveMeasurementMessageIdSet.size === 0) return EMPTY_LIVE_ROW_KEYS
       const keys = new Set<string>()
       for (const row of projectedRows) {
-        if (idSet.has(row.id)) keys.add(row.rowKey)
+        if (liveMeasurementMessageIdSet.has(row.id)) keys.add(row.rowKey)
       }
       return keys.size > 0 ? keys : EMPTY_LIVE_ROW_KEYS
-    }, [liveMeasurementMessageIds, projectedRows])
+    }, [liveMeasurementMessageIdSet, projectedRows])
     const liveRevealRowKey = useMemo(() => {
       if (!liveRevealMessageId) return null
       return (
@@ -3503,6 +3521,12 @@ export const TranscriptPanel = memo(
       const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
         if (msg.id === lastDisplayMessageId) return null
         if (typeof msg.metadata?.pinnedAt === 'number') return null
+        // Mirrors `shouldAutoCollapseActivityStack`'s `isLiveRow`. A stack that
+        // is live but whose own activities have momentarily all settled must
+        // not be hidden here — the per-row branch keeps it rendering, so
+        // without this the two disagree and the row is hidden as a member
+        // while it believes it is still open.
+        if (liveMeasurementMessageIdSet.has(msg.id)) return null
         if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
           return activityStackHasLiveWork(msg.toolActivities || []) ? null : 'stack'
         }
@@ -3578,6 +3602,7 @@ export const TranscriptPanel = memo(
     }, [
       displayMessages,
       lastDisplayMessageId,
+      liveMeasurementMessageIdSet,
       pendingAgentQuestions,
       pendingPlanChoice
     ])
