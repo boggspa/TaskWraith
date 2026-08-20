@@ -33,6 +33,7 @@ import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteering
 import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import type { CloseoutReceipt } from '../../shared/closeoutReceipt'
 import type { EnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
+import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
 export type {
   EnsembleFanoutIsolation,
   EnsembleFanoutIsolationPolicy
@@ -1133,7 +1134,7 @@ export type ConcurrentLaneIntent = 'none' | 'read' | 'write'
 
 export type ConcurrentLaneWriteScopeKind = 'path' | 'glob' | 'workspace'
 
-export type ConcurrentLaneWriteScopeApprover = 'boss' | 'captain' | 'user-preflight'
+export type ConcurrentLaneWriteScopeApprover = EnsembleAuthorityRole | 'user-preflight'
 
 /**
  * Approved mutation envelope for a concurrent writer lane. The lane may still

@@ -21,11 +21,12 @@ describe('resolveAppDriveEnsembleAuthority', () => {
   })
 
   it('allows the Boss and a Captain', () => {
-    for (const callerParticipantId of [BOSS, CAPTAIN]) {
-      expect(
-        resolveAppDriveEnsembleAuthority({ ensemble: ensemble(), callerParticipantId })
-      ).toMatchObject({ ok: true })
-    }
+    expect(
+      resolveAppDriveEnsembleAuthority({ ensemble: ensemble(), callerParticipantId: BOSS })
+    ).toEqual({ ok: true, authorityRole: 'boss' })
+    expect(
+      resolveAppDriveEnsembleAuthority({ ensemble: ensemble(), callerParticipantId: CAPTAIN })
+    ).toEqual({ ok: true, authorityRole: 'captain' })
   })
 
   it('accepts the legacy single second-in-command field', () => {
@@ -37,7 +38,7 @@ describe('resolveAppDriveEnsembleAuthority', () => {
         },
         callerParticipantId: CAPTAIN
       })
-    ).toMatchObject({ ok: true })
+    ).toEqual({ ok: true, authorityRole: 'captain' })
   })
 
   it('refuses an ordinary participant, and says who may', () => {

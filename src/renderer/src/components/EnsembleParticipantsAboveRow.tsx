@@ -39,7 +39,8 @@ import { createPortal } from 'react-dom'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import {
   MAX_ENSEMBLE_CAPTAINS,
-  normalizeEnsembleAuthority
+  normalizeEnsembleAuthority,
+  type EnsembleParticipantAuthority as SharedEnsembleParticipantAuthority
 } from '../../../shared/ensembleAuthority'
 import type {
   ChatRecord,
@@ -147,7 +148,7 @@ export const ENSEMBLE_CHIP_GRID_TRACKS = 60
 export const BOSS_AUTO_APPROVAL_CONSENT_MESSAGE =
   'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. If an eligible shell/file request still opens a modal and the authority is idle, TaskWraith opens a read-only Boss/Captain review turn; the first human, authority, or timeout decision wins. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
 
-export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
+export type EnsembleParticipantAuthority = SharedEnsembleParticipantAuthority
 export type EnsembleParticipantStageChoice =
   | 'any'
   | NonNullable<EnsembleParticipant['stageRole']>

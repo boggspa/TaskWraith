@@ -1,3 +1,5 @@
+import type { EnsembleAuthorityRole } from './ensembleAuthority'
+
 /**
  * Structured transcript payload for a change to the Continuous round handoff
  * budget. Main persists this object; renderer promotes it into the animated
@@ -9,7 +11,7 @@ export const CONTINUATION_HOPS_CHANGE_KIND = 'ensembleContinuationHopsChange'
 /** Match the seat-change row's read-before-roll pause. */
 export const CONTINUATION_HOPS_CHANGE_REVEAL_DELAY_MS = 2_000
 
-export type ContinuationHopsChangeActor = 'user' | 'boss' | 'captain'
+export type ContinuationHopsChangeActor = 'user' | EnsembleAuthorityRole
 
 export interface ContinuationHopsChangePayload {
   before: number

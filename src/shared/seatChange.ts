@@ -1,3 +1,5 @@
+import type { EnsembleAuthorityRole } from './ensembleAuthority'
+
 /**
  * Authoritative seat-change transcript row — shared vocabulary + coalescing
  * (owner spec 2026-08-05). Lives in shared because BOTH processes need it:
@@ -54,7 +56,7 @@ export interface SeatChangeSeatState {
    * Chat-level authority at emit time. Outranks `stageRole` for the glyph — a
    * Boss who is also a Scout reads as the Boss, matching the composer chips.
    */
-  authority?: 'boss' | 'captain'
+  authority?: EnsembleAuthorityRole
 }
 
 export interface SeatChangePayload {
@@ -441,7 +443,7 @@ export function resolveSeatAuthority(input: {
   stageRole?: string | null
   bossmanParticipantId?: string | null
   captainParticipantIds?: readonly string[] | null
-}): 'boss' | 'captain' | undefined {
+}): EnsembleAuthorityRole | undefined {
   const id = (input.participantId || '').trim()
   if (!id || input.stageRole === 'background') return undefined
   const boss = (input.bossmanParticipantId || '').trim()

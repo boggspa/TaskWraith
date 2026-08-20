@@ -1,3 +1,5 @@
+import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
+
 /**
  * Pure App Drive permission / identity / audit / secret / takeover disclosure.
  *
@@ -254,7 +256,7 @@ export interface AppDriveAuthorityAdmissionInput {
   /** True only when a current user-approved View & Control lease exists. */
   readonly hasUserViewAndControlLease: boolean
   /** Consent mint source for the current control lease, when present. */
-  readonly leaseApprovedBy?: AppDriveConsentApprover | 'agent' | 'boss' | 'captain' | null
+  readonly leaseApprovedBy?: AppDriveConsentApprover | 'agent' | EnsembleAuthorityRole | null
   readonly lifecycle: AppDriveSessionLifecycleState
   readonly verb: AppDriveAllowedVerb | string
   /** When true, the target is a secure/password-like field. */

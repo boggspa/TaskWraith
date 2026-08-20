@@ -15,9 +15,10 @@
  */
 
 import type { EnsembleStageRole } from '../../../../main/store/types'
+import type { EnsembleAuthorityRole } from '../../../../shared/ensembleAuthority'
 
 /** Chat-level authority, which outranks a stage role on the same seat. */
-export type SeatAuthority = 'boss' | 'captain'
+export type SeatAuthority = EnsembleAuthorityRole
 
 export function BossmanCrownIcon({ className }: { className?: string }): React.JSX.Element {
   return (

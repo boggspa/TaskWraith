@@ -2,6 +2,10 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { plainDataEqual } from '../../shared/chatUpdateTransport'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
+import type {
+  EnsembleAuthorityRole,
+  LegacyEnsembleAuthorityRole
+} from '../../shared/ensembleAuthority'
 import { buildEnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
 import { BOSS_APPROVAL_REVIEW_TIMEOUT_MS } from '../../shared/interactionTimeouts'
 import {
@@ -2560,7 +2564,7 @@ function participantLabel(participant?: EnsembleParticipant): string {
 function seatChangeSeatState(
   participant: EnsembleParticipant,
   grantsCount?: number,
-  authority?: 'boss' | 'captain'
+  authority?: EnsembleAuthorityRole
 ): SeatChangeSeatState {
   return {
     provider: participant.provider,
@@ -3752,7 +3756,7 @@ export class EnsembleOrchestrator {
       chatId: string
       pollId: string
       authorityParticipantId: string
-      authorityRole: 'boss' | 'captain'
+      authorityRole: EnsembleAuthorityRole
       requesterParticipantId: string
       signal?: AbortSignal
       abortListener?: () => void
@@ -8828,7 +8832,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
     caller: ActiveParticipantRun,
-    authorityRole: 'boss' | 'second_in_command'
+    authorityRole: LegacyEnsembleAuthorityRole
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
     if (
@@ -8962,7 +8966,7 @@ export class EnsembleOrchestrator {
   private skipAuthorityIntervention(
     runtime: ActiveRoundRuntime,
     caller: ActiveParticipantRun,
-    authorityRole: 'boss' | 'second_in_command'
+    authorityRole: LegacyEnsembleAuthorityRole
   ): EnsembleBossmanControlResult {
     const checkpoint = caller.authorityRoutingCheckpoint
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
@@ -8995,7 +8999,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
     caller: ActiveParticipantRun,
-    authorityRole: 'boss' | 'second_in_command',
+    authorityRole: LegacyEnsembleAuthorityRole,
     targetRun?: ActiveParticipantRun
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
@@ -9107,7 +9111,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
     caller: ActiveParticipantRun,
-    authorityRole: 'boss' | 'second_in_command'
+    authorityRole: LegacyEnsembleAuthorityRole
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
     const targetParticipantId = input.targetParticipantId
@@ -9258,7 +9262,7 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
     caller: EnsembleParticipant,
-    authorityRole: 'boss' | 'second_in_command'
+    authorityRole: LegacyEnsembleAuthorityRole
   ): EnsembleBossmanControlResult {
     const action = input.action
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
@@ -13403,7 +13407,7 @@ export class EnsembleOrchestrator {
   ):
     | {
         ok: true
-        role: 'boss' | 'second_in_command'
+        role: LegacyEnsembleAuthorityRole
         bossmanParticipantId: string
         captainParticipantIds: string[]
         secondInCommandParticipantId?: string
@@ -13528,7 +13532,7 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     callerParticipantId: string
-  ): 'boss' | 'second_in_command' | undefined {
+  ): LegacyEnsembleAuthorityRole | undefined {
     if (callerParticipantId === this.activeBossmanParticipantId(chat, runtime)) {
       return 'boss'
     }
@@ -14052,12 +14056,12 @@ export class EnsembleOrchestrator {
     bossmanParticipantId?: string
     captainParticipantIds?: string[]
     secondInCommandParticipantId?: string
-    bossmanAuthorityRole?: 'boss' | 'second_in_command'
+    bossmanAuthorityRole?: LegacyEnsembleAuthorityRole
     bossmanPrimaryUnavailableReason?: string
     bossmanAutoApprovalsEnabled?: boolean
     rosterEditAllowed?: boolean
     rosterPresetImportAllowed?: boolean
-    rosterPresetAuthorityRole?: 'boss' | 'captain'
+    rosterPresetAuthorityRole?: EnsembleAuthorityRole
     availableProviders?: EnsembleParticipantProviderCatalogEntry[]
     participants?: Array<{
       id: string
@@ -21537,7 +21541,7 @@ export class EnsembleOrchestrator {
     roundId: string,
     before: number,
     after: number,
-    actor: 'boss' | 'captain',
+    actor: EnsembleAuthorityRole,
     participant: EnsembleParticipant,
     reason?: string
   ): string | null {
@@ -21588,7 +21592,9 @@ export class EnsembleOrchestrator {
           (grant) => grant.workspacePath === chat.workspacePath
         ).length
       : undefined
-    const seatAuthorityFor = (participant: EnsembleParticipant): 'boss' | 'captain' | undefined =>
+    const seatAuthorityFor = (
+      participant: EnsembleParticipant
+    ): EnsembleAuthorityRole | undefined =>
       resolveSeatAuthority({
         participantId: participant.id,
         stageRole: participant.stageRole,

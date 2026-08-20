@@ -1,3 +1,5 @@
+import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
+
 /**
  * Who, inside an Ensemble, may put a running process under agent control.
  *
@@ -28,7 +30,7 @@ export interface AppDriveEnsembleAuthorityInput {
 }
 
 export type AppDriveEnsembleAuthorityResult =
-  | { readonly ok: true }
+  | { readonly ok: true; readonly authorityRole?: EnsembleAuthorityRole }
   | { readonly ok: false; readonly reason: string }
 
 const REFUSAL =
@@ -58,8 +60,11 @@ export function resolveAppDriveEnsembleAuthority(
     : roster.secondInCommandParticipantId
       ? [roster.secondInCommandParticipantId]
       : []
-  const authorized = new Set([boss, ...captains.map(canonical)].filter(Boolean) as string[])
-  return authorized.has(caller) ? { ok: true } : { ok: false, reason: REFUSAL }
+  if (caller === boss) return { ok: true, authorityRole: 'boss' }
+  const captainIds = new Set(captains.map(canonical).filter(Boolean) as string[])
+  return captainIds.has(caller)
+    ? { ok: true, authorityRole: 'captain' }
+    : { ok: false, reason: REFUSAL }
 }
 
 function canonical(value: unknown): string | null {

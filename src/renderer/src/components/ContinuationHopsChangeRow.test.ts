@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
+import type { EnsembleAuthorityRole } from '../../../shared/ensembleAuthority'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
 
 const rowSource = readFileSync(new URL('./ContinuationHopsChangeRow.tsx', import.meta.url), 'utf8')
@@ -12,7 +13,7 @@ const cssSource = readFileSync(
   'utf8'
 )
 
-function messageWithChange(actor: 'user' | 'boss' | 'captain'): ChatMessage {
+function messageWithChange(actor: 'user' | EnsembleAuthorityRole): ChatMessage {
   return {
     id: `change-${actor}`,
     role: 'system',
