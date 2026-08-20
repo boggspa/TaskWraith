@@ -524,6 +524,41 @@ describe('Studio pixel evidence verifier', () => {
     }
   })
 
+  it('keeps an exact ScreenCaptureKit canvas authoritative over rounded-window alpha', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const capture = PNG.sync.read(readFileSync(fixture.capturePath))
+      const exactCanvas = new PNG({ width: 164, height: 112 })
+      for (let y = 0; y < exactCanvas.height; y += 1) {
+        for (let x = 0; x < exactCanvas.width; x += 1) {
+          const source = ((y + 13) * capture.width + x) * 4
+          const target = (y * exactCanvas.width + x) * 4
+          capture.data.copy(exactCanvas.data, target, source, source + 4)
+          if (x >= 144) exactCanvas.data[target + 3] = 0
+        }
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(exactCanvas))
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100, y: 200, width: 164, height: 112 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'exact-window-canvas',
+          captureExtent: { x: 0, y: 0, width: 164, height: 112 }
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
   it('rounds finite fractional Retina host edges symmetrically to integer pixels', () => {
     const fixture = createVisualFixture(false, 2)
     try {

@@ -180,7 +180,6 @@ function validateSourceHostFrame(sourceHostFrame, windowBounds) {
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
   const capture = PNG.sync.read(fs.readFileSync(capturePath))
   const reference = PNG.sync.read(fs.readFileSync(referencePath))
-  const captureExtent = boundedCaptureExtent(capture)
   const windowWidth = Number(windowBounds?.width)
   const windowHeight = Number(windowBounds?.height)
   invariant(
@@ -210,29 +209,50 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
-  const scaleCandidates = [1, 2, 3, 4]
-    .map((backingScale) => {
-      const scaledWindowWidth = Math.round(windowWidth * backingScale)
-      const scaledWindowHeight = Math.round(windowHeight * backingScale)
-      const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
-      const verticalShadowPixels = captureExtent.height - scaledWindowHeight
-      const shadowless = verticalShadowPixels === 0
-      const boundedWindowShadow =
-        verticalShadowPixels >= 16 * backingScale &&
-        (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
-      const valid =
-        horizontalShadowPixels >= 0 &&
-        horizontalShadowPixels % (2 * backingScale) === 0 &&
-        verticalShadowPixels >= 0 &&
-        (shadowless || boundedWindowShadow)
-      return {
-        backingScale,
-        horizontalShadowPixels,
-        verticalShadowPixels,
-        valid,
-        shadowScore: horizontalShadowPixels + verticalShadowPixels
-      }
-    })
+  const exactCanvasCandidates = [1, 2, 3, 4]
+    .filter(
+      (backingScale) =>
+        capture.width === Math.round(windowWidth * backingScale) &&
+        capture.height === Math.round(windowHeight * backingScale)
+    )
+    .map((backingScale) => ({
+      backingScale,
+      horizontalShadowPixels: 0,
+      verticalShadowPixels: 0,
+      valid: true,
+      shadowScore: 0,
+      captureMode: 'exact-window-canvas'
+    }))
+  const captureExtent =
+    exactCanvasCandidates.length > 0
+      ? { x: 0, y: 0, width: capture.width, height: capture.height }
+      : boundedCaptureExtent(capture)
+  const scaleCandidates =
+    exactCanvasCandidates.length > 0
+      ? exactCanvasCandidates
+      : [1, 2, 3, 4].map((backingScale) => {
+          const scaledWindowWidth = Math.round(windowWidth * backingScale)
+          const scaledWindowHeight = Math.round(windowHeight * backingScale)
+          const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
+          const verticalShadowPixels = captureExtent.height - scaledWindowHeight
+          const shadowless = verticalShadowPixels === 0
+          const boundedWindowShadow =
+            verticalShadowPixels >= 16 * backingScale &&
+            (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
+          const valid =
+            horizontalShadowPixels >= 0 &&
+            horizontalShadowPixels % (2 * backingScale) === 0 &&
+            verticalShadowPixels >= 0 &&
+            (shadowless || boundedWindowShadow)
+          return {
+            backingScale,
+            horizontalShadowPixels,
+            verticalShadowPixels,
+            valid,
+            shadowScore: horizontalShadowPixels + verticalShadowPixels,
+            captureMode: 'bounded-alpha-extent'
+          }
+        })
     .filter((candidate) => candidate.valid)
     .sort(
       (left, right) =>
@@ -402,6 +422,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       hudOverlayHeight,
       horizontalShadowPixels,
       verticalShadowPixels,
+      captureMode: geometry.captureMode,
       comparisonHeight
     },
     colorFit: channelFits,
