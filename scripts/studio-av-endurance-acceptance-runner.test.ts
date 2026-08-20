@@ -5,16 +5,25 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { normalizeResource, planSamples, runAvEnduranceAcceptance, validateAcceptanceEvidence } =
-  require('./studio-av-endurance-acceptance-runner.cjs') as {
-    normalizeResource: (raw: Record<string, any>, index: number) => Record<string, any>
-    planSamples: (options?: Record<string, any>) => Array<Record<string, any>>
-    runAvEnduranceAcceptance: (
-      options: Record<string, any>,
-      adapters: Record<string, any>
-    ) => Promise<Record<string, any>>
-    validateAcceptanceEvidence: (evidence: Record<string, any>) => Record<string, any>
-  }
+const {
+  normalizeResource,
+  planSamples,
+  prepareAvEnduranceSourceEvidence,
+  runAvEnduranceAcceptance,
+  validateAcceptanceEvidence
+} = require('./studio-av-endurance-acceptance-runner.cjs') as {
+  normalizeResource: (raw: Record<string, any>, index: number) => Record<string, any>
+  planSamples: (options?: Record<string, any>) => Array<Record<string, any>>
+  prepareAvEnduranceSourceEvidence: (
+    options: Record<string, any>,
+    adapters: Record<string, any>
+  ) => Record<string, any>
+  runAvEnduranceAcceptance: (
+    options: Record<string, any>,
+    adapters: Record<string, any>
+  ) => Promise<Record<string, any>>
+  validateAcceptanceEvidence: (evidence: Record<string, any>) => Record<string, any>
+}
 const { buildReferenceExtractCommand } = require('./studio-bounded-diagnostics-runner.cjs') as {
   buildReferenceExtractCommand: (options: Record<string, any>) => string[]
 }
@@ -277,6 +286,43 @@ describe('Studio AV endurance acceptance orchestration', () => {
     const result = await runAvEnduranceAcceptance(acceptanceOptions(root), adapters)
     expect(result.evidence.sourcePtsCensus.count).toBe(vfrValues.length)
     expect(result.evidence.sourcePtsCensus.values).toEqual(vfrValues)
+  })
+
+  it('prepares the trusted source census before playback and reuses it without re-probing', async () => {
+    const root = freshRoot('prepared-source')
+    const adapters = truthfulAdapters(root)
+    const census: any = adapters.testOnlyReferenceAuthority.census
+    let censusCalls = 0
+    adapters.testOnlyReferenceAuthority.census = (...args: any[]) => {
+      censusCalls += 1
+      return census(...args)
+    }
+    const options = acceptanceOptions(root)
+    const preparedSourceEvidence = prepareAvEnduranceSourceEvidence(options, adapters)
+    expect(censusCalls).toBe(1)
+    expect(Object.isFrozen(preparedSourceEvidence)).toBe(true)
+    expect(Object.isFrozen(preparedSourceEvidence.sourceAsset)).toBe(true)
+    expect(Object.isFrozen(preparedSourceEvidence.sourcePtsCensus)).toBe(true)
+    expect(Object.isFrozen(preparedSourceEvidence.sourcePtsCensus.values)).toBe(true)
+    expect(preparedSourceEvidence).not.toHaveProperty('referenceAuthority')
+    expect(() => {
+      preparedSourceEvidence.sourcePtsCensus.values[0] = 999
+    }).toThrow()
+    adapters.testOnlyReferenceAuthority.generate = () => {
+      throw new Error('mutated external authority must not be observed after preparation')
+    }
+    await expect(
+      runAvEnduranceAcceptance(options, {
+        ...adapters,
+        preparedSourceEvidence: { ...preparedSourceEvidence }
+      })
+    ).rejects.toThrow(/prepared source evidence.*forged/i)
+    const result = await runAvEnduranceAcceptance(options, {
+      ...adapters,
+      preparedSourceEvidence
+    })
+    expect(censusCalls).toBe(1)
+    expect(result.evidence.sourcePtsCensus.count).toBe(18_000)
   })
 
   it('keeps the physical-audibility blocker and refuses synthetic timing as live proof', async () => {

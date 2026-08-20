@@ -77,9 +77,14 @@ function fakeJourneyAdapters(log: string[], finalTerminalPaused = true) {
     },
     focusSnapshot: () => ({ frontmostPid: 1, targetIsActive: false, cursorX: 10, cursorY: 20 }),
     assertSourceWindowFocusIsolation: () => ({ ok: true }),
-    buildPtsCensus: async () => {
+    prepareAvEnduranceSourceEvidence: async () => {
       log.push('census')
-      return { values: Array.from({ length: 18_001 }, (_, index) => index / 30), count: 18_001 }
+      return {
+        sourcePtsCensus: {
+          values: Array.from({ length: 18_001 }, (_, index) => index / 30),
+          count: 18_001
+        }
+      }
     },
     waitForFreshPlayableSample: async (
       _plan: any,
@@ -275,6 +280,7 @@ describe('Studio AV endurance live runner', () => {
     )
     expect(log[0]).toBe('readiness')
     expect(log).toContain('paused->playing')
+    expect(log.indexOf('census')).toBeLessThan(log.indexOf('paused->playing'))
     expect(log.filter((entry) => entry.startsWith('sample-'))).toHaveLength(20)
     expect(log).toContain('terminal-20')
     expect(log).toContain('ui-audio-0')

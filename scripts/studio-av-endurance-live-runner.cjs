@@ -406,6 +406,19 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
   const readiness = await (
     adapters.waitForPausedMediaReadiness || diagnostics.waitForPausedMediaReadiness
   )(plan, target, bounds, adapters)
+  const sourceOptions = {
+    artifactRoot: plan.artifactRoot,
+    expectedAssetId: target.asset.sha256,
+    sourceAssetPath: target.asset.assetPath
+  }
+  const preparedSourceEvidence = await (
+    adapters.prepareAvEnduranceSourceEvidence || avAcceptance.prepareAvEnduranceSourceEvidence
+  )(sourceOptions, adapters)
+  const census = preparedSourceEvidence.sourcePtsCensus
+  invariant(
+    isRecord(census) && Array.isArray(census.values),
+    'live endurance prepared source census is missing'
+  )
   const focusSnapshot = adapters.focusSnapshot || acceptanceSession.focusSnapshot
   const assertFocus =
     adapters.assertSourceWindowFocusIsolation || acceptanceSession.assertSourceWindowFocusIsolation
@@ -414,7 +427,6 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
   const playbackStart = await pressTransition(plan, target, 'paused', 'playing', adapters)
   const focusAfterStart = focusSnapshot(target.companion.pid)
   const startFocusIsolation = assertFocus(focusBeforeStart, focusAfterStart, target.companion.pid)
-  const census = await (adapters.buildPtsCensus || buildPtsCensus)(target.asset.assetPath, adapters)
   let previousPtsSeconds = null
   let positiveAudio = null
   let priorRouteHealth = null
@@ -427,122 +439,116 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
     priorRouteHealth: null
   }
   const avRun = adapters.runAvEnduranceAcceptance || avAcceptance.runAvEnduranceAcceptance
-  const avResult = await avRun(
-    {
-      artifactRoot: plan.artifactRoot,
-      expectedAssetId: target.asset.sha256,
-      sourceAssetPath: target.asset.assetPath
-    },
-    {
-      ...adapters,
-      audioEvidence,
-      sampleAt: async (planEntry) => {
-        const fresh =
-          planEntry.index === avAcceptance.SAMPLE_COUNT - 1
-            ? await (adapters.captureTerminalSample || captureTerminalSample)(
-                plan,
-                target,
-                census,
-                bounds,
-                planEntry.index,
-                previousPtsSeconds,
-                adapters
-              )
-            : await (adapters.waitForFreshPlayableSample || diagnostics.waitForFreshPlayableSample)(
-                plan,
-                target,
-                census,
-                bounds,
-                planEntry.index,
-                previousPtsSeconds,
-                adapters
-              )
-        const ui = await (adapters.readSampleUi || readSampleUi)(
+  const avResult = await avRun(sourceOptions, {
+    ...adapters,
+    audioEvidence,
+    preparedSourceEvidence,
+    sampleAt: async (planEntry) => {
+      const fresh =
+        planEntry.index === avAcceptance.SAMPLE_COUNT - 1
+          ? await (adapters.captureTerminalSample || captureTerminalSample)(
+              plan,
+              target,
+              census,
+              bounds,
+              planEntry.index,
+              previousPtsSeconds,
+              adapters
+            )
+          : await (adapters.waitForFreshPlayableSample || diagnostics.waitForFreshPlayableSample)(
+              plan,
+              target,
+              census,
+              bounds,
+              planEntry.index,
+              previousPtsSeconds,
+              adapters
+            )
+      const ui = await (adapters.readSampleUi || readSampleUi)(
+        plan,
+        target,
+        bounds,
+        planEntry.index,
+        { includeAudio: planEntry.index === 0 },
+        adapters
+      )
+      const resourceProbe = await (adapters.resourceSample || acceptanceSession.resourceSample)(
+        target.companion.pid,
+        planEntry.index,
+        fresh.observed.contentPtsSeconds,
+        adapters.resourceAdapters || {}
+      )
+      const rawOcrText = JSON.stringify(fresh.hud.observations)
+      const raw = {
+        current: ui.avSync.current,
+        peak: ui.avSync.peak,
+        resource: resourceReceipt(resourceProbe, ui.avSync, planEntry.index),
+        capture: {
+          screenshotPath: fresh.capture.path,
+          screenshotSha256: fresh.capture.sha256,
+          windowBounds: bounds,
+          sourceHostFrame: fresh.sourceHostFrame,
+          hudOverlayHeight: fresh.materialPixels.registration.logicalHudOverlayHeight,
+          rawOcrText,
+          rawOcrSha256: sha256Text(rawOcrText)
+        }
+      }
+      previousPtsSeconds = fresh.observed.contentPtsSeconds
+      samples.push({ index: planEntry.index, fresh, ui, resourceProbe })
+      if (planEntry.index === 0) {
+        positiveAudio = ui.audioProbe
+        priorRouteHealth = ui.routeHealth
+      }
+      if (planEntry.index === avAcceptance.SAMPLE_COUNT - 1) {
+        const focusBeforeStop = focusSnapshot(target.companion.pid)
+        const playbackStop = fresh.terminalPaused
+          ? { terminalPaused: true, reason: 'media-reached-final-frame-before-explicit-stop' }
+          : await pressTransition(plan, target, 'playing', 'paused', adapters)
+        const focusAfterStop = focusSnapshot(target.companion.pid)
+        const stopFocusIsolation = assertFocus(
+          focusBeforeStop,
+          focusAfterStop,
+          target.companion.pid
+        )
+        const stopped = await (adapters.readSampleUi || readSampleUi)(
           plan,
           target,
           bounds,
           planEntry.index,
-          { includeAudio: planEntry.index === 0 },
+          {
+            includeAudio: true,
+            requirePausedState: true,
+            expectedContentPtsSeconds: fresh.observed.contentPtsSeconds,
+            census
+          },
           adapters
         )
-        const resourceProbe = await (adapters.resourceSample || acceptanceSession.resourceSample)(
-          target.companion.pid,
-          planEntry.index,
-          fresh.observed.contentPtsSeconds,
-          adapters.resourceAdapters || {}
+        invariant(
+          isRecord(stopped.pausedState),
+          'live endurance silence probe has no exact post-stop PAUSE observation'
         )
-        const rawOcrText = JSON.stringify(fresh.hud.observations)
-        const raw = {
-          current: ui.avSync.current,
-          peak: ui.avSync.peak,
-          resource: resourceReceipt(resourceProbe, ui.avSync, planEntry.index),
-          capture: {
-            screenshotPath: fresh.capture.path,
-            screenshotSha256: fresh.capture.sha256,
-            windowBounds: bounds,
-            sourceHostFrame: fresh.sourceHostFrame,
-            hudOverlayHeight: fresh.materialPixels.registration.logicalHudOverlayHeight,
-            rawOcrText,
-            rawOcrSha256: sha256Text(rawOcrText)
-          }
+        stopEvidence = {
+          playbackStop,
+          stopFocusIsolation,
+          pausedState: stopped.pausedState,
+          routeHealth: stopped.routeHealth
         }
-        previousPtsSeconds = fresh.observed.contentPtsSeconds
-        samples.push({ index: planEntry.index, fresh, ui, resourceProbe })
-        if (planEntry.index === 0) {
-          positiveAudio = ui.audioProbe
-          priorRouteHealth = ui.routeHealth
-        }
-        if (planEntry.index === avAcceptance.SAMPLE_COUNT - 1) {
-          const focusBeforeStop = focusSnapshot(target.companion.pid)
-          const playbackStop = fresh.terminalPaused
-            ? { terminalPaused: true, reason: 'media-reached-final-frame-before-explicit-stop' }
-            : await pressTransition(plan, target, 'playing', 'paused', adapters)
-          const focusAfterStop = focusSnapshot(target.companion.pid)
-          const stopFocusIsolation = assertFocus(
-            focusBeforeStop,
-            focusAfterStop,
-            target.companion.pid
-          )
-          const stopped = await (adapters.readSampleUi || readSampleUi)(
-            plan,
-            target,
-            bounds,
-            planEntry.index,
-            {
-              includeAudio: true,
-              requirePausedState: true,
-              expectedContentPtsSeconds: fresh.observed.contentPtsSeconds,
-              census
-            },
-            adapters
-          )
-          invariant(
-            isRecord(stopped.pausedState),
-            'live endurance silence probe has no exact post-stop PAUSE observation'
-          )
-          stopEvidence = {
-            playbackStop,
-            stopFocusIsolation,
-            pausedState: stopped.pausedState,
-            routeHealth: stopped.routeHealth
-          }
-          audioEvidence.windowAudio = positiveAudio
-          audioEvidence.silenceWindow = stopped.audioProbe
-          audioEvidence.routeHealth = stopped.routeHealth
-          audioEvidence.priorRouteHealth = priorRouteHealth
-        }
-        return raw
-      },
-      writeEvidence:
-        adapters.writeAvEvidence ||
-        (async (artifactRoot, evidence) => {
-          await acceptanceSession.writeJson(
-            path.join(artifactRoot, 'av-endurance-evidence.json'),
-            evidence
-          )
-        })
-    }
-  )
+        audioEvidence.windowAudio = positiveAudio
+        audioEvidence.silenceWindow = stopped.audioProbe
+        audioEvidence.routeHealth = stopped.routeHealth
+        audioEvidence.priorRouteHealth = priorRouteHealth
+      }
+      return raw
+    },
+    writeEvidence:
+      adapters.writeAvEvidence ||
+      (async (artifactRoot, evidence) => {
+        await acceptanceSession.writeJson(
+          path.join(artifactRoot, 'av-endurance-evidence.json'),
+          evidence
+        )
+      })
+  })
   invariant(stopEvidence, 'live endurance did not complete the playing-to-paused transition')
   invariant(
     isRecord(audioEvidence.windowAudio) &&

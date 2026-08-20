@@ -29,6 +29,8 @@ const CLOCK_SOURCE = 'process-hrtime-bigint+date-now'
 const TEST_CLOCK_SOURCE = 'synthetic-test-only'
 const REFERENCE_SOURCE = 'runner-ffprobe+ffmpeg'
 const TEST_REFERENCE_SOURCE = 'synthetic-test-only'
+const PREPARED_SOURCE_EVIDENCE = Symbol('taskwraith-studio-av-prepared-source')
+const preparedSourceStates = new WeakMap()
 
 function sourcePtsCensusFailure(parsed) {
   if (!isRecord(parsed) || !Array.isArray(parsed.values)) return 'parsed census is missing'
@@ -76,6 +78,18 @@ function cloneJson(value, label) {
   } catch (error) {
     throw new Error(`${label} is not JSON-serializable: ${error.message}`)
   }
+}
+
+function deepFreezeEvidence(value) {
+  if (Array.isArray(value)) {
+    for (const entry of value) deepFreezeEvidence(entry)
+    return Object.freeze(value)
+  }
+  if (isRecord(value)) {
+    for (const entry of Object.values(value)) deepFreezeEvidence(entry)
+    return Object.freeze(value)
+  }
+  return value
 }
 
 function sha256File(filePath, encoding = 'hex') {
@@ -1209,7 +1223,7 @@ function monotonicMilliseconds(clockRead) {
   return Number(canonicalMonotonicNs(clockRead.monotonicNs, 'Outcome 5 clock read')) / 1_000_000
 }
 
-async function runAvEnduranceAcceptance(options = {}, adapters = {}) {
+function normalizeSourceOptions(options = {}) {
   const requestedArtifactRoot = options.artifactRoot
   const artifactRoot = path.resolve(String(requestedArtifactRoot || ''))
   const expectedAssetId = options.expectedAssetId
@@ -1228,17 +1242,76 @@ async function runAvEnduranceAcceptance(options = {}, adapters = {}) {
   }
   ensureSafeRegularPathEvidenceRoot(artifactRoot)
   const sourceAsset = normalizeSourceAsset(options.sourceAssetPath, artifactRoot, expectedAssetId)
+  return { artifactRoot, expectedAssetId, sourceAsset }
+}
+
+function prepareAvEnduranceSourceEvidence(options = {}, adapters = {}) {
+  const normalized = normalizeSourceOptions(options)
+  const referenceAuthority = Object.freeze(createReferenceAuthority(options, adapters))
+  const sourceAsset = deepFreezeEvidence(
+    cloneJson(normalized.sourceAsset, 'Outcome 5 prepared source asset')
+  )
+  const sourcePtsCensus = deepFreezeEvidence(
+    collectSourcePtsCensus(sourceAsset, referenceAuthority)
+  )
+  const prepared = Object.freeze({
+    [PREPARED_SOURCE_EVIDENCE]: true,
+    artifactRoot: normalized.artifactRoot,
+    expectedAssetId: normalized.expectedAssetId,
+    sourceAsset,
+    sourcePtsCensus
+  })
+  preparedSourceStates.set(
+    prepared,
+    Object.freeze({ sourceAsset, sourcePtsCensus, referenceAuthority })
+  )
+  return prepared
+}
+
+function requirePreparedSourceEvidence(options, adapters) {
+  const prepared = adapters.preparedSourceEvidence
+  if (prepared === undefined) {
+    const created = prepareAvEnduranceSourceEvidence(options, adapters)
+    return requirePreparedSourceEvidence(options, { ...adapters, preparedSourceEvidence: created })
+  }
+  const artifactRoot = path.resolve(String(options.artifactRoot || ''))
+  const sourceAssetPath = path.resolve(String(options.sourceAssetPath || ''))
+  const state = isRecord(prepared) ? preparedSourceStates.get(prepared) : null
+  if (
+    !isRecord(prepared) ||
+    prepared[PREPARED_SOURCE_EVIDENCE] !== true ||
+    !state ||
+    prepared.artifactRoot !== artifactRoot ||
+    prepared.expectedAssetId !== options.expectedAssetId ||
+    prepared.sourceAsset?.path !== sourceAssetPath ||
+    !isRecord(prepared.sourcePtsCensus) ||
+    prepared.sourceAsset !== state.sourceAsset ||
+    prepared.sourcePtsCensus !== state.sourcePtsCensus
+  ) {
+    throw new Error('Outcome 5 prepared source evidence is absent, forged, or cross-run')
+  }
+  return {
+    artifactRoot: prepared.artifactRoot,
+    expectedAssetId: prepared.expectedAssetId,
+    sourceAsset: state.sourceAsset,
+    sourcePtsCensus: state.sourcePtsCensus,
+    referenceAuthority: state.referenceAuthority
+  }
+}
+
+async function runAvEnduranceAcceptance(options = {}, adapters = {}) {
+  const prepared = requirePreparedSourceEvidence(options, adapters)
+  const { artifactRoot, expectedAssetId, sourceAsset, sourcePtsCensus, referenceAuthority } =
+    prepared
   if (typeof adapters.sampleAt !== 'function')
     throw new Error('Outcome 5 acceptance requires sampleAt')
   const runnerClock = createRunnerClock(options, adapters)
-  const referenceAuthority = createReferenceAuthority(options, adapters)
   if (
     (runnerClock.source === TEST_CLOCK_SOURCE) !==
     (referenceAuthority.source === TEST_REFERENCE_SOURCE)
   ) {
     throw new Error('Outcome 5 clock and reference authority must share production/test custody')
   }
-  const sourcePtsCensus = collectSourcePtsCensus(sourceAsset, referenceAuthority)
   const waitUntil =
     adapters.waitUntil ||
     (async (plannedAtMs) => {
@@ -1354,6 +1427,7 @@ module.exports = {
   normalizeResource,
   normalizeSample,
   planSamples: endurance.planSamples,
+  prepareAvEnduranceSourceEvidence,
   runAvEnduranceAcceptance,
   validateAcceptanceEvidence
 }
