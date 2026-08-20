@@ -4,6 +4,10 @@ import { join, resolve } from 'node:path'
 
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
 import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
+import {
+  ensureRuntimeMarkerExcluded,
+  type WorkspaceMarkerExcludeOutcome
+} from './WorkspaceMarkerGitExclude'
 
 /**
  * The authority state is deliberately separate from a checkout. A checkout is
@@ -93,6 +97,12 @@ export interface NodeWorkspaceLockPersistenceOptions {
   onStaleReclaimGuardQuarantined?: () => void | Promise<void>
   /** Host platform, injectable only to prove platform-specific filesystem contracts. */
   platform?: NodeJS.Platform
+  /**
+   * Housekeeping seam: keeps a projected marker out of `git status` in a
+   * checkout TaskWraith does not own. Injectable so a test can observe the
+   * call without touching a real repository.
+   */
+  ensureMarkerExcluded?: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
   fs?: NodeWorkspaceLockPersistenceFs
 }
 
@@ -136,6 +146,10 @@ export class NodeWorkspaceLockPersistence {
   private readonly authorityDirectory: string
   private readonly onReclaimGuardAcquired?: () => void
   private readonly onStaleReclaimGuardQuarantined?: () => void | Promise<void>
+  private readonly ensureMarkerExcluded: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
+  /** Roots already settled this process. 'write-failed' is deliberately not
+   *  memoized, so a transient failure is retried at the next marker write. */
+  private readonly markerExclusionSettled = new Set<string>()
 
   constructor(options: NodeWorkspaceLockPersistenceOptions) {
     if (!options.userDataRoot || !options.userDataRoot.trim()) {
@@ -151,6 +165,7 @@ export class NodeWorkspaceLockPersistence {
     this.authorityDirectory = join(this.root, directoryName)
     this.onReclaimGuardAcquired = options.onReclaimGuardAcquired
     this.onStaleReclaimGuardQuarantined = options.onStaleReclaimGuardQuarantined
+    this.ensureMarkerExcluded = options.ensureMarkerExcluded || ensureRuntimeMarkerExcluded
   }
 
   authorityPath(): string {
@@ -462,6 +477,7 @@ export class NodeWorkspaceLockPersistence {
   ): void {
     if (typeof content !== 'string')
       throw new Error('Workspace-lock marker content must be a string.')
+    this.excludeMarkerFromCheckout(canonicalEffectiveWorktreeRoot)
     this.atomicReplaceRegularFile(
       this.markerPath(
         canonicalEffectiveWorktreeRoot,
@@ -515,6 +531,26 @@ export class NodeWorkspaceLockPersistence {
 
   private reclaimGuardPath(): string {
     return join(this.authorityDirectory, WORKSPACE_LOCK_RECLAIM_GUARD_FILENAME)
+  }
+
+  /**
+   * Best-effort: teach this checkout to ignore the marker we are about to write.
+   *
+   * Ordered BEFORE the marker write so the file is never briefly visible to a
+   * concurrent `git add -A`. Never allowed to fail a lease — a marker is how a
+   * lock becomes legible to people and hooks, and losing that to a housekeeping
+   * error would be strictly worse than an untracked file.
+   */
+  private excludeMarkerFromCheckout(canonicalEffectiveWorktreeRoot: string): void {
+    if (this.markerExclusionSettled.has(canonicalEffectiveWorktreeRoot)) return
+    try {
+      const outcome = this.ensureMarkerExcluded(canonicalEffectiveWorktreeRoot)
+      if (outcome.status !== 'skipped' || outcome.reason !== 'write-failed') {
+        this.markerExclusionSettled.add(canonicalEffectiveWorktreeRoot)
+      }
+    } catch {
+      // A custom seam threw. Swallow: the lease is the thing that matters.
+    }
   }
 
   private markerPath(
