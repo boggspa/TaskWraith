@@ -234,9 +234,9 @@ const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
-  companionSha256: '21f70055169e10b1bf05f9b235459635a41e458a9d0b230a32d7d823086d1104',
+  companionSha256: '3f503ca8ff9c1e0426ddd2ace50d9ffad9136727bc09a9e77bd9593fb900e1ca',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
-  bridgeDaemonSha256: 'ba3cd5ce8630b143eb64f4c8d726b1c22afea02a10133807039ba485617961cb'
+  bridgeDaemonSha256: '0f56a7ddc525138d8f76f45fb96cedb899387e43228a688459fbb12a420ddedb'
 })
 
 function isRecord(value) {
