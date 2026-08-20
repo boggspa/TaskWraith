@@ -863,7 +863,11 @@ async function measureStudioAcceptanceSelectedNativeProduct(repoRoot, product) {
 }
 
 async function measureStudioAcceptanceArtifacts(repoRoot) {
-  const outEntries = await collectStudioAcceptanceCustodyEntries(repoRoot, 'out')
+  const outEntries = await collectStudioAcceptanceCustodyEntries(
+    repoRoot,
+    'out',
+    (relativePath) => !isStudioAcceptanceCustodyNoise(relativePath)
+  )
   const companionEntry = await measureStudioAcceptanceSelectedNativeProduct(
     repoRoot,
     STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion

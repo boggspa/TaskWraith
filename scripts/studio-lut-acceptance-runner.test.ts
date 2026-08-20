@@ -25,6 +25,7 @@ const {
   matchHudAssetIdentity,
   parseCli,
   resolveArtifactRoot,
+  treeDigest,
   validateClearedState,
   validateInvalidReplacement,
   validateReplayState,
@@ -80,6 +81,7 @@ const {
   }
   parseCli: (argv: string[]) => Record<string, any>
   resolveArtifactRoot: (candidate: string, acceptanceRoot?: string) => string
+  treeDigest: (directory: string) => { fileCount: number; digest: string }
   validateClearedState: (
     state: Record<string, any>,
     operation: Record<string, any>,
@@ -340,6 +342,14 @@ describe('studio LUT acceptance runner contract', () => {
     })
     expect(calls).toHaveLength(2)
     expect(calls[1]).toContain('lavfi')
+  })
+
+  it('keeps Finder metadata out of source and build custody digests', async () => {
+    const directory = await temporaryDirectory()
+    await fsPromises.writeFile(path.join(directory, 'product.js'), 'product')
+    const before = treeDigest(directory)
+    await fsPromises.writeFile(path.join(directory, '.DS_Store'), 'finder metadata')
+    expect(treeDigest(directory)).toEqual(before)
   })
 
   it('passes matching pins with foreign tracked dirt and seals its hashes into evidence', async () => {

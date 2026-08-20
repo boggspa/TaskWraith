@@ -5070,6 +5070,11 @@ describe('Studio acceptance harness', () => {
       bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
       bridgeDaemonSha256: crypto.createHash('sha256').update('debug bridge').digest('hex')
     })
+
+    const beforeFinderMetadata = await measureStudioAcceptanceArtifacts(root)
+    await fsPromises.writeFile(path.join(root, 'out/.DS_Store'), 'finder metadata')
+    const afterFinderMetadata = await measureStudioAcceptanceArtifacts(root)
+    expect(afterFinderMetadata).toEqual(beforeFinderMetadata)
   })
 
   it('measures the pinned live-build source and support custody from the workspace', async () => {
