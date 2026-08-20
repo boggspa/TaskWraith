@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 /// Swift mirror of the host's durable ghost proposals (mission outcome 6).
@@ -58,6 +59,7 @@ public struct StudioInsertRangeOp: Equatable, Sendable {
     public let itemId: String
     public let assetId: String
     public let trackId: String?
+    public let assetFrameRate: StudioRationalTime?
     public let sourceIn: StudioRationalTime
     public let sourceOut: StudioRationalTime
     /// Sequence insertion point; items at or after it ripple right.
@@ -67,6 +69,7 @@ public struct StudioInsertRangeOp: Equatable, Sendable {
         itemId: String,
         assetId: String,
         trackId: String? = nil,
+        assetFrameRate: StudioRationalTime? = nil,
         sourceIn: StudioRationalTime,
         sourceOut: StudioRationalTime,
         at: StudioRationalTime
@@ -74,6 +77,7 @@ public struct StudioInsertRangeOp: Equatable, Sendable {
         self.itemId = itemId
         self.assetId = assetId
         self.trackId = trackId
+        self.assetFrameRate = assetFrameRate
         self.sourceIn = sourceIn
         self.sourceOut = sourceOut
         self.at = at
@@ -104,6 +108,7 @@ public enum StudioProposalDecodeError: Error, Equatable {
     case missingField(String)
     case unsupportedOperation(String)
     case invalidRationalTime(String)
+    case unexpectedField(String)
 }
 
 public enum StudioProposalDecoder {
@@ -151,6 +156,13 @@ public enum StudioProposalDecoder {
     }
 
     public static func insertRange(from payload: [String: Any]) throws -> StudioInsertRangeOp {
+        let allowed = Set([
+            "type", "itemId", "assetId", "trackId", "assetFrameRate",
+            "sourceIn", "sourceOut", "at",
+        ])
+        if let unexpected = payload.keys.first(where: { !allowed.contains($0) }) {
+            throw StudioProposalDecodeError.unexpectedField("op.\(unexpected)")
+        }
         guard let type = payload["type"] as? String else {
             throw StudioProposalDecodeError.missingField("op.type")
         }
@@ -160,30 +172,50 @@ public enum StudioProposalDecoder {
         guard type == "insert_range" else {
             throw StudioProposalDecodeError.unsupportedOperation(type)
         }
-        guard let itemId = payload["itemId"] as? String else {
+        guard let itemId = payload["itemId"] as? String, !itemId.isEmpty else {
             throw StudioProposalDecodeError.missingField("op.itemId")
         }
-        guard let assetId = payload["assetId"] as? String else {
+        guard let assetId = payload["assetId"] as? String, !assetId.isEmpty else {
             throw StudioProposalDecodeError.missingField("op.assetId")
         }
-        return StudioInsertRangeOp(
+        let trackId = payload["trackId"] as? String
+        if payload.keys.contains("trackId") && (trackId?.isEmpty != false) {
+            throw StudioProposalDecodeError.missingField("op.trackId")
+        }
+        let operation = StudioInsertRangeOp(
             itemId: itemId,
             assetId: assetId,
-            trackId: payload["trackId"] as? String,
+            trackId: trackId,
+            assetFrameRate: payload.keys.contains("assetFrameRate")
+                ? try rational(from: payload["assetFrameRate"], field: "op.assetFrameRate")
+                : nil,
             sourceIn: try rational(from: payload["sourceIn"], field: "op.sourceIn"),
             sourceOut: try rational(from: payload["sourceOut"], field: "op.sourceOut"),
             at: try rational(from: payload["at"], field: "op.at")
         )
+        guard operation.sourceIn.n >= 0, operation.at.n >= 0,
+            compare(operation.sourceOut, operation.sourceIn) > 0
+        else { throw StudioProposalDecodeError.invalidRationalTime("op source range/at") }
+        if let frameRate = operation.assetFrameRate {
+            guard frameRate.n > 0,
+                isFrameAligned(operation.sourceIn, to: frameRate),
+                isFrameAligned(operation.sourceOut, to: frameRate)
+            else { throw StudioProposalDecodeError.invalidRationalTime("op.assetFrameRate") }
+        }
+        return operation
     }
 
     static func rational(from value: Any?, field: String) throws -> StudioRationalTime {
         guard let object = value as? [String: Any] else {
             throw StudioProposalDecodeError.missingField(field)
         }
+        let allowed = Set(["n", "d"])
+        if let unexpected = object.keys.first(where: { !allowed.contains($0) }) {
+            throw StudioProposalDecodeError.unexpectedField("\(field).\(unexpected)")
+        }
         // JSON numbers arrive as NSNumber; Int64 covers both the integer tick
         // counts and the timescale without a Double round trip.
-        guard let n = (object["n"] as? NSNumber)?.int64Value,
-            let d = (object["d"] as? NSNumber)?.int64Value
+        guard let n = exactInteger(object["n"]), let d = exactInteger(object["d"])
         else {
             throw StudioProposalDecodeError.missingField("\(field).n/d")
         }
@@ -191,5 +223,52 @@ public enum StudioProposalDecoder {
             throw StudioProposalDecodeError.invalidRationalTime(field)
         }
         return time
+    }
+
+    private static func exactInteger(_ value: Any?) -> Int64? {
+        guard let number = value as? NSNumber,
+            CFGetTypeID(number) != CFBooleanGetTypeID()
+        else { return nil }
+        guard let integer = Int64(number.stringValue),
+            integer >= -9_007_199_254_740_991,
+            integer <= 9_007_199_254_740_991
+        else { return nil }
+        return integer
+    }
+
+    private static func compare(_ lhs: StudioRationalTime, _ rhs: StudioRationalTime) -> Int {
+        let left = Decimal(lhs.n) * Decimal(rhs.d)
+        let right = Decimal(rhs.n) * Decimal(lhs.d)
+        return left < right ? -1 : (left > right ? 1 : 0)
+    }
+
+    private static func isFrameAligned(
+        _ time: StudioRationalTime,
+        to frameRate: StudioRationalTime
+    ) -> Bool {
+        var timeDenominator = UInt64(time.d)
+        var rateDenominator = UInt64(frameRate.d)
+        var timeNumerator = time.n.magnitude
+        var rateNumerator = frameRate.n.magnitude
+        var divisor = gcd(timeNumerator, timeDenominator)
+        timeNumerator /= divisor
+        timeDenominator /= divisor
+        divisor = gcd(rateNumerator, rateDenominator)
+        rateNumerator /= divisor
+        rateDenominator /= divisor
+        divisor = gcd(timeNumerator, rateDenominator)
+        timeNumerator /= divisor
+        rateDenominator /= divisor
+        divisor = gcd(rateNumerator, timeDenominator)
+        rateNumerator /= divisor
+        timeDenominator /= divisor
+        return timeDenominator == 1 && rateDenominator == 1
+    }
+
+    private static func gcd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        var a = lhs
+        var b = rhs
+        while b != 0 { (a, b) = (b, a % b) }
+        return a == 0 ? 1 : a
     }
 }

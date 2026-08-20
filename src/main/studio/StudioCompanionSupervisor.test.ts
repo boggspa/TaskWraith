@@ -159,6 +159,22 @@ const insertOp = {
   sourceOut: { n: 30030, d: 30000 },
   at: { n: 0, d: 1 }
 }
+const materializedTracks = [
+  {
+    trackId: 'V1',
+    kind: 'video',
+    items: [
+      {
+        itemId: 'sup-item-1',
+        assetId: 'asset-1',
+        sourceIn: { n: 0, d: 1 },
+        sourceOut: { n: 1001, d: 1000 },
+        position: { n: 0, d: 1 },
+        duration: { n: 1001, d: 1000 }
+      }
+    ]
+  }
+]
 
 describe('StudioCompanionSupervisor', () => {
   it('serves companion-driven hydration: hello then getDocument', async () => {
@@ -294,24 +310,88 @@ describe('StudioCompanionSupervisor', () => {
       }
     })
     await until(() => second.messages.length >= 4)
-    expect(second.messages[2]).toMatchObject({
+    expect(second.messages[2]).toEqual({
+      jsonrpc: '2.0',
       id: 6,
-      result: { revision: 2, proposalId: 'proposal-restart', decision: 'accept' }
+      result: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        revision: 2,
+        proposalId: 'proposal-restart',
+        decision: 'accept',
+        appliedOp: insertOp,
+        tracks: materializedTracks
+      }
     })
-    expect(second.messages[3]).toMatchObject({
+    expect(second.messages[3]).toEqual({
+      jsonrpc: '2.0',
       method: STUDIO_METHODS.editCommitted,
       params: {
         revision: 2,
         op: {
           type: 'resolve_proposal',
           proposalId: 'proposal-restart',
-          decision: 'accept'
+          decision: 'accept',
+          appliedOp: insertOp,
+          tracks: materializedTracks
         }
       }
     })
     expect(harness.store.getDocument()).toMatchObject({
       proposals: [],
       tracks: [{ items: [{ itemId: 'sup-item-1' }] }]
+    })
+    await harness.supervisor.stop()
+  })
+
+  it('clears a rejected proposal without inventing an applied operation', async () => {
+    const harness = await createHarness()
+    harness.supervisor.start()
+    const child = harness.children[0]
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.proposeEdit,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 0,
+        proposalId: 'proposal-reject',
+        op: insertOp
+      }
+    })
+    await until(() => child.messages.length >= 2)
+    child.send({
+      jsonrpc: '2.0',
+      id: 2,
+      method: STUDIO_METHODS.resolveProposal,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 1,
+        proposalId: 'proposal-reject',
+        decision: 'reject'
+      }
+    })
+    await until(() => child.messages.length >= 4)
+    expect(child.messages[2]).toEqual({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        revision: 2,
+        proposalId: 'proposal-reject',
+        decision: 'reject'
+      }
+    })
+    expect(child.messages[3]).toEqual({
+      jsonrpc: '2.0',
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 2,
+        op: {
+          type: 'resolve_proposal',
+          proposalId: 'proposal-reject',
+          decision: 'reject'
+        }
+      }
     })
     await harness.supervisor.stop()
   })

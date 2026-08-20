@@ -37,7 +37,7 @@ import {
   studioError,
   type StudioApplyEditParams,
   type StudioApplyEditResult,
-  type StudioDocumentOperation,
+  type StudioEditCommittedOperation,
   type StudioMediaAsset,
   type StudioMessage,
   type StudioOpenMediaResult,
@@ -169,7 +169,7 @@ function describeError(error: unknown): string {
 function extractCommittedEdit(
   request: unknown,
   response: StudioResponseMessage
-): { revision: number; op: StudioDocumentOperation } | null {
+): { revision: number; op: StudioEditCommittedOperation } | null {
   if (typeof request !== 'object' || request === null) return null
   const candidate = request as { method?: unknown; params?: unknown }
   if (!('result' in response)) return null
@@ -226,12 +226,32 @@ function extractCommittedEdit(
     ) {
       return null
     }
+    if (result.decision === 'accept') {
+      if (
+        typeof result.appliedOp !== 'object' ||
+        result.appliedOp === null ||
+        !Array.isArray(result.tracks)
+      ) {
+        return null
+      }
+      return {
+        revision: result.revision,
+        op: {
+          type: 'resolve_proposal',
+          proposalId: result.proposalId,
+          decision: 'accept',
+          appliedOp: structuredClone(result.appliedOp),
+          tracks: structuredClone(result.tracks)
+        }
+      }
+    }
+    if (result.appliedOp !== undefined || result.tracks !== undefined) return null
     return {
       revision: result.revision,
       op: {
         type: 'resolve_proposal',
         proposalId: result.proposalId,
-        decision: result.decision
+        decision: 'reject'
       }
     }
   }

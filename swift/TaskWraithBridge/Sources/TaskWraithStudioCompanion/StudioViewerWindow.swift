@@ -1995,6 +1995,9 @@ final class StudioViewerAppState {
         if !update.step.proposals.isEmpty {
             await adopt(proposals: update.step.proposals)
         }
+        if !update.step.acceptedInserts.isEmpty {
+            await adopt(acceptedInserts: update.step.acceptedInserts)
+        }
         if !update.step.resolvedProposalIds.isEmpty {
             adopt(resolvedProposals: update.step.resolvedProposalIds)
         }
@@ -2402,6 +2405,26 @@ final class StudioViewerAppState {
         (reviewAttachment ?? attachment).detachProposed()
         reviewTarget.adopt(reviewTimeline: nil)
         Self.report("proposal \(openProposalId) resolved — review cleared")
+    }
+
+    /// Applies the exact host-materialised insert before clearing its ghost.
+    /// The host owns durability and revision identity; this is only immediate
+    /// adoption of that same committed operation into the resident projection.
+    private func adopt(
+        acceptedInserts commits: [StudioCompanionSession.AcceptedInsertCommit]
+    ) async {
+        for commit in commits {
+            guard let sequence = activeSequence else {
+                Self.report("accepted insert held — no committed sequence hydrated")
+                continue
+            }
+            do {
+                let next = try sequence.replacingCommittedSequence(with: commit.sequence)
+                await adopt(sequence: next)
+            } catch {
+                Self.report("accepted insert rejected — \(error)")
+            }
+        }
     }
 
     /// Adopts the committed timeline and makes the Review route able to PLAY

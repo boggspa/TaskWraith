@@ -14,10 +14,11 @@ import {
   classifyStudioMessage,
   studioError,
   studioResult,
-  type StudioDocumentOperation,
+  type StudioEditCommittedOperation,
   type StudioEditOp,
   type StudioNotificationMessage,
   type StudioRequestMessage,
+  type StudioResolveProposalResult,
   type StudioResponseMessage,
   type StudioTranscriptSegment
 } from './StudioProtocol'
@@ -174,13 +175,34 @@ async function handleRequest(
         params.decision
       )
       if (outcome.ok) {
-        return studioResult(request.id, {
-          schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
-          revision: outcome.revision,
-          proposalId: outcome.proposalId,
-          decision: outcome.decision,
-          ...(outcome.appliedOp === undefined ? {} : { appliedOp: outcome.appliedOp })
-        })
+        let result: StudioResolveProposalResult
+        if (outcome.decision === 'accept') {
+          const appliedOp = outcome.appliedOp
+          const tracks = outcome.tracks
+          if (appliedOp === undefined || tracks === undefined) {
+            return studioError(
+              request.id,
+              'store_failure',
+              'accepted proposal result omitted its materialised operation or tracks'
+            )
+          }
+          result = {
+            schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+            revision: outcome.revision,
+            proposalId: outcome.proposalId,
+            decision: outcome.decision,
+            appliedOp,
+            tracks
+          }
+        } else {
+          result = {
+            schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+            revision: outcome.revision,
+            proposalId: outcome.proposalId,
+            decision: outcome.decision
+          }
+        }
+        return studioResult(request.id, result)
       }
       return studioError(request.id, outcome.code, outcome.message, {
         currentRevision: outcome.currentRevision
@@ -233,7 +255,7 @@ export async function handleStudioMessage(
 /** Event pushed to companions after each committed edit (transport arrives later). */
 export function buildEditCommittedNotification(
   revision: number,
-  op: StudioDocumentOperation
+  op: StudioEditCommittedOperation
 ): StudioNotificationMessage {
   return { jsonrpc: '2.0', method: STUDIO_METHODS.editCommitted, params: { revision, op } }
 }
