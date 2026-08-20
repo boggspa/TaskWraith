@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { adjudicateLifecycleEvidence, assertFocusHandoff, parseLifecycleCli } =
+const {
+  adjudicateLifecycleEvidence,
+  assertFocusHandoff,
+  parseLifecycleCli,
+  waitForExactMediaObservation
+} =
   require('./studio-bounded-lifecycle-runner.cjs') as {
     adjudicateLifecycleEvidence: (evidence: Record<string, any>) => Record<string, any>
     assertFocusHandoff: (
@@ -11,6 +16,12 @@ const { adjudicateLifecycleEvidence, assertFocusHandoff, parseLifecycleCli } =
       newPid: number
     ) => Record<string, any>
     parseLifecycleCli: (argv: string[]) => Record<string, any>
+    waitForExactMediaObservation: (
+      plan: Record<string, any>,
+      target: Record<string, any>,
+      name: string,
+      options: Record<string, any>
+    ) => Promise<Record<string, any>>
   }
 
 const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
@@ -142,5 +153,22 @@ describe('bounded Studio lifecycle adjudication', () => {
     })
     expect(parseLifecycleCli(['--help'])).toEqual({ help: true, artifactRoot: null })
     expect(() => parseLifecycleCli([])).toThrow(/artifact-root is required/)
+  })
+
+  it('waits boundedly for exact media adoption instead of sampling the initial No media frame', async () => {
+    let attempts = 0
+    const observation = { assetMatch: { matched: true, distance: 0 } }
+    await expect(
+      waitForExactMediaObservation({}, {}, 'lifecycle-before', {
+        timeoutMs: 100,
+        intervalMs: 0,
+        observe: async () => {
+          attempts += 1
+          if (attempts < 3) throw new Error('does not show the exact generated asset')
+          return observation
+        }
+      })
+    ).resolves.toBe(observation)
+    expect(attempts).toBe(3)
   })
 })

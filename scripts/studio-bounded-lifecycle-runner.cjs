@@ -174,6 +174,16 @@ async function exactMediaObservation(plan, target, name) {
   }
 }
 
+async function waitForExactMediaObservation(plan, target, name, options = {}) {
+  const observe = options.observe || exactMediaObservation
+  return waitFor(
+    `exact hydrated Studio media for ${name}`,
+    () => observe(plan, target, name),
+    options.timeoutMs ?? 45_000,
+    options.intervalMs ?? 500
+  )
+}
+
 async function waitForReplacementCompanion(electronPid, electronPgid, oldPid) {
   return waitFor('replacement Studio Companion', async () => {
     const candidate = await harness.findStudioCompanion(electronPid)
@@ -231,7 +241,11 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
       }
       const beforeJournal = await harness.readStudioJournalOperations(plan)
       const beforeFocus = session.focusSnapshot(context.companion.pid)
-      const beforeMedia = await exactMediaObservation(plan, beforeTarget, 'lifecycle-before')
+      const beforeMedia = await waitForExactMediaObservation(
+        plan,
+        beforeTarget,
+        'lifecycle-before'
+      )
       const beforeProcess = session.exactCompanionProcess(context.companion, context.session.pgid)
       if (beforeProcess.ppid !== context.session.pid) {
         throw new Error('original Companion is not the exact Electron child')
@@ -253,7 +267,7 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         expectedWindowTitle: 'TaskWraith Studio',
         asset: runtime.asset
       }
-      const afterMedia = await exactMediaObservation(plan, afterTarget, 'lifecycle-after')
+      const afterMedia = await waitForExactMediaObservation(plan, afterTarget, 'lifecycle-after')
       const afterJournal = await harness.readStudioJournalOperations(plan)
       const afterFocus = session.focusSnapshot(replacement.candidate.pid)
       const focus = assertFocusHandoff(
@@ -335,7 +349,8 @@ module.exports = {
   assertFocusHandoff,
   parseLifecycleCli,
   processExists,
-  runBoundedLifecycle
+  runBoundedLifecycle,
+  waitForExactMediaObservation
 }
 
 if (require.main === module) {
