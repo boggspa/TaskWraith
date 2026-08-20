@@ -335,7 +335,7 @@ public struct StudioOverlayState: Equatable, Sendable {
 /// was drawn straight through the scrub bar. `testNoTextRowOverlapsTheScrubTrack`
 /// is what keeps that from coming back.
 public enum StudioOverlayMetrics {
-    public static let hudHeight: Double = 92
+    public static let hudHeight: Double = 108
     public static let horizontalMargin: Double = 18
     public static let trackHeight: Double = 5
     /// Distance from the top of the HUD strip to the top of the track.
@@ -346,7 +346,7 @@ public enum StudioOverlayMetrics {
     public static let trackGrabHeight: Double = 22
     public static let timecodeSize: Double = 22
     public static let labelSize: Double = 12
-    /// The content identity is a 43-character Base64URL digest. Twelve-point
+    /// The content identity is a 64-character OCR-safe full-hash token. Twelve-point
     /// atlas text is readable to a person but not reliably distinguishable to
     /// the system OCR used for exact packaged-media custody.
     public static let sourceLabelSize: Double = 14
@@ -354,10 +354,11 @@ public enum StudioOverlayMetrics {
     public static let readoutRowTop: Double = 24
     /// Nudged down against the taller readout so the two read as one row.
     public static let statusRowTop: Double = 30
-    /// Diagnostics get their own row BELOW the source label so a long asset
-    /// label and a worst-case counters string cannot be drawn on top of each
-    /// other. The HUD strip is taller by exactly that row's height.
+    /// Diagnostics performance row BELOW the source label.
     public static let diagnosticsRowTop: Double = 72
+    /// Diagnostics resource row. Keep this explicit: the second row is part of
+    /// the HUD geometry contract and must not drift into the timeline exclusion.
+    public static let diagnosticsResourceRowTop: Double = 88
     public static let infoRowTop: Double = 54
 }
 
@@ -717,22 +718,37 @@ public enum StudioOverlayLayout {
         // grew past the viewport, so the two strings overwrote each other.
         let diagnosticsY = hudTop + metric(StudioOverlayMetrics.diagnosticsRowTop)
         if let diagnostics = state.diagnostics {
-            let line =
+            let performanceLine =
                 "\(diagnostics.hardwareDecodeLabel)  \(diagnostics.syncLabel)"
                 + "  drop \(diagnostics.droppedFrameCount)"
                 + "  held \(diagnostics.retainedFrameCount)"
                 + "  shown \(diagnostics.presentedFrameCount)"
-                + "  cache \(diagnostics.cacheHitCount)"
+            let resourceLine =
+                "cache \(diagnostics.cacheHitCount)"
                 + "  tex \(diagnostics.boundTextureCount)"
                 + "  play \(diagnostics.playerCount)"
                 + "  \(diagnostics.memoryLabel)"
-            let lineWidth =
-                StudioOverlayRenderMetrics.advance(forPointSize: labelSize) * Double(line.count)
+            let performanceWidth =
+                StudioOverlayRenderMetrics.advance(forPointSize: labelSize)
+                    * Double(performanceLine.count)
+            let resourceWidth =
+                StudioOverlayRenderMetrics.advance(forPointSize: labelSize)
+                    * Double(resourceLine.count)
+            let resourceY = hudTop + metric(StudioOverlayMetrics.diagnosticsResourceRowTop)
             texts.append(
                 StudioOverlayText(
-                    string: line,
-                    x: max(margin, width - margin - lineWidth),
+                    string: performanceLine,
+                    x: max(margin, width - margin - performanceWidth),
                     y: diagnosticsY,
+                    pointSize: labelSize,
+                    color: .dimText
+                )
+            )
+            texts.append(
+                StudioOverlayText(
+                    string: resourceLine,
+                    x: max(margin, width - margin - resourceWidth),
+                    y: resourceY,
                     pointSize: labelSize,
                     color: .dimText
                 )

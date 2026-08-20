@@ -511,6 +511,61 @@ final class StudioOverlayModelTests: XCTestCase {
             "the diagnostics row must remain inside the viewport")
     }
 
+    func testActualHostDiagnosticsUseTwoCompleteRowsAt640x375() throws {
+        var subject = state()
+        subject.viewport = StudioOverlayViewport(width: 640, height: 375, scale: 1)
+        subject.sourceLabel = String(repeating: "23456789ACDEFHKM", count: 4)
+        subject.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 123_456,
+            droppedFrameCount: 123_456,
+            retainedFrameCount: 123_456,
+            hardwareDecodeLabel: "hardware 10-bit",
+            syncLabel: "a/v +123.456ms !",
+            memoryLabel: "rss 1234MB",
+            cacheHitCount: 123_456,
+            boundTextureCount: 123_456,
+            playerCount: 123_456
+        )
+        let model = StudioOverlayLayout.build(subject)
+        XCTAssertLessThanOrEqual(StudioOverlayMetrics.hudHeight, 118)
+
+        let source = try XCTUnwrap(model.texts.first { $0.string == subject.sourceLabel })
+        let performance = try XCTUnwrap(model.texts.first { $0.string.contains("hardware 10-bit") })
+        let resources = try XCTUnwrap(model.texts.first { $0.string.hasPrefix("cache ") })
+        XCTAssertTrue(performance.string.contains("a/v +123.456ms !"))
+        XCTAssertTrue(performance.string.contains("drop 123456"))
+        XCTAssertTrue(performance.string.contains("held 123456"))
+        XCTAssertTrue(performance.string.contains("shown 123456"))
+        XCTAssertTrue(resources.string.contains("cache 123456"))
+        XCTAssertTrue(resources.string.contains("tex 123456"))
+        XCTAssertTrue(resources.string.contains("play 123456"))
+        XCTAssertTrue(resources.string.contains("rss 1234MB"))
+
+        func textFrame(_ text: StudioOverlayText) -> StudioOverlayFrame {
+            StudioOverlayFrame(
+                x: text.x,
+                y: text.y,
+                width: StudioOverlayRenderMetrics.width(of: text.string, pointSize: text.pointSize),
+                height: StudioOverlayRenderMetrics.cellHeight(forPointSize: text.pointSize))
+        }
+        func overlaps(_ left: StudioOverlayFrame, _ right: StudioOverlayFrame) -> Bool {
+            left.x < right.maxX && right.x < left.maxX &&
+                left.y < right.maxY && right.y < left.maxY
+        }
+        let sourceFrame = textFrame(source)
+        let performanceFrame = textFrame(performance)
+        let resourceFrame = textFrame(resources)
+        XCTAssertFalse(overlaps(sourceFrame, performanceFrame))
+        XCTAssertFalse(overlaps(sourceFrame, resourceFrame))
+        XCTAssertFalse(overlaps(performanceFrame, resourceFrame))
+        XCTAssertGreaterThanOrEqual(performanceFrame.x, 0)
+        XCTAssertGreaterThanOrEqual(resourceFrame.x, 0)
+        XCTAssertLessThanOrEqual(sourceFrame.maxX, 640)
+        XCTAssertLessThanOrEqual(performanceFrame.maxX, 640)
+        XCTAssertLessThanOrEqual(resourceFrame.maxX, 640)
+        XCTAssertFalse(overlaps(resourceFrame, model.trackFrame))
+    }
+
     func testSourceIdentityUsesAnOcrLegiblePointSize() throws {
         var subject = state()
         subject.sourceLabel = "KbSvponumjnJ1GvMD2RPfzpVKrpwbRlGV4w39VKIp0w"
