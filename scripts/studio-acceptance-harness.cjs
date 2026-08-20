@@ -2875,12 +2875,10 @@ function buildStudioWatchdogLaunchSpec(plan, args, options = {}) {
       '-n',
       '-F',
       '-W',
-      '-i',
-      '/dev/null',
-      '-o',
-      '/dev/stdout',
-      '--stderr',
-      '/dev/stderr',
+      // Do not use open's hidden stdio-routing flags here. On macOS 26 they
+      // make this signed Electron bundle fail in LaunchServices with -10810.
+      // The coordinator's joined evidence remains authoritative and the
+      // watchdog still owns both the waiting launcher and adopted app PGIDs.
       ...launchEnvironment,
       appRoot,
       '--args',

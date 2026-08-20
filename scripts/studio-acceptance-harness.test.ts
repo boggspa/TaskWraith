@@ -1708,6 +1708,9 @@ describe('Studio acceptance harness', () => {
           '--use-mock-keychain'
         ])
       )
+      expect(launchSpec.args).not.toEqual(
+        expect.arrayContaining(['-i', '-o', '--stderr'])
+      )
       for (const [name, value] of Object.entries(plan.spawnPlan.env)) {
         const envIndex = launchSpec.args.findIndex(
           (entry: string, index: number) =>
