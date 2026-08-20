@@ -123,6 +123,18 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     rootStack.spacing = 1
     rootStack.frame = workspaceWindow.contentLayoutRect
     rootStack.autoresizingMask = [.width, .height]
+    // Plain NSViews have no intrinsic height. Without a bounded split, AppKit's
+    // `.fill` solver may give all spare height to the lower stack and collapse
+    // the visible viewer route to zero pixels. Keep the viewer-dominant upper
+    // workspace and its route host proportional at every resizable height.
+    upperStack.heightAnchor.constraint(
+      greaterThanOrEqualTo: rootStack.heightAnchor,
+      multiplier: 0.5
+    ).isActive = true
+    routeStack.heightAnchor.constraint(
+      greaterThanOrEqualTo: viewerDeck.heightAnchor,
+      multiplier: 0.75
+    ).isActive = true
     workspaceWindow.contentView = rootStack
 
     let sourceController = StudioViewerWindowController(
@@ -333,6 +345,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     let view = NSView()
     view.identifier = NSUserInterfaceItemIdentifier(identifier)
     view.setAccessibilityElement(true)
+    view.setAccessibilityIdentifier(identifier)
     view.setAccessibilityRole(.group)
     view.setAccessibilityLabel(accessibilityLabel)
     view.wantsLayer = true

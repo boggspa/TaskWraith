@@ -6,6 +6,17 @@ import XCTest
 
 @MainActor
 final class StudioWorkspaceWindowTests: XCTestCase {
+  private func descendant(
+    of root: NSView,
+    identifier: String
+  ) -> NSView? {
+    if root.identifier?.rawValue == identifier { return root }
+    for child in root.subviews {
+      if let match = descendant(of: child, identifier: identifier) { return match }
+    }
+    return nil
+  }
+
   private func makeWorkspace(
     includeReview: Bool = true
   ) throws -> StudioWorkspaceWindowController {
@@ -61,6 +72,36 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertFalse(workspace.window.isKeyWindow)
     XCTAssertEqual(workspace.lastSnapshot.viewerPresentation, .dual)
     XCTAssertEqual(workspace.lastSnapshot.primaryWindowCount, 1)
+  }
+
+  func testVisibleSourceHostOccupiesPositiveAreaInsideWorkspaceContent() throws {
+    let workspace = try makeWorkspace()
+    workspace.update(
+      visibleRoutes: [.source],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: try XCTUnwrap(StudioWorkspaceViewport(width: 1_280, height: 800))
+    )
+    workspace.show()
+    workspace.window.contentView?.layoutSubtreeIfNeeded()
+
+    let content = try XCTUnwrap(workspace.window.contentView)
+    let sourceHost = try XCTUnwrap(
+      descendant(of: content, identifier: "studio.workspace.viewer.source")
+    )
+    let frame = sourceHost.convert(sourceHost.bounds, to: content)
+    let accessibilityFrame = sourceHost.accessibilityFrame()
+    XCTAssertFalse(sourceHost.isHidden)
+    XCTAssertFalse(content.hasAmbiguousLayout)
+    XCTAssertEqual(
+      sourceHost.accessibilityIdentifier(),
+      "studio.workspace.viewer.source"
+    )
+    XCTAssertGreaterThan(frame.width, 0)
+    XCTAssertGreaterThan(frame.height, 0)
+    XCTAssertGreaterThan(accessibilityFrame.width, 0)
+    XCTAssertGreaterThan(accessibilityFrame.height, 0)
+    XCTAssertTrue(content.bounds.contains(frame))
   }
 
   func testClosingWorkspaceDetachesBothRoutePresentations() throws {
