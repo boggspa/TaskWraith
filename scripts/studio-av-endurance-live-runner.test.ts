@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, truncateSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const {
   parseLiveCli,
+  MAX_OWNER_VIDEO_BYTES,
   normalizeRunOptions,
   requireTerminalBackgroundObservation,
   runLiveAcceptance,
@@ -13,6 +14,7 @@ const {
   validatePostStopPausedState
 } = require('./studio-av-endurance-live-runner.cjs') as {
   parseLiveCli: (argv: string[]) => Record<string, any>
+  MAX_OWNER_VIDEO_BYTES: number
   normalizeRunOptions: (options?: Record<string, any>) => Record<string, any>
   requireTerminalBackgroundObservation: (
     snapshot: Record<string, any>,
@@ -300,6 +302,16 @@ describe('Studio AV endurance live runner', () => {
     expect(() => normalizeRunOptions({ timeoutMs: 180_000, openTimeoutMs: 180_000 })).toThrow(
       /remaining watchdog budget/i
     )
+    const oversizedPath = path.join(root('oversized-media'), 'oversized.mp4')
+    writeFileSync(oversizedPath, Buffer.from([0]))
+    truncateSync(oversizedPath, MAX_OWNER_VIDEO_BYTES + 1)
+    expect(() =>
+      normalizeRunOptions({
+        launch: true,
+        mediaPath: oversizedPath,
+        mimeType: 'video/mp4'
+      })
+    ).toThrow(/at or below 536870912 bytes/i)
     expect(() => normalizeRunOptions({ launch: true, mimeType: 'video/mp4' })).toThrow(
       /media path/i
     )

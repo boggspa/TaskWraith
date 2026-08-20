@@ -12,6 +12,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const mediaLimits = require('../src/shared/mediaLimits.json')
 const harness = require('./studio-acceptance-harness.cjs')
 const acceptanceSession = require('./studio-acceptance-session.cjs')
 const diagnostics = require('./studio-bounded-diagnostics-runner.cjs')
@@ -21,6 +22,7 @@ const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS } = require('./studio-pixel-evid
 
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000
 const DEFAULT_OPEN_TIMEOUT_MS = 3 * 60 * 1_000
+const MAX_OWNER_VIDEO_BYTES = mediaLimits.transcriptMediaMaxVideoBytes
 const AUDIO_PROBE_SECONDS = 2
 
 function isRecord(value) {
@@ -168,6 +170,24 @@ function normalizeRunOptions(options = {}) {
     !['video/mp4', 'video/quicktime'].includes(String(args.mimeType || '').toLowerCase())
   ) {
     throw new Error('live endurance launch requires mimeType video/mp4 or video/quicktime')
+  }
+  if (args.launch) {
+    let mediaStat
+    try {
+      mediaStat = fs.lstatSync(args.mediaPath)
+    } catch (error) {
+      throw new Error(`live endurance media is unreadable: ${error.message}`)
+    }
+    if (
+      mediaStat.isSymbolicLink() ||
+      !mediaStat.isFile() ||
+      mediaStat.size <= 0 ||
+      mediaStat.size > MAX_OWNER_VIDEO_BYTES
+    ) {
+      throw new Error(
+        `live endurance media must be a non-empty regular file at or below ${MAX_OWNER_VIDEO_BYTES} bytes`
+      )
+    }
   }
   if (args.packagedExecutablePath !== null) {
     args.packagedExecutablePath = isSafeAbsolute(
@@ -719,6 +739,7 @@ module.exports = {
   AUDIO_PROBE_SECONDS,
   DEFAULT_OPEN_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
+  MAX_OWNER_VIDEO_BYTES,
   assertAssetInsideArtifactRoot,
   buildPtsCensus,
   captureRawPlayableSample,

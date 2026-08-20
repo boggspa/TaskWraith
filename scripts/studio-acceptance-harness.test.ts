@@ -5,6 +5,7 @@ import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { PNG } from 'pngjs'
+import mediaLimits from '../src/shared/mediaLimits.json'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // The production harness is CommonJS because it is run directly by Node.
@@ -203,7 +204,7 @@ const {
     mediaPath: string
     mimeType: string
     userDataPath: string
-  }) => Promise<{
+  }, adapters?: Record<string, any>) => Promise<{
     sha256: string
     mimeType: string
     sourcePath: string
@@ -1941,6 +1942,44 @@ describe('Studio acceptance harness', () => {
     expect(asset.assetPath.startsWith((await fsPromises.realpath(userDataPath)) + path.sep)).toBe(
       true
     )
+  })
+
+  it('refuses owner video over the shared product cap before materialization', async () => {
+    const root = await temporaryRoot('studio-acceptance-oversized-media-')
+    const source = path.join(root, 'oversized.mp4')
+    const userDataPath = path.join(root, 'home', 'Library', 'Application Support', 'isolated')
+    await fsPromises.writeFile(source, Buffer.from([0]))
+    await fsPromises.truncate(source, mediaLimits.transcriptMediaMaxVideoBytes + 1)
+    await expect(
+      materializeOwnedMedia({ mediaPath: source, mimeType: 'video/mp4', userDataPath })
+    ).rejects.toThrow(/shared 536870912-byte product cap/i)
+    await expect(fsPromises.stat(path.join(userDataPath, 'transcript-media'))).rejects.toMatchObject(
+      { code: 'ENOENT' }
+    )
+  })
+
+  it('removes an oversized or identity-changed temp copy before final rename', async () => {
+    const root = await temporaryRoot('studio-acceptance-media-copy-race-')
+    const source = path.join(root, 'source.mp4')
+    const sourceBytes = Buffer.from('bounded source')
+    const userDataPath = path.join(root, 'home', 'Library', 'Application Support', 'isolated')
+    await fsPromises.writeFile(source, sourceBytes)
+    const sha256 = crypto.createHash('sha256').update(sourceBytes).digest('base64url')
+    const shard = path.join(userDataPath, 'transcript-media', sha256.slice(0, 2))
+    const target = path.join(shard, `${sha256}.mp4`)
+    await expect(
+      materializeOwnedMedia(
+        { mediaPath: source, mimeType: 'video/mp4', userDataPath },
+        {
+          copyFile: async (_source: string, temp: string) => {
+            await fsPromises.writeFile(temp, Buffer.from([0]))
+            await fsPromises.truncate(temp, mediaLimits.transcriptMediaMaxVideoBytes + 1)
+          }
+        }
+      )
+    ).rejects.toThrow(/temp copy violates.*product byte cap or identity/i)
+    await expect(fsPromises.stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fsPromises.readdir(shard)).toEqual([])
   })
 
   it('generates and seals the bounded 30-second speech fixture inside its artifact root', async () => {
@@ -5541,8 +5580,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '27e6613cad8208df043a8ad4ed1fe5cb50f5a27726a3d21b839194c0d7d1f865',
-      sourceCount: 2283,
+      sourceDigest: '2c58038d881cc50aa29c106859eb1a2a1fd2e2f958eaa2b18ca79af0fd1755be',
+      sourceCount: 2284,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,

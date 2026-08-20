@@ -23,6 +23,7 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 const { execFile, fork } = require('node:child_process')
 const { PNG } = require('pngjs')
+const mediaLimits = require('../src/shared/mediaLimits.json')
 const {
   buildElectronSpawnPlan,
   assertExactChildOwnsDebugPorts
@@ -234,8 +235,8 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '27e6613cad8208df043a8ad4ed1fe5cb50f5a27726a3d21b839194c0d7d1f865',
-  sourceCount: 2283,
+  sourceDigest: '2c58038d881cc50aa29c106859eb1a2a1fd2e2f958eaa2b18ca79af0fd1755be',
+  sourceCount: 2284,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
@@ -2391,15 +2392,23 @@ async function sha256Base64Url(filePath) {
   return hash.digest('base64url')
 }
 
-async function materializeOwnedMedia(options) {
+async function materializeOwnedMedia(options, adapters = {}) {
   const sourcePath = path.resolve(options.mediaPath)
   const before = await fsPromises.lstat(sourcePath)
   if (before.isSymbolicLink() || !before.isFile() || before.size <= 0) {
     throw new Error('Acceptance media must be a non-empty regular file, not a symlink')
   }
+  const mimeType = options.mimeType.toLowerCase()
+  if (
+    mimeType.startsWith('video/') &&
+    before.size > mediaLimits.transcriptMediaMaxVideoBytes
+  ) {
+    throw new Error(
+      `Acceptance video exceeds the shared ${mediaLimits.transcriptMediaMaxVideoBytes}-byte product cap`
+    )
+  }
   const realSource = await fsPromises.realpath(sourcePath)
   const hash = await sha256Base64Url(realSource)
-  const mimeType = options.mimeType.toLowerCase()
   const baseDir = path.join(options.userDataPath, TRANSCRIPT_MEDIA_DIR)
   const shard = path.join(baseDir, hash.slice(0, 2))
   const target = path.join(shard, `${hash}.${mediaExtension(mimeType)}`)
@@ -2416,8 +2425,22 @@ async function materializeOwnedMedia(options) {
     if (!error || error.code !== 'ENOENT') throw error
     const temp = path.join(shard, `.${hash}.${process.pid}.tmp`)
     try {
-      await fsPromises.copyFile(realSource, temp, fs.constants.COPYFILE_EXCL)
+      await (adapters.copyFile || fsPromises.copyFile)(
+        realSource,
+        temp,
+        fs.constants.COPYFILE_EXCL
+      )
       await fsPromises.chmod(temp, 0o600)
+      const copied = await fsPromises.lstat(temp)
+      if (
+        copied.isSymbolicLink() ||
+        !copied.isFile() ||
+        copied.size !== before.size ||
+        (mimeType.startsWith('video/') &&
+          copied.size > mediaLimits.transcriptMediaMaxVideoBytes)
+      ) {
+        throw new Error('Acceptance media temp copy violates the shared product byte cap or identity')
+      }
       const copiedHash = await sha256Base64Url(temp)
       if (copiedHash !== hash) throw new Error('Acceptance media copy hash mismatch')
       await fsPromises.rename(temp, target)
@@ -2427,12 +2450,23 @@ async function materializeOwnedMedia(options) {
     }
   }
 
+  const assetPath = await fsPromises.realpath(target)
+  const materialized = await fsPromises.lstat(assetPath)
+  if (
+    materialized.isSymbolicLink() ||
+    !materialized.isFile() ||
+    materialized.size !== before.size ||
+    (mimeType.startsWith('video/') &&
+      materialized.size > mediaLimits.transcriptMediaMaxVideoBytes)
+  ) {
+    throw new Error('Materialized acceptance media violates the shared product byte cap or identity')
+  }
   return {
     sha256: hash,
     mimeType,
     sourcePath: realSource,
-    assetPath: await fsPromises.realpath(target),
-    byteLength: before.size
+    assetPath,
+    byteLength: materialized.size
   }
 }
 
