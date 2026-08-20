@@ -565,6 +565,7 @@ import {
 } from './lib/ensembleAgentPool'
 import {
   deriveActiveEnsembleWorkingPresentation,
+  ENSEMBLE_NEUTRAL_HUE_CLASS,
   resolveWorkingIndicatorProviderPresentation
 } from './lib/workingIndicatorPresentation'
 import {
@@ -22004,12 +22005,19 @@ function App(): React.JSX.Element {
     // (commonly 'codex'), so the indicator would show "Codex
     // Thinking…" for ~50-200ms even when Kimi or Gemini is about to
     // speak — confusing and wrong. Show a neutral "Ensemble" label
-    // with no provider tint instead.
+    // instead.
+    //
+    // Neutral means the ENSEMBLE hue, not the absence of one. A null class
+    // leaves `--message-working-accent` inheriting `var(--accent)` — the
+    // user-configurable app accent, gray under graphite/obsidian — so the
+    // indicator's colour tracked the theme rather than saying anything about
+    // the round. `provider` stays null: no adapter owns this moment, and
+    // 'ensemble' is a hue class, never a ProviderId.
     if (currentChat?.chatKind === 'ensemble') {
       return {
         thinkingProviderLabel: 'Ensemble',
         thinkingProvider: null as ProviderId | null,
-        thinkingProviderClass: null as string | null,
+        thinkingProviderClass: ENSEMBLE_NEUTRAL_HUE_CLASS as string | null,
         thinkingModelBadge: null as string | null
       }
     }
@@ -22089,7 +22097,7 @@ function App(): React.JSX.Element {
   const sideThinkingProvider = sideChat?.chatKind === 'ensemble' ? null : sideProvider
   const sideThinkingProviderClass =
     sideChat?.chatKind === 'ensemble'
-      ? null
+      ? ENSEMBLE_NEUTRAL_HUE_CLASS
       : sideThinkingPresentation.providerClass
   const sideThinkingModelBadge =
     sideChat?.chatKind === 'ensemble' ? null : sideThinkingPresentation.modelBadge
