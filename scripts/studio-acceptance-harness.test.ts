@@ -3344,8 +3344,12 @@ describe('Studio acceptance harness', () => {
     expect(driverSource).toContain('request.allowForegroundInput &&')
     expect(driverSource).toContain(
       'if request.inputDelivery == "foreground-global-explicit" {\n' +
-        '        try activateExactWindowForExplicitForeground('
+        '        guard let currentForeground = NSWorkspace.shared.frontmostApplication,'
     )
+    expect(driverSource).toContain('try activateExactWindowForExplicitForeground(')
+    expect(driverSource).toContain('try restoreForegroundAfterExplicitInput(')
+    expect(driverSource).toContain('foregroundToRestore = nil')
+    expect(driverSource).toContain('_ = previous.activate(options: [.activateAllWindows])')
     const activationStart = driverSource.indexOf(
       'func activateExactWindowForExplicitForeground('
     )

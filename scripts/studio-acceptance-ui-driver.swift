@@ -1422,6 +1422,32 @@ func activateExactWindowForExplicitForeground(
     try validateWindow(request)
 }
 
+func restoreForegroundAfterExplicitInput(
+    _ previous: NSRunningApplication,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws {
+    guard !previous.isTerminated,
+          previous.processIdentifier != request.expectedPid,
+          previous.activate(options: [.activateAllWindows]) else {
+        throw DriverFailure.refused("prior foreground application is unavailable for restoration")
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline &&
+        (application.isActive ||
+            NSWorkspace.shared.frontmostApplication?.processIdentifier !=
+                previous.processIdentifier)
+    {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard !application.isActive,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+            previous.processIdentifier else {
+        throw DriverFailure.refused("prior foreground application was not restored")
+    }
+    try validateWindow(request)
+}
+
 func boundedScreenshotURL(_ path: String, artifactRoot: String) throws -> URL {
     let root = URL(fileURLWithPath: artifactRoot).standardizedFileURL
     let destination = URL(fileURLWithPath: path).standardizedFileURL
@@ -2078,12 +2104,26 @@ do {
             expectedLabel: label
         )
     }
+    var foregroundToRestore: NSRunningApplication?
     if request.inputDelivery == "foreground-global-explicit" {
+        guard let currentForeground = NSWorkspace.shared.frontmostApplication,
+              currentForeground.processIdentifier != request.expectedPid else {
+            throw DriverFailure.refused("explicit foreground input has no distinct prior app")
+        }
+        foregroundToRestore = currentForeground
         try activateExactWindowForExplicitForeground(
             request,
             application: application,
             window: accessibilityWindow
         )
+    }
+    defer {
+        if let previous = foregroundToRestore,
+           !previous.isTerminated,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid
+        {
+            _ = previous.activate(options: [.activateAllWindows])
+        }
     }
     try validateWindow(request)
 
@@ -2485,6 +2525,15 @@ do {
             throw DriverFailure.refused("unsupported bounded action at index \(index)")
         }
         usleep(120_000)
+    }
+
+    if let previous = foregroundToRestore {
+        try restoreForegroundAfterExplicitInput(
+            previous,
+            request: request,
+            application: application
+        )
+        foregroundToRestore = nil
     }
 
     let formatter = ISO8601DateFormatter()
