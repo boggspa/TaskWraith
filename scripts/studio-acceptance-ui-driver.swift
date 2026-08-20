@@ -591,14 +591,27 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
         visited += 1
-        let accessibilityLabel =
-            stringAttribute(kAXIdentifierAttribute, of: element) ??
-            stringAttribute(kAXDescriptionAttribute, of: element) ??
-            stringAttribute(kAXTitleAttribute, of: element)
-        if accessibilityLabel == "Playback",
-            !labeledMatches.contains(where: { CFEqual($0, element) })
+        // A transcript segment can truthfully contain the single word
+        // "Playback" and is also exposed as an AXButton. Do not count a label
+        // before proving the complete operable transport identity promised by
+        // the product: its stable identifier + label, role, action and state.
+        if stringAttribute(kAXIdentifierAttribute, of: element) == "Playback",
+            stringAttribute(kAXDescriptionAttribute, of: element) == "Playback",
+            stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole
         {
-            labeledMatches.append(element)
+            var rawActions: CFArray?
+            let actionStatus = AXUIElementCopyActionNames(element, &rawActions)
+            let actionNames = rawActions as? [String]
+            let playbackValue = stringAttribute(kAXValueAttribute, of: element)
+            if actionStatus == .success,
+                let actionNames,
+                actionNames.contains(kAXPressAction),
+                let playbackValue,
+                playbackValue == "playing" || playbackValue == "paused",
+                !labeledMatches.contains(where: { CFEqual($0, element) })
+            {
+                labeledMatches.append(element)
+            }
         }
         guard depth < 8 else { continue }
         var rawChildren: CFTypeRef?
@@ -625,6 +638,13 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
             labeledMatches.isEmpty
                 ? "Playback accessibility control is absent"
                 : "Playback accessibility control is duplicated"
+        )
+    }
+    guard stringAttribute(kAXIdentifierAttribute, of: playback) == "Playback",
+        stringAttribute(kAXDescriptionAttribute, of: playback) == "Playback"
+    else {
+        throw DriverFailure.refused(
+            "Playback accessibility control lost its exact identity"
         )
     }
     guard stringAttribute(kAXRoleAttribute, of: playback) == kAXButtonRole else {

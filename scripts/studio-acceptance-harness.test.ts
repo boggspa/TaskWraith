@@ -3529,8 +3529,49 @@ describe('Studio acceptance harness', () => {
     expect(driverSource).toContain(
       'AXUIElementPerformAction(playback, kAXPressAction as CFString) == .success'
     )
-    expect(driverSource).toContain('accessibilityLabel == "Playback"')
+    const playbackLookupStart = driverSource.indexOf(
+      'func exactAccessibilityPlaybackControl('
+    )
+    const playbackLookupEnd = driverSource.indexOf(
+      'let transportMutationAccessibilityLabel',
+      playbackLookupStart
+    )
+    const playbackLookupSource = driverSource.slice(playbackLookupStart, playbackLookupEnd)
+    const playbackAppendIndex = playbackLookupSource.indexOf('labeledMatches.append(element)')
+    expect(playbackLookupStart).toBeGreaterThan(0)
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXIdentifierAttribute, of: element) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXDescriptionAttribute, of: element) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole'
+    )
+    expect(playbackLookupSource).toContain('actionNames.contains(kAXPressAction)')
+    expect(playbackLookupSource).toContain(
+      'playbackValue == "playing" || playbackValue == "paused"'
+    )
+    for (const exactIdentityFragment of [
+      'stringAttribute(kAXIdentifierAttribute, of: element) == "Playback"',
+      'stringAttribute(kAXDescriptionAttribute, of: element) == "Playback"',
+      'stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole',
+      'actionNames.contains(kAXPressAction)',
+      'playbackValue == "playing" || playbackValue == "paused"'
+    ]) {
+      expect(playbackLookupSource.indexOf(exactIdentityFragment)).toBeGreaterThan(0)
+      expect(playbackLookupSource.indexOf(exactIdentityFragment)).toBeLessThan(
+        playbackAppendIndex
+      )
+    }
     expect(driverSource).toContain('!labeledMatches.contains(where: { CFEqual($0, element) })')
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXIdentifierAttribute, of: playback) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXDescriptionAttribute, of: playback) == "Playback"'
+    )
+    expect(driverSource).toContain('Playback accessibility control lost its exact identity')
     expect(driverSource).toContain('playbackValueBefore == observedBefore')
     expect(driverSource).toContain('playbackValueAfter == observedAfter')
     const playbackPressStart = driverSource.indexOf('func pressAccessibilityPlayback(')
