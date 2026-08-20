@@ -1778,6 +1778,16 @@ final class StudioViewerWindowController {
         window.firstResponder === view
     }
 
+    /// Hands the shared workspace's next keyboard shortcut to this route once
+    /// its presentation view is actually attached. Route visibility and route
+    /// focus arrive as separate host projections, so callers may retry after
+    /// attachment without reaching into the private Metal view.
+    @discardableResult
+    func focusPresentation() -> Bool {
+        guard isPresentationAttached else { return false }
+        return window.makeFirstResponder(view)
+    }
+
     var audioPlayerIdentity: ObjectIdentifier {
         view.audioPlayerIdentity
     }

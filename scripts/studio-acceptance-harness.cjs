@@ -233,12 +233,12 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '827d300be232aa58fe8d60ee40337ece87b169d8c50947615988f8d1db2e41b4',
+  sourceDigest: 'c373877ca5411fee4f9f0d3bbf1211066f88ef7e10677e06a6a6b6400e6b6a15',
   sourceCount: 2282,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
-  companionSha256: '7f393fd30db4a2637f44974bb43e7bffd3cc34602d3aa98c51a71ccee801822d',
+  companionSha256: '5124cc06f8bd8a6e8541fb0856a4fbbc77cfd219adb32f52bb5251f41459348e',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
   bridgeDaemonSha256: '60cf0ce0678e39814182bfa50e2386e0dc3e0ad86eefc05dd90d741f49205a91'
 })

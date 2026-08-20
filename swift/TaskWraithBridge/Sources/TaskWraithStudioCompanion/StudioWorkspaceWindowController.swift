@@ -30,6 +30,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   private var visibleRoutes: Set<StudioViewerRoute> = [.source]
   private var activeSequence: StudioTimelineSequence?
   private var activeProposalId: String?
+  private var pendingFirstResponderRoute: StudioViewerRoute?
   private var viewport: StudioWorkspaceViewport
   private var hasPresented = false
 
@@ -222,6 +223,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
       ? .source
       : route
     presentationState.setActiveRoute(availableRoute)
+    pendingFirstResponderRoute = availableRoute
     refresh()
   }
 
@@ -255,6 +257,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
 
   func windowWillClose(_ notification: Notification) {
     hasPresented = false
+    pendingFirstResponderRoute = presentationState.activeRoute
     sourceController.detachPresentation()
     reviewController?.detachPresentation()
   }
@@ -335,6 +338,18 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
       } else {
         reviewController.detachPresentation()
       }
+    }
+
+    guard let pendingFirstResponderRoute else { return }
+    let focused: Bool
+    switch pendingFirstResponderRoute {
+    case .source:
+      focused = sourceController.focusPresentation()
+    case .review:
+      focused = reviewController?.focusPresentation() ?? false
+    }
+    if focused {
+      self.pendingFirstResponderRoute = nil
     }
   }
 

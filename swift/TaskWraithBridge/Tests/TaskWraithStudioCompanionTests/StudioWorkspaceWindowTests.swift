@@ -39,6 +39,45 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     )
   }
 
+  private func makeReviewTimeline() -> StudioProposedTimeline {
+    let timebase = StudioTimebase(timescale: 600, frameDurationTicks: 20)!
+    let op = StudioInsertRangeOp(
+      itemId: "insert-workspace-focus",
+      assetId: "asset-inserted",
+      trackId: nil,
+      sourceIn: StudioRationalTime(n: 0, d: 600)!,
+      sourceOut: StudioRationalTime(n: 600, d: 600)!,
+      at: StudioRationalTime(n: 1_200, d: 600)!
+    )
+    return StudioProposedTimeline(
+      proposal: StudioEditProposal(
+        proposalId: "proposal-workspace-focus",
+        createdRevision: 1,
+        op: op
+      ),
+      timebase: timebase
+    )!
+  }
+
+  private func makeKeyEvent(
+    in window: NSWindow,
+    characters: String,
+    keyCode: UInt16
+  ) -> NSEvent {
+    NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: [],
+      timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: window.windowNumber,
+      context: nil,
+      characters: characters,
+      charactersIgnoringModifiers: characters,
+      isARepeat: false,
+      keyCode: keyCode
+    )!
+  }
+
   func testOneWorkspaceWindowOwnsBothExistingRoutePresentations() throws {
     if ProcessInfo.processInfo.environment["CI"] != nil {
         throw XCTSkip(
@@ -106,6 +145,56 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertGreaterThan(accessibilityFrame.width, 0)
     XCTAssertGreaterThan(accessibilityFrame.height, 0)
     XCTAssertTrue(content.bounds.contains(frame))
+  }
+
+  func testNewlyVisibleActiveRouteReceivesKeyboardInput() throws {
+    let workspace = try makeWorkspace()
+    let review = try XCTUnwrap(workspace.reviewController)
+    let viewport = try XCTUnwrap(StudioWorkspaceViewport(width: 1_280, height: 800))
+    workspace.update(
+      visibleRoutes: [.source],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+    workspace.show()
+    XCTAssertTrue(workspace.sourceController.isPresentationFirstResponder)
+
+    // Route activation precedes the host-visible route projection in the app
+    // state. Remember that keyboard target until the newly visible route has
+    // actually attached to the shared workspace window.
+    workspace.setActiveRoute(.review)
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: viewport
+    )
+
+    XCTAssertEqual(workspace.lastSnapshot.viewerPresentation, .single(.review))
+    XCTAssertTrue(workspace.routeHostIsVisible(.review))
+    XCTAssertTrue(
+      review.isPresentationFirstResponder,
+      "the active visible route must receive the next keyboard shortcut"
+    )
+
+    review.adopt(reviewTimeline: makeReviewTimeline())
+    XCTAssertEqual(review.activeReviewContext?.version, .current)
+    workspace.window.sendEvent(
+      makeKeyEvent(in: workspace.window, characters: "v", keyCode: 9)
+    )
+    XCTAssertEqual(
+      review.activeReviewContext?.version,
+      .proposed,
+      "the focused Review route must handle the real v key event"
+    )
+
+    workspace.window.close()
+    workspace.show()
+    XCTAssertTrue(
+      review.isPresentationFirstResponder,
+      "reopening must restore keyboard focus to the still-active Review route"
+    )
   }
 
   func testClosingWorkspaceDetachesBothRoutePresentations() throws {
