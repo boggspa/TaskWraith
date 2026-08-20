@@ -1,7 +1,7 @@
 # AppDrive — agent actuation over TaskWraith-owned surfaces
 
-**Status:** Written 2026-07-26. Implementation status re-verified against the tree **2026-08-16** — see §0a, which supersedes the per-slice status in §11 wherever they disagree.
-**Scope of this document:** Tiers 0, 1, 3 and 4 have shipped. Tier 2 (any-origin web) shipped in 1.9.5 **ahead of its stated gate**; §0a records what that means and what is still owed. Tier 5 remains out of scope, and Tier 3-as-designed (XCUITest/idb) was overtaken by the Simulator Canvas that shipped instead.
+**Status:** Written 2026-07-26. Implementation status re-verified against the tree **2026-08-20** — see §0a, which supersedes the per-slice status in §11 wherever they disagree. The retrospective shipped contract is [AppDrive V1](appdrive-v1-contract.md).
+**Scope of this document:** Tiers 0, 2, 3 and 4 have shipped. Tier 1’s loopback-only fence was skipped when Tier 2 (any-origin web) shipped in 1.9.5 **ahead of its stated gate**; §0a records that product decision and the residual risk. Tier 5 remains out of scope, and Tier 3-as-designed (XCUITest/idb) was overtaken by the Simulator Canvas that shipped instead.
 **Citation convention:** source links point at a **file, not a line**. They previously carried `:NNN` anchors, and on 2026-08-16 only 3 of 43 symbol-anchored citations still landed within five lines of the symbol they named — one pointed past end-of-file — so the anchors were removed rather than re-pinned. The backticked symbol name beside each link is the locator; search for it. A handful of bare `` `:NNN` `` references remain inside prose as relative hints and are subject to the same drift.
 
 ---
@@ -50,23 +50,29 @@ Two consequences the rest of this document does not yet reflect:
    by shipping. If a fence is still wanted it needs re-proposing against the
    any-origin product, not restoring as designed.
 
-### Still open
+### Residuals closed 2026-08-20
 
-- **S9 `AppDriveLease` for web/simulator.** Native has a real lease (expiry,
-  step budget, revocation). Web actuation still rides an ordinary
-  `canvasInteraction` / `webBrowsing` session grant with no expiry or budget.
-  The `appDrive` **service id** remains correctly rejected (§3.2); it is the
-  *lease* that is absent, and the two were bundled in the original S9.
-- **S11 new verbs.** `CanvasActionInput.kind` is still `click | fill`. No
-  keyboard, scroll, hover, select or `wait_for`.
-- **S8 authority-role union.** Still hand-declared in at least
-  `BossApprovalReview.ts` and `EnsembleOrchestrator.ts`.
-- **S13 drive-session reporting.** The observe-act-verify *contract* is stated
-  in the tool catalogue, but there is no drive-session report or actor/verifier
-  split.
-- **An "AppDrive V1" contract document.** The roadmap made defining one the
-  gating item before claiming V1. The product shipped without it, so this is now
-  retrospective: write down what the shipped contract *is*.
+- **S9 web/Simulator lease:** one exact, user-minted, expiring and
+  step-bounded `AppDriveLeaseRegistry` now governs both surfaces. Navigation,
+  close, human takeover, terminal Run/chat state, expiry and budget exhaustion
+  revoke it.
+- **S11 verbs:** web Canvas now supports allowlisted non-text `key`, `scroll`,
+  `hover`, `select`, and bounded read-only `wait_for` alongside click/fill.
+- **S8 authority roles:** the shared `EnsembleAuthorityRole` declaration is the
+  canonical vocabulary; legacy literals map explicitly at compatibility seams.
+- **S13 reporting and verifier split:** bounded value-free reports cover web,
+  Simulator and managed native sessions. Completion is actor-bound; a trusted
+  post-action observation receipt binds report/action/surface/verifier; an
+  approved lease can require a different Ensemble participant to attest the
+  postcondition. Managed native actions carry mandatory driver verification and
+  may receive a second-participant attestation; their current lease remains
+  Run/provider-bound rather than claiming participant-required mode.
+- **AppDrive V1 contract:** [appdrive-v1-contract.md](appdrive-v1-contract.md)
+  records the retrospective shipped boundary, including the any-origin web
+  decision and the features explicitly outside V1.
+
+There are no remaining construction items in this reality-pass list. Future
+surface expansion is V2 product work, not unfinished V1 implementation.
 
 ---
 
@@ -454,13 +460,15 @@ observe (snapshot + inputEpoch)
 
 **Actor/verifier split is where the ensemble is a genuine edge**, and it maps directly onto fan-out: the operator seat proposes, a cheaper seat checks the after-state against the stated intent before the lease advances. Hosted single-agent products structurally cannot do this. It is expensive; make it a per-lease option, default on for consequential actions.
 
-**New verbs** (`CanvasActVerb`): `key` (named-key whitelist only — Enter/Tab/Escape/arrows/Backspace/Delete/Home/End/PageUp/PageDown plus modifier combos; never arbitrary key codes), `type`, `scroll`, `hover`, `select`. Plus `wait_for` as a new driver method.
+**Shipped web verbs** (`CanvasActionKind`): `key` (named non-text key whitelist only — Enter/Tab/Escape/arrows/Backspace/Delete/Home/End/PageUp/PageDown/Space; never arbitrary key codes), `scroll`, `hover`, and `select`, alongside click/fill. `wait_for` is the bounded read-only observation primitive. Text entry remains `fill`; there is no separate arbitrary typing verb.
 
 **Shipped Tier 4 difference:** the native `window` driver is intentionally not this generic future-verb surface. Its structured input scope is AX-only `observe`, `inspect`, `click`, and `fill`, with a safety-screened capture path; it has no keyboard, coordinate/CGEvent, pixel, eval, network, console, reload, resize, annotate, or sketch path. A native action must follow a fresh observation and is followed by a required re-observation before another action (§12b).
 
 **Explicitly not in v1:** drag, right-click, double-click, file upload (already refused, [CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)), arbitrary key codes, multi-action batches.
 
-Today's verb set is click + fill only — no keyboard at all beyond setting an input value, no scroll, no hover ([CanvasWebDriver.ts](../src/main/canvas/CanvasWebDriver.ts)). Observation is ~90% built; actuation is ~40%.
+The web verb set and its public MCP catalogue are now complete for V1. Drag,
+right-click, double-click, file upload, arbitrary key codes and multi-action
+batches remain deliberately excluded.
 
 ---
 
