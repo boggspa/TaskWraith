@@ -116,6 +116,10 @@ function exactJsonEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function exactGeometryEqual(left, right) {
+  return ['x', 'y', 'width', 'height'].every((key) => left?.[key] === right?.[key])
+}
+
 function ensureSafeRegularPath(filePath, artifactRoot, label, maximumBytes = MAX_CAPTURE_BYTES) {
   if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
     throw new Error(`${label} must be an absolute path`)
@@ -577,8 +581,8 @@ function requireCaptureBinding(
   }
   const registration = comparison.registration
   if (
-    !exactJsonEqual(registration.sourceHostFrame, rawCapture.sourceHostFrame) ||
-    !exactJsonEqual(registration.logicalHudOverlayHeight, rawCapture.hudOverlayHeight)
+    !exactGeometryEqual(registration.sourceHostFrame, rawCapture.sourceHostFrame) ||
+    registration.logicalHudOverlayHeight !== rawCapture.hudOverlayHeight
   ) {
     throw new Error(`sample ${index} pixel registration geometry was changed`)
   }

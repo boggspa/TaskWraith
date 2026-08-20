@@ -40,7 +40,9 @@ const peakText = 'av1 pf=0 ap=0 err=0 errms=0.000 win=30000 winms=0.030 drawn=1 
 const resourceText = 'res1 dec=1 cap=3 surf=1 ids=0000002A'
 
 const windowBounds = { x: 0, y: 0, width: 320, height: 180 }
-const sourceHostFrame = { x: 1, y: 1, width: 318, height: 178 }
+// Preserve the live AX driver's non-canonical JSON key order. Geometry joins
+// are field-exact; object serialization order is not evidence.
+const sourceHostFrame = { y: 1, width: 318, height: 178, x: 1 }
 const hudOverlayHeight = 20
 
 function sha256Bytes(value: Buffer) {
