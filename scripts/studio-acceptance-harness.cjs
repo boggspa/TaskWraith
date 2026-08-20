@@ -486,12 +486,20 @@ function buildStudioAcceptancePlan(options = {}) {
       path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance', instanceId)
   )
   const home = path.resolve(options.home || path.join(artifactRoot, 'home'))
-  const profile = resolveUnpackagedDevUserDataPath({
+  const unpackagedProfile = resolveUnpackagedDevUserDataPath({
     instanceId,
     platform: options.platform || process.platform,
     home,
     env: options.env || process.env
   })
+  const profile = options.packagedExecutablePath
+    ? {
+        ...unpackagedProfile,
+        appName: 'taskwraith',
+        userDataPath: path.join(home, 'Library', 'Application Support', 'taskwraith'),
+        isPackagedProfile: true
+      }
+    : unpackagedProfile
   const spawnPlan = buildElectronSpawnPlan({
     instanceId,
     repoRoot,
@@ -499,6 +507,7 @@ function buildStudioAcceptancePlan(options = {}) {
     platform: options.platform || process.platform,
     workload: 'dual_run',
     fxPosture: 'reduce_motion',
+    userDataPath: profile.userDataPath,
     ...(options.remoteDebuggingPort == null
       ? {}
       : { remoteDebuggingPort: options.remoteDebuggingPort }),

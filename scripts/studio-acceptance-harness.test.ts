@@ -1670,6 +1670,14 @@ describe('Studio acceptance harness', () => {
       expect(plan.spawnPlan.packaged).toBe(true)
       expect(plan.spawnPlan.electronBinary).toBe(packagedExecutablePath)
       expect(plan.spawnPlan.argv).not.toContain('.')
+      expect(plan.profile).toMatchObject({
+        appName: 'taskwraith',
+        userDataPath: path.join(
+          root,
+          '.local-only/studio/home/Library/Application Support/taskwraith'
+        ),
+        isPackagedProfile: true
+      })
     }
   )
 
