@@ -167,6 +167,107 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertTrue(content.bounds.contains(frame))
   }
 
+  func testViewerFirstGeometryAcrossEveryResponsiveBreakpoint() throws {
+    let workspace = try makeWorkspace()
+    workspace.show()
+
+    struct LayoutCase {
+      let width: CGFloat
+      let browserVisible: Bool
+      let inspectorVisible: Bool
+    }
+    let cases = [
+      LayoutCase(width: 800, browserVisible: false, inspectorVisible: false),
+      LayoutCase(width: 899, browserVisible: false, inspectorVisible: false),
+      LayoutCase(width: 900, browserVisible: true, inspectorVisible: false),
+      LayoutCase(width: 1_299, browserVisible: true, inspectorVisible: false),
+      LayoutCase(width: 1_300, browserVisible: true, inspectorVisible: true),
+      LayoutCase(width: 1_600, browserVisible: true, inspectorVisible: true),
+    ]
+
+    for item in cases {
+      workspace.window.setContentSize(NSSize(width: item.width, height: 800))
+      workspace.update(
+        visibleRoutes: [.source],
+        sequence: nil,
+        activeProposalId: nil,
+        viewport: try XCTUnwrap(
+          StudioWorkspaceViewport(width: item.width, height: 800)
+        )
+      )
+      workspace.window.contentView?.layoutSubtreeIfNeeded()
+
+      let content = try XCTUnwrap(workspace.window.contentView)
+      let toolbar = try XCTUnwrap(
+        descendant(of: content, identifier: StudioWorkspaceToolbarView.identifier)
+      )
+      let editorDeck = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.editor-deck")
+      )
+      let upperDeck = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.upper-deck")
+      )
+      let lowerDeck = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.lower-deck")
+      )
+      let browser = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.browser")
+      )
+      let viewer = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.viewer-deck")
+      )
+      let inspector = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.inspector")
+      )
+      let transcript = try XCTUnwrap(
+        descendant(of: content, identifier: "studio.workspace.transcript")
+      )
+
+      XCTAssertFalse(content.hasAmbiguousLayout, "width \(item.width)")
+      XCTAssertEqual(toolbar.frame.height, StudioWorkspaceSurfaceMetrics.toolbarHeight, accuracy: 0.5)
+      XCTAssertEqual(
+        upperDeck.frame.height,
+        editorDeck.frame.height * StudioWorkspaceSurfaceMetrics.upperDeckFraction,
+        accuracy: 0.5,
+        "width \(item.width)"
+      )
+      XCTAssertGreaterThan(lowerDeck.frame.height, 120)
+      XCTAssertEqual(
+        transcript.frame.height,
+        StudioWorkspaceSurfaceMetrics.transcriptHeight,
+        accuracy: 0.5
+      )
+      XCTAssertEqual(browser.isHidden, !item.browserVisible, "width \(item.width)")
+      XCTAssertEqual(inspector.isHidden, !item.inspectorVisible, "width \(item.width)")
+      if item.browserVisible {
+        XCTAssertEqual(
+          browser.frame.width,
+          StudioWorkspaceSurfaceMetrics.browserWidth,
+          accuracy: 0.5,
+          "width \(item.width)"
+        )
+      }
+      if item.inspectorVisible {
+        XCTAssertEqual(
+          inspector.frame.width,
+          StudioWorkspaceSurfaceMetrics.inspectorWidth,
+          accuracy: 0.5,
+          "width \(item.width)"
+        )
+      }
+
+      let occupiedSidebarWidth =
+        (item.browserVisible ? StudioWorkspaceSurfaceMetrics.browserWidth + 1 : 0)
+        + (item.inspectorVisible ? StudioWorkspaceSurfaceMetrics.inspectorWidth + 1 : 0)
+      XCTAssertEqual(
+        viewer.frame.width,
+        item.width - occupiedSidebarWidth,
+        accuracy: 0.5,
+        "the flexible viewer must receive all non-sidebar width at \(item.width)"
+      )
+    }
+  }
+
   func testNewlyVisibleActiveRouteReceivesKeyboardInput() throws {
     let workspace = try makeWorkspace()
     let review = try XCTUnwrap(workspace.reviewController)
