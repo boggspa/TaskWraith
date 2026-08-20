@@ -31,11 +31,16 @@ function trigger(overrides: Partial<Parameters<typeof signTriggerRequest>[1]> = 
 
 async function startGateway(
   sender: ApnsGatewaySender,
-  bucket?: { capacity: number; refillPerMinute: number }
+  bucket?: { capacity: number; refillPerMinute: number },
+  log?: (line: string) => void
 ) {
   const relay = await createRelayServer({
     port: 0,
-    apnsGateway: createApnsGateway({ sender, ...(bucket ? { triggerBucket: bucket } : {}) })
+    apnsGateway: createApnsGateway({
+      sender,
+      ...(bucket ? { triggerBucket: bucket } : {}),
+      ...(log ? { log } : {})
+    })
   })
   const base = `http://127.0.0.1:${relay.port}`
   const registered = await fetch(`${base}/v1/apns/register`, {
@@ -58,7 +63,8 @@ async function startGateway(
 describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
   it('delivers routing-only alerts with the shared collapse id, uniformly 200', async () => {
     const send = vi.fn(async () => ({ delivered: true }))
-    const { relay, base } = await startGateway({ send })
+    const log = vi.fn()
+    const { relay, base } = await startGateway({ send }, undefined, log)
     try {
       const response = await fetch(`${base}/v1/push/trigger`, {
         method: 'POST',
@@ -75,6 +81,7 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
       const body = JSON.stringify(args.body)
       expect(body).not.toContain('thread-')
       expect(body).not.toContain('run-1')
+      expect(log).toHaveBeenCalledWith('[apns-gateway] send delivered env=sandbox')
     } finally {
       await relay.close()
     }
@@ -191,9 +198,10 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
 
   it('honors the signed notifyFinishedTurns opt-out', async () => {
     const send = vi.fn(async () => ({ delivered: true }))
+    const log = vi.fn()
     const relay = await createRelayServer({
       port: 0,
-      apnsGateway: createApnsGateway({ sender: { send } })
+      apnsGateway: createApnsGateway({ sender: { send }, log })
     })
     try {
       const base = `http://127.0.0.1:${relay.port}`
@@ -220,6 +228,9 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
       ).toBe(200)
       await settle()
       expect(send).not.toHaveBeenCalled()
+      expect(log).toHaveBeenCalledWith(
+        '[apns-gateway] trigger suppressed notifyFinishedTurns=false'
+      )
     } finally {
       await relay.close()
     }
