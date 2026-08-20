@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'ca10422c8b35c4fdf5a2434afc18f181675d21c23cd556ac3f5f8b1058bb5792',
+    '94362e529fd24796d7d4f5a7463717da79c49aa802675f8f6dac02e87a2e7329',
   'scripts/studio-acceptance-ui-driver.swift':
     '41b8b947e33e5477038a227c0a2f0684372ce0c7c93afc710a145837e2de0d79',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -49,7 +49,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-av-endurance-acceptance-runner.cjs':
     'fc18cffa691f5aaa2518db2d307c6800ccc936905fdb8adaeddfc17bb4ec5be7',
   'scripts/studio-av-endurance-live-runner.cjs':
-    '4629b7708dd46a2a644e64992e19e48e3c2b2caa4f0b4187c636aaf16d6595dc',
+    '015e519ae5f58f4c15c70ea485fc0e0925e4ed6695bdb3934076b5225762d7d1',
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':
