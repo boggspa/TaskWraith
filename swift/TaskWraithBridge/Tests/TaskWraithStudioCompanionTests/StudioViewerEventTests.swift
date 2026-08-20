@@ -148,12 +148,12 @@ final class StudioViewerEventTests: XCTestCase {
         view.renderCurrentFrame()
         XCTAssertNil(view.selectedSegmentId)
 
-        view.keyDown(with: makeEvent(
-            .keyDown, at: .zero, in: window, characters: "\t", keyCode: 48))
+        XCTAssertTrue(view.performKeyEquivalent(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "\t", keyCode: 48)))
         XCTAssertEqual(view.selectedSegmentId, "s1")
 
-        view.keyDown(with: makeEvent(
-            .keyDown, at: .zero, in: window, characters: "\t", keyCode: 48))
+        XCTAssertTrue(view.performKeyEquivalent(with: makeEvent(
+            .keyDown, at: .zero, in: window, characters: "\t", keyCode: 48)))
         XCTAssertEqual(view.selectedSegmentId, "s2")
     }
 

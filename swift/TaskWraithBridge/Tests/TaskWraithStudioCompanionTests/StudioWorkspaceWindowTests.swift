@@ -92,6 +92,10 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     let frame = sourceHost.convert(sourceHost.bounds, to: content)
     let accessibilityFrame = sourceHost.accessibilityFrame()
     XCTAssertFalse(sourceHost.isHidden)
+    XCTAssertTrue(
+      workspace.sourceController.isPresentationFirstResponder,
+      "the visible route must receive explicit keyboard input in the one-window workspace"
+    )
     XCTAssertFalse(content.hasAmbiguousLayout)
     XCTAssertEqual(
       sourceHost.accessibilityIdentifier(),

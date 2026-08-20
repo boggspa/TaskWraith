@@ -1336,6 +1336,18 @@ final class StudioViewerView: NSView {
         return true
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // AppKit normally reserves Tab for the window key-view loop before an
+        // NSView's keyDown can see it. Studio owns Tab as transcript traversal,
+        // so consume that one declared equivalent and leave every other menu
+        // or system shortcut to AppKit.
+        guard event.type == .keyDown, event.keyCode == Key.tab else {
+            return super.performKeyEquivalent(with: event)
+        }
+        keyDown(with: event)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         if handleTimecodeEntry(event) { return }
 
@@ -1760,6 +1772,10 @@ final class StudioViewerWindowController {
             return view.superview === presentationHost && view.window === window
         }
         return window.contentView === view && view.window === window
+    }
+
+    var isPresentationFirstResponder: Bool {
+        window.firstResponder === view
     }
 
     var audioPlayerIdentity: ObjectIdentifier {
