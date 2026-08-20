@@ -13,7 +13,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   let sourceController: StudioViewerWindowController
   let reviewController: StudioViewerWindowController?
 
-  private let rootStack: NSStackView
+  private let rootStack: StudioWorkspaceRootStack
   private let workspaceStack: NSStackView
   private let upperStack: NSStackView
   private let lowerStack: NSStackView
@@ -122,7 +122,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     workspaceStack.distribution = .fill
     workspaceStack.spacing = 1
 
-    rootStack = NSStackView(views: [workspaceToolbar, workspaceStack])
+    rootStack = StudioWorkspaceRootStack(views: [workspaceToolbar, workspaceStack])
     rootStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.root")
     rootStack.setAccessibilityElement(true)
     rootStack.setAccessibilityRole(.group)
@@ -197,6 +197,34 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     }
 
     super.init()
+    let sourceZero = StudioRouteResourceSnapshot(
+      route: .source,
+      activeSourceCount: 0,
+      retainedFrameCount: 0,
+      capacity: 0,
+      surfaceIDs: []
+    ).diagnosticsExportText
+    let reviewZero = StudioRouteResourceSnapshot(
+      route: .review,
+      activeSourceCount: 0,
+      retainedFrameCount: 0,
+      capacity: 0,
+      surfaceIDs: []
+    ).diagnosticsExportText
+    let reviewResourceProvider: () -> String
+    if let reviewController {
+      reviewResourceProvider = { [weak reviewController] in
+        reviewController?.routeResourceDetail ?? reviewZero
+      }
+    } else {
+      reviewResourceProvider = { reviewZero }
+    }
+    rootStack.setRouteResourceProviders(
+      source: { [weak sourceController] in
+        sourceController?.routeResourceDetail ?? sourceZero
+      },
+      review: reviewResourceProvider
+    )
     sourceController.onPresentationStateChanged = { [weak self] in
       self?.refreshChrome()
     }

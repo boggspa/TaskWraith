@@ -78,6 +78,36 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     )!
   }
 
+  private func routeResourceElements(
+    in workspace: StudioWorkspaceWindowController
+  ) throws -> [NSAccessibilityElement] {
+    let identifiers = Set([
+      StudioWorkspaceRootStack.sourceRouteResourceIdentifier,
+      StudioWorkspaceRootStack.reviewRouteResourceIdentifier,
+    ])
+    var frontier = NSAccessibility.unignoredChildren(
+      from: workspace.window.accessibilityChildren() ?? []
+    )
+    var matches: [NSAccessibilityElement] = []
+    var depth = 0
+    while !frontier.isEmpty, depth < 8 {
+      var next: [Any] = []
+      for node in frontier {
+        if let element = node as? NSAccessibilityElement,
+          element.accessibilityIdentifier().map(identifiers.contains) == true
+        {
+          matches.append(element)
+        }
+        if let children = (node as AnyObject).accessibilityChildren?() {
+          next.append(contentsOf: NSAccessibility.unignoredChildren(from: children))
+        }
+      }
+      frontier = next
+      depth += 1
+    }
+    return matches
+  }
+
   func testOneWorkspaceWindowOwnsBothExistingRoutePresentations() throws {
     if ProcessInfo.processInfo.environment["CI"] != nil {
         throw XCTSkip(
@@ -214,6 +244,153 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertEqual(reviewSnapshot.retainedFrameCount, 0)
     XCTAssertEqual(reviewSnapshot.capacity, 8)
     XCTAssertNotEqual(source.diagnosticsExportText, reviewSnapshot.diagnosticsExportText)
+  }
+
+  func testWorkspaceRouteResourceElementsSurviveHideShowAndResponsiveLayouts() throws {
+    let workspace = try makeWorkspace()
+    let review = try XCTUnwrap(workspace.reviewController)
+    var sourceReading = StudioRouteResourceSnapshot(
+      route: .source,
+      activeSourceCount: 1,
+      retainedFrameCount: 1,
+      capacity: 4,
+      surfaceIDs: [0x0A]
+    )
+    var reviewReading = StudioRouteResourceSnapshot(
+      route: .review,
+      activeSourceCount: 2,
+      retainedFrameCount: 1,
+      capacity: 8,
+      surfaceIDs: [0x0B, 0x0C]
+    )
+    workspace.sourceController.replaceRouteResourceSnapshotProviderForTesting {
+      sourceReading
+    }
+    review.replaceRouteResourceSnapshotProviderForTesting { reviewReading }
+
+    let wide = try XCTUnwrap(StudioWorkspaceViewport(width: 1_600, height: 900))
+    workspace.update(
+      visibleRoutes: [.source, .review],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: wide
+    )
+    workspace.show()
+
+    let initial = try routeResourceElements(in: workspace)
+    XCTAssertEqual(
+      initial.compactMap { $0.accessibilityIdentifier() },
+      [
+        StudioWorkspaceRootStack.sourceRouteResourceIdentifier,
+        StudioWorkspaceRootStack.reviewRouteResourceIdentifier,
+      ]
+    )
+    XCTAssertEqual(
+      initial.compactMap { $0.accessibilityLabel() },
+      ["Source route resource detail", "Review route resource detail"]
+    )
+    XCTAssertTrue(initial.allSatisfy { $0.accessibilityRole() == .staticText })
+    XCTAssertEqual(
+      initial.compactMap { $0.accessibilityValue() as? String },
+      [sourceReading.diagnosticsExportText, reviewReading.diagnosticsExportText]
+    )
+    let identities = initial.map(ObjectIdentifier.init)
+    let retainedSourceElement = initial[0]
+    let retainedReviewElement = initial[1]
+
+    reviewReading = StudioRouteResourceSnapshot(
+      route: .review,
+      activeSourceCount: 0,
+      retainedFrameCount: 0,
+      capacity: 0,
+      surfaceIDs: []
+    )
+    workspace.update(
+      visibleRoutes: [.source],
+      sequence: nil,
+      activeProposalId: nil,
+      viewport: wide
+    )
+    XCTAssertFalse(workspace.routeHostIsVisible(.review))
+    XCTAssertEqual(
+      retainedReviewElement.accessibilityValue() as? String,
+      "rr1 route=review active=0 retained=0 cap=0 surf=0 ids=-",
+      "a retained AX element must read the current hidden-route value"
+    )
+    let hidden = try routeResourceElements(in: workspace)
+    XCTAssertEqual(hidden.map(ObjectIdentifier.init), identities)
+    XCTAssertEqual(hidden[0].accessibilityValue() as? String, sourceReading.diagnosticsExportText)
+    XCTAssertEqual(
+      hidden[1].accessibilityValue() as? String,
+      "rr1 route=review active=0 retained=0 cap=0 surf=0 ids=-"
+    )
+
+    reviewReading = StudioRouteResourceSnapshot(
+      route: .review,
+      activeSourceCount: 1,
+      retainedFrameCount: 0,
+      capacity: 6,
+      surfaceIDs: [0x0D]
+    )
+    for width in [800.0, 1_600.0] {
+      workspace.update(
+        visibleRoutes: [.source, .review],
+        sequence: nil,
+        activeProposalId: nil,
+        viewport: try XCTUnwrap(StudioWorkspaceViewport(width: width, height: 900))
+      )
+      let responsive = try routeResourceElements(in: workspace)
+      XCTAssertEqual(responsive.map(ObjectIdentifier.init), identities, "width \(width)")
+      XCTAssertEqual(
+        responsive.compactMap { $0.accessibilityIdentifier() },
+        initial.compactMap { $0.accessibilityIdentifier() },
+        "width \(width)"
+      )
+      XCTAssertEqual(
+        responsive[0].accessibilityValue() as? String,
+        sourceReading.diagnosticsExportText,
+        "width \(width)"
+      )
+      XCTAssertEqual(
+        responsive[1].accessibilityValue() as? String,
+        reviewReading.diagnosticsExportText,
+        "width \(width)"
+      )
+    }
+
+    sourceReading = StudioRouteResourceSnapshot(
+      route: .source,
+      activeSourceCount: 1,
+      retainedFrameCount: 0,
+      capacity: 4,
+      surfaceIDs: [0x0E]
+    )
+    XCTAssertEqual(
+      retainedSourceElement.accessibilityValue() as? String,
+      sourceReading.diagnosticsExportText,
+      "a retained AX element must read the current Source value"
+    )
+    let sourceUpdated = try routeResourceElements(in: workspace)
+    XCTAssertEqual(sourceUpdated.map(ObjectIdentifier.init), identities)
+    XCTAssertEqual(
+      sourceUpdated[0].accessibilityValue() as? String,
+      sourceReading.diagnosticsExportText
+    )
+    XCTAssertEqual(
+      sourceUpdated[1].accessibilityValue() as? String,
+      reviewReading.diagnosticsExportText,
+      "Source updates must not alias or replace Review evidence"
+    )
+  }
+
+  func testUnavailableReviewStillPublishesCanonicalWorkspaceResourceZero() throws {
+    let workspace = try makeWorkspace(includeReview: false)
+    let resources = try routeResourceElements(in: workspace)
+    XCTAssertEqual(resources.count, 2)
+    XCTAssertEqual(
+      resources[1].accessibilityValue() as? String,
+      "rr1 route=review active=0 retained=0 cap=0 surf=0 ids=-"
+    )
   }
 
   func testVisibleSourceHostOccupiesPositiveAreaInsideWorkspaceContent() throws {

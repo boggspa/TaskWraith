@@ -89,6 +89,88 @@ private func studioSymbol(_ name: String, pointSize: CGFloat = 13) -> NSImageVie
   return imageView
 }
 
+/// Accessibility-only resource witnesses for both logical routes.
+///
+/// They belong to the workspace root rather than either viewer host so hiding
+/// a route cannot hide the evidence that its renderer released every resource.
+/// The elements are allocated once and appended in Source/Review order on every
+/// query; responsive layout changes therefore move neither their identity nor
+/// their document order.
+@MainActor
+private final class StudioWorkspaceRouteResourceAccessibilityElement: NSAccessibilityElement {
+  private let elementIdentifier: String
+  private let elementLabel: String
+  /// AppKit invokes NSAccessibility selectors on its serialized UI path, but
+  /// the imported override is not MainActor-annotated. This matches the
+  /// Companion's existing action accessibility element: mutation stays on the
+  /// main actor; the nonisolated selector reads the installed closure only.
+  nonisolated(unsafe) private var valueProvider: () -> String
+
+  init(identifier: String, label: String, valueProvider: @escaping () -> String) {
+    elementIdentifier = identifier
+    elementLabel = label
+    self.valueProvider = valueProvider
+    super.init()
+  }
+
+  func setValueProvider(_ provider: @escaping () -> String) {
+    valueProvider = provider
+  }
+
+  override func isAccessibilityElement() -> Bool { true }
+  override func accessibilityIdentifier() -> String? { elementIdentifier }
+  override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+  override func accessibilityLabel() -> String? { elementLabel }
+  override func accessibilityValue() -> Any? { valueProvider() }
+}
+
+@MainActor
+final class StudioWorkspaceRootStack: NSStackView {
+  static let sourceRouteResourceIdentifier = "studio.workspace.resource.source"
+  static let reviewRouteResourceIdentifier = "studio.workspace.resource.review"
+
+  private static let sourceZero = StudioRouteResourceSnapshot(
+    route: .source,
+    activeSourceCount: 0,
+    retainedFrameCount: 0,
+    capacity: 0,
+    surfaceIDs: []
+  ).diagnosticsExportText
+  private static let reviewZero = StudioRouteResourceSnapshot(
+    route: .review,
+    activeSourceCount: 0,
+    retainedFrameCount: 0,
+    capacity: 0,
+    surfaceIDs: []
+  ).diagnosticsExportText
+
+  private let sourceResourceElement = StudioWorkspaceRouteResourceAccessibilityElement(
+    identifier: StudioWorkspaceRootStack.sourceRouteResourceIdentifier,
+    label: "Source route resource detail",
+    valueProvider: { StudioWorkspaceRootStack.sourceZero }
+  )
+  private let reviewResourceElement = StudioWorkspaceRouteResourceAccessibilityElement(
+    identifier: StudioWorkspaceRootStack.reviewRouteResourceIdentifier,
+    label: "Review route resource detail",
+    valueProvider: { StudioWorkspaceRootStack.reviewZero }
+  )
+
+  func setRouteResourceProviders(
+    source: @escaping () -> String,
+    review: @escaping () -> String
+  ) {
+    sourceResourceElement.setValueProvider(source)
+    reviewResourceElement.setValueProvider(review)
+  }
+
+  override func accessibilityChildren() -> [Any]? {
+    sourceResourceElement.setAccessibilityParent(self)
+    reviewResourceElement.setAccessibilityParent(self)
+    return (super.accessibilityChildren() ?? [])
+      + [sourceResourceElement, reviewResourceElement]
+  }
+}
+
 @MainActor
 final class StudioWorkspaceToolbarView: NSView {
   static let identifier = "studio.workspace.toolbar"
