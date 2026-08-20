@@ -180,6 +180,7 @@ module.exports = {
   exactCompanionProcess: lut.exactCompanionProcess,
   focusSnapshot: lut.focusSnapshot,
   hudContainsAsset,
+  hudAssetIdentityToken: lut.hudAssetIdentityToken,
   invokeStudioOpen: lut.invokeStudioOpen,
   materializePortableInputs: lut.materializePortableInputs,
   ocrScreenshot: lut.ocrScreenshot,

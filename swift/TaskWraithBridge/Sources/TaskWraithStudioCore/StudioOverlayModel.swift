@@ -346,6 +346,10 @@ public enum StudioOverlayMetrics {
     public static let trackGrabHeight: Double = 22
     public static let timecodeSize: Double = 22
     public static let labelSize: Double = 12
+    /// The content identity is a 43-character Base64URL digest. Twelve-point
+    /// atlas text is readable to a person but not reliably distinguishable to
+    /// the system OCR used for exact packaged-media custody.
+    public static let sourceLabelSize: Double = 14
     /// Row origins, measured from the top of the HUD strip.
     public static let readoutRowTop: Double = 24
     /// Nudged down against the taller readout so the two read as one row.
@@ -354,7 +358,7 @@ public enum StudioOverlayMetrics {
     /// label and a worst-case counters string cannot be drawn on top of each
     /// other. The HUD strip is taller by exactly that row's height.
     public static let diagnosticsRowTop: Double = 72
-    public static let infoRowTop: Double = 56
+    public static let infoRowTop: Double = 54
 }
 
 public struct StudioOverlayModel: Equatable, Sendable {
@@ -594,6 +598,7 @@ public enum StudioOverlayLayout {
         // into it is the fastest way to seek somewhere you did not mean to.
         let timecodeSize = metric(StudioOverlayMetrics.timecodeSize)
         let labelSize = metric(StudioOverlayMetrics.labelSize)
+        let sourceLabelSize = metric(StudioOverlayMetrics.sourceLabelSize)
         let readoutY = hudTop + metric(StudioOverlayMetrics.readoutRowTop)
         let readout = state.entry?.displayText ?? state.timecodeText
         texts.append(
@@ -702,7 +707,7 @@ public enum StudioOverlayLayout {
                 string: state.message ?? state.sourceLabel,
                 x: margin,
                 y: secondaryY,
-                pointSize: labelSize,
+                pointSize: sourceLabelSize,
                 color: state.message == nil ? .dimText : .errorText
             )
         )

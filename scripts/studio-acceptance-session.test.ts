@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { assertWindowServerSessionAvailable, hudContainsAsset, parseBytes, resourceSample } =
+const {
+  assertWindowServerSessionAvailable,
+  hudAssetIdentityToken,
+  hudContainsAsset,
+  parseBytes,
+  resourceSample
+} =
   require('./studio-acceptance-session.cjs') as {
     assertWindowServerSessionAvailable: (
       sampleIndex: number,
@@ -12,6 +18,7 @@ const { assertWindowServerSessionAvailable, hudContainsAsset, parseBytes, resour
       hud: { observations: Array<{ text: string }> },
       assetId: string
     ) => Record<string, unknown>
+    hudAssetIdentityToken: (assetId: string) => string
     parseBytes: (text: string) => number
     resourceSample: (
       pid: number,
@@ -24,10 +31,11 @@ const { assertWindowServerSessionAvailable, hudContainsAsset, parseBytes, resour
 describe('tracked Studio acceptance session', () => {
   it('requires an exact full HUD asset digest', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
-    expect(hudContainsAsset({ observations: [{ text: assetId }] }, assetId)).toMatchObject({
+    const token = hudAssetIdentityToken(assetId)
+    expect(hudContainsAsset({ observations: [{ text: token }] }, assetId)).toMatchObject({
       matched: true,
       distance: 0,
-      comparedLength: 43,
+      comparedLength: 64,
       threshold: 0
     })
     expect(
@@ -35,7 +43,7 @@ describe('tracked Studio acceptance session', () => {
         {
           observations: [
             {
-              text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2'
+              text: `2${token.slice(1)}`
             }
           ]
         },

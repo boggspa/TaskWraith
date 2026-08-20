@@ -471,6 +471,22 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
         XCTAssertEqual(StudioMediaAsset.openMediaSchemaVersion, 1)
     }
 
+    func testVisibleIdentityTokenCarriesTheFullHashInAnOcrSafeAlphabet() throws {
+        let asset = StudioMediaAsset(
+            assetId: "rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU",
+            path: "/canonical/real/path.mov"
+        )
+
+        XCTAssertEqual(
+            try XCTUnwrap(asset.visibleIdentityToken),
+            "DHH62FHC32CC6226767842E33KCFF349H6H234D8HH37M2K32A9F8FK7656F8757"
+        )
+        XCTAssertEqual(asset.visibleIdentityToken?.count, 64)
+        XCTAssertNil(
+            StudioMediaAsset(assetId: "not-a-content-hash", path: "/p").visibleIdentityToken
+        )
+    }
+
     func testOnlyOpenMediaOperationsYieldAnAsset() {
         let openMedia: [String: Any] = [
             "type": "open_media",

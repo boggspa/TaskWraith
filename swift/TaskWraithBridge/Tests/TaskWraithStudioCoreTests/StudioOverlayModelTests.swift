@@ -511,6 +511,18 @@ final class StudioOverlayModelTests: XCTestCase {
             "the diagnostics row must remain inside the viewport")
     }
 
+    func testSourceIdentityUsesAnOcrLegiblePointSize() throws {
+        var subject = state()
+        subject.sourceLabel = "KbSvponumjnJ1GvMD2RPfzpVKrpwbRlGV4w39VKIp0w"
+        let label = try XCTUnwrap(
+            StudioOverlayLayout.build(subject).texts.first {
+                $0.string == subject.sourceLabel
+            }
+        )
+
+        XCTAssertEqual(label.pointSize, 28, "14pt at the real 2x backing scale")
+    }
+
     // MARK: - Why the transport moved
 
     private func mutationRecord(

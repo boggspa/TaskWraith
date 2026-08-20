@@ -2251,7 +2251,7 @@ final class StudioViewerAppState {
             controller.adopt(
                 timebase: timebase,
                 durationTicks: durationTicks,
-                label: "\(openAssetId) · \(frameCount) frames"
+                label: "\(asset.visibleIdentityToken ?? openAssetId) · \(frameCount) frames"
             )
             controller.attachAudio(
                 track: attachment.attachedAudio,
@@ -2447,7 +2447,9 @@ final class StudioViewerAppState {
                 controller.adopt(
                     timebase: timebase,
                     durationTicks: durationTicks,
-                    label: "\(assetId) · \(frameCount) frames"
+                    label:
+                        "\(proposalAssets[assetId]?.visibleIdentityToken ?? assetId)"
+                        + " · \(frameCount) frames"
                 )
                 // Audio after the clock, so it anchors against the timebase the
                 // viewer just adopted rather than the previous asset's.

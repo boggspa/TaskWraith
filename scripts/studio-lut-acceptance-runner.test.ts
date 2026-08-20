@@ -21,6 +21,7 @@ const {
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  hudAssetIdentityToken,
   materializePortableInputs,
   matchHudAssetIdentity,
   parseCli,
@@ -63,6 +64,7 @@ const {
     windowBounds: { width: number; height: number }
     hudOverlayHeight?: number
   }) => Record<string, any>
+  hudAssetIdentityToken: (assetId: string) => string
   materializePortableInputs: (
     artifactRoot: string,
     adapters?: Record<string, any>
@@ -829,30 +831,38 @@ describe('studio LUT acceptance runner contract', () => {
 
   it('matches an exact normalized full SHA-256 asset identity', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
     const result = matchHudAssetIdentity(
-      { observations: [{ text: `HUD asset: ${assetId}` }] },
+      { observations: [{ text: `HUD asset: ${token}` }] },
       assetId
     )
 
     expect(result).toMatchObject({
       matched: true,
-      expected: assetId.toLowerCase(),
-      observedCandidate: assetId.toLowerCase(),
+      expected: token.toLowerCase(),
+      observedCandidate: token.toLowerCase(),
       observationIndex: 0,
-      comparedLength: 43,
+      comparedLength: 64,
       distance: 0,
       threshold: 0
     })
+    expect(token).toBe(
+      'DHH62FHC32CC6226767842E33KCFF349H6H234D8HH37M2K32A9F8FK7656F8757'
+    )
   })
 
   it('rejects the deterministic fuzzy OCR observation that previously false-greened', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
+    const fuzzy = Array.from(token, (character, index) =>
+      index < 12 ? (character === '2' ? '3' : '2') : character
+    ).join('')
     const result = matchHudAssetIdentity(
       {
         observations: [
           { text: 'PLAY' },
           {
-            text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+            text: `${fuzzy} drop 0 held 3 shown 1976 cache 24 tex 1334 play 2`
           }
         ]
       },
@@ -861,10 +871,10 @@ describe('studio LUT acceptance runner contract', () => {
 
     expect(result).toMatchObject({
       matched: false,
-      observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+      observedCandidate: fuzzy.toLowerCase(),
       observationIndex: 1,
-      comparedLength: 43,
-      distance: 12,
+      comparedLength: 64,
+      distance: 10,
       threshold: 0
     })
   })
@@ -876,10 +886,14 @@ describe('studio LUT acceptance runner contract', () => {
     'does not let a near-complete short prefix shadow the sealed full observation: %s',
     (_name, shortFirst, expectedObservationIndex) => {
       const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+      const token = hudAssetIdentityToken(assetId)
+      const fuzzy = Array.from(token, (character, index) =>
+        index < 12 ? (character === '2' ? '3' : '2') : character
+      ).join('')
       const sealedObservation = {
-        text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+        text: `${fuzzy} drop 0 held 3 shown 1976 cache 24 tex 1334 play 2`
       }
-      const shortObservation = { text: assetId.slice(0, 40) }
+      const shortObservation = { text: token.slice(0, 60) }
       const observations = shortFirst
         ? [shortObservation, sealedObservation]
         : [sealedObservation, shortObservation]
@@ -887,10 +901,10 @@ describe('studio LUT acceptance runner contract', () => {
 
       expect(result).toMatchObject({
         matched: false,
-        observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+        observedCandidate: fuzzy.toLowerCase(),
         observationIndex: expectedObservationIndex,
-        comparedLength: 43,
-        distance: 12,
+        comparedLength: 64,
+        distance: 10,
         threshold: 0
       })
     }
@@ -898,51 +912,56 @@ describe('studio LUT acceptance runner contract', () => {
 
   it('rejects a full ID with the same first 24 characters and a wrong tail', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
-    const wrongTail = `${assetId.slice(0, 24)}${'A'.repeat(19)}`
+    const token = hudAssetIdentityToken(assetId)
+    const wrongTail =
+      token.slice(0, 32) +
+      Array.from(token.slice(32), (character) => (character === '2' ? '3' : '2')).join('')
     const result = matchHudAssetIdentity({ observations: [{ text: wrongTail }] }, assetId)
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBe(43)
+    expect(result.comparedLength).toBe(64)
     expect(result.distance).toBeGreaterThan(12)
   })
 
-  it('rejects the first candidate beyond the full-ID edit-distance boundary', () => {
+  it('rejects the first candidate beyond the exact full-ID boundary', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
-    const thirteenEdits = Array.from(assetId, (character, index) =>
-      index < 13 ? (character.toLowerCase() === 'a' ? 'B' : 'A') : character
+    const token = hudAssetIdentityToken(assetId)
+    const oneEdit = Array.from(token, (character, index) =>
+      index === 0 ? (character === '2' ? '3' : '2') : character
     ).join('')
-    const result = matchHudAssetIdentity({ observations: [{ text: thirteenEdits }] }, assetId)
+    const result = matchHudAssetIdentity({ observations: [{ text: oneEdit }] }, assetId)
 
     expect(result).toMatchObject({
       matched: false,
-      comparedLength: 43,
-      distance: 13,
+      comparedLength: 64,
+      distance: 1,
       threshold: 0
     })
   })
 
   it.each([
-    ['short fragment', 'rdQM2RCZQARUViCxHpzBJ9TQEqbdF'],
+    ['short fragment', hudAssetIdentityToken('rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU').slice(0, 48)],
     ['no-media HUD', 'No media | PAUSE | 00:00:00:00']
   ])('rejects %s observations as full asset identities', (_name, text) => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
     const result = matchHudAssetIdentity({ observations: [{ text }] }, assetId)
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBeLessThan(43)
+    expect(result.comparedLength).toBeLessThan(64)
   })
 
   it('never concatenates separate OCR observations into one asset identity', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
     const result = matchHudAssetIdentity(
       {
-        observations: [{ text: assetId.slice(0, 24) }, { text: assetId.slice(24) }]
+        observations: [{ text: token.slice(0, 32) }, { text: token.slice(32) }]
       },
       assetId
     )
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBeLessThan(43)
+    expect(result.comparedLength).toBeLessThan(64)
   })
 
   it('uses the verifier overlay default for LUT material-color gates', async () => {

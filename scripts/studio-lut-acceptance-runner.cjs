@@ -11,8 +11,8 @@ const speechFixture = require('./studio-generate-speech-fixture.cjs')
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
-const expectedCompanionSha256 = 'c431b53091e7da0357f96a4aa9bf773a72cc123b8a3e13dd94e967180bff1d24'
-const expectedSourceDigest = '3b60d48dd5e104c78c016e0fa8362393bf92d996f81d5e29595c5ffdf23aaa2d'
+const expectedCompanionSha256 = '1c5702e3cb535db6b2a9847f630693ab1cd554877e488945ec32a24dbde07586'
+const expectedSourceDigest = '3e47bb1d4fdc96f7627c85814bfdb382c0097c28bb846c3ac918d4133ab6c9ad'
 const expectedSourceCount = 70
 const expectedOutDigest = '09675fbf05a8b2f81616d2dcb04480d6016ced338a776ccf1d94c5a2010c7f2d'
 const expectedOutCount = 38
@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '29411744e797ac02069df713ae49af5777ae9a88222a9952e348444f6186a4c8',
+    '35d4f638c1d979bdbaa251ca6a659dac997bbbb721d19b1f2db1b8df676395ed',
   'scripts/studio-acceptance-ui-driver.swift':
     '10bc0737095f8cc1bdd095e8f43c2470056263bdd3eec896a57843a3f4f91e51',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -39,7 +39,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-generate-speech-fixture.cjs':
     '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
   'scripts/studio-acceptance-session.cjs':
-    'a56102bc847f571333cb73c78dd7113889e7769daea3328203792022db1d8137',
+    '9aced4b6f6143cb50802f074fadab62fb0ac9d3336e8169b0b5e27708283f79d',
   'scripts/studio-bounded-diagnostics-runner.cjs':
     'd0ec6d3c79830a2f2248f409434a00c1ba69ddfaa1679d4e5579c944d19fe03b',
   'scripts/studio-bounded-lifecycle-runner.cjs':
@@ -1351,7 +1351,9 @@ function ocrScreenshot(screenshotPath) {
 }
 
 const HUD_ASSET_ID_LENGTH = 43
-// A fuzzy 43-character candidate is not an asset identity. Earlier runs
+const HUD_ASSET_TOKEN_LENGTH = 64
+const HUD_ASSET_TOKEN_ALPHABET = '23456789ACDEFHKM'
+// A fuzzy 64-character full-hash token is not an asset identity. Earlier runs
 // accepted up to twelve edits, which let unrelated same-length text qualify as
 // the content-addressed SHA-256 subject. Vision may still emit fuzzy candidates
 // as diagnostics, but only one exact normalized digest binds evidence to media.
@@ -1364,6 +1366,23 @@ function normalizeHudAssetCandidate(value) {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '')
+}
+
+function hudAssetIdentityToken(assetId) {
+  invariant(
+    typeof assetId === 'string' &&
+      assetId.length === HUD_ASSET_ID_LENGTH &&
+      /^[A-Za-z0-9_-]+$/.test(assetId),
+    'expected HUD asset identity must be one 43-character Base64URL SHA-256 value'
+  )
+  const bytes = Buffer.from(assetId, 'base64url')
+  invariant(bytes.length === 32, 'expected HUD asset identity did not decode to 32 bytes')
+  let token = ''
+  for (const byte of bytes) {
+    token += HUD_ASSET_TOKEN_ALPHABET[byte >> 4]
+    token += HUD_ASSET_TOKEN_ALPHABET[byte & 0x0f]
+  }
+  return token
 }
 
 function editDistance(left, right) {
@@ -1395,7 +1414,7 @@ function matchHudAssetIdentity(hud, assetId) {
     `HUD asset matching exceeded ${HUD_ASSET_MAX_OBSERVATIONS} observations`
   )
 
-  const expected = normalizeHudAssetCandidate(assetId)
+  const expected = normalizeHudAssetCandidate(hudAssetIdentityToken(assetId))
   let bestFullWindow = null
   let bestShortFragment = null
   const consider = (candidate, observationIndex, fullWindow) => {
@@ -1429,12 +1448,12 @@ function matchHudAssetIdentity(hud, assetId) {
       observed.length <= HUD_ASSET_MAX_OBSERVATION_LENGTH,
       `HUD asset observation ${observationIndex} exceeded ${HUD_ASSET_MAX_OBSERVATION_LENGTH} normalized characters`
     )
-    if (observed.length < HUD_ASSET_ID_LENGTH) {
+    if (observed.length < HUD_ASSET_TOKEN_LENGTH) {
       consider(observed, observationIndex, false)
       continue
     }
-    for (let offset = 0; offset + HUD_ASSET_ID_LENGTH <= observed.length; offset += 1) {
-      consider(observed.slice(offset, offset + HUD_ASSET_ID_LENGTH), observationIndex, true)
+    for (let offset = 0; offset + HUD_ASSET_TOKEN_LENGTH <= observed.length; offset += 1) {
+      consider(observed.slice(offset, offset + HUD_ASSET_TOKEN_LENGTH), observationIndex, true)
     }
   }
 
@@ -1443,11 +1462,11 @@ function matchHudAssetIdentity(hud, assetId) {
       observedCandidate: null,
       observationIndex: null,
       comparedLength: 0,
-      distance: HUD_ASSET_ID_LENGTH
+      distance: HUD_ASSET_TOKEN_LENGTH
     }
   return {
     matched:
-      winning.comparedLength === HUD_ASSET_ID_LENGTH &&
+      winning.comparedLength === HUD_ASSET_TOKEN_LENGTH &&
       winning.distance <= HUD_ASSET_EDIT_DISTANCE_THRESHOLD,
     expected,
     ...winning,
@@ -2365,6 +2384,7 @@ module.exports = {
   evaluatePureRedCapture,
   exactCompanionProcess,
   focusSnapshot,
+  hudAssetIdentityToken,
   invokeStudioOpen,
   materializePortableInputs,
   matchHudAssetIdentity,
