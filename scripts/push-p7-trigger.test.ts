@@ -1,0 +1,77 @@
+import crypto from 'node:crypto'
+import { createRequire } from 'node:module'
+import { describe, expect, it } from 'vitest'
+
+const require = createRequire(import.meta.url)
+const triggerHarness = require('./push-p7-trigger.cjs') as {
+  buildTrigger: (
+    privateKey: crypto.KeyObject,
+    target: string,
+    input: {
+      reason: string
+      threadId: string
+      runId: string
+      taskId: string
+      issuedAt: number
+      nonce: string
+    }
+  ) => Record<string, unknown>
+  ownerApnsConfigured: (settings: unknown) => boolean
+  pairIdFromIdentityPubKey: (key: string) => string
+  relayHttpBase: (url: string) => string
+  sharedApnsCollapseId: (input: { reason: string; threadId: string; runId: string }) => string
+  triggerSigningString: (input: Record<string, unknown>) => string
+}
+
+describe('push P7 trigger harness', () => {
+  it('authors a relay-verifiable trigger without exposing private material', () => {
+    const mac = crypto.generateKeyPairSync('ed25519')
+    const phone = crypto.generateKeyPairSync('ed25519')
+    const phoneSpki = phone.publicKey.export({ format: 'der', type: 'spki' })
+    const target = phoneSpki.subarray(phoneSpki.length - 32).toString('base64')
+    const trigger = triggerHarness.buildTrigger(mac.privateKey, target, {
+      reason: 'runComplete',
+      threadId: 'thread-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      issuedAt: 1_700_000_000_000,
+      nonce: Buffer.alloc(16, 3).toString('base64')
+    })
+
+    const sig = Buffer.from(String(trigger.sig), 'base64')
+    expect(
+      crypto.verify(
+        null,
+        Buffer.from(triggerHarness.triggerSigningString(trigger), 'utf8'),
+        mac.publicKey,
+        sig
+      )
+    ).toBe(true)
+    expect(trigger.collapseId).toBe(
+      triggerHarness.sharedApnsCollapseId({
+        reason: 'runComplete',
+        threadId: 'thread-1',
+        runId: 'run-1'
+      })
+    )
+    expect(JSON.stringify(trigger)).not.toContain('PRIVATE KEY')
+    expect(triggerHarness.pairIdFromIdentityPubKey(target)).toMatch(/^iphone-[0-9a-f]{16}$/)
+  })
+
+  it('refuses a sending profile that still carries owner APNs credentials', () => {
+    expect(triggerHarness.ownerApnsConfigured({})).toBe(false)
+    expect(triggerHarness.ownerApnsConfigured({ apnsConfig: {} })).toBe(false)
+    expect(
+      triggerHarness.ownerApnsConfigured({ apnsConfig: { encryptedAuthKey: 'ciphertext' } })
+    ).toBe(true)
+    expect(triggerHarness.ownerApnsConfigured({ apnsConfig: { keyId: 'key' } })).toBe(true)
+  })
+
+  it('maps relay schemes without accepting embedded URL credentials', () => {
+    expect(triggerHarness.relayHttpBase('wss://push.example/')).toBe('https://push.example')
+    expect(triggerHarness.relayHttpBase('ws://127.0.0.1:8789')).toBe('http://127.0.0.1:8789')
+    expect(() => triggerHarness.relayHttpBase('https://user:secret@push.example')).toThrow(
+      /credentials/i
+    )
+  })
+})
