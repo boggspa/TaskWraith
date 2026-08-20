@@ -31,7 +31,10 @@ const {
   resolveUnpackagedDevUserDataPath,
   sanitizeDevInstanceId
 } = require('./perf/devUserDataPath.cjs')
-const { assertLaunchPortsFree } = require('./perf/portGuard.cjs')
+const {
+  assertLaunchPortsFree,
+  listListeningPidsForPort
+} = require('./perf/portGuard.cjs')
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
 const {
   parseAvSyncCurrentExport,
@@ -153,7 +156,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
+    'c68429a807ca03465e076e8dd609283ef21937fac1e86aa23177e0972bbd3a8e',
   'scripts/studio-acceptance-detached-coordinator.cjs':
     'ef316fe25a3c8f57e5963cede12e7b8f3d9f7005865f36545aceadf900a93bd2',
   'scripts/studio-generate-speech-fixture.cjs':
@@ -187,6 +190,7 @@ const STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS = Object.freeze([
   '.env.production.local'
 ])
 const STUDIO_ACCEPTANCE_RUNNER_PATH = 'scripts/studio-acceptance-harness.cjs'
+const MACOS_OPEN_PATH = '/usr/bin/open'
 const STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS = Object.freeze({
   bridgeDaemon: Object.freeze({
     label: 'selected bridge daemon',
@@ -2830,6 +2834,122 @@ function launchUnderWatchdog(spec, adapters = {}) {
       })
     } catch (error) {
       rejectBeforeLaunch(error)
+    }
+  })
+}
+
+function packagedAppRootFromExecutable(executablePath) {
+  const executable = path.resolve(String(executablePath || ''))
+  const match = executable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/)
+  if (!match) {
+    throw new Error('packaged Studio executable is not a macOS app main executable')
+  }
+  return match[1]
+}
+
+function buildStudioWatchdogLaunchSpec(plan, args, options = {}) {
+  const direct = {
+    kind: 'electron',
+    command: plan.spawnPlan.electronBinary,
+    args: plan.spawnPlan.argv,
+    cwd: plan.repoRoot,
+    env: plan.spawnPlan.env,
+    timeoutMs: args.timeoutMs,
+    forceAfterMs: 4_000,
+    receiptPath: plan.receiptPath,
+    remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
+    mainInspectorPort: plan.spawnPlan.mainInspectorPort
+  }
+  const platform = options.platform || process.platform
+  if (platform !== 'darwin' || plan.spawnPlan.packaged !== true) return direct
+
+  const executable = path.resolve(plan.spawnPlan.electronBinary)
+  const appRoot = packagedAppRootFromExecutable(executable)
+  const launchEnvironment = Object.entries(direct.env)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([name, value]) => ['--env', `${name}=${value}`])
+  return {
+    ...direct,
+    command: MACOS_OPEN_PATH,
+    args: [
+      '-n',
+      '-F',
+      '-W',
+      '-i',
+      '/dev/null',
+      '-o',
+      '/dev/stdout',
+      '--stderr',
+      '/dev/stderr',
+      ...launchEnvironment,
+      appRoot,
+      '--args',
+      ...direct.args
+    ],
+    launchServicesExecutable: executable,
+    launchServicesAppRoot: appRoot
+  }
+}
+
+function terminalWaitError(message) {
+  const error = new Error(message)
+  error.waitForTerminal = true
+  return error
+}
+
+async function adoptLaunchServicesElectronSession(session, plan, adapters = {}) {
+  if (plan.spawnPlan.packaged !== true || (adapters.platform || process.platform) !== 'darwin') {
+    return session
+  }
+  const listPortPids =
+    adapters.listPortPids ||
+    ((port) => listListeningPidsForPort(port, adapters.portAdapters || {}))
+  const runExec = adapters.execFile || defaultExecFile
+  const expectedExecutable = path.resolve(plan.spawnPlan.electronBinary)
+  return waitFor({
+    label: 'LaunchServices TaskWraith exact process adoption',
+    timeoutMs: adapters.timeoutMs || 20_000,
+    intervalMs: adapters.intervalMs || 100,
+    probe: async () => {
+      const listenerPids = [
+        ...new Set(
+          (await listPortPids(plan.spawnPlan.remoteDebuggingPort)).filter(
+            (pid) => Number.isSafeInteger(pid) && pid > 0
+          )
+        )
+      ].sort((left, right) => left - right)
+      if (listenerPids.length === 0) return null
+
+      const sample = await runExec('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='])
+      const rows = parseProcessTable(sample.stdout)
+      const listeners = listenerPids.map((pid) => rows.find((row) => row.pid === pid))
+      if (listeners.some((row) => !row)) return null
+      const pgids = [...new Set(listeners.map((row) => row.pgid))]
+      if (pgids.length !== 1 || !Number.isSafeInteger(pgids[0]) || pgids[0] <= 0) {
+        throw terminalWaitError('LaunchServices CDP listeners do not share one exact process group')
+      }
+      const targetPgid = pgids[0]
+      const members = rows.filter((row) => row.pgid === targetPgid)
+      const targets = members.filter((row) =>
+        commandRunsExactExecutable(row.command, expectedExecutable)
+      )
+      if (targets.length !== 1) {
+        throw terminalWaitError(
+          'LaunchServices CDP group does not contain exactly one custodied TaskWraith executable'
+        )
+      }
+      if (!members.some((row) => commandContainsBoundedPath(row.command, plan.home))) {
+        return null
+      }
+      return {
+        ...session,
+        launcherPid: session.pid,
+        launcherPgid: session.pgid || null,
+        pid: targets[0].pid,
+        pgid: targetPgid,
+        ownedPids: members.map((row) => row.pid).sort((left, right) => left - right),
+        launchMode: 'launch-services'
+      }
     }
   })
 }
@@ -5627,20 +5747,9 @@ async function runStudioAcceptance(args, adapters = {}) {
       )
     : null
 
-  const spec = {
-    kind: 'electron',
-    command: plan.spawnPlan.electronBinary,
-    args: plan.spawnPlan.argv,
-    cwd: plan.repoRoot,
-    env: plan.spawnPlan.env,
-    timeoutMs: args.timeoutMs,
-    forceAfterMs: 4_000,
-    receiptPath: plan.receiptPath,
-    remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
-    mainInspectorPort: plan.spawnPlan.mainInspectorPort
-  }
+  const spec = (adapters.buildWatchdogLaunchSpec || buildStudioWatchdogLaunchSpec)(plan, args)
   const watchdogLaunch = adapters.launchUnderWatchdog || launchUnderWatchdog
-  const session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
+  let session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
   let renderer = null
   let openResult = null
   let durable = null
@@ -5651,6 +5760,11 @@ async function runStudioAcceptance(args, adapters = {}) {
   let evidence = null
   let acceptanceError = null
   try {
+    if (spec.launchServicesExecutable) {
+      session = await (
+        adapters.adoptLaunchServicesSession || adoptLaunchServicesElectronSession
+      )(session, plan, adapters.launchServicesAdoptionAdapters || {})
+    }
     await (adapters.assertExactChildOwnsDebugPorts || assertExactChildOwnsDebugPorts)(
       session,
       {
@@ -5701,6 +5815,9 @@ async function runStudioAcceptance(args, adapters = {}) {
       electron: {
         pid: session.pid,
         pgid: session.pgid || null,
+        launchMode: session.launchMode || 'direct',
+        launcherPid: session.launcherPid || null,
+        launcherPgid: session.launcherPgid || null,
         remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
         mainInspectorPort: plan.spawnPlan.mainInspectorPort
       },
@@ -5801,6 +5918,9 @@ async function runStudioAcceptance(args, adapters = {}) {
         electron: {
           pid: session.pid,
           pgid: session.pgid || null,
+          launchMode: session.launchMode || 'direct',
+          launcherPid: session.launcherPid || null,
+          launcherPgid: session.launcherPgid || null,
           remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
           mainInspectorPort: plan.spawnPlan.mainInspectorPort
         },
@@ -6046,6 +6166,8 @@ module.exports = {
   assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
+  buildStudioWatchdogLaunchSpec,
+  adoptLaunchServicesElectronSession,
   evaluateByValue,
   parseProcessTable,
   findAcceptanceArtifactGroups,

@@ -135,6 +135,50 @@ function validateSpec(candidate) {
     }
   }
 
+  let launchServicesExecutable = null
+  if (candidate.launchServicesExecutable !== undefined) {
+    if (kind !== 'electron' || process.platform !== 'darwin') {
+      throw new Error('LaunchServices mode is available only for macOS Electron acceptance')
+    }
+    launchServicesExecutable = requireAbsolutePath(
+      candidate.launchServicesExecutable,
+      'launchServicesExecutable'
+    )
+    const match = launchServicesExecutable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/)
+    if (!match) {
+      throw new Error('launchServicesExecutable must be a macOS app main executable')
+    }
+    const appRoot = match[1]
+    if (command !== '/usr/bin/open') {
+      throw new Error('LaunchServices mode must invoke the exact /usr/bin/open executable')
+    }
+    if (
+      !candidate.args.includes('-n') ||
+      !candidate.args.includes('-F') ||
+      !candidate.args.includes('-W') ||
+      candidate.args.includes('-a') ||
+      candidate.args.includes('-b')
+    ) {
+      throw new Error('LaunchServices mode requires exact-path fresh/new/wait launch flags')
+    }
+    const appIndexes = candidate.args
+      .map((arg, index) => (arg === appRoot ? index : -1))
+      .filter((index) => index >= 0)
+    const argsIndex = candidate.args.indexOf('--args')
+    if (appIndexes.length !== 1 || argsIndex !== appIndexes[0] + 1) {
+      throw new Error('LaunchServices mode must launch exactly one custodied app path')
+    }
+    for (const [name, value] of Object.entries(env)) {
+      const expected = `${name}=${value}`
+      const present = candidate.args.some(
+        (arg, index) => arg === '--env' && candidate.args[index + 1] === expected
+      )
+      if (!present) {
+        throw new Error(`LaunchServices mode omitted explicit child environment ${name}`)
+      }
+    }
+  }
+
   return {
     kind,
     command,
@@ -143,7 +187,8 @@ function validateSpec(candidate) {
     args: [...candidate.args],
     env,
     timeoutMs,
-    forceAfterMs
+    forceAfterMs,
+    launchServicesExecutable
   }
 }
 
@@ -422,6 +467,9 @@ function receipt(status, extra = {}) {
     ...(artifactScanError ? { artifactScanError } : {}),
     instanceId: spec.env.TASKWRAITH_INSTANCE_ID || null,
     command: spec.command,
+    ...(spec.launchServicesExecutable
+      ? { launchServicesExecutable: spec.launchServicesExecutable }
+      : {}),
     startedAt: receipt.startedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     stdoutTail,
@@ -704,5 +752,6 @@ function installControllerHandlers() {
 if (require.main === module) installControllerHandlers()
 
 module.exports = {
-  classifyDetachedArtifactGroups
+  classifyDetachedArtifactGroups,
+  validateSpec
 }

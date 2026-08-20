@@ -23,10 +23,12 @@ const {
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
   assertNoPriorStudioOrphans,
+  adoptLaunchServicesElectronSession,
   buildDetachedCoordinatorIdentity,
   buildDetachedCoordinatorPaths,
   buildStudioAcceptanceJourney,
   buildStudioAcceptancePlan,
+  buildStudioWatchdogLaunchSpec,
   buildStudioUiDriverRequest,
   buildStubSpec,
   compareStudioJourneyCaptures,
@@ -116,6 +118,16 @@ const {
   }>
   buildStudioAcceptanceJourney: () => Array<Record<string, any>>
   buildStudioAcceptancePlan: (options?: Record<string, unknown>) => Record<string, any>
+  buildStudioWatchdogLaunchSpec: (
+    plan: Record<string, any>,
+    args: Record<string, any>,
+    options?: Record<string, any>
+  ) => Record<string, any>
+  adoptLaunchServicesElectronSession: (
+    session: Record<string, any>,
+    plan: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   buildStudioUiDriverRequest: (options: Record<string, any>) => Record<string, any>
   buildStubSpec: (options: {
     directory: string
@@ -239,7 +251,7 @@ const { buildMuxCommand, buildSayCommand, describeFixturePlan, expectedTranscrip
     describeFixturePlan: (options: Record<string, any>) => Record<string, any>
     expectedTranscriptPhrases: () => string[]
   }
-const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog.cjs') as {
+const { classifyDetachedArtifactGroups, validateSpec: validateWatchdogSpec } = require('./studio-acceptance-watchdog.cjs') as {
   classifyDetachedArtifactGroups: (options: {
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>
     artifactHomeAliases: string[]
@@ -256,6 +268,7 @@ const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog
     mixedOwnershipGroups: Array<{ pgid: number; memberPids: number[]; baselinePids: number[] }>
     protectedInstalledGroups: Array<{ pgid: number; memberPids: number[] }>
   }
+  validateSpec: (spec: Record<string, any>) => Record<string, any>
 }
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -1678,6 +1691,95 @@ describe('Studio acceptance harness', () => {
         ),
         isPackagedProfile: true
       })
+
+      const launchSpec = buildStudioWatchdogLaunchSpec(plan, args, { platform: 'darwin' })
+      expect(launchSpec).toMatchObject({
+        command: '/usr/bin/open',
+        launchServicesExecutable: packagedExecutablePath,
+        launchServicesAppRoot: path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app')
+      })
+      expect(launchSpec.args).toEqual(
+        expect.arrayContaining([
+          '-n',
+          '-F',
+          '-W',
+          path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app'),
+          '--args',
+          '--use-mock-keychain'
+        ])
+      )
+      for (const [name, value] of Object.entries(plan.spawnPlan.env)) {
+        const envIndex = launchSpec.args.findIndex(
+          (entry: string, index: number) =>
+            entry === '--env' && launchSpec.args[index + 1] === `${name}=${value}`
+        )
+        expect(envIndex).toBeGreaterThanOrEqual(0)
+      }
+      expect(validateWatchdogSpec(launchSpec)).toMatchObject({
+        command: '/usr/bin/open',
+        launchServicesExecutable: packagedExecutablePath
+      })
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'adopts only the exact LaunchServices app group carrying the isolated profile',
+    async () => {
+      const root = await temporaryRoot('studio-launch-services-adoption-')
+      const home = path.join(root, 'acceptance', 'studioLs01', 'home')
+      const executable = path.join(
+        root,
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+      )
+      const plan = buildStudioAcceptancePlan({
+        instanceId: 'studioLs01',
+        repoRoot: root,
+        home,
+        platform: 'darwin',
+        packagedExecutablePath: executable
+      })
+      const launcherSession = {
+        controllerPid: 7100,
+        pid: 7101,
+        pgid: 7101,
+        stop: vi.fn()
+      }
+      const processRows = [
+        `7200 1 7200 ${executable} --use-mock-keychain --remote-debugging-port=9444`,
+        `7201 7200 7200 ${path.join(
+          root,
+          'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Frameworks/TaskWraith Debug Helper.app/Contents/MacOS/TaskWraith Debug Helper'
+        )} --user-data-dir=${path.join(home, 'Library/Application Support/taskwraith')}`
+      ].join('\n')
+
+      const adopted = await adoptLaunchServicesElectronSession(launcherSession, plan, {
+        platform: 'darwin',
+        listPortPids: async () => [7200],
+        execFile: async () => ({ stdout: processRows, stderr: '' }),
+        timeoutMs: 1_000,
+        intervalMs: 1
+      })
+      expect(adopted).toMatchObject({
+        pid: 7200,
+        pgid: 7200,
+        launcherPid: 7101,
+        launcherPgid: 7101,
+        ownedPids: [7200, 7201],
+        launchMode: 'launch-services'
+      })
+
+      await expect(
+        adoptLaunchServicesElectronSession(launcherSession, plan, {
+          platform: 'darwin',
+          listPortPids: async () => [7300],
+          execFile: async () => ({
+            stdout: `7300 1 7300 /Applications/Foreign.app/Contents/MacOS/Foreign --remote-debugging-port=9444`,
+            stderr: ''
+          }),
+          timeoutMs: 1_000,
+          intervalMs: 1
+        })
+      ).rejects.toThrow(/custodied TaskWraith executable/)
     }
   )
 
@@ -5526,7 +5628,7 @@ describe('Studio acceptance harness', () => {
       instanceId: 'studioJoin01',
       generateSpeechFixture: true
     }
-    const adapters = {
+    const adapters: Record<string, any> = {
       custodyExpected,
       measureCustody: async ({ phase }: { phase: string }) => {
         calls.push(`custody.${phase}`)
@@ -5764,6 +5866,41 @@ describe('Studio acceptance harness', () => {
       },
       watchdogTerminal
     })
+
+    calls.length = 0
+    writtenEvidence = null
+    journeyError = null
+    adapters.buildWatchdogLaunchSpec = (plan: Record<string, any>, runArgs: Record<string, any>) => ({
+      ...buildStudioWatchdogLaunchSpec(plan, runArgs, { platform: 'linux' }),
+      launchServicesExecutable: '/virtual/TaskWraith.app/Contents/MacOS/TaskWraith'
+    })
+    adapters.adoptLaunchServicesSession = async () => {
+      calls.push('launchservices.adopt')
+      throw new Error('launchservices adoption refused')
+    }
+    await expect(
+      runStudioAcceptance({ ...args, instanceId: 'studioAdopt01' }, adapters)
+    ).rejects.toThrow(/launchservices adoption refused/)
+    expect(calls).toEqual([
+      'custody.source',
+      'fixture.generate',
+      'ports.free',
+      'build',
+      'custody.before-run',
+      'watchdog.launch',
+      'launchservices.adopt',
+      'watchdog.stop',
+      'custody.after-run',
+      'evidence.write'
+    ])
+    expect(writtenEvidence).toMatchObject({
+      ok: false,
+      verdict: 'RED',
+      failure: expect.objectContaining({ message: 'launchservices adoption refused' }),
+      watchdogTerminal
+    })
+    delete adapters.buildWatchdogLaunchSpec
+    delete adapters.adoptLaunchServicesSession
 
     calls.length = 0
     journeyError = null
