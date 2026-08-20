@@ -126,85 +126,48 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('unknown-local:latest').contextCapTokens).toBe(65_536)
   })
 
-  it('returns thinking level for Ollama tags that advertise thinking support', () => {
+  it('uses level control only for GPT-OSS and boolean thinking for ordinary models', () => {
     expect(
       resolveOllamaThinkingLevel('gpt-oss:latest', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     expect(
-      resolveOllamaThinkingLevel('qwen3.6:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('qwen3.8:27b-mlx', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('minicpm-v4.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('lfm2.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('nemotron3:33b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('laguna-xs-2.1:q8_0', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('qwen3.5:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('ornith:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
       resolveOllamaThinkingLevel('ornith-1.5:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    // Live daemon capabilities, read 2026-07-30: devstral-small-2:24b and
-    // ministral-3:14b advertise ["completion","vision","tools"] with NO
-    // thinking, so they MUST stay off — Ollama rejects a `think` request
-    // outright on a tag that does not advertise it.
-    //
-    // The qwen3.5 dense sizes all advertise thinking and move together on
-    // purpose: splitting them would be a product difference the capabilities
-    // do not justify.
+    ).toBe(true)
     expect(
-      resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    for (const modelId of [
-      'qwen3.5:2b',
-      'deepseek-r1:1.5b',
-      'nemotron-3-nano:4b',
-      'lfm2.5-thinking:1.2b',
-      'lfm2.5-thinking',
-      'lfm2.5-thinking:latest',
-      'deepseek-r1:8b',
-      'glm-4.7-flash:q4_K_M',
-      'north-mini-code-1.0:q4_K_M',
-      'nemotron-3.5-lightning:30b-mlx',
-      'muse-glimmer:30b-mlx'
-    ]) {
-      expect(resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
-        'medium'
+      resolveOllamaThinkingLevel(
+        'ornith-1.5:35b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'off'
       )
-    }
-    for (const modelId of [
-      'ministral-3:3b',
-      'granite4:3b',
-      'gemma3:4b',
-      'llama3.1:8b',
-      'rnj-1',
-      'llama3.2:3b'
-    ]) {
-      expect(
-        resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-      ).toBeUndefined()
-    }
+    ).toBe(false)
     expect(
-      resolveOllamaThinkingLevel('devstral-small-2:24b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+      resolveOllamaThinkingLevel(
+        'gpt-oss:20b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'low'
+      )
+    ).toBe('low')
+  })
+
+  it('lets authoritative daemon capabilities override the curated fallback', () => {
+    expect(
+      resolveOllamaThinkingLevel(
+        'custom-qwen:latest',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        { capabilities: ['completion', 'thinking'] }
+      )
+    ).toBe(true)
+    expect(
+      resolveOllamaThinkingLevel(
+        'ornith:35b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        { capabilities: ['completion', 'tools'] }
+      )
     ).toBeUndefined()
     expect(
-      resolveOllamaThinkingLevel('ministral-3:14b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+      resolveOllamaThinkingLevel('gemma3:4b', OLLAMA_RUN_PROFILE_PRESETS.provider_parity)
     ).toBeUndefined()
   })
 
@@ -219,6 +182,9 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'high', profile })
     ).toBe(profile.numPredictFinal)
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: false, profile })
+    ).toBe(profile.numPredictTool)
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 2, thinkingLevel: null, profile })
     ).toBe(profile.numPredictFinal)

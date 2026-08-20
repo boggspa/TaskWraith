@@ -6,7 +6,6 @@ import {
 } from '../../shared/ollamaModelAvailability'
 import type {
   AgenticNetworkPolicy,
-  OllamaReasoningLevel,
   OllamaRunProfile,
   OllamaRunProfileId,
   OllamaToolControlTier,
@@ -32,7 +31,8 @@ import {
 import {
   resolveOllamaRunProfile,
   resolveOllamaThinkingLevel,
-  resolveOllamaTurnNumPredict
+  resolveOllamaTurnNumPredict,
+  type OllamaThinkingSetting
 } from './OllamaRunProfiles'
 import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
 import type {
@@ -77,7 +77,7 @@ export interface OllamaFinalLaunchPlan {
   readonly formatToolNames: string[]
   /** Exact effective temperature sent in the first `/api/chat` request. */
   readonly temperature: number
-  readonly thinkingLevel: OllamaReasoningLevel | null
+  readonly thinkingLevel: OllamaThinkingSetting | null
   readonly memoryKey: string | null
   readonly sessionMemory: OllamaSessionMemory
   readonly harnessEnabled: boolean
@@ -105,6 +105,7 @@ export interface ResolveOllamaFinalLaunchPlanInput {
   readonly readOnly: boolean
   readonly plan: boolean
   readonly ollamaRunProfile: OllamaRunProfileId | string | null | undefined
+  readonly reasoningEffort?: string | null
   readonly taskWraithMcpAdvertised: boolean | null | undefined
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null | undefined
   readonly chatId: string | null | undefined
@@ -298,7 +299,8 @@ export async function resolveOllamaFinalLaunchPlan(
     ensembleRun: input.ensemble.enabled
   })
   const temperature = ollamaModelFamilyTemperature(model) ?? 0.2
-  const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile) ?? null
+  const thinkingLevel =
+    resolveOllamaThinkingLevel(model, runProfile, merged, input.reasoningEffort) ?? null
   const jsonToolFallback =
     (toolProtocolEnabled && (!nativeToolsSupported || runProfile.protocolMode === 'json_only')) ||
     runProfile.protocolMode === 'json_fallback' ||
@@ -340,7 +342,7 @@ export async function resolveOllamaFinalLaunchPlan(
                 : 'json'
         }
       : {}),
-    ...(thinkingLevel ? { think: thinkingLevel } : {}),
+    ...(thinkingLevel !== null ? { think: thinkingLevel } : {}),
     ...(runProfile.keepAlive ? { keep_alive: runProfile.keepAlive } : {}),
     options: firstRequestOptions
   }
@@ -471,7 +473,11 @@ export function mergeOllamaModelShow(
   if (!next.quantizationLevel && show.details?.quantization_level) {
     next.quantizationLevel = show.details.quantization_level
   }
-  if (!next.capabilities && Array.isArray(show.capabilities)) {
+  // `/api/show` describes the exact runnable artifact and is therefore more
+  // authoritative than `/api/tags` when the two disagree (observed for fresh
+  // Qwen, Ornith, and MiniCPM pulls). Preserve an explicit empty array too: it
+  // is evidence that this artifact does not advertise optional capabilities.
+  if (Array.isArray(show.capabilities)) {
     next.capabilities = show.capabilities.filter(
       (item): item is string => typeof item === 'string' && item.trim().length > 0
     )

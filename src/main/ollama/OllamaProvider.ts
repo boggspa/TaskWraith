@@ -3269,7 +3269,7 @@ async function runOllamaChatTurn(input: {
   tools?: OllamaNativeToolDefinition[]
   temperature?: number
   jsonToolFallback?: boolean
-  think?: 'low' | 'medium' | 'high'
+  think?: boolean | 'low' | 'medium' | 'high'
   numCtx?: number
   numPredict?: number
   keepAlive?: string
@@ -3320,7 +3320,7 @@ async function runOllamaChatTurn(input: {
                 : 'json'
           }
         : {}),
-      ...(input.think ? { think: input.think } : {}),
+      ...(input.think !== undefined ? { think: input.think } : {}),
       ...(input.keepAlive ? { keep_alive: input.keepAlive } : {}),
       options
     }
@@ -3505,6 +3505,7 @@ export async function runOllamaProvider(
         readOnly: payload.effectivePermissions?.readOnly === true,
         plan: payload.effectivePermissions?.presetId === 'plan',
         ollamaRunProfile: payload.ollamaRunProfile,
+        reasoningEffort: payload.reasoningEffort,
         taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
         taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
         chatId: route.appChatId || payload.appChatId,
@@ -3817,7 +3818,7 @@ export async function runOllamaProvider(
         tools: jsonToolFallback ? [] : nativeToolDefs,
         jsonToolFallback,
         ...(modelTemperature != null ? { temperature: modelTemperature } : {}),
-        ...(thinkingLevel ? { think: thinkingLevel } : {}),
+        ...(thinkingLevel !== null ? { think: thinkingLevel } : {}),
         numCtx: resolveOllamaNumCtx({
           messages,
           tools: jsonToolFallback ? [] : nativeToolDefs,

@@ -224,7 +224,9 @@ export interface CursorLaunchControls {
 
 export interface OllamaLaunchControls {
   readonly transport: 'http-chat'
-  readonly reasoningLevel: 'low' | 'medium' | 'high' | null
+  /** Exact native `/api/chat` think value: boolean for ordinary thinking
+   * models, level string for GPT-OSS, null when thinking is unsupported. */
+  readonly reasoningLevel: boolean | 'low' | 'medium' | 'high' | null
   readonly contextCapTokens: number
   readonly protocolMode: 'native_first' | 'json_fallback' | 'json_only'
   readonly compactToolSchemas: boolean
@@ -880,11 +882,10 @@ function normalizeOllamaControls(value: unknown): OllamaLaunchControls {
   )
   return {
     transport: oneOf(record.transport, ['http-chat'], 'Ollama transport'),
-    reasoningLevel: nullableOneOf(
-      record.reasoningLevel,
-      ['low', 'medium', 'high'],
-      'Ollama reasoning level'
-    ),
+    reasoningLevel:
+      typeof record.reasoningLevel === 'boolean'
+        ? boolean(record.reasoningLevel, 'Ollama thinking toggle')
+        : nullableOneOf(record.reasoningLevel, ['low', 'medium', 'high'], 'Ollama reasoning level'),
     contextCapTokens: positiveInteger(record.contextCapTokens, 'Ollama context cap'),
     protocolMode: oneOf(
       record.protocolMode,

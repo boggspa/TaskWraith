@@ -4,6 +4,10 @@ import type {
   OllamaRunProfileId
 } from '../store/types'
 import { resolveContextWindow } from '../../shared/contextWindows'
+import {
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../../shared/ollamaReasoning'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 
 /**
@@ -192,42 +196,35 @@ export function resolveOllamaRunProfile(
  */
 export function resolveOllamaTurnNumPredict(input: {
   toolCallCount: number
-  thinkingLevel?: OllamaReasoningLevel | null
+  thinkingLevel?: OllamaThinkingSetting | null
   profile: Pick<OllamaRunProfile, 'numPredictTool' | 'numPredictFinal'>
 }): number | undefined {
-  return input.toolCallCount > 0 || input.thinkingLevel
+  return input.toolCallCount > 0 || (input.thinkingLevel !== null && input.thinkingLevel !== undefined && input.thinkingLevel !== false)
     ? input.profile.numPredictFinal
     : input.profile.numPredictTool
 }
 
+export type OllamaThinkingSetting = boolean | OllamaReasoningLevel
+
 export function resolveOllamaThinkingLevel(
   modelId: string,
-  profile: Pick<OllamaRunProfile, 'reasoningLevel'>
-): OllamaReasoningLevel | undefined {
-  const family = resolveOllamaModelFamily(modelId)
-  return family === 'gpt_oss_20b' ||
-    family === 'qwen3_6_35b' ||
-    family === 'qwen3_8_27b' ||
-    // The 3.5 family reports `thinking` in `/api/show` capabilities for all
-    // three dense sizes, and the family moves together — a size split
-    // here would be an undocumented product difference, not a capability one.
-    family === 'qwen3_5_9b' ||
-    family === 'qwen3_5_2b' ||
-    family === 'qwen3_5_4b' ||
-    family === 'minicpm_v45_8b' ||
-    family === 'lfm2_5_thinking_1_2b' ||
-    family === 'lfm2_5_8b' ||
-    family === 'laguna_xs_2_1' ||
-    family === 'ornith_9b' ||
-    family === 'ornith_35b' ||
-    family === 'nemotron3_nano_4b' ||
-    family === 'nemotron3_33b' ||
-    family === 'nemotron3_5_lightning_30b' ||
-    family === 'deepseek_r1_1_5b' ||
-    family === 'deepseek_r1_8b' ||
-    family === 'glm_4_7_flash' ||
-    family === 'north_mini_code_1_0' ||
-    family === 'muse_glimmer_30b'
-    ? profile.reasoningLevel || 'medium'
-    : undefined
+  profile: Pick<OllamaRunProfile, 'reasoningLevel'>,
+  modelInfo?: { capabilities?: readonly string[] | null } | null,
+  requestedReasoning?: string | null
+): OllamaThinkingSetting | undefined {
+  const support = resolveOllamaReasoningSupport({
+    modelId,
+    ...(modelInfo && Array.isArray(modelInfo.capabilities)
+      ? { capabilities: modelInfo.capabilities }
+      : {})
+  })
+  if (support.kind === 'unsupported' || support.kind === 'unknown') return undefined
+  const effort = normalizeOllamaReasoningEffort(
+    requestedReasoning || profile.reasoningLevel,
+    support
+  )
+  if (support.kind === 'toggle') return effort !== 'off'
+  return effort === 'low' || effort === 'medium' || effort === 'high'
+    ? effort
+    : support.defaultEffort
 }

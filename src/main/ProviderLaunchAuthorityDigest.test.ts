@@ -165,7 +165,7 @@ const ollama = {
   tools: tools(),
   controls: {
     transport: 'http-chat',
-    reasoningLevel: 'medium',
+    reasoningLevel: true,
     contextCapTokens: 65_536,
     protocolMode: 'native_first',
     compactToolSchemas: false,
@@ -438,6 +438,12 @@ describe('ProviderLaunchAuthorityDigest', () => {
       providerLaunchAuthorityDigest({
         ...ollama,
         controls: { ...ollama.controls, contextCapTokens: 32_768 }
+      })
+    ).not.toBe(providerLaunchAuthorityDigest(ollama))
+    expect(
+      providerLaunchAuthorityDigest({
+        ...ollama,
+        controls: { ...ollama.controls, reasoningLevel: false }
       })
     ).not.toBe(providerLaunchAuthorityDigest(ollama))
   })
