@@ -47,9 +47,9 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
   'scripts/studio-av-endurance-acceptance-runner.cjs':
-    'b84c5d90e98fa328d50930ff736beb0614e9340b56b22ae52d2b2829769d6005',
+    'fc18cffa691f5aaa2518db2d307c6800ccc936905fdb8adaeddfc17bb4ec5be7',
   'scripts/studio-av-endurance-live-runner.cjs':
-    '1bc10fa2769ad583b7a26ee9141833c0580b5cb85d1e2fd55a7b26ceea519500',
+    'a3012146af7ae90e9388c6d8116d7e534754bbc811a345f74a7b27ebd8fb61a4',
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':
