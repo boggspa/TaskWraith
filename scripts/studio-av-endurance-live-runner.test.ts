@@ -7,12 +7,17 @@ import { describe, expect, it } from 'vitest'
 const {
   parseLiveCli,
   normalizeRunOptions,
+  requireTerminalBackgroundObservation,
   runLiveAcceptance,
   runOutcome5Journey,
   validatePostStopPausedState
 } = require('./studio-av-endurance-live-runner.cjs') as {
   parseLiveCli: (argv: string[]) => Record<string, any>
   normalizeRunOptions: (options?: Record<string, any>) => Record<string, any>
+  requireTerminalBackgroundObservation: (
+    snapshot: Record<string, any>,
+    targetPid: number
+  ) => Record<string, any>
   runLiveAcceptance: (options: Record<string, any>, adapters: Record<string, any>) => Promise<any>
   runOutcome5Journey: (
     plan: Record<string, any>,
@@ -75,7 +80,14 @@ function fakeJourneyAdapters(log: string[], finalTerminalPaused = true) {
       log.push(`${before}->${after}`)
       return { inputDelivery: 'background-observation-only', actions: [{ type: 'press-playback' }] }
     },
-    focusSnapshot: () => ({ frontmostPid: 1, targetIsActive: false, cursorX: 10, cursorY: 20 }),
+    focusSnapshot: (targetPid: number) => ({
+      frontmostPid: 1,
+      frontmostBundleIdentifier: 'com.openai.codex',
+      targetPid,
+      targetIsActive: false,
+      cursorX: 10,
+      cursorY: 20
+    }),
     assertSourceWindowFocusIsolation: () => ({ ok: true }),
     prepareAvEnduranceSourceEvidence: async () => {
       log.push('census')
@@ -204,6 +216,46 @@ function fakeJourneyAdapters(log: string[], finalTerminalPaused = true) {
 }
 
 describe('Studio AV endurance live runner', () => {
+  it('records terminal background state without claiming ten-minute cursor isolation', () => {
+    const observation = requireTerminalBackgroundObservation(
+      {
+        frontmostPid: 99,
+        frontmostBundleIdentifier: 'com.apple.finder',
+        targetPid: 42,
+        targetIsActive: false,
+        cursorX: 1_100,
+        cursorY: 700
+      },
+      42
+    )
+    expect(observation).toMatchObject({ targetInactive: true, targetPid: 42 })
+    expect(() =>
+      requireTerminalBackgroundObservation(
+        {
+          frontmostPid: 42,
+          frontmostBundleIdentifier: 'com.example.target',
+          targetPid: 42,
+          targetIsActive: true,
+          cursorX: 10,
+          cursorY: 20
+        },
+        42
+      )
+    ).toThrow(/terminal focus observation/i)
+    expect(() =>
+      requireTerminalBackgroundObservation(
+        {
+          frontmostPid: 99,
+          targetPid: 42,
+          targetIsActive: false,
+          cursorX: 10,
+          cursorY: 20
+        },
+        42
+      )
+    ).toThrow(/terminal focus observation/i)
+  })
+
   it('binds the silence window to an exact paused HUD at the terminal PTS', () => {
     const observations = [
       { text: '00:09:59:29' },
@@ -290,6 +342,7 @@ describe('Studio AV endurance live runner', () => {
     expect(journey.physicalAudibility).toBe('blocked')
     expect(journey.outcomePromotionAuthorized).toBe(false)
     expect(journey.playback.postStopPausedState.observed.state).toBe('PAUSE')
+    expect(journey.playback.focusIsolation.terminalObservation.targetInactive).toBe(true)
   })
 
   it('refuses to join intentional-silence audio without a post-stop PAUSE receipt', async () => {

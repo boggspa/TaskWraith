@@ -400,6 +400,33 @@ function resourceReceipt(resource, avSync, index) {
   }
 }
 
+function requireTerminalBackgroundObservation(snapshot, targetPid) {
+  invariant(
+    isRecord(snapshot) &&
+      snapshot.targetPid === targetPid &&
+      snapshot.targetIsActive === false &&
+      Number.isSafeInteger(snapshot.frontmostPid) &&
+      snapshot.frontmostPid > 0 &&
+      snapshot.frontmostPid !== targetPid &&
+      typeof snapshot.frontmostBundleIdentifier === 'string' &&
+      snapshot.frontmostBundleIdentifier.trim().length > 0 &&
+      snapshot.frontmostBundleIdentifier !== 'com.apple.loginwindow' &&
+      Number.isFinite(snapshot.cursorX) &&
+      Number.isFinite(snapshot.cursorY),
+    `live endurance terminal focus observation is invalid: ${JSON.stringify({
+      snapshot,
+      targetPid
+    })}`
+  )
+  return {
+    ok: true,
+    label: 'endurance-terminal-background-observation',
+    targetPid,
+    targetInactive: true,
+    snapshot
+  }
+}
+
 async function runOutcome5Journey(plan, target, adapters = {}) {
   assertAssetInsideArtifactRoot(target.asset, plan.artifactRoot)
   const bounds = (adapters.windowBounds || acceptanceSession.windowBounds)(target.window)
@@ -558,7 +585,10 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
     'live endurance did not capture complete positive/silence route evidence'
   )
   const focusAtEnd = focusSnapshot(target.companion.pid)
-  const finalFocusIsolation = assertFocus(focusAfterStart, focusAtEnd, target.companion.pid)
+  const terminalFocusObservation = requireTerminalBackgroundObservation(
+    focusAtEnd,
+    target.companion.pid
+  )
   return {
     kind: 'taskwraith-studio-av-endurance-live-journey',
     readiness,
@@ -569,7 +599,7 @@ async function runOutcome5Journey(plan, target, adapters = {}) {
       focusIsolation: {
         start: startFocusIsolation,
         stop: stopEvidence.stopFocusIsolation,
-        final: finalFocusIsolation
+        terminalObservation: terminalFocusObservation
       }
     },
     census,
@@ -623,6 +653,7 @@ module.exports = {
   normalizeRunOptions,
   parseLiveCli,
   readSampleUi,
+  requireTerminalBackgroundObservation,
   resourceReceipt,
   runLiveAcceptance,
   runOutcome5Journey,
