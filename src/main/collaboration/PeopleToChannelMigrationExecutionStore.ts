@@ -46,8 +46,17 @@ export interface PeopleToChannelMigrationExecution {
 export interface PeopleToChannelMigrationExecutionStoreOptions {
   userDataPath: string
   safeStorage: HumanCollaborationSafeStorage
+  /** Observability rendezvous after temp-file fsync and before immutable publication. */
+  beforeDurablePublish?: (event: PeopleToChannelMigrationExecutionDurablePublish) => void
   /** Test/observability seam invoked only after the immutable file is durable. */
   afterDurableWrite?: () => void
+}
+
+export interface PeopleToChannelMigrationExecutionDurablePublish {
+  boundary: 'migration_execution'
+  operation: 'link'
+  temporaryPath: string
+  destinationPath: string
 }
 
 export interface PeopleToChannelMigrationExecutionPersistResult {
@@ -360,7 +369,11 @@ function decodeExecution(args: { bytes: Buffer; safeStorage: HumanCollaborationS
   return { execution, payloadDigest: envelope.payloadDigest }
 }
 
-function persistImmutable(path: string, bytes: Buffer): boolean {
+function persistImmutable(
+  path: string,
+  bytes: Buffer,
+  beforeDurablePublish?: (event: PeopleToChannelMigrationExecutionDurablePublish) => void
+): boolean {
   ensurePrivateDirectory(dirname(path))
   const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
   let descriptor: number | null = null
@@ -372,6 +385,12 @@ function persistImmutable(path: string, bytes: Buffer): boolean {
     closeSync(descriptor)
     descriptor = null
     chmodSync(temporaryPath, 0o600)
+    beforeDurablePublish?.({
+      boundary: 'migration_execution',
+      operation: 'link',
+      temporaryPath,
+      destinationPath: path
+    })
     linkSync(temporaryPath, path)
     unlinkSync(temporaryPath)
     chmodSync(path, 0o600)
@@ -439,7 +458,7 @@ export class PeopleToChannelMigrationExecutionStore {
       }
       return { created: false, payloadDigest: loaded.payloadDigest }
     }
-    const created = persistImmutable(this.path, encoded.bytes)
+    const created = persistImmutable(this.path, encoded.bytes, this.options.beforeDurablePublish)
     if (!created) {
       const raced = readRegularFile(this.path)
       if (!raced) blocked('People migration execution checkpoint publish was lost')

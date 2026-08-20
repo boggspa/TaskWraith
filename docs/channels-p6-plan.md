@@ -43,7 +43,26 @@ P5's banner names the first two before it lists a single achievement, and closes
 that paragraph with _"Do not read this banner as 'everything is proven.'"_ P6
 exists to close them.
 
-## P6-01 — Real-profile crash recovery, end to end
+## P6-01 — Real-profile crash recovery, end to end — PROVEN
+
+**Proven 2026-08-20 by the executable gate
+`scripts/channels-p6-crash-recovery-proof.test.ts`.** One worker-owned disposable
+upgrade profile is seeded with a real approved contribution, then launched in
+separate OS processes. The production execution stores expose a synchronization-
+only callback after their temporary file is fsynced and before publication. The
+parent kills the child with `SIGKILL` in two distinct live windows: the immutable
+migration execution's hard-link publication and the terminal finalization
+execution's atomic rename. The callback neither throws nor substitutes a write;
+the process death is external, and the next launch reads only what reached disk.
+
+The third launch completes the real terminal migration, reconstructs the real
+Channel membership and Channel-only seat authority, finds the approved queue row
+still awaiting materialisation, and delivers it through the real Ensemble path.
+A fourth launch takes the committed fast path and reruns delivery. The durable
+chat contains one row with the frozen message id, the queue remains settled, and
+the terminal plan id is unchanged. The gate is 11 strict assertions across four
+migration launches and two parent-issued process kills. It never names, opens or
+mutates the user's profile.
 
 **The gap, stated precisely so nobody reads existing work as covering it.**
 

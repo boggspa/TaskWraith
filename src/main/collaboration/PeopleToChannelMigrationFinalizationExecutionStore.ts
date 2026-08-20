@@ -55,8 +55,19 @@ export interface PeopleToChannelMigrationFinalizationExecution {
 export interface PeopleToChannelMigrationFinalizationExecutionStoreOptions {
   userDataPath: string
   safeStorage: HumanCollaborationSafeStorage
+  /** Observability rendezvous after temp-file fsync and before atomic replacement. */
+  beforeDurablePublish?: (
+    event: PeopleToChannelMigrationFinalizationExecutionDurablePublish
+  ) => void
   /** Test/observability seam invoked only after a replacement is durable. */
   afterDurableWrite?: () => void
+}
+
+export interface PeopleToChannelMigrationFinalizationExecutionDurablePublish {
+  boundary: 'finalization_execution'
+  operation: 'rename'
+  temporaryPath: string
+  destinationPath: string
 }
 
 export interface PeopleToChannelMigrationFinalizationExecutionPrepareResult {
@@ -438,7 +449,13 @@ function decodeExecution(args: { bytes: Buffer; safeStorage: HumanCollaborationS
   return { execution, payloadDigest: envelope.payloadDigest }
 }
 
-function persistReplacement(path: string, bytes: Buffer): void {
+function persistReplacement(
+  path: string,
+  bytes: Buffer,
+  beforeDurablePublish?: (
+    event: PeopleToChannelMigrationFinalizationExecutionDurablePublish
+  ) => void
+): void {
   ensurePrivateDirectory(dirname(path))
   const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
   let descriptor: number | null = null
@@ -450,6 +467,12 @@ function persistReplacement(path: string, bytes: Buffer): void {
     closeSync(descriptor)
     descriptor = null
     chmodSync(temporaryPath, 0o600)
+    beforeDurablePublish?.({
+      boundary: 'finalization_execution',
+      operation: 'rename',
+      temporaryPath,
+      destinationPath: path
+    })
     renameSync(temporaryPath, path)
     chmodSync(path, 0o600)
     syncDirectory(dirname(path))
@@ -522,7 +545,7 @@ export class PeopleToChannelMigrationFinalizationExecutionStore {
       }
     }
     const encoded = encodeExecution({ execution: expected, safeStorage: this.options.safeStorage })
-    persistReplacement(this.path, encoded.bytes)
+    persistReplacement(this.path, encoded.bytes, this.options.beforeDurablePublish)
     const persisted = this.load()
     if (!persisted || canonicalJson(persisted) !== canonicalJson(expected)) {
       blocked('People migration finalization execution publish was lost')
