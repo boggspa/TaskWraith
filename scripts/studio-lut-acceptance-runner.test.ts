@@ -1019,7 +1019,7 @@ describe('studio LUT acceptance runner contract', () => {
       threshold: 0
     })
     expect(token).toBe(
-      'DHH62FHC32CC6226767842E33KCFF349H6H234D8HH37M2K32A9F8FK7656F8757'
+      'FMM82KME32EE8228989A42H33NEKK34CM8M234FAMM39P2N32DCKAKN9878KA979'
     )
   })
 

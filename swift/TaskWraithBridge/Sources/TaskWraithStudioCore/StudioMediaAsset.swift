@@ -36,18 +36,19 @@ public struct StudioMediaAsset: Equatable, Sendable {
 
     /// Full 256-bit content identity in an OCR-safe sixteen-symbol alphabet.
     ///
-    /// Base64URL is compact but its mixed case plus `0/1/l/I/O` shapes are not
-    /// reliably recoverable from the 14pt Metal HUD. Two safe symbols encode
-    /// every byte nibble, preserving every bit while avoiding those ambiguous
-    /// glyphs. This is presentation only; protocol and durable identity remain
-    /// the normative Base64URL `assetId`.
+    /// Base64URL is compact but mixed case and ambiguous glyph pairs are not
+    /// reliably recoverable from the 14pt Metal HUD. Live Vision evidence also
+    /// confused `5/S` and `6/G`, so neither pair appears in this alphabet. Two
+    /// safe symbols encode every byte nibble, preserving every bit. This is
+    /// presentation only; protocol and durable identity remain the normative
+    /// Base64URL `assetId`.
     public var visibleIdentityToken: String? {
         let padded = assetId
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
             + String(repeating: "=", count: (4 - assetId.count % 4) % 4)
         guard let bytes = Data(base64Encoded: padded), bytes.count == 32 else { return nil }
-        let alphabet = Array("23456789ACDEFHKM")
+        let alphabet = Array("234789ACDEFHKMNP")
         return bytes.flatMap { byte in
             [alphabet[Int(byte >> 4)], alphabet[Int(byte & 0x0f)]]
         }.map(String.init).joined()
