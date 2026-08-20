@@ -26,8 +26,11 @@ const {
   compareWindowCaptureToReference: (
     capturePath: string,
     referencePath: string,
-    windowBounds: { width: number; height: number },
-    options?: { hudOverlayHeight?: number }
+    windowBounds: { x?: number; y?: number; width: number; height: number },
+    options?: {
+      hudOverlayHeight?: number
+      sourceHostFrame?: { x: number; y: number; width: number; height: number }
+    }
   ) => Record<string, any>
   expectedValueSequence: () => number[]
   verifyStudioPixelEvidence: (
@@ -488,6 +491,92 @@ describe('Studio pixel evidence verifier', () => {
         },
         metrics: { materialPixelCount: 4_320 }
       })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('registers a one-window source host from its exact logical frame', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100, y: 200, width: 164, height: 112 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 },
+          captureX: 34,
+          captureY: 58,
+          videoWidth: 96,
+          videoHeight: 54,
+          comparisonHeight: 45
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('rounds finite fractional Retina host edges symmetrically to integer pixels', () => {
+    const fixture = createVisualFixture(false, 2)
+    try {
+      const capture = PNG.sync.read(readFileSync(fixture.capturePath))
+      const shifted = new PNG({ width: capture.width, height: capture.height })
+      for (let y = 0; y < capture.height; y += 1) {
+        for (let x = 0; x < capture.width; x += 1) {
+          const source = (y * capture.width + x) * 4
+          if (capture.data[source + 3] === 0 || x + 1 >= capture.width) continue
+          capture.data.copy(shifted.data, source + 4, source, source + 4)
+        }
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(shifted))
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100.25, y: 200.25, width: 163.75, height: 85.75 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134.5, y: 232, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureX: 69,
+          captureY: 116,
+          videoWidth: 192,
+          videoHeight: 108,
+          hostPixelRect: { x: 69, y: 64, width: 192, height: 108 },
+          hostPixelEdges: { left: 69, top: 64, right: 261, bottom: 172 }
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it.each([
+    ['out-of-window', { x: 99, y: 245, width: 96, height: 54 }],
+    ['full-window', { x: 100, y: 200, width: 164, height: 112 }],
+    ['malformed', { x: 134, y: 245, width: 0, height: 54 }]
+  ])('rejects a %s source host frame', (_label, sourceHostFrame) => {
+    const fixture = createVisualFixture(false)
+    try {
+      expect(() =>
+        compareWindowCaptureToReference(
+          fixture.capturePath,
+          fixture.referencePath,
+          { x: 100, y: 200, width: 164, height: 112 },
+          { sourceHostFrame }
+        )
+      ).toThrow(/source host frame|immutable window/i)
     } finally {
       fixture.cleanup()
     }

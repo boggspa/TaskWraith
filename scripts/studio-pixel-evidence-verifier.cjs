@@ -121,6 +121,62 @@ function boundedCaptureExtent(capture) {
   return { x: 0, y: 0, width: maximumX + 1, height: maximumY + 1 }
 }
 
+function validateSourceHostFrame(sourceHostFrame, windowBounds) {
+  invariant(
+    sourceHostFrame && typeof sourceHostFrame === 'object' && !Array.isArray(sourceHostFrame),
+    'source host frame is malformed'
+  )
+  const keys = Object.keys(sourceHostFrame).sort()
+  invariant(
+    exactJson(keys, ['height', 'width', 'x', 'y']),
+    'source host frame has malformed fields'
+  )
+  const windowX = Number(windowBounds?.x)
+  const windowY = Number(windowBounds?.y)
+  const windowWidth = Number(windowBounds?.width)
+  const windowHeight = Number(windowBounds?.height)
+  const values = [
+    sourceHostFrame.x,
+    sourceHostFrame.y,
+    sourceHostFrame.width,
+    sourceHostFrame.height,
+    windowX,
+    windowY,
+    windowWidth,
+    windowHeight
+  ]
+  invariant(
+    values.every((value) => typeof value === 'number' && Number.isFinite(value)),
+    'source host frame or window bounds are not finite logical numbers'
+  )
+  invariant(
+    sourceHostFrame.width > 0 && sourceHostFrame.height > 0,
+    'source host frame dimensions are invalid'
+  )
+  invariant(
+    sourceHostFrame.x >= windowX &&
+      sourceHostFrame.y >= windowY &&
+      sourceHostFrame.x + sourceHostFrame.width <= windowX + windowWidth &&
+      sourceHostFrame.y + sourceHostFrame.height <= windowY + windowHeight,
+    'source host frame is outside immutable window bounds'
+  )
+  invariant(
+    !(
+      sourceHostFrame.x === windowX &&
+      sourceHostFrame.y === windowY &&
+      sourceHostFrame.width === windowWidth &&
+      sourceHostFrame.height === windowHeight
+    ),
+    'source host frame must not equal the full immutable window'
+  )
+  return {
+    x: sourceHostFrame.x,
+    y: sourceHostFrame.y,
+    width: sourceHostFrame.width,
+    height: sourceHostFrame.height
+  }
+}
+
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
   const capture = PNG.sync.read(fs.readFileSync(capturePath))
   const reference = PNG.sync.read(fs.readFileSync(referencePath))
@@ -128,8 +184,8 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   const windowWidth = Number(windowBounds?.width)
   const windowHeight = Number(windowBounds?.height)
   invariant(
-    Number.isInteger(windowWidth) &&
-      Number.isInteger(windowHeight) &&
+    Number.isFinite(windowWidth) &&
+      Number.isFinite(windowHeight) &&
       windowWidth > 0 &&
       windowHeight > 0,
     'visual checkpoint window bounds are invalid'
@@ -141,18 +197,23 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'visual reference is not a 16:9 frame'
   )
 
-  const logicalVideoWidth = windowWidth
-  const logicalVideoHeight = Math.round((logicalVideoWidth * reference.height) / reference.width)
+  const sourceHostFrame = options.sourceHostFrame
+    ? validateSourceHostFrame(options.sourceHostFrame, windowBounds)
+    : null
+  const logicalVideoWidth = sourceHostFrame ? sourceHostFrame.width : windowWidth
+  const logicalVideoHeight = sourceHostFrame
+    ? sourceHostFrame.height
+    : Math.round((logicalVideoWidth * reference.height) / reference.width)
   const logicalTitleBarHeight = windowHeight - logicalVideoHeight
   invariant(
-    logicalTitleBarHeight >= 20 && logicalTitleBarHeight <= 40,
+    sourceHostFrame || (logicalTitleBarHeight >= 20 && logicalTitleBarHeight <= 40),
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
   const scaleCandidates = [1, 2, 3, 4]
     .map((backingScale) => {
-      const scaledWindowWidth = windowWidth * backingScale
-      const scaledWindowHeight = windowHeight * backingScale
+      const scaledWindowWidth = Math.round(windowWidth * backingScale)
+      const scaledWindowHeight = Math.round(windowHeight * backingScale)
       const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
       const verticalShadowPixels = captureExtent.height - scaledWindowHeight
       const shadowless = verticalShadowPixels === 0
@@ -184,18 +245,54 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
 
   const geometry = scaleCandidates[0]
   const backingScale = geometry.backingScale
-  const videoWidth = logicalVideoWidth * backingScale
-  const videoHeight = logicalVideoHeight * backingScale
-  const titleBarHeight = logicalTitleBarHeight * backingScale
+  const hostPixelEdges = sourceHostFrame
+    ? {
+        left: Math.round((sourceHostFrame.x - Number(windowBounds.x)) * backingScale),
+        top: Math.round((sourceHostFrame.y - Number(windowBounds.y)) * backingScale),
+        right: Math.round(
+          (sourceHostFrame.x + sourceHostFrame.width - Number(windowBounds.x)) * backingScale
+        ),
+        bottom: Math.round(
+          (sourceHostFrame.y + sourceHostFrame.height - Number(windowBounds.y)) * backingScale
+        )
+      }
+    : null
+  const videoWidth = hostPixelEdges
+    ? hostPixelEdges.right - hostPixelEdges.left
+    : Math.round(logicalVideoWidth * backingScale)
+  const videoHeight = hostPixelEdges
+    ? hostPixelEdges.bottom - hostPixelEdges.top
+    : Math.round(logicalVideoHeight * backingScale)
+  invariant(
+    videoWidth > 0 && videoHeight > 0,
+    'source host frame rounds to an empty pixel rectangle'
+  )
+  const hostPixelRect = hostPixelEdges
+    ? {
+        x: hostPixelEdges.left,
+        y: hostPixelEdges.top,
+        width: videoWidth,
+        height: videoHeight
+      }
+    : null
+  const titleBarHeight = Math.round(logicalTitleBarHeight * backingScale)
   const horizontalShadowPixels = geometry.horizontalShadowPixels
   const verticalShadowPixels = geometry.verticalShadowPixels
-  const captureX = captureExtent.x + horizontalShadowPixels / 2
+  const captureX = sourceHostFrame
+    ? captureExtent.x +
+      horizontalShadowPixels / 2 +
+      hostPixelEdges.left
+    : captureExtent.x + horizontalShadowPixels / 2
   const topShadowPixels =
     verticalShadowPixels === 0 ? 0 : (verticalShadowPixels - 16 * backingScale) / 2
-  const captureY = captureExtent.y + topShadowPixels + titleBarHeight
+  const captureY = sourceHostFrame
+    ? captureExtent.y +
+      topShadowPixels +
+      hostPixelEdges.top
+    : captureExtent.y + topShadowPixels + titleBarHeight
   const logicalHudOverlayHeight =
     options.hudOverlayHeight ?? DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
-  const hudOverlayHeight = logicalHudOverlayHeight * backingScale
+  const hudOverlayHeight = Math.round(logicalHudOverlayHeight * backingScale)
   const comparisonHeight = videoHeight - hudOverlayHeight
   invariant(
     Number.isInteger(logicalHudOverlayHeight) &&
@@ -298,6 +395,9 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       logicalVideoWidth,
       logicalVideoHeight,
       logicalTitleBarHeight,
+      sourceHostFrame,
+      hostPixelEdges,
+      hostPixelRect,
       logicalHudOverlayHeight,
       hudOverlayHeight,
       horizontalShadowPixels,

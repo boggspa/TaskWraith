@@ -18,9 +18,11 @@ const {
   parseOcrInteger,
   parseStudioTimecodeText,
   parseVisibleHud,
+  captureFreshPlayableSample,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
+  readSourceWorkspaceObservation,
   resolveMediaTool,
   runBoundedDiagnostics
 } = require('./studio-bounded-diagnostics-runner.cjs')
@@ -36,6 +38,53 @@ const OPTS = { expectedAssetId: EXPECTED_ASSET }
 /** A real lowercase 64-hex digest, distinct per seed so samples cannot collide. */
 function digestFor(seed: unknown) {
   return require('node:crypto').createHash('sha256').update(String(seed)).digest('hex')
+}
+
+function diagnosticsWorkspace(frame: Record<string, number>) {
+  const element = (
+    identifier: string,
+    visible: boolean,
+    role: string | null,
+    value: string | null,
+    enabled: boolean | null,
+    elementFrame: Record<string, number> | null
+  ) => ({ identifier, visible, role, value, enabled, frame: elementFrame })
+  return {
+    elements: [
+      element('studio.workspace.root', true, 'AXGroup', null, null, {
+        x: 100,
+        y: 200,
+        width: 960,
+        height: 640
+      }),
+      element('studio.workspace.route.source', true, 'AXCheckBox', 'selected', true, {
+        x: 104,
+        y: 204,
+        width: 40,
+        height: 20
+      }),
+      element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+        x: 148,
+        y: 204,
+        width: 48,
+        height: 20
+      }),
+      element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
+      element('studio.workspace.viewer.timeline', false, null, null, null, null),
+      element('studio.workspace.review-version.current', true, 'AXRadioButton', 'unavailable', false, {
+        x: 204,
+        y: 204,
+        width: 60,
+        height: 20
+      }),
+      element('studio.workspace.review-version.proposed', true, 'AXRadioButton', 'unavailable', false, {
+        x: 268,
+        y: 204,
+        width: 80,
+        height: 20
+      })
+    ]
+  }
 }
 
 /** HH:MM:SS.mmm for a numeric playhead, so text and seconds cannot disagree. */
@@ -859,6 +908,146 @@ describe('the serialized evidence schema, closed as a schema rather than by exam
 })
 
 describe('the runner carries tracked end-to-end apparatus', () => {
+  it('reads Source geometry through the tracked background workspace contract', async () => {
+    const bounds = { x: 100, y: 200, width: 960, height: 640 }
+    const frame = { x: 100, y: 240, width: 960, height: 540 }
+    const element = (
+      identifier: string,
+      visible: boolean,
+      role: string | null,
+      value: string | null,
+      enabled: boolean | null,
+      elementFrame: Record<string, number> | null
+    ) => ({ identifier, visible, role, value, enabled, frame: elementFrame })
+    const workspace = {
+      elements: [
+        element('studio.workspace.root', true, 'AXGroup', null, null, bounds),
+        element(
+          'studio.workspace.route.source',
+          true,
+          'AXCheckBox',
+          'selected',
+          true,
+          { x: 104, y: 204, width: 40, height: 20 }
+        ),
+        element(
+          'studio.workspace.route.timeline',
+          true,
+          'AXCheckBox',
+          'not selected',
+          true,
+          { x: 148, y: 204, width: 48, height: 20 }
+        ),
+        element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
+        element('studio.workspace.viewer.timeline', false, null, null, null, null),
+        element(
+          'studio.workspace.review-version.current',
+          true,
+          'AXRadioButton',
+          'unavailable',
+          false,
+          { x: 204, y: 204, width: 60, height: 20 }
+        ),
+        element(
+          'studio.workspace.review-version.proposed',
+          true,
+          'AXRadioButton',
+          'unavailable',
+          false,
+          { x: 268, y: 204, width: 80, height: 20 }
+        )
+      ]
+    }
+    let receivedOptions: Record<string, any> | null = null
+    const result = await readSourceWorkspaceObservation(
+      { artifactRoot: '/tmp/diagnostics-workspace-test' },
+      { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+      bounds,
+      {
+        runStudioUiDriver: async (_plan: unknown, _target: unknown, _actions: unknown, options: Record<string, any>) => {
+          receivedOptions = options
+          return { actions: [{ index: 0, type: 'read-workspace', workspace }] }
+        }
+      }
+    )
+    expect(result.sourceHostFrame).toEqual(frame)
+    expect(receivedOptions).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false
+    })
+    const unselected = structuredClone(workspace)
+    unselected.elements[1].value = 'not selected'
+    await expect(
+      readSourceWorkspaceObservation(
+        { artifactRoot: '/tmp/diagnostics-workspace-test' },
+        { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+        bounds,
+        {
+          runStudioUiDriver: async () => ({
+            actions: [{ index: 0, type: 'read-workspace', workspace: unselected }]
+          })
+        }
+      )
+    ).rejects.toThrow(/Source selected and visibly presented/)
+  })
+
+  it('uses each sample’s fresh Source frame after an internal layout shift', async () => {
+    const sampleAsset = 'A'.repeat(43)
+    const frames = [
+      { x: 100, y: 240, width: 960, height: 540 },
+      { x: 120, y: 240, width: 940, height: 528 }
+    ]
+    let readCount = 0
+    let ocrCount = 0
+    const comparedFrames: Array<Record<string, number>> = []
+    const adapters = {
+      runStudioUiDriver: async () => ({
+        actions: [
+          {
+            index: 0,
+            type: 'read-workspace',
+            workspace: diagnosticsWorkspace(frames[Math.min(readCount++, frames.length - 1)])
+          }
+        ]
+      }),
+      captureNative: async () => ({ path: '/tmp/diagnostics-capture.png' }),
+      ocrScreenshot: () => ({
+        texts: [`00:00:0${++ocrCount}.000`, 'PLAY', 'drop 0', 'held 0', 'shown 10', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+        stdoutSha256: digestFor('ocr')
+      }),
+      hudContainsAsset: () => ({ matched: true, distance: 0 }),
+      generateReference: () => ({ path: '/tmp/diagnostics-reference.png' }),
+      compareWindowCaptureToReference: (
+        _capture: string,
+        _reference: string,
+        _bounds: Record<string, number>,
+        options: Record<string, any>
+      ) => {
+        comparedFrames.push(options.sourceHostFrame)
+        return { clean: true, metrics: {} }
+      }
+    }
+    await captureFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-layout-shift' },
+      { asset: { sha256: sampleAsset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      adapters
+    )
+    await captureFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-layout-shift' },
+      { asset: { sha256: sampleAsset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      1,
+      1,
+      adapters
+    )
+    expect(comparedFrames).toEqual(frames)
+  })
+
   it('names and resolves every tracked session dependency', () => {
     expect(TRACKED_SESSION_DEPENDENCIES.length).toBeGreaterThan(0)
     expect(TRACKED_SESSION_DEPENDENCIES).toContain('withIsolatedSession')

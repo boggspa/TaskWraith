@@ -31,7 +31,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
-    '779388aa4f4c31674c99bca16b8e9fd56e9743c651bac3f2d9f409f7b6cbe627',
+    'e76895955a63660c90640bed46a2b73bf5047b46746a13dd5ddd8a1f5ac51a9c',
   'scripts/studio-hud-ocr.swift':
     'd3f1a7efc1189357252932518ed7d0b7ba799b19a3c68d9a32f134b076111a52',
   'scripts/studio-input-isolation-snapshot.swift':
@@ -41,7 +41,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-session.cjs':
     '9aced4b6f6143cb50802f074fadab62fb0ac9d3336e8169b0b5e27708283f79d',
   'scripts/studio-bounded-diagnostics-runner.cjs':
-    'd0ec6d3c79830a2f2248f409434a00c1ba69ddfaa1679d4e5579c944d19fe03b',
+    '44abfebf7f6bfe765e82d7bde0f9e867d9335c909ae4cb73b303363311e2001b',
   'scripts/studio-bounded-lifecycle-runner.cjs':
     'f5c7a7c4c5b59d7f1fbbf93ed2319e92555eb55f84a5fe17af58f4fed77f7d8c',
   'scripts/perf/cdpWebSocketSession.cjs':

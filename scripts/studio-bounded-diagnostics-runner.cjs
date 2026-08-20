@@ -50,6 +50,7 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 
 const acceptanceSession = require('./studio-acceptance-session.cjs')
+const harness = require('./studio-acceptance-harness.cjs')
 const speechFixture = require('./studio-generate-speech-fixture.cjs')
 const { compareWindowCaptureToReference } = require('./studio-pixel-evidence-verifier.cjs')
 
@@ -800,6 +801,7 @@ async function capturePlayableSample(
   target,
   census,
   bounds,
+  sourceHostFrame,
   index,
   previousPtsSeconds,
   adapters = {}
@@ -813,7 +815,7 @@ async function capturePlayableSample(
   acceptanceSession.assertWindowServerSessionAvailable(index, 'after-capture')
   const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
   const observed = parseVisibleHud(hud, target.asset.sha256, {
-    matchAsset: acceptanceSession.hudContainsAsset
+    matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset
   })
   const playable = isPlayableSample(observed, previousPtsSeconds)
   if (!playable.valid) {
@@ -831,7 +833,7 @@ async function capturePlayableSample(
   )
   const materialPixels = (
     adapters.compareWindowCaptureToReference || compareWindowCaptureToReference
-  )(capture.path, reference.path, bounds)
+  )(capture.path, reference.path, bounds, { sourceHostFrame })
   if (materialPixels.clean !== true) {
     throw new Error(
       'bounded diagnostics WindowServer frame disagrees with decoded source: ' +
@@ -840,6 +842,7 @@ async function capturePlayableSample(
   }
   return {
     index,
+    sourceHostFrame,
     capture,
     hud,
     observed,
@@ -848,6 +851,65 @@ async function capturePlayableSample(
     reference,
     materialPixels
   }
+}
+
+async function readSourceWorkspaceObservation(plan, target, windowBounds, adapters = {}) {
+  const runDriver = adapters.runStudioUiDriver || harness.runStudioUiDriver
+  const receipt = await runDriver(plan, target, [{ type: 'read-workspace' }], {
+    ...(adapters.driverAdapters || {}),
+    inputDelivery: 'background-observation-only',
+    allowForegroundInput: false
+  })
+  const actions = Array.isArray(receipt?.actions)
+    ? receipt.actions.filter((action) => action?.type === 'read-workspace')
+    : []
+  if (actions.length !== 1) {
+    throw new Error('bounded diagnostics workspace read did not return exactly one action')
+  }
+  const workspace = harness.validateStudioWorkspaceObservation(
+    actions[0].workspace,
+    windowBounds
+  )
+  if (
+    workspace.sourceRoute?.value !== 'selected' ||
+    workspace.sourceHost?.visible !== true ||
+    !workspace.sourceHost?.frame
+  ) {
+    throw new Error('bounded diagnostics requires Source selected and visibly presented')
+  }
+  return {
+    receipt,
+    workspace,
+    sourceHostFrame: workspace.sourceHost.frame
+  }
+}
+
+async function captureFreshPlayableSample(
+  plan,
+  target,
+  census,
+  bounds,
+  index,
+  previousPtsSeconds,
+  adapters = {}
+) {
+  const workspaceObservation = await readSourceWorkspaceObservation(
+    plan,
+    target,
+    bounds,
+    adapters
+  )
+  const sample = await capturePlayableSample(
+    plan,
+    target,
+    census,
+    bounds,
+    workspaceObservation.sourceHostFrame,
+    index,
+    previousPtsSeconds,
+    adapters
+  )
+  return { ...sample, workspaceObservation }
 }
 
 async function runBoundedDiagnostics(options = {}, adapters = {}) {
@@ -902,7 +964,9 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       }
       const census = sourcePtsCensus(runtime.asset.assetPath, adapters)
       const samples = []
-      samples.push(await capturePlayableSample(plan, target, census, bounds, 0, null, adapters))
+      samples.push(
+        await captureFreshPlayableSample(plan, target, census, bounds, 0, null, adapters)
+      )
       const firstResources = acceptanceSession.resourceSample(
         context.companion.pid,
         0,
@@ -911,7 +975,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       await sleep(options.sampleIntervalMilliseconds ?? 5_000)
       samples.push(
-        await capturePlayableSample(
+        await captureFreshPlayableSample(
           plan,
           target,
           census,
@@ -923,7 +987,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       await sleep(options.sampleIntervalMilliseconds ?? 5_000)
       samples.push(
-        await capturePlayableSample(
+        await captureFreshPlayableSample(
           plan,
           target,
           census,
@@ -950,6 +1014,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       return {
         asset: runtime.asset,
+        workspaceObservation: samples[0].workspaceObservation,
         openResult,
         focusIsolation: {
           open: openFocusIsolation,
@@ -1039,6 +1104,9 @@ module.exports = {
   parseOcrInteger,
   parseStudioTimecodeText,
   parseVisibleHud,
+  capturePlayableSample,
+  captureFreshPlayableSample,
+  readSourceWorkspaceObservation,
   repoRoot,
   resolveExactSourcePts,
   resolveMediaTool,
