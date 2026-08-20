@@ -1,7 +1,9 @@
 # AppDrive V1 — retrospective shipped contract
 
-**Contract date:** 2026-08-20  
-**Status:** Shipped boundary, recorded retrospectively after the implementation reality pass  
+**Contract date:** 2026-08-20
+
+**Status:** Shipped boundary, recorded retrospectively after the implementation reality pass
+
 **Design history:** [appdrive-design.md](appdrive-design.md)
 
 AppDrive lets an agent drive an application only through a surface TaskWraith
