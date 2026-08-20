@@ -20,8 +20,8 @@ import {
   generateIdentityKeyPair,
   type KeyPair
 } from '../src/shared/e2ee/keys'
-import { ChannelExternalSeatAuthority } from '../src/main/collaboration/ChannelExternalSeatAuthority'
 import type { ChannelAgentIdentitySafeStorage } from '../src/main/collaboration/ChannelAgentIdentityStore'
+import { resolveChannelExternalSeatsForChat } from '../src/main/collaboration/ChannelExternalSeatResolver'
 import {
   createChannelProductionService,
   type ChannelProductionService
@@ -373,19 +373,10 @@ function launch(args: {
   }
 }
 
-function resolveChannelExternalSeats(service: ChannelProductionService) {
-  return new ChannelExternalSeatAuthority({
-    channelStore: service.externalSeatChannelStore(),
-    humanPolicyStore: service.externalSeatHumanPolicyStore(),
-    runtime: service.externalSeatRuntimeAuthority(),
-    legacy: { mode: 'channel_only' }
-  }).resolve(CHAT_ID)
-}
-
 function externalSeats(service: ChannelProductionService): readonly ExternalSeat[] {
-  const resolution = resolveChannelExternalSeats(service)
-  assertMission(resolution.state === 'ready', 'Channel seat authority was not ready')
-  return resolution.seats.map((seat) => ({
+  const seats = resolveChannelExternalSeatsForChat({ chatId: CHAT_ID, service })
+  assertMission(seats !== null, 'Channel seat authority was not ready')
+  return seats.map((seat) => ({
     shareId: '',
     collaboratorId: seat.seatId,
     displayName: seat.displayName,
@@ -584,9 +575,8 @@ async function observeMatrix(args: {
   const channels = active.service.listChannels()
   const channel = channels.find((candidate) => candidate.chatId === CHAT_ID)
   assertMission(channel, 'matrix recovery produced no Channel for its chat')
-  const resolution = resolveChannelExternalSeats(active.service)
-  const externalSeatIds =
-    resolution.state === 'ready' ? resolution.seats.map((seat) => seat.seatId) : null
+  const seats = resolveChannelExternalSeatsForChat({ chatId: CHAT_ID, service: active.service })
+  const externalSeatIds = seats === null ? null : seats.map((seat) => seat.seatId)
   const memberCount = active.service
     .externalSeatChannelStore()
     .listMembers(channel.channelId).length
@@ -642,12 +632,25 @@ async function observeBlockedStartup(args: {
     assertMission(false, 'unavailable storage did not block startup')
   } catch (error) {
     assertMission(!bootstrapConstructed, 'blocked startup constructed Channel authority')
+    assertMission(
+      error instanceof Error &&
+        error.message.includes('People migration execution encryption is unavailable'),
+      'blocked startup failed for a reason other than unavailable migration encryption'
+    )
+    assertMission(
+      (error as { code?: unknown }).code === 'recovery_blocked',
+      'blocked startup did not preserve the recovery-blocked error code'
+    )
     const degraded = degradePeopleToChannelMigrationStartup(error)
     assertMission(degraded.legacyWriteGate.isQuiesced(), 'degraded People gate was writable')
+    const resolved = resolveChannelExternalSeatsForChat({ chatId: CHAT_ID, service: null })
+    const externalSeatIds = resolved === null ? null : resolved.map((seat) => seat.seatId)
+    assertMission(externalSeatIds === null, 'production resolver collapsed blocked to empty')
     emit({
       status: 'blocked',
       bootstrapConstructed,
-      externalSeatIds: null,
+      blockedErrorCode: 'recovery_blocked',
+      externalSeatIds,
       legacyWritesQuiesced: true
     })
   }

@@ -624,10 +624,8 @@ import {
   type HistoryClearDispatchReservation,
   type HistoryClearRunPersistenceAuthority
 } from './HistoryClearAdmissionGate'
-import {
-  ChannelExternalSeatAuthority,
-  type ChannelExternalSeat
-} from './collaboration/ChannelExternalSeatAuthority'
+import type { ChannelExternalSeat } from './collaboration/ChannelExternalSeatAuthority'
+import { resolveChannelExternalSeatsForChat } from './collaboration/ChannelExternalSeatResolver'
 import {
   HumanCollaborationStore,
   type HumanCollaborationShare
@@ -50684,42 +50682,16 @@ if (isGeminiMcpBridgeProcess) {
       return typeof found?.colorIndex === 'number' ? { colorIndex: found.colorIndex } : {}
     }
     // Active externals only. A revoked participant holds no seat, and a pending
-    // one has not completed SAS — neither may carry an authority.
-    // Channel-native, with the People fallback still attached. TRANSITIONAL is
-    // explicit so omitting the fallback can never accidentally become the X4
-    // Channel-only seal. A blocked recovery answers null (cannot enumerate),
-    // never [] — an empty array here would read as "no externals exist" and
-    // silently elevate every approval gate that consumes this.
-    // ONE construction site for the seat authority. Two consumers building it
-    // separately could drift, and a channel_only here with a transitional
-    // there would be a silent partial cutover.
-    const resolveChannelExternalSeats = (chatId: string): readonly ChannelExternalSeat[] | null => {
-      // Unreachable today: every call site guards on a truthy chatId and this
-      // binding is module-local. null anyway, because [] would assert "there
-      // are definitively no externals" about a chat we cannot identify.
-      if (!chatId) return null
-      const service = channelProductionBootstrap?.service
-      if (!service || service.status().state !== 'running') return null
-      try {
-        const resolution = new ChannelExternalSeatAuthority({
-          channelStore: service.externalSeatChannelStore(),
-          humanPolicyStore: service.externalSeatHumanPolicyStore(),
-          runtime: service.externalSeatRuntimeAuthority(),
-          // X4 SEAL. The transitional People fallback is retired because it is
-          // provably unreachable, not because it is unwanted: terminal
-          // migration DELETES an ordinary pre-Channels share before either
-          // runtime serves, and a sealed P4 compatibility share is disabled
-          // while getShareForChat returns only `enabled` shares — so the
-          // fallback's own lookup can never yield one. Structurally, the
-          // authority already blocks whenever a legacy share exists without an
-          // active Channel, so isShared was identical under both modes anyway.
-          legacy: { mode: 'channel_only' }
-        }).resolve(chatId)
-        return resolution.state === 'ready' ? resolution.seats : null
-      } catch {
-        return null
-      }
-    }
+    // one has not completed SAS — neither may carry an authority. The shared
+    // production resolver preserves the load-bearing tri-state: a readable
+    // owner-only Channel returns [], while an absent or recovery-blocked
+    // authority returns null (cannot enumerate). It also owns the explicit X4
+    // Channel-only seal so another consumer cannot rebuild a divergent arm.
+    const resolveChannelExternalSeats = (chatId: string): readonly ChannelExternalSeat[] | null =>
+      resolveChannelExternalSeatsForChat({
+        chatId,
+        service: channelProductionBootstrap?.service
+      })
     resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] | null => {
       const seats = resolveChannelExternalSeats(chatId)
       return seats === null ? null : seats.map((seat) => seat.seatId)

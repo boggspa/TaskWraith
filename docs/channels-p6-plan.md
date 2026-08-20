@@ -120,6 +120,15 @@ safeStorage-blocked launch of that same completed empty profile constructs no
 Channel authority and resolves to strict `null`. The test asserts `[]` and
 `null` separately and never accepts either as a substitute for the other.
 
+**Independent-review correction:** the first version of the blocked observation
+emitted a literal `null` after a broad catch. It now requires the exact
+`recovery_blocked` unavailable-encryption failure and calls
+`resolveChannelExternalSeatsForChat`, the same extracted resolver production
+main uses. The resolver's own tests pin missing/non-running/recovery-blocked to
+`null`, a readable owner-only Channel to `[]`, and a readable external member to
+one seat. The matrix therefore measures the production tri-state instead of
+re-stating it in the worker.
+
 Before this gate it was evidenced at unit level only. The gate is the
 permutations, not the individual assertions.
 

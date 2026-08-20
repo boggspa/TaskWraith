@@ -441,6 +441,11 @@ async function runInterruptedStartMatrix(workRoot) {
   const blocked = runWorker(workerBundle, lastEmptyCaseRoot, 'blocked-observe', 5, {
     CHANNELS_P6_PROFILE_KIND: 'empty'
   })
+  assertProof(blocked.status === 'blocked', 'blocked observation did not reach degraded startup')
+  assertProof(
+    blocked.blockedErrorCode === 'recovery_blocked',
+    'blocked observation accepted an unrelated startup failure'
+  )
   const knownEmpty = cases.find((entry) => entry.profileKind === 'empty')?.observed
   assertProof(Array.isArray(knownEmpty?.externalSeatIds), 'known-empty state was not enumerable')
   assertProof(knownEmpty.externalSeatIds.length === 0, 'known-empty state was not empty')
@@ -471,7 +476,9 @@ async function runInterruptedStartMatrix(workRoot) {
     knownEmptyRemainedAnArray: Array.isArray(knownEmpty.externalSeatIds),
     cannotEnumerateRemainedNull: blocked.externalSeatIds === null,
     blockedStartupConstructedNoAuthority:
-      blocked.bootstrapConstructed === false && blocked.legacyWritesQuiesced === true,
+      blocked.bootstrapConstructed === false &&
+      blocked.legacyWritesQuiesced === true &&
+      blocked.blockedErrorCode === 'recovery_blocked',
     terminalAuthorityStableAcrossRelaunch: cases.every(
       (entry) => entry.observed.terminalPlanId === entry.verified.terminalPlanId
     ),

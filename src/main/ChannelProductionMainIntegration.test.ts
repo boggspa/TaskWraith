@@ -342,36 +342,17 @@ describe('Channels production main integration', () => {
     expect(shutdown).toContain('channelProductionBootstrap?.stop().catch((error) => {')
   })
 
-  it('resolves external collaborator seats through the Channel authority, transitionally', () => {
+  it('resolves external collaborator seats through the shared Channel-only resolver', () => {
     const resolver = between(
       'const resolveChannelExternalSeats = (',
       'const humanCollaborationAuditLog = new HumanCollaborationAuditLog('
     )
-    // Channel-native, built from the service seam rather than reopening stores.
-    expect(resolver).toContain('new ChannelExternalSeatAuthority({')
-    expect(resolver).toContain('channelStore: service.externalSeatChannelStore()')
-    expect(resolver).toContain('humanPolicyStore: service.externalSeatHumanPolicyStore()')
-    expect(resolver).toContain('runtime: service.externalSeatRuntimeAuthority()')
-
-    // X4 TOOK THE SEAL. This previously required `mode: 'transitional'` with a
-    // People fallback attached, and forbade `channel_only` so an early cutover
-    // could not happen by omission. That guard did its job: the cutover is now
-    // a decision backed by proof that the fallback is UNREACHABLE — terminal
-    // migration deletes an ordinary pre-Channels share before serving, and a
-    // sealed P4 compatibility share is disabled while getShareForChat returns
-    // only enabled shares. The assertion is inverted so the fallback cannot
-    // return by omission either.
-    expect(resolver).toContain("legacy: { mode: 'channel_only' }")
-    expect(resolver).not.toContain("mode: 'transitional'")
-    expect(resolver).not.toContain('shareStore:')
-    expect(resolver).not.toContain('resolvePresence:')
-
-    // Unknown must never arrive as an empty array: `[]` reads as "no externals
-    // exist" and silently elevates every approval gate that consumes this,
-    // which is the exact defect X2-c closed one layer up.
-    expect(resolver).toContain("if (!service || service.status().state !== 'running') return null")
-    expect(resolver).toContain("resolution.state === 'ready'")
-    expect(resolver).toContain(': null')
+    // One tested resolver now owns store/runtime construction, the X4 seal and
+    // the strict null-versus-empty result. Main wires only the live service.
+    expect(resolver).toContain('resolveChannelExternalSeatsForChat({')
+    expect(resolver).toContain('chatId,')
+    expect(resolver).toContain('service: channelProductionBootstrap?.service')
+    expect(resolver).not.toContain('new ChannelExternalSeatAuthority({')
     // The retired People read is gone from this resolver entirely.
     expect(resolver).not.toContain('humanCollaborationStore.getShareForChat')
 
