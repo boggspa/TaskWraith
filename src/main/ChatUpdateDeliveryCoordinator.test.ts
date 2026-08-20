@@ -416,4 +416,39 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     // burst must not degrade the multi-MB parent chat to snapshot deliveries.
     expect(second.kind).toBe('patch')
   })
+
+  it('delivers the next reply after a save mutated the retained baseline record', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['one', 'the answer is 42']))
+
+    coordinator.enqueue(sink, first)
+    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
+    if (!firstApplied.ok) throw new Error(firstApplied.reason)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true
+    })
+
+    // AppStore.saveChat writes the NEW revision into its CALLER's record
+    // (store/index.ts:7376), and on a getChat()-then-save path that caller's
+    // record is the very object the coordinator retained as its baseline. The
+    // save is not broadcast, so no delivery ever carried that revision.
+    const retainedBaseline = first as { persistenceRevision: number }
+    retainedBaseline.persistenceRevision = 5
+
+    coordinator.enqueue(sink, second)
+
+    // What a human reads: the reply has to reach the renderer.
+    expect(sink.deliveries).toHaveLength(2)
+    const applied = applyChatUpdateDelivery(sink.deliveries[1], firstApplied.baseline)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain(
+      'the answer is 42'
+    )
+  })
+
 })
