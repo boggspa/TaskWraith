@@ -333,21 +333,23 @@ function adjudicateLifecycleEvidence(evidence) {
   ) {
     throw new Error('Studio lifecycle did not prove one host and a distinct replacement child')
   }
+  const expectedVisibleIdentity = session.hudAssetIdentityToken(evidence.expectedAssetId)
   for (const [phase, observation] of [
     ['before', before],
     ['after', after]
   ]) {
+    const assetMatch = session.hudContainsAsset(observation.hud, evidence.expectedAssetId)
     if (
-      observation.assetMatch?.matched !== true ||
-      observation.assetMatch.distance !== 0 ||
-      observation.assetMatch.expected !== evidence.expectedAssetId.toLowerCase() ||
+      assetMatch.matched !== true ||
+      assetMatch.distance !== 0 ||
+      assetMatch.expected !== expectedVisibleIdentity.toLowerCase() ||
       observation.windowTitle !== 'TaskWraith Studio'
     ) {
       throw new Error(
         'Studio lifecycle did not prove exact hydrated media at ' +
           phase +
           ': ' +
-          JSON.stringify(observation)
+          JSON.stringify({ observation, recomputedAssetMatch: assetMatch })
       )
     }
   }

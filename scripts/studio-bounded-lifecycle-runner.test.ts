@@ -61,6 +61,10 @@ const {
 
 const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
 const assetPath = '/tmp/asset.mp4'
+const { hudAssetIdentityToken } = require('./studio-acceptance-session.cjs') as {
+  hudAssetIdentityToken: (assetId: string) => string
+}
+const assetToken = hudAssetIdentityToken(assetId)
 
 function focus(targetPid: number) {
   return {
@@ -143,9 +147,10 @@ function truthfulEvidence() {
       journalPrefixCount: 4,
       journalPrefixDigest: 'a'.repeat(64),
       windowTitle: 'TaskWraith Studio',
+      hud: { observations: [{ text: assetToken }] },
       assetMatch: {
         matched: true,
-        expected: assetId.toLowerCase(),
+        expected: assetToken.toLowerCase(),
         distance: 0
       }
     },
@@ -157,9 +162,10 @@ function truthfulEvidence() {
       journalPrefixCount: 4,
       journalPrefixDigest: 'a'.repeat(64),
       windowTitle: 'TaskWraith Studio',
+      hud: { observations: [{ text: assetToken }] },
       assetMatch: {
         matched: true,
-        expected: assetId.toLowerCase(),
+        expected: assetToken.toLowerCase(),
         distance: 0
       }
     }
@@ -200,7 +206,8 @@ describe('bounded Studio lifecycle adjudication', () => {
     [
       'fuzzy asset',
       (evidence: Record<string, any>) => {
-        evidence.after.assetMatch.distance = 1
+        const token = evidence.after.hud.observations[0].text
+        evidence.after.hud.observations[0].text = token.slice(0, -1) + (token.endsWith('2') ? '3' : '2')
       }
     ],
     [
@@ -244,6 +251,7 @@ describe('bounded Studio lifecycle adjudication', () => {
     evidence.hiddenReplacement.sourceWindowPresentedBeforeExplicitOpen = true
     evidence.hiddenReplacement.journalUnchangedAcrossReplacement = false
     evidence.explicitPresentation.journalDelta.sameAssetOpenMedia = false
+    evidence.after.assetMatch = { matched: false, distance: 64 }
     expect(adjudicateLifecycleEvidence(evidence)).toMatchObject({ ok: true })
   })
 
