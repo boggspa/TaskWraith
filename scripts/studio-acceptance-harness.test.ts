@@ -3338,7 +3338,7 @@ describe('Studio acceptance harness', () => {
     )
 
     expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toHaveLength(2)
-    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(2)
+    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(4)
     expect(driverSource).toContain('(request.inputDelivery == "background-observation-only" ||')
     expect(driverSource).toContain('((request.inputDelivery == "background-observation-only" &&')
     expect(driverSource).toContain('request.allowForegroundInput &&')
@@ -3346,6 +3346,29 @@ describe('Studio acceptance harness', () => {
       'if request.inputDelivery == "foreground-global-explicit" {\n' +
         '        try activateExactWindowForExplicitForeground('
     )
+    const activationStart = driverSource.indexOf(
+      'func activateExactWindowForExplicitForeground('
+    )
+    const activationEnd = driverSource.indexOf(
+      'func boundedScreenshotURL(',
+      activationStart
+    )
+    const activationSource = driverSource.slice(activationStart, activationEnd)
+    expect(activationSource).toContain('AXUIElementPerformAction(window, kAXRaiseAction')
+    expect(activationSource).toContain('try validateWindow(request)')
+    expect(activationSource).toContain('request.windowBounds.width / 2')
+    expect(activationSource).toContain('exactWindowIsTopmost(at: point, request: request)')
+    expect(activationSource).toContain('mouseType: .leftMouseDown')
+    expect(activationSource).toContain('mouseType: .leftMouseUp')
+    expect(activationSource).toContain('NSWorkspace.shared.frontmostApplication?.processIdentifier')
+    const zOrderStart = driverSource.indexOf('func exactWindowIsTopmost(')
+    const zOrderEnd = driverSource.indexOf('func exactAccessibilityWindow(', zOrderStart)
+    const zOrderSource = driverSource.slice(zOrderStart, zOrderEnd)
+    expect(zOrderSource).toContain('CGWindowListCopyWindowInfo')
+    expect(zOrderSource).toContain('layer == 0')
+    expect(zOrderSource).toContain('alpha > 0')
+    expect(zOrderSource).toContain('ownerPid == Int(request.expectedPid)')
+    expect(zOrderSource).toContain('windowId == request.windowId')
     expect(driverSource).toContain(
       'action.type == "click",\n' +
         '                  request.inputDelivery == "foreground-global-explicit"'

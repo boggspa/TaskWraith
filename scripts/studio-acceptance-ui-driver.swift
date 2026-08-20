@@ -440,6 +440,34 @@ func validateWindow(_ request: DriverRequest) throws {
     }
 }
 
+func exactWindowIsTopmost(at point: CGPoint, request: DriverRequest) -> Bool {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let rows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    for row in rows {
+        guard let layer = (row[kCGWindowLayer as String] as? NSNumber)?.intValue,
+              layer == 0,
+              let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
+              alpha > 0,
+              let bounds = row[kCGWindowBounds as String] as? [String: Any],
+              let x = (bounds["X"] as? NSNumber)?.doubleValue,
+              let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+              let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+              let height = (bounds["Height"] as? NSNumber)?.doubleValue,
+              width > 0,
+              height > 0,
+              point.x >= x,
+              point.x < x + width,
+              point.y >= y,
+              point.y < y + height else {
+            continue
+        }
+        let ownerPid = (row[kCGWindowOwnerPID as String] as? NSNumber)?.intValue
+        let windowId = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        return ownerPid == Int(request.expectedPid) && windowId == request.windowId
+    }
+    return false
+}
+
 func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
     guard AXIsProcessTrusted() else {
         throw DriverFailure.refused("macOS Accessibility access is unavailable")
@@ -1317,31 +1345,77 @@ func activateExactWindowForExplicitForeground(
     application: NSRunningApplication,
     window: AXUIElement
 ) throws {
-    guard application.activate(options: [.activateAllWindows]),
-          AXUIElementSetAttributeValue(
-            AXUIElementCreateApplication(pid_t(request.expectedPid)),
-            kAXFrontmostAttribute as CFString,
-            kCFBooleanTrue
-          ) == .success,
-          AXUIElementSetAttributeValue(
-            AXUIElementCreateApplication(pid_t(request.expectedPid)),
-            kAXFocusedWindowAttribute as CFString,
-            window
-          ) == .success,
-          AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
-        throw DriverFailure.refused("explicit foreground input could not activate the exact window")
+    let applicationElement = AXUIElementCreateApplication(pid_t(request.expectedPid))
+    guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
+        throw DriverFailure.refused("explicit foreground input could not raise the exact window")
     }
-    let deadline = Date().addingTimeInterval(3)
+    _ = application.activate(options: [.activateAllWindows])
+    _ = AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFrontmostAttribute as CFString,
+        kCFBooleanTrue
+    )
+    _ = AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFocusedWindowAttribute as CFString,
+        window
+    )
+
+    var deadline = Date().addingTimeInterval(0.75)
     while Date() < deadline &&
         (!application.isActive ||
             NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
     {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
+
+    if !application.isActive ||
+        NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid
+    {
+        // macOS 26 treats NSRunningApplication.activate as advisory for an
+        // accessory app. The request already carries explicit foreground-input
+        // consent, so click only the immutable exact window's title-bar centre,
+        // then prove that the same PID became frontmost before sending a key.
+        try validateWindow(request)
+        let point = CGPoint(
+            x: request.windowBounds.x + request.windowBounds.width / 2,
+            y: request.windowBounds.y + min(16, request.windowBounds.height / 4)
+        )
+        guard exactWindowIsTopmost(at: point, request: request) else {
+            throw DriverFailure.refused(
+                "exact Studio title bar is not topmost at the activation point"
+            )
+        }
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ),
+              let up = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ) else {
+            throw DriverFailure.refused("could not construct exact title-bar activation click")
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        deadline = Date().addingTimeInterval(3)
+        while Date() < deadline &&
+            (!application.isActive ||
+                NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
     guard application.isActive,
           NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
         throw DriverFailure.refused("explicit foreground input did not reach the exact window")
     }
+    try validateWindow(request)
 }
 
 func boundedScreenshotURL(_ path: String, artifactRoot: String) throws -> URL {
