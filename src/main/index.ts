@@ -2115,6 +2115,7 @@ import {
   buildEphemeralFleetRoleFrame,
   findLiveEphemeralFleetWave,
   resolveEphemeralFleetIsolationForWave,
+  isEphemeralFleetChildSettled,
   selectHungEphemeralFleetWorkers,
   shouldArchiveEphemeralFleetAfterSettle,
   shouldArchiveEphemeralFleetChild
@@ -2125,6 +2126,12 @@ import {
   releaseFleetWave,
   summarizeFleetWaveClaim
 } from './SubThreadWaveClaims'
+import {
+  FLEET_DOORBELL_KEY,
+  FLEET_DOORBELL_TTL_MINUTES,
+  buildFleetDoorbellValue,
+  shouldRefreshDoorbell
+} from './SubThreadWaveDoorbell'
 import {
   allocateEphemeralFleetWriterWorktree,
   buildEphemeralFleetRuntimeWorktreeIntent,
@@ -9372,8 +9379,128 @@ async function maybePropagateLinkedChildResult(
   // Notify the renderer so the linked child re-renders with the "returned"
   // timestamp (the parent broadcast rode its save before the settle above).
   broadcastChatUpdated(updatedLinkedChild)
+  // Ring the panel LAST, well clear of the parent save/broadcast pair above:
+  // this re-reads the parent and saves again, and must not land between that
+  // pair or a sibling return can rebroadcast a stale revision.
+  refreshFleetWaveDoorbell(parent.appChatId)
 }
 
+
+/**
+ * Rewrite the one-slot fleet doorbell on the parent's Blackboard.
+ *
+ * The Blackboard is the only surface that reaches EVERY panel seat exactly
+ * once: its digest is a per-participant unseen delta, so a notice posted here
+ * is delivered to each seat on its next turn and then stops repeating. The
+ * in-prompt sub-thread return block cannot do that — it is consumed by
+ * whichever seat composes next, which is precisely why peers never learned a
+ * wave had finished.
+ *
+ * Strictly one entry: host-owned, one fixed key, chat scope, upserted. See
+ * SubThreadWaveDoorbell for why a per-wave entry would brick the board rather
+ * than merely crowd it. Best-effort throughout — a wave that has already
+ * returned must never fail because its notice could not be written.
+ */
+function refreshFleetWaveDoorbell(parentChatId: string): void {
+  try {
+    const parent = AppStore.getChat(parentChatId)
+    // Blackboard writes require an Ensemble chat, and a solo chat has no panel
+    // to notify in the first place.
+    if (!parent?.ensemble) return
+    const nowMs = Date.now()
+    const byWave = new Map<string, { total: number; settled: number }>()
+    for (const child of AppStore.getChildChats(parentChatId)) {
+      const groupId = child.delegationContext?.joinPolicy?.groupId?.trim()
+      if (!groupId) continue
+      const counts = byWave.get(groupId) ?? { total: 0, settled: 0 }
+      counts.total += 1
+      if (isEphemeralFleetChildSettled(child)) counts.settled += 1
+      byWave.set(groupId, counts)
+    }
+    const nextValue = buildFleetDoorbellValue(
+      [...byWave.entries()].map(([waveId, counts]) => {
+        const claim = summarizeFleetWaveClaim(parent.fleetWaveClaims, waveId, nowMs)
+        return {
+          waveId,
+          total: counts.total,
+          settled: counts.settled,
+          ...(claim ? { claimedBy: claim.participantId, claimAuto: claim.auto } : {})
+        }
+      })
+    )
+    const blackboard = parent.ensemble.blackboard || []
+    const existing = blackboard.find(
+      (entry) =>
+        entry.participantId === 'system' &&
+        entry.key === FLEET_DOORBELL_KEY &&
+        entry.scope === 'chat'
+    )
+    // Every upsert mints a fresh entry id and `seenBy` is per id, so an
+    // unchanged rewrite would re-notify the whole panel. One wave return per
+    // worker times a 64-worker wave is exactly the noise this prevents.
+    if (!shouldRefreshDoorbell(existing?.value, nextValue)) return
+
+    const createdAt = new Date().toISOString()
+    if (nextValue === null) {
+      // Nothing left to announce: retract rather than leave a stale notice
+      // pointing peers at work that has since been claimed or cleared.
+      const updated: ChatRecord = {
+        ...parent,
+        ensemble: {
+          ...parent.ensemble,
+          blackboard: blackboard.filter((entry) => entry.id !== existing?.id),
+          updatedAt: createdAt
+        },
+        updatedAt: Date.now()
+      }
+      saveAndBroadcastChat(updated)
+      return
+    }
+
+    const roundResolution = resolveBlackboardPostRound({
+      scope: 'chat',
+      activeRoundId: parent.ensemble.activeRound?.roundId
+    })
+    if (!roundResolution.ok) return
+    const entry = makeBlackboardEntry({
+      id: `blackboard-fleet-doorbell-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      chatId: parent.appChatId,
+      roundId: roundResolution.roundId,
+      participantId: 'system',
+      key: FLEET_DOORBELL_KEY,
+      value: nextValue,
+      category: 'fact',
+      scope: 'chat',
+      ttlMinutes: FLEET_DOORBELL_TTL_MINUTES,
+      createdAt
+    })
+    if (!entry) return
+    const upsert = upsertBlackboardEntry(blackboard, entry, {
+      currentRoundId: parent.ensemble.activeRound?.roundId || roundResolution.roundId,
+      tombstones: parent.ensemble.blackboardTombstones,
+      prunedAt: createdAt
+    })
+    if (!upsert.ok) {
+      // Board is full of durable entries. Skip the notice rather than evicting
+      // anyone: peers can still poll list_subthreads, and silently dropping a
+      // participant's note to make room for bookkeeping would be far worse.
+      console.warn('[fleet-doorbell] blackboard at capacity; notice skipped for', parentChatId)
+      return
+    }
+    saveAndBroadcastChat({
+      ...parent,
+      ensemble: {
+        ...parent.ensemble,
+        blackboard: upsert.entries,
+        blackboardTombstones: upsert.tombstones,
+        updatedAt: createdAt
+      },
+      updatedAt: Date.now()
+    })
+  } catch (error) {
+    console.warn('[fleet-doorbell] refresh failed for', parentChatId, error)
+  }
+}
 
 function subThreadJoinTimerKey(parentChatId: string, groupId: string): string {
   return `${parentChatId}\0${groupId}`
@@ -39008,6 +39135,7 @@ async function executeGeminiMcpTool(
         })
         if (released.ok) {
           saveAndBroadcastChat({ ...chat, fleetWaveClaims: released.claims })
+          refreshFleetWaveDoorbell(chat.appChatId)
           text = mcpJson({ ok: true, tool: 'claim_fleet_wave', action: 'release', waveId })
         } else {
           toolIsError = true
@@ -39040,6 +39168,7 @@ async function executeGeminiMcpTool(
         })
         if (claimed.ok) {
           saveAndBroadcastChat({ ...chat, fleetWaveClaims: claimed.claims })
+          refreshFleetWaveDoorbell(chat.appChatId)
           text = mcpJson({
             ok: true,
             tool: 'claim_fleet_wave',
