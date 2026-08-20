@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  closeoutMatchesRunCompleteNotice,
   deriveVisibleRunCompleteNotice,
   shouldSuppressRunCompleteSummary,
   type RunCompleteNotice
@@ -37,5 +38,48 @@ describe('deriveVisibleRunCompleteNotice', () => {
         isChatRunning: true
       })
     ).toBeNull()
+  })
+})
+
+describe('closeoutMatchesRunCompleteNotice', () => {
+  it('matches Ensemble closeouts by round id, not whichever closeout is newest', () => {
+    const roundNotice = { ...notice, roundId: 'round-new' }
+    expect(
+      closeoutMatchesRunCompleteNotice(
+        {
+          timestamp: notice.timestamp,
+          metadata: { kind: 'taskWraithCloseout', closeoutRoundId: 'round-old' }
+        },
+        roundNotice
+      )
+    ).toBe(false)
+    expect(
+      closeoutMatchesRunCompleteNotice(
+        {
+          timestamp: 'different',
+          metadata: { kind: 'taskWraithCloseout', closeoutRoundId: 'round-new' }
+        },
+        roundNotice
+      )
+    ).toBe(true)
+  })
+
+  it('matches run closeouts by source run id and legacy closeouts by timestamp', () => {
+    expect(
+      closeoutMatchesRunCompleteNotice(
+        {
+          runId: 'run-new',
+          timestamp: 'different',
+          metadata: { kind: 'taskWraithCloseout', sourceRunId: 'run-new' }
+        },
+        { ...notice, runId: 'run-new' }
+      )
+    ).toBe(true)
+    expect(
+      closeoutMatchesRunCompleteNotice(
+        { timestamp: notice.timestamp, metadata: { kind: 'taskWraithCloseout' } },
+        notice
+      )
+    ).toBe(true)
   })
 })

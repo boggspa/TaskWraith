@@ -16,6 +16,7 @@ const baseChat = (patch: Partial<ChatRecord> = {}): ChatRecord =>
   }) as ChatRecord
 
 type RunLike = {
+  runId?: string
   endedAt?: string
   exitCode?: number
   startedAt?: string
@@ -24,7 +25,9 @@ type RunLike = {
 const withRuns = (...list: RunLike[]): Partial<ChatRecord> =>
   ({ runs: list }) as unknown as Partial<ChatRecord>
 
-const ensemblePatch = (status: 'running' | 'completed' | 'cancelled'): Partial<ChatRecord> =>
+const ensemblePatch = (
+  status: 'running' | 'completed' | 'cancelled' | 'failed'
+): Partial<ChatRecord> =>
   ({
     chatKind: 'ensemble',
     ensemble: {
@@ -36,6 +39,7 @@ const ensemblePatch = (status: 'running' | 'completed' | 'cancelled'): Partial<C
         status,
         prompt: 'go',
         startedAt: '2026-06-09T00:00:00.000Z',
+        ...(status === 'running' ? {} : { endedAt: '2026-06-09T00:10:00.000Z' }),
         activeParticipantId: status === 'running' ? 'p1' : undefined,
         participants:
           status === 'running'
@@ -77,7 +81,9 @@ describe('deriveChatIsRunning', () => {
   })
 
   it('is true when the chat id is in runningChatIds', () => {
-    expect(deriveChatIsRunning({ chat: baseChat(), runningChatIds: new Set(['chat-1']) })).toBe(true)
+    expect(deriveChatIsRunning({ chat: baseChat(), runningChatIds: new Set(['chat-1']) })).toBe(
+      true
+    )
   })
 
   it('lets a terminal solo run override an orphan runningChatIds entry', () => {
@@ -291,7 +297,11 @@ describe('deriveChatRunCompleteNotice', () => {
         baseChat(
           withRuns(
             { endedAt: 'old', exitCode: 0 },
-            { endedAt: '2026-06-09T00:05:00.000Z', exitCode: 1, startedAt: '2026-06-09T00:00:00.000Z' }
+            {
+              endedAt: '2026-06-09T00:05:00.000Z',
+              exitCode: 1,
+              startedAt: '2026-06-09T00:00:00.000Z'
+            }
           )
         ),
         false
@@ -331,5 +341,34 @@ describe('deriveChatRunCompleteNotice', () => {
       startedAt: undefined,
       suppressRunSummary: true
     })
+  })
+
+  it('prefers a terminal Ensemble round even when raw running state is stale', () => {
+    expect(
+      deriveChatRunCompleteNotice(
+        baseChat({
+          ...ensemblePatch('completed'),
+          ...withRuns({
+            runId: 'participant-run',
+            startedAt: '2026-06-09T00:09:00.000Z',
+            endedAt: '2026-06-09T00:09:30.000Z'
+          })
+        }),
+        true
+      )
+    ).toEqual({
+      timestamp: '2026-06-09T00:10:00.000Z',
+      exitCode: 0,
+      startedAt: '2026-06-09T00:00:00.000Z',
+      roundId: 'round-1',
+      suppressRunSummary: false
+    })
+  })
+
+  it('maps failed and cancelled Ensemble rounds to terminal exit codes', () => {
+    expect(deriveChatRunCompleteNotice(baseChat(ensemblePatch('failed')), false)?.exitCode).toBe(1)
+    expect(deriveChatRunCompleteNotice(baseChat(ensemblePatch('cancelled')), false)?.exitCode).toBe(
+      130
+    )
   })
 })

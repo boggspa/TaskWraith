@@ -67,6 +67,19 @@ export function deriveChatRunCompleteNotice(
   chat: ChatRecord,
   isRunning: boolean
 ): RunCompleteNotice | null {
+  const round = chat.ensemble?.activeRound
+  if (
+    round?.endedAt &&
+    (round.status === 'completed' || round.status === 'cancelled' || round.status === 'failed')
+  ) {
+    return {
+      timestamp: round.endedAt,
+      exitCode: round.status === 'cancelled' ? 130 : round.status === 'failed' ? 1 : 0,
+      startedAt: round.startedAt || undefined,
+      roundId: round.roundId,
+      suppressRunSummary: false
+    }
+  }
   if (isRunning) return null
   const runs = chat.runs
   if (!Array.isArray(runs) || runs.length === 0) return null
@@ -78,6 +91,7 @@ export function deriveChatRunCompleteNotice(
     timestamp: lastRun.endedAt,
     exitCode: lastRun.exitCode ?? 0,
     startedAt: lastRun.startedAt || undefined,
+    ...(lastRun.runId ? { runId: lastRun.runId } : {}),
     suppressRunSummary: Boolean(lastRun.suppressRunSummary)
   }
 }
