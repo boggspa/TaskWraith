@@ -1,3 +1,4 @@
+import type { StudioTranscriptStatus } from '../shared/studioTranscriptStatus'
 import {
   AppSettings,
   BlackboardEntry,
@@ -1685,6 +1686,7 @@ declare global {
         sha256: string,
         mimeType: string
       ) => Promise<{ ok: boolean; error?: string }>
+      onStudioTranscriptStatus: (listener: (status: StudioTranscriptStatus) => void) => () => void
       /**
        * Studio effect preview (LUT). These take NO arguments on purpose: the
        * path originates only from the main-process file dialog, so a renderer

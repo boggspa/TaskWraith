@@ -65,6 +65,7 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
+import { StudioTranscriptStatusNotice } from './StudioTranscriptStatusNotice'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
 import { GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
@@ -5942,6 +5943,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 }
               />
             )}
+            <StudioTranscriptStatusNotice />
             {shouldShowWelcomeStandaloneHeatmaps && (
               <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}

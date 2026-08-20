@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createStudioOpenInStudioHandler } from './StudioOpenMediaHop'
 import type { StudioOpenMediaAsset, StudioOpenMediaLifecycle } from './StudioOpenMediaHop'
 import type {
@@ -51,6 +51,8 @@ describe('Studio open-media hop', () => {
     // still green. It drives the REAL adapter, not a double.
     const published: StudioTranscript[] = []
     const sourcePaths: string[] = []
+    const started: Array<{ assetId: string; operationId: number }> = []
+    const completedOperationIds: number[] = []
     const settled = deferred<StudioTranscriptPublishOutcome>()
 
     const openInStudio = createStudioOpenInStudioHandler({
@@ -59,17 +61,23 @@ describe('Studio open-media hop', () => {
         sourcePaths.push(params.sourcePath)
         return recognized()
       },
-      onTranscriptOutcome: (event) => settled.resolve(event.outcome)
+      onTranscriptStarted: (event) => started.push(event),
+      onTranscriptOutcome: (event) => {
+        completedOperationIds.push(event.operationId)
+        settled.resolve(event.outcome)
+      }
     })
 
     await expect(
       openInStudio({ assetId: 'assetA', path: '/isolated/transcript-media/aa/assetA.mov' })
     ).resolves.toEqual({ ok: true })
 
+    expect(started).toEqual([{ assetId: 'assetA', operationId: 1 }])
     await expect(settled.promise).resolves.toMatchObject({ ok: true, segmentCount: 2 })
     expect(sourcePaths).toEqual(['/isolated/transcript-media/aa/assetA.mov'])
     expect(published).toHaveLength(1)
     expect(published[0].assetId).toBe('assetA')
+    expect(completedOperationIds).toEqual([1])
     // Exact rationals reached the host, not decimals or rounded ticks.
     expect(published[0].segments[0].sourceOut).toEqual({ n: 3, d: 2 })
     expect(published[0].segments[1].sourceOut).toEqual({ n: 5, d: 2 })
@@ -157,5 +165,32 @@ describe('Studio open-media hop', () => {
       code: 'transcribe_failed',
       message: 'publication path exploded'
     })
+  })
+
+  it('does not let throwing status observers fail the open or report an outcome twice', async () => {
+    const reported = deferred<void>()
+    const onTranscriptStarted = vi.fn(() => {
+      throw new Error('pending renderer disappeared')
+    })
+    const onTranscriptOutcome = vi.fn(() => {
+      reported.resolve()
+      throw new Error('outcome renderer disappeared')
+    })
+    const openInStudio = createStudioOpenInStudioHandler({
+      getLifecycle: () => lifecycle(),
+      transcribe: async () => recognized(),
+      publishTranscript: async () => ({
+        ok: false,
+        code: 'no_usable_segments',
+        message: 'recognizer returned no speech'
+      }),
+      onTranscriptStarted,
+      onTranscriptOutcome
+    })
+
+    await expect(openInStudio({ assetId: 'assetA', path: '/a.mov' })).resolves.toEqual({ ok: true })
+    await reported.promise
+    expect(onTranscriptStarted).toHaveBeenCalledTimes(1)
+    expect(onTranscriptOutcome).toHaveBeenCalledTimes(1)
   })
 })

@@ -59,6 +59,11 @@ import type {
   GitRevisionDiffTarget
 } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
+import {
+  STUDIO_TRANSCRIPT_STATUS_CHANNEL,
+  isStudioTranscriptStatus,
+  type StudioTranscriptStatus
+} from '../shared/studioTranscriptStatus'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason,
@@ -1629,6 +1634,13 @@ const api = {
       ok: boolean
       error?: string
     }>,
+  onStudioTranscriptStatus: (listener: (status: StudioTranscriptStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+      if (isStudioTranscriptStatus(status)) listener(status)
+    }
+    ipcRenderer.on(STUDIO_TRANSCRIPT_STATUS_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(STUDIO_TRANSCRIPT_STATUS_CHANNEL, handler)
+  },
   // Studio effect preview (LUT). DELIBERATELY PATHLESS — these take no
   // arguments. Main owns the file dialog, so the renderer is structurally
   // incapable of naming a file for the host to read. Do not add a path

@@ -3317,6 +3317,24 @@ describe('Studio acceptance harness', () => {
     ).resolves.toMatchObject({ revision: 2, op: { type: 'set_transcript' } })
   })
 
+  it('fails the transcript wait immediately on a typed operator-visible refusal', async () => {
+    const failureProbe = vi.fn(async () =>
+      'Studio transcript unavailable (transcribe_failed): Speech permission denied'
+    )
+    await expect(
+      waitForStudioJournalOperation(
+        { studioStateDirectory: '/virtual/unused' },
+        { type: 'set_transcript', assetId: 'asset-a', requireNonEmptyTranscript: true },
+        {
+          timeoutMs: 10_000,
+          failureProbe,
+          readJournalOperations: async () => []
+        }
+      )
+    ).rejects.toThrow(/Speech permission denied/)
+    expect(failureProbe).toHaveBeenCalledTimes(1)
+  })
+
   it('adjudicates only an asset-bound, timed, ordered recognized passage', () => {
     const phrases = expectedTranscriptPhrases()
     const boundary = { assetId: 'asset-a', durationSeconds: 30, frameRate: 30 }
@@ -5087,8 +5105,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '1b5a1b3ace26ed290d300ad7cce4bc787274af63ab400a88a41c6acd803ed2e8',
-      sourceCount: 2278,
+      sourceDigest: '0922d7ed84b213b9562099ddbb46aa30dbcb307aa6a23aaf6e63328d966898d6',
+      sourceCount: 2281,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,

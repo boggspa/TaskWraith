@@ -229,8 +229,8 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '1b5a1b3ace26ed290d300ad7cce4bc787274af63ab400a88a41c6acd803ed2e8',
-  sourceCount: 2278,
+  sourceDigest: '0922d7ed84b213b9562099ddbb46aa30dbcb307aa6a23aaf6e63328d966898d6',
+  sourceCount: 2281,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
@@ -2698,6 +2698,9 @@ async function waitFor(options) {
       const value = await options.probe()
       if (value) return value
     } catch (error) {
+      if (error && typeof error === 'object' && error.waitForTerminal === true) {
+        throw error
+      }
       lastError = error
     }
     await sleep(intervalMs)
@@ -3944,6 +3947,19 @@ async function waitForStudioJournalOperation(plan, expectation, options = {}) {
     timeoutMs: options.timeoutMs,
     intervalMs: options.intervalMs || 100,
     probe: async () => {
+      if (typeof options.failureProbe === 'function') {
+        const failure = await options.failureProbe()
+        if (failure) {
+          throw Object.assign(
+            new Error(
+              typeof failure === 'string'
+                ? failure
+                : 'Studio acceptance observed a terminal failure while waiting for the journal'
+            ),
+            { waitForTerminal: true }
+          )
+        }
+      }
       const entries = await (options.readJournalOperations || readStudioJournalOperations)(plan)
       return (
         entries.find((entry) => studioJournalOperationMatches(entry, expectation, afterRevision)) ||
@@ -4880,7 +4896,29 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       ...(assetId ? { assetId } : {}),
       requireNonEmptyTranscript: true
     },
-    { afterRevision: 0, timeoutMs: plan.transcriptTimeoutMs }
+    {
+      afterRevision: 0,
+      timeoutMs: plan.transcriptTimeoutMs,
+      ...(typeof adapters.readTranscriptStatus === 'function'
+        ? {
+            failureProbe: async () => {
+              const status = await adapters.readTranscriptStatus()
+              if (
+                status?.state !== 'unavailable' ||
+                (assetId && status.assetId !== assetId)
+              ) {
+                return null
+              }
+              return (
+                'Studio transcript unavailable (' +
+                String(status.code || 'unknown') +
+                '): ' +
+                String(status.message || 'no reason supplied')
+              )
+            }
+          }
+        : {})
+    }
   )
   let recognition = null
   if (target.speechFixture) {
@@ -5471,7 +5509,14 @@ async function runStudioAcceptance(args, adapters = {}) {
         asset,
         speechFixture
       },
-      adapters.journeyAdapters || {}
+      {
+        ...(adapters.journeyAdapters || {}),
+        readTranscriptStatus: () =>
+          evaluateByValue(
+            renderer,
+            '(() => { const node = document.querySelector(".studio-transcript-status"); return node ? { assetId: node.getAttribute("data-studio-transcript-asset-id"), state: node.getAttribute("data-studio-transcript-state"), code: node.getAttribute("data-studio-transcript-code"), message: node.textContent || "" } : null })()'
+          )
+      }
     )
     evidence = {
       ok: true,
