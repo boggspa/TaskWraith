@@ -4416,6 +4416,135 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_key',
+      description:
+        'Dispatch one allowlisted non-text keyboard key (Enter, Escape, Tab, arrows, paging, Backspace/Delete, or Space) to a target by ref or selector. Requires the same exact, user-approved, expiring AppDrive lease as click/fill. Printable text is refused; use canvas_fill for ordinary non-secret text and never type credentials.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          key: {
+            type: 'string',
+            enum: [
+              'Enter',
+              'Escape',
+              'Tab',
+              'ArrowUp',
+              'ArrowDown',
+              'ArrowLeft',
+              'ArrowRight',
+              'Home',
+              'End',
+              'PageUp',
+              'PageDown',
+              'Backspace',
+              'Delete',
+              ' '
+            ]
+          },
+          expectedInputEpoch: { type: 'number' }
+        },
+        required: ['canvasId', 'key']
+      }
+    },
+    {
+      name: 'canvas_scroll',
+      description:
+        'Scroll the page or a target element by CSS-pixel deltaX/deltaY. Optionally target by ref, selector, or x/y; with no target, scrolls the page. Requires the exact user-approved AppDrive lease and consumes one bounded step.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          x: { type: 'number' },
+          y: { type: 'number' },
+          deltaX: { type: 'number' },
+          deltaY: { type: 'number' },
+          expectedInputEpoch: { type: 'number' }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_hover',
+      description:
+        'Hover a target by ref or selector using structured mouseover/mouseenter/mousemove events. Requires the exact user-approved AppDrive lease and consumes one bounded step.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          expectedInputEpoch: { type: 'number' }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_select',
+      description:
+        'Choose an option in a select element by option value or visible label, firing input/change events. Requires the exact user-approved AppDrive lease; credential and stale/human-active protections remain in force.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          value: { type: 'string' },
+          expectedInputEpoch: { type: 'number' }
+        },
+        required: ['canvasId', 'value']
+      }
+    },
+    {
+      name: 'canvas_wait_for',
+      description:
+        'Wait up to 30 seconds for a ref or selector to be present without dispatching input. Read-only and bounded; returns wait_timeout when the condition does not appear.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          timeoutMs: { type: 'number', minimum: 0, maximum: 30000 }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
       name: 'canvas_annotate',
       description:
         'Overlay numbered Set-of-Mark boxes on the Canvas to flag elements for the human (agent→human redlines). Each mark targets a `ref` or explicit `bbox` [x,y,w,h] with a `label` and optional `severity` (info/warn/error). Persisted and visible in a subsequent canvas_screenshot. Gated.',

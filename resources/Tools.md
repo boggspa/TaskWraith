@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 208 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 213 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1313,6 +1313,51 @@ Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selecto
 - Required args: canvasId, value
 - Optional args: ref, selector, expectedInputEpoch
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_fill","arguments":{"canvasId":"text","value":"text"}}}}`
+
+## canvas_key
+
+Dispatch one allowlisted non-text keyboard key (Enter, Escape, Tab, arrows, paging, Backspace/Delete, or Space) to a target by ref or selector. Requires the same exact, user-approved, expiring AppDrive lease as click/fill. Printable text is refused; use canvas_fill for ordinary non-secret text and never type credentials.
+
+- Access: governed by your run permission role
+- Required args: canvasId, key
+- Optional args: ref, selector, expectedInputEpoch
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_key","arguments":{"canvasId":"text","key":"text"}}}}`
+
+## canvas_scroll
+
+Scroll the page or a target element by CSS-pixel deltaX/deltaY. Optionally target by ref, selector, or x/y; with no target, scrolls the page. Requires the exact user-approved AppDrive lease and consumes one bounded step.
+
+- Access: governed by your run permission role
+- Required args: canvasId
+- Optional args: ref, selector, x, y, deltaX, deltaY, expectedInputEpoch
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_scroll","arguments":{"canvasId":"text"}}}}`
+
+## canvas_hover
+
+Hover a target by ref or selector using structured mouseover/mouseenter/mousemove events. Requires the exact user-approved AppDrive lease and consumes one bounded step.
+
+- Access: governed by your run permission role
+- Required args: canvasId
+- Optional args: ref, selector, expectedInputEpoch
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_hover","arguments":{"canvasId":"text"}}}}`
+
+## canvas_select
+
+Choose an option in a select element by option value or visible label, firing input/change events. Requires the exact user-approved AppDrive lease; credential and stale/human-active protections remain in force.
+
+- Access: governed by your run permission role
+- Required args: canvasId, value
+- Optional args: ref, selector, expectedInputEpoch
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_select","arguments":{"canvasId":"text","value":"text"}}}}`
+
+## canvas_wait_for
+
+Wait up to 30 seconds for a ref or selector to be present without dispatching input. Read-only and bounded; returns wait_timeout when the condition does not appear.
+
+- Access: read-only (no approval needed)
+- Required args: canvasId
+- Optional args: ref, selector, timeoutMs
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_wait_for","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_annotate
 

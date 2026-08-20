@@ -702,7 +702,14 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
-    if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
+    if (
+      toolName === 'canvas_click' ||
+      toolName === 'canvas_fill' ||
+      toolName === 'canvas_key' ||
+      toolName === 'canvas_scroll' ||
+      toolName === 'canvas_hover' ||
+      toolName === 'canvas_select'
+    ) {
       return {
         title: `Approve ${providerName} canvas interaction`,
         body: toolName,

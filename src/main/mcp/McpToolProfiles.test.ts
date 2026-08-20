@@ -198,9 +198,10 @@ describe('immutable v1 MCP profile snapshots', () => {
     // through that same V1_HIDDEN filter, so advisory wave ownership needed no
     // v18 receipt and spent no DIRECT slot. CORE was deliberately skipped: it
     // sits at 59/60 and does not advertise delegate_wave either.
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(161)
+    // 2026-08-20: five structured AppDrive verbs — 161 → 166.
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(166)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      '1f0d7d302a45fe2a2deafd6e09bb6ab873c8521b3a10d98801e1123b3e10dcee'
+      '7a1a28bfe24f05c072cf47fb2f2690d4c31efdb5489bd7a760f297d3d7b8d3a8'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -242,9 +243,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
   it('keeps gateway-v1 hidden membership exact while v2 adds only the proposal tool', () => {
     // 2026-08-07: appshots + appshots_status — 120 → 122 via FULL filter().
     // 2026-08-20: claim_fleet_wave — 122 → 123, same FULL filter() route.
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(123)
+    // 2026-08-20: five structured AppDrive verbs — 123 → 128.
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(128)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '6104ec8133a3ea218c37de475f6e76565ba15a89d00b0b4666f58bcc064a4ce1'
+      'd40dda6050004fb69925dfe8573e49fa78571273b4d5d8dcd7a72fc16b70c5d4'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -1332,12 +1334,13 @@ describe('catalogue reachability', () => {
     // off FULL, so a FULL-only tool reaches every version's discovery surface.
     // 2026-08-07: 142 → 144 (appshots + appshots_status).
     // 2026-08-20: 144 → 145 (claim_fleet_wave), same FULL-only route.
-    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(145)
+    // 2026-08-20: five structured AppDrive verbs — 145 → 150.
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(150)
     expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'eb69a91cf50450b08a274d85cfc3be6438ee60f9a43f4b0f4e8dca6807858d82'
+      '0ba56e20d83c49122d51809ea8defdbec961e25211b60eca687964251e77266d'
     )
     expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'eb69a91cf50450b08a274d85cfc3be6438ee60f9a43f4b0f4e8dca6807858d82'
+      '0ba56e20d83c49122d51809ea8defdbec961e25211b60eca687964251e77266d'
     )
   })
 

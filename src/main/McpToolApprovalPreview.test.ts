@@ -344,6 +344,10 @@ describe('createMcpToolApprovalPreviewer', () => {
 
   it.each([
     ['canvas_click', 'canvasInteraction'],
+    ['canvas_key', 'canvasInteraction'],
+    ['canvas_scroll', 'canvasInteraction'],
+    ['canvas_hover', 'canvasInteraction'],
+    ['canvas_select', 'canvasInteraction'],
     ['canvas_sketch_update', 'sketchCanvas'],
     ['canvas_eval', 'canvasEval'],
     ['mesh_scene_present', 'meshCanvas'],

@@ -297,6 +297,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // annotate overlays numbered Set-of-Mark boxes for the human (gated).
   'canvas_click',
   'canvas_fill',
+  'canvas_key',
+  'canvas_scroll',
+  'canvas_hover',
+  'canvas_select',
+  'canvas_wait_for',
   'canvas_annotate',
   // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.

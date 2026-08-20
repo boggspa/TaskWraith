@@ -190,6 +190,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',
+  'canvas_wait_for',
   // Simulator Canvas capability probe + truncated AX dump (observation only).
   // Mutating simulator_* verbs stay gated on simulatorCanvas.
   'simulator_status',
@@ -329,6 +330,10 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
     (tool) =>
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
+      tool === 'canvas_key' ||
+      tool === 'canvas_scroll' ||
+      tool === 'canvas_hover' ||
+      tool === 'canvas_select' ||
       tool === 'canvas_sketch_update' ||
       // Shared with Ask's recon tier (explicit overlap keeps Plan bridge complete).
       tool === 'canvas_render_chart' ||

@@ -374,6 +374,12 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     // canvas actuation + media are the plan tier — a read_only seat must not see them.
     expect(isReadOnlyAdvertisedTool('canvas_click')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_fill')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_key')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_scroll')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_hover')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_select')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_wait_for')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_wait_for')).toBe(true)
     expect(isReadOnlyAdvertisedTool('canvas_sketch_update')).toBe(false)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
@@ -422,6 +428,11 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
   it('advertises canvas actuation + every media-editing tool to a plan seat', () => {
     expect(isPlanAdvertisedTool('canvas_click')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_fill')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_key')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_scroll')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_hover')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_select')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_wait_for')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_sketch_update')).toBe(true)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isPlanAdvertisedTool(tool)).toBe(true)

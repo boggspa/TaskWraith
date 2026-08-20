@@ -132,6 +132,37 @@ describe('TaskWraith MCP tool registry', () => {
     ).toEqual({ action: 'select_participants', participantRoles: ['Reviewer'] })
   })
 
+  it('advertises the richer Canvas control verbs with bounded public schemas', () => {
+    const definitions = createTaskWraithMcpToolDefinitions()
+    const findTool = (name: string) => definitions.find((candidate) => candidate.name === name)
+
+    for (const name of ['canvas_key', 'canvas_scroll', 'canvas_hover', 'canvas_select']) {
+      expect(findTool(name)?.annotations?.readOnlyHint).toBe(false)
+      expect(TASKWRAITH_MCP_TOOLS).toContain(name)
+    }
+
+    expect(findTool('canvas_key')?.inputSchema).toMatchObject({
+      required: ['canvasId', 'key'],
+      properties: { key: { enum: expect.arrayContaining(['Enter', 'Escape', 'Tab']) } }
+    })
+    expect(findTool('canvas_scroll')?.inputSchema).toMatchObject({
+      required: ['canvasId'],
+      properties: { deltaX: { type: 'number' }, deltaY: { type: 'number' } }
+    })
+    expect(findTool('canvas_select')?.inputSchema).toMatchObject({
+      required: ['canvasId', 'value'],
+      properties: { value: { type: 'string' } }
+    })
+    expect(findTool('canvas_wait_for')).toMatchObject({
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      inputSchema: {
+        required: ['canvasId'],
+        properties: { timeoutMs: { type: 'number', minimum: 0, maximum: 30000 } }
+      }
+    })
+    expect(TASKWRAITH_MCP_TOOLS).toContain('canvas_wait_for')
+  })
+
   it('does not expose a Session Activity Ledger write path to agents', () => {
     expect(TASKWRAITH_MCP_TOOLS).not.toContain('session_activity_append' as never)
     expect(TASKWRAITH_MCP_TOOLS).not.toContain('session_activity_write' as never)

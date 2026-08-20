@@ -1876,6 +1876,39 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'attached-application',
     'application-resource'
   ),
+  canvas_key: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_scroll: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_hover: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_select: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_wait_for: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_annotate: tool(
     'orchestration',
     'mcpTools',
