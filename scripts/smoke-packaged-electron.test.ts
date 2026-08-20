@@ -32,12 +32,24 @@ const {
   readMacSigningIdentity: (codePath: string) => MacSigningIdentity
 } = require('./smoke-packaged-electron.cjs')
 
-const { resolveMacBridgeDaemonPath, resolveMacBridgeInfoPath, validateMacBridgeInfo } =
-  require('../build/validate-native-modules.cjs') as {
-    resolveMacBridgeDaemonPath: (resourcesPath: string) => string
-    resolveMacBridgeInfoPath: (resourcesPath: string) => string
-    validateMacBridgeInfo: (info: Record<string, unknown>, infoPath: string) => void
+const {
+  normalizeMacElectronHelperBundles,
+  resolveMacBridgeDaemonPath,
+  resolveMacBridgeInfoPath,
+  validateMacBridgeInfo
+} = require('../build/validate-native-modules.cjs') as {
+  normalizeMacElectronHelperBundles: (
+    resourcesPath: string,
+    context: Record<string, any>
+  ) => {
+    permissionName: string
+    productFilename: string
+    helpers: Array<{ sourceName: string; targetName: string; changed: boolean }>
   }
+  resolveMacBridgeDaemonPath: (resourcesPath: string) => string
+  resolveMacBridgeInfoPath: (resourcesPath: string) => string
+  validateMacBridgeInfo: (info: Record<string, unknown>, infoPath: string) => void
+}
 
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
 // i.e. what a plain local `--dir` build produces with no signing identity. The
@@ -73,6 +85,64 @@ const DEVELOPER_ID_OUTPUT = [
 ].join('\n')
 
 describe('packaged Electron to TUI smoke handoff', () => {
+  it('normalizes debug helper bundles to the signed permission identity before signing', () => {
+    if (process.platform !== 'darwin') return
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-helper-normalization-'))
+    try {
+      const appRoot = path.join(root, 'TaskWraith Debug.app')
+      const contents = path.join(appRoot, 'Contents')
+      const resources = path.join(contents, 'Resources')
+      const frameworks = path.join(contents, 'Frameworks')
+      fs.mkdirSync(resources, { recursive: true })
+      fs.mkdirSync(frameworks, { recursive: true })
+      fs.writeFileSync(path.join(contents, 'Info.plist'), plist({ CFBundleName: 'TaskWraith' }))
+
+      const suffixes = ['', ' (GPU)', ' (Plugin)', ' (Renderer)']
+      for (const suffix of suffixes) {
+        const sourceName = `TaskWraith Debug Helper${suffix}`
+        const helperContents = path.join(frameworks, `${sourceName}.app`, 'Contents')
+        const macos = path.join(helperContents, 'MacOS')
+        fs.mkdirSync(macos, { recursive: true })
+        fs.writeFileSync(path.join(macos, sourceName), sourceName)
+        fs.writeFileSync(
+          path.join(helperContents, 'Info.plist'),
+          plist({
+            CFBundleDisplayName: sourceName,
+            CFBundleExecutable: sourceName,
+            CFBundleIdentifier: `com.example.helper${suffix.replace(/\W/g, '')}`
+          })
+        )
+      }
+
+      const context = {
+        packager: { appInfo: { productFilename: 'TaskWraith Debug' } }
+      }
+      const first = normalizeMacElectronHelperBundles(resources, context)
+      expect(first).toMatchObject({
+        permissionName: 'TaskWraith',
+        productFilename: 'TaskWraith Debug'
+      })
+      expect(first.helpers.every((entry) => entry.changed)).toBe(true)
+
+      for (const suffix of suffixes) {
+        const sourceName = `TaskWraith Debug Helper${suffix}`
+        const targetName = `TaskWraith Helper${suffix}`
+        const sourceApp = path.join(frameworks, `${sourceName}.app`)
+        const targetApp = path.join(frameworks, `${targetName}.app`)
+        expect(fs.existsSync(sourceApp)).toBe(false)
+        expect(fs.existsSync(path.join(targetApp, 'Contents', 'MacOS', targetName))).toBe(true)
+        const info = fs.readFileSync(path.join(targetApp, 'Contents', 'Info.plist'), 'utf8')
+        expect(info).toContain(`<string>${targetName}</string>`)
+        expect(info).not.toContain(`<string>${sourceName}</string>`)
+      }
+
+      const second = normalizeMacElectronHelperBundles(resources, context)
+      expect(second.helpers.every((entry) => entry.changed === false)).toBe(true)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('validates the native daemon from the macOS helper location', () => {
     expect(resolveMacBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources')).toBe(
       '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
@@ -128,6 +198,20 @@ describe('packaged Electron to TUI smoke handoff', () => {
     expect(typeof collectMacSigningPostureFailures).toBe('function')
   })
 })
+
+function plist(values: Record<string, string>): string {
+  const fields = Object.entries(values)
+    .map(([key, value]) => `  <key>${key}</key>\n  <string>${value}</string>`)
+    .join('\n')
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+${fields}
+</dict>
+</plist>
+`
+}
 
 describe('packaged macOS signing posture', () => {
   // The defect this suite exists for: `codesign --verify --strict` inspects

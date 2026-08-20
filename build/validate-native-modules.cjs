@@ -11,6 +11,9 @@ async function validateNativeModules(context) {
   const arch = normalizeArch(context.arch || process.arch)
   const expectedMacArchs = platform === 'darwin' ? expectedMacArchitectures(context, arch) : []
 
+  if (platform === 'darwin') {
+    normalizeMacElectronHelperBundles(resourcesDir, context)
+  }
   if (platform === 'darwin' && expectedMacArchs.length > 1) {
     removeHostOnlyNodePtyBuildBinding(unpackedDir, expectedMacArchs)
   }
@@ -85,6 +88,114 @@ async function validateNativeModules(context) {
   )
 
   await hardenElectronFuses(context, resourcesDir)
+}
+
+const MAC_ELECTRON_HELPER_SUFFIXES = ['', ' (GPU)', ' (Plugin)', ' (Renderer)']
+
+function normalizeMacElectronHelperBundles(resourcesDir, context) {
+  const contentsDir = path.dirname(resourcesDir)
+  const frameworksDir = path.join(contentsDir, 'Frameworks')
+  const mainInfoPath = path.join(contentsDir, 'Info.plist')
+  const mainInfo = readPlistAsJson(mainInfoPath, 'packaged app Info.plist')
+  const permissionName = boundedBundleName(mainInfo.CFBundleName, 'CFBundleName')
+  const appInfo = context.packager && context.packager.appInfo
+  const productFilename = boundedBundleName(
+    appInfo && (appInfo.productFilename || appInfo.productName),
+    'electron-builder product filename'
+  )
+  const normalized = []
+
+  for (const suffix of MAC_ELECTRON_HELPER_SUFFIXES) {
+    const sourceName = `${productFilename} Helper${suffix}`
+    const targetName = `${permissionName} Helper${suffix}`
+    const sourceApp = path.join(frameworksDir, `${sourceName}.app`)
+    const targetApp = path.join(frameworksDir, `${targetName}.app`)
+    let changed = false
+
+    if (sourceApp !== targetApp) {
+      if (fs.existsSync(sourceApp) && fs.existsSync(targetApp)) {
+        throw new Error(`Electron helper normalization found both ${sourceApp} and ${targetApp}.`)
+      }
+      if (fs.existsSync(sourceApp)) {
+        fs.renameSync(sourceApp, targetApp)
+        changed = true
+      } else if (!fs.existsSync(targetApp)) {
+        throw new Error(`Electron helper bundle is missing: ${sourceApp}`)
+      }
+    } else if (!fs.existsSync(targetApp)) {
+      throw new Error(`Electron helper bundle is missing: ${targetApp}`)
+    }
+
+    const macosDir = path.join(targetApp, 'Contents', 'MacOS')
+    const sourceExecutable = path.join(macosDir, sourceName)
+    const targetExecutable = path.join(macosDir, targetName)
+    if (sourceExecutable !== targetExecutable) {
+      if (fs.existsSync(sourceExecutable) && fs.existsSync(targetExecutable)) {
+        throw new Error(
+          `Electron helper normalization found both ${sourceExecutable} and ${targetExecutable}.`
+        )
+      }
+      if (fs.existsSync(sourceExecutable)) {
+        fs.renameSync(sourceExecutable, targetExecutable)
+        changed = true
+      } else if (!fs.existsSync(targetExecutable)) {
+        throw new Error(`Electron helper executable is missing: ${sourceExecutable}`)
+      }
+    } else if (!fs.existsSync(targetExecutable)) {
+      throw new Error(`Electron helper executable is missing: ${targetExecutable}`)
+    }
+
+    const helperInfoPath = path.join(targetApp, 'Contents', 'Info.plist')
+    const helperInfo = readPlistAsJson(helperInfoPath, `${targetName} Info.plist`)
+    if (helperInfo.CFBundleExecutable !== targetName) {
+      replacePlistString(helperInfoPath, 'CFBundleExecutable', targetName)
+      changed = true
+    }
+    if (helperInfo.CFBundleDisplayName !== targetName) {
+      replacePlistString(helperInfoPath, 'CFBundleDisplayName', targetName)
+      changed = true
+    }
+    const normalizedInfo = readPlistAsJson(helperInfoPath, `${targetName} Info.plist`)
+    if (
+      normalizedInfo.CFBundleExecutable !== targetName ||
+      normalizedInfo.CFBundleDisplayName !== targetName
+    ) {
+      throw new Error(`Electron helper metadata did not normalize: ${helperInfoPath}`)
+    }
+    normalized.push({ sourceName, targetName, changed })
+  }
+
+  if (normalized.some((entry) => entry.changed)) {
+    console.log(`Normalized Electron helper bundles for permission identity ${permissionName}.`)
+  }
+  return { permissionName, productFilename, helpers: normalized }
+}
+
+function boundedBundleName(value, label) {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 100 ||
+    value !== value.trim() ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('\0') ||
+    value === '.' ||
+    value === '..'
+  ) {
+    throw new Error(`${label} is not a bounded macOS bundle name.`)
+  }
+  return value
+}
+
+function replacePlistString(plistPath, key, value) {
+  const result = spawnSync('/usr/bin/plutil', ['-replace', key, '-string', value, plistPath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    throw new Error(`Could not update ${key} in ${plistPath}.${detail ? `\n${detail}` : ''}`)
+  }
 }
 
 function resolveMacBridgeInfoPath(resourcesDir) {
@@ -641,3 +752,4 @@ module.exports.default = validateNativeModules
 module.exports.resolveMacBridgeDaemonPath = resolveMacBridgeDaemonPath
 module.exports.resolveMacBridgeInfoPath = resolveMacBridgeInfoPath
 module.exports.validateMacBridgeInfo = validateMacBridgeInfo
+module.exports.normalizeMacElectronHelperBundles = normalizeMacElectronHelperBundles
