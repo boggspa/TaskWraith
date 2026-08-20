@@ -499,6 +499,90 @@ function parseAvSyncCurrentExport(text) {
   return receipt
 }
 
+const RESOURCE_DETAIL_MAX_BYTES = 65_536
+const RESOURCE_DETAIL_FIELDS = ['dec', 'cap', 'surf', 'ids']
+
+/** Fail-closed parser for the shared Source/Review accessibility resource export. */
+function parseResourceDetailExport(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { ok: false, reason: 'empty resource receipt' }
+  }
+  if (Buffer.byteLength(text, 'utf8') > RESOURCE_DETAIL_MAX_BYTES) {
+    return { ok: false, reason: 'resource receipt exceeds its bounded byte length' }
+  }
+  const parts = text.trim().split(/\s+/)
+  if (parts[0] !== 'res1') {
+    return { ok: false, reason: `unknown resource schema ${parts[0] || '(none)'}` }
+  }
+  const fields = new Map()
+  for (const part of parts.slice(1)) {
+    const separator = part.indexOf('=')
+    if (separator <= 0) return { ok: false, reason: `malformed resource field ${part}` }
+    const key = part.slice(0, separator)
+    if (fields.has(key)) return { ok: false, reason: `duplicate resource field ${key}` }
+    fields.set(key, part.slice(separator + 1))
+  }
+  for (const key of RESOURCE_DETAIL_FIELDS) {
+    if (!fields.has(key)) return { ok: false, reason: `missing resource field ${key}` }
+  }
+  for (const key of fields.keys()) {
+    if (!RESOURCE_DETAIL_FIELDS.includes(key)) {
+      return { ok: false, reason: `unknown resource field ${key}` }
+    }
+  }
+  const exactNonNegativeInteger = (key) => {
+    const raw = fields.get(key)
+    if (!/^(?:0|[1-9]\d*)$/.test(raw)) return null
+    const value = Number(raw)
+    return isSafeInteger(value) ? value : null
+  }
+  const residentDecoderCount = exactNonNegativeInteger('dec')
+  const ioSurfaceCapacity = exactNonNegativeInteger('cap')
+  const declaredSurfaceCount = exactNonNegativeInteger('surf')
+  if (
+    residentDecoderCount === null ||
+    ioSurfaceCapacity === null ||
+    declaredSurfaceCount === null
+  ) {
+    return { ok: false, reason: 'resource counts are not canonical non-negative integers' }
+  }
+  const rawIds = fields.get('ids')
+  let liveIoSurfaceIds = []
+  if (rawIds === '!') {
+    return { ok: false, reason: 'resource receipt declares an IOSurface export overflow' }
+  } else if (rawIds === '-') {
+    if (declaredSurfaceCount !== 0) {
+      return { ok: false, reason: 'resource ids are empty but surf is nonzero' }
+    }
+  } else {
+    const tokens = rawIds.split(',')
+    if (tokens.some((token) => !/^[0-9A-F]{8}$/.test(token))) {
+      return { ok: false, reason: 'resource IOSurface ids are not canonical 8-hex values' }
+    }
+    liveIoSurfaceIds = tokens.map((token) => Number.parseInt(token, 16))
+    const canonical = [...liveIoSurfaceIds].sort((left, right) => left - right)
+    if (
+      new Set(liveIoSurfaceIds).size !== liveIoSurfaceIds.length ||
+      canonical.some((value, index) => value !== liveIoSurfaceIds[index])
+    ) {
+      return { ok: false, reason: 'resource IOSurface ids are duplicated or unsorted' }
+    }
+    if (declaredSurfaceCount !== liveIoSurfaceIds.length) {
+      return { ok: false, reason: 'resource surf count disagrees with ids' }
+    }
+  }
+  if (declaredSurfaceCount > ioSurfaceCapacity) {
+    return { ok: false, reason: 'resource surface count exceeds declared capacity' }
+  }
+  return {
+    ok: true,
+    schema: 'res1',
+    residentDecoderCount,
+    ioSurfaceCapacity,
+    liveIoSurfaceIds
+  }
+}
+
 function toleranceVerdict(errorMs) {
   const bound = errorMs >= 0 ? AUDIO_DELAYED_TOLERANCE_MS : AUDIO_ADVANCED_TOLERANCE_MS
   return { within: Math.abs(errorMs) <= bound, bound }
@@ -1246,6 +1330,7 @@ module.exports = {
   MILLISECOND_AGREEMENT,
   MIN_ELAPSED_SECONDS,
   NOMINAL_CADENCE_SECONDS,
+  RESOURCE_DETAIL_MAX_BYTES,
   SAMPLE_COUNT,
   classifyAudioEvidence,
   classifyAvCurrentSample,
@@ -1254,6 +1339,7 @@ module.exports = {
   operandIntegrityFailure,
   parseAvSyncCurrentExport,
   parseAvSyncPeakExport,
+  parseResourceDetailExport,
   planSamples,
   summarizeOutcome5,
   validateSampleSequence

@@ -145,6 +145,29 @@ final class StudioViewerRendererTests: XCTestCase {
         XCTAssertEqual(renderer.testPatternFrameCount, 0)
     }
 
+    func testPresentationRingAccessorsStaySeparateFromSourceAggregation() throws {
+        let renderer = try makeRenderer()
+        let target = try makeTarget(renderer)
+        let source = try StudioTestMedia.makeFrameSource(
+            lumaLevels: [32, 224],
+            device: renderer.device
+        )
+        renderer.attach(source: source)
+        _ = renderer.render(snapshot: snapshot(frame: 0), to: target)
+        let ringIDs = renderer.presentationRingIOSurfaceIDs
+        let sourceIDs = source.liveIOSurfaceIDs
+        XCTAssertEqual(
+            renderer.presentationRingCapacity,
+            renderer.videoRenderer.liveIOSurfaceCapacity
+        )
+        XCTAssertEqual(
+            renderer.presentationRingIOSurfaceIDs,
+            renderer.videoRenderer.liveIOSurfaceIDs
+        )
+        XCTAssertEqual(renderer.liveIOSurfaceIDs, ringIDs.union(sourceIDs))
+        XCTAssertLessThanOrEqual(renderer.liveIOSurfaceIDs.count, renderer.liveIOSurfaceCapacity)
+    }
+
     func testClockDrivesWhichDecodedFrameAppears() throws {
         let renderer = try makeRenderer()
         let target = try makeTarget(renderer)

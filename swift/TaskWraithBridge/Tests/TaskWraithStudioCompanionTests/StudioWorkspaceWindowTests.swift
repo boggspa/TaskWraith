@@ -113,6 +113,21 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     XCTAssertEqual(workspace.lastSnapshot.primaryWindowCount, 1)
   }
 
+  func testSourceAndReviewShareTheAppStateResourceDetailProvider() throws {
+    let workspace = try makeWorkspace()
+    let state = StudioViewerAppState(
+      controller: workspace.sourceController,
+      renderer: workspace.sourceController.renderer,
+      reviewController: workspace.reviewController,
+      workspaceController: workspace
+    )
+    let sourceDetail = workspace.sourceController.currentResourceDetailForTesting
+    let reviewDetail = workspace.reviewController?.currentResourceDetailForTesting
+    XCTAssertEqual(sourceDetail, reviewDetail)
+    XCTAssertEqual(sourceDetail, state.resourceDetail)
+    XCTAssertTrue(sourceDetail?.hasPrefix("res1 dec=") == true)
+  }
+
   func testVisibleSourceHostOccupiesPositiveAreaInsideWorkspaceContent() throws {
     let workspace = try makeWorkspace()
     workspace.update(

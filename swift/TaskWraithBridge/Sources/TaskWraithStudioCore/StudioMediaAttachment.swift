@@ -75,6 +75,16 @@ public final class StudioMediaSourcePool {
     public private(set) var decoderCreationCount = 0
     public var residentDecoderCount: Int { entries.count }
 
+    public var liveIOSurfaceIDs: Set<UInt32> {
+        entries.values.reduce(into: Set<UInt32>()) { ids, entry in
+            ids.formUnion(entry.source.liveIOSurfaceIDs)
+        }
+    }
+
+    public var liveIOSurfaceCapacity: Int {
+        entries.values.reduce(0) { $0 + $1.source.reorderCacheCapacity }
+    }
+
     public init(device: MTLDevice) {
         self.device = device
     }

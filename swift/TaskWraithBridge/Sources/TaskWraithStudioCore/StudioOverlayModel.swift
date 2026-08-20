@@ -261,6 +261,55 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     }
 }
 
+/// One bounded, process-local resource snapshot shared by both route views.
+/// Source IDs are unioned before formatting so a lease shared by Source and
+/// Review is never counted twice.
+public struct StudioResourceSnapshot: Equatable, Sendable {
+    public static let maximumExportByteCount = 65_536
+    /// Each canonical ID consumes at most nine bytes (eight hex digits plus a
+    /// comma). 7,000 IDs consume 62,999 bytes, leaving over 2.5KB for the
+    /// version, counts, separators, and worst-case decimal Int values.
+    public static let maximumExportSurfaceIDCount = 7_000
+    public let decoderCount: Int
+    public let capacity: Int
+    public let surfaceIDs: Set<UInt32>
+
+    public init(
+        decoderCount: Int,
+        sharedPoolSurfaceIDs: Set<UInt32>,
+        sharedPoolCapacity: Int,
+        presentationRingSurfaceIDs: [Set<UInt32>],
+        presentationRingCapacities: [Int]
+    ) {
+        let ids = presentationRingSurfaceIDs.reduce(into: sharedPoolSurfaceIDs) {
+            $0.formUnion($1)
+        }
+        let derivedCapacity = sharedPoolCapacity + presentationRingCapacities.reduce(0, +)
+        precondition(decoderCount >= 0 && derivedCapacity >= 0)
+        precondition(ids.count <= derivedCapacity)
+        self.decoderCount = decoderCount
+        self.capacity = derivedCapacity
+        self.surfaceIDs = ids
+    }
+
+    public var diagnosticsExportText: String {
+        let prefix = "res1 dec=\(decoderCount) cap=\(capacity) surf=\(surfaceIDs.count) ids="
+        if surfaceIDs.count > Self.maximumExportSurfaceIDCount {
+            let overflow = prefix + "!"
+            precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+            return overflow
+        }
+        let ids = surfaceIDs.sorted().map { String(format: "%08X", $0) }.joined(separator: ",")
+        let export = prefix + (ids.isEmpty ? "-" : ids)
+        if export.utf8.count <= Self.maximumExportByteCount {
+            return export
+        }
+        let overflow = prefix + "!"
+        precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+        return overflow
+    }
+}
+
 /// Everything the overlay needs, flattened out of the transport so the layout is
 /// a pure function of a value.
 public struct StudioOverlayState: Equatable, Sendable {
@@ -284,6 +333,9 @@ public struct StudioOverlayState: Equatable, Sendable {
     public var entry: StudioTimecodeFieldSnapshot?
     public var message: String?
     public var diagnostics: StudioOverlayDiagnostics?
+    /// Accessibility-only resource snapshot. It is deliberately not part of
+    /// drawn text or geometry.
+    public var resourceDetail: String?
     /// Open ghost proposals, already resolved into the coordinates of whichever
     /// version is displayed. The layout does not know about rational time or the
     /// wire contract — StudioProposedTimeline has already done that.
@@ -306,7 +358,8 @@ public struct StudioOverlayState: Equatable, Sendable {
         sourceLabel: String = "No media",
         entry: StudioTimecodeFieldSnapshot? = nil,
         message: String? = nil,
-        diagnostics: StudioOverlayDiagnostics? = nil
+        diagnostics: StudioOverlayDiagnostics? = nil,
+        resourceDetail: String? = nil
     ) {
         self.viewport = viewport
         self.positionTicks = positionTicks
@@ -321,6 +374,7 @@ public struct StudioOverlayState: Equatable, Sendable {
         self.entry = entry
         self.message = message
         self.diagnostics = diagnostics
+        self.resourceDetail = resourceDetail
     }
 }
 
@@ -818,6 +872,22 @@ public enum StudioOverlayLayout {
                     role: .staticText,
                     label: "A/V sync current detail",
                     value: syncCurrentDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
+
+        if let resourceDetail = state.resourceDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "Resource detail",
+                    value: resourceDetail,
                     frame: StudioOverlayFrame(
                         x: margin,
                         y: diagnosticsY,

@@ -162,7 +162,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-generate-speech-fixture.cjs':
     '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
   'scripts/studio-av-endurance-runner.cjs':
-    '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
+    'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
   'scripts/perf/electronChildSession.cjs':
     '9d62485e7df55c812d09c61117162fdaa8ce58a26dfad53acc07da773f312d9f',
   'scripts/perf/devUserDataPath.cjs':
@@ -233,12 +233,12 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '380619ddca469704836165f3406cb99aa0a462d92cc8913fcbfc1c8b274c80fe',
+  sourceDigest: '3880c1fdfce4bc5f572f631555b59a212bf3484c3ee285f34b3173ba225e2b71',
   sourceCount: 2282,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
-  companionSha256: '2b1ed034eda2e5808103d8e11fef3129a9025b5d57a106c027c5b9aa5b78560a',
+  companionSha256: '823bba7f61748d77b7d0d2cec8f8250b8704683704786be6b255abd7b194fe4a',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
   bridgeDaemonSha256: '60cf0ce0678e39814182bfa50e2386e0dc3e0ad86eefc05dd90d741f49205a91'
 })

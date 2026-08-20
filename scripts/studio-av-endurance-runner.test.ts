@@ -10,6 +10,7 @@ const {
   MAX_IO_SURFACE_ID,
   MIN_ELAPSED_SECONDS,
   NOMINAL_CADENCE_SECONDS,
+  RESOURCE_DETAIL_MAX_BYTES,
   SAMPLE_COUNT,
   classifyAudioEvidence,
   classifyAvCurrentSample,
@@ -17,6 +18,7 @@ const {
   classifyResourceGrowth,
   parseAvSyncCurrentExport,
   parseAvSyncPeakExport,
+  parseResourceDetailExport,
   planSamples,
   summarizeOutcome5,
   validateSampleSequence
@@ -99,6 +101,54 @@ const plannedSample = (index: number, overrides: Record<string, unknown> = {}) =
   ...overrides
 })
 const goodRun = () => Array.from({ length: SAMPLE_COUNT }, (_, i) => plannedSample(i))
+
+describe('resource detail export parser', () => {
+  it('parses canonical empty and populated shared snapshots', () => {
+    expect(parseResourceDetailExport('res1 dec=0 cap=0 surf=0 ids=-')).toEqual({
+      ok: true,
+      schema: 'res1',
+      residentDecoderCount: 0,
+      ioSurfaceCapacity: 0,
+      liveIoSurfaceIds: []
+    })
+    expect(
+      parseResourceDetailExport(
+        'res1 dec=2 cap=8 surf=4 ids=0000000A,0000000B,0000000C,0000000D'
+      )
+    ).toEqual({
+      ok: true,
+      schema: 'res1',
+      residentDecoderCount: 2,
+      ioSurfaceCapacity: 8,
+      liveIoSurfaceIds: [10, 11, 12, 13]
+    })
+  })
+
+  it.each([
+    ['unknown schema', 'res2 dec=0 cap=0 surf=0 ids=-'],
+    ['missing field', 'res1 dec=0 cap=0 surf=0'],
+    ['unknown field', 'res1 dec=0 cap=0 surf=0 ids=- extra=1'],
+    ['duplicate field', 'res1 dec=0 dec=0 cap=0 surf=0 ids=-'],
+    ['leading-zero count', 'res1 dec=01 cap=1 surf=0 ids=-'],
+    ['lowercase id', 'res1 dec=1 cap=1 surf=1 ids=0000000a'],
+    ['duplicate id', 'res1 dec=1 cap=2 surf=2 ids=0000000A,0000000A'],
+    ['unsorted ids', 'res1 dec=1 cap=2 surf=2 ids=0000000B,0000000A'],
+    ['count mismatch', 'res1 dec=1 cap=2 surf=1 ids=0000000A,0000000B'],
+    ['capacity breach', 'res1 dec=1 cap=1 surf=2 ids=0000000A,0000000B'],
+    ['empty ids with count', 'res1 dec=1 cap=1 surf=1 ids=-'],
+    ['explicit export overflow', 'res1 dec=1 cap=7001 surf=7001 ids=!']
+  ])('rejects %s', (_label, text) => {
+    expect(parseResourceDetailExport(text).ok).toBe(false)
+  })
+
+  it('rejects a receipt beyond the fixed byte bound', () => {
+    expect(
+      parseResourceDetailExport(
+        'res1 dec=0 cap=0 surf=0 ids=-' + ' '.repeat(RESOURCE_DETAIL_MAX_BYTES)
+      ).ok
+    ).toBe(false)
+  })
+})
 
 describe('outcome 5 sample plan', () => {
   it('spans the required ten minutes at the declared cadence and count', () => {

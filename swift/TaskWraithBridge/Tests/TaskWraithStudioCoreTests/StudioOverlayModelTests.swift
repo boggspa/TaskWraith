@@ -566,6 +566,69 @@ final class StudioOverlayModelTests: XCTestCase {
         XCTAssertFalse(overlaps(resourceFrame, model.trackFrame))
     }
 
+    func testResourceSnapshotIsDeterministicAndUnionsSharedAndPresentationSurfaces() {
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: [0x0A, 0x0B],
+            sharedPoolCapacity: 3,
+            presentationRingSurfaceIDs: [[0x0B, 0x0C], [0x0D, 0x0A]],
+            presentationRingCapacities: [2, 3]
+        )
+        XCTAssertEqual(snapshot.capacity, 8)
+        XCTAssertEqual(snapshot.surfaceIDs, [0x0A, 0x0B, 0x0C, 0x0D])
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "res1 dec=2 cap=8 surf=4 ids=0000000A,0000000B,0000000C,0000000D")
+    }
+
+    func testResourceSnapshotMaximumCanonicalExportStaysBounded() {
+        let ids = Set((0..<StudioResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: ids,
+            sharedPoolCapacity: ids.count,
+            presentationRingSurfaceIDs: [],
+            presentationRingCapacities: []
+        )
+        let export = snapshot.diagnosticsExportText
+        XCTAssertFalse(export.hasSuffix("ids=!"))
+        XCTAssertLessThanOrEqual(
+            export.utf8.count,
+            StudioResourceSnapshot.maximumExportByteCount)
+        XCTAssertTrue(export.contains("ids=00000000"))
+        XCTAssertTrue(export.contains("00001B57"))
+    }
+
+    func testResourceSnapshotOverflowIsShortDeterministicAndNeverTruncated() {
+        let ids = Set((0...StudioResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: ids,
+            sharedPoolCapacity: ids.count,
+            presentationRingSurfaceIDs: [],
+            presentationRingCapacities: []
+        )
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "res1 dec=2 cap=7001 surf=7001 ids=!"
+        )
+        XCTAssertLessThanOrEqual(
+            snapshot.diagnosticsExportText.utf8.count,
+            StudioResourceSnapshot.maximumExportByteCount)
+    }
+
+    func testResourceDetailIsAccessibilityOnlyAndDoesNotChangeDrawnOutput() {
+        let bare = StudioOverlayLayout.build(state())
+        var withResource = state()
+        withResource.resourceDetail = "res1 dec=1 cap=3 surf=1 ids=0000002A"
+        let model = StudioOverlayLayout.build(withResource)
+        XCTAssertEqual(model.texts, bare.texts)
+        XCTAssertEqual(model.rects, bare.rects)
+        let descriptor = model.accessibilityElements.first { $0.label == "Resource detail" }
+        XCTAssertEqual(descriptor?.role, .staticText)
+        XCTAssertEqual(descriptor?.value, withResource.resourceDetail)
+    }
+
     func testSourceIdentityUsesAnOcrLegiblePointSize() throws {
         var subject = state()
         subject.sourceLabel = "KbSvponumjnJ1GvMD2RPfzpVKrpwbRlGV4w39VKIp0w"

@@ -210,6 +210,14 @@ public final class StudioViewerRenderer {
         }
     }
 
+    public var presentationRingIOSurfaceIDs: Set<UInt32> {
+        videoRenderer.liveIOSurfaceIDs
+    }
+
+    public var presentationRingCapacity: Int {
+        videoRenderer.liveIOSurfaceCapacity
+    }
+
     /// AGGREGATED ACROSS EVERY RESIDENT SOURCE, and that is not cosmetic. These
     /// read `source?` alone until this commit, which was correct while at most
     /// two sources existed and one was the A/B partner. A sequence holds N, so a

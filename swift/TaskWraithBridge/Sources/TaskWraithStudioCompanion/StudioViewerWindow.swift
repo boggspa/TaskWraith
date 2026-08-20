@@ -73,6 +73,7 @@ final class StudioViewerView: NSView {
     /// revert it to prove a value-set does nothing when unbound. Production
     /// leaves it bound so there is still exactly one transport authority.
     var playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding()
+    var resourceDetailProvider: (() -> String?)?
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
@@ -878,7 +879,8 @@ final class StudioViewerView: NSView {
                     + ((route == .source && suspendsLocalAudioForSequence)
                         ? 0
                         : (audioPlayer.isAttached ? 1 : 0))
-            )
+            ),
+            resourceDetail: resourceDetailProvider?()
         )
         // ROUTE-SPECIFIC CONTENT. Source/Audition previews the selected asset
         // "independently of the timeline" (briefing) — so ghosts and the
@@ -1821,6 +1823,14 @@ final class StudioViewerWindowController {
 
     var playbackAuthority: StudioPlaybackAuthority { view.authority }
 
+    func setResourceDetailProvider(_ provider: @escaping () -> String?) {
+        view.resourceDetailProvider = provider
+    }
+
+    var currentResourceDetailForTesting: String? {
+        view.resourceDetailProvider?()
+    }
+
     func attachPresentation() {
         // Attaching the Metal view starts its display link. Keep it detached
         // until an explicit presentation so hidden startup does no rendering.
@@ -2039,6 +2049,11 @@ final class StudioViewerAppState {
             return self.reviewAttachment?.residentAudio(for: assetId)
                 ?? self.attachment.residentAudio(for: assetId)
         }
+        let resourceProvider: () -> String? = { [weak self] in
+            self?.resourceSnapshot.diagnosticsExportText
+        }
+        controller.setResourceDetailProvider(resourceProvider)
+        reviewController?.setResourceDetailProvider(resourceProvider)
         controller.onPresentationDetached = { [weak self] in
             self?.attachment.detach()
         }
@@ -2162,6 +2177,24 @@ final class StudioViewerAppState {
     /// decoder behind an individual renderer's count.
     var sharedDecoderCreationCount: Int { sourcePool.decoderCreationCount }
     var sharedResidentDecoderCount: Int { sourcePool.residentDecoderCount }
+
+    var resourceSnapshot: StudioResourceSnapshot {
+        StudioResourceSnapshot(
+            decoderCount: sourcePool.residentDecoderCount,
+            sharedPoolSurfaceIDs: sourcePool.liveIOSurfaceIDs,
+            sharedPoolCapacity: sourcePool.liveIOSurfaceCapacity,
+            presentationRingSurfaceIDs: [
+                controller.renderer.presentationRingIOSurfaceIDs,
+                reviewController?.renderer.presentationRingIOSurfaceIDs ?? []
+            ],
+            presentationRingCapacities: [
+                controller.renderer.presentationRingCapacity,
+                reviewController?.renderer.presentationRingCapacity ?? 0
+            ]
+        )
+    }
+
+    var resourceDetail: String { resourceSnapshot.diagnosticsExportText }
 
     /// Applies the host-authorized inline LUT to both real route renderers.
     /// Invalid content holds the last valid preview; it is never silently
