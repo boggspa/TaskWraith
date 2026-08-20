@@ -937,13 +937,36 @@ function assertVerifiedWatchdogReceipt(receipt, terminal, electron) {
   if (terminal.childPid !== receipt.childPid || terminal.childPgid !== receipt.childPgid) {
     throw new Error('watchdog terminal child pid/pgid does not match receipt')
   }
+  const launchServices = electron?.launchMode === 'launch-services'
+  const expectedWatchdogPid = launchServices ? electron?.launcherPid : electron?.pid
+  const expectedWatchdogPgid = launchServices ? electron?.launcherPgid : electron?.pgid
   if (
-    !Number.isSafeInteger(electron?.pid) ||
-    !Number.isSafeInteger(electron?.pgid) ||
-    receipt.childPid !== electron.pid ||
-    receipt.childPgid !== electron.pgid
+    !Number.isSafeInteger(expectedWatchdogPid) ||
+    !Number.isSafeInteger(expectedWatchdogPgid) ||
+    receipt.childPid !== expectedWatchdogPid ||
+    receipt.childPgid !== expectedWatchdogPgid
   ) {
     throw new Error('watchdog receipt child pid/pgid does not match exact harness child')
+  }
+  if (launchServices) {
+    if (!Number.isSafeInteger(electron?.pid) || !Number.isSafeInteger(electron?.pgid)) {
+      throw new Error('launch-services Electron identity is invalid')
+    }
+    if (
+      JSON.stringify(terminal.detachedProcessGroups) !==
+      JSON.stringify(receipt.detachedProcessGroups)
+    ) {
+      throw new Error('watchdog detached process groups do not match terminal evidence')
+    }
+    const exactElectronGroups = (receipt.detachedProcessGroups || []).filter(
+      (group) =>
+        group?.pgid === electron.pgid &&
+        Array.isArray(group.memberPids) &&
+        group.memberPids.includes(electron.pid)
+    )
+    if (exactElectronGroups.length !== 1) {
+      throw new Error('watchdog receipt does not bind the exact detached Electron group')
+    }
   }
   return receipt
 }

@@ -636,6 +636,59 @@ describe('bounded deterministic no-audio fixture apparatus', () => {
         { pid: 1234, pgid: 1234 }
       )
     ).toThrow(/terminal child pid\/pgid/)
+    const detachedProcessGroups = [
+      {
+        pgid: 2468,
+        evidencePids: [2470],
+        memberPids: [2468, 2470],
+        requiredForceKill: true
+      }
+    ]
+    expect(
+      runner.assertVerifiedWatchdogReceipt(
+        {
+          schemaVersion: 2,
+          kind: 'taskwraith-studio-acceptance-watchdog',
+          ...terminal,
+          childPid: 1357,
+          childPgid: 1357,
+          detachedProcessGroups
+        },
+        {
+          ...terminal,
+          childPid: 1357,
+          childPgid: 1357,
+          detachedProcessGroups
+        },
+        {
+          pid: 2468,
+          pgid: 2468,
+          launchMode: 'launch-services',
+          launcherPid: 1357,
+          launcherPgid: 1357
+        }
+      )
+    ).toMatchObject({ childPid: 1357, childPgid: 1357 })
+    expect(() =>
+      runner.assertVerifiedWatchdogReceipt(
+        {
+          schemaVersion: 2,
+          kind: 'taskwraith-studio-acceptance-watchdog',
+          ...terminal,
+          childPid: 1357,
+          childPgid: 1357,
+          detachedProcessGroups: []
+        },
+        { ...terminal, childPid: 1357, childPgid: 1357, detachedProcessGroups: [] },
+        {
+          pid: 2468,
+          pgid: 2468,
+          launchMode: 'launch-services',
+          launcherPid: 1357,
+          launcherPgid: 1357
+        }
+      )
+    ).toThrow(/exact detached Electron group/)
   })
 
   it('refuses root targets and symlinked fixture files', async () => {
