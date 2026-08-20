@@ -57,6 +57,7 @@ import {
 } from './ChatUpdateProjectionTracker'
 import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
+import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -2736,6 +2737,13 @@ function normalizeSettingsFontFamily(value: unknown, fallback: string): string {
   return trimmed === LEGACY_TASKWRAITH_FONT_STACK ? TASKWRAITH_DEFAULT_FONT_STACK : trimmed
 }
 
+/**
+ * Directory fsyncs for every durable write, off the calling thread. Module
+ * scope so writes to the same directory coalesce across all callers, which is
+ * the common case for a hot store.
+ */
+const directoryFsyncQueue = createDirectoryFsyncQueue()
+
 function writeJson<T>(filePath: string, data: T) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   let fd: number | null = null
@@ -2763,16 +2771,16 @@ function writeJson<T>(filePath: string, data: T) {
     } catch {
       // Best effort on filesystems that do not support POSIX modes.
     }
-    try {
-      const dirFd = fs.openSync(path.dirname(filePath), 'r')
-      fs.fsyncSync(dirFd)
-      fs.closeSync(dirFd)
-    } catch {
-      // Directory fsync is best effort on some filesystems.
-    }
+    // Off-thread, coalesced per directory. It was already best-effort here, so
+    // an fsync that has not run yet and one that threw are the same outcome —
+    // but it measured 4.7 ms (36%) of this function on a 2 MB payload, paid on
+    // every write. See DirectoryFsyncQueue for why the FILE fsync above cannot
+    // move with it.
+    directoryFsyncQueue.schedule(path.dirname(filePath))
     // totalMs spans the whole durable write, so it exceeds the sum of the named
-    // phases by the mkdir/open/close/chmod/dir-fsync remainder. That remainder
-    // is real durability cost and is deliberately not discarded. A write that
+    // phases by the mkdir/open/close/chmod remainder. That remainder is real
+    // durability cost and is deliberately not discarded. The directory fsync is
+    // no longer part of it — that work is now queued, not blocking. A write that
     // throws never reaches end(), so failed writes contribute no sample.
     probe?.end()
   } catch (e) {
