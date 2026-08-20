@@ -14,6 +14,8 @@ const { PNG } = require('pngjs') as {
 }
 const {
   JOURNEY_PHASES,
+  LUT_PHASE_TIMEOUT_MS,
+  PHASE_PORTS,
   assertObservationOnlyRequest,
   buildObservationRequest,
   captureNative,
@@ -27,6 +29,7 @@ const {
   materializePortableInputs,
   matchHudAssetIdentity,
   parseHudObservations,
+  phaseSessionOptions,
   pressPlaybackTransition,
   readSourceWorkspaceObservation,
   waitForPausedMediaReadiness,
@@ -41,6 +44,11 @@ const {
   validateTerminalReceipt
 } = require('./studio-lut-acceptance-runner.cjs') as {
   JOURNEY_PHASES: readonly string[]
+  LUT_PHASE_TIMEOUT_MS: number
+  PHASE_PORTS: readonly Readonly<{
+    remoteDebuggingPort: number
+    mainInspectorPort: number
+  }>[]
   assertObservationOnlyRequest: (request: Record<string, any>) => Record<string, any>
   buildObservationRequest: (name: string) => Record<string, any>
   captureNative: (
@@ -103,6 +111,7 @@ const {
     threshold: number
   }
   parseHudObservations: (observations: Array<{ text: string }>) => Record<string, any>
+  phaseSessionOptions: (phaseIndex: number) => Record<string, any>
   pressPlaybackTransition: (
     plan: Record<string, any>,
     target: Record<string, any>,
@@ -618,6 +627,24 @@ describe('studio LUT acceptance runner contract', () => {
       'phase-1-neutral-load-invalid-retention',
       'phase-2-restart-replay-clear'
     ])
+    expect(PHASE_PORTS).toEqual([
+      { remoteDebuggingPort: 9510, mainInspectorPort: 9910 },
+      { remoteDebuggingPort: 9511, mainInspectorPort: 9911 }
+    ])
+    expect(LUT_PHASE_TIMEOUT_MS).toBe(600_000)
+    expect(phaseSessionOptions(0)).toEqual({
+      phase: 'phase-1-neutral-load-invalid-retention',
+      remoteDebuggingPort: 9510,
+      mainInspectorPort: 9910,
+      timeoutMs: 600_000
+    })
+    expect(phaseSessionOptions(1)).toEqual({
+      phase: 'phase-2-restart-replay-clear',
+      remoteDebuggingPort: 9511,
+      mainInspectorPort: 9911,
+      timeoutMs: 600_000
+    })
+    expect(() => phaseSessionOptions(2)).toThrow(/outside the fixed two-phase plan/)
   })
 
   it('builds screenshot-only background observation requests', () => {

@@ -100,6 +100,7 @@ const PHASE_PORTS = Object.freeze([
   Object.freeze({ remoteDebuggingPort: 9510, mainInspectorPort: 9910 }),
   Object.freeze({ remoteDebuggingPort: 9511, mainInspectorPort: 9911 })
 ])
+const LUT_PHASE_TIMEOUT_MS = 600_000
 const DOM_STATE_EXPRESSION = `(() => {
   const root = document.querySelector('.studio-lut-control');
   if (!root) return null;
@@ -1986,15 +1987,21 @@ async function withIsolatedSession(runtime, options, operation) {
 }
 
 async function withSession(runtime, phaseIndex, operation) {
+  return withIsolatedSession(runtime, phaseSessionOptions(phaseIndex), operation)
+}
+
+function phaseSessionOptions(phaseIndex) {
+  const phase = JOURNEY_PHASES[phaseIndex]
   const ports = PHASE_PORTS[phaseIndex]
-  return withIsolatedSession(
-    runtime,
-    {
-      phase: JOURNEY_PHASES[phaseIndex],
-      ...ports
-    },
-    operation
+  invariant(
+    typeof phase === 'string' && ports,
+    'LUT journey phase index is outside the fixed two-phase plan'
   )
+  return {
+    phase,
+    ...ports,
+    timeoutMs: LUT_PHASE_TIMEOUT_MS
+  }
 }
 
 async function phaseOne(runtime, syntheticRedReference) {
@@ -2606,6 +2613,7 @@ async function main(argv = process.argv.slice(2)) {
 
 module.exports = {
   JOURNEY_PHASES,
+  LUT_PHASE_TIMEOUT_MS,
   PHASE_PORTS,
   assertFocusIsolation,
   assertObservationOnlyRequest,
@@ -2630,6 +2638,7 @@ module.exports = {
   requiredSampleSourceHostFrame,
   ocrScreenshot,
   parseHudObservations,
+  phaseSessionOptions,
   pressPlaybackTransition,
   readSourceWorkspaceObservation,
   waitForPausedMediaReadiness,
