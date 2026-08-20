@@ -18,6 +18,12 @@
  * `idle | active | paused | takeover | stopped`.
  */
 
+import {
+  AppDriveSessionReportStore,
+  type AppDriveActionReport,
+  type AppDriveSurfaceVerification
+} from './AppDriveSessionReport'
+
 export const APP_DRIVE_SESSION_SCHEMA_VERSION = 1 as const
 
 /** Canonical session lifecycle. Do not invent alternate chrome state names. */
@@ -87,6 +93,7 @@ export interface AppDriveSessionBinding {
   readonly chatId: string
   readonly runId: string
   readonly provider: string
+  readonly participantId?: string | null
   readonly launchAttemptId: string
   readonly approvedAt: number
   readonly allowedVerbs: readonly AppDriveControlVerb[]
@@ -104,12 +111,14 @@ export interface AppDriveSessionBinding {
 export interface AppDriveSessionSnapshot {
   readonly schemaVersion: typeof APP_DRIVE_SESSION_SCHEMA_VERSION
   readonly sessionId: string
+  readonly reportId: string
   readonly mode: AppDriveMode
   readonly permissionLabel: AppDrivePermissionLabel
   readonly lifecycle: Exclude<AppDriveSessionLifecycle, 'idle'>
   readonly chatId: string
   readonly runId: string
   readonly provider: string
+  readonly participantId: string | null
   readonly launchAttemptId: string
   readonly approvedAt: number
   readonly allowedVerbs: readonly AppDriveControlVerb[]
@@ -140,6 +149,7 @@ export interface AppDriveSessionControls {
 export interface AppDriveSessionRendererStatus {
   readonly schemaVersion: typeof APP_DRIVE_SESSION_SCHEMA_VERSION
   readonly sessionId: string | null
+  readonly reportId: string | null
   readonly mode: AppDriveMode | null
   /** Human-facing mode honesty label. */
   readonly modeLabel: 'Foreground Drive' | null
@@ -150,6 +160,7 @@ export interface AppDriveSessionRendererStatus {
   readonly chatId: string | null
   readonly runId: string | null
   readonly provider: string | null
+  readonly participantId: string | null
   readonly launchAttemptId: string | null
   readonly approvedAt: number | null
   readonly allowedVerbs: readonly AppDriveControlVerb[]
@@ -170,6 +181,13 @@ export interface AppDriveBindResult {
   readonly session: AppDriveSessionSnapshot
   /** Prior non-terminal session, if bind replaced it. */
   readonly replaced: AppDriveSessionSnapshot | null
+}
+
+export interface AppDriveReportedActionCorrelation {
+  readonly leaseId: string
+  readonly reportId: string
+  readonly actionId: string
+  readonly independentVerificationRequired: boolean
 }
 
 /**
@@ -211,6 +229,7 @@ export type AppDriveAdmissionResult =
 export interface AppDriveSessionOptions {
   readonly now?: () => number
   readonly createSessionId?: () => string
+  readonly reports?: AppDriveSessionReportStore
 }
 
 export class AppDriveSessionError extends Error {
@@ -248,11 +267,13 @@ interface ActiveSession {
 export class AppDriveSession {
   private readonly now: () => number
   private readonly createSessionId: () => string
+  private readonly reports: AppDriveSessionReportStore
   private active: ActiveSession | null = null
 
   constructor(options: AppDriveSessionOptions = {}) {
     this.now = options.now ?? Date.now
     this.createSessionId = options.createSessionId ?? defaultSessionId
+    this.reports = options.reports ?? new AppDriveSessionReportStore({ now: this.now })
   }
 
   /**
@@ -264,16 +285,37 @@ export class AppDriveSession {
     const candidate = normalizeBinding(binding, now)
     const sessionId = requiredString(this.createSessionId(), 'sessionId')
     const previous = this.active?.session ?? null
+    if (previous && previous.lifecycle !== 'stopped') {
+      this.reports.end(previous.sessionId, 'replaced', now)
+    }
+    const report = this.reports.start({
+      leaseId: sessionId,
+      surfaceId: `native:${candidate.launchAttemptId}`,
+      surfaceKind: 'native',
+      chatId: candidate.chatId,
+      holder: {
+        runId: candidate.runId,
+        provider: candidate.provider,
+        participantId: candidate.participantId
+      },
+      approvedAt: candidate.approvedAt,
+      expiresAt: candidate.expiresAt,
+      stepBudget: candidate.stepBudget,
+      stepsUsed: candidate.stepsUsed,
+      independentVerificationRequired: Boolean(candidate.participantId)
+    })
 
     const session = freezeSession({
       schemaVersion: APP_DRIVE_SESSION_SCHEMA_VERSION,
       sessionId,
+      reportId: report.reportId,
       mode: 'foreground',
       permissionLabel: 'view-and-control',
       lifecycle: 'active',
       chatId: candidate.chatId,
       runId: candidate.runId,
       provider: candidate.provider,
+      participantId: candidate.participantId,
       launchAttemptId: candidate.launchAttemptId,
       approvedAt: candidate.approvedAt,
       allowedVerbs: candidate.allowedVerbs,
@@ -344,7 +386,72 @@ export class AppDriveSession {
       updatedAt: now
     })
     this.active = { session }
+    this.reports.updateBudget(session.sessionId, {
+      stepsUsed: session.stepsUsed,
+      stepsRemaining: session.stepsRemaining,
+      expiresAt: session.expiresAt
+    })
     return session
+  }
+
+  beginReportedAction(verb: AppDriveControlVerb): AppDriveReportedActionCorrelation {
+    const session = this.requireLiveSession()
+    this.assertCanAdmitActions(verb)
+    const action = this.reports.beginAction({
+      leaseId: session.sessionId,
+      verb,
+      actor: {
+        runId: session.runId,
+        provider: session.provider,
+        participantId: session.participantId
+      },
+      // Every native click/fill is already treated as consequential. In an
+      // Ensemble, keep that action pending until another seat attests it.
+      independentVerificationRequired: Boolean(session.participantId)
+    })
+    return Object.freeze({
+      leaseId: session.sessionId,
+      reportId: session.reportId,
+      actionId: action.actionId,
+      independentVerificationRequired: action.independentVerificationRequired
+    })
+  }
+
+  completeReportedAction(input: {
+    actionId: string
+    executed: boolean | null
+    surfaceVerification: AppDriveSurfaceVerification
+    refusalCode?: string
+  }): AppDriveActionReport {
+    const session = this.active?.session
+    if (!session) fail('no-active-session', 'No Foreground Drive session is bound.')
+    return this.reports.completeAction({
+      leaseId: session.sessionId,
+      actor: {
+        runId: session.runId,
+        provider: session.provider,
+        participantId: session.participantId
+      },
+      ...input
+    })
+  }
+
+  updateReportedSurfaceVerification(
+    actionId: string,
+    surfaceVerification: AppDriveSurfaceVerification
+  ): AppDriveActionReport {
+    const session = this.active?.session
+    if (!session) fail('no-active-session', 'No Foreground Drive session is bound.')
+    return this.reports.updateSurfaceVerification({
+      leaseId: session.sessionId,
+      actionId,
+      actor: {
+        runId: session.runId,
+        provider: session.provider,
+        participantId: session.participantId
+      },
+      surfaceVerification
+    })
   }
 
   pause(): AppDriveSessionSnapshot {
@@ -437,6 +544,7 @@ export class AppDriveSession {
       updatedAt: now
     })
     this.active = { session }
+    this.reports.end(session.sessionId, reason, now)
     return session
   }
 
@@ -668,6 +776,7 @@ export class AppDriveSession {
       updatedAt: now
     })
     this.active = { session: next }
+    this.reports.end(next.sessionId, 'expired', now)
     return next
   }
 }
@@ -701,6 +810,7 @@ function idleRendererStatus(updatedAt: number): AppDriveSessionRendererStatus {
   return Object.freeze({
     schemaVersion: APP_DRIVE_SESSION_SCHEMA_VERSION,
     sessionId: null,
+    reportId: null,
     mode: null,
     modeLabel: null,
     permissionLabel: null,
@@ -709,6 +819,7 @@ function idleRendererStatus(updatedAt: number): AppDriveSessionRendererStatus {
     chatId: null,
     runId: null,
     provider: null,
+    participantId: null,
     launchAttemptId: null,
     approvedAt: null,
     allowedVerbs: EMPTY_VERBS,
@@ -739,6 +850,7 @@ function rendererStatusFromSession(
   return Object.freeze({
     schemaVersion: APP_DRIVE_SESSION_SCHEMA_VERSION,
     sessionId: session.sessionId,
+    reportId: session.reportId,
     mode: 'foreground',
     modeLabel: 'Foreground Drive',
     permissionLabel: 'View & Control',
@@ -747,6 +859,7 @@ function rendererStatusFromSession(
     chatId: session.chatId,
     runId: session.runId,
     provider: session.provider,
+    participantId: session.participantId,
     launchAttemptId: session.launchAttemptId,
     approvedAt: session.approvedAt,
     allowedVerbs: session.allowedVerbs,
@@ -776,6 +889,7 @@ function normalizeBinding(
   chatId: string
   runId: string
   provider: string
+  participantId: string | null
   launchAttemptId: string
   approvedAt: number
   allowedVerbs: readonly AppDriveControlVerb[]
@@ -804,6 +918,8 @@ function normalizeBinding(
     chatId: requiredString(binding.chatId, 'chatId'),
     runId: requiredString(binding.runId, 'runId'),
     provider: requiredString(binding.provider, 'provider'),
+    participantId:
+      binding.participantId == null ? null : requiredString(binding.participantId, 'participantId'),
     launchAttemptId: requiredString(binding.launchAttemptId, 'launchAttemptId'),
     approvedAt,
     allowedVerbs: normalizeAllowedVerbs(binding.allowedVerbs),

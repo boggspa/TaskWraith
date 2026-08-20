@@ -19,6 +19,7 @@ import {
   type CanvasWindowDriverFactoryDaemon
 } from './CanvasWindowDriverFactory'
 import type {
+  NativeWindowCoordinatorCanvasActionAccess,
   NativeWindowCoordinatorCanvasAccess,
   NativeWindowCoordinatorCanvasLeaseIdentity,
   NativeWindowCoordinatorCanvasOwner
@@ -65,6 +66,13 @@ const ACCESS: NativeWindowCoordinatorCanvasAccess = {
   protectedHostPIDs: [111, 222]
 }
 
+const DRIVE_ACTION = {
+  leaseId: 'drive-lease-a',
+  reportId: 'drive-report-a',
+  actionId: 'drive-action-a',
+  independentVerificationRequired: false
+} as const
+
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
@@ -78,6 +86,8 @@ class FakeCoordinator implements CanvasWindowCoordinatorPort {
   access: NativeWindowCoordinatorCanvasAccess = ACCESS
   readonly resolveCalls: Array<{ owner: NativeWindowCoordinatorCanvasOwner; verb: string }> = []
   readonly actionCalls: Array<{ owner: NativeWindowCoordinatorCanvasOwner; verb: string }> = []
+  readonly completionCalls: unknown[] = []
+  readonly verificationCalls: unknown[] = []
 
   resolveLeaseForCanvas(
     owner: NativeWindowCoordinatorCanvasOwner,
@@ -99,11 +109,11 @@ class FakeCoordinator implements CanvasWindowCoordinatorPort {
   consumeCanvasActionStep(
     owner: NativeWindowCoordinatorCanvasOwner,
     verb: 'click' | 'fill'
-  ): NativeWindowCoordinatorCanvasAccess {
+  ): NativeWindowCoordinatorCanvasActionAccess {
     this.assertOwner(owner)
     this.actionCalls.push({ owner, verb })
     if (!this.current) throw new Error('lease revoked')
-    return { ...this.access, lease: this.current }
+    return { ...this.access, lease: this.current, driveAction: DRIVE_ACTION }
   }
   assertAppDriveActionAllowed(
     owner: NativeWindowCoordinatorCanvasOwner,
@@ -117,6 +127,24 @@ class FakeCoordinator implements CanvasWindowCoordinatorPort {
     _target: CanvasWindowActionTargetTelemetry
   ): void {
     this.assertOwner(owner)
+  }
+
+  completeAppDriveAction(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: typeof DRIVE_ACTION,
+    result: unknown
+  ): void {
+    this.assertOwner(owner)
+    this.completionCalls.push({ driveAction, result })
+  }
+
+  updateAppDriveSurfaceVerification(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: typeof DRIVE_ACTION,
+    surfaceVerification: 'changed' | 'unchanged' | 'unknown'
+  ): void {
+    this.assertOwner(owner)
+    this.verificationCalls.push({ driveAction, surfaceVerification })
   }
 
   private assertOwner(owner: NativeWindowCoordinatorCanvasOwner): void {
@@ -652,7 +680,27 @@ describe('CanvasWindowDriverFactory', () => {
         expectedObservationId: 'observation-a',
         expectedInputEpoch: 5
       })
-    ).resolves.toMatchObject({ executed: true })
+    ).resolves.toMatchObject({
+      executed: true,
+      driveReportId: DRIVE_ACTION.reportId,
+      driveActionId: DRIVE_ACTION.actionId
+    })
+
+    expect(coordinator.completionCalls).toEqual([
+      {
+        driveAction: DRIVE_ACTION,
+        result: { executed: true, surfaceVerification: 'unknown' }
+      }
+    ])
+    daemon.handlers.set('nativeWindow.observe', () =>
+      rawObservation({
+        actionVerification: { actionId: 'action-a', verified: 'changed' }
+      })
+    )
+    await driver.observe()
+    expect(coordinator.verificationCalls).toEqual([
+      { driveAction: DRIVE_ACTION, surfaceVerification: 'changed' }
+    ])
 
     expect(confirmations).toEqual([
       {

@@ -4249,9 +4249,62 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_drive_report',
+      description:
+        'Return bounded, value-free AppDrive session reports for this chat across web, Simulator, and managed native surfaces. Reports contain lease/session timing, step budget, action verbs, actor identity, surface verification, and optional participant-verifier attestations. They never contain typed values, target labels, page text, URLs, approval tokens, handles, or PIDs. Filter by reportId or surfaceId when needed.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          reportId: { type: 'string' },
+          surfaceId: { type: 'string' },
+          limit: { type: 'number', minimum: 1, maximum: 50 }
+        }
+      }
+    },
+    {
+      name: 'canvas_drive_verify',
+      description:
+        'After re-observing the driven surface, attest the postcondition for one AppDrive action from canvas_drive_report. `observationId` must be the trusted receipt returned by a post-action canvas_snapshot or Simulator observation for this exact report/action/surface and verifier. Use confirmed only when the observed state proves the intended effect, not merely because dispatch returned success; use not-confirmed when the intended effect is absent, and inconclusive when observation cannot decide. Actions marked independentVerificationRequired must be verified by a different Ensemble participant from the actor. This writes only the value-free report and never actuates the target.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        examples: [
+          {
+            reportId: 'report-id',
+            actionId: 'action-id',
+            surfaceId: 'canvas-id',
+            observationId: 'observation-id',
+            verdict: 'confirmed'
+          }
+        ],
+        properties: {
+          reportId: { type: 'string' },
+          actionId: { type: 'string' },
+          surfaceId: { type: 'string' },
+          observationId: { type: 'string' },
+          verdict: {
+            type: 'string',
+            enum: ['confirmed', 'not-confirmed', 'inconclusive']
+          }
+        },
+        required: ['reportId', 'actionId', 'surfaceId', 'observationId', 'verdict']
+      }
+    },
+    {
       name: 'canvas_snapshot',
       description:
-        'Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked.',
+        'Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked. After an AppDrive action, `driveObservation` is a trusted value-free receipt bound to this observer/report/action/surface; pass its observationId to canvas_drive_verify. Supply `driveActionId` when verifying an earlier action rather than the most recent completed action.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -4260,7 +4313,14 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
-        properties: { canvasId: { type: 'string' } },
+        properties: {
+          canvasId: { type: 'string' },
+          driveActionId: {
+            type: 'string',
+            description:
+              'Optional AppDrive action to bind the returned driveObservation receipt to; defaults to the most recent completed action.'
+          }
+        },
         required: ['canvasId']
       }
     },
@@ -4384,6 +4444,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'number',
             description:
               'Optional. The `inputEpoch` from the canvas_snapshot this action was planned against. If the user has interacted since, the click is refused ("stale_input_epoch") instead of acting on a page you have not seen.'
+          },
+          requireIndependentVerifier: {
+            type: 'boolean',
+            description:
+              'Optional. In an Ensemble, keep this action pending until a different participant re-observes the surface and calls canvas_drive_verify.'
           }
         },
         required: ['canvasId']
@@ -4410,6 +4475,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'number',
             description:
               'Optional. The `inputEpoch` from the canvas_snapshot this action was planned against; refused ("stale_input_epoch") if the user has interacted since.'
+          },
+          requireIndependentVerifier: {
+            type: 'boolean',
+            description:
+              'Optional. Require a different Ensemble participant to attest the postcondition.'
           }
         },
         required: ['canvasId', 'value']
@@ -4427,6 +4497,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
+        examples: [{ canvasId: 'canvas-id', ref: 'e1', key: 'Enter' }],
         properties: {
           canvasId: { type: 'string' },
           ref: { type: 'string' },
@@ -4450,7 +4521,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               ' '
             ]
           },
-          expectedInputEpoch: { type: 'number' }
+          expectedInputEpoch: { type: 'number' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['canvasId', 'key']
       }
@@ -4475,7 +4547,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           y: { type: 'number' },
           deltaX: { type: 'number' },
           deltaY: { type: 'number' },
-          expectedInputEpoch: { type: 'number' }
+          expectedInputEpoch: { type: 'number' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['canvasId']
       }
@@ -4496,7 +4569,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           canvasId: { type: 'string' },
           ref: { type: 'string' },
           selector: { type: 'string' },
-          expectedInputEpoch: { type: 'number' }
+          expectedInputEpoch: { type: 'number' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['canvasId']
       }
@@ -4518,7 +4592,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           ref: { type: 'string' },
           selector: { type: 'string' },
           value: { type: 'string' },
-          expectedInputEpoch: { type: 'number' }
+          expectedInputEpoch: { type: 'number' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['canvasId', 'value']
       }
@@ -5045,7 +5120,16 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         idempotentHint: true,
         openWorldHint: false
       },
-      inputSchema: { type: 'object', properties: {} }
+      inputSchema: {
+        type: 'object',
+        properties: {
+          requireIndependentVerifier: {
+            type: 'boolean',
+            description:
+              'Optional. In an Ensemble, require another participant to attest the postcondition.'
+          }
+        }
+      }
     },
     {
       name: 'simulator_boot',
@@ -5063,7 +5147,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           udid: {
             type: 'string',
             description: 'Simulator device UDID, or the literal "booted".'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid']
       }
@@ -5085,7 +5170,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           appPath: {
             type: 'string',
             description: 'Absolute path to a .app bundle to install.'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'appPath']
       }
@@ -5104,7 +5190,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
-          bundleId: { type: 'string', description: 'App bundle identifier to launch.' }
+          bundleId: { type: 'string', description: 'App bundle identifier to launch.' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'bundleId']
       }
@@ -5112,7 +5199,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'simulator_screenshot',
       description:
-        'Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. Gated via the Simulator Canvas service.',
+        'Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. After an AppDrive action, structured metadata also includes a trusted value-free driveObservation receipt for canvas_drive_verify. Supply driveActionId to select an earlier action; otherwise the receipt binds to the most recent completed action on the exact device/app surface. Gated via the Simulator Canvas service.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -5122,7 +5209,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' }
+          udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
+          driveActionId: { type: 'string' }
         },
         required: ['udid']
       }
@@ -5141,7 +5229,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           udid: { type: 'string', description: 'Simulator device UDID, or "booted".' },
-          bundleId: { type: 'string', description: 'App bundle identifier to terminate.' }
+          bundleId: { type: 'string', description: 'App bundle identifier to terminate.' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'bundleId']
       }
@@ -5149,7 +5238,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'simulator_inspect',
       description:
-        'Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.',
+        'Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. After an AppDrive action, the result also includes a trusted value-free driveObservation receipt for canvas_drive_verify. Supply driveActionId to select an earlier action; otherwise the receipt binds to the most recent completed action on the exact device/app surface. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -5159,7 +5248,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          udid: { type: 'string', description: 'Simulator device UDID.' }
+          udid: { type: 'string', description: 'Simulator device UDID.' },
+          driveActionId: { type: 'string' }
         },
         required: ['udid']
       }
@@ -5182,7 +5272,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['APPLE_PAY', 'HOME', 'LOCK', 'SIDE_BUTTON', 'SIRI'],
             description: 'Allowlisted HID button name.'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'button']
       }
@@ -5205,7 +5296,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['PORTRAIT', 'PORTRAIT_UPSIDE_DOWN', 'LANDSCAPE_LEFT', 'LANDSCAPE_RIGHT'],
             description: 'Absolute device orientation accepted by Facebook idb.'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'direction']
       }
@@ -5241,7 +5333,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'number',
             description:
               'Optional device-point height when no session screenshot dims are available.'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'x', 'y']
       }
@@ -5260,7 +5353,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           udid: { type: 'string', description: 'Simulator device UDID.' },
-          text: { type: 'string', description: 'Text to type into the focused field.' }
+          text: { type: 'string', description: 'Text to type into the focused field.' },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'text']
       }
@@ -5305,7 +5399,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'number',
             description:
               'Optional device-point height when no session screenshot dims are available.'
-          }
+          },
+          requireIndependentVerifier: { type: 'boolean' }
         },
         required: ['udid', 'x', 'y', 'deltaX', 'deltaY']
       }

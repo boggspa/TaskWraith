@@ -1840,6 +1840,22 @@ export const TASKWRAITH_TOOL_ACTIONS = {
   ),
   canvas_list: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_status: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
+  canvas_drive_report: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'canvas',
+    'none',
+    'none'
+  ),
+  canvas_drive_verify: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'canvas',
+    'none',
+    'none'
+  ),
   canvas_snapshot: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_screenshot: tool(
     'orchestration',

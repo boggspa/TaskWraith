@@ -161,6 +161,25 @@ describe('TaskWraith MCP tool registry', () => {
       }
     })
     expect(TASKWRAITH_MCP_TOOLS).toContain('canvas_wait_for')
+    expect(findTool('canvas_click')?.inputSchema).toMatchObject({
+      properties: { requireIndependentVerifier: { type: 'boolean' } }
+    })
+    expect(findTool('canvas_drive_report')).toMatchObject({
+      annotations: { readOnlyHint: true },
+      inputSchema: { properties: { limit: { maximum: 50 } } }
+    })
+    expect(findTool('canvas_drive_verify')).toMatchObject({
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        required: ['reportId', 'actionId', 'surfaceId', 'observationId', 'verdict'],
+        properties: {
+          verdict: { enum: ['confirmed', 'not-confirmed', 'inconclusive'] }
+        }
+      }
+    })
+    expect(findTool('canvas_snapshot')?.inputSchema).toMatchObject({
+      properties: { driveActionId: { type: 'string' } }
+    })
   })
 
   it('does not expose a Session Activity Ledger write path to agents', () => {

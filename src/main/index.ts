@@ -601,6 +601,7 @@ import { createNativeWindowProcessAncestryResolver } from './nativeWindow/Native
 import { resolveAppDriveEnsembleAuthority } from './appDrive/AppDriveEnsembleAuthority'
 import { AppDriveLeaseRegistry } from './appDrive/AppDriveLease'
 import { AppDriveLeaseRuntime } from './appDrive/AppDriveLeaseRuntime'
+import { AppDriveSessionReportStore } from './appDrive/AppDriveSessionReport'
 import {
   appDrivePreviewFrameFromDaemon,
   shouldRequestPreviewFrame,
@@ -4448,7 +4449,8 @@ const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const kimiMeshApprovalRelay = new KimiMeshApprovalRelay()
 const simulatorHostService = new SimulatorHostService()
 const simulatorSessionStore = new SimulatorSessionStore()
-const appDriveSurfaceLeases = new AppDriveLeaseRegistry()
+const appDriveSessionReports = new AppDriveSessionReportStore()
+const appDriveSurfaceLeases = new AppDriveLeaseRegistry({ reports: appDriveSessionReports })
 const simulatorControllerLease = new SimulatorControllerLease({
   appDriveLeases: appDriveSurfaceLeases,
   onAuthorityInvalidated: (token) => {
@@ -51928,6 +51930,7 @@ if (isGeminiMcpBridgeProcess) {
           mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
           request
         ),
+      appDriveReports: appDriveSessionReports,
       notifyRenderer: publishNativeWindowRendererEvent
     })
     canvasWindowDriverFactoryRef = new CanvasWindowDriverFactory({

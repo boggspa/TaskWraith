@@ -19,6 +19,11 @@ import {
   type AppDriveLeaseSnapshot,
   type AppDriveLeaseTarget
 } from '../appDrive/AppDriveLease'
+import type {
+  AppDriveActionReport,
+  AppDriveObservationReceipt,
+  CompleteAppDriveActionReportInput
+} from '../appDrive/AppDriveSessionReport'
 import { randomUUID } from 'crypto'
 
 /** Synthetic run id for human dock control — user is always authoritative. */
@@ -38,6 +43,7 @@ export interface SimulatorControllerToken {
   target?: AppDriveLeaseTarget
   expiresAt?: number
   stepBudget?: number
+  independentVerificationRequired?: boolean
   stepsUsed?: number
   stepsRemaining?: number
   mintedAt: number
@@ -53,9 +59,19 @@ export type SimulatorControllerErrorCode =
   | 'consent_required'
   | 'lease_expired'
   | 'step_budget_exhausted'
+  | 'independent_verifier_required'
 
 export type SimulatorControllerResult =
-  | { ok: true; token: SimulatorControllerToken }
+  | {
+      ok: true
+      token: SimulatorControllerToken
+      driveAction?: {
+        leaseId: string
+        reportId: string
+        actionId: string
+        independentVerificationRequired: boolean
+      }
+    }
   | {
       ok: false
       code: SimulatorControllerErrorCode
@@ -81,6 +97,7 @@ export interface SimulatorControllerMintInput {
   verb: string
   ownerParticipantId?: string
   kind?: SimulatorControllerKind
+  independentVerificationRequired?: boolean
 }
 
 export interface SimulatorControllerAuthorizeInput {
@@ -96,12 +113,14 @@ export interface SimulatorControllerAuthorizeInput {
   approvedBy: 'user'
   expiresAt?: number
   stepBudget?: number
+  independentVerificationRequired?: boolean
 }
 
 export interface SimulatorControllerTransferInput {
   chatId: string
   fromRunId: string
   toRunId: string
+  toProvider: string
   toOwnerParticipantId?: string
   /** When set, target must be Boss/Captain (solo/null ensemble always allowed). */
   ensemble?: AppDriveEnsembleRoster | null
@@ -135,6 +154,7 @@ function tokenFromLease(
     stepBudget: lease.stepBudget,
     stepsUsed: lease.stepsUsed,
     stepsRemaining: lease.stepsRemaining,
+    independentVerificationRequired: lease.independentVerificationRequired,
     mintedAt: previous?.mintedAt ?? lease.approvedAt,
     updatedAt: lease.updatedAt
   }
@@ -227,6 +247,7 @@ export class SimulatorControllerLease {
         approvedBy: 'user',
         ...(requireId(input.approvalId) ? { approvalId: input.approvalId } : {}),
         allowedVerbs: input.allowedVerbs,
+        independentVerificationRequired: input.independentVerificationRequired === true,
         target: input.target,
         ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
         ...(input.stepBudget !== undefined ? { stepBudget: input.stepBudget } : {})
@@ -284,7 +305,8 @@ export class SimulatorControllerLease {
       runId,
       provider,
       ...(ownerParticipantId ? { participantId: ownerParticipantId } : {}),
-      verb
+      verb,
+      independentVerificationRequired: input.independentVerificationRequired === true
     })
     if (!consumed.ok) {
       const code =
@@ -294,7 +316,9 @@ export class SimulatorControllerLease {
             ? 'step_budget_exhausted'
             : consumed.code === 'binding-mismatch'
               ? 'not_holder'
-              : 'consent_required'
+              : consumed.code === 'independent-verifier-required'
+                ? 'independent_verifier_required'
+                : 'consent_required'
       if (code === 'lease_expired' || code === 'step_budget_exhausted') {
         this.byChat.delete(chatId)
         this.notifyInvalidated(
@@ -306,7 +330,41 @@ export class SimulatorControllerLease {
     }
     const next = tokenFromLease(existing.tokenId, consumed.lease, existing)
     this.byChat.set(chatId, next)
-    return { ok: true, token: cloneToken(next) }
+    return {
+      ok: true,
+      token: cloneToken(next),
+      driveAction: {
+        leaseId: consumed.lease.leaseId,
+        reportId: consumed.reportId,
+        actionId: consumed.actionId,
+        independentVerificationRequired: consumed.independentVerificationRequired
+      }
+    }
+  }
+
+  completeAction(input: CompleteAppDriveActionReportInput): AppDriveActionReport {
+    return this.appDriveLeases.completeAction(input)
+  }
+
+  recordObservation(input: {
+    chatId: string
+    runId: string
+    provider: string
+    participantId?: string
+    surfaceId: string
+    actionId?: string
+  }): AppDriveObservationReceipt | null {
+    return this.appDriveLeases.recordObservation({
+      chatId: input.chatId,
+      surfaceId: input.surfaceId,
+      surfaceKind: 'simulator',
+      ...(input.actionId ? { actionId: input.actionId } : {}),
+      observer: {
+        runId: input.runId,
+        provider: input.provider,
+        participantId: input.participantId ?? null
+      }
+    })
   }
 
   /**
@@ -342,10 +400,11 @@ export class SimulatorControllerLease {
     const chatId = requireId(input.chatId)
     const fromRunId = requireId(input.fromRunId)
     const toRunId = requireId(input.toRunId)
-    if (!chatId || !fromRunId || !toRunId) {
+    const toProvider = requireId(input.toProvider)
+    if (!chatId || !fromRunId || !toRunId || !toProvider) {
       return fail(
         'invalid_input',
-        'Simulator controller transfer requires chatId, fromRunId, toRunId.'
+        'Simulator controller transfer requires chatId, fromRunId, toRunId, and toProvider.'
       )
     }
     if (fromRunId === toRunId) {
@@ -380,13 +439,16 @@ export class SimulatorControllerLease {
     const transferredLease = this.appDriveLeases.transfer({
       surfaceId: holder.surfaceId,
       fromRunId,
+      fromProvider: holder.provider || '',
       toRunId,
+      toProvider,
       ...(toOwnerParticipantId ? { toParticipantId: toOwnerParticipantId } : {})
     })
     if (!transferredLease.ok) return fail('not_holder', transferredLease.error, holder)
     const next: SimulatorControllerToken = {
       ...holder,
       runId: toRunId,
+      provider: transferredLease.lease.provider,
       kind: toRunId === SIMULATOR_HUMAN_CONTROLLER_RUN_ID ? 'human' : 'run',
       ...(transferredLease.lease.participantId
         ? { ownerParticipantId: transferredLease.lease.participantId }

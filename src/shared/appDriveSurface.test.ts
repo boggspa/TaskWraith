@@ -4,12 +4,16 @@ import { isAppDriveLeasedTool, resolveAppDriveSurfaceDescriptor } from './appDri
 describe('resolveAppDriveSurfaceDescriptor', () => {
   it('keeps the existing exact canvasId as the web surface grant key', () => {
     expect(
-      resolveAppDriveSurfaceDescriptor('canvas_click', { canvasId: 'canvas-a' })
+      resolveAppDriveSurfaceDescriptor('canvas_click', {
+        canvasId: 'canvas-a',
+        requireIndependentVerifier: true
+      })
     ).toMatchObject({
       surfaceId: 'canvas-a',
       surfaceKind: 'web',
       target: { canvasId: 'canvas-a' },
       verb: 'click',
+      independentVerificationRequired: true,
       allowedVerbs: ['click', 'fill', 'key', 'scroll', 'hover', 'select']
     })
   })

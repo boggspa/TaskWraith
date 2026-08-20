@@ -184,6 +184,8 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // its elements. Web canvas_open / screenshot / resize / close stay gated.
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_inspect',
   'canvas_sketch_open',

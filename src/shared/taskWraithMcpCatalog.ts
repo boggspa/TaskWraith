@@ -286,6 +286,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_sketch_update',
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_screenshot',
   'canvas_inspect',

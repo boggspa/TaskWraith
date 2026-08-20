@@ -96,6 +96,12 @@ function actionResult(overrides: Partial<CanvasWindowActResult> = {}): CanvasWin
     lease: LEASE,
     observationId: 'observation-1',
     actionId: 'action-1',
+    driveAction: {
+      leaseId: 'drive-lease-1',
+      reportId: 'drive-report-1',
+      actionId: 'drive-action-1',
+      independentVerificationRequired: false
+    },
     result: {
       ok: true,
       found: true,

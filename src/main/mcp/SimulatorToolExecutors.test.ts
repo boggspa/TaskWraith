@@ -174,6 +174,60 @@ describe('SimulatorToolExecutors', () => {
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('simulator_status')).toBe(true)
   })
 
+  it('returns value-free report correlation for independently verified Simulator actions', async () => {
+    const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-report' })
+    approveTool(controllerLease, 'simulator_tap', { udid, x: 0.5, y: 0.5 })
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease,
+      idb: fakeIdb(),
+      getActuationTarget: () => ({ udid, pointWidth: 390, pointHeight: 844 })
+    })
+
+    const result = await executeSimulatorTool(
+      'simulator_tap',
+      { udid, x: 0.5, y: 0.5, requireIndependentVerifier: true },
+      runCtx,
+      'codex'
+    )
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      driveReportId: expect.any(String),
+      driveActionId: expect.any(String),
+      independentVerificationRequired: true
+    })
+    expect(JSON.stringify(result.structuredContent)).not.toContain('controllerTokenId')
+
+    const observation = await executeSimulatorTool(
+      'simulator_screenshot',
+      { udid },
+      { appChatId: 'chat-1', appRunId: 'run-review', participantId: 'seat-review' },
+      'claude'
+    )
+    expect(observation.structuredContent?.driveObservation).toMatchObject({
+      reportId: result.structuredContent?.driveReportId,
+      actionId: result.structuredContent?.driveActionId,
+      surfaceId: `simulator:${udid}:-`,
+      observer: {
+        runId: 'run-review',
+        provider: 'claude',
+        participantId: 'seat-review'
+      }
+    })
+
+    const inspection = await executeSimulatorTool(
+      'simulator_inspect',
+      { udid, driveActionId: result.structuredContent?.driveActionId },
+      { appChatId: 'chat-1', appRunId: 'run-inspect', participantId: 'seat-inspect' },
+      'claude'
+    )
+    expect(inspection.structuredContent?.driveObservation).toMatchObject({
+      reportId: result.structuredContent?.driveReportId,
+      actionId: result.structuredContent?.driveActionId,
+      observer: { runId: 'run-inspect', participantId: 'seat-inspect' }
+    })
+  })
+
   it('simulator_open / boot / install / launch / terminate require run context + lease', async () => {
     const hostControl = fakeHost()
     const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-run' })

@@ -66,6 +66,11 @@ import type {
   AppDriveLeaseRegistry,
   AppDriveLeaseRevocationReason
 } from '../appDrive/AppDriveLease'
+import type {
+  AppDriveActionReport,
+  AppDriveSessionReport,
+  AppDriveVerificationVerdict
+} from '../appDrive/AppDriveSessionReport'
 
 export interface CanvasServiceDeps {
   createDriver: (
@@ -118,7 +123,10 @@ export interface CanvasServiceDeps {
    */
   confirmConsequentialAction?: (request: CanvasConsequentialConfirmRequest) => Promise<boolean>
   /** User-minted, expiring step budget for web actuation. */
-  appDriveLeases?: Pick<AppDriveLeaseRegistry, 'acquireAndConsume'>
+  appDriveLeases?: Pick<
+    AppDriveLeaseRegistry,
+    'acquireAndConsume' | 'completeAction' | 'queryReports' | 'recordObservation' | 'verifyAction'
+  >
   /** Revoke the lease and its exact permission grant on navigation/close/takeover. */
   onSurfaceAuthorityInvalidated?: (input: {
     canvasId: string
@@ -962,6 +970,43 @@ export class CanvasService implements CanvasController {
     return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
   }
 
+  driveReports(
+    input: { reportId?: string; surfaceId?: string; limit?: number },
+    ctx: CanvasCallContext
+  ): readonly AppDriveSessionReport[] {
+    if (!ctx.chatId || !this.deps.appDriveLeases || this.contextHistoryBlocked(ctx)) return []
+    return this.deps.appDriveLeases.queryReports({
+      chatId: ctx.chatId,
+      ...(input.reportId ? { reportId: input.reportId } : {}),
+      ...(input.surfaceId ? { surfaceId: input.surfaceId } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {})
+    })
+  }
+
+  verifyDriveAction(
+    input: {
+      reportId: string
+      actionId: string
+      surfaceId: string
+      observationId: string
+      verdict: AppDriveVerificationVerdict
+    },
+    ctx: CanvasCallContext
+  ): AppDriveActionReport {
+    if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) {
+      throw new Error('AppDrive verification requires exact chat, run, and provider authority.')
+    }
+    return this.deps.appDriveLeases.verifyAction({
+      ...input,
+      chatId: ctx.chatId,
+      verifier: {
+        runId: ctx.runId,
+        provider: ctx.provider,
+        participantId: ctx.participantId ?? null
+      }
+    })
+  }
+
   /**
    * Chat-scoped chart document for the Canvas dock. Live sessions only —
    * persisted history does not retain the structured payload.
@@ -972,7 +1017,11 @@ export class CanvasService implements CanvasController {
     return summary.chartDocument ?? null
   }
 
-  async snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree> {
+  async snapshot(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    options: { driveActionId?: string } = {}
+  ): Promise<CanvasElementTree> {
     const session = this.require(canvasId, ctx)
     const tree = await session.driver.snapshot()
     this.assertLiveAfterAwait(canvasId, session, ctx, 'snapshot')
@@ -980,7 +1029,26 @@ export class CanvasService implements CanvasController {
       nodeCount: tree.nodeCount,
       url: redactUrlQuery(tree.url)
     })
-    return tree
+    const driveObservation =
+      (session.record.driver === 'web' || session.record.driver === 'window') &&
+      ctx.chatId &&
+      ctx.runId &&
+      ctx.provider &&
+      this.deps.appDriveLeases
+        ? this.deps.appDriveLeases.recordObservation({
+            chatId: ctx.chatId,
+            observer: {
+              runId: ctx.runId,
+              provider: ctx.provider,
+              participantId: ctx.participantId ?? null
+            },
+            ...(session.record.driver === 'web'
+              ? { surfaceId: canvasId, surfaceKind: 'web' as const }
+              : { surfaceKind: 'native' as const }),
+            ...(options.driveActionId ? { actionId: options.driveActionId } : {})
+          })
+        : null
+    return driveObservation ? { ...tree, driveObservation } : tree
   }
 
   async screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame> {
@@ -1134,12 +1202,16 @@ export class CanvasService implements CanvasController {
     kind: CanvasControlActionKind,
     args: CanvasActionInput,
     ctx: CanvasCallContext
-  ): Promise<{ refusal?: CanvasActResult; pin: Partial<CanvasActionInput> }> {
-    if (kind === 'scroll' || kind === 'hover') return { pin: {} }
+  ): Promise<{
+    refusal?: CanvasActResult
+    pin: Partial<CanvasActionInput>
+    consequential: boolean
+  }> {
+    if (kind === 'scroll' || kind === 'hover') return { pin: {}, consequential: false }
     const describeTarget = session.driver.describeTarget?.bind(session.driver)
     // A surface with no page labels to judge (sketch, chart, image, device) is
     // not gated: refusing on an absent probe would block every action there.
-    if (!describeTarget) return { pin: {} }
+    if (!describeTarget) return { pin: {}, consequential: false }
 
     let description: CanvasTargetDescription
     try {
@@ -1148,12 +1220,14 @@ export class CanvasService implements CanvasController {
       // A probe that cannot run tells us nothing about the target. Let the
       // ordinary dispatch path report the real failure rather than inventing a
       // consequential refusal for what is probably a closed surface.
-      return { pin: {} }
+      return { pin: {}, consequential: false }
     }
-    if (!description.found) return { pin: {} }
+    if (!description.found) return { pin: {}, consequential: false }
 
     const assessment = assessConsequentialTarget(description.label)
-    if (!assessment.consequential || !assessment.category) return { pin: {} }
+    if (!assessment.consequential || !assessment.category) {
+      return { pin: {}, consequential: false }
+    }
 
     const refusal = (): CanvasActResult => ({
       ok: false,
@@ -1170,7 +1244,7 @@ export class CanvasService implements CanvasController {
 
     const confirm = this.deps.confirmConsequentialAction
     // Fail closed: a consequential target with nobody to ask is not dispatched.
-    if (!confirm) return { refusal: refusal(), pin: {} }
+    if (!confirm) return { refusal: refusal(), pin: {}, consequential: true }
 
     let confirmed: boolean
     try {
@@ -1185,7 +1259,7 @@ export class CanvasService implements CanvasController {
     } catch {
       confirmed = false
     }
-    if (!confirmed) return { refusal: refusal(), pin: {} }
+    if (!confirmed) return { refusal: refusal(), pin: {}, consequential: true }
 
     // Pin the epoch the human actually decided against. If they touched the
     // page while the dialog was open, the dispatch refuses with
@@ -1194,7 +1268,8 @@ export class CanvasService implements CanvasController {
       pin:
         typeof description.inputEpoch === 'number'
           ? { expectedInputEpoch: description.inputEpoch }
-          : {}
+          : {},
+      consequential: true
     }
   }
 
@@ -1232,7 +1307,7 @@ export class CanvasService implements CanvasController {
       // past while a human is deciding.
       const gate =
         kind === 'wait_for'
-          ? { pin: {} }
+          ? { pin: {}, consequential: false }
           : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
       if (gate.refusal) {
         this.emit(canvasId, 'interaction', ctx, {
@@ -1245,6 +1320,14 @@ export class CanvasService implements CanvasController {
         })
         return gate.refusal
       }
+      let driveAction:
+        | {
+            leaseId: string
+            reportId: string
+            actionId: string
+            independentVerificationRequired: boolean
+          }
+        | undefined
       if (kind !== 'wait_for' && session.record.driver === 'web' && this.deps.appDriveLeases) {
         if (!ctx.chatId || !ctx.runId || !ctx.provider) {
           return {
@@ -1264,7 +1347,10 @@ export class CanvasService implements CanvasController {
           runId: ctx.runId,
           provider: ctx.provider,
           ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
-          verb: kind
+          verb: kind,
+          independentVerificationRequired:
+            args.requireIndependentVerifier === true ||
+            (gate.consequential && Boolean(ctx.participantId))
         })
         if (!lease.ok) {
           const refusalReason =
@@ -1274,7 +1360,9 @@ export class CanvasService implements CanvasController {
                 ? 'appdrive_step_budget_exhausted'
                 : lease.code === 'binding-mismatch'
                   ? 'appdrive_binding_mismatch'
-                  : 'appdrive_lease_required'
+                  : lease.code === 'independent-verifier-required'
+                    ? 'appdrive_independent_verifier_required'
+                    : 'appdrive_lease_required'
           this.emit(canvasId, 'interaction', ctx, {
             phase: 'outcome',
             action: kind,
@@ -1293,6 +1381,12 @@ export class CanvasService implements CanvasController {
             message: lease.error
           }
         }
+        driveAction = {
+          leaseId: lease.lease.leaseId,
+          reportId: lease.reportId,
+          actionId: lease.actionId,
+          independentVerificationRequired: lease.independentVerificationRequired
+        }
       }
       // A synchronous broadcast hook could have begun a clear while the intent
       // was emitted. Re-check before invoking the driver.
@@ -1301,6 +1395,20 @@ export class CanvasService implements CanvasController {
       try {
         result = await session.driver.act({ ...args, ...gate.pin, kind })
       } catch (error) {
+        if (driveAction) {
+          this.deps.appDriveLeases?.completeAction({
+            leaseId: driveAction.leaseId,
+            actionId: driveAction.actionId,
+            actor: {
+              runId: ctx.runId!,
+              provider: ctx.provider!,
+              participantId: ctx.participantId ?? null
+            },
+            executed: null,
+            surfaceVerification: 'unknown',
+            refusalCode: 'driver_error'
+          })
+        }
         this.emit(canvasId, 'interaction', ctx, {
           phase: 'outcome',
           action: kind,
@@ -1310,6 +1418,26 @@ export class CanvasService implements CanvasController {
           verified: 'unknown'
         })
         throw error
+      }
+      if (driveAction) {
+        this.deps.appDriveLeases?.completeAction({
+          leaseId: driveAction.leaseId,
+          actionId: driveAction.actionId,
+          actor: {
+            runId: ctx.runId!,
+            provider: ctx.provider!,
+            participantId: ctx.participantId ?? null
+          },
+          executed: result.executed,
+          surfaceVerification: result.verified,
+          ...(result.refusalReason ? { refusalCode: result.refusalReason } : {})
+        })
+        result = {
+          ...result,
+          driveReportId: driveAction.reportId,
+          driveActionId: driveAction.actionId,
+          independentVerificationRequired: driveAction.independentVerificationRequired
+        }
       }
       if (!result.ok || !result.executed || result.verified !== 'changed') {
         this.emit(canvasId, 'interaction', ctx, {

@@ -43,6 +43,8 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_sketch_update',
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_screenshot',
   'canvas_inspect',
@@ -791,8 +793,59 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         case 'canvas_status': {
           return jsonResult({ ok: true, tool: toolName, session: controller.status(needsId(), ctx) })
         }
+        case 'canvas_drive_report': {
+          if (!controller.driveReports) {
+            return fail(toolName, 'AppDrive session reporting is unavailable.')
+          }
+          const reports = controller.driveReports(
+            {
+              ...(asOptString(args.reportId) ? { reportId: asOptString(args.reportId) } : {}),
+              ...(asOptString(args.surfaceId) ? { surfaceId: asOptString(args.surfaceId) } : {}),
+              ...(asOptNumber(args.limit) !== undefined ? { limit: asOptNumber(args.limit) } : {})
+            },
+            ctx
+          )
+          return jsonResult({ ok: true, tool: toolName, count: reports.length, reports })
+        }
+        case 'canvas_drive_verify': {
+          if (!controller.verifyDriveAction) {
+            return fail(toolName, 'AppDrive action verification is unavailable.')
+          }
+          const reportId = asOptString(args.reportId)
+          const actionId = asOptString(args.actionId)
+          const surfaceId = asOptString(args.surfaceId)
+          const observationId = asOptString(args.observationId)
+          const verdict = asOptString(args.verdict)
+          if (!reportId || !actionId || !surfaceId || !observationId) {
+            return fail(
+              toolName,
+              '`reportId`, `actionId`, `surfaceId`, and `observationId` are required.'
+            )
+          }
+          if (
+            verdict !== 'confirmed' &&
+            verdict !== 'not-confirmed' &&
+            verdict !== 'inconclusive'
+          ) {
+            return fail(toolName, '`verdict` must be confirmed, not-confirmed, or inconclusive.')
+          }
+          try {
+            const action = controller.verifyDriveAction(
+              { reportId, actionId, surfaceId, observationId, verdict },
+              ctx
+            )
+            return jsonResult({ ok: true, tool: toolName, action })
+          } catch (error) {
+            return fail(
+              toolName,
+              error instanceof Error ? error.message : 'AppDrive verification failed.'
+            )
+          }
+        }
         case 'canvas_snapshot': {
-          const tree = await controller.snapshot(needsId(), ctx)
+          const tree = await controller.snapshot(needsId(), ctx, {
+            driveActionId: asOptString(args.driveActionId)
+          })
           return jsonResult({
             ok: true,
             tool: toolName,
@@ -885,7 +938,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               x,
               y,
               expectedInputEpoch,
-              expectedObservationId
+              expectedObservationId,
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )
@@ -908,7 +962,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               selector,
               value: args.value,
               expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
-              expectedObservationId: asOptString(args.expectedObservationId)
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )
@@ -925,11 +980,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const ref = asOptString(args.ref)
           const selector = asOptString(args.selector)
           if (!ref && !selector) return fail(toolName, 'Provide a `ref` or a `selector`.')
-          const kind = toolName.slice('canvas_'.length) as
-            | 'key'
-            | 'hover'
-            | 'select'
-            | 'wait_for'
+          const kind = toolName.slice('canvas_'.length) as 'key' | 'hover' | 'select' | 'wait_for'
           if (kind === 'key' && typeof args.key !== 'string') {
             return fail(toolName, '`key` (string) is required.')
           }
@@ -946,7 +997,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ...(kind === 'select' ? { value: args.value as string } : {}),
               ...(kind === 'wait_for' ? { timeoutMs: asOptNumber(args.timeoutMs) } : {}),
               expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
-              expectedObservationId: asOptString(args.expectedObservationId)
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )
@@ -973,7 +1025,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               deltaX,
               deltaY,
               expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
-              expectedObservationId: asOptString(args.expectedObservationId)
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )

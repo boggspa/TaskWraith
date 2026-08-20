@@ -22,6 +22,12 @@ import type {
   CanvasChartSeries,
   CanvasChartValidation
 } from '../../shared/canvasChart'
+import type {
+  AppDriveActionReport,
+  AppDriveObservationReceipt,
+  AppDriveSessionReport,
+  AppDriveVerificationVerdict
+} from '../appDrive/AppDriveSessionReport'
 import {
   CANVAS_CHART_KINDS,
   CANVAS_CHART_MAX_JSON_BYTES,
@@ -195,6 +201,8 @@ export interface CanvasElementTree {
    * their isolated renderer world and retain an independent main-process guard.
    */
   inputEpoch?: number
+  /** Trusted post-action observation receipt for canvas_drive_verify. */
+  driveObservation?: AppDriveObservationReceipt
 }
 
 export interface CanvasFrame {
@@ -253,6 +261,8 @@ export interface CanvasActionInput {
   deltaY?: number
   /** Poll ceiling for `wait_for` (milliseconds). */
   timeoutMs?: number
+  /** Require a different Ensemble participant to attest the postcondition. */
+  requireIndependentVerifier?: boolean
   /**
    * The `inputEpoch` from the snapshot this action was planned against. When
    * supplied and no longer current — i.e. the human has touched the surface since
@@ -303,6 +313,8 @@ export type CanvasActRefusalReason =
   | 'appdrive_step_budget_exhausted'
   /** The lease belongs to another run/provider/participant binding. */
   | 'appdrive_binding_mismatch'
+  /** A solo actor requested a verifier split that requires two Ensemble seats. */
+  | 'appdrive_independent_verifier_required'
   /** The driver intentionally does not implement this structured verb. */
   | 'unsupported_action'
   /** `wait_for` reached its bounded timeout without finding the target. */
@@ -371,6 +383,10 @@ export interface CanvasActResult {
    */
   url?: string
   title?: string
+  /** Value-free AppDrive report correlation for this consumed action step. */
+  driveReportId?: string
+  driveActionId?: string
+  independentVerificationRequired?: boolean
 }
 
 /**
@@ -678,12 +694,32 @@ export interface CanvasController {
   ): Promise<{ canvasId: string } & CanvasSessionHandle>
   list(ctx: CanvasCallContext): CanvasSessionSummary[]
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null
+  /** Value-free AppDrive reports across web, Simulator, and managed native surfaces. */
+  driveReports?(
+    input: { reportId?: string; surfaceId?: string; limit?: number },
+    ctx: CanvasCallContext
+  ): readonly AppDriveSessionReport[]
+  /** Record a post-observation attestation for one reported action. */
+  verifyDriveAction?(
+    input: {
+      reportId: string
+      actionId: string
+      surfaceId: string
+      observationId: string
+      verdict: AppDriveVerificationVerdict
+    },
+    ctx: CanvasCallContext
+  ): AppDriveActionReport
   /**
    * Structured chart payload for a live chart session (Canvas dock TelemetryPane).
    * Returns null when the canvas is missing, not owned, or not a chart driver.
    */
   getChartDocument(canvasId: string, ctx: CanvasCallContext): CanvasChartDocument | null
-  snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree>
+  snapshot(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    options?: { driveActionId?: string }
+  ): Promise<CanvasElementTree>
   screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame>
   inspect(
     canvasId: string,

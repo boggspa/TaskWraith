@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { AppDriveLeaseRegistry, type AuthorizeAppDriveLeaseInput } from './AppDriveLease'
+import { AppDriveSessionReportStore } from './AppDriveSessionReport'
 
 function setup() {
   const now = { value: 1_000 }
   let id = 0
+  let reportId = 0
+  let actionId = 0
+  let observationId = 0
   return {
     now,
     leases: new AppDriveLeaseRegistry({
       now: () => now.value,
-      createLeaseId: () => `lease-${++id}`
+      createLeaseId: () => `lease-${++id}`,
+      reports: new AppDriveSessionReportStore({
+        now: () => now.value,
+        createReportId: () => `report-${++reportId}`,
+        createActionId: () => `action-${++actionId}`,
+        createObservationId: () => `observation-${++observationId}`
+      })
     })
   }
 }
@@ -53,9 +63,11 @@ describe('AppDriveLeaseRegistry', () => {
     const lease = leases.authorizeUserLease(binding())
     expect(lease).toMatchObject({
       leaseId: 'lease-1',
+      reportId: 'report-1',
       surfaceId: 'canvas-a',
       surfaceKind: 'web',
       approvedBy: 'user',
+      independentVerificationRequired: false,
       stepBudget: 2,
       stepsRemaining: 2,
       target: { canvasId: 'canvas-a', origin: 'https://example.test' }
@@ -69,6 +81,13 @@ describe('AppDriveLeaseRegistry', () => {
   it('refuses an agent action before a user-minted lease exists', () => {
     const { leases } = setup()
     expect(consume(leases)).toMatchObject({ ok: false, code: 'consent-required' })
+  })
+
+  it('validates the full lease before creating a report', () => {
+    const { leases } = setup()
+    expect(() => leases.authorizeUserLease(binding({ allowedVerbs: [''] }))).toThrow(/verb/i)
+    expect(leases.peek('canvas-a')).toBeNull()
+    expect(leases.queryReports({ chatId: 'chat-a' })).toEqual([])
   })
 
   it('consumes a bounded step and refuses exact binding/verb drift', () => {
@@ -138,7 +157,9 @@ describe('AppDriveLeaseRegistry', () => {
     const transferred = leases.transfer({
       surfaceId: 'canvas-a',
       fromRunId: 'run-a',
+      fromProvider: 'codex',
       toRunId: 'run-b',
+      toProvider: 'claude',
       toParticipantId: 'seat-b'
     })
     expect(transferred).toMatchObject({
@@ -147,9 +168,127 @@ describe('AppDriveLeaseRegistry', () => {
         leaseId: initial.leaseId,
         approvedBy: 'user',
         runId: 'run-b',
+        provider: 'claude',
         participantId: 'seat-b'
       }
     })
+    expect(
+      consume(leases, {
+        runId: 'run-b',
+        provider: 'claude',
+        participantId: 'seat-b'
+      }).ok
+    ).toBe(true)
+  })
+
+  it('keeps an in-flight action bound to its original actor across transfer', () => {
+    const { leases } = setup()
+    leases.authorizeUserLease(binding())
+    const admitted = consume(leases)
+    if (!admitted.ok) throw new Error('expected action admission')
+    leases.transfer({
+      surfaceId: 'canvas-a',
+      fromRunId: 'run-a',
+      fromProvider: 'codex',
+      toRunId: 'run-b',
+      toProvider: 'claude',
+      toParticipantId: 'seat-b'
+    })
+    const completion = {
+      leaseId: admitted.lease.leaseId,
+      actionId: admitted.actionId,
+      executed: true,
+      surfaceVerification: 'changed' as const
+    }
+    expect(() =>
+      leases.completeAction({
+        ...completion,
+        actor: { runId: 'run-b', provider: 'claude', participantId: 'seat-b' }
+      })
+    ).toThrow(/another actor/i)
+    expect(
+      leases.completeAction({
+        ...completion,
+        actor: { runId: 'run-a', provider: 'codex', participantId: 'seat-a' }
+      })
+    ).toMatchObject({ status: 'verified' })
+  })
+
+  it('reports an inconclusive action and accepts a distinct verifier attestation', () => {
+    const { leases } = setup()
+    leases.authorizeUserLease(binding())
+    const admitted = consume(leases, { independentVerificationRequired: true })
+    expect(admitted).toMatchObject({
+      ok: true,
+      reportId: 'report-1',
+      actionId: 'action-1',
+      independentVerificationRequired: true
+    })
+    if (!admitted.ok) throw new Error('expected admission')
+    leases.completeAction({
+      leaseId: admitted.lease.leaseId,
+      actionId: admitted.actionId,
+      actor: { runId: 'run-a', provider: 'codex', participantId: 'seat-a' },
+      executed: true,
+      surfaceVerification: 'unchanged'
+    })
+    expect(leases.queryReports({ chatId: 'chat-a' })[0].counts.awaitingVerification).toBe(1)
+    const actorObservation = leases.recordObservation({
+      chatId: 'chat-a',
+      surfaceId: 'canvas-a',
+      observer: { runId: 'run-a', provider: 'codex', participantId: 'seat-a' }
+    })!
+    expect(() =>
+      leases.verifyAction({
+        reportId: admitted.reportId,
+        actionId: admitted.actionId,
+        surfaceId: 'canvas-a',
+        observationId: actorObservation.observationId,
+        chatId: 'chat-a',
+        verifier: { runId: 'run-a', provider: 'codex', participantId: 'seat-a' },
+        verdict: 'confirmed'
+      })
+    ).toThrow(/different Ensemble participant/i)
+    const reviewer = { runId: 'run-b', provider: 'claude', participantId: 'seat-b' }
+    const reviewerObservation = leases.recordObservation({
+      chatId: 'chat-a',
+      surfaceId: 'canvas-a',
+      observer: reviewer
+    })!
+    expect(
+      leases.verifyAction({
+        reportId: admitted.reportId,
+        actionId: admitted.actionId,
+        surfaceId: 'canvas-a',
+        observationId: reviewerObservation.observationId,
+        chatId: 'chat-a',
+        verifier: reviewer,
+        verdict: 'confirmed'
+      })
+    ).toMatchObject({ status: 'verified' })
+  })
+
+  it('persists independent verification as a lease policy after user approval', () => {
+    const { leases } = setup()
+    leases.authorizeUserLease(binding({ independentVerificationRequired: true }))
+    expect(consume(leases)).toMatchObject({
+      ok: true,
+      independentVerificationRequired: true,
+      lease: { independentVerificationRequired: true }
+    })
+    expect(leases.queryReports({ chatId: 'chat-a' })[0]).toMatchObject({
+      independentVerificationRequired: true,
+      actions: [expect.objectContaining({ independentVerificationRequired: true })]
+    })
+  })
+
+  it('refuses independent verification mode for a solo actor before consuming a step', () => {
+    const { leases } = setup()
+    leases.authorizeUserLease(binding({ participantId: undefined }))
+    expect(
+      consume(leases, { participantId: undefined, independentVerificationRequired: true })
+    ).toMatchObject({ ok: false, code: 'independent-verifier-required' })
+    expect(leases.peek('canvas-a')).toMatchObject({ stepsUsed: 0, stepsRemaining: 2 })
   })
 
   it('replacing a surface rotates lease identity and resets the bounded budget', () => {

@@ -380,6 +380,10 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     expect(isReadOnlyAdvertisedTool('canvas_select')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_wait_for')).toBe(true)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_wait_for')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_drive_report')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_drive_verify')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_drive_report')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_drive_verify')).toBe(true)
     expect(isReadOnlyAdvertisedTool('canvas_sketch_update')).toBe(false)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)

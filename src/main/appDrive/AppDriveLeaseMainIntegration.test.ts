@@ -5,9 +5,13 @@ const mainSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 
 describe('AppDrive lease main integration', () => {
   it('shares one lease registry across web and Simulator controllers', () => {
-    expect(mainSource).toContain('const appDriveSurfaceLeases = new AppDriveLeaseRegistry()')
+    expect(mainSource).toContain('const appDriveSessionReports = new AppDriveSessionReportStore()')
+    expect(mainSource).toContain(
+      'const appDriveSurfaceLeases = new AppDriveLeaseRegistry({ reports: appDriveSessionReports })'
+    )
     expect(mainSource).toContain('appDriveLeases: appDriveSurfaceLeases')
     expect(mainSource).toContain('leases: appDriveSurfaceLeases')
+    expect(mainSource).toContain('appDriveReports: appDriveSessionReports')
   })
 
   it('binds approval, execution, invalidation, and run-terminal seams', () => {

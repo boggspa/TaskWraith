@@ -87,7 +87,7 @@ export interface SimulatorToolExecutorDeps {
     SimulatorHostControl,
     'status' | 'openSimulatorApp' | 'boot' | 'install' | 'launch' | 'terminate' | 'screenshot'
   >
-  controllerLease: Pick<SimulatorControllerLease, 'mint'>
+  controllerLease: Pick<SimulatorControllerLease, 'mint' | 'completeAction' | 'recordObservation'>
   /** Required for inspect / button / rotate / HID (idb argv-array path). */
   idb: Pick<
     IdbClient,
@@ -152,14 +152,57 @@ function actionResult(
   return jsonResult({ ok: true, tool, ...safe }, extraContent)
 }
 
+interface SimulatorDriveActionCorrelation {
+  leaseId: string
+  reportId: string
+  actionId: string
+  independentVerificationRequired: boolean
+}
+
+interface SimulatorRunControl {
+  chatId: string
+  controllerTokenId: string
+  driveAction: SimulatorDriveActionCorrelation
+}
+
+function simulatorHostAuthority(control: SimulatorRunControl): {
+  chatId: string
+  controllerTokenId: string
+} {
+  return { chatId: control.chatId, controllerTokenId: control.controllerTokenId }
+}
+
+function withDriveCorrelation(
+  result: McpToolExecutionResult,
+  driveAction: SimulatorDriveActionCorrelation
+): McpToolExecutionResult {
+  const value = {
+    ...(result.structuredContent || {}),
+    driveReportId: driveAction.reportId,
+    driveActionId: driveAction.actionId,
+    independentVerificationRequired: driveAction.independentVerificationRequired
+  }
+  const text = JSON.stringify(value)
+  return {
+    ...result,
+    text,
+    structuredContent: value,
+    content: [{ type: 'text', text }, ...(result.content || []).slice(1)]
+  }
+}
+
 function requireRunController(
   toolName: SimulatorMcpToolName,
   context: SimulatorToolContext,
   lease: Pick<SimulatorControllerLease, 'mint'>,
   parentProvider: string,
-  surface: AppDriveSurfaceDescriptor
+  surface: AppDriveSurfaceDescriptor,
+  independentVerificationRequired: boolean
 ):
-  | { ok: true; control: { chatId: string; controllerTokenId: string } }
+  | {
+      ok: true
+      control: SimulatorRunControl
+    }
   | { ok: false; result: McpToolExecutionResult } {
   const chatId = stringValue(context.appChatId, 256)
   const runId = stringValue(context.appRunId, 256)
@@ -180,7 +223,8 @@ function requireRunController(
     verb: surface.verb,
     ownerParticipantId:
       stringValue(context.participantId, 256) ||
-      stringValue(context.ensembleRun?.participantId, 256)
+      stringValue(context.ensembleRun?.participantId, 256),
+    independentVerificationRequired
   })
   if (!minted.ok) {
     return {
@@ -190,7 +234,11 @@ function requireRunController(
   }
   return {
     ok: true,
-    control: { chatId, controllerTokenId: minted.token.tokenId }
+    control: {
+      chatId,
+      controllerTokenId: minted.token.tokenId,
+      driveAction: minted.driveAction!
+    }
   }
 }
 
@@ -262,13 +310,71 @@ export function createSimulatorToolExecutors(
   return {
     async executeSimulatorTool(toolName, rawArgs, context, parentProvider) {
       const args = asRecord(rawArgs)
+      let control: SimulatorRunControl | undefined
+      let driveCompleted = false
+      const finishDriveAction = (
+        result: McpToolExecutionResult,
+        executed: boolean | null,
+        refusalCode?: string
+      ): McpToolExecutionResult => {
+        if (!control) return result
+        if (!driveCompleted) {
+          controllerLease.completeAction({
+            leaseId: control.driveAction.leaseId,
+            actionId: control.driveAction.actionId,
+            actor: {
+              runId: stringValue(context.appRunId, 256)!,
+              provider: parentProvider,
+              participantId:
+                stringValue(context.participantId, 256) ||
+                stringValue(context.ensembleRun?.participantId, 256) ||
+                null
+            },
+            executed,
+            surfaceVerification: 'unknown',
+            ...(refusalCode ? { refusalCode } : {})
+          })
+          driveCompleted = true
+        }
+        return withDriveCorrelation(result, control.driveAction)
+      }
+      const finishHostAction = (
+        result: SimulatorHostActionResult,
+        extraContent: McpToolContentBlock[] = []
+      ): McpToolExecutionResult =>
+        finishDriveAction(
+          actionResult(toolName, result, extraContent),
+          result.ok ? true : null,
+          result.ok ? undefined : 'host_action_failed'
+        )
+      const recordSimulatorObservation = (udid: string, driveActionId?: string) => {
+        const chatId = stringValue(context.appChatId, 256)
+        const runId = stringValue(context.appRunId, 256)
+        if (!chatId || !runId) return null
+        const session = sessionStore?.get(chatId)
+        const surface = resolveAppDriveSurfaceDescriptor(
+          'simulator_tap',
+          { udid },
+          { simulatorUdid: session?.udid, simulatorBundleId: session?.bundleId }
+        )
+        if (!surface) return null
+        return controllerLease.recordObservation({
+          chatId,
+          runId,
+          provider: parentProvider,
+          participantId:
+            stringValue(context.participantId, 256) ||
+            stringValue(context.ensembleRun?.participantId, 256),
+          surfaceId: surface.surfaceId,
+          ...(driveActionId ? { actionId: driveActionId } : {})
+        })
+      }
       try {
         if (toolName === 'simulator_status') {
           const status = await hostControl.status()
           return jsonResult({ ok: true, tool: toolName, status })
         }
 
-        let control: { chatId: string; controllerTokenId: string } | undefined
         if (SIMULATOR_MUTATING_TOOLS.has(toolName)) {
           if (isSimulatorControlEnabled?.() === false) {
             return fail(toolName, SIMULATOR_CONTROL_DISABLED_MESSAGE)
@@ -286,18 +392,27 @@ export function createSimulatorToolExecutors(
             context,
             controllerLease,
             parentProvider,
-            surface
+            surface,
+            args.requireIndependentVerifier === true
           )
           if (!gated.ok) return gated.result
           control = gated.control
         }
 
         if (toolName === 'simulator_open') {
-          return actionResult(toolName, await hostControl.openSimulatorApp(control!))
+          return finishHostAction(
+            await hostControl.openSimulatorApp(simulatorHostAuthority(control!))
+          )
         }
 
         const udid = stringValue(args.udid, 128)
-        if (!udid) return fail(toolName, '`udid` is required.')
+        if (!udid) {
+          return finishDriveAction(
+            fail(toolName, '`udid` is required.'),
+            false,
+            'invalid_arguments'
+          )
+        }
 
         const chatId = stringValue(context.appChatId, 256)
         if (chatId && SIMULATOR_CANVAS_PRESENTING_TOOLS.has(toolName)) {
@@ -309,21 +424,43 @@ export function createSimulatorToolExecutors(
         }
 
         if (toolName === 'simulator_boot') {
-          return actionResult(toolName, await hostControl.boot(udid, control!))
+          return finishHostAction(await hostControl.boot(udid, simulatorHostAuthority(control!)))
         }
         if (toolName === 'simulator_install') {
           const appPath = stringValue(args.appPath, 4_096)
-          if (!appPath) return fail(toolName, '`appPath` is required.')
-          return actionResult(toolName, await hostControl.install(udid, appPath, control!))
+          if (!appPath) {
+            return finishDriveAction(
+              fail(toolName, '`appPath` is required.'),
+              false,
+              'invalid_arguments'
+            )
+          }
+          return finishHostAction(
+            await hostControl.install(udid, appPath, simulatorHostAuthority(control!))
+          )
         }
         if (toolName === 'simulator_launch') {
           const bundleId = stringValue(args.bundleId, 256)
-          if (!bundleId) return fail(toolName, '`bundleId` is required.')
-          return actionResult(toolName, await hostControl.launch(udid, bundleId, control!))
+          if (!bundleId) {
+            return finishDriveAction(
+              fail(toolName, '`bundleId` is required.'),
+              false,
+              'invalid_arguments'
+            )
+          }
+          const launched = await hostControl.launch(
+            udid,
+            bundleId,
+            simulatorHostAuthority(control!)
+          )
+          if (launched.ok) sessionStore?.upsert(control!.chatId, { udid, bundleId })
+          return finishHostAction(launched)
         }
         if (toolName === 'simulator_terminate') {
           const bundleId = stringValue(args.bundleId, 256)
-          return actionResult(toolName, await hostControl.terminate(udid, bundleId, control!))
+          return finishHostAction(
+            await hostControl.terminate(udid, bundleId, simulatorHostAuthority(control!))
+          )
         }
 
         if (toolName === 'simulator_inspect') {
@@ -333,57 +470,79 @@ export function createSimulatorToolExecutors(
           if (!described.ok) {
             return fail(toolName, described.error || 'simulator_inspect failed.')
           }
+          const driveObservation = recordSimulatorObservation(
+            udid,
+            stringValue(args.driveActionId, 256)
+          )
           return jsonResult({
             ok: true,
             tool: toolName,
             udid,
             tree: described.tree,
-            truncated: Boolean(described.truncated)
+            truncated: Boolean(described.truncated),
+            ...(driveObservation ? { driveObservation } : {})
           })
         }
 
         if (toolName === 'simulator_button') {
           const missing = requireIdb(toolName, idb)
-          if (missing) return missing
+          if (missing) return finishDriveAction(missing, false, 'dependency_unavailable')
           const button = args.button
           if (!isSimulatorHardwareButton(button)) {
-            return fail(
-              toolName,
-              '`button` must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'
+            return finishDriveAction(
+              fail(toolName, '`button` must be one of APPLE_PAY|HOME|LOCK|SIDE_BUTTON|SIRI.'),
+              false,
+              'invalid_arguments'
             )
           }
           const pressed = await idb.hardwareButton(udid, button)
           if (!pressed.ok) {
-            return fail(toolName, pressed.error || 'simulator_button failed.')
+            return finishDriveAction(
+              fail(toolName, pressed.error || 'simulator_button failed.'),
+              null,
+              'driver_error'
+            )
           }
-          return jsonResult({ ok: true, tool: toolName, udid, button })
+          return finishDriveAction(jsonResult({ ok: true, tool: toolName, udid, button }), true)
         }
 
         if (toolName === 'simulator_rotate') {
           const missing = requireIdb(toolName, idb)
-          if (missing) return missing
+          if (missing) return finishDriveAction(missing, false, 'dependency_unavailable')
           const direction = args.direction
           if (!isSimulatorRotateDirection(direction)) {
-            return fail(
-              toolName,
-              '`direction` must be PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT.'
+            return finishDriveAction(
+              fail(
+                toolName,
+                '`direction` must be PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LEFT|LANDSCAPE_RIGHT.'
+              ),
+              false,
+              'invalid_arguments'
             )
           }
           const rotated = await idb.rotate(udid, direction)
           if (!rotated.ok) {
-            return fail(toolName, rotated.error || 'simulator_rotate failed.')
+            return finishDriveAction(
+              fail(toolName, rotated.error || 'simulator_rotate failed.'),
+              null,
+              'driver_error'
+            )
           }
           sessionStore?.upsert(control!.chatId, { orientation: direction })
-          return jsonResult({ ok: true, tool: toolName, udid, direction })
+          return finishDriveAction(jsonResult({ ok: true, tool: toolName, udid, direction }), true)
         }
 
         if (toolName === 'simulator_tap') {
           const missing = requireIdb(toolName, idb)
-          if (missing) return missing
+          if (missing) return finishDriveAction(missing, false, 'dependency_unavailable')
           const xNorm = finiteNumber(args.x)
           const yNorm = finiteNumber(args.y)
           if (xNorm === undefined || yNorm === undefined) {
-            return fail(toolName, '`x` and `y` are required (normalized 0..1 bezel space).')
+            return finishDriveAction(
+              fail(toolName, '`x` and `y` are required (normalized 0..1 bezel space).'),
+              false,
+              'invalid_arguments'
+            )
           }
           const extents = resolveAgentPointExtents(
             toolName,
@@ -391,39 +550,59 @@ export function createSimulatorToolExecutors(
             control!.chatId,
             getActuationTarget
           )
-          if (!extents.ok) return extents.result
+          if (!extents.ok) {
+            return finishDriveAction(extents.result, false, 'invalid_arguments')
+          }
           const point = mapNormalizedTap(clamp01(xNorm), clamp01(yNorm), extents)
           const tapped = await idb.tap(udid, point.x, point.y)
           if (!tapped.ok) {
-            return fail(toolName, tapped.error || 'simulator_tap failed.')
+            return finishDriveAction(
+              fail(toolName, tapped.error || 'simulator_tap failed.'),
+              null,
+              'driver_error'
+            )
           }
-          return jsonResult({
-            ok: true,
-            tool: toolName,
-            udid,
-            x: point.x,
-            y: point.y,
-            pointWidth: extents.pointWidth,
-            pointHeight: extents.pointHeight
-          })
+          return finishDriveAction(
+            jsonResult({
+              ok: true,
+              tool: toolName,
+              udid,
+              x: point.x,
+              y: point.y,
+              pointWidth: extents.pointWidth,
+              pointHeight: extents.pointHeight
+            }),
+            true
+          )
         }
 
         if (toolName === 'simulator_type') {
           const missing = requireIdb(toolName, idb)
-          if (missing) return missing
+          if (missing) return finishDriveAction(missing, false, 'dependency_unavailable')
           if (typeof args.text !== 'string') {
-            return fail(toolName, '`text` is required.')
+            return finishDriveAction(
+              fail(toolName, '`text` is required.'),
+              false,
+              'invalid_arguments'
+            )
           }
           const typed = await idb.text(udid, args.text)
           if (!typed.ok) {
-            return fail(toolName, typed.error || 'simulator_type failed.')
+            return finishDriveAction(
+              fail(toolName, typed.error || 'simulator_type failed.'),
+              null,
+              'driver_error'
+            )
           }
-          return jsonResult({ ok: true, tool: toolName, udid, length: args.text.length })
+          return finishDriveAction(
+            jsonResult({ ok: true, tool: toolName, udid, length: args.text.length }),
+            true
+          )
         }
 
         if (toolName === 'simulator_scroll') {
           const missing = requireIdb(toolName, idb)
-          if (missing) return missing
+          if (missing) return finishDriveAction(missing, false, 'dependency_unavailable')
           const xNorm = finiteNumber(args.x)
           const yNorm = finiteNumber(args.y)
           const deltaX = finiteNumber(args.deltaX)
@@ -434,9 +613,13 @@ export function createSimulatorToolExecutors(
             deltaX === undefined ||
             deltaY === undefined
           ) {
-            return fail(
-              toolName,
-              '`x`, `y`, `deltaX`, and `deltaY` are required (x/y normalized 0..1; deltas in device points).'
+            return finishDriveAction(
+              fail(
+                toolName,
+                '`x`, `y`, `deltaX`, and `deltaY` are required (x/y normalized 0..1; deltas in device points).'
+              ),
+              false,
+              'invalid_arguments'
             )
           }
           const extents = resolveAgentPointExtents(
@@ -445,7 +628,9 @@ export function createSimulatorToolExecutors(
             control!.chatId,
             getActuationTarget
           )
-          if (!extents.ok) return extents.result
+          if (!extents.ok) {
+            return finishDriveAction(extents.result, false, 'invalid_arguments')
+          }
           // Agent deltas are already point-space — omit pixel dims so no rescale.
           const swipe = mapNormalizedScroll(clamp01(xNorm), clamp01(yNorm), deltaX, deltaY, {
             pointWidth: extents.pointWidth,
@@ -459,16 +644,23 @@ export function createSimulatorToolExecutors(
             swipe.endY
           )
           if (!swiped.ok) {
-            return fail(toolName, swiped.error || 'simulator_scroll failed.')
+            return finishDriveAction(
+              fail(toolName, swiped.error || 'simulator_scroll failed.'),
+              null,
+              'driver_error'
+            )
           }
-          return jsonResult({
-            ok: true,
-            tool: toolName,
-            udid,
-            ...swipe,
-            pointWidth: extents.pointWidth,
-            pointHeight: extents.pointHeight
-          })
+          return finishDriveAction(
+            jsonResult({
+              ok: true,
+              tool: toolName,
+              udid,
+              ...swipe,
+              pointWidth: extents.pointWidth,
+              pointHeight: extents.pointHeight
+            }),
+            true
+          )
         }
 
         if (toolName === 'simulator_screenshot') {
@@ -478,6 +670,10 @@ export function createSimulatorToolExecutors(
             return fail(toolName, shot.error || 'Screenshot failed.')
           }
           const { pngBase64, width, height, capturedAt, udid: frameUdid } = shot.frame
+          const driveObservation = recordSimulatorObservation(
+            udid,
+            stringValue(args.driveActionId, 256)
+          )
           return jsonResult(
             {
               ok: true,
@@ -486,7 +682,8 @@ export function createSimulatorToolExecutors(
               mimeType: 'image/png',
               width,
               height,
-              capturedAt
+              capturedAt,
+              ...(driveObservation ? { driveObservation } : {})
             },
             [{ type: 'image', mimeType: 'image/png', data: pngBase64 }]
           )
@@ -494,6 +691,23 @@ export function createSimulatorToolExecutors(
 
         return fail(toolName, `Unhandled simulator tool: ${toolName}`)
       } catch (error) {
+        if (control && !driveCompleted) {
+          controllerLease.completeAction({
+            leaseId: control.driveAction.leaseId,
+            actionId: control.driveAction.actionId,
+            actor: {
+              runId: stringValue(context.appRunId, 256)!,
+              provider: parentProvider,
+              participantId:
+                stringValue(context.participantId, 256) ||
+                stringValue(context.ensembleRun?.participantId, 256) ||
+                null
+            },
+            executed: null,
+            surfaceVerification: 'unknown',
+            refusalCode: 'operation_error'
+          })
+        }
         const message =
           error instanceof Error ? error.message : 'Simulator Canvas operation failed.'
         return fail(toolName, message)

@@ -32,16 +32,19 @@ describe('AppDriveLeaseRuntime', () => {
       surfaceId: 'simulator:DEVICE-1:com.example.App'
     })
     expect(preview.surfaceId).toBe('simulator:DEVICE-1:com.example.App')
+    expect(preview.independentVerificationRequired).toBe(false)
   })
 
   it('enriches a web lease with its current origin after user approval', () => {
     const { leases, runtime } = harness()
+    const preview: Record<string, unknown> = {}
     const descriptor = runtime.prepareApproval(
       'canvas_click',
-      { canvasId: 'canvas-a' },
+      { canvasId: 'canvas-a', requireIndependentVerifier: true },
       'chat-a',
-      {}
+      preview
     )!
+    expect(preview.independentVerificationRequired).toBe(true)
     expect(
       runtime.authorize({
         descriptor,
@@ -50,10 +53,14 @@ describe('AppDriveLeaseRuntime', () => {
         workspacePath: '/repo',
         chatId: 'chat-a',
         runId: 'run-a',
+        participantId: 'seat-a',
         approval: { action: 'accept', decisionSource: 'user' },
         oneOffPermissionRetry: false
       })
     ).toEqual({ ok: true })
-    expect(leases.peek('canvas-a')?.target.origin).toBe('https://example.test')
+    expect(leases.peek('canvas-a')).toMatchObject({
+      target: { origin: 'https://example.test' },
+      independentVerificationRequired: true
+    })
   })
 })

@@ -1445,6 +1445,79 @@ describe('CanvasService AppDrive web lease', () => {
       rmSync(h.dir, { recursive: true, force: true })
     }
   })
+
+  it('keeps an Ensemble action pending until a different participant verifies it', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      const action = await h.service.click(
+        'canvas-lease',
+        { kind: 'click', ref: 'e1', requireIndependentVerifier: true },
+        ctx
+      )
+      expect(action).toMatchObject({
+        ok: true,
+        independentVerificationRequired: true,
+        driveReportId: expect.any(String),
+        driveActionId: expect.any(String)
+      })
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        counts: { total: 1, awaitingVerification: 1 },
+        actions: [
+          expect.objectContaining({
+            actor: expect.objectContaining({ participantId: 'seat-lease' }),
+            status: 'awaiting-verification'
+          })
+        ]
+      })
+
+      const actorObservation = await h.service.snapshot('canvas-lease', ctx)
+      expect(actorObservation.driveObservation).toMatchObject({
+        reportId: action.driveReportId,
+        actionId: action.driveActionId,
+        surfaceId: 'canvas-lease'
+      })
+
+      expect(() =>
+        h.service.verifyDriveAction(
+          {
+            reportId: action.driveReportId!,
+            actionId: action.driveActionId!,
+            surfaceId: 'canvas-lease',
+            observationId: actorObservation.driveObservation!.observationId,
+            verdict: 'confirmed'
+          },
+          ctx
+        )
+      ).toThrow(/different Ensemble participant/i)
+
+      const reviewerContext = {
+        ...ctx,
+        runId: 'run-review',
+        provider: 'claude',
+        participantId: 'seat-review'
+      }
+      const reviewerObservation = await h.service.snapshot('canvas-lease', reviewerContext)
+      expect(
+        h.service.verifyDriveAction(
+          {
+            reportId: action.driveReportId!,
+            actionId: action.driveActionId!,
+            surfaceId: 'canvas-lease',
+            observationId: reviewerObservation.driveObservation!.observationId,
+            verdict: 'confirmed'
+          },
+          reviewerContext
+        )
+      ).toMatchObject({
+        status: 'verified',
+        participantVerifier: { participantId: 'seat-review', verdict: 'confirmed' }
+      })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('CanvasService browser navigation', () => {

@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 213 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 215 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1244,12 +1244,30 @@ Return metadata for one Canvas session (status, url, viewport). Read-only; carri
 - Required args: canvasId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_status","arguments":{"canvasId":"text"}}}}`
 
+## canvas_drive_report
+
+Return bounded, value-free AppDrive session reports for this chat across web, Simulator, and managed native surfaces. Reports contain lease/session timing, step budget, action verbs, actor identity, surface verification, and optional participant-verifier attestations. They never contain typed values, target labels, page text, URLs, approval tokens, handles, or PIDs. Filter by reportId or surfaceId when needed.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Optional args: reportId, surfaceId, limit
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_drive_report","arguments":{"reportId":"text"}}}}`
+
+## canvas_drive_verify
+
+After re-observing the driven surface, attest the postcondition for one AppDrive action from canvas_drive_report. `observationId` must be the trusted receipt returned by a post-action canvas_snapshot or Simulator observation for this exact report/action/surface and verifier. Use confirmed only when the observed state proves the intended effect, not merely because dispatch returned success; use not-confirmed when the intended effect is absent, and inconclusive when observation cannot decide. Actions marked independentVerificationRequired must be verified by a different Ensemble participant from the actor. This writes only the value-free report and never actuates the target.
+
+- Access: read-only (no approval needed)
+- Required args: reportId, actionId, surfaceId, observationId, verdict
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_drive_verify","arguments":{"reportId":"report-id","actionId":"action-id","surfaceId":"canvas-id","observationId":"observation-id","verdict":"confirmed"}}}}`
+
 ## canvas_snapshot
 
-Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked.
+Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked. After an AppDrive action, `driveObservation` is a trusted value-free receipt bound to this observer/report/action/surface; pass its observationId to canvas_drive_verify. Supply `driveActionId` when verifying an earlier action rather than the most recent completed action.
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
+- Optional args: driveActionId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_snapshot","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_screenshot
@@ -1302,7 +1320,7 @@ Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CS
 
 - Access: governed by your run permission role
 - Required args: canvasId
-- Optional args: ref, selector, x, y, expectedInputEpoch
+- Optional args: ref, selector, x, y, expectedInputEpoch, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_click","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_fill
@@ -1311,7 +1329,7 @@ Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selecto
 
 - Access: governed by your run permission role
 - Required args: canvasId, value
-- Optional args: ref, selector, expectedInputEpoch
+- Optional args: ref, selector, expectedInputEpoch, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_fill","arguments":{"canvasId":"text","value":"text"}}}}`
 
 ## canvas_key
@@ -1320,8 +1338,8 @@ Dispatch one allowlisted non-text keyboard key (Enter, Escape, Tab, arrows, pagi
 
 - Access: governed by your run permission role
 - Required args: canvasId, key
-- Optional args: ref, selector, expectedInputEpoch
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_key","arguments":{"canvasId":"text","key":"text"}}}}`
+- Optional args: ref, selector, expectedInputEpoch, requireIndependentVerifier
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_key","arguments":{"canvasId":"canvas-id","ref":"e1","key":"Enter"}}}}`
 
 ## canvas_scroll
 
@@ -1329,7 +1347,7 @@ Scroll the page or a target element by CSS-pixel deltaX/deltaY. Optionally targe
 
 - Access: governed by your run permission role
 - Required args: canvasId
-- Optional args: ref, selector, x, y, deltaX, deltaY, expectedInputEpoch
+- Optional args: ref, selector, x, y, deltaX, deltaY, expectedInputEpoch, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_scroll","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_hover
@@ -1338,7 +1356,7 @@ Hover a target by ref or selector using structured mouseover/mouseenter/mousemov
 
 - Access: governed by your run permission role
 - Required args: canvasId
-- Optional args: ref, selector, expectedInputEpoch
+- Optional args: ref, selector, expectedInputEpoch, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_hover","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_select
@@ -1347,7 +1365,7 @@ Choose an option in a select element by option value or visible label, firing in
 
 - Access: governed by your run permission role
 - Required args: canvasId, value
-- Optional args: ref, selector, expectedInputEpoch
+- Optional args: ref, selector, expectedInputEpoch, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_select","arguments":{"canvasId":"text","value":"text"}}}}`
 
 ## canvas_wait_for
@@ -1508,7 +1526,8 @@ Open Xcode’s Simulator.app (TaskWraith-owned spawn). Gated via the Simulator C
 
 - Access: governed by your run permission role
 - Required args: none
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_open","arguments":{}}}}`
+- Optional args: requireIndependentVerifier
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_open","arguments":{"requireIndependentVerifier":false}}}}`
 
 ## simulator_boot
 
@@ -1516,6 +1535,7 @@ Boot an iOS Simulator device by UDID (or "booted"). Gated via the Simulator Canv
 
 - Access: governed by your run permission role
 - Required args: udid
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_boot","arguments":{"udid":"text"}}}}`
 
 ## simulator_install
@@ -1524,6 +1544,7 @@ Install a .app bundle onto a simulator via simctl. `appPath` must be an absolute
 
 - Access: governed by your run permission role
 - Required args: udid, appPath
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_install","arguments":{"udid":"text","appPath":"text"}}}}`
 
 ## simulator_launch
@@ -1532,14 +1553,16 @@ Launch an installed app on a simulator by bundle id. Gated via the Simulator Can
 
 - Access: governed by your run permission role
 - Required args: udid, bundleId
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_launch","arguments":{"udid":"text","bundleId":"text"}}}}`
 
 ## simulator_screenshot
 
-Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. Gated via the Simulator Canvas service.
+Capture a PNG screenshot of a simulator via simctl. Returns an image content block; structured metadata omits base64. After an AppDrive action, structured metadata also includes a trusted value-free driveObservation receipt for canvas_drive_verify. Supply driveActionId to select an earlier action; otherwise the receipt binds to the most recent completed action on the exact device/app surface. Gated via the Simulator Canvas service.
 
 - Access: governed by your run permission role
 - Required args: udid
+- Optional args: driveActionId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_screenshot","arguments":{"udid":"text"}}}}`
 
 ## simulator_terminate
@@ -1548,14 +1571,16 @@ Terminate a running app on a simulator by bundle id. Gated via the Simulator Can
 
 - Access: mutating — governed by your run permission role (denied under Plan, prompts under Ask; prompts under Accept Edits unless granted)
 - Required args: udid, bundleId
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_terminate","arguments":{"udid":"text","bundleId":"text"}}}}`
 
 ## simulator_inspect
 
-Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.
+Dump a truncated accessibility tree for a simulator via `idb ui describe-all` (JSON). Observation-only; auto-allowed. After an AppDrive action, the result also includes a trusted value-free driveObservation receipt for canvas_drive_verify. Supply driveActionId to select an earlier action; otherwise the receipt binds to the most recent completed action on the exact device/app surface. Requires idb on PATH. Large trees are truncated (~200KB / ~500 nodes) with `truncated: true`.
 
 - Access: read-only (no approval needed)
 - Required args: udid
+- Optional args: driveActionId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_inspect","arguments":{"udid":"text"}}}}`
 
 ## simulator_button
@@ -1564,6 +1589,7 @@ Press a hardware button on a simulator via `idb ui button` (HOME, LOCK, SIDE_BUT
 
 - Access: governed by your run permission role
 - Required args: udid, button
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_button","arguments":{"udid":"text","button":"text"}}}}`
 
 ## simulator_rotate
@@ -1572,6 +1598,7 @@ Rotate a simulator via `idb ui rotate PORTRAIT|PORTRAIT_UPSIDE_DOWN|LANDSCAPE_LE
 
 - Access: governed by your run permission role
 - Required args: udid, direction
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_rotate","arguments":{"udid":"text","direction":"text"}}}}`
 
 ## simulator_tap
@@ -1580,7 +1607,7 @@ Tap a simulator via `idb ui tap`. x/y are normalized 0..1 bezel coordinates, map
 
 - Access: governed by your run permission role
 - Required args: udid, x, y
-- Optional args: width, height
+- Optional args: width, height, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_tap","arguments":{"udid":"text","x":0,"y":0}}}}`
 
 ## simulator_type
@@ -1589,6 +1616,7 @@ Type text into the focused simulator field via `idb ui text`. Requires an active
 
 - Access: governed by your run permission role
 - Required args: udid, text
+- Optional args: requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_type","arguments":{"udid":"text","text":"text"}}}}`
 
 ## simulator_scroll
@@ -1597,7 +1625,7 @@ Scroll/swipe a simulator via `idb ui swipe`. x/y are normalized 0..1 origin; del
 
 - Access: governed by your run permission role
 - Required args: udid, x, y, deltaX, deltaY
-- Optional args: width, height
+- Optional args: width, height, requireIndependentVerifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"simulator_scroll","arguments":{"udid":"text","x":0,"y":0,"deltaX":0,"deltaY":0}}}}`
 
 ## theme_tokens_get

@@ -36,6 +36,7 @@ export interface AppDriveSurfaceDescriptor {
   }
   verb: string
   allowedVerbs: readonly string[]
+  independentVerificationRequired?: boolean
 }
 
 export interface AppDriveSurfaceContext {
@@ -73,7 +74,8 @@ export function resolveAppDriveSurfaceDescriptor(
       surfaceKind: 'web',
       target: { canvasId },
       verb: toolName.slice('canvas_'.length),
-      allowedVerbs: APP_DRIVE_WEB_CONTROL_TOOLS.map((name) => name.slice('canvas_'.length))
+      allowedVerbs: APP_DRIVE_WEB_CONTROL_TOOLS.map((name) => name.slice('canvas_'.length)),
+      independentVerificationRequired: args.requireIndependentVerifier === true
     }
   }
 
@@ -95,7 +97,8 @@ export function resolveAppDriveSurfaceDescriptor(
     allowedVerbs: [
       'canvas_open_device',
       ...APP_DRIVE_SIMULATOR_CONTROL_TOOLS.filter((name) => name !== 'canvas_open')
-    ]
+    ],
+    independentVerificationRequired: args.requireIndependentVerifier === true
   }
 }
 

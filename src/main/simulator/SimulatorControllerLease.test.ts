@@ -68,6 +68,40 @@ describe('SimulatorControllerLease', () => {
     expect(acquire(lease)).toMatchObject({ ok: false, code: 'step_budget_exhausted' })
   })
 
+  it('never issues an observation receipt for another app on the same device', () => {
+    const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-1' })
+    expect(authorize(lease).ok).toBe(true)
+    const admitted = acquire(lease)
+    if (!admitted.ok || !admitted.driveAction) throw new Error('expected action correlation')
+    lease.completeAction({
+      leaseId: admitted.driveAction.leaseId,
+      actionId: admitted.driveAction.actionId,
+      actor: { runId: 'run-1', provider: 'codex', participantId: 'boss' },
+      executed: true,
+      surfaceVerification: 'unknown'
+    })
+
+    const observer = {
+      chatId: 'chat-a',
+      runId: 'run-review',
+      provider: 'claude',
+      participantId: 'reviewer',
+      actionId: admitted.driveAction.actionId
+    }
+    expect(
+      lease.recordObservation({
+        ...observer,
+        surfaceId: 'simulator:DEVICE-1:com.example.Other'
+      })
+    ).toBeNull()
+    expect(
+      lease.recordObservation({
+        ...observer,
+        surfaceId: 'simulator:DEVICE-1:com.example.App'
+      })
+    ).toMatchObject({ surfaceId: 'simulator:DEVICE-1:com.example.App' })
+  })
+
   it('refuses run, provider, surface, and verb drift', () => {
     const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-1' })
     expect(authorize(lease).ok).toBe(true)
@@ -102,6 +136,7 @@ describe('SimulatorControllerLease', () => {
       chatId: 'chat-a',
       fromRunId: 'run-1',
       toRunId: 'run-2',
+      toProvider: 'claude',
       toOwnerParticipantId: 'worker',
       ensemble: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
     })
@@ -111,13 +146,26 @@ describe('SimulatorControllerLease', () => {
       chatId: 'chat-a',
       fromRunId: 'run-1',
       toRunId: 'run-2',
+      toProvider: 'claude',
       toOwnerParticipantId: 'captain',
       ensemble: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
     })
     expect(transferred).toMatchObject({
       ok: true,
-      token: { tokenId: 'tok-xfer', runId: 'run-2', ownerParticipantId: 'captain' }
+      token: {
+        tokenId: 'tok-xfer',
+        runId: 'run-2',
+        provider: 'claude',
+        ownerParticipantId: 'captain'
+      }
     })
+    expect(
+      acquire(lease, {
+        runId: 'run-2',
+        provider: 'claude',
+        ownerParticipantId: 'captain'
+      }).ok
+    ).toBe(true)
     expect(lease.releaseForRun('run-1')).toEqual([])
     expect(lease.releaseForRun('run-2')).toHaveLength(1)
     expect(lease.peek('chat-a')).toBeNull()

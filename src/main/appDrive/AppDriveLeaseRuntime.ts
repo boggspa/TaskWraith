@@ -54,6 +54,8 @@ export class AppDriveLeaseRuntime {
       !Array.isArray(approvalPreview)
     ) {
       ;(approvalPreview as Record<string, unknown>).surfaceId = descriptor.surfaceId
+      ;(approvalPreview as Record<string, unknown>).independentVerificationRequired =
+        descriptor.independentVerificationRequired
     }
     return descriptor
   }

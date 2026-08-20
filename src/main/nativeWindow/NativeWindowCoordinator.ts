@@ -3,10 +3,15 @@ import { randomUUID } from 'node:crypto'
 import type { LaunchAttempt } from '../launch/types'
 import {
   AppDriveSession,
+  type AppDriveReportedActionCorrelation,
   type AppDriveSessionBinding,
   type AppDriveSessionRendererStatus,
   type AppDriveSessionLifecycle
 } from '../appDrive/AppDriveSession'
+import {
+  AppDriveSessionReportStore,
+  type AppDriveSurfaceVerification
+} from '../appDrive/AppDriveSessionReport'
 import {
   NativeWindowLeaseError,
   NativeWindowLeaseRegistry,
@@ -203,6 +208,10 @@ export interface NativeWindowCoordinatorCanvasAccess {
   readonly protectedHostPIDs: readonly number[]
 }
 
+export interface NativeWindowCoordinatorCanvasActionAccess extends NativeWindowCoordinatorCanvasAccess {
+  readonly driveAction: AppDriveReportedActionCorrelation
+}
+
 export interface NativeWindowCoordinatorPickResult {
   readonly outcome: 'cancelled' | 'view' | 'control'
   readonly status: NativeWindowCoordinatorRendererStatus
@@ -243,6 +252,8 @@ export interface NativeWindowCoordinatorOptions {
   controlLeaseTtlMs?: number
   controlStepBudget?: number
   pickerTimeoutMs?: number
+  /** Shared value-free report ledger for web, Simulator, and native AppDrive. */
+  appDriveReports?: AppDriveSessionReportStore
 }
 
 export type NativeWindowCoordinatorErrorCode =
@@ -331,6 +342,7 @@ export class NativeWindowCoordinator {
   private readonly observationState: ScopedAttachedWindowState
   private readonly leaseRegistry: NativeWindowLeaseRegistry
   private readonly appDriveSession: AppDriveSession
+  private readonly appDriveReports: AppDriveSessionReportStore
   private virtualCursor: NativeWindowCoordinatorVirtualCursor | null = null
 
   private pendingPick: ScopedAttachedWindowPick | null = null
@@ -390,7 +402,9 @@ export class NativeWindowCoordinator {
       now: this.now,
       ...(options.createLeaseID ? { createLeaseId: options.createLeaseID } : {})
     })
-    this.appDriveSession = new AppDriveSession({ now: this.now })
+    this.appDriveReports =
+      options.appDriveReports ?? new AppDriveSessionReportStore({ now: this.now })
+    this.appDriveSession = new AppDriveSession({ now: this.now, reports: this.appDriveReports })
   }
 
   /**
@@ -910,18 +924,74 @@ export class NativeWindowCoordinator {
   consumeCanvasActionStep(
     owner: NativeWindowCoordinatorCanvasOwner,
     verb: NativeWindowLeaseControlVerb
-  ): NativeWindowCoordinatorCanvasAccess {
+  ): NativeWindowCoordinatorCanvasActionAccess {
+    let driveAction: AppDriveReportedActionCorrelation | null = null
     try {
       this.assertExactCanvasOwner(owner)
       this.appDriveSession.assertCanAdmitActions(verb)
+      driveAction = this.appDriveSession.beginReportedAction(verb)
       const grant = this.leaseRegistry.consumeControlStep(this.executorContext(owner), verb)
       this.appDriveSession.mirrorControlBudget(this.appDriveBudgetUpdate(grant.lease))
       this.emitStatus(owner.chatId)
-      return this.canvasAccessForExactOwner(grant.lease, owner)
+      return { ...this.canvasAccessForExactOwner(grant.lease, owner), driveAction }
     } catch (error) {
+      if (driveAction) {
+        this.appDriveReports.completeAction({
+          leaseId: driveAction.leaseId,
+          actionId: driveAction.actionId,
+          actor: {
+            runId: owner.runId,
+            provider: owner.provider,
+            participantId: owner.participantId ?? null
+          },
+          executed: false,
+          surfaceVerification: 'unknown',
+          refusalCode: 'authority_refused'
+        })
+      }
       this.handleRegistryError(error)
       throw error
     }
+  }
+
+  completeAppDriveAction(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: AppDriveReportedActionCorrelation,
+    result: {
+      executed: boolean | null
+      surfaceVerification: AppDriveSurfaceVerification
+      refusalCode?: string
+    }
+  ): void {
+    this.assertReportedActionOwner(owner, driveAction)
+    this.appDriveReports.completeAction({
+      leaseId: driveAction.leaseId,
+      actionId: driveAction.actionId,
+      actor: {
+        runId: owner.runId,
+        provider: owner.provider,
+        participantId: owner.participantId ?? null
+      },
+      ...result
+    })
+  }
+
+  updateAppDriveSurfaceVerification(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: AppDriveReportedActionCorrelation,
+    surfaceVerification: AppDriveSurfaceVerification
+  ): void {
+    this.assertReportedActionOwner(owner, driveAction)
+    this.appDriveReports.updateSurfaceVerification({
+      leaseId: driveAction.leaseId,
+      actionId: driveAction.actionId,
+      actor: {
+        runId: owner.runId,
+        provider: owner.provider,
+        participantId: owner.participantId ?? null
+      },
+      surfaceVerification
+    })
   }
 
   async sweepExpired(): Promise<boolean> {
@@ -1401,6 +1471,7 @@ export class NativeWindowCoordinator {
       chatId: lease.chatId,
       runId: lease.runId,
       provider: lease.provider || 'unknown',
+      participantId: lease.participantId,
       launchAttemptId: lease.launchAttemptId,
       approvedAt: lease.approvedAt,
       allowedVerbs: lease.allowedVerbs,
@@ -1465,6 +1536,30 @@ export class NativeWindowCoordinator {
     this.consumeAppDriveRevocation(error.revocation)
     void this.releaseAccessibilityTarget(error.revocation, target).catch(() => undefined)
     this.emitStatus(error.revocation.lease.chatId)
+  }
+
+  private assertReportedActionOwner(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: AppDriveReportedActionCorrelation
+  ): void {
+    const report = this.appDriveReports.query({
+      chatId: requiredString(owner.chatId, 'chatId'),
+      reportId: requiredString(driveAction.reportId, 'reportId'),
+      limit: 1
+    })[0]
+    if (
+      !report ||
+      report.surfaceKind !== 'native' ||
+      report.leaseId !== driveAction.leaseId ||
+      report.holder.runId !== requiredString(owner.runId, 'runId') ||
+      report.holder.provider !== requiredString(owner.provider, 'provider') ||
+      report.holder.participantId !== (owner.participantId ?? null)
+    ) {
+      throw new NativeWindowCoordinatorError(
+        'control-owner-mismatch',
+        'AppDrive report correlation does not belong to this native-window actor.'
+      )
+    }
   }
 
   private async releaseAccessibilityTarget(

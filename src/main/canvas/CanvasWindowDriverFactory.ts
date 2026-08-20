@@ -36,6 +36,7 @@ import {
 } from './CanvasWindowDriver'
 import type {
   NativeWindowCoordinatorAccessParams,
+  NativeWindowCoordinatorCanvasActionAccess,
   NativeWindowCoordinatorCanvasAccess,
   NativeWindowCoordinatorCanvasLeaseIdentity,
   NativeWindowCoordinatorCanvasOwner
@@ -94,7 +95,7 @@ export interface CanvasWindowCoordinatorPort {
   consumeCanvasActionStep(
     owner: NativeWindowCoordinatorCanvasOwner,
     verb: NativeWindowLeaseControlVerb
-  ): NativeWindowCoordinatorCanvasAccess
+  ): NativeWindowCoordinatorCanvasActionAccess
   assertAppDriveActionAllowed(
     owner: NativeWindowCoordinatorCanvasOwner,
     verb: NativeWindowLeaseControlVerb
@@ -102,6 +103,20 @@ export interface CanvasWindowCoordinatorPort {
   recordAppDriveActionTarget(
     owner: NativeWindowCoordinatorCanvasOwner,
     target: CanvasWindowActionTargetTelemetry
+  ): void
+  completeAppDriveAction(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: CanonicalDriveAction,
+    result: {
+      executed: boolean | null
+      surfaceVerification: 'changed' | 'unchanged' | 'unknown'
+      refusalCode?: string
+    }
+  ): void
+  updateAppDriveSurfaceVerification(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    driveAction: CanonicalDriveAction,
+    surfaceVerification: 'changed' | 'unchanged' | 'unknown'
   ): void
 }
 
@@ -209,6 +224,17 @@ interface CanonicalAccess {
   readonly attachment: NativeWindowCoordinatorAccessParams
   readonly target: CanonicalTarget
   readonly protectedHostPIDs: readonly number[]
+}
+
+interface CanonicalDriveAction {
+  readonly leaseId: string
+  readonly reportId: string
+  readonly actionId: string
+  readonly independentVerificationRequired: boolean
+}
+
+interface CanonicalActionAccess extends CanonicalAccess {
+  readonly driveAction: CanonicalDriveAction
 }
 
 interface PendingTargetBinding {
@@ -587,6 +613,19 @@ function canonicalAccess(value: unknown): CanonicalAccess {
     ].sort((left, right) => left - right)
   )
   return Object.freeze({ lease, attachment, target, protectedHostPIDs })
+}
+
+function canonicalDriveAction(value: unknown): CanonicalDriveAction {
+  const input = record(value, 'AppDrive action correlation')
+  if (typeof input.independentVerificationRequired !== 'boolean') {
+    factoryError('native-protocol', 'AppDrive action correlation is invalid.')
+  }
+  return Object.freeze({
+    leaseId: canonicalString(input.leaseId, 'driveAction.leaseId', 'native-protocol'),
+    reportId: canonicalString(input.reportId, 'driveAction.reportId', 'native-protocol'),
+    actionId: canonicalString(input.actionId, 'driveAction.actionId', 'native-protocol'),
+    independentVerificationRequired: input.independentVerificationRequired
+  })
 }
 
 function responseRecord(value: unknown): Record<string, unknown> {
@@ -995,7 +1034,7 @@ function parseAction(
   response: Record<string, unknown>,
   observationId: string,
   inputEpoch: number
-): Omit<CanvasWindowActResult, 'lease'> {
+): Omit<CanvasWindowActResult, 'lease' | 'driveAction'> {
   if (response.observationId !== observationId) {
     factoryError('native-protocol', 'Native action belongs to another observation.')
   }
@@ -1104,6 +1143,11 @@ function parseCapture(response: Record<string, unknown>, target: CanonicalTarget
 class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
   private title = 'Managed native window'
   private releaseConfirmed = false
+  private pendingDriveAction: {
+    nativeActionId: string
+    driveAction: CanonicalDriveAction
+    executed: boolean
+  } | null = null
 
   constructor(
     private readonly coordinator: CanvasWindowCoordinatorPort,
@@ -1157,6 +1201,19 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
       )
       this.assertResponseBinding(response, access)
       const parsed = parseObservation(response, access.target, this.title)
+      if (
+        this.pendingDriveAction &&
+        parsed.actionVerification?.actionId === this.pendingDriveAction.nativeActionId
+      ) {
+        if (this.pendingDriveAction.executed) {
+          this.coordinator.updateAppDriveSurfaceVerification(
+            coordinatorOwner(this.owner),
+            this.pendingDriveAction.driveAction,
+            parsed.actionVerification.verified
+          )
+        }
+        this.pendingDriveAction = null
+      }
       const after = this.resolveRead(request.lease, 'observe')
       return { lease: after.lease, ...parsed }
     })
@@ -1264,19 +1321,46 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
       // This is intentionally inside the serial queue and immediately precedes
       // dispatch. A failure after this point is indeterminate and is never retried.
       const access = this.consumeAction(request.lease, verb)
-      const response = await this.requestDaemon(`nativeWindow.${verb}`, {
-        ...attachmentParams(access.attachment),
-        observationId: request.observationId,
-        inputEpoch: request.inputEpoch,
-        ref: request.ref,
-        // Receipt material is never sent to the daemon; it is factory-local
-        // authorization state consumed above.
-        ...(verb === 'fill' ? { value: (request as { readonly value: string }).value } : {})
-      })
-      this.assertResponseBinding(response, access)
-      const parsed = parseAction(response, request.observationId, request.inputEpoch)
-      const after = this.resolveRead(request.lease, 'observe')
-      return { lease: after.lease, ...parsed }
+      let completed = false
+      try {
+        const response = await this.requestDaemon(`nativeWindow.${verb}`, {
+          ...attachmentParams(access.attachment),
+          observationId: request.observationId,
+          inputEpoch: request.inputEpoch,
+          ref: request.ref,
+          // Receipt material is never sent to the daemon; it is factory-local
+          // authorization state consumed above.
+          ...(verb === 'fill' ? { value: (request as { readonly value: string }).value } : {})
+        })
+        this.assertResponseBinding(response, access)
+        const parsed = parseAction(response, request.observationId, request.inputEpoch)
+        this.coordinator.completeAppDriveAction(coordinatorOwner(this.owner), access.driveAction, {
+          executed: parsed.result.executed,
+          surfaceVerification: 'unknown',
+          ...(parsed.result.refusalReason ? { refusalCode: parsed.result.refusalReason } : {})
+        })
+        completed = true
+        this.pendingDriveAction = {
+          nativeActionId: parsed.actionId,
+          driveAction: access.driveAction,
+          executed: parsed.result.executed
+        }
+        const after = this.resolveRead(request.lease, 'observe')
+        return { lease: after.lease, driveAction: access.driveAction, ...parsed }
+      } catch (error) {
+        if (!completed) {
+          this.coordinator.completeAppDriveAction(
+            coordinatorOwner(this.owner),
+            access.driveAction,
+            {
+              executed: null,
+              surfaceVerification: 'unknown',
+              refusalCode: 'native_dispatch_error'
+            }
+          )
+        }
+        throw error
+      }
     })
   }
 
@@ -1296,14 +1380,14 @@ class BoundCanvasWindowNativeBridge implements CanvasWindowNativeBridge {
   private consumeAction(
     requestLease: CanvasWindowLeaseIdentity,
     verb: NativeWindowLeaseControlVerb
-  ): CanonicalAccess {
+  ): CanonicalActionAccess {
     this.assertBoundLease(requestLease)
-    const access = canonicalAccess(
-      this.coordinator.consumeCanvasActionStep(coordinatorOwner(this.owner), verb)
-    )
+    const rawAccess = this.coordinator.consumeCanvasActionStep(coordinatorOwner(this.owner), verb)
+    const access = canonicalAccess(rawAccess)
+    const driveAction = canonicalDriveAction(rawAccess.driveAction)
     requireLeaseOwner(access.lease, this.owner)
     requireExactLease(this.lease, access.lease)
-    return access
+    return Object.freeze({ ...access, driveAction })
   }
 
   private assertBoundLease(value: CanvasWindowLeaseIdentity): void {

@@ -68,7 +68,9 @@ function exactBindingMatches(
     lease.chatId === input.chatId &&
     lease.runId === input.runId &&
     lease.provider === input.provider &&
-    (lease.participantId === undefined || lease.participantId === input.participantId)
+    (lease.participantId === undefined || lease.participantId === input.participantId) &&
+    (input.descriptor.independentVerificationRequired !== true ||
+      lease.independentVerificationRequired)
   )
 }
 
@@ -130,6 +132,7 @@ export function authorizeApprovedAppDriveSurface(
     expiresAt: now + APP_DRIVE_DEFAULT_LEASE_TTL_MS,
     allowedVerbs: input.descriptor.allowedVerbs,
     stepBudget,
+    independentVerificationRequired: input.descriptor.independentVerificationRequired,
     target: input.descriptor.target
   }
 

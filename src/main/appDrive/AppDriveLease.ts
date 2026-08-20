@@ -1,4 +1,17 @@
 import { randomUUID } from 'node:crypto'
+import {
+  AppDriveSessionReportError,
+  AppDriveSessionReportStore,
+  type AppDriveActionReport,
+  type AppDriveObservationReceipt,
+  type AppDriveReportActor,
+  type AppDriveSessionReport,
+  type AppDriveSessionReportQuery,
+  type CompleteAppDriveActionReportInput,
+  type RecordAppDriveObservationInput,
+  type UpdateAppDriveSurfaceVerificationInput,
+  type VerifyAppDriveActionReportInput
+} from './AppDriveSessionReport'
 
 export const APP_DRIVE_LEASE_SCHEMA_VERSION = 1 as const
 export const APP_DRIVE_DEFAULT_LEASE_TTL_MS = 15 * 60 * 1_000
@@ -26,6 +39,7 @@ export type AppDriveLeaseErrorCode =
   | 'verb-not-allowed'
   | 'expired'
   | 'step-budget-exhausted'
+  | 'independent-verifier-required'
 
 export interface AppDriveLeaseTarget {
   readonly canvasId?: string
@@ -37,6 +51,7 @@ export interface AppDriveLeaseTarget {
 export interface AppDriveLeaseSnapshot {
   readonly schemaVersion: typeof APP_DRIVE_LEASE_SCHEMA_VERSION
   readonly leaseId: string
+  readonly reportId: string
   readonly surfaceId: string
   readonly surfaceKind: AppDriveLeaseSurfaceKind
   readonly chatId: string
@@ -51,6 +66,7 @@ export interface AppDriveLeaseSnapshot {
   readonly stepBudget: number
   readonly stepsUsed: number
   readonly stepsRemaining: number
+  readonly independentVerificationRequired: boolean
   readonly target: Readonly<AppDriveLeaseTarget>
   readonly status: AppDriveLeaseStatus
   readonly revokedAt: number | null
@@ -71,6 +87,7 @@ export interface AuthorizeAppDriveLeaseInput {
   readonly expiresAt?: number
   readonly allowedVerbs: readonly string[]
   readonly stepBudget?: number
+  readonly independentVerificationRequired?: boolean
   readonly target?: AppDriveLeaseTarget
 }
 
@@ -82,20 +99,34 @@ export interface ConsumeAppDriveLeaseInput {
   readonly provider: string
   readonly participantId?: string
   readonly verb: string
+  readonly independentVerificationRequired?: boolean
+}
+
+export type AppDriveLeaseDenial = {
+  readonly ok: false
+  readonly code: AppDriveLeaseErrorCode
+  readonly error: string
+  readonly lease?: AppDriveLeaseSnapshot
 }
 
 export type AppDriveLeaseAdmission =
-  | { readonly ok: true; readonly lease: AppDriveLeaseSnapshot }
   | {
-      readonly ok: false
-      readonly code: AppDriveLeaseErrorCode
-      readonly error: string
-      readonly lease?: AppDriveLeaseSnapshot
+      readonly ok: true
+      readonly lease: AppDriveLeaseSnapshot
+      readonly reportId: string
+      readonly actionId: string
+      readonly independentVerificationRequired: boolean
     }
+  | AppDriveLeaseDenial
+
+export type AppDriveLeaseTransferResult =
+  | { readonly ok: true; readonly lease: AppDriveLeaseSnapshot }
+  | AppDriveLeaseDenial
 
 export interface AppDriveLeaseRegistryOptions {
   readonly now?: () => number
   readonly createLeaseId?: () => string
+  readonly reports?: AppDriveSessionReportStore
 }
 
 function canonical(value: unknown, label: string): string {
@@ -147,7 +178,7 @@ function denied(
   code: AppDriveLeaseErrorCode,
   error: string,
   lease?: AppDriveLeaseSnapshot
-): AppDriveLeaseAdmission {
+): AppDriveLeaseDenial {
   return lease ? { ok: false, code, error, lease } : { ok: false, code, error }
 }
 
@@ -155,11 +186,13 @@ function denied(
 export class AppDriveLeaseRegistry {
   private readonly now: () => number
   private readonly createLeaseId: () => string
+  private readonly reports: AppDriveSessionReportStore
   private readonly bySurface = new Map<string, AppDriveLeaseSnapshot>()
 
   constructor(options: AppDriveLeaseRegistryOptions = {}) {
     this.now = options.now ?? Date.now
     this.createLeaseId = options.createLeaseId ?? randomUUID
+    this.reports = options.reports ?? new AppDriveSessionReportStore({ now: this.now })
   }
 
   authorizeUserLease(input: AuthorizeAppDriveLeaseInput): AppDriveLeaseSnapshot {
@@ -168,6 +201,22 @@ export class AppDriveLeaseRegistry {
       throw new Error('App Drive leases can only be minted by a user approval.')
     }
     const surfaceId = canonical(input.surfaceId, 'surfaceId')
+    if (input.surfaceKind !== 'web' && input.surfaceKind !== 'simulator') {
+      throw new Error('App Drive lease surfaceKind must be web or simulator.')
+    }
+    const chatId = canonical(input.chatId, 'chatId')
+    const runId = canonical(input.runId, 'runId')
+    const provider = canonical(input.provider, 'provider')
+    const participantId = optionalCanonical(input.participantId, 'participantId')
+    const approvalId = optionalCanonical(input.approvalId, 'approvalId')
+    const allowedVerbs = canonicalVerbs(input.allowedVerbs)
+    if (
+      input.target !== undefined &&
+      (!input.target || typeof input.target !== 'object' || Array.isArray(input.target))
+    ) {
+      throw new Error('App Drive lease target must be an object.')
+    }
+    const target = Object.freeze({ ...(input.target || {}) })
     const approvedAt = finiteNumber(input.approvedAt ?? now, 'approvedAt')
     const expiresAt = finiteNumber(
       input.expiresAt ?? approvedAt + APP_DRIVE_DEFAULT_LEASE_TTL_MS,
@@ -181,32 +230,50 @@ export class AppDriveLeaseRegistry {
       'stepBudget',
       APP_DRIVE_MAX_STEP_BUDGET
     )
+    if (input.independentVerificationRequired === true && !participantId) {
+      throw new Error('Independent App Drive verification requires an Ensemble participant holder.')
+    }
+    const leaseId = canonical(this.createLeaseId(), 'leaseId')
+    const holder = this.reportActor({
+      runId,
+      provider,
+      participantId
+    })
+    const report = this.reports.start({
+      leaseId,
+      surfaceId,
+      surfaceKind: input.surfaceKind,
+      chatId,
+      holder,
+      approvedAt,
+      expiresAt,
+      stepBudget,
+      independentVerificationRequired: input.independentVerificationRequired === true
+    })
     const previous = this.bySurface.get(surfaceId)
     if (previous?.status === 'active') {
       this.bySurface.set(surfaceId, this.revokeSnapshot(previous, 'replaced', now))
     }
     const lease = freezeLease({
       schemaVersion: APP_DRIVE_LEASE_SCHEMA_VERSION,
-      leaseId: canonical(this.createLeaseId(), 'leaseId'),
+      leaseId,
+      reportId: report.reportId,
       surfaceId,
       surfaceKind: input.surfaceKind,
-      chatId: canonical(input.chatId, 'chatId'),
-      runId: canonical(input.runId, 'runId'),
-      provider: canonical(input.provider, 'provider'),
-      ...(optionalCanonical(input.participantId, 'participantId')
-        ? { participantId: input.participantId }
-        : {}),
+      chatId,
+      runId,
+      provider,
+      ...(participantId ? { participantId } : {}),
       approvedBy: 'user',
-      ...(optionalCanonical(input.approvalId, 'approvalId')
-        ? { approvalId: input.approvalId }
-        : {}),
+      ...(approvalId ? { approvalId } : {}),
       approvedAt,
       expiresAt,
-      allowedVerbs: canonicalVerbs(input.allowedVerbs),
+      allowedVerbs,
       stepBudget,
       stepsUsed: 0,
       stepsRemaining: stepBudget,
-      target: Object.freeze({ ...(input.target || {}) }),
+      independentVerificationRequired: input.independentVerificationRequired === true,
+      target,
       status: 'active',
       revokedAt: null,
       revocationReason: null,
@@ -265,6 +332,36 @@ export class AppDriveLeaseRegistry {
         exhausted
       )
     }
+    const independentVerificationRequired =
+      lease.independentVerificationRequired || input.independentVerificationRequired === true
+    if (independentVerificationRequired && !participantId) {
+      return denied(
+        'independent-verifier-required',
+        'Independent App Drive verification requires an Ensemble participant actor.',
+        lease
+      )
+    }
+    let action: AppDriveActionReport
+    try {
+      action = this.reports.beginAction({
+        leaseId: lease.leaseId,
+        verb,
+        actor: this.reportActor({
+          runId: lease.runId,
+          provider: lease.provider,
+          participantId: lease.participantId
+        }),
+        independentVerificationRequired
+      })
+    } catch (error) {
+      if (
+        error instanceof AppDriveSessionReportError &&
+        error.code === 'independent-verifier-required'
+      ) {
+        return denied('independent-verifier-required', error.message, lease)
+      }
+      throw error
+    }
     const stepsUsed = lease.stepsUsed + 1
     const next = freezeLease({
       ...lease,
@@ -273,33 +370,84 @@ export class AppDriveLeaseRegistry {
       updatedAt: this.now()
     })
     this.bySurface.set(surfaceId, next)
-    return { ok: true, lease: next }
+    this.reports.updateBudget(next.leaseId, {
+      stepsUsed: next.stepsUsed,
+      stepsRemaining: next.stepsRemaining,
+      expiresAt: next.expiresAt
+    })
+    return {
+      ok: true,
+      lease: next,
+      reportId: next.reportId,
+      actionId: action.actionId,
+      independentVerificationRequired: action.independentVerificationRequired
+    }
   }
 
   transfer(input: {
     surfaceId: string
     fromRunId: string
+    fromProvider: string
     toRunId: string
+    toProvider: string
     toParticipantId?: string
-  }): AppDriveLeaseAdmission {
+  }): AppDriveLeaseTransferResult {
     const surfaceId = canonical(input.surfaceId, 'surfaceId')
     const lease = this.peek(surfaceId)
     if (!lease || lease.status !== 'active') {
       return denied('consent-required', 'No active App Drive lease exists for this surface.')
     }
-    if (lease.runId !== canonical(input.fromRunId, 'fromRunId')) {
+    if (
+      lease.runId !== canonical(input.fromRunId, 'fromRunId') ||
+      lease.provider !== canonical(input.fromProvider, 'fromProvider')
+    ) {
       return denied('binding-mismatch', 'Only the holding run may transfer this lease.', lease)
+    }
+    const toParticipantId = optionalCanonical(input.toParticipantId, 'toParticipantId')
+    if (lease.independentVerificationRequired && !toParticipantId) {
+      return denied(
+        'independent-verifier-required',
+        'This App Drive lease requires an Ensemble participant holder.',
+        lease
+      )
     }
     const next = freezeLease({
       ...lease,
       runId: canonical(input.toRunId, 'toRunId'),
-      ...(optionalCanonical(input.toParticipantId, 'toParticipantId')
-        ? { participantId: input.toParticipantId }
-        : { participantId: undefined }),
+      provider: canonical(input.toProvider, 'toProvider'),
+      ...(toParticipantId ? { participantId: toParticipantId } : { participantId: undefined }),
       updatedAt: this.now()
     })
     this.bySurface.set(surfaceId, next)
+    this.reports.transfer(
+      next.leaseId,
+      this.reportActor({
+        runId: next.runId,
+        provider: next.provider,
+        participantId: next.participantId
+      })
+    )
     return { ok: true, lease: next }
+  }
+
+  completeAction(input: CompleteAppDriveActionReportInput): AppDriveActionReport {
+    return this.reports.completeAction(input)
+  }
+
+  updateSurfaceVerification(input: UpdateAppDriveSurfaceVerificationInput): AppDriveActionReport {
+    return this.reports.updateSurfaceVerification(input)
+  }
+
+  recordObservation(input: RecordAppDriveObservationInput): AppDriveObservationReceipt | null {
+    return this.reports.recordObservation(input)
+  }
+
+  queryReports(input: AppDriveSessionReportQuery): readonly AppDriveSessionReport[] {
+    return this.reports.query(input)
+  }
+
+  verifyAction(input: VerifyAppDriveActionReportInput): AppDriveActionReport {
+    return this.reports.verifyAction(input)
   }
 
   revokeSurface(
@@ -341,12 +489,26 @@ export class AppDriveLeaseRegistry {
     reason: AppDriveLeaseRevocationReason,
     at: number
   ): AppDriveLeaseSnapshot {
-    return freezeLease({
+    const revoked = freezeLease({
       ...lease,
       status: 'revoked',
       revokedAt: at,
       revocationReason: reason,
       updatedAt: at
     })
+    this.reports.end(lease.leaseId, reason, at)
+    return revoked
+  }
+
+  private reportActor(input: {
+    runId: string
+    provider: string
+    participantId?: string
+  }): AppDriveReportActor {
+    return {
+      runId: canonical(input.runId, 'runId'),
+      provider: canonical(input.provider, 'provider'),
+      participantId: optionalCanonical(input.participantId, 'participantId') ?? null
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { LaunchAttempt } from '../launch/types'
+import { AppDriveSessionReportStore } from '../appDrive/AppDriveSessionReport'
 import {
   NativeWindowCoordinator,
   NativeWindowCoordinatorError,
@@ -150,6 +151,7 @@ interface Harness {
   consentRequests: NativeWindowCoordinatorConsentRequest[]
   rendererEvents: NativeWindowCoordinatorRendererEvent[]
   decisions: NativeWindowCoordinatorConsentDecision[]
+  reports: AppDriveSessionReportStore
   advanceTime(ms: number): void
 }
 
@@ -184,6 +186,13 @@ function createHarness(
   let leaseID = 0
   let consentEpoch = 0
   let now = Date.parse('2026-07-28T03:10:00.000Z')
+  let reportID = 0
+  let actionID = 0
+  const reports = new AppDriveSessionReportStore({
+    now: () => now,
+    createReportId: () => `report-${++reportID}`,
+    createActionId: () => `action-${++actionID}`
+  })
   const coordinator = new NativeWindowCoordinator({
     instanceEpoch: 'instance-epoch-a',
     daemon,
@@ -210,6 +219,7 @@ function createHarness(
     controlLeaseTtlMs: 60_000,
     controlStepBudget: 2,
     pickerTimeoutMs: 90_000,
+    appDriveReports: reports,
     notifyRenderer: (event) => rendererEvents.push(event),
     ...overrides
   })
@@ -222,6 +232,7 @@ function createHarness(
     consentRequests,
     rendererEvents,
     decisions,
+    reports,
     advanceTime: (ms) => {
       now += ms
     }
@@ -486,7 +497,23 @@ describe('NativeWindowCoordinator', () => {
       protectedHostPIDs: [900, 901]
     })
 
-    harness.coordinator.consumeCanvasActionStep(owner(), 'click')
+    const driveAccess = harness.coordinator.consumeCanvasActionStep(owner(), 'click')
+    expect(driveAccess.driveAction).toMatchObject({
+      reportId: 'report-1',
+      actionId: 'action-1',
+      independentVerificationRequired: false
+    })
+    harness.coordinator.completeAppDriveAction(owner(), driveAccess.driveAction, {
+      executed: true,
+      surfaceVerification: 'unknown'
+    })
+    expect(harness.reports.query({ chatId: 'chat-a' })[0].counts.awaitingVerification).toBe(1)
+    harness.coordinator.updateAppDriveSurfaceVerification(
+      owner(),
+      driveAccess.driveAction,
+      'changed'
+    )
+    expect(harness.reports.query({ chatId: 'chat-a' })[0].counts.verified).toBe(1)
     expect(harness.coordinator.statusForChat('chat-a').control?.stepsUsed).toBe(1)
     expect(harness.coordinator.statusForChat('chat-a').control).toMatchObject({
       mode: 'foreground',
@@ -528,6 +555,26 @@ describe('NativeWindowCoordinator', () => {
     await harness.coordinator.controlSession('chat-a', 'stop')
     expect(harness.coordinator.statusForChat('chat-a').control).toBeNull()
     expect(harness.coordinator.statusForChat('chat-a').observation).not.toBeNull()
+  })
+
+  it('settles an in-flight native report after user stop revokes live authority', async () => {
+    const harness = createHarness()
+    queuePick(harness.daemon)
+    await harness.coordinator.pick('chat-a')
+    const access = harness.coordinator.consumeCanvasActionStep(owner(), 'fill')
+
+    await harness.coordinator.controlSession('chat-a', 'stop')
+    expect(() =>
+      harness.coordinator.completeAppDriveAction(owner(), access.driveAction, {
+        executed: null,
+        surfaceVerification: 'unknown',
+        refusalCode: 'native_dispatch_error'
+      })
+    ).not.toThrow()
+    expect(harness.reports.query({ chatId: 'chat-a' })[0]).toMatchObject({
+      status: 'ended',
+      actions: [expect.objectContaining({ status: 'indeterminate' })]
+    })
   })
 
   it('denies cross-chat and cross-run lease resolution', async () => {
