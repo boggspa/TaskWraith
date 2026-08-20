@@ -55,4 +55,14 @@ describe('production Host main integration', () => {
       /remoteQuestionRegistry\.rejectScoped\([\s\S]*?response\.reason \|\| 'user-dismissed',\s*action\.receiptId\s*\)/
     )
   })
+
+  it('advertises the configured project push gateway through the authenticated token ack', () => {
+    const registration = between(
+      'registerApnsTokenFn: async (action) => {',
+      'registerLiveActivityTokenFn: async (action) => {'
+    )
+    expect(registration).toMatch(
+      /pushGatewayUrl:\s*\(process\.env\.TASKWRAITH_PUSH_GATEWAY_URL \|\| ''\)\.trim\(\) \|\| undefined/
+    )
+  })
 })

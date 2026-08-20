@@ -976,6 +976,10 @@ export interface MainProcessActionExecutorDependencies {
     /** base64 raw X25519 push-agreement public key of the Mac, returned so the
      * device can derive the static shared secret to decrypt rich pushes. */
     macAgreePub?: string
+    /** Project-operated Tier-2 gateway base URL. It is returned only across
+     * the authenticated bridge ack so the phone can register its own token
+     * with the same gateway this Mac will trigger. */
+    pushGatewayUrl?: string
   }>
   registerLiveActivityTokenFn?: (action: BridgeRegisterLiveActivityTokenAction) => Promise<{
     registered: boolean
@@ -2526,7 +2530,12 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
           // macAgreePub lets the device derive the static shared secret to
           // decrypt rich pushes — undefined until the bridge identity loads
           // (the device then just keeps getting generic pushes).
-          data: { pairID: action.pairID, env: action.env, macAgreePub: result.macAgreePub }
+          data: {
+            pairID: action.pairID,
+            env: action.env,
+            macAgreePub: result.macAgreePub,
+            pushGatewayUrl: result.pushGatewayUrl
+          }
         }
       }
       return {

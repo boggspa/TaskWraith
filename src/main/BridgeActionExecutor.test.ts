@@ -1555,7 +1555,11 @@ describe('MainProcessActionExecutor.executeRegisterApnsToken', () => {
   })
 
   it('dispatches the action to registerApnsTokenFn', async () => {
-    const registerApnsTokenFn = vi.fn().mockResolvedValue({ registered: true })
+    const registerApnsTokenFn = vi.fn().mockResolvedValue({
+      registered: true,
+      macAgreePub: 'mac-agreement-public-key',
+      pushGatewayUrl: 'https://push.taskwraith.example'
+    })
     const executor = new MainProcessActionExecutor({ cancelRunFn, registerApnsTokenFn })
     const result = await executor.executeRegisterApnsToken(sample.registerApnsToken)
     expect(registerApnsTokenFn).toHaveBeenCalledTimes(1)
@@ -1563,7 +1567,12 @@ describe('MainProcessActionExecutor.executeRegisterApnsToken', () => {
     expect(result.executed).toBe(true)
     expect(result.message).toMatch(/pair-1/)
     expect(result.message).toMatch(/production/)
-    expect(result.data).toMatchObject({ pairID: 'pair-1', env: 'production' })
+    expect(result.data).toMatchObject({
+      pairID: 'pair-1',
+      env: 'production',
+      macAgreePub: 'mac-agreement-public-key',
+      pushGatewayUrl: 'https://push.taskwraith.example'
+    })
   })
 
   it('reports executed=false when registerApnsTokenFn declines', async () => {

@@ -44407,7 +44407,13 @@ if (isGeminiMcpBridgeProcess) {
               // bridge identity loads — the device then just gets generic pushes).
               macAgreePub: macIdentitySeedRef
                 ? deriveAgreementPublicRaw(macIdentitySeedRef).toString('base64')
-                : undefined
+                : undefined,
+              // The phone must register its APNs token with the SAME project
+              // gateway this Mac will trigger. Send the configured base URL
+              // only through this authenticated bridge ack; absent means the
+              // ordinary direct-APNs path remains the whole push topology.
+              pushGatewayUrl:
+                (process.env.TASKWRAITH_PUSH_GATEWAY_URL || '').trim() || undefined
             }
           } catch (err) {
             return {
