@@ -30,6 +30,7 @@ import type {
   CanvasTargetDescription,
   CanvasViewport
 } from './canvasTypes'
+import { AppDriveLeaseRegistry } from '../appDrive/AppDriveLease'
 
 const IMAGE_SHA = 'a'.repeat(43)
 
@@ -1295,6 +1296,133 @@ describe('CanvasService', () => {
     expect(store.getSession(b.canvasId)?.chatId).toBe('B')
     expect(store.listEvents(a.canvasId)).toEqual([])
     expect(store.listEvents(b.canvasId).map((entry) => entry.kind)).toContain('session.opened')
+  })
+})
+
+describe('CanvasService AppDrive web lease', () => {
+  const ctx = {
+    provider: 'codex',
+    chatId: 'chat-lease',
+    runId: 'run-lease',
+    participantId: 'seat-lease'
+  }
+
+  function leaseHarness() {
+    const dir = mkdtempSync(join(tmpdir(), 'canvas-appdrive-'))
+    const driver = new FakeDriver()
+    const leases = new AppDriveLeaseRegistry({
+      now: () => 1_000,
+      createLeaseId: () => 'lease-web'
+    })
+    const invalidated = vi.fn(
+      (input: { canvasId: string; reason: 'navigation' | 'surface-closed' | 'human-takeover' }) => {
+        leases.revokeSurface(input.canvasId, input.reason)
+      }
+    )
+    const service = new CanvasService({
+      createDriver: () => driver,
+      store: new CanvasStore(dir),
+      uuid: () => 'canvas-lease',
+      now: () => '2026-08-20T00:00:00.000Z',
+      appDriveLeases: leases,
+      onSurfaceAuthorityInvalidated: invalidated
+    })
+    return { dir, driver, leases, invalidated, service }
+  }
+
+  function authorize(leases: AppDriveLeaseRegistry, stepBudget = 2): void {
+    leases.authorizeUserLease({
+      surfaceId: 'canvas-lease',
+      surfaceKind: 'web',
+      chatId: ctx.chatId,
+      runId: ctx.runId,
+      provider: ctx.provider,
+      participantId: ctx.participantId,
+      approvedBy: 'user',
+      allowedVerbs: ['click', 'fill'],
+      target: { canvasId: 'canvas-lease', origin: 'http://localhost:3000' },
+      stepBudget,
+      expiresAt: 10_000
+    })
+  }
+
+  it('refuses dispatch without a user-minted exact surface lease', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      const result = await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)
+      expect(result).toMatchObject({
+        ok: false,
+        executed: false,
+        refusalReason: 'appdrive_lease_required'
+      })
+      expect(h.driver.lastAction).toBeUndefined()
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('consumes the approved step budget and refuses the next action', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases, 1)
+      expect((await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)).ok).toBe(
+        true
+      )
+      expect(
+        await h.service.fill('canvas-lease', { kind: 'fill', ref: 'e2', value: 'value' }, ctx)
+      ).toMatchObject({
+        ok: false,
+        refusalReason: 'appdrive_step_budget_exhausted'
+      })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes web authority on navigation and close', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      await h.service.navigate('canvas-lease', { url: 'https://example.test' }, ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'navigation' })
+      )
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ status: 'revoked' })
+
+      authorize(h.leases)
+      await h.service.close('canvas-lease', ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'surface-closed' })
+      )
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes the lease when the web driver reports human takeover', async () => {
+    const h = leaseHarness()
+    h.driver.act = vi.fn(async () => ({
+      ok: false,
+      action: 'click' as const,
+      found: true,
+      executed: false,
+      verified: 'unknown' as const,
+      refusalReason: 'user_active' as const
+    }))
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'human-takeover' })
+      )
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ status: 'revoked' })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
   })
 })
 

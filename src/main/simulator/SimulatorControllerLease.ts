@@ -14,6 +14,11 @@ import {
   resolveAppDriveEnsembleAuthority,
   type AppDriveEnsembleRoster
 } from '../appDrive/AppDriveEnsembleAuthority'
+import {
+  AppDriveLeaseRegistry,
+  type AppDriveLeaseSnapshot,
+  type AppDriveLeaseTarget
+} from '../appDrive/AppDriveLease'
 import { randomUUID } from 'crypto'
 
 /** Synthetic run id for human dock control — user is always authoritative. */
@@ -27,6 +32,14 @@ export interface SimulatorControllerToken {
   runId: string
   kind: SimulatorControllerKind
   ownerParticipantId?: string
+  provider?: string
+  surfaceId?: string
+  leaseId?: string
+  target?: AppDriveLeaseTarget
+  expiresAt?: number
+  stepBudget?: number
+  stepsUsed?: number
+  stepsRemaining?: number
   mintedAt: number
   updatedAt: number
 }
@@ -37,6 +50,9 @@ export type SimulatorControllerErrorCode =
   | 'not_holder'
   | 'not_found'
   | 'authority_denied'
+  | 'consent_required'
+  | 'lease_expired'
+  | 'step_budget_exhausted'
 
 export type SimulatorControllerResult =
   | { ok: true; token: SimulatorControllerToken }
@@ -50,13 +66,36 @@ export type SimulatorControllerResult =
 export interface SimulatorControllerLeaseDeps {
   now?: () => number
   createId?: () => string
+  appDriveLeases?: AppDriveLeaseRegistry
+  onAuthorityInvalidated?: (
+    token: SimulatorControllerToken,
+    reason: 'expired' | 'step-budget-exhausted' | 'human-takeover' | 'run-terminal' | 'user-revoked'
+  ) => void
 }
 
 export interface SimulatorControllerMintInput {
   chatId: string
   runId: string
+  provider: string
+  surfaceId: string
+  verb: string
   ownerParticipantId?: string
   kind?: SimulatorControllerKind
+}
+
+export interface SimulatorControllerAuthorizeInput {
+  chatId: string
+  runId: string
+  provider: string
+  surfaceId: string
+  verb: string
+  allowedVerbs: readonly string[]
+  target: AppDriveLeaseTarget
+  ownerParticipantId?: string
+  approvalId?: string
+  approvedBy: 'user'
+  expiresAt?: number
+  stepBudget?: number
 }
 
 export interface SimulatorControllerTransferInput {
@@ -74,7 +113,31 @@ function requireId(value: unknown): string | null {
 }
 
 function cloneToken(token: SimulatorControllerToken): SimulatorControllerToken {
-  return { ...token }
+  return { ...token, ...(token.target ? { target: { ...token.target } } : {}) }
+}
+
+function tokenFromLease(
+  tokenId: string,
+  lease: AppDriveLeaseSnapshot,
+  previous?: SimulatorControllerToken
+): SimulatorControllerToken {
+  return {
+    tokenId,
+    chatId: lease.chatId,
+    runId: lease.runId,
+    kind: 'run',
+    ...(lease.participantId ? { ownerParticipantId: lease.participantId } : {}),
+    provider: lease.provider,
+    surfaceId: lease.surfaceId,
+    leaseId: lease.leaseId,
+    target: { ...lease.target },
+    expiresAt: lease.expiresAt,
+    stepBudget: lease.stepBudget,
+    stepsUsed: lease.stepsUsed,
+    stepsRemaining: lease.stepsRemaining,
+    mintedAt: previous?.mintedAt ?? lease.approvedAt,
+    updatedAt: lease.updatedAt
+  }
 }
 
 function fail(
@@ -90,25 +153,44 @@ function fail(
 export class SimulatorControllerLease {
   private readonly now: () => number
   private readonly createId: () => string
+  private readonly appDriveLeases: AppDriveLeaseRegistry
+  private readonly onAuthorityInvalidated?: SimulatorControllerLeaseDeps['onAuthorityInvalidated']
   private readonly byChat = new Map<string, SimulatorControllerToken>()
 
   constructor(deps: SimulatorControllerLeaseDeps = {}) {
     this.now = deps.now ?? (() => Date.now())
     this.createId = deps.createId ?? (() => randomUUID())
+    this.appDriveLeases = deps.appDriveLeases ?? new AppDriveLeaseRegistry({ now: this.now })
+    this.onAuthorityInvalidated = deps.onAuthorityInvalidated
   }
 
   peek(chatId: string): SimulatorControllerToken | null {
     const id = requireId(chatId)
     if (!id) return null
     const token = this.byChat.get(id)
-    return token ? cloneToken(token) : null
+    if (!token) return null
+    if (token.kind === 'run' && token.surfaceId) {
+      const lease = this.appDriveLeases.peek(token.surfaceId)
+      if (!lease || lease.status !== 'active' || lease.leaseId !== token.leaseId) {
+        this.byChat.delete(id)
+        this.notifyInvalidated(
+          token,
+          lease?.revocationReason === 'step-budget-exhausted' ? 'step-budget-exhausted' : 'expired'
+        )
+        return null
+      }
+      const refreshed = tokenFromLease(token.tokenId, lease, token)
+      this.byChat.set(id, refreshed)
+      return cloneToken(refreshed)
+    }
+    return cloneToken(token)
   }
 
   isValid(input: { chatId: string; tokenId: string; runId?: string }): boolean {
     const chatId = requireId(input.chatId)
     const tokenId = requireId(input.tokenId)
     if (!chatId || !tokenId) return false
-    const holder = this.byChat.get(chatId)
+    const holder = this.peek(chatId)
     if (!holder || holder.tokenId !== tokenId) return false
     if (input.runId !== undefined) {
       const runId = requireId(input.runId)
@@ -117,15 +199,61 @@ export class SimulatorControllerLease {
     return true
   }
 
+  /** User approval is the only path that can mint a run controller lease. */
+  authorizeUserLease(input: SimulatorControllerAuthorizeInput): SimulatorControllerResult {
+    const chatId = requireId(input.chatId)
+    const runId = requireId(input.runId)
+    const provider = requireId(input.provider)
+    const surfaceId = requireId(input.surfaceId)
+    if (!chatId || !runId || !provider || !surfaceId || input.approvedBy !== 'user') {
+      return fail(
+        'invalid_input',
+        'Simulator controller authorization requires exact user-approved chat/run/provider/surface authority.'
+      )
+    }
+    try {
+      const previous = this.byChat.get(chatId)
+      if (previous?.kind === 'run' && previous.surfaceId && previous.surfaceId !== surfaceId) {
+        this.appDriveLeases.revokeSurface(previous.surfaceId, 'replaced')
+        this.notifyInvalidated(previous, 'user-revoked')
+      }
+      const lease = this.appDriveLeases.authorizeUserLease({
+        surfaceId,
+        surfaceKind: 'simulator',
+        chatId,
+        runId,
+        provider,
+        ...(requireId(input.ownerParticipantId) ? { participantId: input.ownerParticipantId } : {}),
+        approvedBy: 'user',
+        ...(requireId(input.approvalId) ? { approvalId: input.approvalId } : {}),
+        allowedVerbs: input.allowedVerbs,
+        target: input.target,
+        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        ...(input.stepBudget !== undefined ? { stepBudget: input.stepBudget } : {})
+      })
+      const token = tokenFromLease(this.createId(), lease)
+      this.byChat.set(chatId, token)
+      return { ok: true, token: cloneToken(token) }
+    } catch (error) {
+      return fail('invalid_input', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   /**
-   * Mint for a run when the chat is free, or return the existing token when the
-   * same run already holds control (seat yields). Conflicts if another run holds it.
+   * Acquire and consume one step from an already user-authorized lease.
+   * This method deliberately cannot mint authority from an agent call.
    */
   mint(input: SimulatorControllerMintInput): SimulatorControllerResult {
     const chatId = requireId(input.chatId)
     const runId = requireId(input.runId)
-    if (!chatId || !runId) {
-      return fail('invalid_input', 'Simulator controller mint requires chatId and runId.')
+    const provider = requireId(input.provider)
+    const surfaceId = requireId(input.surfaceId)
+    const verb = requireId(input.verb)
+    if (!chatId || !runId || !provider || !surfaceId || !verb) {
+      return fail(
+        'invalid_input',
+        'Simulator controller acquisition requires chatId, runId, provider, surfaceId, and verb.'
+      )
     }
     const kind: SimulatorControllerKind =
       input.kind ?? (runId === SIMULATOR_HUMAN_CONTROLLER_RUN_ID ? 'human' : 'run')
@@ -135,36 +263,50 @@ export class SimulatorControllerLease {
         `Human controller mint must use runId ${SIMULATOR_HUMAN_CONTROLLER_RUN_ID}.`
       )
     }
-    const ownerParticipantId = requireId(input.ownerParticipantId) ?? undefined
-    const existing = this.byChat.get(chatId)
-    if (existing) {
-      if (existing.runId === runId) {
-        const next: SimulatorControllerToken = {
-          ...existing,
-          ...(ownerParticipantId ? { ownerParticipantId } : {}),
-          updatedAt: this.now()
-        }
-        this.byChat.set(chatId, next)
-        return { ok: true, token: cloneToken(next) }
-      }
+    if (kind === 'human') {
+      return fail('invalid_input', 'Human control must be claimed through claimHuman().')
+    }
+    const existing = this.peek(chatId)
+    if (!existing) {
       return fail(
-        'conflict',
-        `Simulator control for this chat is held by another run (${existing.runId}).`,
-        existing
+        'consent_required',
+        'Simulator control requires a current user-approved lease for this exact device/app.'
       )
     }
-    const at = this.now()
-    const token: SimulatorControllerToken = {
-      tokenId: this.createId(),
+    if (existing.runId !== runId || existing.surfaceId !== surfaceId) {
+      return fail('conflict', 'Simulator control is bound to another run or target.', existing)
+    }
+    const ownerParticipantId = requireId(input.ownerParticipantId) ?? undefined
+    const consumed = this.appDriveLeases.acquireAndConsume({
+      surfaceId,
+      surfaceKind: 'simulator',
       chatId,
       runId,
-      kind,
-      ...(ownerParticipantId ? { ownerParticipantId } : {}),
-      mintedAt: at,
-      updatedAt: at
+      provider,
+      ...(ownerParticipantId ? { participantId: ownerParticipantId } : {}),
+      verb
+    })
+    if (!consumed.ok) {
+      const code =
+        consumed.code === 'expired'
+          ? 'lease_expired'
+          : consumed.code === 'step-budget-exhausted'
+            ? 'step_budget_exhausted'
+            : consumed.code === 'binding-mismatch'
+              ? 'not_holder'
+              : 'consent_required'
+      if (code === 'lease_expired' || code === 'step_budget_exhausted') {
+        this.byChat.delete(chatId)
+        this.notifyInvalidated(
+          existing,
+          code === 'lease_expired' ? 'expired' : 'step-budget-exhausted'
+        )
+      }
+      return fail(code, consumed.error, existing)
     }
-    this.byChat.set(chatId, token)
-    return { ok: true, token: cloneToken(token) }
+    const next = tokenFromLease(existing.tokenId, consumed.lease, existing)
+    this.byChat.set(chatId, next)
+    return { ok: true, token: cloneToken(next) }
   }
 
   /**
@@ -175,6 +317,9 @@ export class SimulatorControllerLease {
   claimHuman(chatId: string): SimulatorControllerResult {
     const id = requireId(chatId)
     if (!id) return fail('invalid_input', 'Simulator human claim requires chatId.')
+    const previous = this.byChat.get(id)
+    this.appDriveLeases.revokeForChat(id, 'human-takeover')
+    if (previous?.kind === 'run') this.notifyInvalidated(previous, 'human-takeover')
     const at = this.now()
     const token: SimulatorControllerToken = {
       tokenId: this.createId(),
@@ -206,7 +351,7 @@ export class SimulatorControllerLease {
     if (fromRunId === toRunId) {
       return fail('invalid_input', 'Simulator controller transfer requires a different toRunId.')
     }
-    const holder = this.byChat.get(chatId)
+    const holder = this.peek(chatId)
     if (!holder) return fail('not_found', 'No Simulator controller is held for this chat.')
     if (holder.runId !== fromRunId) {
       return fail('not_holder', 'Only the holding run may transfer Simulator control.', holder)
@@ -225,14 +370,32 @@ export class SimulatorControllerLease {
       )
     }
 
+    if (!holder.surfaceId) {
+      return fail(
+        'not_holder',
+        'The holding Simulator controller has no transferable lease.',
+        holder
+      )
+    }
+    const transferredLease = this.appDriveLeases.transfer({
+      surfaceId: holder.surfaceId,
+      fromRunId,
+      toRunId,
+      ...(toOwnerParticipantId ? { toParticipantId: toOwnerParticipantId } : {})
+    })
+    if (!transferredLease.ok) return fail('not_holder', transferredLease.error, holder)
     const next: SimulatorControllerToken = {
       ...holder,
       runId: toRunId,
       kind: toRunId === SIMULATOR_HUMAN_CONTROLLER_RUN_ID ? 'human' : 'run',
-      ...(toOwnerParticipantId
-        ? { ownerParticipantId: toOwnerParticipantId }
+      ...(transferredLease.lease.participantId
+        ? { ownerParticipantId: transferredLease.lease.participantId }
         : { ownerParticipantId: undefined }),
-      updatedAt: this.now()
+      expiresAt: transferredLease.lease.expiresAt,
+      stepBudget: transferredLease.lease.stepBudget,
+      stepsUsed: transferredLease.lease.stepsUsed,
+      stepsRemaining: transferredLease.lease.stepsRemaining,
+      updatedAt: transferredLease.lease.updatedAt
     }
     // Drop undefined owner so peek clones stay tidy.
     if (!toOwnerParticipantId) delete next.ownerParticipantId
@@ -246,12 +409,14 @@ export class SimulatorControllerLease {
     if (!chatId || !runId) {
       return fail('invalid_input', 'Simulator controller release requires chatId and runId.')
     }
-    const holder = this.byChat.get(chatId)
+    const holder = this.peek(chatId)
     if (!holder) return fail('not_found', 'No Simulator controller is held for this chat.')
     if (holder.runId !== runId) {
       return fail('not_holder', 'Only the holding run may release Simulator control.', holder)
     }
     this.byChat.delete(chatId)
+    if (holder.surfaceId) this.appDriveLeases.revokeSurface(holder.surfaceId, 'user-revoked')
+    if (holder.kind === 'run') this.notifyInvalidated(holder, 'user-revoked')
     return { ok: true, token: cloneToken(holder) }
   }
 
@@ -263,9 +428,23 @@ export class SimulatorControllerLease {
     for (const [chatId, token] of this.byChat) {
       if (token.runId === id) {
         released.push(cloneToken(token))
+        if (token.surfaceId) this.appDriveLeases.revokeSurface(token.surfaceId, 'run-terminal')
+        if (token.kind === 'run') this.notifyInvalidated(token, 'run-terminal')
         this.byChat.delete(chatId)
       }
     }
     return released
+  }
+
+  private notifyInvalidated(
+    token: SimulatorControllerToken,
+    reason: 'expired' | 'step-budget-exhausted' | 'human-takeover' | 'run-terminal' | 'user-revoked'
+  ): void {
+    try {
+      this.onAuthorityInvalidated?.(cloneToken(token), reason)
+    } catch {
+      // Grant cleanup is idempotent; never let a diagnostic callback mutate
+      // the controller lifecycle result.
+    }
   }
 }

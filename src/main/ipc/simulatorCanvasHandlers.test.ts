@@ -240,7 +240,10 @@ describe('registerSimulatorCanvasHandlers', () => {
       reason: SIMULATOR_VIEW_CONTROL_REQUIRED,
       hasObservation: true,
       controllerLeaseHeld: false,
-      controllerKind: null
+      controllerKind: null,
+      controllerExpiresAt: null,
+      controllerStepsRemaining: null,
+      controllerTarget: null
     })
     expect(
       await handlers.get('simulator-canvas:tap')?.(event, {
@@ -381,7 +384,10 @@ describe('registerSimulatorCanvasHandlers', () => {
       reason: 'ready',
       hasObservation: true,
       controllerLeaseHeld: true,
-      controllerKind: 'run'
+      controllerKind: 'run',
+      controllerExpiresAt: null,
+      controllerStepsRemaining: null,
+      controllerTarget: null
     })
   })
 

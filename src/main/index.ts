@@ -599,6 +599,8 @@ import {
 import { createNativeProcessStartedAtResolver } from './nativeWindow/NativeProcessIdentityResolver'
 import { createNativeWindowProcessAncestryResolver } from './nativeWindow/NativeWindowProcessAncestryClient'
 import { resolveAppDriveEnsembleAuthority } from './appDrive/AppDriveEnsembleAuthority'
+import { AppDriveLeaseRegistry } from './appDrive/AppDriveLease'
+import { AppDriveLeaseRuntime } from './appDrive/AppDriveLeaseRuntime'
 import {
   appDrivePreviewFrameFromDaemon,
   shouldRequestPreviewFrame,
@@ -4446,7 +4448,38 @@ const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const kimiMeshApprovalRelay = new KimiMeshApprovalRelay()
 const simulatorHostService = new SimulatorHostService()
 const simulatorSessionStore = new SimulatorSessionStore()
-const simulatorControllerLease = new SimulatorControllerLease()
+const appDriveSurfaceLeases = new AppDriveLeaseRegistry()
+const simulatorControllerLease = new SimulatorControllerLease({
+  appDriveLeases: appDriveSurfaceLeases,
+  onAuthorityInvalidated: (token) => {
+    if (!token.provider || !token.surfaceId) return
+    permissionService.removeSessionGrant(
+      token.provider as ProviderId,
+      AppStore.getChat(token.chatId)?.workspacePath,
+      'simulatorCanvas',
+      token.runId,
+      token.surfaceId
+    )
+  }
+})
+const appDriveLeaseRuntime = new AppDriveLeaseRuntime({
+  leases: appDriveSurfaceLeases,
+  simulatorController: simulatorControllerLease,
+  simulatorSessions: simulatorSessionStore,
+  hasSessionGrant: (provider, scope, service, runId, surfaceId) =>
+    permissionService.hasSessionGrant(provider, scope, service, runId, surfaceId),
+  removeSessionGrant: (provider, scope, service, runId, surfaceId) =>
+    permissionService.removeSessionGrant(provider, scope, service, runId, surfaceId),
+  webOrigin: (canvasId, context) => {
+    const canvas = canvasService.status(canvasId, context)
+    if (!canvas?.url) return undefined
+    try {
+      return new URL(canvas.url).origin
+    } catch {
+      return undefined
+    }
+  }
+})
 const simulatorControlSetup = new SimulatorControlSetupService({
   getUserDataPath: () => app.getPath('userData')
 })
@@ -4516,6 +4549,8 @@ const simulatorInteractionBridge = new SimulatorInteractionBridge({
 })
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
+  appDriveLeases: appDriveSurfaceLeases,
+  onSurfaceAuthorityInvalidated: (input) => appDriveLeaseRuntime.invalidateWebSurface(input),
   clearBrowserProfileData: () => canvasBrowserProfile.clearBrowsingData(),
   // One human decision before an irreversible or financial web control, even at
   // tiers that authorize canvas_click for the run. See CanvasConsequentialTarget
@@ -4533,6 +4568,8 @@ const canvasService = new CanvasService({
       appChatId?: string
       appRunId?: string
       ownerParticipantId?: string
+      deviceTarget?: { udid: string; bundleId: string }
+      provider?: string
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
@@ -4552,8 +4589,8 @@ const canvasService = new CanvasService({
       )
     }
     if (kind === 'device') {
-      if (!opts?.appChatId || !opts.appRunId) {
-        throw new Error('Device Canvas requires exact chat and run authority.')
+      if (!opts?.appChatId || !opts.appRunId || !opts.provider || !opts.deviceTarget) {
+        throw new Error('Device Canvas requires exact chat, run, provider, and target authority.')
       }
       return new CanvasDeviceDriver(sessionId, {
         // Agent canvas_open(device) must mint a controller lease and mutate via
@@ -4563,6 +4600,8 @@ const canvasService = new CanvasService({
           controllerLease: simulatorControllerLease,
           chatId: opts.appChatId,
           runId: opts.appRunId,
+          provider: opts.provider,
+          target: opts.deviceTarget,
           ...(opts.ownerParticipantId
             ? { ownerParticipantId: opts.ownerParticipantId }
             : {}),
@@ -8787,6 +8826,7 @@ runManager.onChange((event) => {
     // Simulator Canvas hybrid ownership: release run-owned controller unless
     // it was already transferred away from this runId.
     simulatorControllerLease.releaseForRun(event.session.runId)
+    appDriveLeaseRuntime.revokeRun(event.session.runId)
   }
   if (event.type === 'removed') {
     approvalService?.cancelForRun(event.session.runId, 'run-removed')
@@ -36916,6 +36956,12 @@ async function executeGeminiMcpTool(
   // Claude / Kimi tool call" instead of always "Approve Gemini …"
   // when a non-Gemini participant invokes a shared MCP tool.
   const approvalPreview = previewForGeminiMcpTool(toolName, args, cwd, context, parentProvider)
+  const appDriveSurfaceDescriptor = appDriveLeaseRuntime.prepareApproval(
+    toolName,
+    args,
+    context.appChatId,
+    approvalPreview.preview
+  )
   applyMcpWriteLockApprovalContext(approvalPreview, context, toolName, args, cwd)
   const externalPathDetection = detectExternalPathForProviderApproval({
     provider: parentProvider,
@@ -37278,6 +37324,30 @@ async function executeGeminiMcpTool(
       server: GEMINI_MCP_SERVER_NAME
     })
     return { ...deniedResult, isError: true }
+  }
+
+  if (appDriveSurfaceDescriptor) {
+    const leaseAdmission = appDriveLeaseRuntime.authorize({
+      descriptor: appDriveSurfaceDescriptor,
+      provider: parentProvider,
+      service: gateService,
+      workspacePath: context.scope === 'global' ? undefined : workspacePath,
+      chatId: context.appChatId,
+      runId: context.appRunId,
+      participantId: context.ensembleRun?.participantId,
+      approval: genericApprovalResolution,
+      oneOffPermissionRetry: exactOneOffPermissionRetry
+    })
+    if (!leaseAdmission.ok) {
+      return {
+        ...mcpStructuredJsonResult({
+          ok: false,
+          tool: toolName,
+          error: leaseAdmission.error
+        }),
+        isError: true
+      }
+    }
   }
 
   const workspaceMutationOperationDone =

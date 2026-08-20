@@ -60,6 +60,10 @@ import {
   validateCanvasUrl
 } from './canvasTypes'
 import type { CanvasStore } from './CanvasStore'
+import type {
+  AppDriveLeaseRegistry,
+  AppDriveLeaseRevocationReason
+} from '../appDrive/AppDriveLease'
 
 export interface CanvasServiceDeps {
   createDriver: (
@@ -73,6 +77,10 @@ export interface CanvasServiceDeps {
       appRunId?: string
       /** Ensemble seat owner for device-driver controller lease mint. */
       ownerParticipantId?: string
+      /** Exact user-reviewed Simulator target for the device lease. */
+      deviceTarget?: { udid: string; bundleId: string }
+      /** Provider identity bound into the device lease. */
+      provider?: string
       /** Opaque main-owned native-window lease; never sourced from canvas_open. */
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
@@ -107,6 +115,18 @@ export interface CanvasServiceDeps {
    * CLOSED: nothing is dispatched.
    */
   confirmConsequentialAction?: (request: CanvasConsequentialConfirmRequest) => Promise<boolean>
+  /** User-minted, expiring step budget for web actuation. */
+  appDriveLeases?: Pick<AppDriveLeaseRegistry, 'acquireAndConsume'>
+  /** Revoke the lease and its exact permission grant on navigation/close/takeover. */
+  onSurfaceAuthorityInvalidated?: (input: {
+    canvasId: string
+    record: CanvasSessionRecord
+    ctx: CanvasCallContext
+    reason: Extract<
+      AppDriveLeaseRevocationReason,
+      'navigation' | 'surface-closed' | 'human-takeover'
+    >
+  }) => void
 }
 
 /** What the human is asked. Deliberately carries no page-authored text. */
@@ -541,6 +561,7 @@ export class CanvasService implements CanvasController {
     const url = redactUrlQuery(state.url)
     const title = state.title
     if (session.record.url === url && session.record.title === title) return
+    this.invalidateSurfaceAuthority(canvasId, session, ctx, 'navigation')
     session.record = { ...session.record, url, title, updatedAt: this.deps.now() }
     try {
       this.deps.store.upsertSession(session.record)
@@ -573,6 +594,7 @@ export class CanvasService implements CanvasController {
     let deviceAppChatId: string | undefined
     let deviceAppRunId: string | undefined
     let deviceOwnerParticipantId: string | undefined
+    let deviceTarget: { udid: string; bundleId: string } | undefined
     let windowTarget: CanvasWindowOpenTarget | undefined
     if (driverKind === 'window') {
       const chatId = canonicalAuthority(ctx.chatId)
@@ -609,6 +631,7 @@ export class CanvasService implements CanvasController {
       }
       eventHost = (input.device?.udid || 'booted').trim()
       recordUrl = `device://${eventHost}/${bundleId}`
+      deviceTarget = { udid: eventHost, bundleId }
     } else if (driverKind === 'html') {
       // Agent-authored HTML/SVG. No URL / no host — it is rasterized offscreen
       // with scripts off and egress cut, so there is no SSRF surface to gate;
@@ -708,6 +731,7 @@ export class CanvasService implements CanvasController {
         appChatId: imageAppChatId ?? windowAppChatId ?? deviceAppChatId,
         ...(windowAppRunId || deviceAppRunId ? { appRunId: windowAppRunId ?? deviceAppRunId } : {}),
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
+        ...(deviceTarget ? { deviceTarget, provider: ctx.provider } : {}),
         ...(windowTarget ? { windowTarget } : {}),
         initialSketchDocument: sketchScope
           ? (this.deps.store.getSketchDocument(sketchScope) ?? undefined)
@@ -1215,6 +1239,55 @@ export class CanvasService implements CanvasController {
         })
         return gate.refusal
       }
+      if (session.record.driver === 'web' && this.deps.appDriveLeases) {
+        if (!ctx.chatId || !ctx.runId || !ctx.provider) {
+          return {
+            ok: false,
+            action: kind,
+            found: false,
+            executed: false,
+            verified: 'unknown',
+            refusalReason: 'appdrive_binding_mismatch',
+            message: 'App Drive requires exact chat, run, and provider authority.'
+          }
+        }
+        const lease = this.deps.appDriveLeases.acquireAndConsume({
+          surfaceId: canvasId,
+          surfaceKind: 'web',
+          chatId: ctx.chatId,
+          runId: ctx.runId,
+          provider: ctx.provider,
+          ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
+          verb: kind
+        })
+        if (!lease.ok) {
+          const refusalReason =
+            lease.code === 'expired'
+              ? 'appdrive_lease_expired'
+              : lease.code === 'step-budget-exhausted'
+                ? 'appdrive_step_budget_exhausted'
+                : lease.code === 'binding-mismatch'
+                  ? 'appdrive_binding_mismatch'
+                  : 'appdrive_lease_required'
+          this.emit(canvasId, 'interaction', ctx, {
+            phase: 'outcome',
+            action: kind,
+            ...targetAudit,
+            outcome: refusalReason,
+            executed: false,
+            verified: 'unknown'
+          })
+          return {
+            ok: false,
+            action: kind,
+            found: false,
+            executed: false,
+            verified: 'unknown',
+            refusalReason,
+            message: lease.error
+          }
+        }
+      }
       // A synchronous broadcast hook could have begun a clear while the intent
       // was emitted. Re-check before invoking the driver.
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
@@ -1245,6 +1318,9 @@ export class CanvasService implements CanvasController {
           verified: result.verified,
           ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
         })
+      }
+      if (result.refusalReason === 'user_active' || result.refusalReason === 'stale_input_epoch') {
+        this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
       }
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
       return result
@@ -1457,6 +1533,7 @@ export class CanvasService implements CanvasController {
       // The runaway budget exists to stop a hijacked agent, not the human
       // driving their own browser chrome; the renderer IPC opts out.
       if (opts?.chargeInteraction !== false) this.chargeInteraction(session)
+      this.invalidateSurfaceAuthority(canvasId, session, ctx, 'navigation')
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
       const state = await session.driver.navigate(input)
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
@@ -1567,6 +1644,7 @@ export class CanvasService implements CanvasController {
     session: LiveSession,
     ctx: CanvasCallContext
   ): Promise<void> {
+    this.invalidateSurfaceAuthority(canvasId, session, ctx, 'surface-closed')
     this.sessions.delete(canvasId)
     // Drop the interaction chain with the session so the map cannot grow across
     // a long-lived app run. Anything still queued will fail its own `require`.
@@ -1603,6 +1681,21 @@ export class CanvasService implements CanvasController {
     }
     if (this.canvasGenerations.get(canvasId) === session.generation) {
       this.canvasGenerations.delete(canvasId)
+    }
+  }
+
+  private invalidateSurfaceAuthority(
+    canvasId: string,
+    session: LiveSession,
+    ctx: CanvasCallContext,
+    reason: 'navigation' | 'surface-closed' | 'human-takeover'
+  ): void {
+    if (session.record.driver !== 'web') return
+    try {
+      this.deps.onSurfaceAuthorityInvalidated?.({ canvasId, record: session.record, ctx, reason })
+    } catch {
+      // Lease revocation is idempotent and main-owned; a diagnostic callback
+      // must not change the Canvas lifecycle result.
     }
   }
 

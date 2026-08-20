@@ -4,84 +4,106 @@ import {
   SimulatorControllerLease
 } from './SimulatorControllerLease'
 
+function authorize(lease: SimulatorControllerLease, overrides: Record<string, unknown> = {}) {
+  return lease.authorizeUserLease({
+    chatId: 'chat-a',
+    runId: 'run-1',
+    provider: 'codex',
+    surfaceId: 'simulator:DEVICE-1:com.example.App',
+    verb: 'simulator_tap',
+    allowedVerbs: ['simulator_tap', 'simulator_type', 'simulator_launch'],
+    target: { udid: 'DEVICE-1', bundleId: 'com.example.App' },
+    ownerParticipantId: 'boss',
+    approvalId: 'approval-1',
+    approvedBy: 'user',
+    expiresAt: 10_000,
+    stepBudget: 2,
+    ...overrides
+  } as never)
+}
+
+function acquire(lease: SimulatorControllerLease, overrides: Record<string, unknown> = {}) {
+  return lease.mint({
+    chatId: 'chat-a',
+    runId: 'run-1',
+    provider: 'codex',
+    surfaceId: 'simulator:DEVICE-1:com.example.App',
+    verb: 'simulator_tap',
+    ownerParticipantId: 'boss',
+    ...overrides
+  } as never)
+}
+
 describe('SimulatorControllerLease', () => {
-  it('mints a run controller when the chat has none', () => {
+  it('refuses agent self-minting before exact user authorization', () => {
+    const lease = new SimulatorControllerLease({ now: () => 1_000 })
+    expect(acquire(lease)).toMatchObject({ ok: false, code: 'consent_required' })
+  })
+
+  it('authorizes an exact device/app lease, then consumes bounded steps', () => {
     const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-1' })
-    const result = lease.mint({
-      chatId: 'chat-a',
-      runId: 'run-1',
-      ownerParticipantId: 'seat-boss'
-    })
-    expect(result).toEqual({
+    expect(authorize(lease)).toMatchObject({
       ok: true,
       token: {
         tokenId: 'tok-1',
         chatId: 'chat-a',
         runId: 'run-1',
-        kind: 'run',
-        ownerParticipantId: 'seat-boss',
-        mintedAt: 1_000,
-        updatedAt: 1_000
+        provider: 'codex',
+        surfaceId: 'simulator:DEVICE-1:com.example.App',
+        target: { udid: 'DEVICE-1', bundleId: 'com.example.App' },
+        expiresAt: 10_000,
+        stepBudget: 2,
+        stepsUsed: 0,
+        stepsRemaining: 2
       }
     })
-    expect(lease.peek('chat-a')?.tokenId).toBe('tok-1')
+    expect(acquire(lease)).toMatchObject({
+      ok: true,
+      token: { tokenId: 'tok-1', stepsUsed: 1, stepsRemaining: 1 }
+    })
+    expect(acquire(lease, { verb: 'simulator_type' })).toMatchObject({
+      ok: true,
+      token: { tokenId: 'tok-1', stepsUsed: 2, stepsRemaining: 0 }
+    })
+    expect(acquire(lease)).toMatchObject({ ok: false, code: 'step_budget_exhausted' })
   })
 
-  it('returns the same token across seat yields within the same run', () => {
-    let n = 0
-    const lease = new SimulatorControllerLease({
-      now: () => 2_000 + n++,
-      createId: () => `tok-${n}`
+  it('refuses run, provider, surface, and verb drift', () => {
+    const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-1' })
+    expect(authorize(lease).ok).toBe(true)
+    expect(acquire(lease, { runId: 'run-2' })).toMatchObject({ ok: false, code: 'conflict' })
+    expect(acquire(lease, { provider: 'claude' })).toMatchObject({
+      ok: false,
+      code: 'not_holder'
     })
-    const first = lease.mint({
-      chatId: 'chat-a',
-      runId: 'run-1',
-      ownerParticipantId: 'seat-a'
-    })
-    expect(first.ok).toBe(true)
-    const second = lease.mint({
-      chatId: 'chat-a',
-      runId: 'run-1',
-      ownerParticipantId: 'seat-b'
-    })
-    expect(second.ok).toBe(true)
-    if (!first.ok || !second.ok) return
-    expect(second.token.tokenId).toBe(first.token.tokenId)
-    expect(second.token.ownerParticipantId).toBe('seat-b')
-    expect(second.token.updatedAt).toBeGreaterThan(first.token.mintedAt)
-  })
-
-  it('conflicts when a second run tries to control the same chat', () => {
-    const lease = new SimulatorControllerLease({ createId: () => 'tok-1' })
-    expect(lease.mint({ chatId: 'chat-a', runId: 'run-1' }).ok).toBe(true)
-    const conflict = lease.mint({ chatId: 'chat-a', runId: 'run-2' })
-    expect(conflict).toMatchObject({
+    expect(acquire(lease, { surfaceId: 'simulator:DEVICE-2:com.example.App' })).toMatchObject({
       ok: false,
       code: 'conflict'
     })
-    if (conflict.ok) return
-    expect(conflict.holder?.runId).toBe('run-1')
-    expect(conflict.error).toMatch(/another run/i)
+    expect(acquire(lease, { verb: 'simulator_scroll' })).toMatchObject({
+      ok: false,
+      code: 'consent_required'
+    })
   })
 
-  it('transfers to another authoritative role and releases on run terminal', () => {
-    const lease = new SimulatorControllerLease({
-      now: () => 5_000,
-      createId: () => 'tok-xfer'
-    })
-    expect(lease.mint({ chatId: 'chat-a', runId: 'run-1', ownerParticipantId: 'boss' }).ok).toBe(
-      true
-    )
+  it('expires mechanically and removes the controller projection', () => {
+    const now = { value: 1_000 }
+    const lease = new SimulatorControllerLease({ now: () => now.value, createId: () => 'tok-1' })
+    expect(authorize(lease, { expiresAt: 1_100 }).ok).toBe(true)
+    now.value = 1_101
+    expect(lease.peek('chat-a')).toBeNull()
+    expect(acquire(lease)).toMatchObject({ ok: false, code: 'consent_required' })
+  })
 
+  it('transfers the same user-approved lease only to Boss/Captain authority', () => {
+    const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-xfer' })
+    expect(authorize(lease).ok).toBe(true)
     const denied = lease.transfer({
       chatId: 'chat-a',
       fromRunId: 'run-1',
       toRunId: 'run-2',
       toOwnerParticipantId: 'worker',
-      ensemble: {
-        bossmanParticipantId: 'boss',
-        captainParticipantIds: ['captain']
-      }
+      ensemble: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
     })
     expect(denied).toMatchObject({ ok: false, code: 'authority_denied' })
 
@@ -90,115 +112,66 @@ describe('SimulatorControllerLease', () => {
       fromRunId: 'run-1',
       toRunId: 'run-2',
       toOwnerParticipantId: 'captain',
-      ensemble: {
-        bossmanParticipantId: 'boss',
-        captainParticipantIds: ['captain']
-      }
+      ensemble: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
     })
-    expect(transferred.ok).toBe(true)
-    if (!transferred.ok) return
-    expect(transferred.token).toMatchObject({
-      runId: 'run-2',
-      ownerParticipantId: 'captain',
-      tokenId: 'tok-xfer'
+    expect(transferred).toMatchObject({
+      ok: true,
+      token: { tokenId: 'tok-xfer', runId: 'run-2', ownerParticipantId: 'captain' }
     })
-
-    // Original run terminal must not release after transfer.
     expect(lease.releaseForRun('run-1')).toEqual([])
-    expect(lease.peek('chat-a')?.runId).toBe('run-2')
-
-    const released = lease.releaseForRun('run-2')
-    expect(released).toHaveLength(1)
+    expect(lease.releaseForRun('run-2')).toHaveLength(1)
     expect(lease.peek('chat-a')).toBeNull()
   })
 
-  it('lets the human dock claim control authoritatively over a run holder', () => {
+  it('human takeover rotates token identity and invalidates the agent lease', () => {
+    let id = 0
     const lease = new SimulatorControllerLease({
-      now: () => 9_000,
-      createId: () => 'tok-human'
+      now: () => 1_000,
+      createId: () => `tok-${++id}`
     })
-    expect(lease.mint({ chatId: 'chat-a', runId: 'run-1' }).ok).toBe(true)
+    const authorized = authorize(lease)
+    expect(authorized).toMatchObject({ ok: true, token: { tokenId: 'tok-1' } })
     const claimed = lease.claimHuman('chat-a')
-    expect(claimed.ok).toBe(true)
-    if (!claimed.ok) return
-    expect(claimed.token).toMatchObject({
-      kind: 'human',
-      runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID,
-      tokenId: 'tok-human'
-    })
-    expect(
-      lease.isValid({
-        chatId: 'chat-a',
-        tokenId: 'tok-human',
-        runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
-      })
-    ).toBe(true)
-  })
-
-  it('claimHuman mints a fresh tokenId and invalidates the previous run token', () => {
-    let n = 0
-    const lease = new SimulatorControllerLease({
-      now: () => 10_000 + n,
-      createId: () => `tok-${++n}`
-    })
-    const minted = lease.mint({ chatId: 'chat-a', runId: 'run-1' })
-    expect(minted.ok).toBe(true)
-    if (!minted.ok) return
-    expect(minted.token.tokenId).toBe('tok-1')
-    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-1', runId: 'run-1' })).toBe(true)
-
-    const claimed = lease.claimHuman('chat-a')
-    expect(claimed.ok).toBe(true)
-    if (!claimed.ok) return
-    expect(claimed.token.tokenId).toBe('tok-2')
-    expect(claimed.token.tokenId).not.toBe(minted.token.tokenId)
-    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-1' })).toBe(false)
-    expect(
-      lease.isValid({
-        chatId: 'chat-a',
+    expect(claimed).toMatchObject({
+      ok: true,
+      token: {
         tokenId: 'tok-2',
+        kind: 'human',
         runId: SIMULATOR_HUMAN_CONTROLLER_RUN_ID
-      })
-    ).toBe(true)
-  })
-
-  it('claimHuman always rotates tokenId even when human already holds control', () => {
-    let n = 0
-    const lease = new SimulatorControllerLease({
-      now: () => 11_000 + n,
-      createId: () => `human-${++n}`
+      }
     })
-    const first = lease.claimHuman('chat-a')
-    expect(first.ok).toBe(true)
-    if (!first.ok) return
-    expect(first.token.tokenId).toBe('human-1')
-
-    const second = lease.claimHuman('chat-a')
-    expect(second.ok).toBe(true)
-    if (!second.ok) return
-    expect(second.token.tokenId).toBe('human-2')
-    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'human-1' })).toBe(false)
-    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'human-2' })).toBe(true)
+    expect(acquire(lease)).toMatchObject({ ok: false, code: 'conflict' })
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-1' })).toBe(false)
+    expect(lease.isValid({ chatId: 'chat-a', tokenId: 'tok-2' })).toBe(true)
   })
 
-  it('mint by an agent conflicts while human holds control', () => {
-    const lease = new SimulatorControllerLease({ createId: () => 'tok-h' })
-    expect(lease.claimHuman('chat-a').ok).toBe(true)
-    const conflict = lease.mint({ chatId: 'chat-a', runId: 'run-2' })
-    expect(conflict).toMatchObject({ ok: false, code: 'conflict' })
-    if (conflict.ok) return
-    expect(conflict.holder?.kind).toBe('human')
-    expect(conflict.holder?.runId).toBe(SIMULATOR_HUMAN_CONTROLLER_RUN_ID)
-  })
-
-  it('release requires the holding run', () => {
-    const lease = new SimulatorControllerLease({ createId: () => 'tok-1' })
-    expect(lease.mint({ chatId: 'chat-a', runId: 'run-1' }).ok).toBe(true)
+  it('release requires the holding run and revokes its AppDrive lease', () => {
+    const lease = new SimulatorControllerLease({ now: () => 1_000, createId: () => 'tok-1' })
+    expect(authorize(lease).ok).toBe(true)
     expect(lease.release({ chatId: 'chat-a', runId: 'run-2' })).toMatchObject({
       ok: false,
       code: 'not_holder'
     })
     expect(lease.release({ chatId: 'chat-a', runId: 'run-1' }).ok).toBe(true)
     expect(lease.peek('chat-a')).toBeNull()
+    expect(acquire(lease)).toMatchObject({ ok: false, code: 'consent_required' })
+  })
+
+  it('notifies permission authority when human takeover invalidates an agent lease', () => {
+    const invalidated: Array<{ reason: string; surfaceId?: string }> = []
+    const lease = new SimulatorControllerLease({
+      now: () => 1_000,
+      createId: () => 'tok',
+      onAuthorityInvalidated: (token, reason) =>
+        invalidated.push({ reason, surfaceId: token.surfaceId })
+    })
+    expect(authorize(lease).ok).toBe(true)
+    lease.claimHuman('chat-a')
+    expect(invalidated).toEqual([
+      {
+        reason: 'human-takeover',
+        surfaceId: 'simulator:DEVICE-1:com.example.App'
+      }
+    ])
   })
 })

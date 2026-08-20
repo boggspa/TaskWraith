@@ -304,6 +304,9 @@ export function registerSimulatorCanvasHandlers(
       ...status,
       controllerLeaseHeld: Boolean(controller) || Boolean(status.controllerLeaseHeld),
       controllerKind: controller?.kind ?? null,
+      controllerExpiresAt: controller?.expiresAt ?? null,
+      controllerStepsRemaining: controller?.stepsRemaining ?? null,
+      controllerTarget: controller?.target ?? null,
       ...(orientation ? { orientation } : {})
     }
   })

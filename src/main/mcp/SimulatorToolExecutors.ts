@@ -20,6 +20,10 @@ import {
   mapNormalizedScroll,
   mapNormalizedTap
 } from '../simulator/simulatorGestureMapping'
+import {
+  resolveAppDriveSurfaceDescriptor,
+  type AppDriveSurfaceDescriptor
+} from '../../shared/appDriveSurface'
 
 /** Main-side alias retained for MCP dispatch callers. The shared catalogue owns membership. */
 export const SIMULATOR_MCP_TOOL_NAMES_MAIN = SIMULATOR_MCP_TOOL_NAMES
@@ -95,7 +99,7 @@ export interface SimulatorToolExecutorDeps {
    */
   getActuationTarget?: (chatId: string) => SimulatorActuationTarget | null
   /** Chat-scoped session store — persist last absolute orientation on rotate. */
-  sessionStore?: Pick<SimulatorSessionStore, 'upsert'>
+  sessionStore?: Pick<SimulatorSessionStore, 'get' | 'upsert'>
   /** User-owned global switch for simulator mutations. */
   isSimulatorControlEnabled?: () => boolean
   /** Best-effort renderer presentation; never participates in tool success. */
@@ -151,7 +155,9 @@ function actionResult(
 function requireRunController(
   toolName: SimulatorMcpToolName,
   context: SimulatorToolContext,
-  lease: Pick<SimulatorControllerLease, 'mint'>
+  lease: Pick<SimulatorControllerLease, 'mint'>,
+  parentProvider: string,
+  surface: AppDriveSurfaceDescriptor
 ):
   | { ok: true; control: { chatId: string; controllerTokenId: string } }
   | { ok: false; result: McpToolExecutionResult } {
@@ -169,6 +175,9 @@ function requireRunController(
   const minted = lease.mint({
     chatId,
     runId,
+    provider: parentProvider,
+    surfaceId: surface.surfaceId,
+    verb: surface.verb,
     ownerParticipantId:
       stringValue(context.participantId, 256) ||
       stringValue(context.ensembleRun?.participantId, 256)
@@ -251,7 +260,7 @@ export function createSimulatorToolExecutors(
     presentCanvas
   } = deps
   return {
-    async executeSimulatorTool(toolName, rawArgs, context, _parentProvider) {
+    async executeSimulatorTool(toolName, rawArgs, context, parentProvider) {
       const args = asRecord(rawArgs)
       try {
         if (toolName === 'simulator_status') {
@@ -264,7 +273,21 @@ export function createSimulatorToolExecutors(
           if (isSimulatorControlEnabled?.() === false) {
             return fail(toolName, SIMULATOR_CONTROL_DISABLED_MESSAGE)
           }
-          const gated = requireRunController(toolName, context, controllerLease)
+          const leaseTarget = context.appChatId ? sessionStore?.get(context.appChatId) : null
+          const surface = resolveAppDriveSurfaceDescriptor(toolName, args, {
+            simulatorUdid: leaseTarget?.udid,
+            simulatorBundleId: leaseTarget?.bundleId
+          })
+          if (!surface) {
+            return fail(toolName, 'Simulator control could not resolve an exact device/app surface.')
+          }
+          const gated = requireRunController(
+            toolName,
+            context,
+            controllerLease,
+            parentProvider,
+            surface
+          )
           if (!gated.ok) return gated.result
           control = gated.control
         }

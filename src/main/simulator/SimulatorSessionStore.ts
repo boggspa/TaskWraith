@@ -21,6 +21,8 @@ export interface SimulatorSessionFrameMeta {
 export interface SimulatorSessionRecord {
   chatId: string
   udid?: string
+  /** Last successfully launched bundle; binds subsequent HID lease prompts. */
+  bundleId?: string
   lastFrame?: SimulatorSessionFrameMeta
   /**
    * Last absolute orientation applied via IPC/MCP rotate. Used so the dock

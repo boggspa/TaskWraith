@@ -284,6 +284,14 @@ export type CanvasActRefusalReason =
    * The observation the plan was built on is stale; re-snapshot.
    */
   | 'stale_input_epoch'
+  /** No live user-minted AppDrive lease exists for this exact web surface. */
+  | 'appdrive_lease_required'
+  /** The bounded AppDrive lease expired and must be approved again. */
+  | 'appdrive_lease_expired'
+  /** The user-approved AppDrive step budget has been consumed. */
+  | 'appdrive_step_budget_exhausted'
+  /** The lease belongs to another run/provider/participant binding. */
+  | 'appdrive_binding_mismatch'
   /**
    * Native target appears consequential and no content-bound confirmation
    * receipt exists. Nothing was dispatched.
