@@ -17,7 +17,11 @@ import type {
   RunDiffResult,
   FileSnapshot
 } from './store/types'
-import { parseNumstatByPath, type WorkspaceChurnSample } from './WorkspaceChurn'
+import {
+  parseNumstatByPath,
+  type WorkspaceChurnFileStat,
+  type WorkspaceChurnSample
+} from './WorkspaceChurn'
 
 const NOISE_PATHS = ['.DS_Store', 'Thumbs.db', 'node_modules', 'dist', 'build', '.vite']
 const SENSITIVE_PATTERNS = [/\.env$/i, /\.pem$/i, /\.key$/i, /secret/i, /password/i, /token/i]
@@ -727,7 +731,13 @@ function buildCurrentFileSummary(
   repoPath: string,
   displayPath: string,
   status: DiffFileStatus,
-  stageState?: Pick<DiffFileSummary, 'staged' | 'unstaged'>
+  stageState?: Pick<DiffFileSummary, 'staged' | 'unstaged'>,
+  /**
+   * Per-path churn already read in ONE `diff --numstat HEAD` for the whole
+   * workspace. When it carries this file, the two per-file subprocesses below
+   * are skipped. Omitted by single-file callers, where batching buys nothing.
+   */
+  churnByPath?: Readonly<Record<string, WorkspaceChurnFileStat>>
 ): DiffFileSummary {
   const baseSummary: DiffFileSummary = {
     path: displayPath,
@@ -779,7 +789,18 @@ function buildCurrentFileSummary(
   } else if (status === 'modified' || status === 'deleted' || status === 'renamed') {
     const gitCwd = repoRoot || workspace
     const gitPath = repoRoot ? repoPath : displayPath
-    const exactCounts = countGitFileDiffLines(gitCwd, gitPath)
+    // `diff HEAD` collapses index and worktree into one number, which is
+    // exactly the sum `countGitFileDiffLines` builds from its two subprocesses
+    // — so a batched hit is the same answer for two fewer spawns. A path the
+    // batch does not carry falls back to the pair rather than guessing zero:
+    // renames key the NEW path, git quotes paths with special or non-ASCII
+    // characters, and an unborn HEAD yields no batch at all. Slower, never wrong.
+    const batchedChurn = churnByPath?.[gitPath]
+    const exactCounts = batchedChurn
+      ? batchedChurn.binary
+        ? { additions: undefined, deletions: undefined }
+        : { additions: batchedChurn.additions, deletions: batchedChurn.deletions }
+      : countGitFileDiffLines(gitCwd, gitPath)
     additions = exactCounts.additions
     deletions = exactCounts.deletions
     const unstagedDiff = readGitDiffPreview(gitCwd, [
@@ -889,6 +910,27 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
 
   const statusEntries = parseGitStatusZ(statusOut)
 
+  // ONE numstat read for every tracked file, hoisted out of the per-file path.
+  // The pair it replaces cost two subprocesses PER FILE, measured 2026-08-20 at
+  // ~50 ms of blocked main thread per file on this repo (6400 tracked files) —
+  // and the clean-tree floor matched the with-content cost, so the expense is
+  // git process STARTUP, not diff work. Fewer spawns is the only lever that
+  // moves it. `sampleWorkspaceChurn` below already reads churn exactly this way
+  // and documents the same reasoning; this brings the per-file path in line.
+  // Measured end to end: getWorkspaceDiff over 20 modified files 1879 -> 1006 ms.
+  const batchedChurn = await spawnGit(scope.repoRoot, [
+    'diff',
+    '--numstat',
+    '--no-ext-diff',
+    '--no-textconv',
+    'HEAD',
+    ...pathspec
+  ])
+  // Failure — most often an unborn HEAD with nothing to diff against — leaves
+  // this undefined, and every file falls back to its own pair. The batch is an
+  // optimisation; the per-file path stays the correctness path.
+  const churnByPath = batchedChurn.code === 0 ? parseNumstatByPath(batchedChurn.stdout) : undefined
+
   const summaries = statusEntries.flatMap((entry) => {
     const displayPath = repoPathToWorkspacePath(entry.filePath, scope.workspacePrefix)
     if (!displayPath) return []
@@ -899,7 +941,8 @@ export async function getWorkspaceDiff(workspace: string): Promise<{
         entry.filePath,
         displayPath,
         classifyStatus(entry.statusCode),
-        { staged: entry.staged, unstaged: entry.unstaged }
+        { staged: entry.staged, unstaged: entry.unstaged },
+        churnByPath
       )
     ]
   })
