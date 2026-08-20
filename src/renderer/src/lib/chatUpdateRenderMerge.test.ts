@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
-import { mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
+import { coalescePendingChatUpdateRender, mergeChatUpdatedForRender } from './chatUpdateRenderMerge'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '1' }
@@ -44,5 +44,48 @@ describe('mergeChatUpdatedForRender', () => {
 
     expect(merged.messages).toHaveLength(1)
     expect(merged.messages[0].content).toBe('longer live answer')
+  })
+})
+
+describe('coalescePendingChatUpdateRender', () => {
+  it('keeps transcript dirt sticky when metadata arrives before the frame flush', () => {
+    const live = chat([message('a', 'old')])
+    const closeout: ChatMessage = {
+      id: 'closeout',
+      role: 'system',
+      content: '',
+      timestamp: '2',
+      metadata: { kind: 'taskWraithCloseout' }
+    }
+    const transcriptMessages = [message('a', 'old'), closeout]
+    const transcriptDelivery = chat(transcriptMessages)
+    const metadataDelivery = {
+      ...chat(transcriptMessages),
+      title: 'Newest metadata'
+    }
+
+    const first = coalescePendingChatUpdateRender(undefined, {
+      chat: transcriptDelivery,
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+    const pending = coalescePendingChatUpdateRender(first, {
+      chat: metadataDelivery,
+      messagesChanged: false,
+      hasActiveRun: true,
+      hadRecentRun: false
+    })
+    const merged = mergeChatUpdatedForRender(pending.chat, {
+      liveChat: live,
+      messagesChanged: pending.messagesChanged,
+      hasActiveRun: pending.hasActiveRun,
+      hadRecentRun: pending.hadRecentRun
+    })
+
+    expect(pending.chat).toBe(metadataDelivery)
+    expect(pending.messagesChanged).toBe(true)
+    expect(merged.title).toBe('Newest metadata')
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout'])
   })
 })

@@ -25,6 +25,7 @@ import { rawLogPayloadForStringify } from './lib/rawLogPayload'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import {
+  coalescePendingChatUpdateRender,
   mergeChatUpdatedForRender,
   type PendingChatUpdateRender
 } from './lib/chatUpdateRenderMerge'
@@ -12665,12 +12666,16 @@ function App(): React.JSX.Element {
           // queueing the exact accepted snapshot is enough for ACK. The live
           // transcript merge and React state writes run in the existing rAF
           // coalescer, so prompt input is not serialized behind them.
-          pendingMainChatUpdatesRef.current.set(chat.appChatId, {
-            chat,
-            messagesChanged: previousBaseline?.chat.messages !== chat.messages,
-            hasActiveRun,
-            hadRecentRun
-          })
+          const pendingRender = pendingMainChatUpdatesRef.current.get(chat.appChatId)
+          pendingMainChatUpdatesRef.current.set(
+            chat.appChatId,
+            coalescePendingChatUpdateRender(pendingRender, {
+              chat,
+              messagesChanged: previousBaseline?.chat.messages !== chat.messages,
+              hasActiveRun,
+              hadRecentRun
+            })
+          )
           scheduleCoalescedChatFlush(chat.appChatId)
           if (
             currentChatIdRef.current === chat.appChatId &&

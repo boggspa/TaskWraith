@@ -11,6 +11,25 @@ export interface PendingChatUpdateRender {
   hadRecentRun: boolean
 }
 
+/**
+ * Fold one accepted transport delivery into the not-yet-rendered frame.
+ *
+ * `messagesChanged` is measured against the transport baseline, but the
+ * pending slot is scoped to the render baseline. Once any accepted delivery
+ * changes the transcript, a later metadata-only delivery must not clear that
+ * evidence before the frame drains. Keep the newest canonical chat and live
+ * run state while treating transcript dirt as a monotone bit for the whole
+ * unrendered window.
+ */
+export function coalescePendingChatUpdateRender(
+  previous: PendingChatUpdateRender | undefined,
+  next: PendingChatUpdateRender
+): PendingChatUpdateRender {
+  return previous?.messagesChanged === true && next.messagesChanged === false
+    ? { ...next, messagesChanged: true }
+    : next
+}
+
 export interface ChatUpdateRenderMergeOptions {
   liveChat?: ChatRecord | null
   messagesChanged: boolean
