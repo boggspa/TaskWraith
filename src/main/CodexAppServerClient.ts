@@ -513,7 +513,24 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
       '-c',
       `mcp_servers.TaskWraith.args=[${args}]`,
       '-c',
-      `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`
+      `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`,
+      // Codex refuses any MCP tool call that needs its approval when
+      // `approval_policy` is `never` ("MCP tool call requires approval, but
+      // approval policy is never", core/src/mcp_tool_call.rs) and offers no
+      // retry. A Full WS Access / Full Access seat resolves to exactly that
+      // policy via codexApprovalPolicyForMode, and the app-server transport
+      // carries only applyPatchApproval / execCommandApproval — there is no
+      // MCP approval RPC for TaskWraith to answer. Without this the brokered
+      // tools are unreachable on precisely the most-elevated presets.
+      //
+      // `auto` is safe because it does not widen anything: every TaskWraith
+      // tool call still routes through requestAgenticServiceApproval and is
+      // recorded in the Approval Ledger. This only stops codex double-gating
+      // a call TaskWraith already governs. Deliberately NOT applied to user
+      // MCP servers below — those have no such mediation. Enum is
+      // auto|prompt|writes|approve (verified against codex-cli 0.148.0).
+      '-c',
+      `mcp_servers.TaskWraith.default_tools_approval_mode="auto"`
     )
   }
   for (const server of config.userMcpServers ?? []) {

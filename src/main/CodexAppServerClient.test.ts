@@ -176,9 +176,9 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     expect(buildCodexTaskWraithMcpArgs({ ...makeConfig(), enabled: false })).toEqual([])
   })
 
-  it('emits three -c flag pairs in command/args/env order when enabled', () => {
+  it('emits four -c flag pairs in command/args/env/approval order when enabled', () => {
     const args = buildCodexTaskWraithMcpArgs(makeConfig())
-    expect(args).toHaveLength(6)
+    expect(args).toHaveLength(8)
     expect(args[0]).toBe('-c')
     expect(args[1]).toBe(
       'mcp_servers.TaskWraith.command="/Applications/TaskWraith.app/Contents/MacOS/TaskWraith"'
@@ -189,6 +189,45 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     )
     expect(args[4]).toBe('-c')
     expect(args[5]).toBe('mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "codex" }')
+  })
+
+  it('marks the TaskWraith server auto-approved so approval_policy=never cannot strand it', () => {
+    // Codex 0.148 rejects any MCP tool call that needs approval when
+    // `approval_policy` is `never` — "MCP tool call requires approval, but
+    // approval policy is never" (core/src/mcp_tool_call.rs), with no retry.
+    // A Full WS Access / Full Access codex seat resolves to exactly that
+    // policy (codexApprovalPolicyForMode), which stranded a live ensemble
+    // worker: TaskWraith__run_shell_command refused even `git status --short`
+    // and TaskWraith__apply_patch refused an in-workspace patch.
+    //
+    // The app-server transport exposes only applyPatchApproval and
+    // execCommandApproval, so TaskWraith cannot answer a codex-side MCP
+    // approval at all. `auto` is therefore the only workable value: the
+    // brokered tools are already mediated by TaskWraith's own permission gate
+    // and recorded in the Approval Ledger, so codex must not double-gate them.
+    // Native codex tools keep the sandbox and are unaffected.
+    const args = buildCodexTaskWraithMcpArgs(makeConfig())
+    expect(args).toContain('mcp_servers.TaskWraith.default_tools_approval_mode="auto"')
+  })
+
+  it('never auto-approves user-supplied MCP servers', () => {
+    // Only the TaskWraith broker earns the auto stamp — its calls route back
+    // through requestAgenticServiceApproval. A user's own server has no such
+    // mediation, so it keeps codex's default approval behaviour.
+    const args = buildCodexTaskWraithMcpArgs(
+      makeConfig({
+        userMcpServers: [
+          { serverName: 'usertool', transport: 'stdio', command: '/bin/true', args: [] }
+        ]
+      })
+    )
+    // Guard against the assertion going vacuous: the user server must really
+    // be in the argv, just without the auto-approval stamp.
+    expect(args).toContain('mcp_servers.usertool.command="/bin/true"')
+    expect(args).not.toContain('mcp_servers.usertool.default_tools_approval_mode="auto"')
+    expect(args.filter((arg) => arg.includes('default_tools_approval_mode'))).toEqual([
+      'mcp_servers.TaskWraith.default_tools_approval_mode="auto"'
+    ])
   })
 
   it('TOML-escapes embedded backslashes and double quotes', () => {
