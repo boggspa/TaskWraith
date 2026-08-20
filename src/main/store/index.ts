@@ -57,6 +57,7 @@ import {
 } from './ChatUpdateProjectionTracker'
 import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
+import { readRunEventLedgerHead } from './RunEventLedgerHead'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
 export type {
   UsageHistoryMutationHold,
@@ -210,8 +211,7 @@ import {
   createRunEventRecord,
   createRunEventReplay,
   filterRunEvents,
-  lastRunEventHash,
-  nextRunEventSequence,
+  RUN_EVENT_EMPTY_HASH,
   parseRunEventLine,
   safeRunEventFileName,
   serializeRunEventRecord
@@ -295,6 +295,7 @@ import { createProductCrashRecord, filterProductCrashRecords } from '../ProductO
 import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
 import {
+  MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE,
   TOOL_DETAIL_EXTERNALIZATION_GENERATION,
   authoredMutationMentionsActivityIds,
   externalizeToolActivityDetails,
@@ -7119,7 +7120,8 @@ export class AppStore {
         (runId, activity) => detailWriter.stage(runId, activity),
         {
           previousChat: previousChatForFeedback,
-          readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref)
+          readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
+          maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
         }
       )
       const checkpoints = detailWriter.commit()
@@ -11835,11 +11837,15 @@ export class AppStore {
     const filePath = runEventFilePath(input.runId)
     const cachedSequence = runEventSequenceCache.get(input.runId)
     const cachedHash = runEventHashCache.get(input.runId)
-    const existingEvents =
-      cachedSequence !== undefined && cachedHash !== undefined ? [] : readRunEventFile(filePath)
+    // Seek the ledger's head rather than reading it: an append needs two
+    // scalars, and these files reach a gigabyte. See RunEventLedgerHead.
+    const ledgerHead =
+      cachedSequence !== undefined && cachedHash !== undefined
+        ? null
+        : readRunEventLedgerHead(filePath)
     const sequence =
-      cachedSequence !== undefined ? cachedSequence + 1 : nextRunEventSequence(existingEvents)
-    const previousHash = cachedHash || lastRunEventHash(existingEvents)
+      cachedSequence !== undefined ? cachedSequence + 1 : (ledgerHead?.sequence ?? 0) + 1
+    const previousHash = cachedHash || ledgerHead?.hash || RUN_EVENT_EMPTY_HASH
     const settings = this.getSettings()
     const artifacts = settings.storeRawEvents ? appendRunStreamArtifact(input, sequence) : undefined
     const record = createRunEventRecord(input, sequence, {
