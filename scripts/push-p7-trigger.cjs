@@ -91,6 +91,18 @@ function loadJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'))
 }
 
+function explicitUserDataPath(rawValue) {
+  const raw = String(rawValue || '').trim()
+  if (!raw || !path.isAbsolute(raw)) {
+    throw new Error('P7 userData path must be an explicit bounded absolute path')
+  }
+  const resolved = path.resolve(raw)
+  if (resolved === path.parse(resolved).root) {
+    throw new Error('P7 userData path must be an explicit bounded absolute path')
+  }
+  return resolved
+}
+
 function selectedPhone(pairing, requestedPairId) {
   const devices = Array.isArray(pairing?.devices) ? pairing.devices : []
   const candidates = devices
@@ -107,10 +119,7 @@ async function runElectronTrigger(env = process.env) {
   if (env.TASKWRAITH_P7_CONFIRMED !== '1') {
     throw new Error('P7 trigger requires TASKWRAITH_P7_CONFIRMED=1')
   }
-  const userDataPath = path.resolve(String(env.TASKWRAITH_P7_USER_DATA_PATH || ''))
-  if (!path.isAbsolute(userDataPath) || userDataPath === path.parse(userDataPath).root) {
-    throw new Error('P7 userData path must be an explicit bounded absolute path')
-  }
+  const userDataPath = explicitUserDataPath(env.TASKWRAITH_P7_USER_DATA_PATH)
   const identityPath = path.join(userDataPath, 'bridge', 'remote-mac-identity.json')
   const pairingPath = path.join(userDataPath, 'bridge', 'remote-pairing.json')
   const settingsPath = path.join(userDataPath, 'settings.json')
@@ -171,6 +180,7 @@ async function runElectronTrigger(env = process.env) {
 
 module.exports = {
   buildTrigger,
+  explicitUserDataPath,
   ownerApnsConfigured,
   pairIdFromIdentityPubKey,
   relayHttpBase,
@@ -179,7 +189,8 @@ module.exports = {
   triggerSigningString
 }
 
-if (require.main === module) {
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : ''
+if (require.main === module || invokedPath === __filename) {
   runElectronTrigger().catch((error) => {
     process.stderr.write(
       `P7 trigger failed: ${error instanceof Error ? error.message : String(error)}\n`

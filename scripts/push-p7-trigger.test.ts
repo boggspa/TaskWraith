@@ -16,6 +16,7 @@ const triggerHarness = require('./push-p7-trigger.cjs') as {
       nonce: string
     }
   ) => Record<string, unknown>
+  explicitUserDataPath: (raw: string | undefined) => string
   ownerApnsConfigured: (settings: unknown) => boolean
   pairIdFromIdentityPubKey: (key: string) => string
   relayHttpBase: (url: string) => string
@@ -72,6 +73,17 @@ describe('push P7 trigger harness', () => {
     expect(triggerHarness.relayHttpBase('ws://127.0.0.1:8789')).toBe('http://127.0.0.1:8789')
     expect(() => triggerHarness.relayHttpBase('https://user:secret@push.example')).toThrow(
       /credentials/i
+    )
+  })
+
+  it('requires an explicit bounded absolute sending profile', () => {
+    expect(() => triggerHarness.explicitUserDataPath(undefined)).toThrow(/explicit bounded/)
+    expect(() => triggerHarness.explicitUserDataPath('relative/profile')).toThrow(
+      /explicit bounded/
+    )
+    expect(() => triggerHarness.explicitUserDataPath('/')).toThrow(/explicit bounded/)
+    expect(triggerHarness.explicitUserDataPath('/tmp/taskwraith-p7-sender')).toBe(
+      '/tmp/taskwraith-p7-sender'
     )
   })
 })
