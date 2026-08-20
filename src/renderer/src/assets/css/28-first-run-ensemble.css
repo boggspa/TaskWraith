@@ -1,0 +1,134 @@
+/* First-run Ensemble sample. This stays in its own shard so onboarding copy
+ * can evolve without growing the already-large theme override sheet. */
+.first-run-ensemble-task {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid
+    color-mix(in srgb, var(--accent, #5a8cff) 34%, var(--surface-border, rgba(255, 255, 255, 0.1)));
+  border-radius: 12px;
+  background: color-mix(
+    in srgb,
+    var(--accent, #5a8cff) 7%,
+    var(--surface-2, rgba(255, 255, 255, 0.035))
+  );
+}
+
+.first-run-ensemble-task-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.first-run-ensemble-task-heading h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.94em;
+  font-weight: 650;
+}
+
+.first-run-ensemble-task-heading p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.86em;
+  line-height: 1.4;
+}
+
+.first-run-ensemble-task-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--success, #4ade80) 42%, transparent);
+  border-radius: 999px;
+  color: var(--success, #4ade80);
+  font-size: 0.7em;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.first-run-ensemble-task-setup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 18px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  line-height: 1.4;
+}
+
+.first-run-ensemble-task-details {
+  min-width: 0;
+}
+
+.first-run-ensemble-task-details summary {
+  width: fit-content;
+  color: var(--accent, #5a8cff);
+  cursor: pointer;
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.first-run-ensemble-task-prompt {
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-1, #1c1c20) 76%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.75em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.first-run-ensemble-task-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.first-run-ensemble-task-copy {
+  padding: 6px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent, #5a8cff) 62%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent, #5a8cff) 18%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.8em;
+  font-weight: 650;
+}
+
+.first-run-ensemble-task-copy:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #5a8cff) 28%, transparent);
+}
+
+.first-run-ensemble-task-copy:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.first-run-ensemble-task-hint {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 0.78em;
+  line-height: 1.35;
+}
+
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .first-run-ensemble-task {
+  background: color-mix(in srgb, var(--accent, #5a8cff) 5%, var(--surface-2, #fff));
+}
+
+@media (max-width: 560px) {
+  .first-run-ensemble-task-heading {
+    flex-direction: column;
+  }
+
+  .first-run-ensemble-task-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

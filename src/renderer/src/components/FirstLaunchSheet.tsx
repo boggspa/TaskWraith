@@ -30,6 +30,7 @@ import { useUsageSummary } from '../lib/usageSummaryStore'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
+import { FirstRunEnsembleTaskCard } from './FirstRunEnsembleTaskCard'
 import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
@@ -900,6 +901,7 @@ export function FirstLaunchSheet({
               <span>Turn / Continuous in the composer</span>
             </div>
           </div>
+          <FirstRunEnsembleTaskCard />
         </section>
 
         <section className="first-launch-sheet-section">
