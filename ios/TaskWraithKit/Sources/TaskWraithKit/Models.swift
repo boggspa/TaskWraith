@@ -998,6 +998,13 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// so the Notification Service Extension can derive the static shared secret
     /// to decrypt that host's rich pushes. Wire key `macAgreePub`.
     public let macAgreePub: String?
+    /// Whether this authenticated host currently has a project-operated Tier-2
+    /// APNs gateway configured. False clears a previously advertised URL;
+    /// absent preserves compatibility with older hosts.
+    public let pushGatewayConfigured: Bool?
+    /// Base URL for that gateway. The phone, not the Mac, signs and submits its
+    /// device-token registration. Wire key `pushGatewayUrl`.
+    public let pushGatewayUrl: String?
     /// Workflow action acks (`workflowSetEnabled` / `workflowRunNow`): the
     /// acted-on workflow id, the Mac-final enabled state, and — for run-now —
     /// the materialized scheduled task + workflow execution ids.

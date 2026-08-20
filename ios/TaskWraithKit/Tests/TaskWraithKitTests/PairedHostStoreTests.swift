@@ -187,6 +187,19 @@ struct PairedHostStoreTests {
         #expect(restored == original)
     }
 
+    @Test("project push gateway survives pairing updates and can be cleared deliberately")
+    func pushGatewayPersistence() throws {
+        let original = host(1).withPushGatewayUrl("wss://push.taskwraith.example")
+        let restored = try #require(
+            PairedHostsCodec.decode(
+                v2Data: PairedHostsCodec.encode(PairedHostsDocument().upserting(original)),
+                legacyData: nil
+            ).selectedHost)
+        #expect(restored.pushGatewayUrl == "wss://push.taskwraith.example")
+        #expect(restored.withMacAgreePub("agree-key").pushGatewayUrl == restored.pushGatewayUrl)
+        #expect(restored.withPushGatewayUrl(nil).pushGatewayUrl == nil)
+    }
+
     // ── UserDefaults-backed shell (isolated suite domain) ────────────────────
 
     private func freshDefaults() -> UserDefaults {

@@ -1571,6 +1571,7 @@ describe('MainProcessActionExecutor.executeRegisterApnsToken', () => {
       pairID: 'pair-1',
       env: 'production',
       macAgreePub: 'mac-agreement-public-key',
+      pushGatewayConfigured: true,
       pushGatewayUrl: 'https://push.taskwraith.example'
     })
   })

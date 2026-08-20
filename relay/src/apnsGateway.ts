@@ -221,7 +221,10 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
     const entry = table.get(pairID, request.macIdentityPubKey)
     if (!entry) return
     // Both trigger reasons are finish events; honor the signed opt-out.
-    if (!entry.notifyFinishedTurns) return
+    if (!entry.notifyFinishedTurns) {
+      log('[apns-gateway] trigger suppressed notifyFinishedTurns=false')
+      return
+    }
     const sender = config.sender
     if (!sender) {
       log('[apns-gateway] trigger accepted with no sender configured (dropped)')
@@ -247,7 +250,11 @@ export function createApnsGateway(config: ApnsGatewayConfig = {}): ApnsGateway {
         },
         collapseId: request.collapseId
       })
-      if (!outcome.delivered && /^Unregistered$/i.test(outcome.reason ?? '')) {
+      if (outcome.delivered) {
+        // P7 acceptance receipt: content-free and device-free. It proves Apple
+        // accepted this relay send without logging token, pair, thread, or run.
+        log(`[apns-gateway] send delivered env=${entry.env}`)
+      } else if (/^Unregistered$/i.test(outcome.reason ?? '')) {
         // Apple's authoritative dead-token verdict — the ONLY reap signal.
         table.reapUnregistered(pairID, request.macIdentityPubKey)
       } else if (!outcome.delivered && /^BadDeviceToken$/i.test(outcome.reason ?? '')) {

@@ -51,6 +51,19 @@ interface TargetChatState {
    * full ChatRecord beside pending.
    */
   baselineChat?: ChatRecord
+  /**
+   * Persistence revision of the ACKNOWLEDGED generation, captured as a scalar.
+   *
+   * It must NOT be read back off `baselineChat`: that is the store's live cache
+   * entry, and `AppStore.saveChat` writes the new revision into its caller's
+   * record in place. A `getChat()`-then-save that is never broadcast therefore
+   * advanced this watermark to a generation no delivery ever carried, and every
+   * later broadcast at or below it was silently discarded by the staleness
+   * guard in `enqueue` — a frozen transcript with perfectly healthy counters.
+   * Outlives `baselineChat`, which is dropped for memory once the next payload
+   * is in flight; cleared with `acknowledged`, whose generation it describes.
+   */
+  baselineRevision?: number
   inFlight?: InFlightChatUpdate
   pending?: PendingChatUpdate
   timer?: ReturnType<typeof setTimeout>
@@ -155,10 +168,7 @@ function newestKnownPersistenceRevision(state: TargetChatState): number | undefi
   if (pendingRevision !== undefined) return pendingRevision
   const inFlightRevision = state.inFlight?.producer?.state.persistenceRevision
   if (inFlightRevision !== undefined) return inFlightRevision
-  const baselineRevision = state.baselineChat?.persistenceRevision
-  return Number.isSafeInteger(baselineRevision) && (baselineRevision ?? -1) >= 0
-    ? baselineRevision!
-    : undefined
+  return state.baselineRevision
 }
 
 function toPatchBaseline(
@@ -325,6 +335,13 @@ export class ChatUpdateDeliveryCoordinator {
       // scan the full transcript again on the main event loop.
       state.acknowledged = inFlight.compactBaseline
       state.baselineChat = inFlight.chat
+      // Scalar copy, taken now. See TargetChatState.baselineRevision.
+      const ackedRevision =
+        inFlight.producer?.state.persistenceRevision ?? inFlight.chat.persistenceRevision
+      state.baselineRevision =
+        Number.isSafeInteger(ackedRevision) && (ackedRevision ?? -1) >= 0
+          ? ackedRevision
+          : undefined
       state.consecutiveRejects = 0
     } else {
       // Degradation: the renderer could not apply the patch (or the revision /
@@ -333,6 +350,7 @@ export class ChatUpdateDeliveryCoordinator {
       if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
       state.acknowledged = undefined
       state.baselineChat = undefined
+      state.baselineRevision = undefined
       state.consecutiveRejects += 1
       // One immediate snapshot retry repairs a missing/stale renderer base.
       // If that snapshot is also rejected, wait for a future producer update
@@ -490,6 +508,7 @@ export class ChatUpdateDeliveryCoordinator {
           if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
           state.acknowledged = undefined
           state.baselineChat = undefined
+          state.baselineRevision = undefined
           state.lastTouchedAt = this.now()
           this.maybeSend(state)
           this.pruneTarget(state.target.id)
@@ -521,5 +540,6 @@ export class ChatUpdateDeliveryCoordinator {
     if (state.inFlight) this.deliveryIndex.delete(state.inFlight.deliveryId)
     state.baselineChat = undefined
     state.acknowledged = undefined
+    state.baselineRevision = undefined
   }
 }

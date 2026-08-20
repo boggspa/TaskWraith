@@ -81,7 +81,8 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
             identityStore: KeychainIdentitySeedStore(
                 account: "remote-identity-seed",
                 accessGroup: TWPushKeyAccess.keychainAccessGroup),
-            pairingStore: UserDefaultsPairedHostStore(defaults: sharedDefaults))
+            pairingStore: UserDefaultsPairedHostStore(defaults: sharedDefaults),
+            pushGatewayDefaults: sharedDefaults)
         super.init()
     }
 

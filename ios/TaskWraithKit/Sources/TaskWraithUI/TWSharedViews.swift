@@ -8083,6 +8083,34 @@ public struct AppSettingsSheet: View {
                     detail: "Reconnect and wake flows reuse the active host stored on this device."
                 )
             }
+            SettingsCard(title: "Finish notifications", systemImage: "bell.badge") {
+                Toggle(
+                    isOn: Binding(
+                        get: { model.notifyFinishedTurns },
+                        set: { model.setNotifyFinishedTurns($0) })
+                ) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notify when a task finishes")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(TWTheme.textPrimary)
+                        Text(
+                            "Applies to the project-operated relay while this app is closed. The phone signs the preference; message content never enters the relay."
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .tint(TWTheme.statusSuccess)
+                SettingsValueRow(
+                    title: "Project gateway", value: completionPushGatewayStatusLabel)
+                if completionPushGatewayCanRetry {
+                    Button("Retry gateway registration") {
+                        model.retryProjectPushGatewayRegistration()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
             SettingsCard(title: "Paired devices", systemImage: "iphone.and.arrow.forward") {
                 if model.pairedHosts.isEmpty {
                     SettingsInfoRow(
@@ -8101,6 +8129,32 @@ public struct AppSettingsSheet: View {
                     detail: "Use the pairing flow for host switching. Revoke device access from the Mac when removing trust."
                 )
             }
+        }
+    }
+
+    private var completionPushGatewayStatusLabel: String {
+        switch model.completionPushGatewayStatus {
+        case .directOnly:
+            return "Not advertised"
+        case .registering(let totalHosts):
+            return totalHosts == 1 ? "Registering…" : "Registering \(totalHosts) hosts…"
+        case .registered(let hosts):
+            return hosts == 1 ? "Ready" : "Ready on \(hosts) hosts"
+        case .optedOut(let hosts):
+            return hosts == 1 ? "Opted out" : "Opted out on \(hosts) hosts"
+        case .partial(let registered, let total, _):
+            return "Partial · \(registered)/\(total) hosts"
+        case .failed:
+            return "Registration failed"
+        }
+    }
+
+    private var completionPushGatewayCanRetry: Bool {
+        switch model.completionPushGatewayStatus {
+        case .partial, .failed:
+            return true
+        default:
+            return false
         }
     }
 

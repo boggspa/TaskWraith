@@ -2534,6 +2534,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
             pairID: action.pairID,
             env: action.env,
             macAgreePub: result.macAgreePub,
+            pushGatewayConfigured: Boolean(result.pushGatewayUrl),
             pushGatewayUrl: result.pushGatewayUrl
           }
         }
