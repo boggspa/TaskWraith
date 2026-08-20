@@ -6,9 +6,7 @@ import {
   shouldMarkChangelogSeenOnDismiss
 } from './useChangelog'
 
-const snapshot = (
-  overrides: Partial<ProductChangelogSnapshot> = {}
-): ProductChangelogSnapshot => ({
+const snapshot = (overrides: Partial<ProductChangelogSnapshot> = {}): ProductChangelogSnapshot => ({
   currentVersion: '1.7.0',
   ...overrides
 })
@@ -25,6 +23,12 @@ describe('resolveSidebarQuickUpdateAction', () => {
     expect(resolveSidebarQuickUpdateAction(undefined)).toBe('none')
     expect(resolveSidebarQuickUpdateAction('idle')).toBe('none')
     expect(resolveSidebarQuickUpdateAction('checking')).toBe('none')
+  })
+
+  it('opens the reviewed journey instead of one-click launching an identity handoff', () => {
+    expect(resolveSidebarQuickUpdateAction('available', true)).toBe('openChangelog')
+    expect(resolveSidebarQuickUpdateAction('downloaded', true)).toBe('openChangelog')
+    expect(resolveSidebarQuickUpdateAction('error', true)).toBe('openChangelog')
   })
 })
 

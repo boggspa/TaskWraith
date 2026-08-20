@@ -28,7 +28,8 @@ import {
   protocol,
   session,
   Tray,
-  systemPreferences
+  systemPreferences,
+  net
 } from 'electron'
 import type {
   BrowserWindowConstructorOptions,
@@ -570,6 +571,10 @@ import {
   UpdateService,
   type UpdateStateSnapshot
 } from './UpdateService'
+import {
+  createIdentityHandoffBootstrap,
+  reconcileReleaseIdentityUpdateChannel
+} from './IdentityHandoffBootstrap'
 import {
   ActivityReportingService,
   bundledActivityReportingEndpoint
@@ -51556,10 +51561,22 @@ if (isGeminiMcpBridgeProcess) {
     //                              is on (useful for local feed testing)
     //   unset                    → enabled when app.isPackaged + user setting
     //                              is on + channel != 'debug'
+    const identityHandoff = createIdentityHandoffBootstrap({
+      appPath: app.getAppPath(),
+      currentVersion: app.getVersion(),
+      userDataPath: app.getPath('userData'),
+      manifestPath: join(process.resourcesPath, 'identity-handoff.json'),
+      envOverride: process.env.TASKWRAITH_IDENTITY_HANDOFF,
+      fetcher: (url, init) => net.fetch(url, init),
+      quit: () => app.quit(),
+      log: (line) => console.log(line)
+    })
     const updateService = new UpdateService({
       log: (line) => {
         console.log(line)
-      }
+      },
+      stableUpdateChannel: identityHandoff.distribution.stableUpdateChannel,
+      identityHandoff: identityHandoff.service
     })
     updateServiceRef = updateService
     const autoUpdateForce = process.env.TASKWRAITH_AUTO_UPDATE
@@ -51585,7 +51602,13 @@ if (isGeminiMcpBridgeProcess) {
     if (Object.keys(startupManagedPatch).length > 0) {
       AppStore.updateSettings(startupManagedPatch)
     }
-    const initialSettings = managedPolicyService.effectiveSettings(AppStore.getSettings())
+    let initialSettings = managedPolicyService.effectiveSettings(AppStore.getSettings())
+    initialSettings = reconcileReleaseIdentityUpdateChannel(
+      identityHandoff,
+      initialSettings,
+      (updateChannel) => AppStore.updateSettings({ updateChannel }),
+      () => managedPolicyService.effectiveSettings(AppStore.getSettings())
+    )
     // Publish the user's extra CLI directories before anything resolves a
     // binary. AppStore.updateSettings republishes on every later write; this is
     // the boot-time seed, without which the setting would only take effect
@@ -52040,7 +52063,13 @@ if (isGeminiMcpBridgeProcess) {
             sanitizedPatch.updateChannel !== undefined ||
             sanitizedPatch.autoUpdateEnabled !== undefined
           ) {
-            const settings = AppStore.getSettings()
+            let settings = AppStore.getSettings()
+            settings = reconcileReleaseIdentityUpdateChannel(
+              identityHandoff,
+              settings,
+              (updateChannel) => AppStore.updateSettings({ updateChannel }),
+              () => AppStore.getSettings()
+            )
             updateService.configure({
               channel: settings.updateChannel,
               enabled: resolveAutoUpdateEnabled(settings)

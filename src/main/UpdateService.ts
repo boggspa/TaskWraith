@@ -14,6 +14,7 @@ import {
   windowsUpdateChannelForHost,
   type UpdateArchitectureCompatibility
 } from './UpdateArchitecture'
+import type { IdentityHandoffService, IdentityHandoffSnapshot } from './IdentityHandoffService'
 
 /**
  * UpdateService — Phase G2 wrapper around `electron-updater`.
@@ -84,6 +85,12 @@ export interface UpdateStateSnapshot {
   lastCheckedAt?: string
   /** A user requested restart once the app has no live work. */
   restartPending?: boolean
+  /**
+   * Present only for the explicit 1.9.9 → 0.1.0 app-identity bridge. The
+   * ordinary updater never compares those versions; the signed beta build
+   * carries a hash-pinned installer inventory instead.
+   */
+  identityHandoff?: IdentityHandoffSnapshot
 }
 
 type Listener = (snapshot: UpdateStateSnapshot) => void
@@ -120,11 +127,35 @@ export class UpdateService {
   private log: (line: string) => void
   private hostPlatform: string
   private hostArch: string
+  private stableUpdateChannel: 'latest' | 'release'
+  private identityHandoff?: Pick<
+    IdentityHandoffService,
+    'snapshot' | 'subscribe' | 'download' | 'retry' | 'launch'
+  >
+  private identityHandoffActive = false
 
-  constructor(options: { log?: (line: string) => void; platform?: string; arch?: string } = {}) {
+  constructor(
+    options: {
+      log?: (line: string) => void
+      platform?: string
+      arch?: string
+      stableUpdateChannel?: 'latest' | 'release'
+      identityHandoff?: Pick<
+        IdentityHandoffService,
+        'snapshot' | 'subscribe' | 'download' | 'retry' | 'launch'
+      >
+    } = {}
+  ) {
     this.log = options.log ?? (() => {})
     this.hostPlatform = options.platform || process.platform
     this.hostArch = options.arch || process.arch
+    this.stableUpdateChannel = options.stableUpdateChannel || 'latest'
+    this.identityHandoff = options.identityHandoff
+    this.identityHandoff?.subscribe((snapshot) => {
+      if (!this.identityHandoffActive) return
+      this.applyIdentityHandoffSnapshot(snapshot)
+      this.publish()
+    })
   }
 
   /**
@@ -138,8 +169,25 @@ export class UpdateService {
    * can still inspect the snapshot but no checks will run.
    */
   configure(args: { channel: ProductUpdateChannel; enabled: boolean }): void {
-    this.channel = args.channel
-    if (!args.enabled || args.channel === 'debug') {
+    const configuredChannel =
+      this.stableUpdateChannel === 'release' && args.channel === 'nightly' ? 'stable' : args.channel
+    this.channel = configuredChannel
+    const identityHandoff = this.identityHandoff?.snapshot()
+    // The final beta's handoff is an explicit, user-triggered product journey,
+    // not a background update check. Keep it visible even when automatic
+    // checks are disabled; it never downloads or opens anything until the user
+    // acts. Debug builds remain outside the distributed handoff.
+    if (configuredChannel !== 'debug' && identityHandoff?.active) {
+      this.identityHandoffActive = true
+      autoUpdater.autoDownload = false
+      autoUpdater.autoInstallOnAppQuit = false
+      this.stopPeriodicChecks()
+      this.applyIdentityHandoffSnapshot(identityHandoff)
+      this.publish()
+      return
+    }
+    this.identityHandoffActive = false
+    if (!args.enabled || configuredChannel === 'debug') {
       this.status = 'disabled'
       autoUpdater.autoDownload = false
       autoUpdater.autoInstallOnAppQuit = false
@@ -160,10 +208,10 @@ export class UpdateService {
     // and arm64 NSIS installers cannot safely share one latest.yml.
     autoUpdater.channel =
       this.hostPlatform === 'win32'
-        ? windowsUpdateChannelForHost(args.channel, this.hostArch)
-        : args.channel === 'nightly'
+        ? windowsUpdateChannelForHost(configuredChannel, this.hostArch, this.stableUpdateChannel)
+        : configuredChannel === 'nightly'
           ? 'beta'
-          : 'latest'
+          : this.stableUpdateChannel
     // The enabled preference permits automatic *checks*, not background
     // downloads. Once an update is found, the user must explicitly choose to
     // download it from the masthead or Settings; this also prevents a routine
@@ -181,6 +229,12 @@ export class UpdateService {
 
   /** Trigger a check immediately. Surfaces result via events. */
   async checkForUpdates(): Promise<UpdateCheckResult | null> {
+    if (this.identityHandoffActive && this.identityHandoff) {
+      this.lastCheckedAt = new Date().toISOString()
+      const phase = this.identityHandoff.snapshot().phase
+      if (phase === 'error') await this.identityHandoff.retry()
+      return null
+    }
     if (this.status === 'disabled') {
       return null
     }
@@ -206,6 +260,10 @@ export class UpdateService {
   /** Start downloading the staged update. Only valid when status is
    * `'available'`. */
   async downloadUpdate(): Promise<void> {
+    if (this.identityHandoffActive && this.identityHandoff) {
+      await this.identityHandoff.download()
+      return
+    }
     if (this.status !== 'available') return
     if (this.updateArchitecture && !this.updateArchitecture.compatible) return
     this.status = 'downloading'
@@ -221,6 +279,7 @@ export class UpdateService {
    * app — the renderer should prompt the user, and the user's quit
    * action triggers the install. */
   installOnQuit(): void {
+    if (this.identityHandoffActive) return
     if (this.status !== 'downloaded') return
     autoUpdater.autoInstallOnAppQuit = true
   }
@@ -228,6 +287,9 @@ export class UpdateService {
   /** Immediate install + restart. The renderer should confirm with the
    * user before invoking this. */
   quitAndInstall(): boolean {
+    if (this.identityHandoffActive && this.identityHandoff) {
+      return this.identityHandoff.launch()
+    }
     if (this.status !== 'downloaded') return false
     autoUpdater.autoRunAppAfterInstall = true
     try {
@@ -261,7 +323,10 @@ export class UpdateService {
       downloadProgress: this.downloadProgress,
       errorMessage: this.errorMessage,
       lastCheckedAt: this.lastCheckedAt,
-      restartPending: this.restartPending
+      restartPending: this.restartPending,
+      ...(this.identityHandoffActive && this.identityHandoff
+        ? { identityHandoff: this.identityHandoff.snapshot() }
+        : {})
     }
   }
 
@@ -335,6 +400,51 @@ export class UpdateService {
       arch: this.hostArch
     })
     return this.updateArchitecture
+  }
+
+  private applyIdentityHandoffSnapshot(snapshot: IdentityHandoffSnapshot): void {
+    this.latestVersion = snapshot.targetVersion
+    this.releaseName = 'TaskWraith Release'
+    this.releaseDate = undefined
+    this.releaseNotes =
+      'Move this beta installation to the public TaskWraith Release identity. Your existing TaskWraith profile stays in place; the installer and target identity are verified before the beta app exits.'
+    this.releasePageUrl = snapshot.supportUrl
+    this.updateArchitecture = undefined
+    this.downloadProgress =
+      snapshot.phase === 'downloading' && snapshot.totalBytes !== undefined
+        ? {
+            bytesPerSecond: 0,
+            delta: 0,
+            percent: snapshot.percent || 0,
+            transferred: snapshot.downloadedBytes || 0,
+            total: snapshot.totalBytes
+          }
+        : undefined
+    this.errorMessage = snapshot.errorMessage
+    this.restartPending = false
+    switch (snapshot.phase) {
+      case 'ready':
+        this.status = 'available'
+        break
+      case 'downloading':
+        this.status = 'downloading'
+        break
+      case 'downloaded':
+      case 'awaiting-target':
+        this.status = 'downloaded'
+        break
+      case 'error':
+      case 'blocked':
+        this.status = 'error'
+        break
+      case 'complete':
+        this.status = 'not-available'
+        break
+      case 'inactive':
+      default:
+        this.status = 'idle'
+        break
+    }
   }
 
   private clearReleaseMetadata(): void {

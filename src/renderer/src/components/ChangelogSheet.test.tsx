@@ -88,6 +88,33 @@ describe('UpdatePill', () => {
     expect(html).toContain('chat-corner-update-pill-downloading')
     expect(html).toContain('42%')
   })
+
+  it('labels the one-time identity bridge separately from an ordinary update', () => {
+    const html = renderToStaticMarkup(
+      <UpdatePill
+        snapshot={{
+          status: 'available',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          identityHandoff: {
+            active: true,
+            phase: 'ready',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json'
+          }
+        }}
+        onOpen={() => {}}
+      />
+    )
+    expect(html).toContain('Move to Release')
+    expect(html).toContain('public Release identity')
+  })
 })
 
 describe('ChangelogSheet', () => {
@@ -145,6 +172,73 @@ describe('ChangelogSheet', () => {
       />
     )
     expect(html).toContain('Restart to install')
+  })
+
+  it('shows the resumable beta-to-Release journey and exact installer action', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={{ currentVersion: '1.9.9' }}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          releaseName: 'TaskWraith Release',
+          identityHandoff: {
+            active: true,
+            phase: 'downloaded',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json',
+            instructions: 'Replace the beta app, then launch TaskWraith Release.'
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('TaskWraith Release')
+    expect(html).toContain('Release installer is verified')
+    expect(html).toContain('Replace the beta app')
+    expect(html).toContain('Open Release installer')
+  })
+
+  it('offers the support route without an inert retry action for a blocked handoff', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={{ currentVersion: '1.9.9' }}
+        updateSnapshot={{
+          status: 'error',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          releasePageUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+          errorMessage: 'Unsupported platform.',
+          identityHandoff: {
+            active: true,
+            phase: 'blocked',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json',
+            errorMessage: 'Unsupported platform.'
+          }
+        }}
+        onCheckForUpdates={() => {}}
+      />
+    )
+    expect(html).toContain('Open release')
+    expect(html).not.toContain('Resume or verify again')
   })
 
   it('falls back to bundled current-version release notes when updater metadata is missing', () => {

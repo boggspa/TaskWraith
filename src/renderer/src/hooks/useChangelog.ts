@@ -5,8 +5,15 @@ import type { UpdateStateSnapshot, UpdateStatus } from '../../../main/UpdateServ
 export type SidebarQuickUpdateAction = 'download' | 'install' | 'check' | 'openChangelog' | 'none'
 
 export function resolveSidebarQuickUpdateAction(
-  status: UpdateStatus | undefined
+  status: UpdateStatus | undefined,
+  identityHandoff = false
 ): SidebarQuickUpdateAction {
+  if (
+    identityHandoff &&
+    (status === 'available' || status === 'downloaded' || status === 'error')
+  ) {
+    return 'openChangelog'
+  }
   if (status === 'available') return 'download'
   if (status === 'downloaded') return 'install'
   if (status === 'error') return 'check'
@@ -94,7 +101,12 @@ export function useChangelog(
   }, [appVersion, changelogSnapshot])
 
   const handleSidebarQuickUpdate = useCallback(() => {
-    switch (resolveSidebarQuickUpdateAction(updateStatus.snapshot?.status)) {
+    switch (
+      resolveSidebarQuickUpdateAction(
+        updateStatus.snapshot?.status,
+        Boolean(updateStatus.snapshot?.identityHandoff)
+      )
+    ) {
       case 'download':
         void updateStatus.downloadUpdateAndRestart()
         break

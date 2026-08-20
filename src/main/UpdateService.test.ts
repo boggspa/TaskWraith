@@ -27,11 +27,51 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
   UpdateService
 } from './UpdateService'
+import type { IdentityHandoffSnapshot } from './IdentityHandoffService'
 
 function emitUpdaterEvent(name: string, payload?: unknown): void {
   const handler = mockAutoUpdater.on.mock.calls.find((call) => call[0] === name)?.[1]
   if (typeof handler === 'function') {
     handler(payload)
+  }
+}
+
+function createIdentityHandoffBridge(initialPhase: IdentityHandoffSnapshot['phase'] = 'ready') {
+  let snapshot: IdentityHandoffSnapshot = {
+    active: true,
+    phase: initialPhase,
+    handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+    sourceVersion: '1.9.9',
+    targetVersion: '0.1.0',
+    targetAppId: 'com.taskwraith.desktop',
+    targetUpdateFeedChannel: 'release',
+    supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+    evidencePath: '/profile/identity-handoff-v1/state.json',
+    totalBytes: 100,
+    downloadedBytes: initialPhase === 'downloaded' ? 100 : 0,
+    percent: initialPhase === 'downloaded' ? 100 : 0
+  }
+  const listeners = new Set<(value: IdentityHandoffSnapshot) => void>()
+  const publish = (next: Partial<IdentityHandoffSnapshot>) => {
+    snapshot = { ...snapshot, ...next }
+    for (const listener of listeners) listener(snapshot)
+  }
+  return {
+    snapshot: vi.fn(() => snapshot),
+    subscribe: vi.fn((listener: (value: IdentityHandoffSnapshot) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }),
+    download: vi.fn(async () => {
+      publish({ phase: 'downloaded', downloadedBytes: 100, percent: 100 })
+      return snapshot
+    }),
+    retry: vi.fn(async () => {
+      publish({ phase: 'ready', errorMessage: undefined, errorCode: undefined })
+      return snapshot
+    }),
+    launch: vi.fn(() => true),
+    publish
   }
 }
 
@@ -87,6 +127,72 @@ describe('UpdateService', () => {
     const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
     svc.configure({ channel: 'nightly', enabled: true })
     expect(mockAutoUpdater.channel).toBe('beta')
+  })
+
+  it('uses the isolated release feed for the public distribution identity', () => {
+    const mac = new UpdateService({
+      platform: 'darwin',
+      arch: 'arm64',
+      stableUpdateChannel: 'release'
+    })
+    mac.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('release')
+
+    const windows = new UpdateService({
+      platform: 'win32',
+      arch: 'arm64',
+      stableUpdateChannel: 'release'
+    })
+    windows.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('release-win-arm64')
+
+    windows.configure({ channel: 'nightly', enabled: true })
+    expect(windows.snapshot().channel).toBe('stable')
+    expect(mockAutoUpdater.channel).toBe('release-win-arm64')
+  })
+
+  it('surfaces the explicit identity handoff even when automatic checks are off', () => {
+    const identityHandoff = createIdentityHandoffBridge()
+    const svc = new UpdateService({ identityHandoff })
+    svc.configure({ channel: 'stable', enabled: false })
+
+    expect(svc.snapshot()).toMatchObject({
+      status: 'available',
+      enabled: true,
+      latestVersion: '0.1.0',
+      releaseName: 'TaskWraith Release',
+      identityHandoff: {
+        active: true,
+        phase: 'ready',
+        targetAppId: 'com.taskwraith.desktop'
+      }
+    })
+    expect(mockAutoUpdater.channel).toBe('latest')
+    expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it('routes handoff download, progress, and install through the custom bridge', async () => {
+    const identityHandoff = createIdentityHandoffBridge()
+    const svc = new UpdateService({ identityHandoff })
+    svc.configure({ channel: 'stable', enabled: true })
+
+    identityHandoff.publish({
+      phase: 'downloading',
+      downloadedBytes: 40,
+      percent: 40
+    })
+    expect(svc.snapshot()).toMatchObject({
+      status: 'downloading',
+      downloadProgress: { transferred: 40, total: 100, percent: 40 }
+    })
+
+    await svc.downloadUpdate()
+    expect(identityHandoff.download).toHaveBeenCalledTimes(1)
+    expect(svc.snapshot()).toMatchObject({ status: 'downloaded' })
+    expect(svc.quitAndInstall()).toBe(true)
+    expect(identityHandoff.launch).toHaveBeenCalledTimes(1)
+    expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled()
+    expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled()
   })
 
   it('wires the autoUpdater event listeners exactly once', () => {
