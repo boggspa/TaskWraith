@@ -4864,7 +4864,8 @@ input:disabled, select:disabled, textarea:disabled {
 
 /* Expander button. It sits in the row grid, so it must reset the button
  * chrome rather than inherit the platform default. */
-.run-complete-epic-subagent-more {
+.run-complete-epic-subagent-more,
+.run-complete-epic-commit-more {
   grid-column: 1 / -1;
   width: 100%;
   border: none;
@@ -4876,7 +4877,9 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .run-complete-epic-subagent-more:hover,
-.run-complete-epic-subagent-more:focus-visible {
+.run-complete-epic-subagent-more:focus-visible,
+.run-complete-epic-commit-more:hover,
+.run-complete-epic-commit-more:focus-visible {
   background: color-mix(in srgb, var(--surface-2) 60%, transparent);
   text-decoration: underline;
 }
@@ -4931,12 +4934,6 @@ input:disabled, select:disabled, textarea:disabled {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-}
-
-.run-complete-epic-overflow {
-  grid-column: 1 / -1;
-  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
-  font-style: italic;
 }
 
 .run-complete-epic-work {

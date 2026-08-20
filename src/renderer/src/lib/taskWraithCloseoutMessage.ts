@@ -1654,7 +1654,7 @@ export const CLOSEOUT_SUBAGENT_TABLE_LIMIT = 8
 /** Rows revealed per "Show more" press. */
 export const CLOSEOUT_SUBAGENT_PAGE_SIZE = 16
 
-export interface CloseoutSubagentWindow<T> {
+export interface CloseoutRowWindow<T> {
   items: T[]
   visibleCount: number
   canShowMore: boolean
@@ -1665,34 +1665,52 @@ export interface CloseoutSubagentWindow<T> {
   hiddenCount: number
 }
 
+/** Retained name for the Sub-threads card's window. */
+export type CloseoutSubagentWindow<T> = CloseoutRowWindow<T>
+
 /**
- * Paging window for the Task-complete Sub-threads table.
+ * Shared paging window for the expandable Task-complete tables.
  *
- * The card used to slice to `CLOSEOUT_SUBAGENT_TABLE_LIMIT` and print "N more
- * not shown", which told the reader that evidence existed and then refused to
- * show it — the File changes card in the same stack has always been expandable.
- * Unlike that one this has NO absolute ceiling: sub-thread counts are bounded
- * by the wave size a human authorised, so every row can be reached.
+ * Both the Sub-threads and Commits cards used to slice to their limit and
+ * print "N more not shown", which told the reader that evidence existed and
+ * then refused to show it — the File changes card in the same stack has always
+ * been expandable. Unlike that one neither has an absolute ceiling: both counts
+ * are bounded by work a human authorised, so every row can be reached.
  */
-export function buildCloseoutSubagentWindow<T>(
+function buildCloseoutRowWindow<T>(
   rows: readonly T[],
-  requestedVisibleCount = CLOSEOUT_SUBAGENT_TABLE_LIMIT
-): CloseoutSubagentWindow<T> {
+  requestedVisibleCount: number,
+  baseLimit: number,
+  pageSize: number
+): CloseoutRowWindow<T> {
   const totalCount = rows.length
   const visibleCount = Math.min(
-    Math.max(CLOSEOUT_SUBAGENT_TABLE_LIMIT, Math.floor(requestedVisibleCount) || 0),
+    Math.max(baseLimit, Math.floor(requestedVisibleCount) || 0),
     totalCount
   )
-  const nextCount = Math.min(visibleCount + CLOSEOUT_SUBAGENT_PAGE_SIZE, totalCount)
+  const nextCount = Math.min(visibleCount + pageSize, totalCount)
   return {
     items: rows.slice(0, visibleCount),
     visibleCount,
     canShowMore: nextCount > visibleCount,
-    canShowFewer: visibleCount > CLOSEOUT_SUBAGENT_TABLE_LIMIT,
+    canShowFewer: visibleCount > baseLimit,
     nextShowCount: Math.max(0, nextCount - visibleCount),
     nextCount,
     hiddenCount: Math.max(0, totalCount - visibleCount)
   }
+}
+
+/** Paging window for the Task-complete Sub-threads table. */
+export function buildCloseoutSubagentWindow<T>(
+  rows: readonly T[],
+  requestedVisibleCount = CLOSEOUT_SUBAGENT_TABLE_LIMIT
+): CloseoutRowWindow<T> {
+  return buildCloseoutRowWindow(
+    rows,
+    requestedVisibleCount,
+    CLOSEOUT_SUBAGENT_TABLE_LIMIT,
+    CLOSEOUT_SUBAGENT_PAGE_SIZE
+  )
 }
 
 export type CloseoutSubagentDelegationStatus =
@@ -1936,8 +1954,23 @@ function statusFromChildChat(child: CloseoutChildChat): CloseoutSubagentDelegati
   return null
 }
 
-/** Visible commit rows in the Task-complete epic stack (metadata keeps the rest). */
+/** Commit rows shown before the reader asks for more. */
 export const CLOSEOUT_COMMIT_TABLE_LIMIT = 8
+/** Commit rows revealed per "Show more" press. */
+export const CLOSEOUT_COMMIT_PAGE_SIZE = 16
+
+/** Paging window for the Task-complete Commits table. */
+export function buildCloseoutCommitWindow<T>(
+  rows: readonly T[],
+  requestedVisibleCount = CLOSEOUT_COMMIT_TABLE_LIMIT
+): CloseoutRowWindow<T> {
+  return buildCloseoutRowWindow(
+    rows,
+    requestedVisibleCount,
+    CLOSEOUT_COMMIT_TABLE_LIMIT,
+    CLOSEOUT_COMMIT_PAGE_SIZE
+  )
+}
 
 /** Per-file detail harvested from git --stat output in commit receipts. */
 export type CloseoutCommitFile = {

@@ -5,6 +5,11 @@ import {
   CloseoutFileChangesSection,
   closeoutFileChangeWindow
 } from './CloseoutFileChangesSection'
+import {
+  buildCloseoutCommitWindow,
+  CLOSEOUT_COMMIT_PAGE_SIZE,
+  CLOSEOUT_COMMIT_TABLE_LIMIT
+} from '../lib/taskWraithCloseoutMessage'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 
 function fileChangeRows(count: number): {
@@ -184,7 +189,9 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('tabindex="0"')
   })
 
-  it('caps visible commits and notes the overflow', () => {
+  it('collapses commits to a reachable window instead of a dead overflow note', () => {
+    // Was: "2 more commits not shown." — the same dead line the Sub-threads
+    // card shed. Both now match the File changes card beside them.
     const commits = Array.from({ length: 10 }, (_, index) => ({
       hash: `${(index + 1).toString(16).padStart(9, '0')}abcdef`,
       subject: `Commit ${index + 1}`,
@@ -194,7 +201,45 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('Commit 1')
     expect(html).toContain('Commit 8')
     expect(html).not.toContain('Commit 9')
-    expect(html).toContain('2 more commits not shown.')
+    expect(html).not.toContain('not shown.')
+    expect(html).toContain('Show 2 more commits')
+    expect(html).toContain('run-complete-epic-commit-more')
+    // The window is a view, not a filter: the header keeps counting the whole
+    // close-out, so the number does not shift as the reader expands.
+    expect(html).toContain('10 commits')
+  })
+
+  it('renders no commit expander when the close-out fits the cap', () => {
+    const commits = Array.from({ length: CLOSEOUT_COMMIT_TABLE_LIMIT }, (_, index) => ({
+      hash: `${(index + 1).toString(16).padStart(9, '0')}abcdef`,
+      subject: `Commit ${index + 1}`,
+      stats: '1 file'
+    }))
+    const html = renderToStaticMarkup(<RunCompleteEpicStack commits={commits} />)
+    expect(html).toContain('Commit 8')
+    expect(html).not.toContain('run-complete-epic-commit-more')
+  })
+
+  it('opens the whole commit list once the window is expanded', () => {
+    // No DOM test environment here, so the expander's two states are proven on
+    // the pure window helper the component renders from rather than by click.
+    const commits = Array.from({ length: 30 }, (_, index) => `commit-${index + 1}`)
+
+    const collapsed = buildCloseoutCommitWindow(commits)
+    expect(collapsed.items).toHaveLength(CLOSEOUT_COMMIT_TABLE_LIMIT)
+    expect(collapsed.canShowMore).toBe(true)
+    expect(collapsed.canShowFewer).toBe(false)
+    expect(collapsed.nextShowCount).toBe(CLOSEOUT_COMMIT_PAGE_SIZE)
+
+    const opened = buildCloseoutCommitWindow(commits, collapsed.nextCount)
+    expect(opened.items).toHaveLength(CLOSEOUT_COMMIT_TABLE_LIMIT + CLOSEOUT_COMMIT_PAGE_SIZE)
+    expect(opened.canShowFewer).toBe(true)
+
+    // No ceiling: pressing on always reaches the last commit.
+    const full = buildCloseoutCommitWindow(commits, opened.nextCount)
+    expect(full.items).toHaveLength(30)
+    expect(full.canShowMore).toBe(false)
+    expect(full.hiddenCount).toBe(0)
   })
 
   it('renders the complete selectable stack with generic author attribution', () => {
@@ -230,6 +275,8 @@ describe('RunCompleteEpicStack', () => {
     expect(html).toContain('Commit 10')
     expect(html).toContain('PR for 000000000')
     expect(html).not.toContain('more commits not shown')
+    // The inspector opts out of the window entirely, so no expander appears.
+    expect(html).not.toContain('run-complete-epic-commit-more')
   })
 
   it('orders commit columns as Seat, Changes, Message, Hash and colors diff counts', () => {

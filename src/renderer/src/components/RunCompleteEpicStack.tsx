@@ -3,6 +3,7 @@ import type { SeatChangeLink } from '../../../shared/seatChange'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
+  buildCloseoutCommitWindow,
   buildCloseoutSubagentWindow,
   CLOSEOUT_COMMIT_TABLE_LIMIT,
   CLOSEOUT_SUBAGENT_TABLE_LIMIT,
@@ -243,11 +244,24 @@ export function RunCompleteEpicStack({
     setSubagentVisibleCount(CLOSEOUT_SUBAGENT_TABLE_LIMIT)
   }, [])
   const allCommitRows = Array.isArray(commits) ? commits : []
-  const commitRows =
-    commitRowLimit === null
-      ? allCommitRows
-      : allCommitRows.slice(0, Math.max(0, commitRowLimit))
-  const commitOverflow = Math.max(0, allCommitRows.length - commitRows.length)
+  // Same treatment as the Sub-threads table above and the File changes card
+  // below: the hard slice printed "N more commits not shown", naming evidence
+  // the reader then had no way to reach.
+  const [commitVisibleCount, setCommitVisibleCount] = useState(
+    commitRowLimit ?? CLOSEOUT_COMMIT_TABLE_LIMIT
+  )
+  const commitWindow = useMemo(
+    () =>
+      commitRowLimit === null ? null : buildCloseoutCommitWindow(allCommitRows, commitVisibleCount),
+    [allCommitRows, commitRowLimit, commitVisibleCount]
+  )
+  const commitRows = commitWindow ? commitWindow.items : allCommitRows
+  const showMoreCommits = useCallback(() => {
+    setCommitVisibleCount((current) => buildCloseoutCommitWindow(allCommitRows, current).nextCount)
+  }, [allCommitRows])
+  const showFewerCommits = useCallback(() => {
+    setCommitVisibleCount(CLOSEOUT_COMMIT_TABLE_LIMIT)
+  }, [])
   const hasParticipants = rows.length > 0
   const hasSubagents = subagentRows.length > 0
   const hasCommits = commitRows.length > 0
@@ -401,7 +415,8 @@ export function RunCompleteEpicStack({
   }, [scheduleCloseCommitFilesPill])
 
   const anyCommitHasFiles =
-    Boolean(loadCommitFiles) || commitRows.some((commit) => commit.files && commit.files.length > 0)
+    Boolean(loadCommitFiles) ||
+    allCommitRows.some((commit) => commit.files && commit.files.length > 0)
   // ──────────────────────────────────────────────────────────────────────
 
   if (!hasParticipants && !hasSubagents && !fileChanges && !hasCommits) return null
@@ -559,7 +574,7 @@ export function RunCompleteEpicStack({
             <div className="file-change-summary-meta">
               <span>
                 {commitCountLabel ??
-                  `${commitRows.length} commit${commitRows.length === 1 ? '' : 's'}`}
+                  `${allCommitRows.length} commit${allCommitRows.length === 1 ? '' : 's'}`}
               </span>
             </div>
           </div>
@@ -679,13 +694,26 @@ export function RunCompleteEpicStack({
                 </div>
               )
             })}
-            {commitOverflow > 0 && (
-              <div className="run-complete-epic-row is-commits is-overflow" role="row">
-                <span role="cell" className="run-complete-epic-overflow">
-                  {commitOverflow} more commit{commitOverflow === 1 ? '' : 's'} not shown.
-                </span>
-              </div>
-            )}
+            {commitWindow?.canShowMore ? (
+              <button
+                className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
+                type="button"
+                aria-label={`Show ${commitWindow.nextShowCount} more commits`}
+                onClick={showMoreCommits}
+              >
+                Show {commitWindow.nextShowCount} more commit
+                {commitWindow.nextShowCount === 1 ? '' : 's'}
+              </button>
+            ) : commitWindow?.canShowFewer ? (
+              <button
+                className="run-complete-epic-row is-overflow run-complete-epic-commit-more"
+                type="button"
+                aria-label="Show fewer commits"
+                onClick={showFewerCommits}
+              >
+                Show fewer commits
+              </button>
+            ) : null}
           </div>
         </section>
       )}
