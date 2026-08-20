@@ -1448,6 +1448,32 @@ final class CaptureResultBox: @unchecked Sendable {
     var result: Result<CGImage, Error>?
 }
 
+func nativeCaptureScale(window: SCWindow, displays: [SCDisplay]) throws -> CGFloat {
+    let display = displays.max { left, right in
+        let leftIntersection = left.frame.intersection(window.frame)
+        let rightIntersection = right.frame.intersection(window.frame)
+        let leftArea = leftIntersection.isNull ? 0 : leftIntersection.width * leftIntersection.height
+        let rightArea =
+            rightIntersection.isNull ? 0 : rightIntersection.width * rightIntersection.height
+        return leftArea < rightArea
+    }
+    guard let display,
+          display.frame.width > 0,
+          display.frame.height > 0 else {
+        throw DriverFailure.refused("exact Studio window has no bounded capture display")
+    }
+    let horizontal = CGFloat(display.width) / display.frame.width
+    let vertical = CGFloat(display.height) / display.frame.height
+    guard horizontal.isFinite,
+          vertical.isFinite,
+          horizontal >= 0.5,
+          horizontal <= 4,
+          abs(horizontal - vertical) <= 0.001 else {
+        throw DriverFailure.refused("exact Studio display has no uniform native capture scale")
+    }
+    return horizontal
+}
+
 func capture(windowId: UInt32, pid: Int32, to destination: URL) throws -> Int {
     let semaphore = DispatchSemaphore(value: 0)
     let box = CaptureResultBox()
@@ -1464,10 +1490,11 @@ func capture(windowId: UInt32, pid: Int32, to destination: URL) throws -> Int {
                     "ScreenCaptureKit could not find the exact isolated Studio window"
                 )
             }
+            let captureScale = try nativeCaptureScale(window: window, displays: content.displays)
             let filter = SCContentFilter(desktopIndependentWindow: window)
             let configuration = SCStreamConfiguration()
-            configuration.width = max(1, Int(window.frame.width * 2))
-            configuration.height = max(1, Int(window.frame.height * 2))
+            configuration.width = max(1, Int((window.frame.width * captureScale).rounded()))
+            configuration.height = max(1, Int((window.frame.height * captureScale).rounded()))
             configuration.captureResolution = .best
             configuration.ignoreShadowsSingleWindow = true
             configuration.showsCursor = false

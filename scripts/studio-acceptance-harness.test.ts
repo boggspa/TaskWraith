@@ -3435,6 +3435,11 @@ describe('Studio acceptance harness', () => {
     )
     expect(driverSource).toContain(': ticks - candidate <= toleranceTicks')
     expect(driverSource).toContain('foregroundAfter == foregroundBefore')
+    expect(driverSource).toContain(
+      'let captureScale = try nativeCaptureScale(window: window, displays: content.displays)'
+    )
+    expect(driverSource).toContain('CGFloat(display.width) / display.frame.width')
+    expect(driverSource).not.toContain('window.frame.width * 2')
     const transportReadStart = driverSource.indexOf('func exactAccessibilityTransportMutation(')
     const transportReadEnd = driverSource.indexOf(
       '/// Studio route observation helpers begin here',
@@ -6423,7 +6428,7 @@ describe('Studio acceptance harness', () => {
         ).toThrow(/window bounds are invalid/)
       })
 
-      it('rejects a screenshot that is not exactly 2x the window bounds', () => {
+      it('rejects a screenshot that has no uniform native window scale', () => {
         expect(() =>
           studioReviewHostCaptureRegion({ width: 100, height: 100 }, bounds, {
             x: 740,
@@ -6431,7 +6436,7 @@ describe('Studio acceptance harness', () => {
             width: 620,
             height: 700
           })
-        ).toThrow(/exact 2x window bounds/)
+        ).toThrow(/uniform native window scale/)
       })
 
       it('rejects a non-finite or non-positive host frame', () => {
@@ -6577,9 +6582,13 @@ describe('Studio acceptance harness', () => {
       async function makeOneWindowCapture(
         root: string,
         name: string,
-        mutate?: (image: InstanceType<typeof PNG>) => void
+        mutate?: (image: InstanceType<typeof PNG>) => void,
+        scale = 2
       ): Promise<string> {
-        const image = new PNG({ width: 2_560, height: 1_600 })
+        const image = new PNG({
+          width: oneWindowBounds.width * scale,
+          height: oneWindowBounds.height * scale
+        })
         image.data.fill(255)
         mutate?.(image)
         const destination = path.join(root, name)
@@ -6640,6 +6649,34 @@ describe('Studio acceptance harness', () => {
         expect(
           studioSourceHostOverlayCaptureRegion({ width: 2_560, height: 1_600 }, oneWindowBounds, sourceHostFrame)
         ).toEqual({ x: 0, y: 1_164, width: 1_280, height: 236 })
+      })
+
+      it('derives the same live Source band on a native 1x external display capture', async () => {
+        const sourceHostFrame = { x: 0, y: 100, width: 640, height: 600 }
+        const root = await temporaryRoot('studio-onewindow-source-overlay-1x-')
+        const before = await makeOneWindowCapture(root, 'before.png', undefined, 1)
+        const after = await makeOneWindowCapture(
+          root,
+          'after.png',
+          (image) => paintOneWindowRectangle(image, 25, 600, 10, 10),
+          1
+        )
+        expect(
+          compareStudioJourneyCaptures(
+            before,
+            after,
+            oneWindowBounds,
+            'source-host-overlay',
+            sourceHostFrame
+          )
+        ).toMatchObject({ ok: true, region: 'source-host-overlay' })
+        expect(
+          studioSourceHostOverlayCaptureRegion(
+            { width: 1_280, height: 800 },
+            oneWindowBounds,
+            sourceHostFrame
+          )
+        ).toEqual({ x: 0, y: 582, width: 640, height: 118 })
       })
 
       it('does not detect a change painted outside the live overlay band (correctly scoped, not whole-host)', async () => {

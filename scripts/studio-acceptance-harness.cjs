@@ -152,7 +152,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    'a962be185034e018f94cef7ea2a4ba485e49c42292640732721ac41af92e5d43',
+    '7d4a0d5d416f59ca81ac4de5086f29730bacd5c8b790a21a495e0904d3452f37',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -4677,6 +4677,21 @@ function readStudioJourneyCapture(capturePath) {
   }
 }
 
+function studioJourneyCaptureScale(image, logicalWidth, logicalHeight) {
+  const horizontal = Number(image?.width) / logicalWidth
+  const vertical = Number(image?.height) / logicalHeight
+  if (
+    !Number.isFinite(horizontal) ||
+    !Number.isFinite(vertical) ||
+    horizontal < 0.5 ||
+    horizontal > 4 ||
+    Math.abs(horizontal - vertical) > 0.001
+  ) {
+    throw new Error('Studio journey capture does not have one uniform native window scale')
+  }
+  return horizontal
+}
+
 function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   const logicalX = Number(windowBounds?.x)
   const logicalY = Number(windowBounds?.y)
@@ -4692,11 +4707,7 @@ function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   if (
     !isRecord(hostFrame) ||
     !['x', 'y', 'width', 'height'].every(
@@ -4726,10 +4737,10 @@ function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
     throw new Error('Studio review host capture region must not equal the whole window')
   }
-  const x = Math.round(clipX * 2)
-  const y = Math.round(clipY * 2)
-  const width = Math.round(clipWidth * 2)
-  const height = Math.round(clipHeight * 2)
+  const x = Math.round(clipX * captureScale)
+  const y = Math.round(clipY * captureScale)
+  const width = Math.round(clipWidth * captureScale)
+  const height = Math.round(clipHeight * captureScale)
   if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > image.width || y + height > image.height) {
     throw new Error('Studio review host capture region is outside the screenshot')
   }
@@ -4756,11 +4767,7 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   if (
     !isRecord(hostFrame) ||
     !['x', 'y', 'width', 'height'].every(
@@ -4785,10 +4792,10 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
     throw new Error('Studio source host capture region must not equal the whole window')
   }
-  const hostX = Math.round(clipX * 2)
-  const hostY = Math.round(clipY * 2)
-  const hostWidth = Math.round(clipWidth * 2)
-  const hostHeight = Math.round(clipHeight * 2)
+  const hostX = Math.round(clipX * captureScale)
+  const hostY = Math.round(clipY * captureScale)
+  const hostWidth = Math.round(clipWidth * captureScale)
+  const hostHeight = Math.round(clipHeight * captureScale)
   if (
     hostX < 0 ||
     hostY < 0 ||
@@ -4799,7 +4806,7 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio source host capture region is outside the screenshot')
   }
-  const overlayHeight = STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  const overlayHeight = Math.round(STUDIO_JOURNEY_OVERLAY_POINTS * captureScale)
   if (overlayHeight <= 0 || overlayHeight > hostHeight) {
     throw new Error('Studio source host overlay band does not fit the live host frame')
   }
@@ -4828,19 +4835,16 @@ function studioJourneyCaptureRegion(image, windowBounds, region, reviewHostFrame
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   const logicalVideoHeight = Math.round((logicalWidth * 9) / 16)
   const logicalTitleBarHeight = logicalHeight - logicalVideoHeight
   if (logicalTitleBarHeight < 20 || logicalTitleBarHeight > 40) {
     throw new Error('Studio journey capture is outside the bounded Companion geometry')
   }
-  const videoTop = logicalTitleBarHeight * 2
-  const videoBottom = videoTop + logicalVideoHeight * 2
-  const materialBottom = videoBottom - STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  const videoTop = Math.round(logicalTitleBarHeight * captureScale)
+  const videoBottom = videoTop + Math.round(logicalVideoHeight * captureScale)
+  const materialBottom =
+    videoBottom - Math.round(STUDIO_JOURNEY_OVERLAY_POINTS * captureScale)
   if (materialBottom <= videoTop || videoBottom > image.height) {
     throw new Error('Studio journey capture comparison region is invalid')
   }
