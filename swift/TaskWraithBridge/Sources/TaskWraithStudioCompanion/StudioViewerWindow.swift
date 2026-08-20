@@ -303,9 +303,11 @@ final class StudioViewerView: NSView {
         }
 
         updateDrawableSize()
-        mutateTransport(.lifecycleAttach) { controller, host in
-            controller.play(atHost: host)
-        }
+        // Opening an editor viewer must not begin an unbounded decode loop
+        // before the operator or assistive client can act. Retain the lifecycle
+        // observation even though attachment deliberately preserves the paused
+        // transport.
+        mutateTransport(.lifecycleAttach, recordsDeclaredMutation: true) { _, _ in }
 
         let link = displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         link.add(to: .main, forMode: .common)
@@ -425,11 +427,11 @@ final class StudioViewerView: NSView {
         after: StudioTransportController,
         afterReading: TransportHostReading,
         previousHost: Double?,
-        recordsDeclaredTransition: Bool = false
+        recordsDeclaredMutation: Bool = false
     ) {
         let controllerChanged =
             TransportMutationSignature(before) != TransportMutationSignature(after)
-        guard controllerChanged || recordsDeclaredTransition else {
+        guard controllerChanged || recordsDeclaredMutation else {
             return
         }
         transport = after
@@ -448,6 +450,7 @@ final class StudioViewerView: NSView {
 
     private func mutateTransport(
         _ kind: StudioTransportMutationKind,
+        recordsDeclaredMutation: Bool = false,
         _ body: (inout StudioTransportController, Double) -> Void
     ) {
         let reading = transportMutationHostReading
@@ -460,7 +463,8 @@ final class StudioViewerView: NSView {
             beforeReading: reading,
             after: after,
             afterReading: reading,
-            previousHost: nil
+            previousHost: nil,
+            recordsDeclaredMutation: recordsDeclaredMutation
         )
     }
 
@@ -523,7 +527,7 @@ final class StudioViewerView: NSView {
             after: after,
             afterReading: TransportHostReading(source: afterSource, seconds: afterHost),
             previousHost: beforeHost,
-            recordsDeclaredTransition: true
+            recordsDeclaredMutation: true
         )
         authority.didReanchorTransport(to: afterSource, atHost: afterHost)
     }
@@ -972,7 +976,7 @@ final class StudioViewerView: NSView {
             controller = StudioTransportController(
                 clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
             )
-            controller.play(atHost: host)
+            controller.pause(atHost: host)
         }
         // A half-typed timecode belongs to the PREVIOUS asset's timebase, so
         // carrying it across an open would resolve it against the wrong rate.

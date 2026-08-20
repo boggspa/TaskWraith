@@ -127,6 +127,19 @@ final class StudioViewerAccessibilityTests: XCTestCase {
     /// foreground input is the focus theft the acceptance policy forbids. This
     /// presses the real element and reads the transport back through the same
     /// AX tree a client sees — no synthesised events anywhere.
+    func testViewerAttachmentHydratesPausedForResponsiveAccessibility() throws {
+        let (view, _) = try makeViewer()
+        let timebase = try XCTUnwrap(
+            StudioTimebase(timescale: 600, frameDurationTicks: 20))
+        view.adopt(timebase: timebase, durationTicks: 6_000, label: "opened fixture")
+        view.renderCurrentFrame()
+        let playback = try child(labeledChildren(of: view), labeled: "Playback")
+        XCTAssertEqual(
+            playback.accessibilityValue() as? String,
+            "paused",
+            "attachment must not saturate the main run loop with decode before AX can act")
+    }
+
     func testPressingThePlaybackControlTogglesTheRealTransport() throws {
         let (view, window) = try makeViewer()
 
@@ -350,12 +363,16 @@ final class StudioViewerAccessibilityTests: XCTestCase {
     /// verified beneath the AX surface, never through it.
     func testElementIdentityIsStableWhileTheTimecodeRuns() throws {
         let (view, _) = try makeViewer()
+        // Attachment is intentionally paused. Enter the state whose per-tick
+        // identity this test measures before taking the baseline; a deliberate
+        // paused→playing structure transition may rebuild the tree.
+        let host = CACurrentMediaTime()
+        view.transport.play(atHost: host)
+        view.renderCurrentFrame()
         let before = try labeledChildren(of: view)
         let identitiesBefore = before.map(ObjectIdentifier.init)
 
         // Drive real frames with a moving position.
-        let host = CACurrentMediaTime()
-        view.transport.play(atHost: host)
         for step in 1...30 {
             view.transport.seek(toTicks: Int64(step) * 100, atHost: host + Double(step) / 60)
             view.renderCurrentFrame()

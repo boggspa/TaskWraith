@@ -233,12 +233,12 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: 'cba12941a7d56455d809bbe6ce35b9cb0d4e4f18f6fe7087d1ee9dc68c032423',
+  sourceDigest: '5be62633528feff17fb0794d7971583a53cedd00b845175818fd06faf7fc73f0',
   sourceCount: 2282,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
-  companionSha256: 'e7c4239bfd02861c5bf328778677cb4d5bfd8837169e2b43e2a0e76e97b23902',
+  companionSha256: '89da6a3d990afbc64e70e76dc6e1fb9aacc97059ce323c4b49dae0cb22d2755f',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
   bridgeDaemonSha256: '60cf0ce0678e39814182bfa50e2386e0dc3e0ad86eefc05dd90d741f49205a91'
 })
@@ -5240,13 +5240,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     throw new Error('Studio UI journey requires Source selected and visible at journey start')
   }
   const sourceHostFrame = initialWorkspace.sourceHost.frame
-  await drive([
-    {
-      type: 'press-playback',
-      playbackValueBefore: 'playing',
-      playbackValueAfter: 'paused'
-    }
-  ])
   let afterRevision = transcript.revision
   const transcriptBandCapture = await drive([{ type: 'screenshot', name: 'transcript-band' }])
   await drive(['tab'])

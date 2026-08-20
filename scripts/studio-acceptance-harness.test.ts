@@ -4943,7 +4943,6 @@ describe('Studio acceptance harness', () => {
     expect(calls).toEqual([
       'journal:set_transcript:asset-a',
       'driver:read-workspace',
-      'driver:press-playback',
       'driver:transcript-band',
       'driver:tab',
       'driver:transcript-selected',
@@ -4978,7 +4977,6 @@ describe('Studio acceptance harness', () => {
       'driver:press-playback,press-playback'
     ])
     expect(deliveries).toEqual([
-      'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
       'background-observation-only',
@@ -5313,7 +5311,7 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: 'cba12941a7d56455d809bbe6ce35b9cb0d4e4f18f6fe7087d1ee9dc68c032423',
+      sourceDigest: '5be62633528feff17fb0794d7971583a53cedd00b845175818fd06faf7fc73f0',
       sourceCount: 2282,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
