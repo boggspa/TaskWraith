@@ -354,11 +354,15 @@ function parseVisibleHud(hud, assetId, options = {}) {
     return parseOcrInteger(matches.at(-1)?.[1])
   }
   const rssMatch = joined.match(/\brss\s*([0-9.]+)\s*MB/i)
-  const stateMatch = joined.match(/\b(PLAY|PAUSE)\b/i)
+  const stateTokens = texts
+    .filter((text) => typeof text === 'string')
+    .map((text) => text.trim())
+    .filter((text) => text === 'PLAY' || text === 'PAUSE')
+  const state = stateTokens.length === 1 ? stateTokens[0] : null
   return {
     contentPtsText: contentPtsText || null,
     contentPtsSeconds: parseStudioTimecodeText(contentPtsText),
-    state: stateMatch?.[1]?.toUpperCase() || null,
+    state,
     diagnostics: {
       droppedFrames: field('drop'),
       heldFrames: field('held'),
@@ -884,6 +888,51 @@ async function readSourceWorkspaceObservation(plan, target, windowBounds, adapte
   }
 }
 
+async function pressPlaybackTransition(plan, target, before, after, adapters = {}) {
+  if (!['paused', 'playing'].includes(before) || !['paused', 'playing'].includes(after) || before === after) {
+    throw new Error('bounded diagnostics Playback transition is not an exact state change')
+  }
+  const runDriver = adapters.runStudioUiDriver || harness.runStudioUiDriver
+  const receipt = await runDriver(
+    plan,
+    target,
+    [{ type: 'press-playback', playbackValueBefore: before, playbackValueAfter: after }],
+    {
+      ...(adapters.driverAdapters || {}),
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false
+    }
+  )
+  const actions = Array.isArray(receipt?.actions) ? receipt.actions : []
+  if (
+    receipt?.inputDelivery !== 'background-observation-only' ||
+    actions.length !== 1
+  ) {
+    throw new Error('bounded diagnostics Playback transition receipt is not one background action')
+  }
+  const action = actions[0]
+  const expectedKeys = [
+    'accessibilityAction',
+    'accessibilityLabel',
+    'index',
+    'playbackValueAfter',
+    'playbackValueBefore',
+    'type'
+  ]
+  if (
+    JSON.stringify(Object.keys(action).sort()) !== JSON.stringify(expectedKeys) ||
+    action.index !== 0 ||
+    action.type !== 'press-playback' ||
+    action.accessibilityLabel !== 'Playback' ||
+    action.accessibilityAction !== 'AXPress' ||
+    action.playbackValueBefore !== before ||
+    action.playbackValueAfter !== after
+  ) {
+    throw new Error('bounded diagnostics Playback transition receipt is forged or malformed')
+  }
+  return receipt
+}
+
 async function captureFreshPlayableSample(
   plan,
   target,
@@ -962,6 +1011,20 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
         expectedWindowTitle: 'TaskWraith Studio',
         asset: runtime.asset
       }
+      const focusBeforePlaybackStart = acceptanceSession.focusSnapshot(context.companion.pid)
+      const playbackStart = await pressPlaybackTransition(
+        plan,
+        target,
+        'paused',
+        'playing',
+        adapters
+      )
+      const focusAfterPlaybackStart = acceptanceSession.focusSnapshot(context.companion.pid)
+      const playbackStartFocusIsolation = acceptanceSession.assertSourceWindowFocusIsolation(
+        focusBeforePlaybackStart,
+        focusAfterPlaybackStart,
+        context.companion.pid
+      )
       const census = sourcePtsCensus(runtime.asset.assetPath, adapters)
       const samples = []
       samples.push(
@@ -1003,6 +1066,20 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
         samples.at(-1).observed.contentPtsSeconds,
         adapters.resourceAdapters || {}
       )
+      const focusBeforePlaybackStop = acceptanceSession.focusSnapshot(context.companion.pid)
+      const playbackStop = await pressPlaybackTransition(
+        plan,
+        target,
+        'playing',
+        'paused',
+        adapters
+      )
+      const focusAfterPlaybackStop = acceptanceSession.focusSnapshot(context.companion.pid)
+      const playbackStopFocusIsolation = acceptanceSession.assertSourceWindowFocusIsolation(
+        focusBeforePlaybackStop,
+        focusAfterPlaybackStop,
+        context.companion.pid
+      )
       const diagnosticsVerdict = assertDiagnostics(samples, firstResources, lastResources, {
         expectedAssetId: runtime.asset.sha256
       })
@@ -1016,6 +1093,14 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
         asset: runtime.asset,
         workspaceObservation: samples[0].workspaceObservation,
         openResult,
+        playback: {
+          start: playbackStart,
+          stop: playbackStop,
+          focusIsolation: {
+            start: playbackStartFocusIsolation,
+            stop: playbackStopFocusIsolation
+          }
+        },
         focusIsolation: {
           open: openFocusIsolation,
           final: finalFocusIsolation
@@ -1106,6 +1191,7 @@ module.exports = {
   parseVisibleHud,
   capturePlayableSample,
   captureFreshPlayableSample,
+  pressPlaybackTransition,
   readSourceWorkspaceObservation,
   repoRoot,
   resolveExactSourcePts,

@@ -19,6 +19,7 @@ const {
   parseStudioTimecodeText,
   parseVisibleHud,
   captureFreshPlayableSample,
+  pressPlaybackTransition,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
@@ -343,6 +344,13 @@ describe('HUD parsing reads every counter the outcome claims', () => {
       textures: 8
     })
     expect(parsed.players).toEqual({ count: 1, rssMegabytes: 512.5 })
+  })
+
+  it('derives transport only from one exact PLAY or PAUSE OCR token', () => {
+    const base = { matchAsset: () => ({ matched: true }) }
+    expect(parseVisibleHud({ texts: ['play 2', 'drop 0'] }, 'a', base).state).toBeNull()
+    expect(parseVisibleHud({ texts: ['PLAY', 'PAUSE'] }, 'a', base).state).toBeNull()
+    expect(parseVisibleHud({ texts: ['PLAYBACK', 'drop 0'] }, 'a', base).state).toBeNull()
   })
 
   it('reports a missing timecode as null rather than zero', () => {
@@ -908,6 +916,83 @@ describe('the serialized evidence schema, closed as a schema rather than by exam
 })
 
 describe('the runner carries tracked end-to-end apparatus', () => {
+  it('validates one exact background Playback AXPress receipt', async () => {
+    const receipt = await pressPlaybackTransition(
+      { artifactRoot: '/tmp/diagnostics-playback-test' },
+      { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+      'paused',
+      'playing',
+      {
+        runStudioUiDriver: async () => ({
+          inputDelivery: 'background-observation-only',
+          actions: [
+            {
+              index: 0,
+              type: 'press-playback',
+              accessibilityLabel: 'Playback',
+              accessibilityAction: 'AXPress',
+              playbackValueBefore: 'paused',
+              playbackValueAfter: 'playing'
+            }
+          ]
+        })
+      }
+    )
+    expect(receipt.actions[0]).toMatchObject({ playbackValueAfter: 'playing' })
+    await expect(
+      pressPlaybackTransition(
+        { artifactRoot: '/tmp/diagnostics-playback-test' },
+        { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+        'playing',
+        'paused',
+        {
+          runStudioUiDriver: async () => ({
+            inputDelivery: 'background-observation-only',
+            actions: [
+              {
+                index: 0,
+                type: 'press-playback',
+                accessibilityLabel: 'Playback',
+                accessibilityAction: 'AXPress',
+                playbackValueBefore: 'paused',
+                playbackValueAfter: 'paused',
+                forged: true
+              }
+            ]
+          })
+        }
+      )
+    ).rejects.toThrow(/forged or malformed/)
+  })
+
+  it('enforces the paused-to-playing then playing-to-paused sequence', async () => {
+    const transitions: string[] = []
+    const adapters = {
+      runStudioUiDriver: async (
+        _plan: unknown,
+        _target: unknown,
+        actions: Array<Record<string, any>>
+      ) => {
+        const action = actions[0]
+        transitions.push(`${action.playbackValueBefore}->${action.playbackValueAfter}`)
+        return {
+          inputDelivery: 'background-observation-only',
+          actions: [{
+            index: 0,
+            type: 'press-playback',
+            accessibilityLabel: 'Playback',
+            accessibilityAction: 'AXPress',
+            playbackValueBefore: action.playbackValueBefore,
+            playbackValueAfter: action.playbackValueAfter
+          }]
+        }
+      }
+    }
+    await pressPlaybackTransition({}, {}, 'paused', 'playing', adapters)
+    await pressPlaybackTransition({}, {}, 'playing', 'paused', adapters)
+    expect(transitions).toEqual(['paused->playing', 'playing->paused'])
+  })
+
   it('reads Source geometry through the tracked background workspace contract', async () => {
     const bounds = { x: 100, y: 200, width: 960, height: 640 }
     const frame = { x: 100, y: 240, width: 960, height: 540 }
