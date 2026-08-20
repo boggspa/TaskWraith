@@ -21,6 +21,7 @@ const {
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  materializePortableInputs,
   matchHudAssetIdentity,
   parseCli,
   resolveArtifactRoot,
@@ -61,6 +62,10 @@ const {
     windowBounds: { width: number; height: number }
     hudOverlayHeight?: number
   }) => Record<string, any>
+  materializePortableInputs: (
+    artifactRoot: string,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   matchHudAssetIdentity: (
     hud: { observations: Array<{ text: string }> },
     assetId: string
@@ -302,6 +307,41 @@ afterEach(async () => {
 })
 
 describe('studio LUT acceptance runner contract', () => {
+  it('derives media and LUT inputs inside the fresh artifact root', async () => {
+    const directory = await temporaryDirectory()
+    const calls: string[][] = []
+    const inputs = await materializePortableInputs(directory, {
+      resolveMediaTool: (name: string) => `/virtual/${name}`,
+      runExact: (command: string, args: string[]) => {
+        calls.push([command, ...args])
+        if (command === '/usr/bin/say') {
+          fs.writeFileSync(args[args.indexOf('-o') + 1], 'deterministic speech')
+        } else {
+          fs.writeFileSync(args.at(-1) as string, 'deterministic muxed fixture')
+        }
+        return { command: [command, ...args], exitCode: 0, stdout: '', stderr: '' }
+      }
+    })
+
+    expect(inputs.fixturePath).toBe(path.join(directory, 'inputs', 'acceptance-speech-600s.mp4'))
+    expect(inputs.fixtureSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(inputs.fixtureAssetId).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(inputs.validCubeSha256).toBe(
+      'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
+    )
+    expect(inputs.invalidCubeSha256).toBe(
+      '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
+    )
+    expect(inputs.fixtureManifest).toMatchObject({
+      durationSeconds: 600,
+      frameRate: 30,
+      expectedFrameCount: 18_000,
+      outputPath: inputs.fixturePath
+    })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toContain('lavfi')
+  })
+
   it('passes matching pins with foreign tracked dirt and seals its hashes into evidence', async () => {
     const dirt = classifyTrackedDirt(
       ' M src/main/collaboration/ExternalSeatResolution.ts\0 M src/main/index.ts\0',
@@ -345,7 +385,13 @@ describe('studio LUT acceptance runner contract', () => {
     'scripts/studio-acceptance-ui-driver.swift',
     'scripts/studio-acceptance-watchdog.cjs',
     'scripts/studio-acceptance-window-probe.swift',
-    'scripts/studio-pixel-evidence-verifier.cjs'
+    'scripts/studio-pixel-evidence-verifier.cjs',
+    'scripts/studio-hud-ocr.swift',
+    'scripts/studio-input-isolation-snapshot.swift',
+    'scripts/studio-generate-speech-fixture.cjs',
+    'scripts/studio-acceptance-session.cjs',
+    'scripts/studio-bounded-diagnostics-runner.cjs',
+    'scripts/studio-bounded-lifecycle-runner.cjs'
   ])('rejects tracked dirt in protected Studio script %s', (relativePath) => {
     const trackedStatus = ` M ${relativePath}\0`
     const dirt = classifyTrackedDirt(trackedStatus, () => 'c'.repeat(64))
@@ -692,6 +738,26 @@ describe('studio LUT acceptance runner contract', () => {
     expect(captureSource).toContain('transportMutationBracket')
   })
 
+  it('uses tracked native helpers and the one-window Studio title', async () => {
+    const source = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-lut-acceptance-runner.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')")
+    expect(source).toContain(
+      "path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')"
+    )
+    expect(source).not.toContain(
+      '.local-only/taskwraith-studio/acceptance/w1acc10e/studio-hud-ocr.swift'
+    )
+    expect(source).not.toContain(
+      '.local-only/taskwraith-studio/acceptance/w1acc10e/input-isolation-snapshot.swift'
+    )
+    expect(source).not.toContain("'TaskWraith Studio — Source'")
+    expect(source).toContain("entry.title === 'TaskWraith Studio'")
+  })
+
   it.each([
     {
       inputDelivery: 'foreground-global-explicit',
@@ -760,11 +826,11 @@ describe('studio LUT acceptance runner contract', () => {
       observationIndex: 0,
       comparedLength: 43,
       distance: 0,
-      threshold: 12
+      threshold: 0
     })
   })
 
-  it('accepts the deterministic w2lut0816h full-ID OCR observation at distance 12', () => {
+  it('rejects the deterministic fuzzy OCR observation that previously false-greened', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
     const result = matchHudAssetIdentity(
       {
@@ -779,12 +845,12 @@ describe('studio LUT acceptance runner contract', () => {
     )
 
     expect(result).toMatchObject({
-      matched: true,
+      matched: false,
       observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
       observationIndex: 1,
       comparedLength: 43,
       distance: 12,
-      threshold: 12
+      threshold: 0
     })
   })
 
@@ -805,12 +871,12 @@ describe('studio LUT acceptance runner contract', () => {
       const result = matchHudAssetIdentity({ observations }, assetId)
 
       expect(result).toMatchObject({
-        matched: true,
+        matched: false,
         observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
         observationIndex: expectedObservationIndex,
         comparedLength: 43,
         distance: 12,
-        threshold: 12
+        threshold: 0
       })
     }
   )
@@ -836,7 +902,7 @@ describe('studio LUT acceptance runner contract', () => {
       matched: false,
       comparedLength: 43,
       distance: 13,
-      threshold: 12
+      threshold: 0
     })
   })
 

@@ -149,7 +149,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    'a358524787405a1e1e9cf9b4bb7923d82c05012abbf2abe6d2ab9a50d9dc6172',
+    'c608e697e6c28abbccf663da3b402a495450434c5c5488c9278a939f0e07b32d',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -3294,6 +3294,31 @@ function buildStudioUiDriverRequest(options) {
       }
     }
     if (
+      action.type === 'press-workspace-route' &&
+      (action.route === 'source' || action.route === 'timeline')
+    ) {
+      const accessibilityIdentifier =
+        action.route === 'source'
+          ? STUDIO_WORKSPACE_SOURCE_ROUTE_ID
+          : STUDIO_WORKSPACE_TIMELINE_ROUTE_ID
+      const pairedAccessibilityIdentifier =
+        action.route === 'source'
+          ? STUDIO_WORKSPACE_TIMELINE_ROUTE_ID
+          : STUDIO_WORKSPACE_SOURCE_ROUTE_ID
+      return {
+        type: 'press-workspace-route',
+        route: action.route,
+        accessibilityIdentifier,
+        pairedAccessibilityIdentifier,
+        accessibilityRole: 'AXCheckBox',
+        accessibilityAction: 'AXPress',
+        routeValueBefore: 'not selected',
+        routeValueAfter: 'selected',
+        pairedRouteValueBefore: 'selected',
+        pairedRouteValueAfter: 'selected'
+      }
+    }
+    if (
       action.type === 'set-playhead-ticks' &&
       Number.isSafeInteger(action.playheadTicks) &&
       action.playheadTicks >= 0 &&
@@ -4128,6 +4153,22 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       ) {
         throw new Error('Studio UI driver Playback receipt does not match the bounded request')
       }
+      if (action.type === 'press-workspace-route') {
+        if (
+          observed.accessibilityIdentifier !== action.accessibilityIdentifier ||
+          observed.pairedAccessibilityIdentifier !== action.pairedAccessibilityIdentifier ||
+          observed.accessibilityRole !== action.accessibilityRole ||
+          observed.accessibilityAction !== action.accessibilityAction ||
+          observed.routeValueBefore !== action.routeValueBefore ||
+          observed.routeValueAfter !== action.routeValueAfter ||
+          observed.pairedRouteValueBefore !== action.pairedRouteValueBefore ||
+          observed.pairedRouteValueAfter !== action.pairedRouteValueAfter
+        ) {
+          throw new Error(
+            'Studio UI driver workspace AXPress route transition receipt does not match the bounded request'
+          )
+        }
+      }
       if (
         action.type === 'set-playhead-ticks' &&
         (observed.playheadTicks !== action.playheadTicks ||
@@ -4173,6 +4214,13 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         }
       }
       if (action.type === 'read-workspace') {
+        const actionKeys = Object.keys(observed)
+        const allowedActionKeys = new Set(['index', 'type', 'workspace'])
+        if (actionKeys.some((key) => !allowedActionKeys.has(key))) {
+          throw new Error(
+            'Studio UI driver read-workspace action receipt has an extra top-level key'
+          )
+        }
         failureEvidence.failureStage = 'workspace-observation-validation'
         try {
           validateStudioWorkspaceObservation(observed.workspace, request.windowBounds)
@@ -4707,9 +4755,22 @@ function exactDriverAction(receipt, type) {
   return matches[0]
 }
 
-function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt) {
+function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt, routeReceipt) {
   const source = exactDriverAction(sourceReceipt, 'step-playhead-frame')
   const review = exactDriverAction(reviewReceipt, 'step-playhead-frame')
+  const route = exactDriverAction(routeReceipt, 'press-workspace-route')
+  if (
+    route.accessibilityIdentifier !== STUDIO_WORKSPACE_TIMELINE_ROUTE_ID ||
+    route.pairedAccessibilityIdentifier !== STUDIO_WORKSPACE_SOURCE_ROUTE_ID ||
+    route.accessibilityRole !== 'AXCheckBox' ||
+    route.accessibilityAction !== 'AXPress' ||
+    route.routeValueBefore !== 'not selected' ||
+    route.routeValueAfter !== 'selected' ||
+    route.pairedRouteValueBefore !== 'selected' ||
+    route.pairedRouteValueAfter !== 'selected'
+  ) {
+    throw new Error('Studio journey did not prove an AXPress route transition from Source to Review')
+  }
   if (
     source.playheadStepFrames !== 1 ||
     review.playheadStepFrames !== -1 ||
@@ -4723,7 +4784,16 @@ function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt) {
     sourceBeforeTicks: source.playheadTicksBefore,
     sourceAfterTicks: source.observedPlayheadTicks,
     reviewBeforeTicks: review.playheadTicksBefore,
-    reviewAfterTicks: review.observedPlayheadTicks
+    reviewAfterTicks: review.observedPlayheadTicks,
+    route: {
+      accessibilityIdentifier: route.accessibilityIdentifier,
+      pairedAccessibilityIdentifier: route.pairedAccessibilityIdentifier,
+      accessibilityAction: route.accessibilityAction,
+      before: route.routeValueBefore,
+      after: route.routeValueAfter,
+      pairedBefore: route.pairedRouteValueBefore,
+      pairedAfter: route.pairedRouteValueAfter
+    }
   }
 }
 
@@ -4756,7 +4826,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const compareCaptures = adapters.compareCaptures || compareStudioJourneyCaptures
   const journeyTarget = resolveStudioWorkspaceWindow(target)
   const windowBounds = assertSafeUiDriverTarget(journeyTarget).bounds
-  const waitForWorkspaceReview = () =>
+  const waitForWorkspaceReview = (expectedVersion = null, sourceMustRemainSelected = false) =>
     waitFor({
       label: 'exact visible Studio Review workspace presentation',
       timeoutMs: 10_000,
@@ -4768,7 +4838,11 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
           allowForegroundInput: false
         })
         const workspace = readWorkspaceObservationFromReceipt(receipt, windowBounds)
-        if (!studioWorkspaceReviewPresented(workspace)) {
+        if (
+          !studioWorkspaceReviewPresented(workspace) ||
+          (expectedVersion && workspace[`${expectedVersion}Version`]?.value !== 'selected') ||
+          (sourceMustRemainSelected && workspace.sourceRoute?.value !== 'selected')
+        ) {
           return null
         }
         return workspace
@@ -4887,9 +4961,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const acceptedProposalId = acceptedProposalEvidence.proposalId
   afterRevision = acceptedProposal.revision
   await drive([{ type: 'screenshot', name: 'ghost' }], journeyTarget)
-  await drive(['w'], journeyTarget)
-  const acceptedWorkspace = await waitForWorkspaceReview()
-  const acceptedReviewHostFrame = acceptedWorkspace.timelineHost.frame
   await drive(
     [
       {
@@ -4901,11 +4972,36 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     ],
     journeyTarget
   )
+  const sourceStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
+    journeyTarget
+  )
+  const routeTransition = await drive(
+    [{ type: 'press-workspace-route', route: 'timeline' }],
+    journeyTarget
+  )
+  const acceptedWorkspace = await waitForWorkspaceReview('current', true)
+  const acceptedReviewHostFrame = acceptedWorkspace.timelineHost.frame
+  const reviewStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
+    journeyTarget
+  )
   const currentCapture = await drive(
     [{ type: 'screenshot', name: 'current' }],
     journeyTarget
   )
   await drive(['v'], journeyTarget)
+  const proposedWorkspaceReceipt = await drive([{ type: 'read-workspace' }], journeyTarget)
+  const proposedWorkspace = readWorkspaceObservationFromReceipt(
+    proposedWorkspaceReceipt,
+    windowBounds
+  )
+  if (
+    proposedWorkspace.proposedVersion.value !== 'selected' ||
+    proposedWorkspace.currentVersion.value !== 'not selected'
+  ) {
+    throw new Error('Studio Current/Proposed journey did not prove Proposed is selected after v')
+  }
   await drive(
     [
       {
@@ -4933,15 +5029,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     'review-host',
     acceptedReviewHostFrame
   )
-  const sourceStep = await drive(
-    [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
-    journeyTarget
-  )
-  const reviewStep = await drive(
-    [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
-    journeyTarget
-  )
-  const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep)
+  const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep, routeTransition)
   await drive(['a', { type: 'screenshot', name: 'accept-sent' }], journeyTarget)
   const acceptedResolution = await waitJournal(
     plan,
@@ -5048,6 +5136,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       playbackRoundTrip,
       workspace: {
         accepted: acceptedWorkspace,
+        proposedAfterV: proposedWorkspace,
         rejected: rejectedWorkspace
       }
     },

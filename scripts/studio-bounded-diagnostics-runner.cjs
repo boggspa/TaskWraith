@@ -39,19 +39,19 @@
  *    this file - a control scans for it, and prose spells it just as effectively
  *    as code.)
  *
- * WHAT THIS FILE HONESTLY CANNOT DO YET. The session layer - disposable-profile
- * setup, Studio open, native capture, OCR, resource sampling, focus isolation -
- * is still untracked (~3,000 lines across two `.local-only` modules). Rather than
- * reach back into `.local-only` and keep the defect while looking tracked, an
- * end-to-end run REFUSES and names every missing dependency. Shipping a runner
- * that merely looks runnable is precisely how an outcome gets promoted on
- * apparatus nobody can reproduce.
+ * The shared session layer is now tracked in studio-acceptance-session.cjs.
+ * Disposable launch, generated media, one-window capture, exact OCR identity,
+ * focus isolation, and allocation sampling therefore execute without loading
+ * apparatus from .local-only.
  */
 
 const fs = require('node:fs')
+const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 
+const acceptanceSession = require('./studio-acceptance-session.cjs')
 const speechFixture = require('./studio-generate-speech-fixture.cjs')
+const { compareWindowCaptureToReference } = require('./studio-pixel-evidence-verifier.cjs')
 
 /** Resolved from this file so the runner is not bound to one checkout path. */
 const repoRoot = path.resolve(__dirname, '..')
@@ -130,11 +130,11 @@ const PTS_SELECTION_TOLERANCE_SECONDS = 0.000_501
 const PTS_BRACKET_HALF_WIDTH_SECONDS = 0.000_001
 
 /**
- * Session-layer functions this runner needs for an end-to-end observation, which
- * still exist only in the untracked evidence root. Named individually so the
- * follow-up slice is unambiguous rather than "port the session layer".
+ * Session-layer functions this runner requires for an end-to-end observation.
+ * The list is executable: module load fails if the tracked session facade stops
+ * carrying one, instead of discovering the drift after a packaged app launches.
  */
-const UNPROMOTED_SESSION_DEPENDENCIES = [
+const TRACKED_SESSION_DEPENDENCIES = [
   'withIsolatedSession',
   'invokeStudioOpen',
   'waitForSourceWindow',
@@ -147,6 +147,11 @@ const UNPROMOTED_SESSION_DEPENDENCIES = [
   'focusSnapshot',
   'hudContainsAsset'
 ]
+for (const dependency of TRACKED_SESSION_DEPENDENCIES) {
+  if (typeof acceptanceSession[dependency] !== 'function') {
+    throw new Error('tracked Studio acceptance session is missing ' + dependency)
+  }
+}
 
 /**
  * The fixture contract, derived from the tracked generator rather than restated.
@@ -294,23 +299,31 @@ function resolveExactSourcePts(censusValues, roundedHudSeconds) {
   return matches[0]
 }
 
-/**
- * The exact HH:MM:SS.mmm form parseVisibleHud reads. Kept here so the claim can
- * check the serialized timecode against the number it was parsed into rather
- * than trusting that they still agree.
- */
-function formatStudioTimecode(seconds) {
-  const whole = Math.floor(seconds)
-  const milliseconds = Math.round((seconds - whole) * 1000)
-  const pad = (value, width = 2) => String(value).padStart(width, '0')
+function parseStudioTimecodeText(text, frameRate = speechFixture.FIXTURE_FRAME_RATE) {
+  if (typeof text !== 'string') return null
+  const decimal = text.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$/)
+  if (decimal) {
+    return (
+      Number(decimal[1]) * 3_600 +
+      Number(decimal[2]) * 60 +
+      Number(decimal[3]) +
+      Number(decimal[4]) / 1_000
+    )
+  }
+  const framed = text.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/)
+  if (
+    !framed ||
+    !Number.isSafeInteger(frameRate) ||
+    frameRate <= 0 ||
+    Number(framed[4]) >= frameRate
+  ) {
+    return null
+  }
   return (
-    pad(Math.floor(whole / 3600)) +
-    ':' +
-    pad(Math.floor((whole % 3600) / 60)) +
-    ':' +
-    pad(whole % 60) +
-    '.' +
-    pad(milliseconds, 3)
+    Number(framed[1]) * 3_600 +
+    Number(framed[2]) * 60 +
+    Number(framed[3]) +
+    Number(framed[4]) / frameRate
   )
 }
 
@@ -334,8 +347,7 @@ function parseVisibleHud(hud, assetId, options = {}) {
   }
   const texts = hud.texts || []
   const joined = texts.join(' ')
-  const contentPtsText = texts.find((text) => /^\d{2}:\d{2}:\d{2}\.\d{3}$/.test(text))
-  const contentPtsMatch = contentPtsText?.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$/)
+  const contentPtsText = texts.find((text) => /^\d{2}:\d{2}:\d{2}(?:\.\d{3}|:\d{2})$/.test(text))
   const field = (label) => {
     const matches = [...joined.matchAll(new RegExp('\\b' + label + '\\s*([0-9oøØe]+)', 'gi'))]
     return parseOcrInteger(matches.at(-1)?.[1])
@@ -344,12 +356,7 @@ function parseVisibleHud(hud, assetId, options = {}) {
   const stateMatch = joined.match(/\b(PLAY|PAUSE)\b/i)
   return {
     contentPtsText: contentPtsText || null,
-    contentPtsSeconds: contentPtsMatch
-      ? Number(contentPtsMatch[1]) * 3_600 +
-        Number(contentPtsMatch[2]) * 60 +
-        Number(contentPtsMatch[3]) +
-        Number(contentPtsMatch[4]) / 1_000
-      : null,
+    contentPtsSeconds: parseStudioTimecodeText(contentPtsText),
     state: stateMatch?.[1]?.toUpperCase() || null,
     diagnostics: {
       droppedFrames: field('drop'),
@@ -501,13 +508,17 @@ function assertDiagnostics(samples, firstResources, lastResources, options) {
 
     // The HUD timecode and the parsed playhead are serialized side by side. If
     // they disagree, the OCR parse is untrustworthy and neither is evidence.
-    const expectedText = formatStudioTimecode(pts)
-    if (typeof sample.contentPtsText !== 'string' || sample.contentPtsText !== expectedText) {
+    const reparsedPts = parseStudioTimecodeText(sample.contentPtsText)
+    if (reparsedPts === null || Math.abs(reparsedPts - pts) > Number.EPSILON) {
       throw new Error(
         'visible timecode disagrees with the parsed playhead at sample ' +
           String(index) +
           ': ' +
-          JSON.stringify({ text: sample.contentPtsText ?? null, expected: expectedText })
+          JSON.stringify({
+            text: sample.contentPtsText ?? null,
+            parsed: pts,
+            reparsed: reparsedPts
+          })
       )
     }
 
@@ -740,20 +751,269 @@ function assertDiagnostics(samples, firstResources, lastResources, options) {
   }
 }
 
-/**
- * End-to-end run. Refuses until the session layer is tracked. This is deliberate:
- * silently requiring the untracked `.local-only` modules would leave the exact
- * reproducibility defect this promotion exists to repair, disguised as a tracked
- * runner.
- */
-async function runBoundedDiagnostics() {
-  throw new Error(
-    'bounded diagnostics cannot run end to end: the session layer is not yet promoted ' +
-      'into tracked scripts/. Missing dependencies: ' +
-      UNPROMOTED_SESSION_DEPENDENCIES.join(', ') +
-      '. They remain only in the untracked acceptance evidence root; promote them ' +
-      'before claiming Outcome 9 from a fresh checkout.'
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function sourcePtsCensus(assetPath, adapters = {}) {
+  const run = adapters.runExact || acceptanceSession.runExact
+  const command = buildFramePtsCensusCommand(assetPath)
+  const receipt = run(acceptanceSession.resolveMediaTool('ffprobe'), command, {
+    timeout: 180_000,
+    maxBuffer: 32 * 1024 * 1024
+  })
+  const parsed = parseFramePtsCensus(receipt.stdout)
+  const expected = describeFixtureContract().expectedFrameCount
+  if (parsed.count !== expected) {
+    throw new Error(
+      'bounded diagnostics generated fixture census changed: ' +
+        JSON.stringify({ expected, actual: parsed.count })
+    )
+  }
+  return {
+    ...parsed,
+    command: receipt.command
+  }
+}
+
+function generateReference(assetPath, exactSourcePtsSeconds, referencePath, adapters = {}) {
+  const run = adapters.runExact || acceptanceSession.runExact
+  const command = buildReferenceExtractCommand({
+    assetPath,
+    exactSourcePtsSeconds,
+    referencePath
+  })
+  const receipt = run(acceptanceSession.resolveMediaTool('ffmpeg'), command, {
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024
+  })
+  return {
+    path: referencePath,
+    sha256: acceptanceSession.sha256File(referencePath),
+    exactSourcePtsSeconds,
+    command: receipt.command
+  }
+}
+
+async function capturePlayableSample(
+  plan,
+  target,
+  census,
+  bounds,
+  index,
+  previousPtsSeconds,
+  adapters = {}
+) {
+  acceptanceSession.assertWindowServerSessionAvailable(index, 'before-capture')
+  const capture = await (adapters.captureNative || acceptanceSession.captureNative)(
+    plan,
+    target,
+    'diagnostics-' + String(index)
   )
+  acceptanceSession.assertWindowServerSessionAvailable(index, 'after-capture')
+  const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
+  const observed = parseVisibleHud(hud, target.asset.sha256, {
+    matchAsset: acceptanceSession.hudContainsAsset
+  })
+  const playable = isPlayableSample(observed, previousPtsSeconds)
+  if (!playable.valid) {
+    throw new Error(
+      'bounded diagnostics sample is not playable: ' +
+        JSON.stringify({ index, reasons: playable.reasons, observed })
+    )
+  }
+  const exactSourcePtsSeconds = resolveExactSourcePts(census.values, observed.contentPtsSeconds)
+  const reference = (adapters.generateReference || generateReference)(
+    target.asset.assetPath,
+    exactSourcePtsSeconds,
+    path.join(plan.artifactRoot, 'diagnostics-reference-' + String(index) + '.png'),
+    adapters
+  )
+  const materialPixels = (
+    adapters.compareWindowCaptureToReference || compareWindowCaptureToReference
+  )(capture.path, reference.path, bounds)
+  if (materialPixels.clean !== true) {
+    throw new Error(
+      'bounded diagnostics WindowServer frame disagrees with decoded source: ' +
+        JSON.stringify({ index, metrics: materialPixels.metrics })
+    )
+  }
+  return {
+    index,
+    capture,
+    hud,
+    observed,
+    playable,
+    exactSourcePtsSeconds,
+    reference,
+    materialPixels
+  }
+}
+
+async function runBoundedDiagnostics(options = {}, adapters = {}) {
+  const artifactRoot = path.resolve(String(options.artifactRoot || ''))
+  if (
+    !path.isAbsolute(artifactRoot) ||
+    artifactRoot === path.parse(artifactRoot).root ||
+    fs.existsSync(artifactRoot)
+  ) {
+    throw new Error('bounded diagnostics requires a fresh absolute artifact root')
+  }
+  const staticCustody = acceptanceSession.assertAcceptanceCustody()
+  await fsPromises.mkdir(path.dirname(artifactRoot), { recursive: true, mode: 0o700 })
+  await fsPromises.mkdir(artifactRoot, { recursive: false, mode: 0o700 })
+  const inputs = await (
+    adapters.materializePortableInputs || acceptanceSession.materializePortableInputs
+  )(artifactRoot, adapters.inputAdapters || {})
+  const custody = acceptanceSession.assertAcceptanceCustody(inputs)
+  const runtime = await (adapters.prepareFreshRuntime || acceptanceSession.prepareFreshRuntime)(
+    artifactRoot,
+    inputs
+  )
+  acceptanceSession.assertWindowServerSessionAvailable(-1, 'preflight')
+  const startedAt = new Date().toISOString()
+  const result = await (adapters.withIsolatedSession || acceptanceSession.withIsolatedSession)(
+    runtime,
+    {
+      phase: 'bounded-visible-diagnostics',
+      remoteDebuggingPort: options.remoteDebuggingPort || 9460,
+      mainInspectorPort: options.mainInspectorPort || 9860,
+      timeoutMs: options.timeoutMs || 210_000
+    },
+    async (context) => {
+      const plan = { ...context.plan, artifactRoot }
+      await sleep(options.hydrationSettleMilliseconds ?? 15_000)
+      const focusBeforeOpen = acceptanceSession.focusSnapshot(context.companion.pid)
+      const openResult = await acceptanceSession.invokeStudioOpen(context.renderer, runtime.asset)
+      const window = await acceptanceSession.waitForSourceWindow(context.companion)
+      const focusAfterOpen = acceptanceSession.focusSnapshot(context.companion.pid)
+      const openFocusIsolation = acceptanceSession.assertSourceWindowFocusIsolation(
+        focusBeforeOpen,
+        focusAfterOpen,
+        context.companion.pid
+      )
+      const bounds = acceptanceSession.windowBounds(window)
+      const target = {
+        companion: context.companion,
+        electronPgid: context.session.pgid,
+        window,
+        expectedWindowTitle: 'TaskWraith Studio',
+        asset: runtime.asset
+      }
+      const census = sourcePtsCensus(runtime.asset.assetPath, adapters)
+      const samples = []
+      samples.push(await capturePlayableSample(plan, target, census, bounds, 0, null, adapters))
+      const firstResources = acceptanceSession.resourceSample(
+        context.companion.pid,
+        0,
+        samples[0].observed.contentPtsSeconds,
+        adapters.resourceAdapters || {}
+      )
+      await sleep(options.sampleIntervalMilliseconds ?? 5_000)
+      samples.push(
+        await capturePlayableSample(
+          plan,
+          target,
+          census,
+          bounds,
+          1,
+          samples.at(-1).observed.contentPtsSeconds,
+          adapters
+        )
+      )
+      await sleep(options.sampleIntervalMilliseconds ?? 5_000)
+      samples.push(
+        await capturePlayableSample(
+          plan,
+          target,
+          census,
+          bounds,
+          2,
+          samples.at(-1).observed.contentPtsSeconds,
+          adapters
+        )
+      )
+      const lastResources = acceptanceSession.resourceSample(
+        context.companion.pid,
+        2,
+        samples.at(-1).observed.contentPtsSeconds,
+        adapters.resourceAdapters || {}
+      )
+      const diagnosticsVerdict = assertDiagnostics(samples, firstResources, lastResources, {
+        expectedAssetId: runtime.asset.sha256
+      })
+      const focusAtEnd = acceptanceSession.focusSnapshot(context.companion.pid)
+      const finalFocusIsolation = acceptanceSession.assertSourceWindowFocusIsolation(
+        focusAfterOpen,
+        focusAtEnd,
+        context.companion.pid
+      )
+      return {
+        asset: runtime.asset,
+        openResult,
+        focusIsolation: {
+          open: openFocusIsolation,
+          final: finalFocusIsolation
+        },
+        census: {
+          count: census.count,
+          command: census.command
+        },
+        samples,
+        resources: {
+          first: firstResources,
+          last: lastResources
+        },
+        diagnosticsVerdict,
+        portOwnership: context.portOwnership,
+        mainIdentity: context.mainIdentity
+      }
+    }
+  )
+  const custodyAfter = acceptanceSession.assertAcceptanceCustody(inputs)
+  const evidence = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-bounded-visible-playback-diagnostics',
+    ok: true,
+    startedAt,
+    recordedAt: new Date().toISOString(),
+    staticCustody,
+    custody,
+    custodyAfter,
+    inputBoundary: {
+      mode: 'background-observation-only',
+      foregroundInputUsed: false,
+      manualInputRequired: false
+    },
+    inputs,
+    ...result
+  }
+  const evidencePath = path.join(artifactRoot, 'evidence.json')
+  await acceptanceSession.writeJson(evidencePath, evidence)
+  return {
+    evidencePath,
+    evidenceSha256: acceptanceSession.sha256File(evidencePath),
+    evidence
+  }
+}
+
+function parseDiagnosticsCli(argv) {
+  if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
+    return { help: true, artifactRoot: null }
+  }
+  let artifactRoot = null
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]
+    if (argument.startsWith('--artifact-root=')) {
+      artifactRoot = argument.slice('--artifact-root='.length)
+    } else if (argument === '--artifact-root' && index + 1 < argv.length) {
+      artifactRoot = argv[++index]
+    } else {
+      throw new Error('unknown bounded diagnostics argument: ' + argument)
+    }
+  }
+  if (!artifactRoot) throw new Error('--artifact-root is required')
+  return { help: false, artifactRoot }
 }
 
 module.exports = {
@@ -767,7 +1027,7 @@ module.exports = {
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
   PTS_SELECTION_TOLERANCE_SECONDS,
-  UNPROMOTED_SESSION_DEPENDENCIES,
+  TRACKED_SESSION_DEPENDENCIES,
   assertDiagnostics,
   buildFramePtsCensusCommand,
   buildReferenceExtractCommand,
@@ -775,7 +1035,9 @@ module.exports = {
   isPlayableSample,
   mediaToolCandidates,
   parseFramePtsCensus,
+  parseDiagnosticsCli,
   parseOcrInteger,
+  parseStudioTimecodeText,
   parseVisibleHud,
   repoRoot,
   resolveExactSourcePts,
@@ -784,11 +1046,27 @@ module.exports = {
 }
 
 if (require.main === module) {
-  runBoundedDiagnostics().catch((error) => {
+  let cli
+  try {
+    cli = parseDiagnosticsCli(process.argv.slice(2))
+  } catch (error) {
     console.error(
       '[studio-bounded-diagnostics-runner] FAIL — ' +
         (error instanceof Error ? error.message : String(error))
     )
     process.exitCode = 1
-  })
+  }
+  if (cli?.help) {
+    process.stdout.write(
+      'Usage: node scripts/studio-bounded-diagnostics-runner.cjs --artifact-root=/fresh/absolute/path\n'
+    )
+  } else if (cli) {
+    runBoundedDiagnostics({ artifactRoot: cli.artifactRoot }).catch((error) => {
+      console.error(
+        '[studio-bounded-diagnostics-runner] FAIL — ' +
+          (error instanceof Error ? error.message : String(error))
+      )
+      process.exitCode = 1
+    })
+  }
 }

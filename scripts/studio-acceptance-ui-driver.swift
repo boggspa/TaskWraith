@@ -50,7 +50,14 @@ struct DriverAction: Codable {
     let playheadMaximumForwardAdvanceTicks: Int64?
     let playheadStepFrames: Int?
     let accessibilityLabel: String?
+    let accessibilityIdentifier: String?
+    let pairedAccessibilityIdentifier: String?
+    let accessibilityRole: String?
     let accessibilityAction: String?
+    let routeValueBefore: String?
+    let routeValueAfter: String?
+    let pairedRouteValueBefore: String?
+    let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
 }
@@ -168,6 +175,19 @@ struct WorkspaceObservationReceipt: Codable {
 }
 
 struct ActionReceipt: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case index, type, key, screenshotPath, byteLength, xFraction, yFraction, audioProbe
+        case routeHealth, avSyncPeakValue, avSyncCurrentValue
+        case playheadTicks, playheadToleranceTicks, playheadMaximumForwardAdvanceTicks
+        case playheadStepFrames, playheadTicksBefore, observedPlayheadTicks
+        case accessibilityLabel, accessibilityIdentifier, pairedAccessibilityIdentifier
+        case accessibilityRole
+        case accessibilityMatchCount, accessibilityValue, accessibilityAction
+        case routeValueBefore, routeValueAfter, pairedRouteValueBefore, pairedRouteValueAfter
+        case playbackValueBefore, playbackValueAfter
+        case workspace
+    }
+
     let index: Int
     let type: String
     let key: String?
@@ -186,10 +206,16 @@ struct ActionReceipt: Codable {
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
     let accessibilityLabel: String?
+    let accessibilityIdentifier: String?
+    let pairedAccessibilityIdentifier: String?
     let accessibilityRole: String?
     let accessibilityMatchCount: Int?
     let accessibilityValue: String?
     let accessibilityAction: String?
+    let routeValueBefore: String?
+    let routeValueAfter: String?
+    let pairedRouteValueBefore: String?
+    let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
     let workspace: WorkspaceObservationReceipt?
@@ -213,10 +239,16 @@ struct ActionReceipt: Codable {
         playheadTicksBefore: Int64? = nil,
         observedPlayheadTicks: Int64? = nil,
         accessibilityLabel: String? = nil,
+        accessibilityIdentifier: String? = nil,
+        pairedAccessibilityIdentifier: String? = nil,
         accessibilityRole: String? = nil,
         accessibilityMatchCount: Int? = nil,
         accessibilityValue: String? = nil,
         accessibilityAction: String? = nil,
+        routeValueBefore: String? = nil,
+        routeValueAfter: String? = nil,
+        pairedRouteValueBefore: String? = nil,
+        pairedRouteValueAfter: String? = nil,
         playbackValueBefore: String? = nil,
         playbackValueAfter: String? = nil,
         workspace: WorkspaceObservationReceipt? = nil
@@ -239,13 +271,60 @@ struct ActionReceipt: Codable {
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.pairedAccessibilityIdentifier = pairedAccessibilityIdentifier
         self.accessibilityRole = accessibilityRole
         self.accessibilityMatchCount = accessibilityMatchCount
         self.accessibilityValue = accessibilityValue
         self.accessibilityAction = accessibilityAction
+        self.routeValueBefore = routeValueBefore
+        self.routeValueAfter = routeValueAfter
+        self.pairedRouteValueBefore = pairedRouteValueBefore
+        self.pairedRouteValueAfter = pairedRouteValueAfter
         self.playbackValueBefore = playbackValueBefore
         self.playbackValueAfter = playbackValueAfter
         self.workspace = workspace
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(index, forKey: .index)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(key, forKey: .key)
+        try container.encodeIfPresent(screenshotPath, forKey: .screenshotPath)
+        try container.encodeIfPresent(byteLength, forKey: .byteLength)
+        try container.encodeIfPresent(xFraction, forKey: .xFraction)
+        try container.encodeIfPresent(yFraction, forKey: .yFraction)
+        try container.encodeIfPresent(audioProbe, forKey: .audioProbe)
+        try container.encodeIfPresent(routeHealth, forKey: .routeHealth)
+        try container.encodeIfPresent(avSyncPeakValue, forKey: .avSyncPeakValue)
+        try container.encodeIfPresent(avSyncCurrentValue, forKey: .avSyncCurrentValue)
+        try container.encodeIfPresent(playheadTicks, forKey: .playheadTicks)
+        try container.encodeIfPresent(playheadToleranceTicks, forKey: .playheadToleranceTicks)
+        try container.encodeIfPresent(
+            playheadMaximumForwardAdvanceTicks,
+            forKey: .playheadMaximumForwardAdvanceTicks
+        )
+        try container.encodeIfPresent(playheadStepFrames, forKey: .playheadStepFrames)
+        try container.encodeIfPresent(playheadTicksBefore, forKey: .playheadTicksBefore)
+        try container.encodeIfPresent(observedPlayheadTicks, forKey: .observedPlayheadTicks)
+        try container.encodeIfPresent(accessibilityLabel, forKey: .accessibilityLabel)
+        try container.encodeIfPresent(accessibilityIdentifier, forKey: .accessibilityIdentifier)
+        try container.encodeIfPresent(
+            pairedAccessibilityIdentifier,
+            forKey: .pairedAccessibilityIdentifier
+        )
+        try container.encodeIfPresent(accessibilityRole, forKey: .accessibilityRole)
+        try container.encodeIfPresent(accessibilityMatchCount, forKey: .accessibilityMatchCount)
+        try container.encodeIfPresent(accessibilityValue, forKey: .accessibilityValue)
+        try container.encodeIfPresent(accessibilityAction, forKey: .accessibilityAction)
+        try container.encodeIfPresent(routeValueBefore, forKey: .routeValueBefore)
+        try container.encodeIfPresent(routeValueAfter, forKey: .routeValueAfter)
+        try container.encodeIfPresent(pairedRouteValueBefore, forKey: .pairedRouteValueBefore)
+        try container.encodeIfPresent(pairedRouteValueAfter, forKey: .pairedRouteValueAfter)
+        try container.encodeIfPresent(playbackValueBefore, forKey: .playbackValueBefore)
+        try container.encodeIfPresent(playbackValueAfter, forKey: .playbackValueAfter)
+        try container.encodeIfPresent(workspace, forKey: .workspace)
     }
 }
 
@@ -834,6 +913,169 @@ func exactWorkspaceObservation(in window: AXUIElement) throws -> WorkspaceObserv
         )
     }
     return WorkspaceObservationReceipt(elements: elements)
+}
+
+/// Studio route observation helpers begin here; keep them outside the
+/// playhead's forward-advance policy block below.
+
+/// Finds one exact Source or Timeline route control and verifies that the
+/// control itself exposes AXPress. Route identity is an accessibility
+/// contract, not a coordinate or a keyboard shortcut.
+func exactAccessibilityWorkspaceRoute(
+    in window: AXUIElement,
+    identifier: String
+) throws -> AXUIElement {
+    guard identifier == workspaceSourceRouteIdentifier ||
+            identifier == workspaceTimelineRouteIdentifier else {
+        throw DriverFailure.refused("workspace route identifier is not one of the fixed routes")
+    }
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        if stringAttribute(kAXIdentifierAttribute, of: element) == identifier {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("workspace accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512, matches.count == 1, let route = matches.first else {
+        throw DriverFailure.refused(
+            "workspace route accessibility identifier is absent or duplicated"
+        )
+    }
+    guard stringAttribute(kAXRoleAttribute, of: route) == kAXCheckBoxRole else {
+        throw DriverFailure.refused("workspace route accessibility control is not an AXCheckBox")
+    }
+    guard workspaceBoolAttribute(kAXEnabledAttribute, of: route) == true else {
+        throw DriverFailure.refused("workspace route accessibility control is not enabled")
+    }
+    var rawActions: CFArray?
+    guard AXUIElementCopyActionNames(route, &rawActions) == .success,
+          let actionNames = rawActions as? [String],
+          actionNames.contains(kAXPressAction) else {
+        throw DriverFailure.refused("workspace route accessibility control has no AXPress action")
+    }
+    guard let value = stringAttribute(kAXValueAttribute, of: route),
+          value == "selected" || value == "not selected" else {
+        throw DriverFailure.refused("workspace route accessibility value is invalid")
+    }
+    return route
+}
+
+func pressAccessibilityWorkspaceRoute(
+    _ route: AXUIElement,
+    in window: AXUIElement,
+    identifier: String,
+    pairedIdentifier: String,
+    accessibilityAction: String,
+    routeValueBefore: String,
+    routeValueAfter: String,
+    pairedRouteValueBefore: String,
+    pairedRouteValueAfter: String,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> (before: String, after: String, pairedBefore: String, pairedAfter: String) {
+    let exactRouteIdentifiers = Set([
+        workspaceSourceRouteIdentifier,
+        workspaceTimelineRouteIdentifier,
+    ])
+    guard Set([identifier, pairedIdentifier]) == exactRouteIdentifiers,
+          accessibilityAction == "AXPress",
+          routeValueBefore == "not selected",
+          routeValueAfter == "selected",
+          pairedRouteValueBefore == "selected",
+          pairedRouteValueAfter == "selected",
+          let observedBefore = stringAttribute(kAXValueAttribute, of: route),
+          observedBefore == routeValueBefore,
+          let pairedRoute = try? exactAccessibilityWorkspaceRoute(
+              in: window,
+              identifier: pairedIdentifier
+          ),
+          let observedPairedBefore = stringAttribute(kAXValueAttribute, of: pairedRoute),
+          observedPairedBefore == pairedRouteValueBefore else {
+        throw DriverFailure.refused("exact workspace AXPress route request does not match observed control")
+    }
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard foregroundBefore != request.expectedPid, !application.isActive else {
+        throw DriverFailure.refused("background workspace route control refuses an active Companion")
+    }
+    guard AXUIElementPerformAction(route, kAXPressAction as CFString) == .success else {
+        throw DriverFailure.refused("exact workspace route AXPress failed")
+    }
+    let deadline = Date().addingTimeInterval(1)
+    var observedAfter: String?
+    var observedPairedAfter: String?
+    var lastObservationFailure: String?
+    while Date() < deadline {
+        do {
+            try validateWindow(request)
+            let freshWindow = try exactAccessibilityWindow(request)
+            let freshRoute = try exactAccessibilityWorkspaceRoute(
+                in: freshWindow,
+                identifier: identifier
+            )
+            let freshPairedRoute = try exactAccessibilityWorkspaceRoute(
+                in: freshWindow,
+                identifier: pairedIdentifier
+            )
+            guard let candidate = stringAttribute(kAXValueAttribute, of: freshRoute),
+                  let pairedCandidate = stringAttribute(
+                    kAXValueAttribute,
+                    of: freshPairedRoute
+                  ) else {
+                throw DriverFailure.refused("workspace route accessibility value is unreadable")
+            }
+            observedAfter = candidate
+            observedPairedAfter = pairedCandidate
+            lastObservationFailure = nil
+        } catch let failure as DriverFailure {
+            observedAfter = nil
+            observedPairedAfter = nil
+            lastObservationFailure = failure.description
+        } catch {
+            observedAfter = nil
+            observedPairedAfter = nil
+            lastObservationFailure = String(describing: error)
+        }
+        if observedAfter == routeValueAfter &&
+            observedPairedAfter == pairedRouteValueAfter {
+            break
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard observedAfter == routeValueAfter,
+          observedPairedAfter == pairedRouteValueAfter,
+          foregroundAfter == foregroundBefore,
+          !application.isActive else {
+        throw DriverFailure.refused(
+            "workspace route AXPress did not settle: identifier=\(identifier) " +
+                "requestedBefore=\(routeValueBefore) observedBefore=\(observedBefore) " +
+                "requestedAfter=\(routeValueAfter) observedAfter=\(String(describing: observedAfter)) " +
+                "pairedIdentifier=\(pairedIdentifier) " +
+                "pairedRequestedBefore=\(pairedRouteValueBefore) " +
+                "pairedObservedBefore=\(observedPairedBefore) " +
+                "pairedRequestedAfter=\(pairedRouteValueAfter) " +
+                "pairedObservedAfter=\(String(describing: observedPairedAfter)) " +
+                "lastObservationFailure=\(lastObservationFailure ?? "none")"
+        )
+    }
+    return (observedBefore, observedAfter!, observedPairedBefore, observedPairedAfter!)
 }
 
 func readWorkspaceObservation(
@@ -1704,6 +1946,22 @@ do {
     if request.actions.contains(where: { $0.type == "press-playback" }) {
         _ = try exactAccessibilityPlaybackControl(in: accessibilityWindow)
     }
+    if let routeAction = request.actions.first(where: {
+        $0.type == "press-workspace-route"
+    }) {
+        guard let identifier = routeAction.accessibilityIdentifier,
+              let pairedIdentifier = routeAction.pairedAccessibilityIdentifier else {
+            throw DriverFailure.refused("workspace route AXPress request has incomplete identifiers")
+        }
+        _ = try exactAccessibilityWorkspaceRoute(
+            in: accessibilityWindow,
+            identifier: identifier
+        )
+        _ = try exactAccessibilityWorkspaceRoute(
+            in: accessibilityWindow,
+            identifier: pairedIdentifier
+        )
+    }
     if let transportMutationAction = request.actions.first(where: {
         $0.type == "read-transport-mutation"
     }) {
@@ -1865,6 +2123,58 @@ do {
                     accessibilityAction: accessibilityAction,
                     playbackValueBefore: observed.before,
                     playbackValueAfter: observed.after
+                )
+            )
+        } else if action.type == "press-workspace-route",
+                  request.inputDelivery == "background-observation-only",
+                  let accessibilityIdentifier = action.accessibilityIdentifier,
+                  let pairedAccessibilityIdentifier = action.pairedAccessibilityIdentifier,
+                  let accessibilityRole = action.accessibilityRole,
+                  let accessibilityAction = action.accessibilityAction,
+                  let routeValueBefore = action.routeValueBefore,
+                  let routeValueAfter = action.routeValueAfter,
+                  let pairedRouteValueBefore = action.pairedRouteValueBefore,
+                  let pairedRouteValueAfter = action.pairedRouteValueAfter
+        {
+            guard accessibilityRole == kAXCheckBoxRole else {
+                throw DriverFailure.refused("workspace route AXPress request is not an AXCheckBox")
+            }
+            let route = try exactAccessibilityWorkspaceRoute(
+                in: accessibilityWindow,
+                identifier: accessibilityIdentifier
+            )
+            let observed = try pressAccessibilityWorkspaceRoute(
+                route,
+                in: accessibilityWindow,
+                identifier: accessibilityIdentifier,
+                pairedIdentifier: pairedAccessibilityIdentifier,
+                accessibilityAction: accessibilityAction,
+                routeValueBefore: routeValueBefore,
+                routeValueAfter: routeValueAfter,
+                pairedRouteValueBefore: pairedRouteValueBefore,
+                pairedRouteValueAfter: pairedRouteValueAfter,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "press-workspace-route",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    accessibilityIdentifier: accessibilityIdentifier,
+                    pairedAccessibilityIdentifier: pairedAccessibilityIdentifier,
+                    accessibilityRole: accessibilityRole,
+                    accessibilityAction: accessibilityAction,
+                    routeValueBefore: observed.before,
+                    routeValueAfter: observed.after,
+                    pairedRouteValueBefore: observed.pairedBefore,
+                    pairedRouteValueAfter: observed.pairedAfter
                 )
             )
         } else if action.type == "set-playhead-ticks",

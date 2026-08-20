@@ -60,7 +60,8 @@ const {
   ) => Record<string, any>
   adjudicateSharedStudioClock: (
     sourceReceipt: Record<string, any>,
-    reviewReceipt: Record<string, any>
+    reviewReceipt: Record<string, any>,
+    routeReceipt: Record<string, any>
   ) => Record<string, any>
   assertGeneratedSpeechFixtureCustody: (
     fixture: Record<string, any>,
@@ -266,7 +267,10 @@ function workspaceElement(
   return { identifier, visible, role, value, enabled, frame }
 }
 
-function validWorkspaceObservation(review: boolean): { elements: Array<Record<string, any>> } {
+function validWorkspaceObservation(
+  review: boolean,
+  proposed = false
+): { elements: Array<Record<string, any>> } {
   return {
     elements: [
       workspaceElement('studio.workspace.root', true, 'AXGroup', null, null, {
@@ -279,7 +283,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.route.source',
         true,
         'AXCheckBox',
-        review ? 'not selected' : 'selected',
+        'selected',
         true,
         { x: 4, y: 4, width: 40, height: 20 }
       ),
@@ -311,7 +315,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.review-version.current',
         true,
         'AXRadioButton',
-        review ? 'selected' : 'unavailable',
+        review ? (proposed ? 'not selected' : 'selected') : 'unavailable',
         review ? true : false,
         { x: 100, y: 4, width: 60, height: 20 }
       ),
@@ -319,7 +323,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.review-version.proposed',
         true,
         'AXRadioButton',
-        review ? 'not selected' : 'unavailable',
+        review ? (proposed ? 'selected' : 'not selected') : 'unavailable',
         review ? true : false,
         { x: 164, y: 4, width: 80, height: 20 }
       )
@@ -3239,7 +3243,7 @@ describe('Studio acceptance harness', () => {
     expect(driverSource).toContain('foregroundAfter == foregroundBefore')
     const transportReadStart = driverSource.indexOf('func exactAccessibilityTransportMutation(')
     const transportReadEnd = driverSource.indexOf(
-      '/// The forward-advance envelope',
+      '/// Studio route observation helpers begin here',
       transportReadStart
     )
     const transportReadSource = driverSource.slice(transportReadStart, transportReadEnd)
@@ -3258,6 +3262,21 @@ describe('Studio acceptance harness', () => {
     expect(transportReadSource).toContain('pgidAfter == pgidBefore')
     expect(transportReadSource).toContain('executableAfter == executableBefore')
     expect(transportReadSource).not.toContain('AXUIElementPerformAction')
+    const routePressStart = driverSource.indexOf('func pressAccessibilityWorkspaceRoute(')
+    const routePressEnd = driverSource.indexOf(
+      'func readWorkspaceObservation(',
+      routePressStart
+    )
+    const routePressSource = driverSource.slice(routePressStart, routePressEnd)
+    expect(routePressStart).toBeGreaterThan(0)
+    expect(routePressSource).toContain('try validateWindow(request)')
+    expect(routePressSource).toContain('let freshWindow = try exactAccessibilityWindow(request)')
+    expect(routePressSource).not.toContain('try? exactAccessibilityWindow')
+    expect(routePressSource).toContain('observedPairedBefore == pairedRouteValueBefore')
+    expect(routePressSource).toContain('observedPairedAfter == pairedRouteValueAfter')
+    expect(routePressSource).toContain(
+      'AXUIElementPerformAction(route, kAXPressAction as CFString) == .success'
+    )
     expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
 
@@ -4116,6 +4135,61 @@ describe('Studio acceptance harness', () => {
     await expect(run({ accessibilityAction: 'AXShowMenu' })).rejects.toThrow(/Playback receipt/)
   })
 
+  it('rejects an extra top-level key in a read-workspace action receipt', async () => {
+    const root = await temporaryRoot('studio-acceptance-workspace-receipt-schema-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: WORKSPACE_WINDOW_BOUNDS
+          }
+        ]
+      }
+    }
+    await expect(
+      runStudioUiDriver(
+        { artifactRoot: root },
+        target,
+        [{ type: 'read-workspace' }],
+        {
+          execFile: vi.fn(async (_file: string, args: string[]) => {
+            const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+            return {
+              stdout: `${JSON.stringify({
+                schemaVersion: 1,
+                kind: 'taskwraith-studio-ui-driver-receipt',
+                inputDelivery: request.inputDelivery,
+                pid: request.expectedPid,
+                pgid: request.expectedPgid,
+                windowId: request.windowId,
+                actions: [
+                  {
+                    index: 0,
+                    type: 'read-workspace',
+                    workspace: validWorkspaceObservation(true),
+                    unexpected: true
+                  }
+                ]
+              })}\n`,
+              stderr: ''
+            }
+          })
+        }
+      )
+    ).rejects.toThrow(/read-workspace action receipt.*extra top-level key/i)
+  })
+
   it('bounds live Playhead settlement with an explicit forward-only envelope', async () => {
     const root = await temporaryRoot('studio-acceptance-playhead-envelope-')
     const target = {
@@ -4346,13 +4420,43 @@ describe('Studio acceptance harness', () => {
         }
       ]
     }
-    expect(adjudicateSharedStudioClock(source, review)).toMatchObject({
+    const routeTransition = {
+      actions: [
+        {
+          type: 'press-workspace-route',
+          accessibilityIdentifier: 'studio.workspace.route.timeline',
+          pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+          accessibilityRole: 'AXCheckBox',
+          accessibilityAction: 'AXPress',
+          routeValueBefore: 'not selected',
+          routeValueAfter: 'selected',
+          pairedRouteValueBefore: 'selected',
+          pairedRouteValueAfter: 'selected'
+        }
+      ]
+    }
+    expect(adjudicateSharedStudioClock(source, review, routeTransition)).toMatchObject({
       ok: true,
       reviewAfterTicks: 1_500_000
     })
     const splitClock = structuredClone(review)
     splitClock.actions[0].playheadTicksBefore = 9_000_000
-    expect(() => adjudicateSharedStudioClock(source, splitClock)).toThrow(/one shared clock/)
+    expect(() => adjudicateSharedStudioClock(source, splitClock, routeTransition)).toThrow(
+      /one shared clock/
+    )
+    const sameVisibleControl = structuredClone(routeTransition)
+    sameVisibleControl.actions[0].accessibilityIdentifier = 'studio.workspace.route.source'
+    sameVisibleControl.actions[0].pairedAccessibilityIdentifier =
+      'studio.workspace.route.timeline'
+    sameVisibleControl.actions[0].routeValueBefore = 'selected'
+    expect(() => adjudicateSharedStudioClock(source, review, sameVisibleControl)).toThrow(
+      /AXPress route transition/
+    )
+    const sourceWasNotSelected = structuredClone(routeTransition)
+    sourceWasNotSelected.actions[0].pairedRouteValueBefore = 'not selected'
+    expect(() => adjudicateSharedStudioClock(source, review, sourceWasNotSelected)).toThrow(
+      /AXPress route transition/
+    )
 
     const playback = {
       actions: [
@@ -4393,7 +4497,8 @@ describe('Studio acceptance harness', () => {
     const windowTargetsSeen: Array<Record<string, any>> = []
     let proposalNumber = 0
     let sharedPlayheadTicks = 1_500_000
-    let readWorkspaceCallCount = 0
+    let reviewRouteSelected = false
+    let proposedVersionSelected = false
     const receipt = await driveStudioUiJourney(
       { artifactRoot: '/virtual/acceptance/studioJourney01', transcriptTimeoutMs: 720_000 },
       {
@@ -4505,13 +4610,6 @@ describe('Studio acceptance harness', () => {
           windowTargetsSeen.push(target?.window?.windows?.[0] ?? null)
           if (actions.length === 1 && actions[0].type === 'read-workspace') {
             calls.push('driver:read-workspace')
-            readWorkspaceCallCount += 1
-            // The very first read-workspace call happens at journey start,
-            // before Timeline is ever shown: Source is selected/visible and
-            // Timeline is not. Every later call (the accept/reject
-            // waitForWorkspaceReview polls) happens after `w` has shown
-            // Timeline, so review=true from then on.
-            const review = readWorkspaceCallCount > 1
             return {
               schemaVersion: 1,
               kind: 'taskwraith-studio-ui-driver-receipt',
@@ -4522,7 +4620,10 @@ describe('Studio acceptance harness', () => {
                 {
                   index: 0,
                   type: 'read-workspace',
-                  workspace: validWorkspaceObservation(review)
+                  workspace: validWorkspaceObservation(
+                    reviewRouteSelected,
+                    proposedVersionSelected
+                  )
                 }
               ]
             }
@@ -4536,6 +4637,17 @@ describe('Studio acceptance harness', () => {
             return action.type
           })
           calls.push(`driver:${actionNames.join(',')}`)
+          for (const action of actions) {
+            if (action.type === 'press-workspace-route' && action.route === 'timeline') {
+              reviewRouteSelected = true
+            }
+            if (action.type === 'key' && action.key === 'w') {
+              reviewRouteSelected = true
+            }
+            if (action.type === 'key' && action.key === 'v') {
+              proposedVersionSelected = true
+            }
+          }
           return {
             schemaVersion: 1,
             kind: 'taskwraith-studio-ui-driver-receipt',
@@ -4556,6 +4668,18 @@ describe('Studio acceptance harness', () => {
                   accessibilityAction: 'AXPress',
                   playbackValueBefore: action.playbackValueBefore,
                   playbackValueAfter: action.playbackValueAfter
+                })
+              }
+              if (action.type === 'press-workspace-route') {
+                Object.assign(observed, {
+                  accessibilityIdentifier: 'studio.workspace.route.timeline',
+                  pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+                  accessibilityRole: 'AXCheckBox',
+                  accessibilityAction: 'AXPress',
+                  routeValueBefore: 'not selected',
+                  routeValueAfter: 'selected',
+                  pairedRouteValueBefore: 'selected',
+                  pairedRouteValueAfter: 'selected'
                 })
               }
               if (action.type === 'set-playhead-ticks') {
@@ -4610,8 +4734,14 @@ describe('Studio acceptance harness', () => {
         ghostRejectPixels: { ok: true, region: 'review-host' },
         workspace: {
           accepted: {
+            sourceRoute: { value: 'selected' },
             timelineRoute: { value: 'selected' },
             timelineHost: { visible: true }
+          },
+          proposedAfterV: {
+            sourceRoute: { value: 'selected' },
+            currentVersion: { value: 'not selected' },
+            proposedVersion: { value: 'selected' }
           },
           rejected: {
             timelineRoute: { value: 'selected' },
@@ -4622,7 +4752,16 @@ describe('Studio acceptance harness', () => {
           sourceBeforeTicks: 1_500_000,
           sourceAfterTicks: 1_501_000,
           reviewBeforeTicks: 1_501_000,
-          reviewAfterTicks: 1_500_000
+          reviewAfterTicks: 1_500_000,
+          route: {
+            accessibilityIdentifier: 'studio.workspace.route.timeline',
+            pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+            accessibilityAction: 'AXPress',
+            before: 'not selected',
+            after: 'selected',
+            pairedBefore: 'selected',
+            pairedAfter: 'selected'
+          }
         },
         playbackRoundTrip: {
           ok: true,
@@ -4646,16 +4785,17 @@ describe('Studio acceptance harness', () => {
       'compare:source-host-overlay:transcript-band.png:transcript-selected.png',
       'journal:propose_edit:',
       'driver:ghost',
-      'driver:w',
-      'driver:read-workspace',
       'driver:set:1500000',
+      'driver:step:1',
+      'driver:press-workspace-route',
+      'driver:read-workspace',
+      'driver:step:-1',
       'driver:current',
       'driver:v',
+      'driver:read-workspace',
       'driver:set:1500000',
       'driver:proposed',
       'compare:review-host:current.png:proposed.png',
-      'driver:step:1',
-      'driver:step:-1',
       'driver:a,accept-sent',
       'journal:resolve_proposal:accept',
       'driver:w,tab,bracket-right,return',
@@ -4678,12 +4818,12 @@ describe('Studio acceptance harness', () => {
       'foreground-global-explicit',
       'background-observation-only',
       'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
+      'background-observation-only',
       'foreground-global-explicit',
-      'background-observation-only',
-      'background-observation-only',
-      'foreground-global-explicit',
-      'background-observation-only',
-      'background-observation-only',
       'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
@@ -6067,6 +6207,56 @@ describe('Studio acceptance harness', () => {
           actions: [{ type: 'read-workspace', callerControlledValue: 'must-be-ignored' }]
         })
         expect(Object.keys(built.actions[0])).toEqual(['type'])
+      })
+
+      it('normalizes a Timeline route AXPress transition to the fixed accessibility contract', () => {
+        const target = {
+          companion: {
+            pid: 7002,
+            ppid: 7001,
+            pgid: 7001,
+            command: '/virtual/TaskWraithStudioCompanion --viewer'
+          },
+          electronPgid: 7001,
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [
+              { windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          },
+          artifactRoot: '/virtual/acceptance/studioWorkspaceRoute01'
+        }
+        expect(
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              {
+                type: 'press-workspace-route',
+                route: 'timeline',
+                accessibilityIdentifier: 'caller-controlled',
+                routeValueBefore: 'selected'
+              }
+            ]
+          })
+        ).toMatchObject({
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false,
+          actions: [
+            {
+              type: 'press-workspace-route',
+              route: 'timeline',
+              accessibilityIdentifier: 'studio.workspace.route.timeline',
+              pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+              accessibilityRole: 'AXCheckBox',
+              accessibilityAction: 'AXPress',
+              routeValueBefore: 'not selected',
+              routeValueAfter: 'selected',
+              pairedRouteValueBefore: 'selected',
+              pairedRouteValueAfter: 'selected'
+            }
+          ]
+        })
       })
     })
 

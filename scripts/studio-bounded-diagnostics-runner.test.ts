@@ -7,14 +7,16 @@ const {
   DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
-  UNPROMOTED_SESSION_DEPENDENCIES,
+  TRACKED_SESSION_DEPENDENCIES,
   assertDiagnostics,
   buildReferenceExtractCommand,
   describeFixtureContract,
   isPlayableSample,
   mediaToolCandidates,
   parseFramePtsCensus,
+  parseDiagnosticsCli,
   parseOcrInteger,
+  parseStudioTimecodeText,
   parseVisibleHud,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
@@ -856,26 +858,34 @@ describe('the serialized evidence schema, closed as a schema rather than by exam
   })
 })
 
-describe('the runner is honest about what it cannot yet do', () => {
-  // The session layer (withIsolatedSession, invokeStudioOpen, captureNative,
-  // waitForSourceWindow, ocrScreenshot, resourceSample, focus isolation) is still
-  // untracked. Rather than silently reaching into .local-only, an end-to-end run
-  // must refuse and name what is missing. Shipping a runner that LOOKS runnable is
-  // how an outcome gets promoted on apparatus nobody can reproduce.
-  it('names the unpromoted session dependencies explicitly', () => {
-    expect(UNPROMOTED_SESSION_DEPENDENCIES.length).toBeGreaterThan(0)
-    expect(UNPROMOTED_SESSION_DEPENDENCIES).toContain('withIsolatedSession')
-    expect(UNPROMOTED_SESSION_DEPENDENCIES).toContain('captureNative')
-  })
-
-  it('refuses an end-to-end run instead of pretending to observe', async () => {
-    await expect(runBoundedDiagnostics()).rejects.toThrow(/not yet promoted/i)
-  })
-
-  it('names every missing dependency in the refusal, so the follow-up is unambiguous', async () => {
-    const error = await runBoundedDiagnostics().catch((e: Error) => e)
-    for (const dependency of UNPROMOTED_SESSION_DEPENDENCIES) {
-      expect(String(error.message)).toContain(dependency)
+describe('the runner carries tracked end-to-end apparatus', () => {
+  it('names and resolves every tracked session dependency', () => {
+    expect(TRACKED_SESSION_DEPENDENCIES.length).toBeGreaterThan(0)
+    expect(TRACKED_SESSION_DEPENDENCIES).toContain('withIsolatedSession')
+    expect(TRACKED_SESSION_DEPENDENCIES).toContain('captureNative')
+    const session = require('./studio-acceptance-session.cjs')
+    for (const dependency of TRACKED_SESSION_DEPENDENCIES) {
+      expect(session[dependency]).toBeTypeOf('function')
     }
+  })
+
+  it('requires a fresh explicit artifact root before any end-to-end run', async () => {
+    await expect(runBoundedDiagnostics()).rejects.toThrow(/fresh absolute artifact root/i)
+  })
+
+  it('parses only the explicit bounded diagnostics launch argument', () => {
+    expect(parseDiagnosticsCli(['--artifact-root', '/tmp/diagnostics-a'])).toEqual({
+      help: false,
+      artifactRoot: '/tmp/diagnostics-a'
+    })
+    expect(parseDiagnosticsCli(['--help'])).toEqual({ help: true, artifactRoot: null })
+    expect(() => parseDiagnosticsCli([])).toThrow(/artifact-root is required/)
+    expect(() => parseDiagnosticsCli(['--unknown'])).toThrow(/unknown/)
+  })
+
+  it('parses the live frame timecode as well as the legacy decimal form', () => {
+    expect(parseStudioTimecodeText('00:00:10:15')).toBe(10.5)
+    expect(parseStudioTimecodeText('00:00:10.500')).toBe(10.5)
+    expect(parseStudioTimecodeText('00:00:10:30')).toBeNull()
   })
 })
