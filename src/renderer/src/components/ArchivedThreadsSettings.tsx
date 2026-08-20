@@ -3,6 +3,11 @@ import {
   ARCHIVED_CHAT_EXPORT_FORMATS,
   type ArchivedChatExportFormat
 } from '../../../shared/archivedChatExport'
+import {
+  EXTERNAL_PROVIDER_THREAD_IMPORT_PROVIDERS,
+  externalProviderThreadImportLabel,
+  type ExternalProviderThreadImportProvider
+} from '../../../shared/externalProviderThreadImport'
 import './ArchivedThreadsSettings.css'
 
 interface ArchivedThreadSummary {
@@ -14,6 +19,10 @@ interface ArchivedThreadSummary {
   archived: boolean
   updatedAt: number
   messageCount: number
+  externalProviderThreadImport?: {
+    provider: ExternalProviderThreadImportProvider
+    truncated: boolean
+  }
 }
 
 function displayDate(timestamp: number): string {
@@ -25,6 +34,9 @@ function displayDate(timestamp: number): string {
 }
 
 function chatKindLabel(chat: ArchivedThreadSummary): string {
+  if (chat.externalProviderThreadImport) {
+    return `Imported ${externalProviderThreadImportLabel(chat.externalProviderThreadImport.provider)}`
+  }
   if (chat.parentChatRelation === 'sideChat') return 'Side chat'
   if (chat.parentChatRelation === 'subThread') return 'Sub-thread'
   if (chat.chatKind === 'ensemble') return 'Ensemble'
@@ -35,6 +47,9 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
   const [archivedChats, setArchivedChats] = useState<ArchivedThreadSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [busyChatId, setBusyChatId] = useState<string | null>(null)
+  const [importProvider, setImportProvider] =
+    useState<ExternalProviderThreadImportProvider>('codex')
+  const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -131,6 +146,28 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
     }
   }
 
+  const handleExternalImport = async (): Promise<void> => {
+    setImporting(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await window.api.importExternalProviderThread({ provider: importProvider })
+      if (!result.ok) throw new Error(result.error)
+      if (result.canceled) return
+      await loadArchivedChats()
+      const suffix = result.truncated ? ' The bounded importer truncated the source.' : ''
+      setNotice(
+        result.duplicate
+          ? `That ${externalProviderThreadImportLabel(importProvider)} transcript is already imported.`
+          : `Imported ${result.importedMessageCount} messages into “${result.chat.title}”.${suffix}`
+      )
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : 'Could not import thread.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="archived-threads-settings">
       <div className="settings-group archived-threads-intro">
@@ -147,6 +184,35 @@ export function ArchivedThreadsSettings(): React.JSX.Element {
         >
           {loading ? 'Loading…' : 'Refresh'}
         </button>
+      </div>
+
+      <div className="settings-group archived-threads-import">
+        <span className="settings-label">Import an external provider thread</span>
+        <p className="settings-hint">
+          Choose one local Codex, Claude, Cursor, or AntiGravity transcript file. TaskWraith never
+          scans provider folders automatically. Imports are archived, untrusted, excluded from
+          future provider prompts, and cannot resume the native provider session. Local chat history
+          must be enabled.
+        </p>
+        <div className="archived-threads-import-controls">
+          <select
+            value={importProvider}
+            onChange={(event) =>
+              setImportProvider(event.target.value as ExternalProviderThreadImportProvider)
+            }
+            disabled={importing}
+            aria-label="External transcript provider"
+          >
+            {EXTERNAL_PROVIDER_THREAD_IMPORT_PROVIDERS.map((provider) => (
+              <option key={provider} value={provider}>
+                {externalProviderThreadImportLabel(provider)}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => void handleExternalImport()} disabled={importing}>
+            {importing ? 'Opening picker…' : 'Choose transcript file…'}
+          </button>
+        </div>
       </div>
 
       {error && <p className="settings-error archived-threads-feedback">{error}</p>}

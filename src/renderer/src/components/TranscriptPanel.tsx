@@ -47,6 +47,11 @@ import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReference
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import type { ProjectReferenceCitationExtractResolution } from '../../../shared/projectReferenceCitation'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
+import { ExternalProviderThreadImportBanner } from './ExternalProviderThreadImportBanner'
+import {
+  externalProviderThreadImportMessageLabel,
+  isExternalProviderThreadImportMessage
+} from '../../../shared/externalProviderThreadImport'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
 import {
   buildRunCompleteBlockers,
@@ -4309,6 +4314,11 @@ export const TranscriptPanel = memo(
         data-scope={isGlobal ? 'global' : 'workspace'}
         ref={scrollRef}
       >
+        {currentChat?.externalProviderThreadImport && (
+          <ExternalProviderThreadImportBanner
+            metadata={currentChat.externalProviderThreadImport}
+          />
+        )}
         {userMessageGutterEnabled !== false && (
           <TranscriptUserMessageGutter
             key={currentChat?.appChatId || 'transcript-user-gutter'}
@@ -4387,6 +4397,7 @@ export const TranscriptPanel = memo(
             // action, and offering that on a contribution that has ALREADY been
             // delivered invites the host to re-inject it as their own prompt.
             const isDeliveredExternal = isDeliveredExternalContribution(msg)
+            const isImportedProviderMessage = isExternalProviderThreadImportMessage(msg)
             const deliveredExternalName =
               (isDeliveredExternal &&
                 typeof msg.metadata?.collaboratorDisplayName === 'string' &&
@@ -5401,6 +5412,23 @@ export const TranscriptPanel = memo(
                       // CSS in `main.css` keys off `.provider-{name}`
                       // on `.message-meta` to tint with
                       // `--provider-{name}-color`.
+                      if (
+                        isImportedProviderMessage &&
+                        currentChat?.externalProviderThreadImport
+                      ) {
+                        return (
+                          <div className="message-meta external-provider-import-meta">
+                            {externalProviderThreadImportMessageLabel(
+                              currentChat.externalProviderThreadImport.provider,
+                              msg.role === 'user'
+                                ? 'user'
+                                : msg.role === 'assistant'
+                                  ? 'assistant'
+                                  : 'system'
+                            )}
+                          </div>
+                        )
+                      }
                       if (msg.role === 'user') {
                         // `user-meta` class is the seam the per-user
                         // `userBubbleColor` appearance setting hooks
