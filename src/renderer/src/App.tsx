@@ -21874,47 +21874,41 @@ function App(): React.JSX.Element {
     ]
   )
 
-  // Ensemble round-complete notice — fires once when the round
-  // transitions to `completed` (or `cancelled`). Solo chats use the
-  // per-run-exit notice path; for ensemble we suppress that and
-  // emit here instead, so the card reflects round-level metadata
-  // rather than the last participant's individual run.
-  //
-  // Lifecycle:
-  //   - `completed` / `cancelled` → emit the notice (once per round).
-  //   - `running` (new round started) → CLEAR any stale notice from
-  //     a previous round so the user doesn't see a stale "Task
-  //     complete" card overlapping a live run.
-  //   - The ref dedupes within a single round so chat broadcasts
-  //     landing in pairs (debounce + finalise) don't refire.
-  const lastEnsembleRoundCompleteRef = useRef<string | null>(null)
+  // Ensemble round-complete notice is derived from durable round state rather
+  // than an edge-triggered once-per-round ref. Continuous rounds can reopen and
+  // re-complete under the same round id, and chat switches/reloads must rebuild
+  // the same notice without relying on a transition this component happened to
+  // observe. Solo chats retain the per-run exit path.
   useEffect(() => {
-    if (!isCurrentEnsembleChat) return
+    if (!isCurrentEnsembleChat || !currentChat) return
     const round = currentChat?.ensemble?.activeRound
     if (!round) return
     if (isEnsembleActiveRoundDispatchLive(round)) {
-      // A new round (or a round-restart) is live — wipe any notice
-      // left from a previous round. The dedupe ref also resets so
-      // the upcoming round-end CAN fire a fresh notice.
-      if (lastEnsembleRoundCompleteRef.current !== round.roundId) {
-        lastEnsembleRoundCompleteRef.current = null
-        setRunCompleteNotice(null)
-      }
+      setRunCompleteNotice(null)
       return
     }
-    if (round.status !== 'completed' && round.status !== 'cancelled') return
-    if (lastEnsembleRoundCompleteRef.current === round.roundId) return
-    lastEnsembleRoundCompleteRef.current = round.roundId
+    if (
+      round.status !== 'completed' &&
+      round.status !== 'cancelled' &&
+      round.status !== 'failed'
+    ) {
+      return
+    }
+    const notice = deriveChatRunCompleteNotice(currentChat, false)
+    if (!notice) return
     setIsThinking(false)
-    setRunCompleteNotice({
-      timestamp: round.endedAt || new Date().toISOString(),
-      // Treat `cancelled` like a non-zero exit so the card surfaces
-      // the cancellation outcome via the existing copy.
-      exitCode: round.status === 'cancelled' ? 130 : 0,
-      startedAt: round.startedAt || undefined
-    })
+    setRunCompleteNotice((previous) =>
+      previous !== null &&
+      previous.roundId === notice.roundId &&
+      previous.timestamp === notice.timestamp &&
+      previous.exitCode === notice.exitCode &&
+      previous.startedAt === notice.startedAt
+        ? previous
+        : notice
+    )
   }, [
     isCurrentEnsembleChat,
+    currentChat?.appChatId,
     currentChat?.ensemble?.activeRound?.roundId,
     currentChat?.ensemble?.activeRound,
     currentChat?.ensemble?.activeRound?.status,

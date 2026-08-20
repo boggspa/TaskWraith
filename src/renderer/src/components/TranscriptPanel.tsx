@@ -141,7 +141,11 @@ import {
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
-import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
+import {
+  closeoutMatchesRunCompleteNotice,
+  shouldSuppressRunCompleteSummary,
+  type RunCompleteNotice
+} from '../lib/runCompleteNotice'
 import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import {
@@ -2766,6 +2770,12 @@ export const TranscriptPanel = memo(
       for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
         const message = resolvedMessages[index]
         if (message.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND) continue
+        if (
+          runCompleteNotice &&
+          !closeoutMatchesRunCompleteNotice(message, runCompleteNotice)
+        ) {
+          continue
+        }
         return {
           messageId: message.id,
           participantTable: (message.metadata.closeoutParticipantTable ||
@@ -2788,7 +2798,7 @@ export const TranscriptPanel = memo(
         fileChanges: null,
         subagentDelegations: null
       }
-    }, [resolvedMessages])
+    }, [resolvedMessages, runCompleteNotice])
     const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
     const latestCloseoutHasParticipants = Boolean(
       runCompleteCloseoutTables.participantTable?.rows?.length

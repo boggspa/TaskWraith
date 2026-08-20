@@ -977,6 +977,48 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('Awaiting your next prompt.')
   })
 
+  it('does not let an older round closeout suppress the current footer card', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:10:00.000Z',
+            exitCode: 0,
+            roundId: 'round-new'
+          },
+          messages: [
+            {
+              id: 'closeout-old',
+              role: 'system',
+              content: 'Worked for 30s.\n\nClose-out:\n\nOld round.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutRoundId: 'round-old',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    // The historical closeout keeps its historical card, while the unmatched
+    // current notice still renders its footer instead of disappearing.
+    expect((html.match(/run-complete-card/g) || []).length).toBe(2)
+  })
+
   it('hosts Task Complete from Sub-threads tombstone alone', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
