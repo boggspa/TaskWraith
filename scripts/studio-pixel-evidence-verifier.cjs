@@ -88,6 +88,38 @@ function bilinearChannel(image, x, y, channel) {
   return (1 - yWeight) * topValue + yWeight * bottomValue
 }
 
+function twiceBilinearChannel(
+  image,
+  projectedX,
+  projectedY,
+  channel,
+  intermediateWidth,
+  intermediateHeight,
+  projectedWidth,
+  projectedHeight
+) {
+  const intermediateX = ((projectedX + 0.5) * intermediateWidth) / projectedWidth - 0.5
+  const intermediateY = ((projectedY + 0.5) * intermediateHeight) / projectedHeight - 0.5
+  const left = Math.floor(intermediateX)
+  const top = Math.floor(intermediateY)
+  const xWeight = intermediateX - left
+  const yWeight = intermediateY - top
+  const sampleIntermediate = (x, y) =>
+    bilinearChannel(
+      image,
+      ((x + 0.5) * image.width) / intermediateWidth - 0.5,
+      ((y + 0.5) * image.height) / intermediateHeight - 0.5,
+      channel
+    )
+  const topValue =
+    (1 - xWeight) * sampleIntermediate(left, top) +
+    xWeight * sampleIntermediate(left + 1, top)
+  const bottomValue =
+    (1 - xWeight) * sampleIntermediate(left, top + 1) +
+    xWeight * sampleIntermediate(left + 1, top + 1)
+  return (1 - yWeight) * topValue + yWeight * bottomValue
+}
+
 function quantile(sortedValues, fraction) {
   invariant(sortedValues.length > 0, 'pixel comparison produced no residuals')
   return sortedValues[Math.min(sortedValues.length - 1, Math.floor(sortedValues.length * fraction))]
@@ -269,15 +301,17 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
-  const opaqueProjection = opaqueCaptureProjection(capture, windowWidth, windowHeight)
-  const exactCanvasCandidates = (opaqueProjection ? [] : [1, 2, 3, 4])
+  const canvasBackingScales = [1, 2, 3, 4]
     .filter(
       (backingScale) =>
         capture.width === Math.round(windowWidth * backingScale) &&
         capture.height === Math.round(windowHeight * backingScale)
     )
+  const opaqueProjection = opaqueCaptureProjection(capture, windowWidth, windowHeight)
+  const exactCanvasCandidates = (opaqueProjection ? [] : canvasBackingScales)
     .map((backingScale) => ({
       backingScale,
+      canvasBackingScale: backingScale,
       horizontalShadowPixels: 0,
       verticalShadowPixels: 0,
       valid: true,
@@ -299,6 +333,8 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       ? [
           {
             backingScale: (opaqueProjection.scaleX + opaqueProjection.scaleY) / 2,
+            canvasBackingScale:
+              canvasBackingScales.length === 1 ? canvasBackingScales[0] : null,
             scaleX: opaqueProjection.scaleX,
             scaleY: opaqueProjection.scaleY,
             horizontalShadowPixels: 0,
@@ -328,6 +364,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
             (shadowless || boundedWindowShadow)
           return {
             backingScale,
+            canvasBackingScale: backingScale,
             horizontalShadowPixels,
             verticalShadowPixels,
             valid,
@@ -351,6 +388,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
 
   const geometry = scaleCandidates[0]
   const backingScale = geometry.backingScale
+  const canvasBackingScale = geometry.canvasBackingScale
   const scaleX = geometry.scaleX
   const scaleY = geometry.scaleY
   const windowEdgeInsets = sourceHostFrame
@@ -418,6 +456,37 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   )
 
   const materialPixelCount = videoWidth * comparisonHeight
+  const projectedVideoWidth =
+    videoWidth + (windowEdgeInsets?.left || 0) + (windowEdgeInsets?.right || 0)
+  const projectedVideoHeight =
+    videoHeight + (windowEdgeInsets?.top || 0) + (windowEdgeInsets?.bottom || 0)
+  const intermediateVideoWidth = Number.isInteger(canvasBackingScale)
+    ? Math.max(1, Math.round(logicalVideoWidth * canvasBackingScale))
+    : null
+  const intermediateVideoHeight = Number.isInteger(canvasBackingScale)
+    ? Math.max(1, Math.round(logicalVideoHeight * canvasBackingScale))
+    : null
+  const usesProjectedWindowResampling =
+    geometry.captureMode === 'opaque-window-projection' &&
+    intermediateVideoWidth !== null &&
+    intermediateVideoHeight !== null
+  const referenceChannel = (x, y, channel) => {
+    if (usesProjectedWindowResampling) {
+      return twiceBilinearChannel(
+        reference,
+        x + (windowEdgeInsets?.left || 0),
+        y + (windowEdgeInsets?.top || 0),
+        channel,
+        intermediateVideoWidth,
+        intermediateVideoHeight,
+        projectedVideoWidth,
+        projectedVideoHeight
+      )
+    }
+    const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
+    const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
+    return bilinearChannel(reference, referenceX, referenceY, channel)
+  }
   const channelFits = []
   for (let channel = 0; channel < 3; channel += 1) {
     let referenceSum = 0
@@ -425,10 +494,8 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     let referenceSquaredSum = 0
     let crossProductSum = 0
     for (let y = 0; y < comparisonHeight; y += 1) {
-      const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
       for (let x = 0; x < videoWidth; x += 1) {
-        const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
-        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const referenceValue = referenceChannel(x, y, channel)
         const captureValue = pixelChannel(capture, captureX + x, captureY + y, channel)
         referenceSum += referenceValue
         captureSum += captureValue
@@ -448,12 +515,10 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   let pixelsAbove40 = 0
   let pixelsAbove80 = 0
   for (let y = 0; y < comparisonHeight; y += 1) {
-    const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
     for (let x = 0; x < videoWidth; x += 1) {
-      const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
       let maximumPixelResidual = 0
       for (let channel = 0; channel < 3; channel += 1) {
-        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const referenceValue = referenceChannel(x, y, channel)
         const predictedCaptureValue =
           channelFits[channel].scale * referenceValue + channelFits[channel].offset
         const residual = Math.abs(
@@ -500,6 +565,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     },
     registration: {
       backingScale,
+      canvasBackingScale,
       captureExtent,
       captureX,
       captureY,
@@ -518,6 +584,9 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       horizontalShadowPixels,
       verticalShadowPixels,
       captureMode: geometry.captureMode,
+      referenceProjection: usesProjectedWindowResampling
+        ? 'logical-host-then-window'
+        : 'direct-to-capture',
       comparisonHeight
     },
     colorFit: channelFits,

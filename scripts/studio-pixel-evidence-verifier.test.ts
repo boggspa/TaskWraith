@@ -273,6 +273,79 @@ function createVisualFixture(corrupt: boolean, backingScale = 1) {
   }
 }
 
+function createProjectedWindowFixture(wrongFrame = false) {
+  const fixture = createVisualFixture(false)
+  const reference = PNG.sync.read(readFileSync(fixture.referencePath))
+  const windowBounds = { x: 100, y: 200, width: 200, height: 120 }
+  const sourceHostFrame = { x: 140, y: 230, width: 140, height: 70 }
+  const intermediate = new PNG({ width: 140, height: 70 })
+  const transforms = [
+    { scale: 0.97, offset: 7 },
+    { scale: 0.84, offset: 11 },
+    { scale: 0.824, offset: 39 }
+  ]
+  for (let y = 0; y < intermediate.height; y += 1) {
+    for (let x = 0; x < intermediate.width; x += 1) {
+      const target = (y * intermediate.width + x) * 4
+      const sourceX = wrongFrame ? (x + intermediate.width / 4) % intermediate.width : x
+      for (let channel = 0; channel < 3; channel += 1) {
+        const referenceValue = syntheticBilinearChannel(
+          reference,
+          ((sourceX + 0.5) * reference.width) / intermediate.width - 0.5,
+          ((y + 0.5) * reference.height) / intermediate.height - 0.5,
+          channel
+        )
+        intermediate.data[target + channel] = Math.max(
+          0,
+          Math.min(
+            255,
+            Math.round(
+              transforms[channel].scale * referenceValue + transforms[channel].offset
+            )
+          )
+        )
+      }
+      intermediate.data[target + 3] = 255
+    }
+  }
+
+  const capture = new PNG({ width: windowBounds.width, height: windowBounds.height })
+  const extent = { x: 10, y: 6, width: 180, height: 108 }
+  for (let y = extent.y; y < extent.y + extent.height; y += 1) {
+    for (let x = extent.x; x < extent.x + extent.width; x += 1) {
+      const pixel = (y * capture.width + x) * 4
+      capture.data[pixel] = 35
+      capture.data[pixel + 1] = 39
+      capture.data[pixel + 2] = 46
+      capture.data[pixel + 3] = 255
+    }
+  }
+  const projected = {
+    x: extent.x + Math.round((sourceHostFrame.x - windowBounds.x) * 0.9),
+    y: extent.y + Math.round((sourceHostFrame.y - windowBounds.y) * 0.9),
+    width: Math.round(sourceHostFrame.width * 0.9),
+    height: Math.round(sourceHostFrame.height * 0.9)
+  }
+  for (let y = 0; y < projected.height; y += 1) {
+    for (let x = 0; x < projected.width; x += 1) {
+      const target = ((projected.y + y) * capture.width + projected.x + x) * 4
+      for (let channel = 0; channel < 3; channel += 1) {
+        capture.data[target + channel] = Math.round(
+          syntheticBilinearChannel(
+            intermediate,
+            ((x + 0.5) * intermediate.width) / projected.width - 0.5,
+            ((y + 0.5) * intermediate.height) / projected.height - 0.5,
+            channel
+          )
+        )
+      }
+      capture.data[target + 3] = 255
+    }
+  }
+  writeFileSync(fixture.capturePath, PNG.sync.write(capture))
+  return { ...fixture, sourceHostFrame, windowBounds }
+}
+
 function createDefaultOverlayFixture(mutation: 'timeline-band' | 'above-timeline' | 'wrong-frame') {
   const directory = mkdtempSync(join(tmpdir(), 'studio-overlay-mask-'))
   const referencePath = join(directory, 'reference.png')
@@ -559,6 +632,51 @@ describe('Studio pixel evidence verifier', () => {
           captureExtent: { x: 0, y: 0, width: 164, height: 112 }
         }
       })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('models the host render before a uniformly projected window capture', () => {
+    const fixture = createProjectedWindowFixture()
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          canvasBackingScale: 1,
+          captureMode: 'opaque-window-projection',
+          referenceProjection: 'logical-host-then-window',
+          captureExtent: { x: 10, y: 6, width: 180, height: 108 },
+          videoWidth: 126,
+          videoHeight: 63,
+          comparisonHeight: 55
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('still rejects a wrong frame through that projected-window model', () => {
+    const fixture = createProjectedWindowFixture(true)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison.clean).toBe(false)
+      expect(comparison.registration.referenceProjection).toBe(
+        'logical-host-then-window'
+      )
+      expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
     } finally {
       fixture.cleanup()
     }
