@@ -152,7 +152,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    '2e1946fb516106a99a6caf4e5c0a0524c4dd52a87f5ff927d62d671177410859',
+    '10bc0737095f8cc1bdd095e8f43c2470056263bdd3eec896a57843a3f4f91e51',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -3580,8 +3580,10 @@ function buildStudioUiDriverRequest(options) {
     }
     if (
       action.type === 'press-workspace-route' &&
-      (action.route === 'source' || action.route === 'timeline')
+      (action.route === 'source' || action.route === 'timeline') &&
+      (action.selectedAfter === undefined || typeof action.selectedAfter === 'boolean')
     ) {
+      const selectedAfter = action.selectedAfter !== false
       const accessibilityIdentifier =
         action.route === 'source'
           ? STUDIO_WORKSPACE_SOURCE_ROUTE_ID
@@ -3597,8 +3599,8 @@ function buildStudioUiDriverRequest(options) {
         pairedAccessibilityIdentifier,
         accessibilityRole: 'AXCheckBox',
         accessibilityAction: 'AXPress',
-        routeValueBefore: 'not selected',
-        routeValueAfter: 'selected',
+        routeValueBefore: selectedAfter ? 'not selected' : 'selected',
+        routeValueAfter: selectedAfter ? 'selected' : 'not selected',
         pairedRouteValueBefore: 'selected',
         pairedRouteValueAfter: 'selected'
       }
@@ -5150,6 +5152,31 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
         return workspace
       }
     })
+  const waitForWorkspaceSource = () =>
+    waitFor({
+      label: 'exact visible Studio Source workspace presentation',
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      probe: async () => {
+        const receipt = await runDriver(plan, journeyTarget, [{ type: 'read-workspace' }], {
+          ...(adapters.driverAdapters || {}),
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false
+        })
+        const workspace = readWorkspaceObservationFromReceipt(receipt, windowBounds)
+        if (
+          workspace.sourceRoute?.value !== 'selected' ||
+          workspace.timelineRoute?.value !== 'not selected' ||
+          workspace.sourceHost?.visible !== true ||
+          workspace.timelineHost?.visible !== false ||
+          workspace.currentVersion?.value !== 'unavailable' ||
+          workspace.proposedVersion?.value !== 'unavailable'
+        ) {
+          return null
+        }
+        return workspace
+      }
+    })
   const driverReceipts = []
   const screenshots = []
   const drive = async (actions, driverTarget = journeyTarget) => {
@@ -5359,7 +5386,12 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   afterRevision = acceptedResolution.revision
 
-  await drive(['w', 'tab', 'bracket-right', 'return'], journeyTarget)
+  await drive(
+    [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: false }],
+    journeyTarget
+  )
+  const sourceBeforeRejectedProposal = await waitForWorkspaceSource()
+  await drive(['tab', 'bracket-right', 'return'], journeyTarget)
   const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const rejectedProposalEvidence = studioProposalInsertionEvidence(
     rejectedProposal,
@@ -5370,7 +5402,10 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     throw new Error('Studio accept and reject journeys reused one proposal identity')
   }
   afterRevision = rejectedProposal.revision
-  await drive(['w'], journeyTarget)
+  await drive(
+    [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: true }],
+    journeyTarget
+  )
   const rejectedWorkspace = await waitForWorkspaceReview()
   const rejectedReviewHostFrame = rejectedWorkspace.timelineHost.frame
   // ADJUDICATE THE GHOST, DO NOT MERELY PHOTOGRAPH IT.
@@ -5454,6 +5489,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       workspace: {
         accepted: acceptedWorkspace,
         proposedAfterV: proposedWorkspace,
+        sourceBeforeRejectedProposal,
         rejected: rejectedWorkspace
       }
     },

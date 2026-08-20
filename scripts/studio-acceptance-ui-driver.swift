@@ -1029,10 +1029,12 @@ func pressAccessibilityWorkspaceRoute(
         workspaceSourceRouteIdentifier,
         workspaceTimelineRouteIdentifier,
     ])
+    let requestedRouteTransitionIsExact =
+        (routeValueBefore == "not selected" && routeValueAfter == "selected")
+        || (routeValueBefore == "selected" && routeValueAfter == "not selected")
     guard Set([identifier, pairedIdentifier]) == exactRouteIdentifiers,
           accessibilityAction == "AXPress",
-          routeValueBefore == "not selected",
-          routeValueAfter == "selected",
+          requestedRouteTransitionIsExact,
           pairedRouteValueBefore == "selected",
           pairedRouteValueAfter == "selected",
           let observedBefore = stringAttribute(kAXValueAttribute, of: route),

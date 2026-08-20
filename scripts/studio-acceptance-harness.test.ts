@@ -4860,10 +4860,7 @@ describe('Studio acceptance harness', () => {
           calls.push(`driver:${actionNames.join(',')}`)
           for (const action of actions) {
             if (action.type === 'press-workspace-route' && action.route === 'timeline') {
-              reviewRouteSelected = true
-            }
-            if (action.type === 'key' && action.key === 'w') {
-              reviewRouteSelected = true
+              reviewRouteSelected = action.selectedAfter !== false
             }
             if (action.type === 'key' && action.key === 'v') {
               proposedVersionSelected = true
@@ -4892,13 +4889,14 @@ describe('Studio acceptance harness', () => {
                 })
               }
               if (action.type === 'press-workspace-route') {
+                const routeSelectedAfter = action.selectedAfter !== false
                 Object.assign(observed, {
                   accessibilityIdentifier: 'studio.workspace.route.timeline',
                   pairedAccessibilityIdentifier: 'studio.workspace.route.source',
                   accessibilityRole: 'AXCheckBox',
                   accessibilityAction: 'AXPress',
-                  routeValueBefore: 'not selected',
-                  routeValueAfter: 'selected',
+                  routeValueBefore: routeSelectedAfter ? 'not selected' : 'selected',
+                  routeValueAfter: routeSelectedAfter ? 'selected' : 'not selected',
                   pairedRouteValueBefore: 'selected',
                   pairedRouteValueAfter: 'selected'
                 })
@@ -4964,6 +4962,14 @@ describe('Studio acceptance harness', () => {
             currentVersion: { value: 'not selected' },
             proposedVersion: { value: 'selected' }
           },
+          sourceBeforeRejectedProposal: {
+            sourceRoute: { value: 'selected' },
+            timelineRoute: { value: 'not selected' },
+            sourceHost: { visible: true },
+            timelineHost: { visible: false },
+            currentVersion: { value: 'unavailable' },
+            proposedVersion: { value: 'unavailable' }
+          },
           rejected: {
             timelineRoute: { value: 'selected' },
             timelineHost: { visible: true }
@@ -5018,9 +5024,11 @@ describe('Studio acceptance harness', () => {
       'compare:review-host:current.png:proposed.png',
       'driver:a,accept-sent',
       'journal:resolve_proposal:accept',
-      'driver:w,tab,bracket-right,return',
+      'driver:press-workspace-route',
+      'driver:read-workspace',
+      'driver:tab,bracket-right,return',
       'journal:propose_edit:',
-      'driver:w',
+      'driver:press-workspace-route',
       'driver:read-workspace',
       'driver:ghost-reject',
       'driver:r,reject-sent',
@@ -5046,8 +5054,9 @@ describe('Studio acceptance harness', () => {
       'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
+      'background-observation-only',
       'foreground-global-explicit',
-      'foreground-global-explicit',
+      'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
       'background-observation-only'
@@ -6573,6 +6582,52 @@ describe('Studio acceptance harness', () => {
             }
           ]
         })
+        expect(
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              {
+                type: 'press-workspace-route',
+                route: 'timeline',
+                selectedAfter: false,
+                routeValueAfter: 'caller-controlled'
+              }
+            ]
+          })
+        ).toMatchObject({
+          actions: [
+            {
+              type: 'press-workspace-route',
+              route: 'timeline',
+              routeValueBefore: 'selected',
+              routeValueAfter: 'not selected',
+              pairedRouteValueBefore: 'selected',
+              pairedRouteValueAfter: 'selected'
+            }
+          ]
+        })
+        expect(() =>
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              { type: 'press-workspace-route', route: 'timeline', selectedAfter: 'false' }
+            ]
+          })
+        ).toThrow(/unsupported UI action/)
+      })
+
+      it('keeps the Swift route driver exact and bidirectional', async () => {
+        const driverSource = await fsPromises.readFile(
+          path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
+          'utf8'
+        )
+        expect(driverSource).toContain(
+          'routeValueBefore == "not selected" && routeValueAfter == "selected"'
+        )
+        expect(driverSource).toContain(
+          'routeValueBefore == "selected" && routeValueAfter == "not selected"'
+        )
+        expect(driverSource).toContain('requestedRouteTransitionIsExact,')
       })
     })
 
