@@ -14,7 +14,7 @@ const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
 const expectedCompanionSha256 = '3f503ca8ff9c1e0426ddd2ace50d9ffad9136727bc09a9e77bd9593fb900e1ca'
 const expectedSourceDigest = 'f12976a879791e1e0f6abe3cdd50702b8c144dcaf8642e6f591d412cf889f3d4'
 const expectedSourceCount = 70
-const expectedOutDigest = '3ee1424fcb3048c2a36c8ce5ec4791e218894b651b206e95157f7431d0a0739a'
+const expectedOutDigest = '9dd5875170f2ed9c489d012047b110ef84e1c8b4cddad863823ab40011e50999'
 const expectedOutCount = 38
 const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'a7cd30f3581e6677699c113e82020a32eeecc299677be55ffe746e6cb40f4ea9',
+    '0ba19090b67b494549f7a7c9d66fc4fcc735db82e98b210e181af66a80fd236a',
   'scripts/studio-acceptance-ui-driver.swift':
     'c608e697e6c28abbccf663da3b402a495450434c5c5488c9278a939f0e07b32d',
   'scripts/studio-acceptance-watchdog.cjs':
