@@ -188,6 +188,8 @@ mac:
   # _taskwraith-quic._udp carrier was being dropped before reaching
   # the daemon: NSBonjourServices was sitting under "5", not at root.
   extendInfo:
+    CFBundleName: TaskWraith
+    CFBundleDisplayName: TaskWraith
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSSpeechRecognitionUsageDescription: TaskWraith transcribes audio files you point it at entirely on-device (no audio leaves your Mac) so agents can read back what was said.

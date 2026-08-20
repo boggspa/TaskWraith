@@ -45,6 +45,14 @@ describe('macOS package permission metadata', () => {
   it.each([
     ['release', releaseExtendInfo],
     ['debug', debugExtendInfo]
+  ])('keeps the signed permission identity exactly TaskWraith in %s', (_label, extendInfo) => {
+    expect(extendInfo.CFBundleName).toBe('TaskWraith')
+    expect(extendInfo.CFBundleDisplayName).toBe('TaskWraith')
+  })
+
+  it.each([
+    ['release', releaseExtendInfo],
+    ['debug', debugExtendInfo]
   ])('keeps required native permission keys flat in the %s config', (_label, extendInfo) => {
     for (const key of REQUIRED_NATIVE_PERMISSION_KEYS) {
       expect(extendInfo).toHaveProperty(key)
