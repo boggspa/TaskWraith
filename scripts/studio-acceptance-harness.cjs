@@ -229,7 +229,7 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '7527a02d9ea0874bab3dbe0a198d5c26a4e9a9bbc88b99851eebaf26065234c0',
+  sourceDigest: 'e8f52b4cabdf52ce30d76176c300cba1a360f546089fadef8844ac76a9a99a06',
   sourceCount: 2282,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
@@ -966,7 +966,18 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
       appRoot,
       'Contents',
       'Helpers',
+      'TaskWraith Bridge.app',
+      'Contents',
+      'MacOS',
       'TaskWraithBridgeDaemon'
+    ),
+    bridgeInfoPlist: path.join(
+      appRoot,
+      'Contents',
+      'Helpers',
+      'TaskWraith Bridge.app',
+      'Contents',
+      'Info.plist'
     )
   }
   const files = {}
@@ -996,6 +1007,29 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
   if (!String(speechUsage.stdout || '').trim()) {
     throw new Error('packaged Studio app omits its Speech Recognition usage description')
   }
+  const bridgeSpeechUsage = await runExec(
+    '/usr/bin/plutil',
+    [
+      '-extract',
+      'NSSpeechRecognitionUsageDescription',
+      'raw',
+      '-o',
+      '-',
+      candidates.bridgeInfoPlist
+    ],
+    { timeoutMs: 10_000 }
+  )
+  if (!String(bridgeSpeechUsage.stdout || '').trim()) {
+    throw new Error('packaged Studio bridge omits its Speech Recognition usage description')
+  }
+  const bridgeBundleIdentifier = await runExec(
+    '/usr/bin/plutil',
+    ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', candidates.bridgeInfoPlist],
+    { timeoutMs: 10_000 }
+  )
+  if (String(bridgeBundleIdentifier.stdout || '').trim() !== 'com.chrisizatt.taskwraith') {
+    throw new Error('packaged Studio bridge does not share TaskWraith consent identity')
+  }
   return {
     appRoot: path.relative(root, appRoot).split(path.sep).join('/'),
     bundleIdentityDigest: sha256Text(JSON.stringify(files)),
@@ -1007,6 +1041,8 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
     bridgeDaemonPath: files.bridgeDaemon.path,
     bridgeDaemonSha256: files.bridgeDaemon.sha256,
     speechUsageDescription: String(speechUsage.stdout).trim(),
+    bridgeSpeechUsageDescription: String(bridgeSpeechUsage.stdout).trim(),
+    bridgeBundleIdentifier: String(bridgeBundleIdentifier.stdout).trim(),
     codeSignatureVerified: true
   }
 }

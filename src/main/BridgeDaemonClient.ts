@@ -107,7 +107,8 @@ export class BridgeDaemonClient {
    *
    * Resolution order:
    *   1. Explicit `options.binaryPath` (tests / smokes override this).
-   *   2. Packaged Electron build: `Contents/Helpers/TaskWraithBridgeDaemon`.
+   *   2. Packaged Electron build: the executable inside
+   *      `Contents/Helpers/TaskWraith Bridge.app`.
    *      `electron-builder.yml`'s mac `extraFiles` block places the release
    *      binary there, and
    *      `scripts/build-bridge-daemon.cjs` builds it just before

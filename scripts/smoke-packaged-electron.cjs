@@ -591,8 +591,34 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
       )
     }
   }
-  const bridgeDaemon = path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraithBridgeDaemon')
+  const bridgeApp = path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraith Bridge.app')
+  const bridgeInfoPath = path.join(bridgeApp, 'Contents', 'Info.plist')
+  const bridgeDaemon = path.join(
+    bridgeApp,
+    'Contents',
+    'MacOS',
+    'TaskWraithBridgeDaemon'
+  )
+  assertDir(bridgeApp, 'TaskWraith Bridge.app')
+  assertFile(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
+  const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
+  if (bridgeInfo.CFBundleIdentifier !== 'com.chrisizatt.taskwraith') {
+    fail(
+      `TaskWraith Bridge CFBundleIdentifier must share com.chrisizatt.taskwraith, got ${String(bridgeInfo.CFBundleIdentifier)}.`
+    )
+  }
+  if (bridgeInfo.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
+    fail(
+      `TaskWraith Bridge CFBundleExecutable must be TaskWraithBridgeDaemon, got ${String(bridgeInfo.CFBundleExecutable)}.`
+    )
+  }
+  if (
+    typeof bridgeInfo.NSSpeechRecognitionUsageDescription !== 'string' ||
+    bridgeInfo.NSSpeechRecognitionUsageDescription.trim().length === 0
+  ) {
+    fail('TaskWraith Bridge Info.plist is missing NSSpeechRecognitionUsageDescription.')
+  }
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
 
   const studioApp = path.join(resourcesDir, 'studio', 'TaskWraith Studio.app')
@@ -690,6 +716,9 @@ function validateMacAppSignature(packageRoot) {
     packageRoot,
     'Contents',
     'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'MacOS',
     'TaskWraithBridgeDaemon'
   )
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')

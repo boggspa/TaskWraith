@@ -45,12 +45,15 @@ async function validateNativeModules(context) {
     validateWindowsClaudeAgentSdkBinaries(unpackedDir, arch)
   }
 
-  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded as a
-  // Contents/Helpers tool. The mac build chains run
+  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded inside
+  // a real Contents/Helpers app bundle. The mac build chains run
   // `prebuild:bridge-daemon` before electron-builder; this is the safety
   // net that surfaces a clear error if the binary failed to land in the
   // bundle for any reason (broken swift toolchain, missing config, etc.).
   if (platform === 'darwin') {
+    const bridgeInfoPath = resolveMacBridgeInfoPath(resourcesDir)
+    const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
+    validateMacBridgeInfo(bridgeInfo, bridgeInfoPath)
     const daemonPath = resolveMacBridgeDaemonPath(resourcesDir)
     if (!fs.existsSync(daemonPath)) {
       throw new Error(
@@ -84,8 +87,63 @@ async function validateNativeModules(context) {
   await hardenElectronFuses(context, resourcesDir)
 }
 
+function resolveMacBridgeInfoPath(resourcesDir) {
+  return path.join(
+    path.dirname(resourcesDir),
+    'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'Info.plist'
+  )
+}
+
+function validateMacBridgeInfo(info, infoPath) {
+  if (info.CFBundleIdentifier !== 'com.chrisizatt.taskwraith') {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} must share bundle identifier com.chrisizatt.taskwraith.`
+    )
+  }
+  if (info.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} must declare TaskWraithBridgeDaemon as CFBundleExecutable.`
+    )
+  }
+  if (
+    typeof info.NSSpeechRecognitionUsageDescription !== 'string' ||
+    info.NSSpeechRecognitionUsageDescription.trim().length === 0
+  ) {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} must declare a non-empty NSSpeechRecognitionUsageDescription.`
+    )
+  }
+}
+
+function readPlistAsJson(plistPath, label) {
+  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    throw new Error(`Could not read ${label}.${detail ? `\n${detail}` : ''}`)
+  }
+  try {
+    return JSON.parse(result.stdout)
+  } catch (error) {
+    throw new Error(
+      `${label} did not decode as JSON: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
 function resolveMacBridgeDaemonPath(resourcesDir) {
-  return path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraithBridgeDaemon')
+  return path.join(
+    path.dirname(resourcesDir),
+    'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'MacOS',
+    'TaskWraithBridgeDaemon'
+  )
 }
 
 function validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs) {
@@ -581,3 +639,5 @@ function formatBytes(bytes) {
 module.exports = validateNativeModules
 module.exports.default = validateNativeModules
 module.exports.resolveMacBridgeDaemonPath = resolveMacBridgeDaemonPath
+module.exports.resolveMacBridgeInfoPath = resolveMacBridgeInfoPath
+module.exports.validateMacBridgeInfo = validateMacBridgeInfo

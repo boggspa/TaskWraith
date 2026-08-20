@@ -5155,17 +5155,24 @@ describe('Studio acceptance harness', () => {
         appRoot,
         'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
       )]: 'companion',
-      [path.join(appRoot, 'Contents/Helpers/TaskWraithBridgeDaemon')]: 'bridge'
+      [path.join(
+        appRoot,
+        'Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      )]: 'bridge',
+      [path.join(appRoot, 'Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist')]:
+        'bridge plist'
     }
     for (const [filePath, contents] of Object.entries(files)) {
       await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
       await fsPromises.writeFile(filePath, contents)
     }
-    const execFile = vi.fn(async (command: string) => ({
+    const execFile = vi.fn(async (command: string, args: string[]) => ({
       stdout:
-        command === '/usr/bin/plutil'
-          ? 'TaskWraith transcribes selected media entirely on-device.\n'
-          : '',
+        command !== '/usr/bin/plutil'
+          ? ''
+          : args.includes('CFBundleIdentifier')
+            ? 'com.chrisizatt.taskwraith\n'
+            : 'TaskWraith transcribes selected media entirely on-device.\n',
       stderr: ''
     }))
 
@@ -5175,7 +5182,8 @@ describe('Studio acceptance harness', () => {
       companionPath:
         'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion',
       bridgeDaemonPath:
-        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Helpers/TaskWraithBridgeDaemon',
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon',
+      bridgeBundleIdentifier: 'com.chrisizatt.taskwraith',
       codeSignatureVerified: true
     })
     expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
@@ -5200,7 +5208,7 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '7527a02d9ea0874bab3dbe0a198d5c26a4e9a9bbc88b99851eebaf26065234c0',
+      sourceDigest: 'e8f52b4cabdf52ce30d76176c300cba1a360f546089fadef8844ac76a9a99a06',
       sourceCount: 2282,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,

@@ -32,9 +32,12 @@ const {
   readMacSigningIdentity: (codePath: string) => MacSigningIdentity
 } = require('./smoke-packaged-electron.cjs')
 
-const { resolveMacBridgeDaemonPath } = require('../build/validate-native-modules.cjs') as {
-  resolveMacBridgeDaemonPath: (resourcesPath: string) => string
-}
+const { resolveMacBridgeDaemonPath, resolveMacBridgeInfoPath, validateMacBridgeInfo } =
+  require('../build/validate-native-modules.cjs') as {
+    resolveMacBridgeDaemonPath: (resourcesPath: string) => string
+    resolveMacBridgeInfoPath: (resourcesPath: string) => string
+    validateMacBridgeInfo: (info: Record<string, unknown>, infoPath: string) => void
+  }
 
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
 // i.e. what a plain local `--dir` build produces with no signing identity. The
@@ -71,9 +74,27 @@ const DEVELOPER_ID_OUTPUT = [
 
 describe('packaged Electron to TUI smoke handoff', () => {
   it('validates the native daemon from the macOS helper location', () => {
-    expect(
-      resolveMacBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources')
-    ).toBe('/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon')
+    expect(resolveMacBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources')).toBe(
+      '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+    )
+    expect(resolveMacBridgeInfoPath('/Applications/TaskWraith.app/Contents/Resources')).toBe(
+      '/Applications/TaskWraith.app/Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist'
+    )
+  })
+
+  it('requires the helper consent identity and Speech usage metadata after packing', () => {
+    const valid = {
+      CFBundleIdentifier: 'com.chrisizatt.taskwraith',
+      CFBundleExecutable: 'TaskWraithBridgeDaemon',
+      NSSpeechRecognitionUsageDescription: 'Transcribes media selected by the user.'
+    }
+    expect(() => validateMacBridgeInfo(valid, '/tmp/Info.plist')).not.toThrow()
+    expect(() =>
+      validateMacBridgeInfo(
+        { ...valid, NSSpeechRecognitionUsageDescription: ' ' },
+        '/tmp/Info.plist'
+      )
+    ).toThrow(/NSSpeechRecognitionUsageDescription/)
   })
 
   it('passes the exact package root instead of rediscovering an architecture sibling', () => {

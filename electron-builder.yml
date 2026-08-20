@@ -205,9 +205,9 @@ mac:
       - _taskwraith._tcp
       - _taskwraith-quic._udp
   notarize: false
-  # Bundle the Swift TaskWraithBridgeDaemon as a helper tool so macOS can
-  # preserve TaskWraith as the responsible code for privacy services. Mach-O
-  # helpers do not belong in Resources. The binary is
+  # Bundle the Swift TaskWraithBridgeDaemon as a real helper app so macOS TCC
+  # can resolve its privacy usage descriptions. Mach-O helpers do not belong
+  # in Resources, and an unbundled executable has no Info.plist for TCC. It is
   # compiled by `scripts/build-bridge-daemon.cjs` (run via the
   # `prebuild:bridge-daemon` npm script in all mac build targets).
   # macOS-only: the daemon uses Apple Network framework + Bonjour +
@@ -216,8 +216,8 @@ mac:
   # the universal merge contain the same nested bundle. It stays unsigned here;
   # the parent macOS signing pass seals nested code in final-inside-out order.
   extraFiles:
-    - from: swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon
-      to: Helpers/TaskWraithBridgeDaemon
+    - from: swift/TaskWraithBridge/.build/bridge/TaskWraith Bridge.app
+      to: Helpers/TaskWraith Bridge.app
   extraResources:
     - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
       to: studio/TaskWraith Studio.app
