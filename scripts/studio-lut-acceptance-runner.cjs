@@ -11,10 +11,10 @@ const speechFixture = require('./studio-generate-speech-fixture.cjs')
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
-const expectedCompanionSha256 = '3f503ca8ff9c1e0426ddd2ace50d9ffad9136727bc09a9e77bd9593fb900e1ca'
-const expectedSourceDigest = 'f12976a879791e1e0f6abe3cdd50702b8c144dcaf8642e6f591d412cf889f3d4'
+const expectedCompanionSha256 = '1f2144847ab99fa982d71ae12632d93dc7235d855b8cdde55e25980c77134271'
+const expectedSourceDigest = '143da19e3b52ed653a6034d6d0c50f3723755b12f9707ffb2c688606ba12fc4b'
 const expectedSourceCount = 70
-const expectedOutDigest = '2d628168453a102f889fc27821a8d28ff8672fe05f565a0ac1f5a97bcfc610a8'
+const expectedOutDigest = '09675fbf05a8b2f81616d2dcb04480d6016ced338a776ccf1d94c5a2010c7f2d'
 const expectedOutCount = 38
 const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
@@ -23,11 +23,11 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '7cc37eefdcabb907cf7ef7179ccc13b5648edb0d607d6a9735a3ba33d2878a84',
+    'f38c4adaf1738c71b719982ebb4e5c4c9a6362bad1d15e2501d40afb7ca1800d',
   'scripts/studio-acceptance-ui-driver.swift':
-    'c608e697e6c28abbccf663da3b402a495450434c5c5488c9278a939f0e07b32d',
+    '10bc0737095f8cc1bdd095e8f43c2470056263bdd3eec896a57843a3f4f91e51',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
+    'c68429a807ca03465e076e8dd609283ef21937fac1e86aa23177e0972bbd3a8e',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
