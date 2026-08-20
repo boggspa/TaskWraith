@@ -6,8 +6,12 @@ claimed to have run** — they are named in P5's own record, in its own words, a
 this document exists so they cannot be buried by the passage of time.
 
 Companion document: [`channels-p5-proof.md`](channels-p5-proof.md). That record
-is the source of truth for what P5 proved. This one is the source of truth for
-what remains unproven.
+is the source of truth for what P5 proved. This one began as the source of truth
+for what remained unproven and now records how each P6 gate was closed.
+
+**Result: COMPLETE on 2026-08-20.** P6-01 and P6-02 are process-level executable
+missions, and P6-03 is an executable composition pin. Platform packaging remains
+explicitly outside P6 rather than silently unrun.
 
 ## The one thing that must not be misread
 
@@ -130,7 +134,20 @@ permutations, not the individual assertions.
   distinction is load-bearing throughout the Channel seat authority, and a matrix
   that accepts either answer proves nothing.
 
-## P6-03 — An executable retention pin
+## P6-03 — An executable retention pin — PROVEN
+
+**Proven 2026-08-20 in `ChannelProductionMainIntegration.test.ts`.** The test
+pins the degraded catch falling through without a return or throw, then pins the
+ordered construction and wiring of the People store, the enabled-share
+`reopenCollaborationRooms` reconnect loop, the lazy runtime and transport, and
+the People IPC registration. Every assertion, including anchor failures, carries
+one shared message stating the user-approved Keep decision and why this path is
+the only collaboration history/reconnect capability when Channels migration is
+unavailable. No production code changed for this gate.
+
+The reason string is deliberately part of the test contract. A future,
+user-authorized People retirement can change the product, but it must edit that
+reason and the named assertions; deleting an obscure count is not enough.
 
 **This item exists because a document can be missed and a failing test cannot.**
 

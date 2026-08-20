@@ -1,13 +1,19 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 
-function between(start: string, end: string): string {
+// This sentence is part of the executable pin. An authorized future People
+// retirement must edit the reason, not quietly delete an unexplained count.
+const DEGRADED_PEOPLE_RETENTION_REASON =
+  'P6-03 retention pin: the user explicitly kept the People store, runtime, IPC and enabled-share reconnect path because they are the only collaboration history/reconnect capability when Channels migration degrades; removing any seam silently breaks that recovery mode.'
+
+function between(start: string, end: string, message?: string): string {
   const startAt = source.indexOf(start)
   const endAt = source.indexOf(end, startAt + start.length)
-  expect(startAt, `missing start anchor: ${start}`).toBeGreaterThanOrEqual(0)
-  expect(endAt, `missing end anchor: ${end}`).toBeGreaterThan(startAt)
+  expect(startAt, message ?? `missing start anchor: ${start}`).toBeGreaterThanOrEqual(0)
+  expect(endAt, message ?? `missing end anchor: ${end}`).toBeGreaterThan(startAt)
   return source.slice(startAt, endAt)
 }
 
@@ -89,6 +95,141 @@ describe('Channels production main integration', () => {
     expect(dispatchComposition).toContain('hooks.finalAuthorization')
     expect(source).toContain('Channels migration authority is unavailable before People startup.')
     expect(source).toContain('{ legacyWriteGate: channelMigrationLegacyWriteGate }')
+  })
+
+  it('pins the user-kept degraded People recovery path so it cannot be retired silently', () => {
+    const reason = DEGRADED_PEOPLE_RETENTION_REASON
+    const degradedAt = source.indexOf('const degraded = degradePeopleToChannelMigrationStartup(')
+    const catchEndAt = source.indexOf(
+      '// Wire the remote task-card channel lookup now that the bootstrap',
+      degradedAt
+    )
+    const storeAt = source.indexOf('const humanCollaborationStore = new HumanCollaborationStore(')
+    const reconnectAt = source.indexOf('const reopenCollaborationRooms = (): void => {')
+    const runtimeAt = source.indexOf('const getHumanCollaborationRuntime = () => {')
+    const ipcAt = source.indexOf(
+      'disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({'
+    )
+
+    expect(degradedAt, reason).toBeGreaterThanOrEqual(0)
+    expect(catchEndAt, reason).toBeGreaterThan(degradedAt)
+    expect(storeAt, reason).toBeGreaterThan(catchEndAt)
+    expect(reconnectAt, reason).toBeGreaterThan(storeAt)
+    expect(runtimeAt, reason).toBeGreaterThan(reconnectAt)
+    expect(ipcAt, reason).toBeGreaterThan(runtimeAt)
+
+    // Parse only this composition slice: all four seams must remain direct
+    // statements in the same flow as the completed catch. A future
+    // `if (channelProductionBootstrap)` wrapper would change the AST parent and
+    // fail even though every source string still existed.
+    const compositionStartAt = source.indexOf('let channelProductionBootstrap:')
+    const compositionEndAt = source.indexOf('registerUsageRatesHandlers({', ipcAt)
+    expect(compositionStartAt, reason).toBeGreaterThanOrEqual(0)
+    expect(compositionEndAt, reason).toBeGreaterThan(ipcAt)
+    const syntax = ts.createSourceFile(
+      'channels-p6-retention-pin.ts',
+      `async function retentionPin() {\n${source.slice(compositionStartAt, compositionEndAt)}\n}`,
+      ts.ScriptTarget.Latest,
+      true
+    )
+    const findNode = <Node extends ts.Node>(predicate: (node: ts.Node) => node is Node): Node => {
+      let found: Node | undefined
+      const visit = (node: ts.Node): void => {
+        if (found) return
+        if (predicate(node)) found = node
+        else ts.forEachChild(node, visit)
+      }
+      visit(syntax)
+      expect(found, reason).toBeDefined()
+      return found!
+    }
+    const degradedTry = findNode(
+      (node): node is ts.TryStatement =>
+        ts.isTryStatement(node) &&
+        Boolean(node.catchClause?.block.getText(syntax).includes('degradePeopleToChannel'))
+    )
+    const directVariable = (name: string): ts.VariableStatement =>
+      findNode(
+        (node): node is ts.VariableStatement =>
+          ts.isVariableStatement(node) &&
+          node.declarationList.declarations.some(
+            (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name
+          )
+      )
+    const ipcRegistration = findNode(
+      (node): node is ts.ExpressionStatement =>
+        ts.isExpressionStatement(node) &&
+        ts.isBinaryExpression(node.expression) &&
+        ts.isIdentifier(node.expression.left) &&
+        node.expression.left.text === 'disposeHumanCollaborationIpcHandlers' &&
+        node.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    )
+    for (const statement of [
+      directVariable('humanCollaborationStore'),
+      directVariable('reopenCollaborationRooms'),
+      directVariable('getHumanCollaborationRuntime'),
+      ipcRegistration
+    ]) {
+      expect(statement.parent === degradedTry.parent, reason).toBe(true)
+      expect(statement.pos, reason).toBeGreaterThan(degradedTry.end)
+    }
+
+    const degradedCatch = source.slice(degradedAt, catchEndAt)
+    expect(degradedCatch, reason).toContain(
+      'channelMigrationLegacyWriteGate = degraded.legacyWriteGate'
+    )
+    expect(degradedCatch, reason).not.toMatch(/\b(?:return|throw)\b/)
+
+    const storeConstruction = between(
+      'const humanCollaborationStore = new HumanCollaborationStore(',
+      '/**\n     * Tri-state presence for external collaborators',
+      reason
+    )
+    expect(storeConstruction, reason).toContain("'human-collaboration.json'")
+    expect(storeConstruction, reason).toContain(
+      '{ legacyWriteGate: channelMigrationLegacyWriteGate }'
+    )
+
+    const reconnect = between(
+      'const reopenCollaborationRooms = (): void => {',
+      'const getHumanCollaborationRuntime = () => {',
+      reason
+    )
+    expect(reconnect, reason).toContain(
+      'for (const share of humanCollaborationStore.listShares()) {'
+    )
+    expect(reconnect, reason).toContain('if (!share.enabled) continue')
+    expect(reconnect, reason).toContain("participant.status === 'active'")
+    expect(reconnect, reason).toContain("typeof invite.consumedAt === 'number'")
+    expect(reconnect, reason).toContain('getHumanCollaborationRuntime()')
+    expect(reconnect, reason).toContain(
+      'humanCollaborationHostTransport?.openRoom(hostRelay, roomId)'
+    )
+
+    const runtime = between(
+      'const getHumanCollaborationRuntime = () => {',
+      '// Boot the iOS remote bridge now that the human-collaboration cluster above is',
+      reason
+    )
+    expect(runtime, reason).toContain('humanCollaborationRuntime = new HumanCollaborationRuntime({')
+    expect(runtime, reason).toContain('store: humanCollaborationStore')
+    expect(runtime, reason).toContain(
+      'humanCollaborationHostTransport.attachRuntime(humanCollaborationRuntime)'
+    )
+
+    const ipc = between(
+      'disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({',
+      'registerUsageRatesHandlers({',
+      reason
+    )
+    expect(ipc, reason).toContain('humanCollaborationStore,')
+    expect(ipc, reason).toContain('getHumanCollaborationRuntime,')
+    expect(ipc, reason).toContain(
+      'getCurrentHumanCollaborationRuntime: () => humanCollaborationRuntime'
+    )
+    expect(source, reason).toContain(
+      'if (humanCollaborationHostTransport) reopenCollaborationRooms()'
+    )
   })
 
   it('isolates exact Channel runs from parent sessions, raw history, and ordinary failover', () => {
