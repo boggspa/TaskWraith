@@ -2444,9 +2444,16 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_inspect',
     'canvas_network',
     'canvas_console',
+    'canvas_drive_report',
+    'canvas_drive_verify',
     'canvas_resize',
     'canvas_click',
     'canvas_fill',
+    'canvas_key',
+    'canvas_scroll',
+    'canvas_hover',
+    'canvas_select',
+    'canvas_wait_for',
     'canvas_annotate',
     'canvas_eval',
     'canvas_navigate',
@@ -5234,7 +5241,7 @@ export function SettingsPanel({
             provisionalFallback?.source ||
             (provider === 'codex' ? 'provider' : 'taskwraith')
     const codexInventoryNote =
-      provider === 'codex' && rawToolCount > toolCount
+      provider === 'codex' && rawServerCount > 0 && rawToolCount > 0
         ? ` Codex app-server also reports ${rawServerCount} MCP server${rawServerCount === 1 ? '' : 's'} with ${pluralizeCount(rawToolCount, 'total tool')}.`
         : ''
     const messageBase =
