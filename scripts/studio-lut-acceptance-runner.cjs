@@ -11,8 +11,8 @@ const speechFixture = require('./studio-generate-speech-fixture.cjs')
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
-const expectedCompanionSha256 = '1f2144847ab99fa982d71ae12632d93dc7235d855b8cdde55e25980c77134271'
-const expectedSourceDigest = '143da19e3b52ed653a6034d6d0c50f3723755b12f9707ffb2c688606ba12fc4b'
+const expectedCompanionSha256 = 'c431b53091e7da0357f96a4aa9bf773a72cc123b8a3e13dd94e967180bff1d24'
+const expectedSourceDigest = '3b60d48dd5e104c78c016e0fa8362393bf92d996f81d5e29595c5ffdf23aaa2d'
 const expectedSourceCount = 70
 const expectedOutDigest = '09675fbf05a8b2f81616d2dcb04480d6016ced338a776ccf1d94c5a2010c7f2d'
 const expectedOutCount = 38
@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'f38c4adaf1738c71b719982ebb4e5c4c9a6362bad1d15e2501d40afb7ca1800d',
+    '29411744e797ac02069df713ae49af5777ae9a88222a9952e348444f6186a4c8',
   'scripts/studio-acceptance-ui-driver.swift':
     '10bc0737095f8cc1bdd095e8f43c2470056263bdd3eec896a57843a3f4f91e51',
   'scripts/studio-acceptance-watchdog.cjs':

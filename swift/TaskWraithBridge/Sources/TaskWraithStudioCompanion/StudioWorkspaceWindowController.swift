@@ -132,6 +132,10 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
       greaterThanOrEqualTo: rootStack.heightAnchor,
       multiplier: 0.5
     ).isActive = true
+    viewerDeck.widthAnchor.constraint(
+      greaterThanOrEqualTo: upperStack.widthAnchor,
+      multiplier: 0.5
+    ).isActive = true
     routeStack.heightAnchor.constraint(
       greaterThanOrEqualTo: viewerDeck.heightAnchor,
       multiplier: 0.75

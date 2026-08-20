@@ -142,6 +142,11 @@ final class StudioWorkspaceWindowTests: XCTestCase {
     )
     XCTAssertGreaterThan(frame.width, 0)
     XCTAssertGreaterThan(frame.height, 0)
+    XCTAssertGreaterThanOrEqual(
+      frame.width,
+      content.bounds.width * 0.5,
+      "the one-window viewer deck must remain wide enough for visible media identity"
+    )
     XCTAssertGreaterThan(accessibilityFrame.width, 0)
     XCTAssertGreaterThan(accessibilityFrame.height, 0)
     XCTAssertTrue(content.bounds.contains(frame))
