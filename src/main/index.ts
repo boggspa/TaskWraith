@@ -475,6 +475,10 @@ import {
 import { chatGrantWorkspaceBindingFromChat } from '../shared/externalPathGrantBinding'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
 import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
+import {
+  ReasoningLedgerCoalescer,
+  coalescedReasoningInput
+} from './ReasoningLedgerCoalescer'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type {
   BridgeActionAuthorizationResolver,
@@ -13065,8 +13069,26 @@ function emitRunEventsChanged(record: {
   })
 }
 
+/**
+ * Reasoning arrives as a cumulative restatement of the whole segment on every
+ * chunk, so persisting each one is quadratic in the segment's length — it was
+ * 99.8% of the largest run ledgers and the bulk of a 28 GB corpus. Hold the
+ * open segment here and write ONE consolidated record when it closes.
+ */
+const reasoningLedgerCoalescer = new ReasoningLedgerCoalescer()
+
 function appendDurableRunEvent(input: RunEventInput): void {
   if (channelAgentRunIsolationRegistry.isRunIsolated(input.runId)) return
+  // Any non-reasoning event for a run closes its open segment first, so the
+  // consolidated record keeps its place ahead of whatever closed it — which
+  // covers every terminal path without hooking each one.
+  const absorbed = reasoningLedgerCoalescer.absorb(input, new Date().toISOString())
+  for (const segment of absorbed.flushed) {
+    // Isolation is per-run and a flushed segment may belong to another run.
+    if (channelAgentRunIsolationRegistry.isRunIsolated(segment.template.runId)) continue
+    getRunRepository().appendRunEvent(coalescedReasoningInput(segment))
+  }
+  if (absorbed.deferred) return
   getRunRepository().appendRunEvent(input)
 }
 

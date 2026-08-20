@@ -558,3 +558,95 @@ describe('commit evidence survives detail stripping', () => {
     expect(activity.commitEvidence).toEqual(evidence)
   })
 })
+
+function manyRunRecord(runCount: number): ChatRecord {
+  const messages: ChatRecord['messages'] = []
+  const runs: ChatRecord['runs'] = []
+  for (let index = 0; index < runCount; index += 1) {
+    const runId = `run-${index}`
+    messages.push({
+      id: `message-${index}`,
+      role: 'tool',
+      content: '',
+      timestamp: '2026-08-16T00:00:00.000Z',
+      runId,
+      toolActivities: [
+        {
+          id: `tool-${index}`,
+          toolName: 'run_shell_command',
+          displayName: 'Ran command',
+          category: 'shell',
+          status: 'success',
+          parameters: { command: 'printf hello' },
+          resultSummary: 'hello',
+          outputPreview: 'hello',
+          rawResultEvent: { output: 'hello' }
+        }
+      ]
+    })
+    runs.push({
+      runId,
+      startedAt: '2026-08-16T00:00:00.000Z',
+      endedAt: '2026-08-16T00:01:00.000Z',
+      status: 'success'
+    })
+  }
+  return {
+    appChatId: 'chat-many',
+    title: 'Many runs',
+    createdAt: 1,
+    updatedAt: 2,
+    archived: false,
+    messages,
+    runs
+  }
+}
+
+describe('terminal externalization backlog cap', () => {
+  it('stages at most maxTerminalRunsPerPass runs in one pass', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+
+    const result = externalizeToolActivityDetails(manyRunRecord(120), sink, {
+      previousChat: null,
+      maxTerminalRunsPerPass: 25
+    })
+
+    expect(result.completedRunIds).toHaveLength(25)
+    expect(sink).toHaveBeenCalledTimes(25)
+    const stamped = result.chat.runs.filter(
+      (run) => run.toolDetailExternalizationGeneration === TOOL_DETAIL_EXTERNALIZATION_GENERATION
+    )
+    expect(stamped).toHaveLength(25)
+  })
+
+  it('drains the backlog across successive passes, oldest run first', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+    let chat = manyRunRecord(60)
+    const order: string[] = []
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      const result = externalizeToolActivityDetails(chat, sink, {
+        previousChat: null,
+        maxTerminalRunsPerPass: 25
+      })
+      order.push(...result.completedRunIds)
+      chat = result.chat
+    }
+
+    expect(order.slice(0, 3)).toEqual(['run-0', 'run-1', 'run-2'])
+    expect(new Set(order).size).toBe(60)
+    expect(
+      chat.runs.every(
+        (run) => run.toolDetailExternalizationGeneration === TOOL_DETAIL_EXTERNALIZATION_GENERATION
+      )
+    ).toBe(true)
+  })
+
+  it('externalizes the whole backlog when no cap is given', () => {
+    const sink = vi.fn((runId: string, activity: { id: string }) => ref(runId, activity.id))
+
+    const result = externalizeToolActivityDetails(manyRunRecord(40), sink, { previousChat: null })
+
+    expect(result.completedRunIds).toHaveLength(40)
+  })
+})

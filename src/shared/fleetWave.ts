@@ -24,6 +24,8 @@ export interface FleetWaveAgentState {
   role: FleetWaveRole | string
   status: FleetWaveAgentStatus
   provider?: string
+  /** Resolves the Ollama/Pi upstream brand hue; plain providers ignore it. */
+  model?: string
   error?: string
   pendingApproval?: FleetWavePendingApproval
 }
@@ -40,6 +42,22 @@ export interface FleetWaveTelemetry {
   durationMs?: number
   totalTokens?: number
 }
+
+/**
+ * Settings → General default for Max Wave Agents — how many workers one
+ * `delegate_wave` call may spawn before the user raises the slider.
+ *
+ * 12 rather than the original 8 because 8 was an arbitrary starting point that
+ * real work kept overrunning: a caller asked for a 12-agent fleet, was
+ * refused, and split it into waves of 8 and 4 — two approvals, two joins, and
+ * a roster the reader had to reassemble by hand. This is only where the slider
+ * starts; the structural ceiling is unchanged.
+ *
+ * Lives in shared because BOTH sides need the number: main enforces it, and
+ * the Settings hint states it. A renderer value-import from `src/main/**` is
+ * the rollup-bind hazard this repo has been bitten by twice.
+ */
+export const DEFAULT_MAX_WAVE_AGENTS = 12
 
 export function fleetWaveDensityTier(agentCount: number): FleetWaveDensityTier {
   const n = Math.max(0, Math.floor(agentCount))
@@ -109,8 +127,16 @@ export function groupPendingApprovalsByScope(
 /** Density-strip cells in dispatch order — never re-sorted by status. */
 export function fleetWaveGhostCellStates(
   agents: readonly FleetWaveAgentState[]
-): Array<{ id: string; status: FleetWaveAgentStatus }> {
-  return agents.map((agent) => ({ id: agent.id, status: agent.status }))
+): Array<{ id: string; status: FleetWaveAgentStatus; provider?: string; model?: string }> {
+  // provider/model ride along so an in-flight ghost can wear its agent's own
+  // accent instead of a generic running colour. Both stay optional: a cell
+  // without them inherits the card accent.
+  return agents.map((agent) => ({
+    id: agent.id,
+    status: agent.status,
+    ...(agent.provider ? { provider: agent.provider } : {}),
+    ...(agent.model ? { model: agent.model } : {})
+  }))
 }
 
 /** Agents that are not failed / needs_approval (exceptions stay named separately). */

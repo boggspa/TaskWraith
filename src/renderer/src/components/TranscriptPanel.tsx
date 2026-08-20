@@ -5084,7 +5084,16 @@ export const TranscriptPanel = memo(
                                 role: worker?.role || 'worker',
                                 status,
                                 provider:
-                                  typeof worker?.provider === 'string' ? worker.provider : undefined
+                                  typeof worker?.provider === 'string'
+                                    ? worker.provider
+                                    : undefined,
+                                // Read off the live child, not the card: it is
+                                // what resolves an Ollama/Pi seat to the
+                                // upstream brand hue the user actually picked.
+                                model:
+                                  typeof child?.requestedModel === 'string'
+                                    ? child.requestedModel
+                                    : undefined
                               }
                             })
                       }}

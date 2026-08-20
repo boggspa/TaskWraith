@@ -1072,7 +1072,7 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 
 ## delegate_wave
 
-Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). One approval covers the wave; capped by Settings → General → Max Wave Agents.
+Spawn a wave of fresh context-isolated sub-threads (fleet). lifecycle=ephemeral (die-on-return, min 1) or durable (default, min 2). Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). One approval covers the wave; sized by Settings → General → Max Wave Agents (default 12). An over-cap roster is REFUSED whole — never trimmed — and the refusal names the live cap, so size the wave once rather than splitting it pre-emptively.
 
 - Access: governed by your run permission role
 - Required args: workers

@@ -3483,9 +3483,13 @@
   height: 11px;
   flex: 0 0 11px;
 }
+/* In flight wears the AGENT's accent (FleetWaveCard scopes --accent per chip
+ * from its provider, with the Ollama/Pi upstream-brand override). It used to
+ * be the generic running indigo, which named nobody. Settled + approval states
+ * below keep their own meaning and must NOT be repainted this way. */
 .fleet-wave-card-worker.status-working {
-  color: color-mix(in srgb, var(--tool-running) 70%, var(--text-primary) 30%);
-  background: color-mix(in srgb, var(--tool-running) 12%, transparent);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-primary) 30%);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .fleet-wave-card-worker.status-completed {
   color: color-mix(in srgb, var(--success) 70%, var(--text-primary) 30%);
@@ -3528,7 +3532,7 @@
   overflow: visible;
 }
 .fleet-wave-card-cell.status-working {
-  color: var(--tool-running);
+  color: var(--accent);
 }
 .fleet-wave-card-cell.status-needs_approval {
   color: var(--tool-warning);

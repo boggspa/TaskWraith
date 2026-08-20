@@ -16,6 +16,13 @@ import type { ChatTranscriptOp } from '../../shared/chatUpdateTransport'
 export const TOOL_DETAIL_EXTERNALIZATION_GENERATION = 1
 
 /**
+ * Newly terminal runs one save may externalize. Each costs a strict, fsync'd
+ * run-event checkpoint, so this bounds the blocking I/O a single save can add
+ * when a long-lived thread presents its entire un-externalized history at once.
+ */
+export const MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE = 25
+
+/**
  * Serialized-detail size above which a SEALED activity in a still-running run
  * moves its raw payload behind a `detailRef` mid-run (perf-epic T5 hot case).
  * Below it, activities stay fully inline until their run turns terminal, so
@@ -43,6 +50,17 @@ export interface ExternalizeToolActivityDetailsOptions {
    * raw bytes that exist only in the archive.
    */
   readArchivedDetail?: (ref: ToolActivityDetailRef) => ToolActivity | null
+  /**
+   * Ceiling on how many NEWLY terminal runs one pass stages, oldest first.
+   * Uncapped by default; the store caps it because each staged run costs the
+   * caller a strict (fsync'd) run-event checkpoint, and a long thread that has
+   * never been externalized presents its whole history at once — 520 runs in
+   * the 2026-08-20 main-process OOM. Runs left over keep their unstamped
+   * generation and are picked up by the next save, which is the same retry
+   * path a failed stage already uses. Live-run externalization is never
+   * capped: it is what keeps an active chat lean.
+   */
+  maxTerminalRunsPerPass?: number
 }
 
 export interface ChatToolDetailExternalizationResult {
@@ -316,10 +334,15 @@ export function externalizeToolActivityDetails(
   // Live externalization is opt-in via options: without the previous record
   // for ref re-adoption, every save would re-append the same detail bytes.
   const liveEnabled = options !== undefined
+  const maxTerminalRuns = options?.maxTerminalRunsPerPass
   for (let index = 0; index < runs.length; index += 1) {
     const run = runs[index]
     if (isTerminalRun(run, index < runs.length - 1)) {
-      if (run.toolDetailExternalizationGeneration !== TOOL_DETAIL_EXTERNALIZATION_GENERATION) {
+      if (
+        run.toolDetailExternalizationGeneration !== TOOL_DETAIL_EXTERNALIZATION_GENERATION &&
+        (maxTerminalRuns === undefined || terminalCandidateRunIds.size < maxTerminalRuns)
+      ) {
+        // Runs are chronological, so a capped pass drains oldest-first.
         terminalCandidateRunIds.add(run.runId)
       }
     } else if (liveEnabled) {

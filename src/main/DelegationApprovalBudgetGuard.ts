@@ -22,6 +22,7 @@
  * key-agnostic) and caps delegation approvals per agent turn.
  */
 
+import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { ApprovalBudgetTracker, type ApprovalBudgetDecision } from './ApprovalBudgetTracker'
 
 /** Env override for the per-parent-run delegation-approval cap. */
@@ -31,8 +32,14 @@ export const DELEGATION_APPROVAL_BUDGET_ENV = 'TASKWRAITH_DELEGATION_APPROVAL_BU
  * Default cap. Generous headroom for a legitimate multi-delegation
  * turn while still stopping a runaway loop (which could otherwise
  * spawn hundreds of provider runs from one turn).
+ *
+ * Derived from the wave default rather than picked, because a wave
+ * reserves one slot per worker and this budget is per turn: the two
+ * numbers are coupled whether or not anyone writes it down. Two full
+ * waves is the headroom a real turn wants — one big fan-out plus a
+ * follow-up — and is still two orders of magnitude short of a loop.
  */
-export const DEFAULT_DELEGATION_APPROVAL_BUDGET = 20
+export const DEFAULT_DELEGATION_APPROVAL_BUDGET = DEFAULT_MAX_WAVE_AGENTS * 2
 
 /**
  * Resolve the cap from the environment, falling back to the default

@@ -16,6 +16,28 @@ import { composedSeatRole } from '../lib/transcriptSeat'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
+import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+
+/**
+ * Per-agent accent for the in-flight states. A working agent used to wear the
+ * generic running colour, which said nothing about whose agent it was — and a
+ * wave may be multi-provider. Ollama and Pi route through
+ * `resolveProviderHueClass` so a hosted Qwen paints its maker's hue rather
+ * than the seat's. Settled states (done / failed) and the approval amber keep
+ * their own meaning and never take this.
+ */
+function agentAccentStyle(agent: {
+  provider?: string
+  model?: string
+  status?: string
+}): CSSProperties | undefined {
+  // Emitted ONLY for the state that reads it. Settled and waiting agents keep
+  // the success / danger / warning tokens, so scoping the variable onto them
+  // would be a style that does nothing and invites a later rule to consume it.
+  if (agent.status !== 'working' || !agent.provider) return undefined
+  const accent = providerAccentVar(resolveProviderHueClass(agent.provider, agent.model))
+  return accent ? ({ '--accent': accent } as CSSProperties) : undefined
+}
 
 export interface FleetWaveCardProps {
   telemetry: FleetWaveTelemetry
@@ -140,6 +162,7 @@ export function FleetWaveCard({
     const chipTitle = agent.provider
       ? `${providerDisplayName(agent.provider)} · ${agent.label}`
       : agent.label
+    const accentStyle = agentAccentStyle(agent)
 
     if (openable) {
       return (
@@ -147,7 +170,7 @@ export function FleetWaveCard({
           key={agent.id}
           type="button"
           className={className}
-          style={chipButtonStyle}
+          style={{ ...chipButtonStyle, ...accentStyle }}
           title={`Open ${chipTitle}`}
           aria-label={`Open ${chipTitle}`}
           onClick={(event) => handleChipClick(event, agent.id)}
@@ -162,7 +185,7 @@ export function FleetWaveCard({
     }
 
     return (
-      <span key={agent.id} className={className} title={chipTitle}>
+      <span key={agent.id} className={className} title={chipTitle} style={accentStyle}>
         {logo}
         <span>{label}</span>
       </span>
@@ -334,6 +357,7 @@ function FleetWaveDensityStrip({
         <svg
           key={cell.id}
           className={`fleet-wave-card-cell status-${cell.status}`}
+          style={agentAccentStyle(cell)}
           viewBox="0 0 128 128"
           aria-hidden="true"
           focusable="false"
