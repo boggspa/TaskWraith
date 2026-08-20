@@ -2,6 +2,7 @@ import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
 import {
   BLACKBOARD_MAX_KEY_LEN,
@@ -3639,7 +3640,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Omit workers[].provider to inherit the parent provider; set allowMultiProvider=true only when the user asked for a multi-provider fleet. ' +
         'Optional workers[].role (scout|worker|reviewer) + label; waves are spawn-only. ' +
         'Join knobs bind to a host waveId — express wait-vs-partials via deadline/quorum (no fleet_await); poll progress with list_subthreads({waveId}). ' +
-        'One approval covers the wave; capped by Settings → General → Max Wave Agents.',
+        `One approval covers the wave; sized by Settings → General → Max Wave Agents (default ${DEFAULT_MAX_WAVE_AGENTS}). ` +
+        'An over-cap roster is REFUSED whole — never trimmed — and the refusal names the live cap, so size the wave once rather than splitting it pre-emptively.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3701,7 +3703,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               },
               required: ['prompt']
             },
-            description: 'Spawn-only worker specs (ephemeral min 1; durable min 2 at parse).'
+            description:
+              'Spawn-only worker specs (ephemeral min 1; durable min 2 at parse). ' +
+              `maxItems is the structural ceiling, not the live cap: the user cap (Max Wave Agents, default ${DEFAULT_MAX_WAVE_AGENTS}) is lower and is enforced at call time.`
           },
           join: {
             type: 'object',

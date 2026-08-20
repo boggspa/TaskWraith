@@ -4,6 +4,7 @@ import * as path from 'path'
 import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
 import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
@@ -2350,8 +2351,11 @@ const defaultSettings: AppSettings = {
   closeoutAiSummaryEnabled: true,
   hostAutoCompactEnabled: true,
   ensembleCollapseOlderRounds: true,
-  /** Settings → General Max Wave Agents (clamped 2–64 on read/write). */
-  maxWaveAgents: 8,
+  /** Settings → General Max Wave Agents (clamped 2–64 on read/write).
+   *  A literal because `defaultSettings` is the shipped settings shape, not a
+   *  computed one; kept in step with shared/fleetWave's DEFAULT_MAX_WAVE_AGENTS
+   *  by maxWaveAgentsDefault.test.ts, which reads this line back as source. */
+  maxWaveAgents: 12,
   dashboardStatPrefs: {
     dashboardSize: 'small'
   },
@@ -5066,11 +5070,10 @@ export class AppStore {
         typeof stored.autoResumeParentOnSubThreadCompletion === 'boolean'
           ? stored.autoResumeParentOnSubThreadCompletion
           : defaultSettings.autoResumeParentOnSubThreadCompletion,
-      // Settings → General Max Wave Agents: clamp 2–64; malformed/missing → 8.
-      maxWaveAgents:
-        typeof stored.maxWaveAgents === 'number' && Number.isFinite(stored.maxWaveAgents)
-          ? Math.max(2, Math.min(64, Math.floor(stored.maxWaveAgents)))
-          : (defaultSettings.maxWaveAgents ?? 8),
+      // Settings → General Max Wave Agents: clamp 2–64; malformed/missing
+      // takes the default. A value equal to the SUPERSEDED default is lifted
+      // once — see adoptSupersededMaxWaveAgents.
+      maxWaveAgents: adoptSupersededMaxWaveAgents(stored.maxWaveAgents),
       autoUpdateEnabled:
         typeof stored.autoUpdateEnabled === 'boolean'
           ? stored.autoUpdateEnabled

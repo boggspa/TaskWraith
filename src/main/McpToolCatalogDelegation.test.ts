@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 
 describe('delegate_to_subthread MCP schema', () => {
@@ -36,5 +37,42 @@ describe('delegate_to_subthread MCP schema', () => {
 
     expect(definition?.description).toMatch(/queued recalled follow-ups/i)
     expect(definition?.description).toMatch(/active run/i)
+  })
+})
+
+describe('delegate_wave roster sizing is discoverable', () => {
+  // Agents were sizing every fleet at 8 and splitting bigger jobs into two
+  // waves. That was not superstition: they read `maxItems: 64`, asked for a
+  // large roster, and the runtime refused with "at most 8" — so 8 is what they
+  // learned. Nothing in the advertised schema ever named the real number, and
+  // the one place it was named was a refusal they had to earn by failing.
+  const waveDefinition = () =>
+    createTaskWraithMcpToolDefinitions().find((tool) => tool.name === 'delegate_wave')
+
+  it('names the default roster size in the tool description', () => {
+    expect(waveDefinition()?.description).toMatch(
+      new RegExp(`default(?:s to)? ${DEFAULT_MAX_WAVE_AGENTS}\\b`, 'i')
+    )
+  })
+
+  it('says an over-cap roster is refused, not silently trimmed', () => {
+    // The distinction is load-bearing for planning: a caller that believes the
+    // tail is dropped will pad the roster; one that knows the call fails will
+    // size it correctly the first time.
+    expect(waveDefinition()?.description).toMatch(/refus/i)
+  })
+
+  it('marks maxItems as the structural ceiling, not the live cap', () => {
+    const schema = waveDefinition()?.inputSchema as
+      | { properties?: Record<string, { description?: string; maxItems?: number }> }
+      | undefined
+    const workers = schema?.properties?.workers
+
+    // 64 stays — it IS the structural ceiling, and a schema that moved with a
+    // user setting would make the same call valid or invalid depending on a
+    // slider the agent cannot see.
+    expect(workers?.maxItems).toBe(64)
+    expect(workers?.description).toMatch(/ceiling/i)
+    expect(workers?.description).toMatch(new RegExp(`${DEFAULT_MAX_WAVE_AGENTS}`))
   })
 })

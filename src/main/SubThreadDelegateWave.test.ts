@@ -119,14 +119,16 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('clamps maxWaveAgents to 2–64 with default 8', () => {
+  it('clamps maxWaveAgents to 2–64, falling back to the default', () => {
+    expect(DEFAULT_MAX_WAVE_AGENTS).toBe(12)
     expect(clampMaxWaveAgents(undefined)).toBe(DEFAULT_MAX_WAVE_AGENTS)
     expect(clampMaxWaveAgents(8)).toBe(8)
     expect(clampMaxWaveAgents(20)).toBe(20)
     expect(clampMaxWaveAgents(64)).toBe(DELEGATE_WAVE_MAX_WORKERS)
     expect(clampMaxWaveAgents(99)).toBe(DELEGATE_WAVE_MAX_WORKERS)
-    expect(clampMaxWaveAgents(null)).toBe(8)
-    expect(clampMaxWaveAgents('nope')).toBe(8)
+    // Malformed input takes the default, never a hand-pinned number.
+    expect(clampMaxWaveAgents(null)).toBe(DEFAULT_MAX_WAVE_AGENTS)
+    expect(clampMaxWaveAgents('nope')).toBe(DEFAULT_MAX_WAVE_AGENTS)
     expect(clampMaxWaveAgents(1)).toBe(2)
     expect(clampMaxWaveAgents(8.9)).toBe(8)
   })
@@ -164,20 +166,24 @@ describe('SubThreadDelegateWave pure helpers', () => {
     expect(ok.ok).toBe(true)
   })
 
-  it('defaults maxWorkers to 8 when omitted — 9 workers fail, 8 succeed', () => {
-    const nine = Array.from({ length: 9 }, (_, i) => ({
+  it('defaults maxWorkers to the wave default — one over fails, the default succeeds', () => {
+    // 12 is the default because a 12-agent fleet was the size real work asked
+    // for and the old 8 forced callers to split it into two waves.
+    const overCap = Array.from({ length: DEFAULT_MAX_WAVE_AGENTS + 1 }, (_, i) => ({
       provider: 'codex',
       prompt: `w${i}`
     }))
     const overDefault = parseDelegateWaveArgs(
-      { workers: nine },
+      { workers: overCap },
       { parentChatId, parentAppRunId, nowMs, isAllowedProvider, parentProvider: 'codex' }
     )
     expect(overDefault.ok).toBe(false)
-    if (!overDefault.ok) expect(overDefault.message).toMatch(/at most 8/i)
+    if (!overDefault.ok) {
+      expect(overDefault.message).toMatch(new RegExp(`at most ${DEFAULT_MAX_WAVE_AGENTS}`, 'i'))
+    }
 
     const atDefault = parseDelegateWaveArgs(
-      { workers: nine.slice(0, 8) },
+      { workers: overCap.slice(0, DEFAULT_MAX_WAVE_AGENTS) },
       { parentChatId, parentAppRunId, nowMs, isAllowedProvider, parentProvider: 'codex' }
     )
     expect(atDefault.ok).toBe(true)
@@ -204,30 +210,32 @@ describe('SubThreadDelegateWave pure helpers', () => {
     if (!over.ok) expect(over.message).toMatch(/at most 12/i)
   })
 
-  it('falls back to maxWorkers 8 when the option is missing or non-finite', () => {
-    const nine = Array.from({ length: 9 }, (_, i) => ({
+  it('falls back to the wave default when the option is missing or non-finite', () => {
+    const overCap = Array.from({ length: DEFAULT_MAX_WAVE_AGENTS + 1 }, (_, i) => ({
       provider: 'codex',
       prompt: `w${i}`
     }))
     const base = { parentChatId, parentAppRunId, nowMs, isAllowedProvider }
 
-    // Omitted maxWorkers → DEFAULT_MAX_WAVE_AGENTS (8).
-    const omitted = parseDelegateWaveArgs({ workers: nine }, base)
-    expect(omitted.ok).toBe(false)
-    if (!omitted.ok) expect(omitted.message).toMatch(/at most 8/i)
+    const atMostDefault = new RegExp(`at most ${DEFAULT_MAX_WAVE_AGENTS}`, 'i')
 
-    // Non-finite / non-number values clamp to DEFAULT_MAX_WAVE_AGENTS (8).
+    // Omitted maxWorkers → DEFAULT_MAX_WAVE_AGENTS.
+    const omitted = parseDelegateWaveArgs({ workers: overCap }, base)
+    expect(omitted.ok).toBe(false)
+    if (!omitted.ok) expect(omitted.message).toMatch(atMostDefault)
+
+    // Non-finite / non-number values clamp to DEFAULT_MAX_WAVE_AGENTS.
     for (const maxWorkers of [null, 'nope', NaN, Infinity] as const) {
       const result = parseDelegateWaveArgs(
-        { workers: nine },
+        { workers: overCap },
         { ...base, maxWorkers: maxWorkers as unknown as number }
       )
       expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.message).toMatch(/at most 8/i)
+      if (!result.ok) expect(result.message).toMatch(atMostDefault)
     }
 
-    // Finite but below the floor clamps to 2 (not the default 8).
-    const belowFloor = parseDelegateWaveArgs({ workers: nine }, { ...base, maxWorkers: -1 })
+    // Finite but below the floor clamps to 2, not up to the default.
+    const belowFloor = parseDelegateWaveArgs({ workers: overCap }, { ...base, maxWorkers: -1 })
     expect(belowFloor.ok).toBe(false)
     if (!belowFloor.ok) expect(belowFloor.message).toMatch(/at most 2/i)
   })

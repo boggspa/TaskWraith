@@ -7,6 +7,7 @@
  * catalog wiring live elsewhere; this module stays free of AppStore and IPC.
  */
 
+import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import type { PermissionPresetId, ProviderId, SubThreadJoinPolicy } from './store/types'
 import { resolveSubThreadJoinPolicy, type SubThreadJoinPolicyRequest } from './SubThreadJoinPolicy'
 import {
@@ -25,8 +26,10 @@ export const DELEGATE_WAVE_EPHEMERAL_MIN_WORKERS = 1
  * MAX_SUBTHREAD_JOIN_QUORUM (keep both ≥ each other when raising either).
  */
 export const DELEGATE_WAVE_MAX_WORKERS = 64
-/** Settings → General default for Max Wave Agents. */
-export const DEFAULT_MAX_WAVE_AGENTS = 8
+/** Re-exported so delegation callers keep one import; defined in shared
+ *  because the Settings hint must state the same number, and the renderer
+ *  cannot value-import from `src/main/**` without breaking the client bind. */
+export { DEFAULT_MAX_WAVE_AGENTS }
 
 /**
  * Clamp the Settings → General `maxWaveAgents` value into the structural
@@ -105,7 +108,7 @@ export interface ParseDelegateWaveOptions {
   allowedProvidersLabel?: string
   /**
    * Cap from Settings → General `maxWaveAgents` (clamped 2–64). When omitted,
-   * defaults to DEFAULT_MAX_WAVE_AGENTS (8), not the absolute wave ceiling.
+   * defaults to DEFAULT_MAX_WAVE_AGENTS, not the absolute wave ceiling.
    */
   maxWorkers?: number
 }

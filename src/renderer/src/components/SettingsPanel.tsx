@@ -39,6 +39,7 @@ import type {
   UserMcpServerTransport
 } from '../../../main/store/types'
 import type { DiffStatColors } from '../../../shared/diffStatColors'
+import { DEFAULT_MAX_WAVE_AGENTS } from '../../../shared/fleetWave'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
 import {
@@ -4846,7 +4847,7 @@ export function SettingsPanel({
   const boundedTurns = Math.min(20, safeTurns)
   const safeMaxWaveAgents = (() => {
     const n = Number(maxWaveAgents)
-    if (!Number.isFinite(n)) return 8
+    if (!Number.isFinite(n)) return DEFAULT_MAX_WAVE_AGENTS
     return Math.max(2, Math.min(64, Math.floor(n)))
   })()
   const transcriptFontOptions = [...TRANSCRIPT_FONT_OPTIONS, ...installedFontOptions]
@@ -6556,7 +6557,10 @@ export function SettingsPanel({
                     onChange({
                       maxWaveAgents: Math.max(
                         2,
-                        Math.min(64, Math.floor(Number(e.target.value) || 8))
+                        Math.min(
+                          64,
+                          Math.floor(Number(e.target.value) || DEFAULT_MAX_WAVE_AGENTS)
+                        )
                       )
                     })
                   }
@@ -6567,7 +6571,7 @@ export function SettingsPanel({
                 />
                 <p className="settings-hint">
                   Caps how many workers a single <code>delegate_wave</code> batch may spawn (2–64).
-                  Default is 8. Structural wave + join ceilings are 64.
+                  Default is {DEFAULT_MAX_WAVE_AGENTS}. Structural wave + join ceilings are 64.
                 </p>
               </div>
 

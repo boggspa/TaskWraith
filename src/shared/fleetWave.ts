@@ -43,6 +43,22 @@ export interface FleetWaveTelemetry {
   totalTokens?: number
 }
 
+/**
+ * Settings → General default for Max Wave Agents — how many workers one
+ * `delegate_wave` call may spawn before the user raises the slider.
+ *
+ * 12 rather than the original 8 because 8 was an arbitrary starting point that
+ * real work kept overrunning: a caller asked for a 12-agent fleet, was
+ * refused, and split it into waves of 8 and 4 — two approvals, two joins, and
+ * a roster the reader had to reassemble by hand. This is only where the slider
+ * starts; the structural ceiling is unchanged.
+ *
+ * Lives in shared because BOTH sides need the number: main enforces it, and
+ * the Settings hint states it. A renderer value-import from `src/main/**` is
+ * the rollup-bind hazard this repo has been bitten by twice.
+ */
+export const DEFAULT_MAX_WAVE_AGENTS = 12
+
 export function fleetWaveDensityTier(agentCount: number): FleetWaveDensityTier {
   const n = Math.max(0, Math.floor(agentCount))
   if (n <= 6) return 'enumerate'

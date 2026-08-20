@@ -7,6 +7,7 @@ import {
   delegationApprovalBudgetExhaustedMessage,
   resolveDelegationApprovalBudget
 } from './DelegationApprovalBudgetGuard'
+import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 
 describe('resolveDelegationApprovalBudget', () => {
   it('falls back to the default when unset or blank', () => {
@@ -126,5 +127,33 @@ describe('DelegationApprovalBudgetGuard — delegation-loop anti-spam', () => {
   it('a 0 cap blocks every delegation (kill switch)', () => {
     const guard = new DelegationApprovalBudgetGuard(0)
     expect(simulateDelegationAttempt(guard, 'run-x').spawned).toBe(false)
+  })
+})
+
+describe('the anti-spam budget survives a full-size wave', () => {
+  // The budget is per parent RUN, i.e. per agent turn, and a wave reserves one
+  // slot per worker. So the wave default and this cap are coupled whether or
+  // not anyone wrote them down: raising Max Wave Agents without raising this
+  // turns "one big wave, then a small follow-up" into a refusal — the exact
+  // shape of the problem raising the wave default was meant to remove.
+  it('fits two full default-size waves in one turn', () => {
+    const guard = new DelegationApprovalBudgetGuard()
+    const run = 'run-two-waves'
+    for (let i = 0; i < DEFAULT_MAX_WAVE_AGENTS * 2; i++) {
+      expect(guard.tryConsume(run)).toBe('allowed')
+    }
+  })
+
+  it('still stops a runaway loop', () => {
+    // The guard's actual job. A loop blows past two waves' worth of slots and
+    // is declined before any further modal is raised.
+    const guard = new DelegationApprovalBudgetGuard()
+    const run = 'run-loop'
+    let allowed = 0
+    for (let i = 0; i < 500; i++) {
+      if (guard.tryConsume(run) === 'allowed') allowed += 1
+    }
+    expect(allowed).toBe(DEFAULT_DELEGATION_APPROVAL_BUDGET)
+    expect(allowed).toBeLessThan(500)
   })
 })
