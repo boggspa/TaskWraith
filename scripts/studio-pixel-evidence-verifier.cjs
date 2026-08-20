@@ -269,6 +269,13 @@ function sourceHostWindowEdgeInsets(sourceHostFrame, windowBounds) {
   }
 }
 
+function projectedHostPixelEdge(logicalOffset, scale, edgeInset, leading, opaqueProjection) {
+  const projected = logicalOffset * scale
+  if (!opaqueProjection) return Math.round(projected) + (leading ? edgeInset : -edgeInset)
+  if (leading) return Math.floor(projected) + edgeInset
+  return (edgeInset > 0 ? Math.ceil(projected) : Math.floor(projected)) - edgeInset
+}
+
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
   const capture = PNG.sync.read(fs.readFileSync(capturePath))
   const reference = PNG.sync.read(fs.readFileSync(referencePath))
@@ -401,17 +408,35 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
         // decoded media; exclude exactly one backing pixel at each touching
         // edge while retaining the entire interior material surface.
         left:
-          Math.round((sourceHostFrame.x - Number(windowBounds.x)) * scaleX) +
-          windowEdgeInsets.left,
+          projectedHostPixelEdge(
+            sourceHostFrame.x - Number(windowBounds.x),
+            scaleX,
+            windowEdgeInsets.left,
+            true,
+            geometry.captureMode === 'opaque-window-projection'
+          ),
         top:
-          Math.round((sourceHostFrame.y - Number(windowBounds.y)) * scaleY) +
-          windowEdgeInsets.top,
-        right: Math.round(
-          (sourceHostFrame.x + sourceHostFrame.width - Number(windowBounds.x)) * scaleX
-        ) - windowEdgeInsets.right,
-        bottom: Math.round(
-          (sourceHostFrame.y + sourceHostFrame.height - Number(windowBounds.y)) * scaleY
-        ) - windowEdgeInsets.bottom
+          projectedHostPixelEdge(
+            sourceHostFrame.y - Number(windowBounds.y),
+            scaleY,
+            windowEdgeInsets.top,
+            true,
+            geometry.captureMode === 'opaque-window-projection'
+          ),
+        right: projectedHostPixelEdge(
+          sourceHostFrame.x + sourceHostFrame.width - Number(windowBounds.x),
+          scaleX,
+          windowEdgeInsets.right,
+          false,
+          geometry.captureMode === 'opaque-window-projection'
+        ),
+        bottom: projectedHostPixelEdge(
+          sourceHostFrame.y + sourceHostFrame.height - Number(windowBounds.y),
+          scaleY,
+          windowEdgeInsets.bottom,
+          false,
+          geometry.captureMode === 'opaque-window-projection'
+        )
       }
     : null
   const videoWidth = hostPixelEdges
@@ -577,6 +602,11 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       logicalTitleBarHeight,
       sourceHostFrame,
       hostPixelEdges,
+      hostPixelEdgePolicy: sourceHostFrame
+        ? geometry.captureMode === 'opaque-window-projection'
+          ? 'floor-interior-ceil-touching-window-edge'
+          : 'round-symmetric'
+        : null,
       hostPixelRect,
       windowEdgeInsets,
       logicalHudOverlayHeight,

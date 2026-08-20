@@ -273,11 +273,13 @@ function createVisualFixture(corrupt: boolean, backingScale = 1) {
   }
 }
 
-function createProjectedWindowFixture(wrongFrame = false) {
+function createProjectedWindowFixture(wrongFrame = false, fractionalEdges = false) {
   const fixture = createVisualFixture(false)
   const reference = PNG.sync.read(readFileSync(fixture.referencePath))
   const windowBounds = { x: 100, y: 200, width: 200, height: 120 }
-  const sourceHostFrame = { x: 140, y: 230, width: 140, height: 70 }
+  const sourceHostFrame = fractionalEdges
+    ? { x: 140.6, y: 230.6, width: 140, height: 70 }
+    : { x: 140, y: 230, width: 140, height: 70 }
   const intermediate = new PNG({ width: 140, height: 70 })
   const transforms = [
     { scale: 0.97, offset: 7 },
@@ -320,11 +322,19 @@ function createProjectedWindowFixture(wrongFrame = false) {
       capture.data[pixel + 3] = 255
     }
   }
+  const leading = (value: number) =>
+    fractionalEdges ? Math.floor(value * 0.9) : Math.round(value * 0.9)
+  const trailing = (value: number) =>
+    fractionalEdges ? Math.floor(value * 0.9) : Math.round(value * 0.9)
+  const left = leading(sourceHostFrame.x - windowBounds.x)
+  const top = leading(sourceHostFrame.y - windowBounds.y)
+  const right = trailing(sourceHostFrame.x + sourceHostFrame.width - windowBounds.x)
+  const bottom = trailing(sourceHostFrame.y + sourceHostFrame.height - windowBounds.y)
   const projected = {
-    x: extent.x + Math.round((sourceHostFrame.x - windowBounds.x) * 0.9),
-    y: extent.y + Math.round((sourceHostFrame.y - windowBounds.y) * 0.9),
-    width: Math.round(sourceHostFrame.width * 0.9),
-    height: Math.round(sourceHostFrame.height * 0.9)
+    x: extent.x + left,
+    y: extent.y + top,
+    width: right - left,
+    height: bottom - top
   }
   for (let y = 0; y < projected.height; y += 1) {
     for (let x = 0; x < projected.width; x += 1) {
@@ -679,6 +689,40 @@ describe('Studio pixel evidence verifier', () => {
       expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
     } finally {
       fixture.cleanup()
+    }
+  })
+
+  it('uses raster-extent rounding for fractional opaque WindowServer host edges', () => {
+    const fixture = createProjectedWindowFixture(false, true)
+    const wrong = createProjectedWindowFixture(true, true)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'opaque-window-projection',
+          hostPixelEdgePolicy: 'floor-interior-ceil-touching-window-edge',
+          captureX: 46,
+          captureY: 33,
+          hostPixelEdges: { left: 36, top: 27, right: 162, bottom: 90 }
+        }
+      })
+      expect(
+        compareWindowCaptureToReference(
+          wrong.capturePath,
+          wrong.referencePath,
+          wrong.windowBounds,
+          { hudOverlayHeight: 9, sourceHostFrame: wrong.sourceHostFrame }
+        ).clean
+      ).toBe(false)
+    } finally {
+      fixture.cleanup()
+      wrong.cleanup()
     }
   })
 
