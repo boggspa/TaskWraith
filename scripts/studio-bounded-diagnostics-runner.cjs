@@ -808,13 +808,14 @@ async function capturePlayableSample(
   sourceHostFrame,
   index,
   previousPtsSeconds,
-  adapters = {}
+  adapters = {},
+  options = {}
 ) {
   acceptanceSession.assertWindowServerSessionAvailable(index, 'before-capture')
   const capture = await (adapters.captureNative || acceptanceSession.captureNative)(
     plan,
     target,
-    'diagnostics-' + String(index)
+    options.captureName || 'diagnostics-' + String(index)
   )
   acceptanceSession.assertWindowServerSessionAvailable(index, 'after-capture')
   const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
@@ -822,11 +823,23 @@ async function capturePlayableSample(
     matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset
   })
   const playable = isPlayableSample(observed, previousPtsSeconds)
-  if (!playable.valid) {
+  if (!playable.valid && options.requirePlayable !== false) {
     throw new Error(
       'bounded diagnostics sample is not playable: ' +
         JSON.stringify({ index, reasons: playable.reasons, observed })
     )
+  }
+  if (!playable.valid && options.requirePlayable === false) {
+    return {
+      index,
+      sourceHostFrame,
+      capture,
+      hud,
+      observed,
+      playable,
+      reference: null,
+      materialPixels: null
+    }
   }
   const exactSourcePtsSeconds = resolveExactSourcePts(census.values, observed.contentPtsSeconds)
   const reference = (adapters.generateReference || generateReference)(
@@ -996,7 +1009,8 @@ async function captureFreshPlayableSample(
   bounds,
   index,
   previousPtsSeconds,
-  adapters = {}
+  adapters = {},
+  options = {}
 ) {
   const workspaceObservation = await readSourceWorkspaceObservation(
     plan,
@@ -1012,9 +1026,80 @@ async function captureFreshPlayableSample(
     workspaceObservation.sourceHostFrame,
     index,
     previousPtsSeconds,
-    adapters
+    adapters,
+    options
   )
   return { ...sample, workspaceObservation }
+}
+
+const RETRYABLE_SAMPLE_REASONS = new Set([
+  'playhead-unreadable-or-out-of-range',
+  'asset-identity-mismatch',
+  'counter-unreadable'
+])
+
+async function waitForFreshPlayableSample(
+  plan,
+  target,
+  census,
+  bounds,
+  index,
+  previousPtsSeconds,
+  adapters = {},
+  options = {}
+) {
+  const timeoutMs = options.timeoutMs ?? 30_000
+  const intervalMs = options.intervalMs ?? 500
+  const deadline = Date.now() + timeoutMs
+  const attempts = []
+  let attempt = 0
+  while (Date.now() <= deadline) {
+    const sample = await captureFreshPlayableSample(
+      plan,
+      target,
+      census,
+      bounds,
+      index,
+      previousPtsSeconds,
+      adapters,
+      {
+        requirePlayable: false,
+        captureName: `diagnostics-${String(index)}-attempt-${String(attempt).padStart(2, '0')}`
+      }
+    )
+    const reasons = sample.playable.reasons
+    attempts.push({
+      attempt,
+      reasons,
+      observed: sample.observed,
+      sourceHostFrame: sample.sourceHostFrame,
+      capture: {
+        path: sample.capture.path,
+        sha256: sample.capture.sha256
+      }
+    })
+    if (sample.playable.valid) {
+      return {
+        ...sample,
+        retry: { attemptCount: attempts.length, attempts }
+      }
+    }
+    if (
+      reasons.length === 0 ||
+      reasons.some((reason) => !RETRYABLE_SAMPLE_REASONS.has(reason))
+    ) {
+      throw new Error(
+        'bounded diagnostics sample failed with a non-retryable observation: ' +
+          JSON.stringify({ index, attempt, reasons, observed: sample.observed })
+      )
+    }
+    attempt += 1
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  throw new Error(
+    `bounded diagnostics sample ${index} readiness timed out after ${attempts.length} attempts: ` +
+      JSON.stringify(attempts)
+  )
 }
 
 async function runBoundedDiagnostics(options = {}, adapters = {}) {
@@ -1085,7 +1170,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       const census = sourcePtsCensus(runtime.asset.assetPath, adapters)
       const samples = []
       samples.push(
-        await captureFreshPlayableSample(plan, target, census, bounds, 0, null, adapters)
+        await waitForFreshPlayableSample(plan, target, census, bounds, 0, null, adapters)
       )
       const firstResources = acceptanceSession.resourceSample(
         context.companion.pid,
@@ -1095,7 +1180,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       await sleep(options.sampleIntervalMilliseconds ?? 5_000)
       samples.push(
-        await captureFreshPlayableSample(
+        await waitForFreshPlayableSample(
           plan,
           target,
           census,
@@ -1107,7 +1192,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       await sleep(options.sampleIntervalMilliseconds ?? 5_000)
       samples.push(
-        await captureFreshPlayableSample(
+        await waitForFreshPlayableSample(
           plan,
           target,
           census,
@@ -1250,7 +1335,9 @@ module.exports = {
   capturePlayableSample,
   captureFreshPlayableSample,
   pressPlaybackTransition,
+  RETRYABLE_SAMPLE_REASONS,
   waitForPausedMediaReadiness,
+  waitForFreshPlayableSample,
   readSourceWorkspaceObservation,
   repoRoot,
   resolveExactSourcePts,

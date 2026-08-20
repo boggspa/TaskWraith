@@ -21,6 +21,7 @@ const {
   captureFreshPlayableSample,
   pressPlaybackTransition,
   waitForPausedMediaReadiness,
+  waitForFreshPlayableSample,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
@@ -1113,7 +1114,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
         return { clean: true, metrics: {} }
       }
     }
-    await captureFreshPlayableSample(
+    await waitForFreshPlayableSample(
       { artifactRoot: '/tmp/diagnostics-layout-shift' },
       { asset: { sha256: sampleAsset } },
       { values: [1, 2], count: 2 },
@@ -1122,7 +1123,7 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       null,
       adapters
     )
-    await captureFreshPlayableSample(
+    await waitForFreshPlayableSample(
       { artifactRoot: '/tmp/diagnostics-layout-shift' },
       { asset: { sha256: sampleAsset } },
       { values: [1, 2], count: 2 },
@@ -1166,6 +1167,140 @@ describe('the runner carries tracked end-to-end apparatus', () => {
     expect(captures).toBe(2)
     expect(readiness.observed).toMatchObject({ state: 'PAUSE', assetMatch: { distance: 0 } })
     expect(readiness.capture.transportMutationBracket.after.parsedValue.afterDurationTicks).toBe('900')
+  })
+
+  it('retries one-character asset/counter OCR misses without combining observations', async () => {
+    const asset = 'A'.repeat(43)
+    let captures = 0
+    const adapters = {
+      runStudioUiDriver: async () => ({
+        actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+      }),
+      captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
+        path: `/tmp/${name}.png`,
+        sha256: `capture-${++captures}`
+      }),
+      ocrScreenshot: () => ({
+        texts: ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', captures === 1 ? 'shown x' : 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+        stdoutSha256: digestFor(`ocr-${captures}`)
+      }),
+      hudContainsAsset: () => ({ matched: captures > 1, distance: captures > 1 ? 0 : 1 }),
+      generateReference: () => ({ path: '/tmp/reference.png' }),
+      compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+    }
+    const result = await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-retry' },
+      { asset: { sha256: asset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      adapters,
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(result.retry.attemptCount).toBe(2)
+    expect(result.retry.attempts[0].reasons).toEqual(
+      expect.arrayContaining(['asset-identity-mismatch', 'counter-unreadable'])
+    )
+    expect(result.observed.assetMatch.distance).toBe(0)
+    expect(captures).toBe(2)
+    expect(result.retry.attempts[0].capture.path).not.toBe(result.capture.path)
+  })
+
+  it('retries an unreadable PTS with a distinct capture and recovers the raw winner', async () => {
+    let captures = 0
+    const result = await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-pts-retry' },
+      { asset: { sha256: 'A'.repeat(43) } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      {
+        runStudioUiDriver: async () => ({
+          actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+        }),
+        captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
+          path: `/tmp/${name}.png`,
+          sha256: `pts-${++captures}`
+        }),
+        ocrScreenshot: () => ({
+          texts: captures === 1
+            ? ['PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB']
+            : ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+          stdoutSha256: digestFor(`pts-${captures}`)
+        }),
+        hudContainsAsset: () => ({ matched: true, distance: 0 }),
+        generateReference: () => ({ path: '/tmp/reference.png' }),
+        compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+      },
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(result.retry.attemptCount).toBe(2)
+    expect(result.retry.attempts[0].reasons).toContain('playhead-unreadable-or-out-of-range')
+    expect(result.capture.path).toContain('attempt-01')
+    expect(result.retry.attempts[0].capture.path).not.toBe(result.capture.path)
+  })
+
+  it.each([
+    ['nonretryable state', 'PAUSE', 1, null],
+    ['nonadvancing playhead', 'PLAY', 1, 2]
+  ])('fails fast for %s instead of retrying', async (_label, state, capturesExpected, previous) => {
+    let captures = 0
+    await expect(
+      waitForFreshPlayableSample(
+        { artifactRoot: '/tmp/diagnostics-nonretry' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { values: [1, 2], count: 2 },
+        { x: 100, y: 200, width: 960, height: 640 },
+        0,
+        previous,
+        {
+          runStudioUiDriver: async () => ({
+            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+          }),
+          captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
+          ocrScreenshot: () => ({
+            texts: ['00:00:02.000', state, 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+            stdoutSha256: digestFor('nonretry')
+          }),
+          hudContainsAsset: () => ({ matched: true, distance: 0 }),
+          generateReference: () => ({ path: '/tmp/reference.png' }),
+          compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+        },
+        { timeoutMs: 500, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/non-retryable/)
+    expect(captures).toBe(capturesExpected)
+  })
+
+  it('does not combine partial OCR observations across attempts', async () => {
+    let captures = 0
+    await expect(
+      waitForFreshPlayableSample(
+        { artifactRoot: '/tmp/diagnostics-partial' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { values: [1, 2], count: 2 },
+        { x: 100, y: 200, width: 960, height: 640 },
+        0,
+        null,
+        {
+          runStudioUiDriver: async () => ({
+            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+          }),
+          captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
+          ocrScreenshot: () => ({
+            texts: ['00:00:01.000', 'PLAY', 'drop 0', 'held 0', captures === 1 ? 'shown x' : 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB'],
+            stdoutSha256: digestFor(`partial-${captures}`)
+          }),
+          hudContainsAsset: () => ({ matched: captures === 1, distance: captures === 1 ? 0 : 1 }),
+          generateReference: () => ({ path: '/tmp/reference.png' }),
+          compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+        },
+        { timeoutMs: 500, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/readiness timed out/)
+    expect(captures).toBeGreaterThanOrEqual(2)
   })
 
   it.each([
