@@ -29,6 +29,10 @@ import {
   mergeChatUpdatedForRender,
   type PendingChatUpdateRender
 } from './lib/chatUpdateRenderMerge'
+import {
+  CHAT_UPDATE_MAX_RENDER_LATENCY_MS,
+  shouldFlushChatUpdateImmediately
+} from './lib/chatUpdateRenderUrgency'
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
@@ -3785,6 +3789,7 @@ function App(): React.JSX.Element {
   const pendingChatFlushRef = useRef<Set<string>>(new Set())
   const pendingMainChatUpdatesRef = useRef<Map<string, PendingChatUpdateRender>>(new Map())
   const chatFlushRafRef = useRef<number | null>(null)
+  const chatFlushDeadlineRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
   chatHydrationRuntimeRef.current.retention.attachTransportBaselines(
@@ -5716,17 +5721,36 @@ function App(): React.JSX.Element {
       cancelAnimationFrame(chatFlushRafRef.current)
       chatFlushRafRef.current = null
     }
+    if (chatFlushDeadlineRef.current !== null) {
+      window.clearTimeout(chatFlushDeadlineRef.current)
+      chatFlushDeadlineRef.current = null
+    }
     flushCoalescedChats()
   }, [flushCoalescedChats])
 
   const scheduleCoalescedChatFlush = useCallback(
     (chatId: string): void => {
       pendingChatFlushRef.current.add(chatId)
-      if (chatFlushRafRef.current !== null) return
-      chatFlushRafRef.current = requestAnimationFrame(() => {
-        chatFlushRafRef.current = null
-        flushCoalescedChats()
-      })
+      if (chatFlushRafRef.current === null) {
+        chatFlushRafRef.current = requestAnimationFrame(() => {
+          chatFlushRafRef.current = null
+          if (chatFlushDeadlineRef.current !== null) {
+            window.clearTimeout(chatFlushDeadlineRef.current)
+            chatFlushDeadlineRef.current = null
+          }
+          flushCoalescedChats()
+        })
+      }
+      if (chatFlushDeadlineRef.current === null) {
+        chatFlushDeadlineRef.current = window.setTimeout(() => {
+          chatFlushDeadlineRef.current = null
+          if (chatFlushRafRef.current !== null) {
+            cancelAnimationFrame(chatFlushRafRef.current)
+            chatFlushRafRef.current = null
+          }
+          flushCoalescedChats()
+        }, CHAT_UPDATE_MAX_RENDER_LATENCY_MS)
+      }
     },
     [flushCoalescedChats]
   )
@@ -5740,6 +5764,10 @@ function App(): React.JSX.Element {
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
+      }
+      if (chatFlushDeadlineRef.current !== null) {
+        window.clearTimeout(chatFlushDeadlineRef.current)
+        chatFlushDeadlineRef.current = null
       }
     }
   }, [])
@@ -12685,6 +12713,10 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
           acknowledge(true, applied.baseline)
+          // ACK first so main can release its in-flight delivery, then make a
+          // terminal round visible synchronously. The completion notice and
+          // closeout effects must not depend on a future paint.
+          if (shouldFlushChatUpdateImmediately(chat)) flushCoalescedChatsNow()
           return
         })
       )
