@@ -2973,14 +2973,32 @@ async function waitFor(options) {
   const deadline = Date.now() + timeoutMs
   let lastError = null
   while (Date.now() <= deadline) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    let probeTimer = null
     try {
-      const value = await options.probe()
+      const value = await Promise.race([
+        Promise.resolve().then(() => options.probe()),
+        new Promise((_, reject) => {
+          probeTimer = setTimeout(
+            () =>
+              reject(
+                terminalWaitError(
+                  `${options.label} probe exceeded its remaining ${remainingMs}ms deadline`
+                )
+              ),
+            remainingMs
+          )
+        })
+      ])
       if (value) return value
     } catch (error) {
       if (error && typeof error === 'object' && error.waitForTerminal === true) {
         throw error
       }
       lastError = error
+    } finally {
+      if (probeTimer) clearTimeout(probeTimer)
     }
     await sleep(intervalMs)
   }
@@ -2990,9 +3008,22 @@ async function waitFor(options) {
   throw new Error(`${options.label} timed out after ${timeoutMs}ms${suffix}`)
 }
 
-async function invokeAuthorizedStudioOpen(renderer, asset) {
+async function invokeAuthorizedStudioOpen(renderer, asset, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_MS
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < DEFAULT_WAIT_MS || timeoutMs > 5 * 60_000) {
+    throw new Error('Studio open timeout must be an integer from 45000 to 300000ms')
+  }
+  const deadline = Date.now() + timeoutMs
+  const remainingTimeoutMs = (phase) => {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      throw new Error(`Studio open ${phase} exceeded the shared ${timeoutMs}ms deadline`)
+    }
+    return remaining
+  }
   await waitFor({
     label: 'renderer preload Studio API',
+    timeoutMs: remainingTimeoutMs('preload'),
     probe: async () =>
       (await evaluateByValue(
         renderer,
@@ -3004,6 +3035,7 @@ async function invokeAuthorizedStudioOpen(renderer, asset) {
   )}, ${JSON.stringify(asset.mimeType)})`
   return waitFor({
     label: 'hydrated Studio open_media result',
+    timeoutMs: remainingTimeoutMs('hydration'),
     intervalMs: 250,
     probe: async () => {
       const result = await evaluateByValue(renderer, expression)
@@ -5831,7 +5863,11 @@ async function runStudioAcceptance(args, adapters = {}) {
       port: plan.spawnPlan.remoteDebuggingPort,
       ...(adapters.cdpAdapters ? { adapters: adapters.cdpAdapters } : {})
     })
-    openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(renderer, asset)
+    openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(
+      renderer,
+      asset,
+      adapters.openAdapters || {}
+    )
     durable = await (adapters.verifyDurableOpen || verifyDurableOpen)(plan, asset)
     companion = await (adapters.findCompanion || findStudioCompanion)(
       session.pid,
@@ -6224,6 +6260,7 @@ module.exports = {
   buildStudioWatchdogLaunchSpec,
   adoptLaunchServicesElectronSession,
   evaluateByValue,
+  invokeAuthorizedStudioOpen,
   parseProcessTable,
   findAcceptanceArtifactGroups,
   descendantsOf,
@@ -6243,6 +6280,7 @@ module.exports = {
   compareStudioJourneyCaptures,
   resolveStudioWorkspaceWindow,
   validateStudioWorkspaceObservation,
+  waitFor,
   parseResourceDetailExport,
   studioReviewHostCaptureRegion,
   studioSourceHostOverlayCaptureRegion,

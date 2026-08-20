@@ -293,7 +293,13 @@ describe('Studio AV endurance live runner', () => {
     const parsed = parseLiveCli([])
     expect(parsed.launch).toBe(false)
     expect(parsed.generateSpeechFixture).toBe(false)
+    expect(parsed.openTimeoutMs).toBe(180_000)
+    expect(parseLiveCli(['--open-timeout-ms=240000']).openTimeoutMs).toBe(240_000)
+    expect(() => parseLiveCli(['--open-timeout-ms=300001'])).toThrow(/open-timeout-ms/i)
     expect(() => parseLiveCli(['--generate-speech-fixture'])).toThrow(/owner-supplied/i)
+    expect(() => normalizeRunOptions({ timeoutMs: 180_000, openTimeoutMs: 180_000 })).toThrow(
+      /remaining watchdog budget/i
+    )
     expect(() => normalizeRunOptions({ launch: true, mimeType: 'video/mp4' })).toThrow(
       /media path/i
     )
@@ -307,13 +313,15 @@ describe('Studio AV endurance live runner', () => {
         runStudioAcceptance: async (args: Record<string, any>, adapters: Record<string, any>) => ({
           args,
           journeyDriverPresent: typeof adapters.driveUiJourney === 'function',
-          planOptions: adapters.planOptions
+          planOptions: adapters.planOptions,
+          openAdapters: adapters.openAdapters
         })
       }
     )
     expect(result.args).toMatchObject({ launch: false, artifactRoot, generateSpeechFixture: false })
     expect(result.journeyDriverPresent).toBe(true)
     expect(result.planOptions).toEqual({ artifactRoot })
+    expect(result.openAdapters).toEqual({ timeoutMs: 180_000 })
   })
 
   it('runs readiness, 21 samples, terminal pause allowance, audio, and focus through adapters', async () => {

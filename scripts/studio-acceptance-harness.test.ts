@@ -36,6 +36,7 @@ const {
   driveStudioUiJourney,
   findAcceptanceArtifactGroups,
   generateAcceptanceSpeechFixture,
+  invokeAuthorizedStudioOpen,
   launchDetachedCoordinator,
   launchUnderWatchdog,
   materializeIsolatedProviderGuards,
@@ -54,6 +55,7 @@ const {
   studioWorkspaceReviewPresented,
   validateStudioWorkspaceObservation,
   validateDetachedCoordinatorRequest,
+  waitFor: waitForHarnessProbe,
   waitForStudioJournalOperation,
   runStudioAcceptance
 } = require('./studio-acceptance-harness.cjs') as {
@@ -166,6 +168,11 @@ const {
     options: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  invokeAuthorizedStudioOpen: (
+    renderer: Record<string, any>,
+    asset: Record<string, any>,
+    options?: Record<string, any>
+  ) => Promise<Record<string, any>>
   launchDetachedCoordinator: (
     args: Record<string, any>,
     adapters?: Record<string, any>
@@ -228,6 +235,7 @@ const {
     workspace: Record<string, any>,
     windowBounds: Record<string, number>
   ) => Record<string, any>
+  waitFor: (options: Record<string, any>) => Promise<any>
   studioWorkspaceReviewPresented: (workspace: Record<string, any>) => boolean
   runStudioUiDriver: (
     plan: Record<string, any>,
@@ -560,6 +568,48 @@ describe('Studio acceptance harness', () => {
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002A').ok).toBe(false)
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002B,0000002A').ok).toBe(false)
     expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=0000002a').ok).toBe(false)
+  })
+  it('supports a bounded explicit hydration timeout for large owner media', async () => {
+    let openAttempts = 0
+    const renderer = {
+      send: async (_method: string, input: Record<string, any>) => {
+        const expression = String(input.expression || '')
+        if (expression.includes('typeof window.api')) return { result: { value: true } }
+        openAttempts += 1
+        return {
+          result: {
+            value:
+              openAttempts === 1
+                ? { ok: false, error: 'hydration not completed' }
+                : { ok: true, assetId: 'asset-id' }
+          }
+        }
+      }
+    }
+    await expect(
+      invokeAuthorizedStudioOpen(
+        renderer,
+        { sha256: 'asset-id', mimeType: 'video/mp4' },
+        { timeoutMs: 120_000 }
+      )
+    ).resolves.toEqual({ ok: true, assetId: 'asset-id' })
+    expect(openAttempts).toBe(2)
+    await expect(
+      invokeAuthorizedStudioOpen(
+        renderer,
+        { sha256: 'asset-id', mimeType: 'video/mp4' },
+        { timeoutMs: 300_001 }
+      )
+    ).rejects.toThrow(/45000 to 300000ms/i)
+    const startedAt = Date.now()
+    await expect(
+      waitForHarnessProbe({
+        label: 'hanging Studio probe',
+        timeoutMs: 25,
+        probe: () => new Promise(() => {})
+      })
+    ).rejects.toThrow(/probe exceeded its remaining.*deadline/i)
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
   })
   it.runIf(process.platform === 'darwin')('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
     const parsed = parseArgs([
@@ -5893,7 +5943,13 @@ describe('Studio acceptance harness', () => {
         calls.push('renderer.attach')
         return renderer
       },
-      invokeStudioOpen: async (_renderer: unknown, asset: { sha256: string }) => {
+      openAdapters: { timeoutMs: 120_000 },
+      invokeStudioOpen: async (
+        _renderer: unknown,
+        asset: { sha256: string },
+        openOptions: Record<string, any>
+      ) => {
+        expect(openOptions).toEqual({ timeoutMs: 120_000 })
         calls.push('preload.open')
         return { ok: true, assetId: asset.sha256 }
       },

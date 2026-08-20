@@ -20,6 +20,7 @@ const avCore = require('./studio-av-endurance-runner.cjs')
 const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS } = require('./studio-pixel-evidence-verifier.cjs')
 
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000
+const DEFAULT_OPEN_TIMEOUT_MS = 3 * 60 * 1_000
 const AUDIO_PROBE_SECONDS = 2
 
 function isRecord(value) {
@@ -78,6 +79,7 @@ function parseLiveCli(argv = process.argv.slice(2)) {
     generateSpeechFixture: false,
     mediaPath: null,
     mimeType: null,
+    openTimeoutMs: DEFAULT_OPEN_TIMEOUT_MS,
     timeoutMs: DEFAULT_TIMEOUT_MS
   }
   for (let index = 0; index < argv.length; index += 1) {
@@ -102,6 +104,10 @@ function parseLiveCli(argv = process.argv.slice(2)) {
       parsed.timeoutMs = parseInteger(argument.slice(13), 'timeout-ms', 30_000, 30 * 60 * 1_000)
     else if (argument === '--timeout-ms' && index + 1 < argv.length)
       parsed.timeoutMs = parseInteger(argv[++index], 'timeout-ms', 30_000, 30 * 60 * 1_000)
+    else if (argument.startsWith('--open-timeout-ms='))
+      parsed.openTimeoutMs = parseInteger(argument.slice(18), 'open-timeout-ms', 45_000, 5 * 60_000)
+    else if (argument === '--open-timeout-ms' && index + 1 < argv.length)
+      parsed.openTimeoutMs = parseInteger(argv[++index], 'open-timeout-ms', 45_000, 5 * 60_000)
     else if (argument.startsWith('--media=')) {
       parsed.mediaPath = argument.slice(8)
       parsed.generateSpeechFixture = false
@@ -137,6 +143,12 @@ function normalizeRunOptions(options = {}) {
     generateSpeechFixture,
     mediaPath: options.mediaPath ?? null,
     mimeType: options.mimeType ?? null,
+    openTimeoutMs: parseInteger(
+      options.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS,
+      'openTimeoutMs',
+      45_000,
+      5 * 60_000
+    ),
     timeoutMs: parseInteger(
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       'timeoutMs',
@@ -144,6 +156,9 @@ function normalizeRunOptions(options = {}) {
       30 * 60 * 1_000
     ),
     transcriptTimeoutMs: options.transcriptTimeoutMs
+  }
+  if (args.openTimeoutMs + 30_000 > args.timeoutMs) {
+    throw new Error('live endurance openTimeoutMs requires 30000ms of remaining watchdog budget')
   }
   if (args.launch && (!args.mediaPath || !path.isAbsolute(args.mediaPath))) {
     throw new Error('live endurance launch requires an absolute owner-supplied media path')
@@ -673,6 +688,7 @@ async function runLiveAcceptance(options = {}, adapters = {}) {
   const runStudioAcceptance = adapters.runStudioAcceptance || harness.runStudioAcceptance
   return runStudioAcceptance(args, {
     ...adapters,
+    openAdapters: { ...(adapters.openAdapters || {}), timeoutMs: args.openTimeoutMs },
     planOptions: { ...(adapters.planOptions || {}), artifactRoot: args.artifactRoot },
     driveUiJourney: (plan, target, journeyAdapters) =>
       runOutcome5Journey(plan, target, { ...adapters, ...journeyAdapters })
@@ -683,7 +699,7 @@ async function main(argv = process.argv.slice(2)) {
   const parsed = parseLiveCli(argv)
   if (parsed.help) {
     process.stdout.write(
-      'Usage: studio-av-endurance-live-runner.cjs [--launch --i-accept-studio-isolated-launch --owner-confirms-existing-orphans-cleared] [--artifact-root PATH] [--packaged-executable PATH] [--media /absolute/600s.mp4 --mime video/mp4]\n'
+      'Usage: studio-av-endurance-live-runner.cjs [--launch --i-accept-studio-isolated-launch --owner-confirms-existing-orphans-cleared] [--artifact-root PATH] [--packaged-executable PATH] [--media /absolute/media.mp4 --mime video/mp4] [--open-timeout-ms 180000]\n'
     )
     return { help: true }
   }
@@ -701,6 +717,7 @@ if (require.main === module) {
 
 module.exports = {
   AUDIO_PROBE_SECONDS,
+  DEFAULT_OPEN_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   assertAssetInsideArtifactRoot,
   buildPtsCensus,
