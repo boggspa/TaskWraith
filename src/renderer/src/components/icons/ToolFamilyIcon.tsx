@@ -203,6 +203,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'list_subthreads':
     case 'read_subthread_result':
     case 'cancel_subthread':
+    case 'claim_fleet_wave':
     case 'collabtoolcall':
       return 'subthread'
     case 'attached_window_status':

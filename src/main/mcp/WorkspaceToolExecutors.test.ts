@@ -2634,6 +2634,7 @@ describe('delegate wave visibility', () => {
     settled?: boolean
     running?: boolean
     deadlineAt?: string
+    spawnedBy?: string
   }) {
     const returnedAtMs = Date.parse('2026-08-19T02:05:00.000Z')
     return {
@@ -2668,6 +2669,7 @@ describe('delegate wave visibility', () => {
         lifecycle: 'ephemeral',
         ...(input.role ? { role: input.role } : {}),
         ...(input.label ? { label: input.label } : {}),
+        ...(input.spawnedBy ? { spawnedBy: input.spawnedBy } : {}),
         ...(input.settled ? { resultReturnedAt: returnedAtMs } : {}),
         joinPolicy: {
           schemaVersion: 1,
@@ -2701,10 +2703,13 @@ describe('delegate wave visibility', () => {
     } as any
   }
 
-  function depsWith(children: any[]) {
+  function depsWith(children: any[], parent?: any) {
     const deps = makeDeps(async () => commandResult(''))
     deps.store.getChildChats = () => children
-    deps.store.getChat = (chatId) => children.find((chat) => chat.appChatId === chatId)
+    deps.store.getChat = (chatId) =>
+      chatId === 'parent-1' && parent
+        ? parent
+        : children.find((chat) => chat.appChatId === chatId)
     return deps
   }
 
@@ -2747,6 +2752,70 @@ describe('delegate wave visibility', () => {
         deadlineAt: FUTURE_DEADLINE
       })
     ])
+  })
+
+  it('names the seat that spawned each worker so a peer can tell whose wave it is', () => {
+    const children = [
+      waveChild({ id: 'w1', settled: true, spawnedBy: 'seat-a' }),
+      waveChild({ id: 'w2', settled: true })
+    ]
+    const result = executeListSubthreads(depsWith(children), context, { waveId: WAVE_ID }) as any
+
+    expect(result.subthreads[0].spawnedBy).toBe('seat-a')
+    // Solo-spawned workers carry no seat rather than a placeholder one.
+    expect(result.subthreads[1].spawnedBy).toBeUndefined()
+  })
+
+  it('reports the live claim on a wave, and reports an unclaimed wave as free', () => {
+    const children = [waveChild({ id: 'w1', settled: true })]
+    const claimedAt = Date.now()
+    const parent = {
+      appChatId: 'parent-1',
+      fleetWaveClaims: {
+        [WAVE_ID]: {
+          waveId: WAVE_ID,
+          participantId: 'seat-a',
+          claimedAt,
+          expiresAt: claimedAt + 30 * 60 * 1000,
+          auto: true
+        }
+      }
+    }
+    const claimed = executeListSubthreads(depsWith(children, parent), context, {
+      waveId: WAVE_ID
+    }) as any
+    expect(claimed.waves[0]).toMatchObject({
+      waveId: WAVE_ID,
+      claimed: true,
+      claim: { participantId: 'seat-a', auto: true }
+    })
+
+    // No parent claim map at all — the wave must read as free to pick up, not
+    // as missing information.
+    const unclaimed = executeListSubthreads(depsWith(children), context, {
+      waveId: WAVE_ID
+    }) as any
+    expect(unclaimed.waves[0].claimed).toBe(false)
+    expect(unclaimed.waves[0].claim).toBeUndefined()
+  })
+
+  it('treats a lapsed claim as unclaimed rather than stale ownership', () => {
+    const children = [waveChild({ id: 'w1', settled: true })]
+    const parent = {
+      appChatId: 'parent-1',
+      fleetWaveClaims: {
+        [WAVE_ID]: {
+          waveId: WAVE_ID,
+          participantId: 'seat-a',
+          claimedAt: Date.now() - 60 * 60 * 1000,
+          expiresAt: Date.now() - 1000
+        }
+      }
+    }
+    const result = executeListSubthreads(depsWith(children, parent), context, {
+      waveId: WAVE_ID
+    }) as any
+    expect(result.waves[0].claimed).toBe(false)
   })
 
   it('default listing hides archived returns but discloses them via archivedHidden + waves', () => {

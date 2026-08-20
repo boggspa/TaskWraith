@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 207 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 208 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -500,6 +500,15 @@ Cancel queued recalled follow-ups and, when present, the active run in a sub-thr
 - Required args: subThreadId
 - Optional args: reason
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"cancel_subthread","arguments":{"subThreadId":"text"}}}}`
+
+## claim_fleet_wave
+
+Advisory claim on a delegate_wave, so panel seats do not double-adopt the same results. The spawning seat is auto-claimed; a peer takes over deliberately with takeover=true. Claims expire and never block anything — read who holds what via list_subthreads.
+
+- Access: governed by your run permission role
+- Required args: waveId
+- Optional args: action, takeover, ttlMinutes
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"claim_fleet_wave","arguments":{"waveId":"text"}}}}`
 
 ## workspace_symbols
 

@@ -69,6 +69,7 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
+  'claim_fleet_wave',
   'workspace_symbols',
   'browser_open',
   'browser_click',

@@ -1,4 +1,5 @@
 import type { TodoItem } from '../TodoList'
+import type { FleetWaveClaim } from '../SubThreadWaveClaims'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
@@ -4137,6 +4138,15 @@ export interface ChatRecord {
    * by the todo_write MCP tool (+ ingested provider-native plans) and broadcast
    * to renderer + iOS via the chat-updated path. */
   chatTodos?: Record<string, TodoItem[]>
+  /**
+   * Advisory per-wave fleet claims, keyed by waveId — which panel seat is
+   * acting on a wave's returned results, so peers do not double-adopt them.
+   * A wave has no record of its own (`list_subthreads` derives one by grouping
+   * children on delegationContext.joinPolicy.groupId), so the claim map hangs
+   * off the shared PARENT chat every seat already reads. Leases expire; see
+   * src/main/SubThreadWaveClaims.ts. Nothing denies an operation on a claim.
+   */
+  fleetWaveClaims?: Record<string, FleetWaveClaim>
   ensemble?: EnsembleConfig
   /**
    * 1.0.5-EW37 — Solo-chat wakeup records. Mirror of
@@ -4219,6 +4229,15 @@ export interface ChatRecord {
     /** Provider running the parent thread at the moment of delegation
      * — preserved even if the parent later switches provider. */
     parentProvider: ProviderId
+    /**
+     * Ensemble participant id of the seat that called `delegate_to_subthread`
+     * / `delegate_wave`. Absent on solo chats, where there is no panel to
+     * attribute to. Written once at creation and never mutated — which is why
+     * it is safe here: `delegationContext` sits in WORKSPACE_IDENTITY_FIELDS,
+     * a merge group that must not carry churning state. Mutable claim state
+     * lives on `ChatRecord.fleetWaveClaims` instead.
+     */
+    spawnedBy?: string
     /** The user-supplied (or future: auto-generated) delegation
      * prompt that primes the sub-thread's first turn. Persisted for
      * the parent-thread "↪ Delegated to X" surface to show. */

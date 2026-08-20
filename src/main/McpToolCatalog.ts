@@ -1496,6 +1496,43 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'claim_fleet_wave',
+      description:
+        'Advisory claim on a delegate_wave, so panel seats do not double-adopt the same results. ' +
+        'The spawning seat is auto-claimed; a peer takes over deliberately with takeover=true. ' +
+        'Claims expire and never block anything — read who holds what via list_subthreads.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          waveId: {
+            type: 'string',
+            description: 'Wave to claim, from list_subthreads({waveId}) or the delegate_wave result.'
+          },
+          action: {
+            type: 'string',
+            enum: ['claim', 'release', 'status'],
+            description: 'Default claim. release requires you to be the holder; status never mutates.'
+          },
+          takeover: {
+            type: 'boolean',
+            description:
+              'Take a wave another seat currently holds. Recorded as a handoff; without it a held wave is refused.'
+          },
+          ttlMinutes: {
+            type: 'number',
+            description: 'Claim lease length in minutes (default 30). Re-claim to renew.'
+          }
+        },
+        required: ['waveId']
+      }
+    },
+    {
       name: 'cancel_subthread',
       description:
         'Cancel queued recalled follow-ups and, when present, the active run in a sub-thread owned by the active parent chat.',

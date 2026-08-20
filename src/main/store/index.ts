@@ -6916,6 +6916,8 @@ export class AppStore {
     role?: 'scout' | 'worker' | 'reviewer' | string
     label?: string
     title?: string
+    /** Ensemble participant id of the calling seat; omitted on solo chats. */
+    spawnedBy?: string
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
     if (!parent) {
@@ -6969,7 +6971,10 @@ export class AppStore {
           ? { lifecycle: args.lifecycle }
           : {}),
         ...(typeof args.role === 'string' && args.role.trim() ? { role: args.role.trim() } : {}),
-        ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {})
+        ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {}),
+        ...(typeof args.spawnedBy === 'string' && args.spawnedBy.trim()
+          ? { spawnedBy: args.spawnedBy.trim() }
+          : {})
       }
     }
     if (settings.storeLocalChatHistory) {

@@ -1173,6 +1173,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  claim_fleet_wave: tool(
+    'orchestration',
+    'mcpTools',
+    'control.mutate',
+    'subthread-control',
+    'host-state',
+    'host-resource'
+  ),
   workspace_symbols: tool(
     'workspace_read',
     'mcpTools',

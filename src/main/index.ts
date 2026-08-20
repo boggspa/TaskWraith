@@ -2120,6 +2120,12 @@ import {
   shouldArchiveEphemeralFleetChild
 } from './SubThreadEphemeralFleet'
 import {
+  DEFAULT_FLEET_WAVE_CLAIM_TTL_MS,
+  claimFleetWave,
+  releaseFleetWave,
+  summarizeFleetWaveClaim
+} from './SubThreadWaveClaims'
+import {
   allocateEphemeralFleetWriterWorktree,
   buildEphemeralFleetRuntimeWorktreeIntent,
   settleEphemeralFleetWriterWorktreeOnReturn
@@ -38947,6 +38953,123 @@ async function executeGeminiMcpTool(
           missingKeys: result.missingKeys
         })
       }
+    } else if (toolName === 'claim_fleet_wave') {
+      markDispatchHandled('subthread-control')
+      // Advisory per-wave ownership for panel coordination. Deliberately does
+      // NOT gate anything: it records which seat is acting on a wave's results
+      // so peers stop double-adopting them. Lives here rather than in
+      // WorkspaceToolExecutors because only the composition root can resolve a
+      // run to its roster seat.
+      const chatId = context.appChatId || ''
+      const chat = chatId ? AppStore.getChat(chatId) : null
+      const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+      const waveId = (optionalString(args.waveId) || '').trim()
+      const action = (optionalString(args.action) || 'claim').trim()
+      const nowMs = Date.now()
+      if (!chat) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'claim_fleet_wave',
+          error: 'claim_fleet_wave requires an active chat context.'
+        })
+      } else if (!waveId) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'claim_fleet_wave',
+          error: 'claim_fleet_wave requires waveId. Poll list_subthreads to see waves on this chat.'
+        })
+      } else if (action === 'status') {
+        text = mcpJson({
+          ok: true,
+          tool: 'claim_fleet_wave',
+          waveId,
+          you: participantId || null,
+          claim: summarizeFleetWaveClaim(chat.fleetWaveClaims, waveId, nowMs) ?? null
+        })
+      } else if (!participantId) {
+        // Solo chats have no panel, so there is no one to coordinate with and
+        // nothing sensible to record as a holder. Say so rather than inventing
+        // a 'system' seat that a later takeover could never match.
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'claim_fleet_wave',
+          error:
+            'claim_fleet_wave is for Ensemble panels: this run has no roster seat, so a claim would coordinate nothing.'
+        })
+      } else if (action === 'release') {
+        const released = releaseFleetWave({
+          claims: chat.fleetWaveClaims,
+          waveId,
+          participantId,
+          nowMs
+        })
+        if (released.ok) {
+          saveAndBroadcastChat({ ...chat, fleetWaveClaims: released.claims })
+          text = mcpJson({ ok: true, tool: 'claim_fleet_wave', action: 'release', waveId })
+        } else {
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: 'claim_fleet_wave',
+            action: 'release',
+            waveId,
+            error:
+              released.code === 'not_held'
+                ? `No live claim on wave ${waveId}.`
+                : `Wave ${waveId} is claimed by ${released.holder.participantId}; only the holder can release it. Re-claim with takeover=true to take it over instead.`,
+            ...(released.code === 'not_holder'
+              ? { holder: released.holder.participantId }
+              : {})
+          })
+        }
+      } else if (action === 'claim') {
+        const ttlMinutes = optionalNumber(args.ttlMinutes)
+        const claimed = claimFleetWave({
+          claims: chat.fleetWaveClaims,
+          waveId,
+          participantId,
+          nowMs,
+          ttlMs:
+            typeof ttlMinutes === 'number' && Number.isFinite(ttlMinutes)
+              ? ttlMinutes * 60_000
+              : DEFAULT_FLEET_WAVE_CLAIM_TTL_MS,
+          takeover: args.takeover === true
+        })
+        if (claimed.ok) {
+          saveAndBroadcastChat({ ...chat, fleetWaveClaims: claimed.claims })
+          text = mcpJson({
+            ok: true,
+            tool: 'claim_fleet_wave',
+            action: 'claim',
+            waveId,
+            claim: summarizeFleetWaveClaim(claimed.claims, waveId, nowMs),
+            ...(claimed.claim.takenFrom ? { tookOverFrom: claimed.claim.takenFrom } : {})
+          })
+        } else {
+          const holder = claimed.code === 'claim_held' ? claimed.holder : undefined
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: 'claim_fleet_wave',
+            action: 'claim',
+            waveId,
+            ...(holder ? { holder: holder.participantId } : {}),
+            error: holder
+              ? `Wave ${waveId} is already claimed by ${holder.participantId}. Coordinate with that seat, or re-call with takeover=true if you are deliberately taking it over.`
+              : `Could not claim wave ${waveId}.`
+          })
+        }
+      } else {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'claim_fleet_wave',
+          error: `Unknown action "${action}". Use claim, release, or status.`
+        })
+      }
     } else if (toolName === 'blackboard_delete') {
       markDispatchHandled('blackboard')
       const chatId = context.appChatId || ''
@@ -39622,7 +39745,11 @@ async function executeGeminiMcpTool(
           provider: providerArg,
           delegationPrompt: promptArg,
           returnResultToParent: returnResult,
-          joinPolicy
+          joinPolicy,
+          // Panel attribution. Empty on a solo chat — there is no seat to
+          // name, and createSubThread drops a blank rather than storing one.
+          spawnedBy:
+            ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || undefined
         })
       const readOnlyPermissions = resolveEffectiveRunPermissions({
         provider: providerArg,
@@ -39959,6 +40086,11 @@ async function executeGeminiMcpTool(
       if (!parentChatForWave) {
         throw new Error(`delegate_wave: parent chat "${parentChatId}" was not found.`)
       }
+      // Panel seat that called the wave. Drives both `delegationContext.spawnedBy`
+      // on each worker and the auto-claim below. Empty on a solo chat, where
+      // there is no panel and a claim would coordinate nothing.
+      const waveSpawnedBy =
+        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
       const parentChatRelation = (parentChatForWave as { parentChatRelation?: unknown })
         .parentChatRelation
       if (
@@ -40104,7 +40236,8 @@ async function executeGeminiMcpTool(
             lifecycle,
             role: worker.role,
             label: worker.label,
-            title
+            title,
+            spawnedBy: waveSpawnedBy || undefined
           })
           const soleFleetWriter =
             worker.role === 'worker' &&
@@ -40396,6 +40529,30 @@ async function executeGeminiMcpTool(
           server: GEMINI_MCP_SERVER_NAME
         })
         return { text: waveOutcome.text, isError: true }
+      }
+      // Auto-claim the wave for the seat that called it. The spawner is the
+      // de-facto owner of its own results today, so stamping it changes no
+      // behaviour — it just makes ownership legible to peers instead of
+      // implicit. Advisory and best-effort: a claim never gates anything, and
+      // failing to record one must not fail a wave that already spawned.
+      if (waveSpawnedBy) {
+        try {
+          const parentForClaim = AppStore.getChat(parentChatId)
+          if (parentForClaim) {
+            const autoClaim = claimFleetWave({
+              claims: parentForClaim.fleetWaveClaims,
+              waveId: waveOutcome.result.waveId,
+              participantId: waveSpawnedBy,
+              nowMs: Date.now(),
+              auto: true
+            })
+            if (autoClaim.ok) {
+              saveAndBroadcastChat({ ...parentForClaim, fleetWaveClaims: autoClaim.claims })
+            }
+          }
+        } catch (error) {
+          console.warn('[fleet-claim] auto-claim failed for wave', waveOutcome.result.waveId, error)
+        }
       }
       if (
         shouldSkipDelegateWaveApproval({

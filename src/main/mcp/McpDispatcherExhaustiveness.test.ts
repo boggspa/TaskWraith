@@ -142,6 +142,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch("toolName === 'scout_brief'", ['scout_brief'], 'ensemble-control'),
   branch("toolName === 'blackboard_post'", ['blackboard_post'], 'blackboard'),
   branch("toolName === 'blackboard_read'", ['blackboard_read'], 'blackboard'),
+  branch("toolName === 'claim_fleet_wave'", ['claim_fleet_wave'], 'subthread-control'),
   branch("toolName === 'blackboard_delete'", ['blackboard_delete'], 'blackboard'),
   branch("toolName === 'goal_read'", ['goal_read'], 'goal-control'),
   branch(

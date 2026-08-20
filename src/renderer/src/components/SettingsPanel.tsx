@@ -2482,6 +2482,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'list_subthreads',
     'read_subthread_result',
     'cancel_subthread',
+    'claim_fleet_wave',
     'ensemble_yield',
     'ensemble_send',
     'ensemble_fanout',

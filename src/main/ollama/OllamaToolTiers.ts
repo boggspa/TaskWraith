@@ -97,7 +97,8 @@ export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
   'delegate_wave',
   'list_subthreads',
   'read_subthread_result',
-  'cancel_subthread'
+  'cancel_subthread',
+  'claim_fleet_wave'
 ] as const satisfies readonly OllamaToolName[])
 
 const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(

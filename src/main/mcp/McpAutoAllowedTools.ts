@@ -120,6 +120,12 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // seenBy marker for the calling participant so slim prompts can omit it.
   'blackboard_read',
   'blackboard_delete',
+  // Fleet wave claims are the same class as blackboard/todo coordination
+  // state: chat-local, advisory, and reversible. A claim gates nothing, so
+  // prompting for one would buy no safety while making seats skip the very
+  // step that stops two of them adopting the same wave. Takeover is recorded
+  // (takenFrom) and leases expire on their own.
+  'claim_fleet_wave',
   // Evidence Packs are run-observability/progress records, not workspace
   // mutation. Read-only agents must still be able to leave auditable evidence
   // and check whether completion language is supported.

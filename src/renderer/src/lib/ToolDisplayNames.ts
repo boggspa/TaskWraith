@@ -35,6 +35,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   list_subthreads: 'Listed sub-threads',
   read_subthread_result: 'Read sub-thread result',
   cancel_subthread: 'Cancelled sub-thread',
+  claim_fleet_wave: 'Claimed fleet wave',
 
   // ── Git ──────────────────────────────────────────────────────
   git_status: 'Git status',

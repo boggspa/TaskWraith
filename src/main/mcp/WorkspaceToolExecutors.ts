@@ -9,6 +9,10 @@ import { isEphemeralFleetChildSettled } from '../SubThreadEphemeralFleet'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
 import { summarizeSubThreadMailbox, type SubThreadMailbox } from '../SubThreadMailbox'
 import {
+  summarizeFleetWaveClaim,
+  type FleetWaveClaimMap
+} from '../SubThreadWaveClaims'
+import {
   cancelPendingSubThreadWorkerEvents,
   summarizeSubThreadWorkerControl
 } from '../SubThreadWorkerControl'
@@ -2132,7 +2136,7 @@ function summarizeSubThreadWorkerActions(
 function summarizeSubThreadWaves(
   deps: WorkspaceToolExecutorDependencies,
   children: readonly ChatRecord[],
-  options: { waveId?: string; nowMs?: number } = {}
+  options: { waveId?: string; nowMs?: number; claims?: FleetWaveClaimMap } = {}
 ) {
   const nowMs = options.nowMs ?? Date.now()
   const byWave = new Map<
@@ -2189,10 +2193,18 @@ function summarizeSubThreadWaves(
     else if (state === 'cancelled') entry.cancelled += 1
     byWave.set(groupId, entry)
   }
-  return [...byWave.values()].map((wave) => ({
-    ...wave,
-    allSettled: wave.settled >= wave.total
-  }))
+  return [...byWave.values()].map((wave) => {
+    // Advisory only — a claim never gates a read here. An unclaimed wave is
+    // reported as such so a peer can tell "free to pick up" from "someone is
+    // already on it" without a second call.
+    const claim = summarizeFleetWaveClaim(options.claims, wave.waveId, nowMs)
+    return {
+      ...wave,
+      allSettled: wave.settled >= wave.total,
+      claimed: Boolean(claim),
+      ...(claim ? { claim } : {})
+    }
+  })
 }
 
 export function executeListSubthreads(
@@ -2217,7 +2229,11 @@ export function executeListSubthreads(
     : allChildren
   const visibleChildren = scopedChildren.filter((chat) => includeArchived || !chat.archived)
   const archivedHidden = scopedChildren.length - visibleChildren.length
-  const waves = summarizeSubThreadWaves(deps, allChildren, { waveId: waveIdFilter })
+  const parentClaims = deps.store.getChat(parentChatId)?.fleetWaveClaims
+  const waves = summarizeSubThreadWaves(deps, allChildren, {
+    waveId: waveIdFilter,
+    claims: parentClaims
+  })
   const subthreads = visibleChildren
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((chat) => {
@@ -2243,6 +2259,9 @@ export function executeListSubthreads(
           ? { waveId: chat.delegationContext.joinPolicy.groupId }
           : {}),
         ...(chat.delegationContext?.role ? { role: chat.delegationContext.role } : {}),
+        ...(chat.delegationContext?.spawnedBy
+          ? { spawnedBy: chat.delegationContext.spawnedBy }
+          : {}),
         ...(chat.delegationContext?.label ? { label: chat.delegationContext.label } : {}),
         readyToRead:
           lifecycle.resultAvailable &&
