@@ -121,18 +121,39 @@ export const APP_DRIVE_CONSENT_LAYERS: readonly AppDriveConsentDisclosure[] = [
   }
 ] as const
 
-export type AppDriveAllowedVerb = 'observe' | 'inspect' | 'click' | 'fill'
+export type AppDriveAllowedVerb =
+  | 'observe'
+  | 'inspect'
+  | 'click'
+  | 'fill'
+  | 'key'
+  | 'scroll'
+  | 'hover'
+  | 'select'
+  | 'wait_for'
 
 export const APP_DRIVE_ALLOWED_VERBS: readonly AppDriveAllowedVerb[] = [
   'observe',
   'inspect',
   'click',
-  'fill'
+  'fill',
+  'key',
+  'scroll',
+  'hover',
+  'select',
+  'wait_for'
 ] as const
 
-export type AppDriveControlVerb = Extract<AppDriveAllowedVerb, 'click' | 'fill'>
+export type AppDriveControlVerb = Exclude<AppDriveAllowedVerb, 'observe' | 'inspect' | 'wait_for'>
 
-export const APP_DRIVE_CONTROL_VERBS: readonly AppDriveControlVerb[] = ['click', 'fill'] as const
+export const APP_DRIVE_CONTROL_VERBS: readonly AppDriveControlVerb[] = [
+  'click',
+  'fill',
+  'key',
+  'scroll',
+  'hover',
+  'select'
+] as const
 
 export type AppDriveSessionControlAction = 'pause' | 'resume' | 'takeover' | 'stop'
 

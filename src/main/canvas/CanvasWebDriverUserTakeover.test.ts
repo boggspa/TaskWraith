@@ -28,6 +28,7 @@ type InputListener = (event: unknown, input: { type: string }) => void
 interface HarnessOptions {
   secretProbeResult?: unknown
   secretProbeError?: Error
+  waitAlwaysMissing?: boolean
 }
 
 function harness(options: HarnessOptions = {}): {
@@ -61,6 +62,24 @@ function harness(options: HarnessOptions = {}): {
         truncated: false,
         trustedInputEpoch: rendererTrustedInputEpoch
       }
+    }
+    if (source.includes('"kind":"wait_for"')) {
+      return options.waitAlwaysMissing
+        ? {
+            ok: false,
+            found: false,
+            action: 'wait_for',
+            executed: false,
+            verified: 'unknown',
+            refusalReason: 'not_found'
+          }
+        : {
+            ok: true,
+            found: true,
+            action: 'wait_for',
+            executed: false,
+            verified: 'unchanged'
+          }
     }
     // actScript: pretend the click landed so a refusal can't be mistaken for one.
     return { ok: true, found: true, action: 'click', executed: true, verified: 'changed' }
@@ -253,6 +272,30 @@ describe('canvas user takeover', () => {
       const result = await driver.act({ kind: 'click', ref: 'e1' })
 
       expect(result.executed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('allows read-only wait_for while the human owns the surface', async () => {
+    const { driver, emitInput } = await openedHarness()
+    emitInput('mouseDown')
+    const result = await driver.act({ kind: 'wait_for', selector: '[data-ready]' })
+    expect(result).toMatchObject({ ok: true, action: 'wait_for', executed: false })
+  })
+
+  it('bounds wait_for and returns a typed timeout refusal', async () => {
+    vi.useFakeTimers()
+    try {
+      const { driver } = await openedHarness({ waitAlwaysMissing: true })
+      const pending = driver.act({ kind: 'wait_for', selector: '[data-ready]', timeoutMs: 250 })
+      await vi.advanceTimersByTimeAsync(300)
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        action: 'wait_for',
+        executed: false,
+        refusalReason: 'wait_timeout'
+      })
     } finally {
       vi.useRealTimers()
     }

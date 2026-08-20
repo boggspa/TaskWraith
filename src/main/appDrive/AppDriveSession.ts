@@ -40,7 +40,16 @@ export type AppDrivePermissionLabel = 'view-and-control'
 
 export type AppDriveSessionLifecycle = (typeof APP_DRIVE_SESSION_LIFECYCLES)[number]
 
-export type AppDriveControlVerb = 'observe' | 'inspect' | 'click' | 'fill'
+export type AppDriveControlVerb =
+  | 'observe'
+  | 'inspect'
+  | 'click'
+  | 'fill'
+  | 'key'
+  | 'scroll'
+  | 'hover'
+  | 'select'
+  | 'wait_for'
 
 export type AppDriveStopReason =
   | 'user-stop'
@@ -216,7 +225,17 @@ export class AppDriveSessionError extends Error {
 
 const EMPTY_VERBS: readonly AppDriveControlVerb[] = Object.freeze([])
 
-const CONTROL_VERBS = new Set<AppDriveControlVerb>(['observe', 'inspect', 'click', 'fill'])
+const CONTROL_VERBS = new Set<AppDriveControlVerb>([
+  'observe',
+  'inspect',
+  'click',
+  'fill',
+  'key',
+  'scroll',
+  'hover',
+  'select',
+  'wait_for'
+])
 
 interface ActiveSession {
   session: AppDriveSessionSnapshot

@@ -234,14 +234,25 @@ export interface CanvasInspectInput {
   expectedObservationId?: string
 }
 
-/** P1 interaction. ref-first; selector/xy are explicit fallbacks. */
+export type CanvasActionKind = 'click' | 'fill' | 'key' | 'scroll' | 'hover' | 'select' | 'wait_for'
+
+export type CanvasControlActionKind = Exclude<CanvasActionKind, 'wait_for'>
+
+/** Structured interaction. ref-first; selector/xy are explicit fallbacks. */
 export interface CanvasActionInput {
-  kind: 'click' | 'fill'
+  kind: CanvasActionKind
   ref?: string
   selector?: string
   x?: number
   y?: number
   value?: string
+  /** Non-text keyboard key (Enter/Escape/Tab/arrows/etc.) for `key`. */
+  key?: string
+  /** Scroll delta in CSS pixels for `scroll`. */
+  deltaX?: number
+  deltaY?: number
+  /** Poll ceiling for `wait_for` (milliseconds). */
+  timeoutMs?: number
   /**
    * The `inputEpoch` from the snapshot this action was planned against. When
    * supplied and no longer current — i.e. the human has touched the surface since
@@ -292,6 +303,10 @@ export type CanvasActRefusalReason =
   | 'appdrive_step_budget_exhausted'
   /** The lease belongs to another run/provider/participant binding. */
   | 'appdrive_binding_mismatch'
+  /** The driver intentionally does not implement this structured verb. */
+  | 'unsupported_action'
+  /** `wait_for` reached its bounded timeout without finding the target. */
+  | 'wait_timeout'
   /**
    * Native target appears consequential and no content-bound confirmation
    * receipt exists. Nothing was dispatched.
@@ -323,7 +338,7 @@ export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
 
 export interface CanvasActResult {
   ok: boolean
-  action: 'click' | 'fill'
+  action: CanvasActionKind
   ref?: string
   selector?: string
   found: boolean
@@ -692,6 +707,7 @@ export interface CanvasController {
   ): Promise<CanvasViewport>
   click(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   fill(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
+  act(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   annotate(canvasId: string, marks: CanvasMark[], ctx: CanvasCallContext): Promise<CanvasAnnotation>
   sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument>
   sketchUpdate(

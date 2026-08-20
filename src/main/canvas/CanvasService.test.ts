@@ -1339,7 +1339,7 @@ describe('CanvasService AppDrive web lease', () => {
       provider: ctx.provider,
       participantId: ctx.participantId,
       approvedBy: 'user',
-      allowedVerbs: ['click', 'fill'],
+      allowedVerbs: ['click', 'fill', 'key', 'scroll', 'hover', 'select'],
       target: { canvasId: 'canvas-lease', origin: 'http://localhost:3000' },
       stepBudget,
       expiresAt: 10_000
@@ -1420,6 +1420,27 @@ describe('CanvasService AppDrive web lease', () => {
         expect.objectContaining({ canvasId: 'canvas-lease', reason: 'human-takeover' })
       )
       expect(h.leases.peek('canvas-lease')).toMatchObject({ status: 'revoked' })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes richer control verbs through the same lease while wait_for stays read-only', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      const waited = await h.service.act(
+        'canvas-lease',
+        { kind: 'wait_for', selector: '[data-ready]', timeoutMs: 100 },
+        ctx
+      )
+      expect(waited.action).toBe('wait_for')
+      expect(h.leases.peek('canvas-lease')).toBeNull()
+
+      authorize(h.leases)
+      const hovered = await h.service.act('canvas-lease', { kind: 'hover', selector: '#menu' }, ctx)
+      expect(hovered).toMatchObject({ ok: true, action: 'hover' })
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ stepsUsed: 1 })
     } finally {
       rmSync(h.dir, { recursive: true, force: true })
     }

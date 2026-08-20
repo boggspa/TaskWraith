@@ -51,6 +51,11 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_resize',
   'canvas_click',
   'canvas_fill',
+  'canvas_key',
+  'canvas_scroll',
+  'canvas_hover',
+  'canvas_select',
+  'canvas_wait_for',
   'canvas_annotate',
   'canvas_eval',
   'canvas_navigate',
@@ -902,6 +907,71 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ref,
               selector,
               value: args.value,
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
+              expectedObservationId: asOptString(args.expectedObservationId)
+            },
+            ctx
+          )
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
+        }
+        case 'canvas_key':
+        case 'canvas_hover':
+        case 'canvas_select':
+        case 'canvas_wait_for': {
+          const ref = asOptString(args.ref)
+          const selector = asOptString(args.selector)
+          if (!ref && !selector) return fail(toolName, 'Provide a `ref` or a `selector`.')
+          const kind = toolName.slice('canvas_'.length) as
+            | 'key'
+            | 'hover'
+            | 'select'
+            | 'wait_for'
+          if (kind === 'key' && typeof args.key !== 'string') {
+            return fail(toolName, '`key` (string) is required.')
+          }
+          if (kind === 'select' && typeof args.value !== 'string') {
+            return fail(toolName, '`value` (option value or label) is required.')
+          }
+          const result = await controller.act(
+            needsId(),
+            {
+              kind,
+              ref,
+              selector,
+              ...(kind === 'key' ? { key: args.key as string } : {}),
+              ...(kind === 'select' ? { value: args.value as string } : {}),
+              ...(kind === 'wait_for' ? { timeoutMs: asOptNumber(args.timeoutMs) } : {}),
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
+              expectedObservationId: asOptString(args.expectedObservationId)
+            },
+            ctx
+          )
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
+        }
+        case 'canvas_scroll': {
+          const deltaX = asOptNumber(args.deltaX) ?? 0
+          const deltaY = asOptNumber(args.deltaY) ?? 0
+          if (deltaX === 0 && deltaY === 0) {
+            return fail(toolName, 'Provide a non-zero `deltaX` and/or `deltaY`.')
+          }
+          const result = await controller.act(
+            needsId(),
+            {
+              kind: 'scroll',
+              ref: asOptString(args.ref),
+              selector: asOptString(args.selector),
+              x: asOptNumber(args.x),
+              y: asOptNumber(args.y),
+              deltaX,
+              deltaY,
               expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
               expectedObservationId: asOptString(args.expectedObservationId)
             },

@@ -10,7 +10,7 @@ describe('resolveAppDriveSurfaceDescriptor', () => {
       surfaceKind: 'web',
       target: { canvasId: 'canvas-a' },
       verb: 'click',
-      allowedVerbs: ['click', 'fill']
+      allowedVerbs: ['click', 'fill', 'key', 'scroll', 'hover', 'select']
     })
   })
 

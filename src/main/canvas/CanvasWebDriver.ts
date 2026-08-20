@@ -488,6 +488,9 @@ export function actScript(action: CanvasActionInput): string {
     x: typeof action.x === 'number' ? action.x : null,
     y: typeof action.y === 'number' ? action.y : null,
     value: typeof action.value === 'string' ? action.value : null,
+    key: typeof action.key === 'string' ? action.key : null,
+    deltaX: typeof action.deltaX === 'number' ? action.deltaX : null,
+    deltaY: typeof action.deltaY === 'number' ? action.deltaY : null,
     expectedInputEpoch:
       typeof action.expectedInputEpoch === 'number' ? action.expectedInputEpoch : null
   })
@@ -518,6 +521,7 @@ export function actScript(action: CanvasActionInput): string {
     }
     if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
     if (!el && a.x != null && a.y != null) el = document.elementFromPoint(a.x, a.y);
+    if (!el && a.kind === 'scroll') el = document.scrollingElement || document.documentElement;
     if (!el) return refuse('not_found', 'Element not found.', false);
 
     // 1. Still attached? A detached node accepts clicks silently.
@@ -531,12 +535,18 @@ export function actScript(action: CanvasActionInput): string {
         return refuse('stale_target', 'Target changed since the snapshot that produced this ref; re-run canvas_snapshot.', false);
       }
     }
+    if (a.kind === 'wait_for') {
+      return {
+        ok: true, found: true, action: a.kind, executed: false,
+        verified: 'unchanged', message: 'Target condition is present.'
+      };
+    }
 
     const inView = () => {
       const r = el.getBoundingClientRect();
       return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth;
     };
-    if (!inView() && typeof el.scrollIntoView === 'function') {
+    if (a.kind !== 'scroll' && !inView() && typeof el.scrollIntoView === 'function') {
       try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
     }
 
@@ -544,7 +554,7 @@ export function actScript(action: CanvasActionInput): string {
     //    click in a real browser, so refuse rather than pretend it landed.
     const rect = el.getBoundingClientRect();
     const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    if (rect.width > 0 && rect.height > 0 && cx >= 0 && cy >= 0 &&
+    if (a.kind !== 'scroll' && rect.width > 0 && rect.height > 0 && cx >= 0 && cy >= 0 &&
         cx <= window.innerWidth && cy <= window.innerHeight) {
       let hit = null;
       try { hit = document.elementFromPoint(cx, cy); } catch (e) { hit = null; }
@@ -566,6 +576,7 @@ export function actScript(action: CanvasActionInput): string {
             el.childElementCount + ':' +
             (typeof el.value === 'string' ? el.value.length : -1) + ':' +
             (el.checked === true ? 1 : 0) + ':' +
+            Number(el.scrollLeft || 0) + ':' + Number(el.scrollTop || 0) + ':' +
             (el.getAttribute('aria-expanded') || '') + ':' +
             String(el.className || '').length;
       } catch (e) { target = 'err'; }
@@ -614,6 +625,56 @@ export function actScript(action: CanvasActionInput): string {
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return settle(true);
+    }
+    if (a.kind === 'select') {
+      if (el.tagName !== 'SELECT') {
+        return refuse('not_fillable', 'Target is not a select element.', true);
+      }
+      const next = a.value == null ? '' : String(a.value);
+      const option = Array.from(el.options || []).find((candidate) =>
+        String(candidate.value) === next || String(candidate.textContent || '').trim() === next);
+      if (!option) return refuse('not_found', 'No matching select option was found.', true);
+      el.value = option.value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return settle(true, 'selected=' + String(option.value));
+    }
+    if (a.kind === 'scroll') {
+      const dx = Number.isFinite(a.deltaX) ? a.deltaX : 0;
+      const dy = Number.isFinite(a.deltaY) ? a.deltaY : 0;
+      if (dx === 0 && dy === 0) return refuse('not_found', 'Scroll requires a non-zero delta.', true);
+      if (el === document.scrollingElement || el === document.documentElement || el === document.body) {
+        try { window.scrollBy({ left: dx, top: dy, behavior: 'auto' }); }
+        catch (e) { window.scrollBy(dx, dy); }
+      } else if (typeof el.scrollBy === 'function') {
+        try { el.scrollBy({ left: dx, top: dy, behavior: 'auto' }); }
+        catch (e) { el.scrollLeft += dx; el.scrollTop += dy; }
+      } else {
+        el.scrollLeft += dx; el.scrollTop += dy;
+      }
+      return settle(true, 'scrolled');
+    }
+    if (a.kind === 'hover') {
+      const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      el.dispatchEvent(new MouseEvent('mouseover', opts));
+      el.dispatchEvent(new MouseEvent('mouseenter', opts));
+      el.dispatchEvent(new MouseEvent('mousemove', opts));
+      return settle(true, 'hovered');
+    }
+    if (a.kind === 'key') {
+      const allowed = new Set(['Enter','Escape','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+        'Home','End','PageUp','PageDown','Backspace','Delete',' ']);
+      if (!allowed.has(a.key)) {
+        return refuse('unsupported_action', 'Key is not in the structured non-text allowlist.', true);
+      }
+      try { el.focus(); } catch (e) {}
+      const opts = { key: a.key, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent('keydown', opts));
+      el.dispatchEvent(new KeyboardEvent('keyup', opts));
+      return settle(true, 'key=' + a.key);
+    }
+    if (a.kind !== 'click') {
+      return refuse('unsupported_action', 'Structured Canvas action is unsupported.', true);
     }
     try { el.focus(); } catch (e) {}
     const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
@@ -1347,7 +1408,7 @@ export class CanvasWebDriver implements CanvasDriver {
       url: wc.getURL(),
       title: surface.getTitle()
     })
-    if (Date.now() < this.userActiveUntil) {
+    if (action.kind !== 'wait_for' && Date.now() < this.userActiveUntil) {
       return refuse(
         'user_active',
         'The user is interacting with this canvas. Wait for them to finish, then re-snapshot.'
@@ -1365,15 +1426,39 @@ export class CanvasWebDriver implements CanvasDriver {
       // input can arrive after this main-process check and before injection.
     }
 
-    const result = await this.executeCanvasScript<{
+    type InjectedActResult = {
       ok: boolean
       found: boolean
-      action: 'click' | 'fill'
+      action: CanvasActionInput['kind']
       executed?: boolean
       verified?: CanvasActVerification
       refusalReason?: CanvasActRefusalReason
       message?: string
-    }>(wc, actScript(action))
+    }
+    let result: InjectedActResult
+    if (action.kind === 'wait_for') {
+      const timeoutMs = Math.max(0, Math.min(30_000, Math.trunc(action.timeoutMs ?? 5_000)))
+      const deadline = Date.now() + timeoutMs
+      while (true) {
+        result = await this.executeCanvasScript<InjectedActResult>(wc, actScript(action))
+        if (result.ok && result.found) break
+        if (Date.now() >= deadline) {
+          result = {
+            ok: false,
+            found: false,
+            action: 'wait_for',
+            executed: false,
+            verified: 'unknown',
+            refusalReason: 'wait_timeout',
+            message: `Target did not appear within ${timeoutMs}ms.`
+          }
+          break
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
+      }
+    } else {
+      result = await this.executeCanvasScript<InjectedActResult>(wc, actScript(action))
+    }
     return {
       ...result,
       // Fail honest: an injected result missing these is treated as "we cannot

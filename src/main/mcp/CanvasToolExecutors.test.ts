@@ -73,6 +73,15 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       ref: args.ref,
       selector: args.selector
     }),
+    act: async (_id, args) => ({
+      ok: true,
+      action: args.kind,
+      found: true,
+      executed: args.kind !== 'wait_for',
+      verified: args.kind === 'wait_for' ? 'unchanged' : 'changed',
+      ref: args.ref,
+      selector: args.selector
+    }),
     annotate: async (_id, marks) => ({
       schemaVersion: 1,
       id: 'ann1',
@@ -1318,6 +1327,69 @@ describe('executeCanvasTool', () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
     const r = await executeCanvasTool('canvas_fill', { canvasId: 'c1', ref: 'e5' }, ctx, 'claude')
     expect(r.isError).toBe(true)
+  })
+
+  it('routes key, hover, select, scroll, and wait_for through structured actions', async () => {
+    const actions: unknown[] = []
+    const controller = fakeController({
+      act: async (_id, action) => {
+        actions.push(action)
+        return {
+          ok: true,
+          action: action.kind,
+          found: true,
+          executed: action.kind !== 'wait_for',
+          verified: action.kind === 'wait_for' ? 'unchanged' : 'changed'
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+
+    await executeCanvasTool(
+      'canvas_key',
+      { canvasId: 'c1', ref: 'e1', key: 'Enter', expectedInputEpoch: 2 },
+      ctx,
+      'claude'
+    )
+    await executeCanvasTool('canvas_hover', { canvasId: 'c1', selector: '#menu' }, ctx, 'claude')
+    await executeCanvasTool(
+      'canvas_select',
+      { canvasId: 'c1', ref: 'e2', value: 'Option A' },
+      ctx,
+      'claude'
+    )
+    await executeCanvasTool('canvas_scroll', { canvasId: 'c1', deltaY: 400 }, ctx, 'claude')
+    await executeCanvasTool(
+      'canvas_wait_for',
+      { canvasId: 'c1', selector: '[data-ready]', timeoutMs: 2_000 },
+      ctx,
+      'claude'
+    )
+
+    expect(actions).toEqual([
+      expect.objectContaining({ kind: 'key', ref: 'e1', key: 'Enter', expectedInputEpoch: 2 }),
+      expect.objectContaining({ kind: 'hover', selector: '#menu' }),
+      expect.objectContaining({ kind: 'select', ref: 'e2', value: 'Option A' }),
+      expect.objectContaining({ kind: 'scroll', deltaX: 0, deltaY: 400 }),
+      expect.objectContaining({ kind: 'wait_for', selector: '[data-ready]', timeoutMs: 2_000 })
+    ])
+  })
+
+  it('validates required arguments for the richer Canvas verbs', async () => {
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
+    expect(
+      (await executeCanvasTool('canvas_key', { canvasId: 'c1', ref: 'e1' }, ctx, 'claude')).isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_select', { canvasId: 'c1', ref: 'e1' }, ctx, 'claude'))
+        .isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_scroll', { canvasId: 'c1' }, ctx, 'claude')).isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_wait_for', { canvasId: 'c1' }, ctx, 'claude')).isError
+    ).toBe(true)
   })
 
   it('canvas_annotate drops untargeted marks and requires at least one', async () => {

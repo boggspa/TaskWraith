@@ -224,7 +224,8 @@ export interface CanvasWindowInspectInput {
   expectedObservationId?: string
 }
 
-export interface CanvasWindowActionInput extends CanvasActionInput {
+export interface CanvasWindowActionInput extends Omit<CanvasActionInput, 'kind'> {
+  kind: 'click' | 'fill'
   /** The observationId returned by observe/snapshot. Required for this driver. */
   expectedObservationId?: string
 }
@@ -700,6 +701,21 @@ export class CanvasWindowDriver implements CanvasDriver {
   }
 
   act(action: CanvasActionInput): Promise<CanvasActResult> {
+    if (action.kind !== 'click' && action.kind !== 'fill') {
+      return Promise.resolve({
+        ok: false,
+        action: action.kind,
+        ref: action.ref,
+        selector: action.selector,
+        found: false,
+        executed: false,
+        verified: 'unknown',
+        refusalReason: 'unsupported_action',
+        message: `Native Foreground Drive does not support ${action.kind}; use click or fill.`,
+        url: this.syntheticUrl,
+        title: this.title
+      })
+    }
     const result =
       action.kind === 'fill'
         ? this.fill(action as CanvasWindowActionInput)

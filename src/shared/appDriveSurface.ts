@@ -1,4 +1,11 @@
-export const APP_DRIVE_WEB_CONTROL_TOOLS = ['canvas_click', 'canvas_fill'] as const
+export const APP_DRIVE_WEB_CONTROL_TOOLS = [
+  'canvas_click',
+  'canvas_fill',
+  'canvas_key',
+  'canvas_scroll',
+  'canvas_hover',
+  'canvas_select'
+] as const
 
 export const APP_DRIVE_SIMULATOR_CONTROL_TOOLS = [
   'canvas_open',

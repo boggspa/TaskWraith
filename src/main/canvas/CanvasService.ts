@@ -15,12 +15,14 @@
 import { createHash } from 'crypto'
 import type {
   CanvasActionInput,
+  CanvasActionKind,
   CanvasActResult,
   CanvasAnnotation,
   CanvasController,
   CanvasCallContext,
   CanvasChartDocument,
   CanvasConsoleEntry,
+  CanvasControlActionKind,
   CanvasDriver,
   CanvasDriverKind,
   CanvasElementDetail,
@@ -133,7 +135,7 @@ export interface CanvasServiceDeps {
 export interface CanvasConsequentialConfirmRequest {
   readonly canvasId: string
   readonly chatId?: string
-  readonly action: 'click' | 'fill'
+  readonly action: CanvasControlActionKind
   /** TaskWraith-authored, built from the matched term. Never page prose. */
   readonly summary: string
   readonly category: CanvasConsequentialCategory
@@ -1129,10 +1131,11 @@ export class CanvasService implements CanvasController {
   private async gateConsequentialAction(
     canvasId: string,
     session: LiveSession,
-    kind: 'click' | 'fill',
+    kind: CanvasControlActionKind,
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<{ refusal?: CanvasActResult; pin: Partial<CanvasActionInput> }> {
+    if (kind === 'scroll' || kind === 'hover') return { pin: {} }
     const describeTarget = session.driver.describeTarget?.bind(session.driver)
     // A surface with no page labels to judge (sketch, chart, image, device) is
     // not gated: refusing on an absent probe would block every action there.
@@ -1197,7 +1200,7 @@ export class CanvasService implements CanvasController {
 
   private interact(
     canvasId: string,
-    kind: 'click' | 'fill',
+    kind: CanvasActionKind,
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
@@ -1227,7 +1230,10 @@ export class CanvasService implements CanvasController {
       // Consequential-action confirmation (design §7). Runs BEFORE dispatch and
       // inside the same serialization lock, so a second interaction cannot slip
       // past while a human is deciding.
-      const gate = await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
+      const gate =
+        kind === 'wait_for'
+          ? { pin: {} }
+          : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
       if (gate.refusal) {
         this.emit(canvasId, 'interaction', ctx, {
           phase: 'outcome',
@@ -1239,7 +1245,7 @@ export class CanvasService implements CanvasController {
         })
         return gate.refusal
       }
-      if (session.record.driver === 'web' && this.deps.appDriveLeases) {
+      if (kind !== 'wait_for' && session.record.driver === 'web' && this.deps.appDriveLeases) {
         if (!ctx.chatId || !ctx.runId || !ctx.provider) {
           return {
             ok: false,
@@ -1332,7 +1338,7 @@ export class CanvasService implements CanvasController {
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    return this.interact(canvasId, 'click', args, ctx)
+    return this.act(canvasId, { ...args, kind: 'click' }, ctx)
   }
 
   async fill(
@@ -1340,7 +1346,15 @@ export class CanvasService implements CanvasController {
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    return this.interact(canvasId, 'fill', args, ctx)
+    return this.act(canvasId, { ...args, kind: 'fill' }, ctx)
+  }
+
+  async act(
+    canvasId: string,
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasActResult> {
+    return this.interact(canvasId, args.kind, args, ctx)
   }
 
   async annotate(

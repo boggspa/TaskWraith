@@ -861,6 +861,19 @@ describe('CanvasWindowDriver', () => {
     await expect(driver.reload()).rejects.toThrow(/screenshot\/observe\/inspect\/click\/fill only/)
   })
 
+  it('returns a typed refusal for richer verbs that native Foreground Drive does not ship', async () => {
+    const { driver, bridge } = makeHarness()
+    await driver.open({ driver: 'window' })
+    await expect(driver.act({ kind: 'key', ref: 'ax2', key: 'Enter' })).resolves.toMatchObject({
+      ok: false,
+      action: 'key',
+      executed: false,
+      refusalReason: 'unsupported_action'
+    })
+    expect(bridge.click).not.toHaveBeenCalled()
+    expect(bridge.fill).not.toHaveBeenCalled()
+  })
+
   it('releases the exact adopted capability once on close', async () => {
     const { driver, bridge, setCurrentLease } = makeHarness()
     await driver.open({ driver: 'window' })

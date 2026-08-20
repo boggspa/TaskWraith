@@ -35,6 +35,9 @@ interface StubElement {
   className: string
   value?: string
   checked?: boolean
+  options?: Array<{ value: string; textContent: string }>
+  scrollLeft: number
+  scrollTop: number
   clicks: number
   focuses: number
   scrolls: number
@@ -56,6 +59,7 @@ interface StubElement {
   click(): void
   focus(): void
   scrollIntoView(): void
+  scrollBy(input: { left?: number; top?: number } | number, y?: number): void
   dispatchEvent(event: { type: string }): boolean
 }
 
@@ -67,6 +71,7 @@ function makeElement(
     className?: string
     value?: string
     checked?: boolean
+    options?: Array<{ value: string; textContent: string }>
     rect?: { left: number; top: number; width: number; height: number }
   } = {}
 ): StubElement {
@@ -84,6 +89,8 @@ function makeElement(
     focuses: 0,
     scrolls: 0,
     dispatched: [],
+    scrollLeft: 0,
+    scrollTop: 0,
     rect: opts.rect || { left: 10, top: 10, width: 100, height: 40 },
     get childElementCount() {
       return el.children.length
@@ -129,6 +136,16 @@ function makeElement(
     scrollIntoView() {
       el.scrolls += 1
     },
+    scrollBy(input, y) {
+      if (typeof input === 'number') {
+        el.scrollLeft += input
+        el.scrollTop += y || 0
+      } else {
+        el.scrollLeft += input.left || 0
+        el.scrollTop += input.top || 0
+      }
+      el.scrolls += 1
+    },
     dispatchEvent(event) {
       el.dispatched.push(event.type)
       return true
@@ -136,6 +153,7 @@ function makeElement(
   }
   if (opts.value !== undefined) el.value = opts.value
   if (opts.checked !== undefined) el.checked = opts.checked
+  if (opts.options !== undefined) el.options = opts.options
   return el
 }
 
@@ -184,6 +202,8 @@ function runAct(action: CanvasActionInput, opts: HarnessOptions): ActOutcome {
   const doc = {
     title: 'Start',
     body,
+    scrollingElement: body,
+    documentElement: body,
     querySelector: (_selector: string) => opts.selectorElement || null,
     elementFromPoint: (_x: number, _y: number) =>
       opts.hitTest === undefined ? opts.refElement || null : opts.hitTest
@@ -192,6 +212,8 @@ function runAct(action: CanvasActionInput, opts: HarnessOptions): ActOutcome {
   const win: Record<string, unknown> = {
     innerWidth: 1280,
     innerHeight: 800,
+    scrollBy: (input: { left?: number; top?: number } | number, y?: number) =>
+      body.scrollBy(input, y),
     __twCanvas__: {
       refs:
         (opts.pageRefElement ?? opts.refElement) && action.ref
@@ -228,11 +250,12 @@ function runAct(action: CanvasActionInput, opts: HarnessOptions): ActOutcome {
     'document',
     'location',
     'MouseEvent',
+    'KeyboardEvent',
     'Event',
     'globalThis',
     `return ${source}`
   )
-  return evaluate(win, doc, loc, StubEvent, StubEvent, isolatedGlobal) as ActOutcome
+  return evaluate(win, doc, loc, StubEvent, StubEvent, StubEvent, isolatedGlobal) as ActOutcome
 }
 
 /** Mirrors the __twIdentity digest for a stub element. */
@@ -431,6 +454,60 @@ describe('canvas actuation preconditions', () => {
 
     expect(result.executed).toBe(true)
     expect(result.verified).toBe('unchanged')
+  })
+
+  it('dispatches structured hover events without clicking', () => {
+    const menu = makeElement('div')
+    const result = runAct({ kind: 'hover', ref: 'e1' }, { refElement: menu })
+    expect(result.executed).toBe(true)
+    expect(menu.dispatched).toEqual(['mouseover', 'mouseenter', 'mousemove'])
+    expect(menu.clicks).toBe(0)
+  })
+
+  it('selects an option by label and fires input/change', () => {
+    const select = makeElement('select', {
+      value: '',
+      options: [
+        { value: 'a', textContent: 'Option A' },
+        { value: 'b', textContent: 'Option B' }
+      ]
+    })
+    const result = runAct({ kind: 'select', ref: 'e1', value: 'Option B' }, { refElement: select })
+    expect(result.executed).toBe(true)
+    expect(select.value).toBe('b')
+    expect(select.dispatched).toEqual(['input', 'change'])
+  })
+
+  it('scrolls a target by bounded CSS-pixel deltas', () => {
+    const panel = makeElement('div')
+    const result = runAct(
+      { kind: 'scroll', ref: 'e1', deltaX: 10, deltaY: 200 },
+      { refElement: panel }
+    )
+    expect(result.executed).toBe(true)
+    expect(panel.scrollLeft).toBe(10)
+    expect(panel.scrollTop).toBe(200)
+  })
+
+  it('dispatches allowlisted non-text keyboard keys and refuses arbitrary text', () => {
+    const button = makeElement('button')
+    const accepted = runAct({ kind: 'key', ref: 'e1', key: 'Enter' }, { refElement: button })
+    expect(accepted.executed).toBe(true)
+    expect(button.dispatched).toEqual(['keydown', 'keyup'])
+
+    const refused = runAct({ kind: 'key', ref: 'e1', key: 'hunter2' }, { refElement: button })
+    expect(refused.executed).toBe(false)
+    expect(refused.refusalReason).toBe('unsupported_action')
+  })
+
+  it('reports a present wait_for target without dispatching', () => {
+    const target = makeElement('div')
+    const result = runAct(
+      { kind: 'wait_for', selector: '[data-ready]', timeoutMs: 500 },
+      { selectorElement: target }
+    )
+    expect(result).toMatchObject({ ok: true, found: true, executed: false })
+    expect(target.dispatched).toEqual([])
   })
 
   describe('credential fields', () => {
