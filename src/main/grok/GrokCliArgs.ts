@@ -74,14 +74,23 @@ export const GROK_READ_ONLY_DENY_RULES = [
 export const GROK_WRITE_MODE_DENY_RULES = GROK_READ_ONLY_DENY_RULES
 
 /**
- * ACP sessions have a client-mediated `session/request_permission` hook, so
- * native file tools can reach TaskWraith's canonical workspace preflight
- * instead of being blanket-disabled at argv construction. Read-only seats
- * still deny the native mutation primitives as a prevention backstop.
+ * ACP seats deny the native mutation primitives in BOTH modes — read-only and
+ * write-capable alike. `GROK_ACP_WRITE_MODE_DENY_RULES` is deliberately the
+ * same list as the read-only one, so a write-capable seat still ships
+ * `--deny Edit(*) --deny Write(*)`; native reads (Read/Glob/Grep) stay
+ * available in both. This is intentional, not drift: it is pinned by the
+ * "keeps ACP native edits broker-only on write-capable seats" test.
  *
- * Native shell remains denied in both modes: the permission hook can validate
- * cwd, but Grok does not yet provide a hard workspace-rooted shell sandbox to
- * contain absolute paths or network egress.
+ * The consequence is worth stating plainly, because the argv reads like a
+ * posture leak when you see it on a live write-capable process: a Grok seat's
+ * writes go through the TaskWraith broker (`apply_patch` / `write_file`),
+ * never through Grok's own Edit/Write. Elevating the permission preset does
+ * NOT change these flags, and is not supposed to.
+ *
+ * Native shell remains denied in both modes too: the client-mediated
+ * `session/request_permission` hook can validate cwd, but Grok does not yet
+ * provide a hard workspace-rooted shell sandbox to contain absolute paths or
+ * network egress. Shell goes through the broker as well.
  */
 export const GROK_ACP_READ_ONLY_DENY_RULES = [
   'Bash(*)',
