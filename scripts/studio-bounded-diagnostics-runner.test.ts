@@ -20,6 +20,7 @@ const {
   parseVisibleHud,
   captureFreshPlayableSample,
   pressPlaybackTransition,
+  waitForPausedMediaReadiness,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
@@ -1131,6 +1132,66 @@ describe('the runner carries tracked end-to-end apparatus', () => {
       adapters
     )
     expect(comparedFrames).toEqual(frames)
+  })
+
+  it('waits for paused exact media and a positive transport duration before starting', async () => {
+    let captures = 0
+    const asset = 'A'.repeat(43)
+    const readiness = await waitForPausedMediaReadiness(
+      { artifactRoot: '/tmp/diagnostics-readiness' },
+      { asset: { sha256: asset } },
+      { x: 100, y: 200, width: 960, height: 640 },
+      {
+        runStudioUiDriver: async () => ({
+          actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+        }),
+        captureNative: async () => {
+          captures += 1
+          return {
+            path: '/tmp/readiness.png',
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: captures === 1 ? '0' : '900' } }
+            }
+          }
+        },
+        ocrScreenshot: () => ({
+          texts: captures === 1 ? ['PAUSE'] : ['00:00:00.000', 'PAUSE'],
+          stdoutSha256: digestFor('readiness')
+        }),
+        hudContainsAsset: () => ({ matched: captures > 1, distance: 0 })
+      },
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(captures).toBe(2)
+    expect(readiness.observed).toMatchObject({ state: 'PAUSE', assetMatch: { distance: 0 } })
+    expect(readiness.capture.transportMutationBracket.after.parsedValue.afterDurationTicks).toBe('900')
+  })
+
+  it.each([
+    ['fuzzy asset', { matched: true, distance: 1 }, ['00:00:00.000', 'PAUSE'], '900'],
+    ['wrong state', { matched: true, distance: 0 }, ['00:00:00.000', 'PLAY'], '900'],
+    ['zero duration', { matched: true, distance: 0 }, ['00:00:00.000', 'PAUSE'], '0']
+  ])('rejects %s paused-media readiness', async (_label, match, texts, durationTicks) => {
+    await expect(
+      waitForPausedMediaReadiness(
+        { artifactRoot: '/tmp/diagnostics-readiness' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { x: 100, y: 200, width: 960, height: 640 },
+        {
+          runStudioUiDriver: async () => ({
+            actions: [{ index: 0, type: 'read-workspace', workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 }) }]
+          }),
+          captureNative: async () => ({
+            path: '/tmp/readiness.png',
+            transportMutationBracket: { ok: true, after: { parsedValue: { afterDurationTicks: durationTicks } } }
+          }),
+          ocrScreenshot: () => ({ texts, stdoutSha256: digestFor('readiness-fail') }),
+          hudContainsAsset: () => match
+        },
+        { timeoutMs: 20, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/timed out|not ready/i)
   })
 
   it('names and resolves every tracked session dependency', () => {

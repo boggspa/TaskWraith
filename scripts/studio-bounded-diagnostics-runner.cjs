@@ -933,6 +933,62 @@ async function pressPlaybackTransition(plan, target, before, after, adapters = {
   return receipt
 }
 
+async function waitFor(label, probe, timeoutMs = 30_000, intervalMs = 100) {
+  const deadline = Date.now() + timeoutMs
+  let lastError = null
+  while (Date.now() <= deadline) {
+    try {
+      const value = await probe()
+      if (value) return value
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  throw new Error(
+    `${label} timed out${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ''}`
+  )
+}
+
+async function waitForPausedMediaReadiness(plan, target, windowBounds, adapters = {}, options = {}) {
+  const runCapture = adapters.captureNative || acceptanceSession.captureNative
+  const observe = async () => {
+    const workspaceObservation = await readSourceWorkspaceObservation(
+      plan,
+      target,
+      windowBounds,
+      adapters
+    )
+    const capture = await runCapture(plan, target, 'diagnostics-readiness')
+    const hud = (adapters.ocrScreenshot || acceptanceSession.ocrScreenshot)(capture.path)
+    const observed = parseVisibleHud(hud, target.asset.sha256, {
+      matchAsset: adapters.hudContainsAsset || acceptanceSession.hudContainsAsset
+    })
+    const durationTicks = capture.transportMutationBracket?.after?.parsedValue?.afterDurationTicks
+    if (
+      capture.transportMutationBracket?.ok !== true ||
+      observed.state !== 'PAUSE' ||
+      observed.assetMatch?.matched !== true ||
+      observed.assetMatch?.distance !== 0 ||
+      !Number.isFinite(observed.contentPtsSeconds) ||
+      typeof durationTicks !== 'string' ||
+      !/^[1-9]\d*$/.test(durationTicks)
+    ) {
+      throw new Error(
+        'bounded diagnostics media is not ready for playback: ' +
+          JSON.stringify({ observed, durationTicks, transportMutationBracket: capture.transportMutationBracket })
+      )
+    }
+    return { workspaceObservation, capture, hud, observed }
+  }
+  return waitFor(
+    'paused exact Studio media readiness',
+    observe,
+    options.timeoutMs ?? 30_000,
+    options.intervalMs ?? 250
+  )
+}
+
 async function captureFreshPlayableSample(
   plan,
   target,
@@ -1011,6 +1067,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
         expectedWindowTitle: 'TaskWraith Studio',
         asset: runtime.asset
       }
+      const readiness = await waitForPausedMediaReadiness(plan, target, bounds, adapters)
       const focusBeforePlaybackStart = acceptanceSession.focusSnapshot(context.companion.pid)
       const playbackStart = await pressPlaybackTransition(
         plan,
@@ -1091,6 +1148,7 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
       )
       return {
         asset: runtime.asset,
+        readiness,
         workspaceObservation: samples[0].workspaceObservation,
         openResult,
         playback: {
@@ -1192,6 +1250,7 @@ module.exports = {
   capturePlayableSample,
   captureFreshPlayableSample,
   pressPlaybackTransition,
+  waitForPausedMediaReadiness,
   readSourceWorkspaceObservation,
   repoRoot,
   resolveExactSourcePts,
