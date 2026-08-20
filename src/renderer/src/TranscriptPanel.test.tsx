@@ -530,6 +530,111 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Handing off to Builder')
     expect(html).not.toContain('Role: Builder')
     expect(html).not.toContain('message-working-telemetry')
+    // Neutral about WHO is working, not about the accent. Without a hue class
+    // the row inherits `var(--accent)` — the app accent, which is gray under
+    // graphite/obsidian and says nothing about the ensemble.
+    expect(html).toContain('provider-codex')
+    expect(html).toContain('--message-working-accent:var(--provider-codex-color, var(--accent))')
+  })
+
+  it('paints a cross-provider handoff in the incoming seat hue, not the app accent', () => {
+    const chat = activeEnsembleChat(ensembleParticipant())
+    chat.ensemble!.participants.push(
+      ensembleParticipant({
+        id: 'mistral-reviewer',
+        provider: 'mistral',
+        role: 'Mistral3',
+        order: 1
+      })
+    )
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'codex-builder',
+        sourceRunId: 'codex-run-1',
+        targetParticipantId: 'mistral-reviewer',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      participants: [
+        ...chat.ensemble!.activeRound!.participants.map((item) => ({
+          ...item,
+          status: 'answered' as const,
+          endedAt: '2026-07-01T00:00:01.000Z'
+        })),
+        {
+          participantId: 'mistral-reviewer',
+          provider: 'mistral' as const,
+          role: 'Mistral3',
+          order: 1,
+          status: 'idle' as const
+        }
+      ]
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('Handing off to Mistral3')
+    // The accent follows the seat the row NAMES, so the colour points where the
+    // round is going rather than at the seat that just finished.
+    expect(html).toContain('--message-working-accent:var(--provider-mistral-color, var(--accent))')
+    // Scoped to the accent: `provider-codex` also appears on the settled codex
+    // rows further up the same transcript, which is correct and unrelated.
+    expect(html).not.toContain('--message-working-accent:var(--provider-codex-color')
+    // Still round-owned: the label never claims a seat, and no seat is metered.
+    expect(html).toContain('Ensemble')
+    expect(html).not.toContain('message-working-telemetry')
+  })
+
+  it('falls back to the ensemble hue when the transition names no seat on the roster', () => {
+    const chat = activeEnsembleChat(ensembleParticipant())
+    chat.ensemble!.participants = []
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      participants: [],
+      turnTransition: {
+        phase: 'settling-provider',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'retired-seat',
+        sourceRunId: 'retired-run-1',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      }
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('Finalizing turn')
+    expect(html).toContain('provider-ensemble')
+    expect(html).toContain('--message-working-accent:var(--provider-ensemble-color, var(--accent))')
   })
 
   it('uses Ollama display-brand label and hue for an active Ensemble local model', () => {
