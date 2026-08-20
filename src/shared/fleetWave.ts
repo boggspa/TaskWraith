@@ -24,6 +24,8 @@ export interface FleetWaveAgentState {
   role: FleetWaveRole | string
   status: FleetWaveAgentStatus
   provider?: string
+  /** Resolves the Ollama/Pi upstream brand hue; plain providers ignore it. */
+  model?: string
   error?: string
   pendingApproval?: FleetWavePendingApproval
 }
@@ -109,8 +111,16 @@ export function groupPendingApprovalsByScope(
 /** Density-strip cells in dispatch order — never re-sorted by status. */
 export function fleetWaveGhostCellStates(
   agents: readonly FleetWaveAgentState[]
-): Array<{ id: string; status: FleetWaveAgentStatus }> {
-  return agents.map((agent) => ({ id: agent.id, status: agent.status }))
+): Array<{ id: string; status: FleetWaveAgentStatus; provider?: string; model?: string }> {
+  // provider/model ride along so an in-flight ghost can wear its agent's own
+  // accent instead of a generic running colour. Both stay optional: a cell
+  // without them inherits the card accent.
+  return agents.map((agent) => ({
+    id: agent.id,
+    status: agent.status,
+    ...(agent.provider ? { provider: agent.provider } : {}),
+    ...(agent.model ? { model: agent.model } : {})
+  }))
 }
 
 /** Agents that are not failed / needs_approval (exceptions stay named separately). */

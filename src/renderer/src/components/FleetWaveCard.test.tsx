@@ -225,6 +225,61 @@ describe('FleetWaveCard', () => {
     expect(html).toContain('claude-workflow-card-name')
   })
 
+  describe('agent accent', () => {
+    it('tints a working chip and its ghost with the agent provider, not the blue running token', () => {
+      // The running token (--tool-running, #5a8cff indigo) said nothing about
+      // WHOSE agent was working; the whole card is provider-accented now.
+      const html = renderToStaticMarkup(
+        <FleetWaveCard
+          telemetry={telemetry({
+            agents: [agent(1, { provider: 'mistral', status: 'working' })]
+          })}
+          provider="claude"
+        />
+      )
+      expect(html).toContain('var(--provider-mistral-color')
+      expect(html).not.toContain('--tool-running')
+    })
+
+    it('resolves the upstream brand for an Ollama-hosted model', () => {
+      // Ollama and Pi hide the brand the user actually picked, so the hue has
+      // to come through resolveProviderHueClass rather than the provider id.
+      const html = renderToStaticMarkup(
+        <FleetWaveCard
+          telemetry={telemetry({
+            agents: [agent(1, { provider: 'ollama', model: 'qwen3:32b', status: 'working' })]
+          })}
+          provider="claude"
+        />
+      )
+      // Qwen resolves to its maker's hue (Alibaba), not the Ollama seat green.
+      expect(html).not.toContain('var(--provider-ollama-color')
+      expect(html).toContain('var(--provider-alibaba-color')
+    })
+
+    it('keeps amber for an agent waiting on the user', () => {
+      const html = renderToStaticMarkup(
+        <FleetWaveCard
+          telemetry={telemetry({
+            agents: [agent(1, { provider: 'mistral', status: 'needs_approval' })]
+          })}
+          provider="claude"
+        />
+      )
+      // Approval is a state the reader must act on — it keeps its own colour
+      // and must not be repainted with the provider hue.
+      expect(html).toContain('status-needs_approval')
+      expect(html).not.toContain('var(--provider-mistral-color')
+    })
+
+    it('leaves a provider-less agent on the inherited accent', () => {
+      const html = renderToStaticMarkup(
+        <FleetWaveCard telemetry={telemetry({ agents: [agent(1, { status: 'working' })] })} />
+      )
+      expect(html).not.toContain('var(--provider-undefined-color')
+    })
+  })
+
   describe('caller identity', () => {
     const callerSeat = {
       provider: 'claude',
