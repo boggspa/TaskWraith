@@ -591,7 +591,7 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
       )
     }
   }
-  const bridgeDaemon = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
+  const bridgeDaemon = path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraithBridgeDaemon')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
 
@@ -689,8 +689,7 @@ function validateMacAppSignature(packageRoot) {
   const bridgeDaemon = path.join(
     packageRoot,
     'Contents',
-    'Resources',
-    'bridge',
+    'Helpers',
     'TaskWraithBridgeDaemon'
   )
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')

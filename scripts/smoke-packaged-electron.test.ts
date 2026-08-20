@@ -32,6 +32,10 @@ const {
   readMacSigningIdentity: (codePath: string) => MacSigningIdentity
 } = require('./smoke-packaged-electron.cjs')
 
+const { resolveMacBridgeDaemonPath } = require('../build/validate-native-modules.cjs') as {
+  resolveMacBridgeDaemonPath: (resourcesPath: string) => string
+}
+
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
 // i.e. what a plain local `--dir` build produces with no signing identity. The
 // Authority/TeamIdentifier lines that a real identity emits are simply absent,
@@ -66,6 +70,12 @@ const DEVELOPER_ID_OUTPUT = [
 ].join('\n')
 
 describe('packaged Electron to TUI smoke handoff', () => {
+  it('validates the native daemon from the macOS helper location', () => {
+    expect(
+      resolveMacBridgeDaemonPath('/Applications/TaskWraith.app/Contents/Resources')
+    ).toBe('/Applications/TaskWraith.app/Contents/Helpers/TaskWraithBridgeDaemon')
+  })
+
   it('passes the exact package root instead of rediscovering an architecture sibling', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-package-siblings-'))
     const x64 = path.join(root, 'win-unpacked')

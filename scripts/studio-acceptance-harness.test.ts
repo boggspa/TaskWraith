@@ -5155,7 +5155,7 @@ describe('Studio acceptance harness', () => {
         appRoot,
         'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
       )]: 'companion',
-      [path.join(appRoot, 'Contents/Resources/bridge/TaskWraithBridgeDaemon')]: 'bridge'
+      [path.join(appRoot, 'Contents/Helpers/TaskWraithBridgeDaemon')]: 'bridge'
     }
     for (const [filePath, contents] of Object.entries(files)) {
       await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
@@ -5175,7 +5175,7 @@ describe('Studio acceptance harness', () => {
       companionPath:
         'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion',
       bridgeDaemonPath:
-        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/bridge/TaskWraithBridgeDaemon',
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Helpers/TaskWraithBridgeDaemon',
       codeSignatureVerified: true
     })
     expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
@@ -5200,8 +5200,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '3d5a184f50cb2e0e2de3238274e71c7f0ad233e36d690a42cce1c0159e1e1e82',
-      sourceCount: 2281,
+      sourceDigest: '7527a02d9ea0874bab3dbe0a198d5c26a4e9a9bbc88b99851eebaf26065234c0',
+      sourceCount: 2282,
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,

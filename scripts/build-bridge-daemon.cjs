@@ -4,7 +4,7 @@
  * build-bridge-daemon
  *
  * Pre-build step that compiles the Swift TaskWraithBridgeDaemon as a
- * release binary so electron-builder can bundle it as an extraResource
+ * release binary so electron-builder can bundle it under Contents/Helpers
  * in the packaged .app. macOS-only; no-op (with a friendly log) on
  * other platforms because the daemon uses Apple Network framework +
  * Bonjour + CryptoKit and only makes sense in a macOS Electron build.

@@ -965,8 +965,7 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
     bridgeDaemon: path.join(
       appRoot,
       'Contents',
-      'Resources',
-      'bridge',
+      'Helpers',
       'TaskWraithBridgeDaemon'
     )
   }

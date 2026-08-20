@@ -45,13 +45,13 @@ async function validateNativeModules(context) {
     validateWindowsClaudeAgentSdkBinaries(unpackedDir, arch)
   }
 
-  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded
-  // as an extraResource. The mac build chains run
+  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded as a
+  // Contents/Helpers tool. The mac build chains run
   // `prebuild:bridge-daemon` before electron-builder; this is the safety
   // net that surfaces a clear error if the binary failed to land in the
   // bundle for any reason (broken swift toolchain, missing config, etc.).
   if (platform === 'darwin') {
-    const daemonPath = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
+    const daemonPath = resolveMacBridgeDaemonPath(resourcesDir)
     if (!fs.existsSync(daemonPath)) {
       throw new Error(
         `TaskWraithBridgeDaemon was not packaged at ${daemonPath}. Did \`npm run prebuild:bridge-daemon\` run before electron-builder?`
@@ -82,6 +82,10 @@ async function validateNativeModules(context) {
   )
 
   await hardenElectronFuses(context, resourcesDir)
+}
+
+function resolveMacBridgeDaemonPath(resourcesDir) {
+  return path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraithBridgeDaemon')
 }
 
 function validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs) {
@@ -576,3 +580,4 @@ function formatBytes(bytes) {
 
 module.exports = validateNativeModules
 module.exports.default = validateNativeModules
+module.exports.resolveMacBridgeDaemonPath = resolveMacBridgeDaemonPath

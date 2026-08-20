@@ -61,7 +61,7 @@ files:
   - '!papercuts/**'
   - '!.githooks/**'
   # Native/mobile source trees are development inputs only. The mac app
-  # receives the release TaskWraithBridgeDaemon via `mac.extraResources`
+  # receives the release TaskWraithBridgeDaemon via `mac.extraFiles`
   # below; packaging the full Swift/iOS `.build` trees into app.asar
   # bloated debug builds by hundreds of megabytes.
   - '!swift/**'
@@ -205,8 +205,9 @@ mac:
       - _taskwraith._tcp
       - _taskwraith-quic._udp
   notarize: false
-  # Bundle the Swift TaskWraithBridgeDaemon as an extraResource so the
-  # main process can spawn it from the packaged .app. The binary is
+  # Bundle the Swift TaskWraithBridgeDaemon as a helper tool so macOS can
+  # preserve TaskWraith as the responsible code for privacy services. Mach-O
+  # helpers do not belong in Resources. The binary is
   # compiled by `scripts/build-bridge-daemon.cjs` (run via the
   # `prebuild:bridge-daemon` npm script in all mac build targets).
   # macOS-only: the daemon uses Apple Network framework + Bonjour +
@@ -214,9 +215,10 @@ mac:
   # pre-lipo'd by scripts/build-studio-companion.cjs so both temporary apps in
   # the universal merge contain the same nested bundle. It stays unsigned here;
   # the parent macOS signing pass seals nested code in final-inside-out order.
-  extraResources:
+  extraFiles:
     - from: swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon
-      to: bridge/TaskWraithBridgeDaemon
+      to: Helpers/TaskWraithBridgeDaemon
+  extraResources:
     - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
       to: studio/TaskWraith Studio.app
 dmg:
