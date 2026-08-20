@@ -514,7 +514,7 @@ final class StudioOverlayModelTests: XCTestCase {
     func testActualHostDiagnosticsUseTwoCompleteRowsAt640x375() throws {
         var subject = state()
         subject.viewport = StudioOverlayViewport(width: 640, height: 375, scale: 1)
-        subject.sourceLabel = String(repeating: "23479ACDEFHKMNPX", count: 4)
+        subject.sourceLabel = String(repeating: "2349ACDEFHKMNPXT", count: 4)
         subject.diagnostics = StudioOverlayDiagnostics(
             presentedFrameCount: 123_456,
             droppedFrameCount: 123_456,

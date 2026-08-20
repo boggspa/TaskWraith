@@ -11,8 +11,8 @@ const speechFixture = require('./studio-generate-speech-fixture.cjs')
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
-const expectedCompanionSha256 = 'c133a3926a94925ac1e371e16beefeb9d9e3c5e4f9e549e0199ec79f12f26a49'
-const expectedSourceDigest = 'd1230b83f2e6220d981dfc4baf6663ad51cb5b3c050be343f61aec916e4225a1'
+const expectedCompanionSha256 = '439dd4262118a29a818ad595c2a6af1c2d7b5d8ee05fffd8139fa7879671c6e9'
+const expectedSourceDigest = '32c1c3c2f5c34866076a22ce81fd76b6de64cd951bcfe815ee4a7ba3c2718a27'
 const expectedSourceCount = 70
 const expectedOutDigest = '09675fbf05a8b2f81616d2dcb04480d6016ced338a776ccf1d94c5a2010c7f2d'
 const expectedOutCount = 38
@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '7afbceeca8d57fa9f13157b39a1cc8d3b106527c75fc62a0fa86d1b778473d1f',
+    'e4599563df30822d9759cfed3d09fabd55ff56cda4afbbe280f8a69e0cfc77a1',
   'scripts/studio-acceptance-ui-driver.swift':
     '41b8b947e33e5477038a227c0a2f0684372ce0c7c93afc710a145837e2de0d79',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -1398,7 +1398,7 @@ function ocrScreenshot(screenshotPath) {
 
 const HUD_ASSET_ID_LENGTH = 43
 const HUD_ASSET_TOKEN_LENGTH = 64
-const HUD_ASSET_TOKEN_ALPHABET = '23479ACDEFHKMNPX'
+const HUD_ASSET_TOKEN_ALPHABET = '2349ACDEFHKMNPXT'
 // A fuzzy 64-character full-hash token is not an asset identity. Earlier runs
 // accepted up to twelve edits, which let unrelated same-length text qualify as
 // the content-addressed SHA-256 subject. Vision may still emit fuzzy candidates
