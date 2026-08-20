@@ -48,6 +48,10 @@ import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityG
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
 import {
+  isExternalProviderThreadImportMessage,
+  stripExternalProviderThreadImportContinuity
+} from '../../shared/externalProviderThreadImport'
+import {
   clearPendingWorkspaceRebind,
   queuePendingWorkspaceRebind,
   type PendingWorkspaceRebind
@@ -567,7 +571,8 @@ export class ChatService {
     const continuityFenced = allowWorkspaceTransition
       ? grantFenced
       : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
-    const sanitized = this.preserveCollaboratorComments(continuityFenced)
+    const importedTranscriptFenced = this.preserveExternalProviderThreadImport(continuityFenced)
+    const sanitized = this.preserveCollaboratorComments(importedTranscriptFenced)
     return this.deps.appStore.saveChat(sanitized)
   }
 
@@ -1831,6 +1836,21 @@ export class ChatService {
       ...chat,
       messages
     }
+  }
+
+  private preserveExternalProviderThreadImport(chat: ChatRecord): ChatRecord {
+    const current = this.deps.appStore.getChat(chat.appChatId)
+    if (!current?.externalProviderThreadImport) return chat
+    const canonicalImportedMessages = current.messages.filter(isExternalProviderThreadImportMessage)
+    const canonicalIds = new Set(canonicalImportedMessages.map((message) => message.id))
+    const ordinaryMessages = chat.messages.filter(
+      (message) => !canonicalIds.has(message.id) && !isExternalProviderThreadImportMessage(message)
+    )
+    return stripExternalProviderThreadImportContinuity({
+      ...chat,
+      externalProviderThreadImport: current.externalProviderThreadImport,
+      messages: [...canonicalImportedMessages, ...ordinaryMessages]
+    })
   }
 }
 

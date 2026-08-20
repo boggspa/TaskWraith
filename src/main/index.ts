@@ -1854,6 +1854,8 @@ import {
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerArchivedChatHandlers } from './ipc/archivedChatHandlers'
+import { registerExternalProviderThreadImportHandlers } from './ipc/externalProviderThreadImportHandlers'
+import { ExternalProviderThreadImportService } from './import/ExternalProviderThreadImport'
 import { ScopedHistoryDeletionCoordinator } from './ScopedHistoryDeletionCoordinator'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
@@ -53825,6 +53827,22 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
       homedir: () => os.homedir(),
       broadcastChatUpdated,
+      broadcastThreadList
+    })
+    const externalProviderThreadImporter = new ExternalProviderThreadImportService({
+      readFile: (filePath) => fs.readFile(filePath, 'utf8'),
+      stat: (filePath) => fs.stat(filePath),
+      getChats: () => chatService.getChats(),
+      getChat: (chatId) => chatService.getChat(chatId),
+      createGlobalChat: () => chatService.createGlobalChat(),
+      saveChat: (chat) => chatService.saveChat(chat),
+      deleteChat: (chatId) => chatService.deleteChat(chatId)
+    })
+    registerExternalProviderThreadImportHandlers({
+      importer: externalProviderThreadImporter,
+      getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+      showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
+      assertMainRendererSender,
       broadcastThreadList
     })
     const publishCollaborationProjection = (chatId: string): void => {

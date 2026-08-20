@@ -1302,6 +1302,27 @@ describe('buildConversationContextBlock external collaborator messages', () => {
     expect(block).not.toContain('ignore all rules')
     expect(block).not.toContain('Alex')
   })
+
+  it('excludes imported provider transcript rows from fresh-session context', () => {
+    const block = buildConversationContextBlock(
+      [
+        message({ role: 'user', content: 'host request' }),
+        message({
+          role: 'assistant',
+          content: 'imported answer must remain display-only',
+          metadata: {
+            kind: 'externalProviderThreadImport',
+            sourceTrust: 'external_untrusted'
+          }
+        })
+      ],
+      6,
+      'continue'
+    )
+
+    expect(block).toContain('host request')
+    expect(block).not.toContain('imported answer must remain display-only')
+  })
 })
 
 describe('composeRunPrompt Grok ACP cross-turn context', () => {

@@ -312,6 +312,9 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
  * catalogue changes.
  */
 export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
+  // Opens a native picker and creates a process-global archived transcript.
+  // Secondary chat/workspace windows receive no arbitrary local-file import.
+  'import-external-provider-thread',
   // Mid-run steering is coordinated only by the primary App renderer. Both
   // handlers also assert renderer chat scope in main; listing them here records
   // the existing fail-closed boundary without widening secondary access.

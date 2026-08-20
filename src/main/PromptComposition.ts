@@ -48,6 +48,7 @@ import type {
   ResolvedInstructionContext,
   ResolvedInstructionLayer
 } from '../shared/instructions/InstructionTypes'
+import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -706,6 +707,7 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
       // That is not hypothetical; it is the shape the mid-run steering builder
       // produces (P2c security review, F1).
       !isExternalUntrustedMessage(message) &&
+      !isExternalProviderThreadImportMessage(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
       !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())

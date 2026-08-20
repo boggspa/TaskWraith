@@ -16,6 +16,7 @@ import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
+import { stripExternalProviderThreadImportContinuity } from '../../shared/externalProviderThreadImport'
 import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
@@ -5459,6 +5460,7 @@ export class AppStore {
 
   // Chats
   static normalizeChatRecord(chat: ChatRecord): ChatRecord {
+    chat = stripExternalProviderThreadImportContinuity(chat)
     const scope = chat.scope === 'global' ? 'global' : 'workspace'
     const chatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
     const workflowMode = normalizeChatWorkflowMode(chat.workflowMode)

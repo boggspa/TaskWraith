@@ -167,6 +167,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'delete-chat': ['chatId'],
   'unarchive-chat': ['nonEmptyString'],
   'export-archived-chat': ['object'],
+  'import-external-provider-thread': ['object'],
   // Human collaboration (shared chat: host + up to 2 human collaborators). These
   // MUST be registered — installIpcValidation throws "No IPC schema registered"
   // for any unregistered ipcMain.handle channel, so their absence bricks the whole

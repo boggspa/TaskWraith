@@ -356,6 +356,102 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
   })
 
+  it('preserves imported transcript provenance across renderer whole-record saves', () => {
+    const importedMetadata = {
+      schemaVersion: 1 as const,
+      provider: 'claude' as const,
+      trust: 'external_untrusted' as const,
+      sourceFileName: 'thread.jsonl',
+      sourceFingerprintSha256: 'a'.repeat(64),
+      sourceMessageCount: 1,
+      importedMessageCount: 1,
+      omittedRecordCount: 0,
+      invalidRecordCount: 0,
+      importedAt: '2026-08-20T00:00:00.000Z',
+      truncated: false,
+      promptBridgeEnabled: false as const,
+      nativeResumeAllowed: false as const
+    }
+    const importedMessage = {
+      id: 'imported-1',
+      role: 'assistant' as const,
+      content: 'external imported answer',
+      timestamp: '2026-08-20T00:00:00.000Z',
+      metadata: {
+        kind: 'externalProviderThreadImport',
+        sourceTrust: 'external_untrusted'
+      }
+    }
+    const current = makeChat({
+      externalProviderThreadImport: importedMetadata,
+      messages: [importedMessage]
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      externalProviderThreadImport: undefined,
+      linkedProviderSessionId: 'forged-source-session',
+      linkedGeminiSessionId: 'forged-gemini-session',
+      taskWraithMcpProfileReceipt: { sessionId: 'forged-source-session' } as never,
+      forkContext: {
+        kind: 'native',
+        createdAt: 1,
+        sourceProviderThreadId: 'forged-source-thread'
+      },
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          {
+            id: 'forged-seat',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 0,
+            linkedProviderSessionId: 'forged-seat-session',
+            kimiAcpNativeSession: true,
+            kimiAcpPostureVersion: 'forged-posture',
+            promptShellVersion: 'forged-shell',
+            promptDynamicStateVersion: 'forged-dynamic'
+          }
+        ]
+      } as never,
+      runs: [
+        {
+          runId: 'run-forged',
+          providerThreadId: 'forged-provider-thread',
+          startedAt: '2026-08-20T00:00:00.000Z'
+        }
+      ],
+      messages: [
+        { ...importedMessage, content: 'metadata-stripped rewrite', metadata: undefined },
+        {
+          id: 'new-host-row',
+          role: 'user',
+          content: 'new host prompt',
+          timestamp: '2026-08-20T00:01:00.000Z'
+        }
+      ]
+    })
+
+    expect(saved.externalProviderThreadImport).toEqual(importedMetadata)
+    expect(saved.messages).toEqual([
+      importedMessage,
+      expect.objectContaining({ id: 'new-host-row', content: 'new host prompt' })
+    ])
+    expect(JSON.stringify(saved)).not.toContain('metadata-stripped rewrite')
+    expect(JSON.stringify(saved)).not.toContain('forged-source-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-gemini-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-source-thread')
+    expect(JSON.stringify(saved)).not.toContain('forged-provider-thread')
+    expect(JSON.stringify(saved)).not.toContain('forged-seat-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-posture')
+    expect(JSON.stringify(saved)).not.toContain('forged-shell')
+    expect(JSON.stringify(saved)).not.toContain('forged-dynamic')
+  })
+
   it('allows changing a live chat to Cursor through saveChat', () => {
     const current = makeChat({ provider: 'claude' })
     const store = makeStatefulStore(current)

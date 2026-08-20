@@ -91,6 +91,11 @@ import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
 import type {
+  ExternalProviderThreadImportChatSummary,
+  ExternalProviderThreadImportProvider,
+  ExternalProviderThreadImportResult
+} from '../shared/externalProviderThreadImport'
+import type {
   LiveSteeringCancelRequest,
   LiveSteeringCancelResult,
   LiveSteeringInjectionRequest,
@@ -2296,6 +2301,9 @@ declare global {
         reason?: 'not-found' | 'not-archived' | 'invalid-request'
         error?: string
       }>
+      importExternalProviderThread: (input: {
+        provider: ExternalProviderThreadImportProvider
+      }) => Promise<ExternalProviderThreadImportResult<ExternalProviderThreadImportChatSummary>>
       createChat: (workspaceId: string, workspacePath: string) => Promise<ChatRecord>
       createGlobalChat: () => Promise<ChatRecord>
       createEnsembleChat: (args?: {

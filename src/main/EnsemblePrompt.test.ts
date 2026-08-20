@@ -1065,6 +1065,33 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Olly')
   })
 
+  it('excludes imported provider history until an explicit host bridge creates a new row', () => {
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'imported-provider-row',
+        role: 'assistant',
+        content: 'display-only imported provider history',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'externalProviderThreadImport',
+          sourceTrust: 'external_untrusted'
+        }
+      }
+    ]
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1',
+      chatContextTurns: 10
+    })
+
+    expect(prompt).not.toContain('display-only imported provider history')
+  })
+
   it('never tags an external-untrusted row as the host or as System', () => {
     const prompt = promptWithExternalRow('a contribution')
 

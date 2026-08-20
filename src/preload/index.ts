@@ -65,6 +65,11 @@ import type {
   GitSnapshotSubscribeResult
 } from '../main/services/GitSnapshotPublisher'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type {
+  ExternalProviderThreadImportChatSummary,
+  ExternalProviderThreadImportProvider,
+  ExternalProviderThreadImportResult
+} from '../shared/externalProviderThreadImport'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
 import type {
   LiveSteeringCancelRequest,
@@ -2135,6 +2140,10 @@ const api = {
   unarchiveChat: (chatId: string) => ipcRenderer.invoke('unarchive-chat', chatId),
   exportArchivedChat: (input: { chatId: string; format: ArchivedChatExportFormat }) =>
     ipcRenderer.invoke('export-archived-chat', input),
+  importExternalProviderThread: (input: { provider: ExternalProviderThreadImportProvider }) =>
+    ipcRenderer.invoke('import-external-provider-thread', input) as Promise<
+      ExternalProviderThreadImportResult<ExternalProviderThreadImportChatSummary>
+    >,
   createChat: (workspaceId: string, workspacePath: string) =>
     ipcRenderer.invoke('create-chat', workspaceId, workspacePath),
   createGlobalChat: () => ipcRenderer.invoke('create-global-chat'),

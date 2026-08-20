@@ -72,6 +72,7 @@ import {
   isExternalUntrustedMessage,
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
+import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
 import {
   looksExternallyWrapped,
   wrapExternalContribution
@@ -2286,6 +2287,9 @@ function projectTaggedTranscript(
   let externalDropped = 0
   for (let i = relevant.length - 1; i >= 0; i--) {
     const message = relevant[i]
+    // Imported provider history is a local display snapshot, never panel
+    // context. An explicit future bridge must create a new host-authored row.
+    if (isExternalProviderThreadImportMessage(message)) continue
     const tag = messageTag(message, participantTokens, modelLabels)
     // M6 (1.0.7) — thinking-ephemerality. Strip any inlined reasoning chain
     // from a message authored by an ephemeral-reasoning provider before it

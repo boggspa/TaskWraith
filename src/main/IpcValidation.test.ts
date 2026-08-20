@@ -1017,6 +1017,10 @@ describe('IpcValidation', () => {
       validateIpcArgs('export-archived-chat', [{ chatId: 'archived-1', format: 'md' }])
     ).not.toThrow()
     expect(() => validateIpcArgs('export-archived-chat', ['archived-1'])).toThrow(/object/)
+    expect(() =>
+      validateIpcArgs('import-external-provider-thread', [{ provider: 'codex' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('import-external-provider-thread', ['codex'])).toThrow(/object/)
   })
 
   it('accepts bridge daemon status and toggle APIs', () => {

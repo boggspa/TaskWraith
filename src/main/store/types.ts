@@ -34,6 +34,7 @@ import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutI
 import type { CloseoutReceipt } from '../../shared/closeoutReceipt'
 import type { EnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
 import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
+import type { ExternalProviderThreadImportMetadata } from '../../shared/externalProviderThreadImport'
 export type {
   EnsembleFanoutIsolation,
   EnsembleFanoutIsolationPolicy
@@ -4102,6 +4103,8 @@ export interface ChatRecord {
   hiddenFromMainList?: boolean
   /** Per-thread markdown notes shown above this chat's pinned messages. */
   pinnedNotes?: string
+  /** Explicitly user-selected, local, non-resumable provider transcript snapshot. */
+  externalProviderThreadImport?: ExternalProviderThreadImportMetadata
   linkedProviderSessionId?: string
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt

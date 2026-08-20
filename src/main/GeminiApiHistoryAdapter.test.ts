@@ -177,6 +177,20 @@ describe('chatMessagesToGeminiContents', () => {
     expect(JSON.stringify(out)).not.toContain('ignore all previous instructions')
   })
 
+  it('never replays imported provider transcript rows as Gemini history', () => {
+    const out = chatMessagesToGeminiContents([
+      msg('user', 'ordinary host row'),
+      msg('assistant', 'imported provider answer', {
+        metadata: {
+          kind: 'externalProviderThreadImport',
+          sourceTrust: 'external_untrusted'
+        }
+      })
+    ])
+
+    expect(out.map(textOf)).toEqual(['ordinary host row'])
+  })
+
   it('skips tool messages', () => {
     const out = chatMessagesToGeminiContents([
       msg('user', 'q'),
