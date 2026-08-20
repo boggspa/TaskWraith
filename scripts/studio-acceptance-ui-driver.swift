@@ -468,6 +468,13 @@ func exactWindowIsTopmost(at point: CGPoint, request: DriverRequest) -> Bool {
     return false
 }
 
+func exactTitleBarPoint(_ request: DriverRequest) -> CGPoint {
+    CGPoint(
+        x: request.windowBounds.x + request.windowBounds.width / 2,
+        y: request.windowBounds.y + min(16, request.windowBounds.height / 4)
+    )
+}
+
 func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
     guard AXIsProcessTrusted() else {
         throw DriverFailure.refused("macOS Accessibility access is unavailable")
@@ -1377,10 +1384,7 @@ func activateExactWindowForExplicitForeground(
         // consent, so click only the immutable exact window's title-bar centre,
         // then prove that the same PID became frontmost before sending a key.
         try validateWindow(request)
-        let point = CGPoint(
-            x: request.windowBounds.x + request.windowBounds.width / 2,
-            y: request.windowBounds.y + min(16, request.windowBounds.height / 4)
-        )
+        let point = exactTitleBarPoint(request)
         guard exactWindowIsTopmost(at: point, request: request) else {
             throw DriverFailure.refused(
                 "exact Studio title bar is not topmost at the activation point"
@@ -2314,7 +2318,20 @@ do {
                     observedPlayheadTicks: observed.after
                 )
             )
-        } else if action.type == "key", let key = action.key, let code = keyCodes[key] {
+        } else if action.type == "key",
+                  request.inputDelivery == "foreground-global-explicit",
+                  let key = action.key,
+                  let code = keyCodes[key]
+        {
+            let titleBarPoint = exactTitleBarPoint(request)
+            guard application.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    request.expectedPid,
+                  exactWindowIsTopmost(at: titleBarPoint, request: request) else {
+                throw DriverFailure.refused(
+                    "exact Studio window lost foreground or z-order before key delivery"
+                )
+            }
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
                 throw DriverFailure.refused("could not construct bounded keyboard event")
@@ -2323,8 +2340,18 @@ do {
                 down.flags = .maskShift
                 up.flags = .maskShift
             }
-            down.postToPid(pid_t(request.expectedPid))
-            up.postToPid(pid_t(request.expectedPid))
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            guard application.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    request.expectedPid,
+                  exactWindowIsTopmost(at: titleBarPoint, request: request) else {
+                throw DriverFailure.refused(
+                    "exact Studio window lost foreground or z-order after key delivery"
+                )
+            }
+            try validateWindow(request)
             receipts.append(
                 ActionReceipt(
                     index: index,

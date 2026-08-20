@@ -3337,8 +3337,8 @@ describe('Studio acceptance harness', () => {
       'utf8'
     )
 
-    expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toHaveLength(2)
-    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(4)
+    expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toBeNull()
+    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(6)
     expect(driverSource).toContain('(request.inputDelivery == "background-observation-only" ||')
     expect(driverSource).toContain('((request.inputDelivery == "background-observation-only" &&')
     expect(driverSource).toContain('request.allowForegroundInput &&')
@@ -3356,7 +3356,10 @@ describe('Studio acceptance harness', () => {
     const activationSource = driverSource.slice(activationStart, activationEnd)
     expect(activationSource).toContain('AXUIElementPerformAction(window, kAXRaiseAction')
     expect(activationSource).toContain('try validateWindow(request)')
-    expect(activationSource).toContain('request.windowBounds.width / 2')
+    expect(activationSource).toContain('let point = exactTitleBarPoint(request)')
+    expect(driverSource).toContain(
+      'x: request.windowBounds.x + request.windowBounds.width / 2'
+    )
     expect(activationSource).toContain('exactWindowIsTopmost(at: point, request: request)')
     expect(activationSource).toContain('mouseType: .leftMouseDown')
     expect(activationSource).toContain('mouseType: .leftMouseUp')
@@ -3373,6 +3376,23 @@ describe('Studio acceptance harness', () => {
       'action.type == "click",\n' +
         '                  request.inputDelivery == "foreground-global-explicit"'
     )
+    expect(driverSource).toContain(
+      'action.type == "key",\n' +
+        '                  request.inputDelivery == "foreground-global-explicit"'
+    )
+    expect(driverSource).toContain(
+      'exactWindowIsTopmost(at: titleBarPoint, request: request)'
+    )
+    const keyDeliveryStart = driverSource.indexOf('action.type == "key",')
+    const keyDeliveryEnd = driverSource.indexOf(
+      'action.type == "click",',
+      keyDeliveryStart
+    )
+    const keyDeliverySource = driverSource.slice(keyDeliveryStart, keyDeliveryEnd)
+    expect(
+      keyDeliverySource.match(/exactWindowIsTopmost\(at: titleBarPoint, request: request\)/g)
+    ).toHaveLength(2)
+    expect(keyDeliverySource).toContain('try validateWindow(request)')
     expect(driverSource).toContain(
       'action.type == "set-playhead-ticks",\n' +
         '                  request.inputDelivery == "background-observation-only"'
