@@ -158,6 +158,12 @@ The reason string is deliberately part of the test contract. A future,
 user-authorized People retirement can change the product, but it must edit that
 reason and the named assertions; deleting an obscure count is not enough.
 
+**Independent-review correction:** the first pin required runtime construction
+and transport attachment but did not name the transport constructor itself. It
+now separately requires `new HumanCollaborationHostTransport` with the production
+WebSocket factory before the runtime is constructed and attached, so deleting
+the actual reconnect transport cannot leave the pin green.
+
 **This item exists because a document can be missed and a failing test cannot.**
 
 The concern P6 was created to address is burial. Every other protection for the

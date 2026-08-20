@@ -211,6 +211,10 @@ describe('Channels production main integration', () => {
       '// Boot the iOS remote bridge now that the human-collaboration cluster above is',
       reason
     )
+    expect(runtime, reason).toContain(
+      'humanCollaborationHostTransport = new HumanCollaborationHostTransport({'
+    )
+    expect(runtime, reason).toContain('socketFactory: wsTransportSocketFactory')
     expect(runtime, reason).toContain('humanCollaborationRuntime = new HumanCollaborationRuntime({')
     expect(runtime, reason).toContain('store: humanCollaborationStore')
     expect(runtime, reason).toContain(
