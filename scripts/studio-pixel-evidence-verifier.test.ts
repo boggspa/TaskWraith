@@ -273,12 +273,18 @@ function createVisualFixture(corrupt: boolean, backingScale = 1) {
   }
 }
 
-function createProjectedWindowFixture(wrongFrame = false, fractionalEdges = false) {
+function createProjectedWindowFixture(
+  wrongFrame = false,
+  fractionalEdges = false,
+  opaquePolicy: 'floor-local' | 'round-local' = 'round-local'
+) {
   const fixture = createVisualFixture(false)
   const reference = PNG.sync.read(readFileSync(fixture.referencePath))
-  const windowBounds = { x: 100, y: 200, width: 200, height: 120 }
+  const windowBounds = fractionalEdges
+    ? { x: 100.25, y: 200.25, width: 200, height: 120 }
+    : { x: 100, y: 200, width: 200, height: 120 }
   const sourceHostFrame = fractionalEdges
-    ? { x: 140.6, y: 230.6, width: 140, height: 70 }
+    ? { x: 140.9, y: 230.9, width: 140, height: 70 }
     : { x: 140, y: 230, width: 140, height: 70 }
   const intermediate = new PNG({ width: 140, height: 70 })
   const transforms = [
@@ -322,14 +328,16 @@ function createProjectedWindowFixture(wrongFrame = false, fractionalEdges = fals
       capture.data[pixel + 3] = 255
     }
   }
-  const leading = (value: number) =>
-    fractionalEdges ? Math.floor(value * 0.9) : Math.round(value * 0.9)
-  const trailing = (value: number) =>
-    fractionalEdges ? Math.floor(value * 0.9) : Math.round(value * 0.9)
-  const left = leading(sourceHostFrame.x - windowBounds.x)
-  const top = leading(sourceHostFrame.y - windowBounds.y)
-  const right = trailing(sourceHostFrame.x + sourceHostFrame.width - windowBounds.x)
-  const bottom = trailing(sourceHostFrame.y + sourceHostFrame.height - windowBounds.y)
+  const edge = (value: number, origin: number) =>
+    fractionalEdges
+      ? opaquePolicy === 'floor-local'
+        ? Math.floor((value - origin) * 0.9)
+        : Math.round((value - origin) * 0.9)
+      : Math.round((value - origin) * 0.9)
+  const left = edge(sourceHostFrame.x, windowBounds.x)
+  const top = edge(sourceHostFrame.y, windowBounds.y)
+  const right = edge(sourceHostFrame.x + sourceHostFrame.width, windowBounds.x)
+  const bottom = edge(sourceHostFrame.y + sourceHostFrame.height, windowBounds.y)
   const projected = {
     x: extent.x + left,
     y: extent.y + top,
@@ -693,8 +701,10 @@ describe('Studio pixel evidence verifier', () => {
   })
 
   it('uses raster-extent rounding for fractional opaque WindowServer host edges', () => {
-    const fixture = createProjectedWindowFixture(false, true)
-    const wrong = createProjectedWindowFixture(true, true)
+    const fixture = createProjectedWindowFixture(false, true, 'round-local')
+    const wrong = createProjectedWindowFixture(true, true, 'round-local')
+    const floorFixture = createProjectedWindowFixture(false, true, 'floor-local')
+    const floorWrong = createProjectedWindowFixture(true, true, 'floor-local')
     try {
       const comparison = compareWindowCaptureToReference(
         fixture.capturePath,
@@ -706,10 +716,14 @@ describe('Studio pixel evidence verifier', () => {
         clean: true,
         registration: {
           captureMode: 'opaque-window-projection',
-          hostPixelEdgePolicy: 'floor-interior-ceil-touching-window-edge',
-          captureX: 46,
-          captureY: 33,
-          hostPixelEdges: { left: 36, top: 27, right: 162, bottom: 90 }
+          hostPixelEdgePolicy: 'round-local',
+          captureX: 47,
+          captureY: 34,
+          hostPixelEdges: { left: 37, top: 28, right: 163, bottom: 91 },
+          opaqueHostPixelCandidateSelection: {
+            selectedPolicy: 'round-local',
+            cleanCandidateCount: 1
+          }
         }
       })
       expect(
@@ -720,9 +734,39 @@ describe('Studio pixel evidence verifier', () => {
           { hudOverlayHeight: 9, sourceHostFrame: wrong.sourceHostFrame }
         ).clean
       ).toBe(false)
+      const floorComparison = compareWindowCaptureToReference(
+        floorFixture.capturePath,
+        floorFixture.referencePath,
+        floorFixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: floorFixture.sourceHostFrame }
+      )
+      expect(floorComparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'opaque-window-projection',
+          hostPixelEdgePolicy: 'floor-local',
+          captureX: 46,
+          captureY: 33,
+          hostPixelEdges: { left: 36, top: 27, right: 162, bottom: 90 },
+          opaqueHostPixelCandidateSelection: {
+            selectedPolicy: 'floor-local',
+            cleanCandidateCount: 1
+          }
+        }
+      })
+      expect(
+        compareWindowCaptureToReference(
+          floorWrong.capturePath,
+          floorWrong.referencePath,
+          floorWrong.windowBounds,
+          { hudOverlayHeight: 9, sourceHostFrame: floorWrong.sourceHostFrame }
+        ).clean
+      ).toBe(false)
     } finally {
       fixture.cleanup()
       wrong.cleanup()
+      floorFixture.cleanup()
+      floorWrong.cleanup()
     }
   })
 

@@ -269,11 +269,57 @@ function sourceHostWindowEdgeInsets(sourceHostFrame, windowBounds) {
   }
 }
 
-function projectedHostPixelEdge(logicalOffset, scale, edgeInset, leading, opaqueProjection) {
-  const projected = logicalOffset * scale
-  if (!opaqueProjection) return Math.round(projected) + (leading ? edgeInset : -edgeInset)
+function projectedHostPixelEdge(
+  globalLogicalEdge,
+  globalWindowOrigin,
+  scale,
+  edgeInset,
+  leading,
+  opaqueProjection,
+  opaquePolicy
+) {
+  const projected = (globalLogicalEdge - globalWindowOrigin) * scale
+  if (!opaqueProjection || opaquePolicy === 'round-local') {
+    return Math.round(projected) + (leading ? edgeInset : -edgeInset)
+  }
+  invariant(opaquePolicy === 'floor-local', 'unknown opaque host-pixel edge policy')
   if (leading) return Math.floor(projected) + edgeInset
   return (edgeInset > 0 ? Math.ceil(projected) : Math.floor(projected)) - edgeInset
+}
+
+function visualThresholdScore(comparison) {
+  const metrics = comparison.metrics
+  const thresholds = comparison.thresholds
+  return Math.max(
+    metrics.meanAbsoluteChannelResidual / thresholds.maximumMeanAbsoluteChannelResidual,
+    metrics.p99ChannelResidual / thresholds.maximumP99ChannelResidual,
+    metrics.fractionAbove40 / thresholds.maximumFractionAbove40,
+    metrics.fractionAbove80 / thresholds.maximumFractionAbove80
+  )
+}
+
+function selectOpaqueHostPixelCandidate(candidates) {
+  const clean = candidates.filter((candidate) => candidate.comparison.clean)
+  const eligible = clean.length > 0 ? clean : candidates
+  const selected = [...eligible].sort(
+    (left, right) =>
+      visualThresholdScore(left.comparison) - visualThresholdScore(right.comparison) ||
+      left.policy.localeCompare(right.policy)
+  )[0]
+  return {
+    selected,
+    receipt: {
+      selectedPolicy: selected.policy,
+      cleanCandidateCount: clean.length,
+      candidates: candidates.map(({ policy, comparison }) => ({
+        policy,
+        clean: comparison.clean,
+        thresholdScore: visualThresholdScore(comparison),
+        hostPixelEdges: comparison.registration.hostPixelEdges,
+        metrics: comparison.metrics
+      }))
+    }
+  }
 }
 
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
@@ -394,6 +440,27 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   )
 
   const geometry = scaleCandidates[0]
+  if (
+    geometry.captureMode === 'opaque-window-projection' &&
+    sourceHostFrame &&
+    options.opaqueHostPixelEdgePolicy === undefined
+  ) {
+    const candidates = ['floor-local', 'round-local'].map((policy) => ({
+      policy,
+      comparison: compareWindowCaptureToReference(capturePath, referencePath, windowBounds, {
+        ...options,
+        opaqueHostPixelEdgePolicy: policy
+      })
+    }))
+    const selection = selectOpaqueHostPixelCandidate(candidates)
+    return {
+      ...selection.selected.comparison,
+      registration: {
+        ...selection.selected.comparison.registration,
+        opaqueHostPixelCandidateSelection: selection.receipt
+      }
+    }
+  }
   const backingScale = geometry.backingScale
   const canvasBackingScale = geometry.canvasBackingScale
   const scaleX = geometry.scaleX
@@ -409,33 +476,41 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
         // edge while retaining the entire interior material surface.
         left:
           projectedHostPixelEdge(
-            sourceHostFrame.x - Number(windowBounds.x),
+            sourceHostFrame.x,
+            Number(windowBounds.x),
             scaleX,
             windowEdgeInsets.left,
             true,
-            geometry.captureMode === 'opaque-window-projection'
+            geometry.captureMode === 'opaque-window-projection',
+            options.opaqueHostPixelEdgePolicy
           ),
         top:
           projectedHostPixelEdge(
-            sourceHostFrame.y - Number(windowBounds.y),
+            sourceHostFrame.y,
+            Number(windowBounds.y),
             scaleY,
             windowEdgeInsets.top,
             true,
-            geometry.captureMode === 'opaque-window-projection'
+            geometry.captureMode === 'opaque-window-projection',
+            options.opaqueHostPixelEdgePolicy
           ),
         right: projectedHostPixelEdge(
-          sourceHostFrame.x + sourceHostFrame.width - Number(windowBounds.x),
+          sourceHostFrame.x + sourceHostFrame.width,
+          Number(windowBounds.x),
           scaleX,
           windowEdgeInsets.right,
           false,
-          geometry.captureMode === 'opaque-window-projection'
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
         ),
         bottom: projectedHostPixelEdge(
-          sourceHostFrame.y + sourceHostFrame.height - Number(windowBounds.y),
+          sourceHostFrame.y + sourceHostFrame.height,
+          Number(windowBounds.y),
           scaleY,
           windowEdgeInsets.bottom,
           false,
-          geometry.captureMode === 'opaque-window-projection'
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
         )
       }
     : null
@@ -604,7 +679,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       hostPixelEdges,
       hostPixelEdgePolicy: sourceHostFrame
         ? geometry.captureMode === 'opaque-window-projection'
-          ? 'floor-interior-ceil-touching-window-edge'
+          ? options.opaqueHostPixelEdgePolicy
           : 'round-symmetric'
         : null,
       hostPixelRect,
