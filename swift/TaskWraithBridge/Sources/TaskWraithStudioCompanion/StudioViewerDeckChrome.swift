@@ -30,6 +30,19 @@ private final class StudioHostProjectedButtonCell: NSButtonCell {
   }
 }
 
+private final class StudioHostProjectedButton: NSButton {
+  override func isAccessibilitySelectorAllowed(_ selector: Selector) -> Bool {
+    if selector == #selector(accessibilityPerformPress) { return true }
+    return super.isAccessibilitySelectorAllowed(selector)
+  }
+
+  override func accessibilityPerformPress() -> Bool {
+    guard isEnabled else { return false }
+    performClick(nil)
+    return true
+  }
+}
+
 @MainActor
 final class StudioViewerDeckChrome: NSStackView {
   static let identifier = "studio.workspace.viewer-deck.chrome"
@@ -135,7 +148,7 @@ final class StudioViewerDeckChrome: NSStackView {
     label: String,
     role: NSAccessibility.Role
   ) -> NSButton {
-    let button = NSButton(title: label, target: nil, action: nil)
+    let button = StudioHostProjectedButton(title: label, target: nil, action: nil)
     button.cell = StudioHostProjectedButtonCell(textCell: label)
     button.identifier = NSUserInterfaceItemIdentifier(identifier)
     button.setAccessibilityElement(true)

@@ -96,6 +96,10 @@ final class StudioViewerDeckChromeTests: XCTestCase {
       XCTAssertEqual(button.title, label)
       XCTAssertEqual(button.accessibilityLabel(), label)
       XCTAssertEqual(button.accessibilityRole(), role)
+      XCTAssertTrue(
+        button.isAccessibilitySelectorAllowed(#selector(NSButton.accessibilityPerformPress)),
+        "projected route/review controls must expose AXPress"
+      )
     }
 
     for (identifier, label) in [
@@ -131,7 +135,7 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     XCTAssertEqual(source.state, .on)
     XCTAssertEqual(timeline.state, .off)
 
-    timeline.performClick(nil)
+    XCTAssertTrue(timeline.accessibilityPerformPress())
     XCTAssertEqual(source.state, .on)
     XCTAssertEqual(timeline.state, .on)
 
