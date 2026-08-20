@@ -147,6 +147,8 @@ export class NodeWorkspaceLockPersistence {
   private readonly onReclaimGuardAcquired?: () => void
   private readonly onStaleReclaimGuardQuarantined?: () => void | Promise<void>
   private readonly ensureMarkerExcluded: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
+  /** Exact file revision whose complete prefix was validated in this process. */
+  private validatedEventsRevision: string | null = null
   /** Roots already settled this process. 'write-failed' is deliberately not
    *  memoized, so a transient failure is retried at the next marker write. */
   private readonly markerExclusionSettled = new Set<string>()
@@ -177,12 +179,17 @@ export class NodeWorkspaceLockPersistence {
     this.ensureAuthorityDirectory()
     const path = this.eventsPath()
     const snapshot = this.readOptionalRegularFile(path, true)
-    if (!snapshot) return { raw: '', byteLength: 0, revision: 'absent' }
+    if (!snapshot) {
+      this.validatedEventsRevision = 'absent'
+      return { raw: '', byteLength: 0, revision: 'absent' }
+    }
     validateJsonLines(snapshot.raw, path)
+    const revision = eventRevision(snapshot.stat, path)
+    this.validatedEventsRevision = snapshot.raw.endsWith('\n') ? revision : null
     return {
       raw: snapshot.raw,
       byteLength: snapshot.bytes.byteLength,
-      revision: eventRevision(snapshot.stat, path)
+      revision
     }
   }
 
@@ -213,18 +220,32 @@ export class NodeWorkspaceLockPersistence {
     this.ensureAuthorityDirectory()
 
     const path = this.eventsPath()
-    const before = this.readOptionalRegularFile(path)
-    const observedByteLength = before?.bytes.byteLength || 0
-    if (observedByteLength !== expectedByteLength) {
+    const observedRevision = this.readEventsRevision()
+    const existedBeforeAppend = observedRevision !== 'absent'
+    if (!existedBeforeAppend && expectedByteLength !== 0) {
       throw new Error(
-        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${observedByteLength}).`
+        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed 0).`
       )
     }
-    if (before) {
-      validateJsonLines(before.raw, path)
-      if (!before.raw.endsWith('\n')) {
-        throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+    if (observedRevision !== this.validatedEventsRevision) {
+      const before = this.readOptionalRegularFile(path)
+      const observedByteLength = before?.bytes.byteLength || 0
+      if (observedByteLength !== expectedByteLength) {
+        throw new Error(
+          `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${observedByteLength}).`
+        )
       }
+      const validatedRevision = before ? eventRevision(before.stat, path) : 'absent'
+      if (validatedRevision !== observedRevision) {
+        throw new Error('Workspace-lock WAL changed while validating the append prefix.')
+      }
+      if (before) {
+        validateJsonLines(before.raw, path)
+        if (!before.raw.endsWith('\n')) {
+          throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+        }
+      }
+      this.validatedEventsRevision = validatedRevision
     }
 
     const encoded = Buffer.from(serializedLineWithNewline, 'utf8')
@@ -238,19 +259,26 @@ export class NodeWorkspaceLockPersistence {
       fd = this.fs.openSync(path, flags, PRIVATE_FILE_MODE)
       const opened = this.fs.fstatSync(fd)
       assertRegularFile(opened, path)
+      if (existedBeforeAppend && eventRevision(opened, path) !== observedRevision) {
+        throw new Error('Workspace-lock WAL changed identity or revision while opening for append.')
+      }
       const actualLength = numericSize(opened.size, path)
       if (actualLength !== expectedByteLength) {
         throw new Error(
           `Workspace-lock WAL byte fence changed while opening (expected ${expectedByteLength}, observed ${actualLength}).`
         )
       }
+      // From this point a failed write/fsync has an ambiguous durable tail.
+      // Force a complete validation before any retry can append again.
+      this.validatedEventsRevision = null
       writeFully(this.fs, fd, encoded)
       this.fs.fsyncSync(fd)
-      if (!before) this.fsyncDirectory(this.authorityDirectory)
-      return actualLength + encoded.byteLength
+      if (!existedBeforeAppend) this.fsyncDirectory(this.authorityDirectory)
     } finally {
       if (fd !== null) this.fs.closeSync(fd)
     }
+    this.validatedEventsRevision = this.readEventsRevision()
+    return expectedByteLength + encoded.byteLength
   }
 
   /**

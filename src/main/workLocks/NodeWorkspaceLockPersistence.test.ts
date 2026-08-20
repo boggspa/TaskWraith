@@ -96,6 +96,30 @@ describe('NodeWorkspaceLockPersistence', () => {
     ).toBe(`${first}${second}`)
   })
 
+  it('does not reread a validated append-only prefix for every new frame', () => {
+    const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-lock-append-cache-'))
+    temporaryRoots.push(root)
+    const baseFs = nodeFs as unknown as NodeWorkspaceLockPersistenceFs
+    let fileReads = 0
+    const countingFs: NodeWorkspaceLockPersistenceFs = {
+      ...baseFs,
+      readFileSync: (fd) => {
+        fileReads += 1
+        return baseFs.readFileSync(fd)
+      }
+    }
+    const store = new NodeWorkspaceLockPersistence({ userDataRoot: root, fs: countingFs })
+    let byteLength = 0
+
+    for (let index = 0; index < 100; index += 1) {
+      byteLength = store.appendEvent(`${JSON.stringify({ index })}\n`, byteLength)
+    }
+
+    expect(fileReads).toBe(0)
+    expect(store.readEvents()).toMatchObject({ byteLength })
+    expect(fileReads).toBe(1)
+  })
+
   it('uses a write-capable WAL handle for durable confirmation on Windows', () => {
     const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-lock-windows-fsync-'))
     temporaryRoots.push(root)
