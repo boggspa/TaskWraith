@@ -14877,7 +14877,7 @@ Next action:
     expect(musePayload.reasoningEffort).toBe('ultra')
   })
 
-  it('threads Ollama participant tier and run profile through dispatch', async () => {
+  it('threads Ollama reasoning and run profile through dispatch', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -14888,6 +14888,7 @@ Next action:
         instructions: 'Work locally.',
         order: 1,
         model: 'ornith:35b',
+        reasoningEffort: 'off',
         permissionPresetId: 'workspace_write',
         ollamaRunProfile: 'verify_with_shell'
       }
@@ -14903,6 +14904,7 @@ Next action:
     expect(harness.dispatched[0]).toMatchObject({
       provider: 'ollama',
       model: 'ornith:35b',
+      reasoningEffort: 'off',
       ollamaRunProfile: 'verify_with_shell'
     })
   })

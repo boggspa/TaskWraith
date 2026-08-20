@@ -709,6 +709,23 @@ describe('ComposerService', () => {
     expect(payload.reasoningEffort).toBe('xhigh')
   })
 
+  it('threads Ollama reasoning from the picker and persisted chat metadata', async () => {
+    const selected = await compose(
+      { provider: 'ollama' },
+      {
+        selectedModelType: 'gpt-oss:20b',
+        ollamaReasoningEffort: 'low'
+      }
+    )
+    expect(selected.reasoningEffort).toBe('low')
+
+    const persisted = await compose(
+      { provider: 'ollama', providerMetadata: { ollamaReasoningEffort: 'off' } },
+      { selectedModelType: 'ornith-1.5:35b' }
+    )
+    expect(persisted.reasoningEffort).toBe('off')
+  })
+
   it('defaults K3 effort to Max and ignores unsupported Off', async () => {
     const payload = await compose(
       { provider: 'kimi' },

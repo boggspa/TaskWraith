@@ -41,6 +41,7 @@ import {
   KIMI_DEFAULT_MODELS,
   type CodexModelOption
 } from './providerModelDefaults'
+import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
@@ -152,6 +153,16 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'medium', label: mistralReasoningDisplayLabel('medium') },
   { value: 'high', label: mistralReasoningDisplayLabel('high') },
   { value: 'max', label: mistralReasoningDisplayLabel('max') }
+]
+
+const OLLAMA_TOGGLE_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'on', label: 'On' }
+]
+const OLLAMA_LEVEL_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' }
 ]
 
 /** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
@@ -469,7 +480,8 @@ function isClaudeHaikuModel(modelId?: string | null): boolean {
 
 export function getEnsembleReasoningOptions(
   provider: ProviderId,
-  modelId?: string | null
+  modelId?: string | null,
+  modelMetadata?: { capabilities?: readonly string[] | null } | null
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
     case 'codex': {
@@ -514,6 +526,17 @@ export function getEnsembleReasoningOptions(
     }
     case 'pi': {
       return isPiMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
+    }
+    case 'ollama': {
+      const support = resolveOllamaReasoningSupport({
+        modelId,
+        ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
+          ? { capabilities: modelMetadata.capabilities }
+          : {})
+      })
+      if (support.kind === 'toggle') return OLLAMA_TOGGLE_REASONING
+      if (support.kind === 'levels') return OLLAMA_LEVEL_REASONING
+      return []
     }
     case 'muse':
       return MUSE_REASONING
@@ -614,7 +637,8 @@ export function getDefaultEnsembleParticipantConfig(
     case 'ollama':
       return {
         model: 'qwen3.5:9b',
-        permissionPresetId: 'default'
+        permissionPresetId: 'default',
+        reasoningEffort: 'on'
       }
     case 'antigravity':
       // Gemini-api lane model id — the `gemini-api:` prefix is load-bearing
@@ -745,7 +769,7 @@ export function buildProviderChangeParticipantPatch(
  */
 export type ProviderModelSelectionMetadata = Pick<
   CodexModelOption,
-  'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'additionalSpeedTiers'
+  'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'capabilities' | 'additionalSpeedTiers'
 >
 
 /**
@@ -828,7 +852,7 @@ function enabledReasoningEffortsForModel(
     ? source
         .filter((option) => !option.disabled)
         .map((option) => normalizeReasoningEffortToken(option.reasoningEffort))
-    : getEnsembleReasoningOptions(provider, model)
+    : getEnsembleReasoningOptions(provider, model, metadata)
         .filter((option) => !option.disabled)
         .map((option) => normalizeReasoningEffortToken(option.value))
   return [...new Set(values.filter(Boolean))]
@@ -863,6 +887,16 @@ function defaultReasoningEffortForModel(
     enabled
   )
   if (modelDefault) return modelDefault
+
+  if (provider === 'ollama') {
+    const ollamaDefault = resolveOllamaReasoningSupport({
+      modelId: model,
+      ...(metadata && Array.isArray(metadata.capabilities)
+        ? { capabilities: metadata.capabilities }
+        : {})
+    }).defaultEffort
+    if (ollamaDefault && enabled.includes(ollamaDefault)) return ollamaDefault
+  }
 
   const providerDefault = resolveEnabledEffortToken(
     normalizeReasoningEffortToken(getDefaultEnsembleParticipantConfig(provider).reasoningEffort),
@@ -1155,6 +1189,7 @@ export function resolveEnsembleParticipantSettings(
     | 'fastModeEnabled'
     | 'thinkingEnabled'
     | 'serviceTier'
+    | 'ollamaRunProfile'
   >
 ): ResolvedEnsembleParticipantSettings {
   const defaults = getDefaultEnsembleParticipantConfig(participant.provider)
@@ -1163,7 +1198,16 @@ export function resolveEnsembleParticipantSettings(
   const reasoningOptions = getEnsembleReasoningOptions(participant.provider, model)
   const enabledReasoningOptions = reasoningOptions.filter((option) => !option.disabled)
   const reasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
-  const modelDefaultReasoning = defaultReasoningEffortForModel(participant.provider, model)
+  const configuredModelDefaultReasoning = defaultReasoningEffortForModel(
+    participant.provider,
+    model
+  )
+  const modelDefaultReasoning =
+    participant.provider === 'ollama' &&
+    participant.ollamaRunProfile === 'local_scout' &&
+    reasoningValues.has('medium')
+      ? 'medium'
+      : configuredModelDefaultReasoning
   const reasoningEffort =
     enabledReasoningOptions.length === 0
       ? ''
@@ -1251,8 +1295,8 @@ export function getEnsembleModelDefaults(
     case 'ollama':
       return {
         modelOptions: OLLAMA_MODELS,
-        reasoningOptions: [],
-        defaultReasoning: '',
+        reasoningOptions: getEnsembleReasoningOptions('ollama', 'qwen3.5:9b'),
+        defaultReasoning: 'on',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'qwen3.5:9b'
       }

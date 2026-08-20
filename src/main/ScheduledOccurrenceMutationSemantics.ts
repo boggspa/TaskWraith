@@ -479,6 +479,9 @@ export function buildScheduledTaskDispatchReceipt(task: ScheduledTask, generated
       ...(task.museReasoningEffort !== undefined
         ? { museReasoningEffort: task.museReasoningEffort }
         : {}),
+      ...(task.ollamaReasoningEffort !== undefined
+        ? { ollamaReasoningEffort: task.ollamaReasoningEffort }
+        : {}),
       ...(task.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: task.cursorReasoningEffort }
         : {}),

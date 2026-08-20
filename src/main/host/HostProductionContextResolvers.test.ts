@@ -142,6 +142,27 @@ describe('createHostProductionContextResolvers', () => {
     })
   })
 
+  it('reads Ollama reasoning from the shared provider metadata key', async () => {
+    const { resolvers } = open({
+      chats: [
+        chat({
+          provider: 'ollama',
+          requestedModel: 'ornith-1.5:35b',
+          providerMetadata: { ollamaReasoningEffort: 'off' }
+        })
+      ]
+    })
+
+    await expect(resolvers.resolveComposerSend('thread-1')).resolves.toMatchObject({
+      ok: true,
+      value: {
+        provider: 'ollama',
+        model: 'ornith-1.5:35b',
+        reasoningEffort: 'off'
+      }
+    })
+  })
+
   it('projects canonical offers and rejects any composer nomination outside them', async () => {
     const { resolvers } = open({
       chats: [

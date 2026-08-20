@@ -16588,6 +16588,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
         participant.provider === 'muse' ||
+        participant.provider === 'ollama' ||
         (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
           ? participant.reasoningEffort
@@ -19106,6 +19107,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex' ||
         participant.provider === 'kimi' ||
         participant.provider === 'muse' ||
+        participant.provider === 'ollama' ||
         (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
           ? participant.reasoningEffort
@@ -22519,6 +22521,7 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
   if (
     participant.provider === 'codex' ||
     participant.provider === 'claude' ||
+    participant.provider === 'ollama' ||
     (participant.provider === 'grok' && isGrokReasoningModelId(participant.model)) ||
     (participant.provider === 'cursor' && isCursorGrokModelId(participant.model))
   ) {

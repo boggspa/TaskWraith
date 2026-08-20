@@ -695,6 +695,21 @@ describe('EnsembleParticipantsAboveRow', () => {
         fastModeEnabled: false,
         serviceTier: 'standard'
       })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'ornith-1.5:35b')).toMatchObject({
+        provider: 'ollama',
+        model: 'ornith-1.5:35b',
+        reasoningEffort: 'on'
+      })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'gpt-oss:20b')).toMatchObject({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: 'high'
+      })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'gemma3:4b')).toMatchObject({
+        provider: 'ollama',
+        model: 'gemma3:4b',
+        reasoningEffort: undefined
+      })
       expect(createEnsembleParticipantAddConfiguration('claude', 'claude-haiku-4-5')).toMatchObject(
         {
           model: 'claude-haiku-4-5',

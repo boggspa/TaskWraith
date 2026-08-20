@@ -53,6 +53,7 @@ export interface QueuedRunRequest {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string

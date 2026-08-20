@@ -26,6 +26,8 @@ interface CodexModelOption {
     disabledReason?: string
   }>
   defaultReasoningEffort?: string | null
+  /** Ollama `/api/show` capability names retained for model-aware controls. */
+  capabilities?: string[]
   additionalSpeedTiers?: string[]
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when this model is retired by the
    * provider. When set, the model picker renders a small clock + ordinal-

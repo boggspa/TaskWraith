@@ -87,6 +87,7 @@ function scheduledComposerInput(chat: ChatRecord, task: ScheduledTask): Composer
     kimiThinkingEnabled: task.kimiThinkingEnabled,
     grokReasoningEffort: task.grokReasoningEffort,
     museReasoningEffort: task.museReasoningEffort,
+    ollamaReasoningEffort: task.ollamaReasoningEffort,
     cursorReasoningEffort: task.cursorReasoningEffort,
     cursorFastMode: task.cursorFastMode,
     runtimeProfileId: task.runtimeProfileId,

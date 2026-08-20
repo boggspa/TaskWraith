@@ -152,6 +152,7 @@ export interface ComposerInput {
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   museReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
@@ -911,11 +912,15 @@ export class ComposerService {
                     optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
                       optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
                   )
-                : provider === 'muse'
-                  ? optionalStringOrNull(effectiveInput.museReasoningEffort) ||
-                    optionalStringOrNull(metadataString(chat, 'museReasoningEffort')) ||
+                : provider === 'ollama'
+                  ? optionalStringOrNull(effectiveInput.ollamaReasoningEffort) ||
+                    optionalStringOrNull(metadataString(chat, 'ollamaReasoningEffort')) ||
                     null
-                  : null,
+                  : provider === 'muse'
+                    ? optionalStringOrNull(effectiveInput.museReasoningEffort) ||
+                      optionalStringOrNull(metadataString(chat, 'museReasoningEffort')) ||
+                      null
+                    : null,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
@@ -1124,6 +1129,9 @@ function applyComposerReroutePlan(
       : {}),
     ...(resolution.provider === 'grok'
       ? { grokReasoningEffort: plan.grokReasoningEffort ?? null }
+      : {}),
+    ...(resolution.provider === 'ollama'
+      ? { ollamaReasoningEffort: plan.ollamaReasoningEffort ?? null }
       : {}),
     ...(resolution.provider === 'cursor'
       ? {

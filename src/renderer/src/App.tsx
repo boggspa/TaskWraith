@@ -571,6 +571,7 @@ import {
 import {
   buildProviderChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
+  getEnsembleReasoningOptions,
   normalizeProviderModelSelection,
   resolveEnsembleParticipantSettings
 } from './lib/ensembleProviderDefaults'
@@ -1874,6 +1875,7 @@ function App(): React.JSX.Element {
   )
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [mistralReasoningEffort, setMistralReasoningEffort] = useState<string>('medium')
+  const [ollamaReasoningEffort, setOllamaReasoningEffort] = useState<string>('on')
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
   // failsafe (Tier 1 → Accept Edits, shown once per workspace+provider;
@@ -4463,6 +4465,18 @@ function App(): React.JSX.Element {
               participant.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
           }
         : {}),
+      ...(provider === 'ollama'
+        ? {
+            ollamaReasoningEffort:
+              participant.reasoningEffort ||
+              getEnsembleReasoningOptions(
+                'ollama',
+                providerModel,
+                providerOptions.find((model) => model.id === providerModel)
+              ).at(-1)?.value ||
+              ''
+          }
+        : {}),
       ...(provider === 'mistral'
         ? {
             mistralReasoningEffort:
@@ -4601,6 +4615,11 @@ function App(): React.JSX.Element {
           ...(fallbackProvider === 'muse'
             ? typeof fallbackMetadata.museReasoningEffort === 'string'
               ? { museReasoningEffort: fallbackMetadata.museReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'ollama'
+            ? typeof fallbackMetadata.ollamaReasoningEffort === 'string'
+              ? { ollamaReasoningEffort: fallbackMetadata.ollamaReasoningEffort }
               : {}
             : {}),
           ...(fallbackProvider === 'cursor'
@@ -6283,10 +6302,17 @@ function App(): React.JSX.Element {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
+    const providerReasoningOptions = getEnsembleReasoningOptions(
+      provider,
+      selected,
+      providerModelOption
+    )
     const providerReasoningEfforts = new Set(
-      (providerModelOption?.supportedReasoningEfforts || [])
-        .filter((option) => !option.disabled)
-        .map((option) => option.reasoningEffort)
+      providerModelOption?.supportedReasoningEfforts
+        ? providerModelOption.supportedReasoningEfforts
+            .filter((option) => !option.disabled)
+            .map((option) => option.reasoningEffort)
+        : providerReasoningOptions.filter((option) => !option.disabled).map((option) => option.value)
     )
     const providerDefaultReasoning =
       providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
@@ -6311,6 +6337,8 @@ function App(): React.JSX.Element {
       storedPermissionPresetId === 'full_access' && resolvedApprovalMode !== 'auto_edit'
         ? derivedPermissionPresetId
         : storedPermissionPresetId || derivedPermissionPresetId
+    const persistedOllamaRunProfile =
+      typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
     return {
       provider,
       selectedModelType: selected,
@@ -6355,6 +6383,13 @@ function App(): React.JSX.Element {
         providerReasoningEfforts.has(metadata.mistralReasoningEffort)
           ? metadata.mistralReasoningEffort
           : 'medium',
+      ollamaReasoningEffort:
+        typeof metadata.ollamaReasoningEffort === 'string' &&
+        providerReasoningEfforts.has(metadata.ollamaReasoningEffort)
+          ? metadata.ollamaReasoningEffort
+          : persistedOllamaRunProfile === 'local_scout' && providerReasoningEfforts.has('medium')
+            ? 'medium'
+            : providerReasoningOptions.at(-1)?.value || '',
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
         providerReasoningEfforts.has(metadata.cursorReasoningEffort)
@@ -6373,7 +6408,7 @@ function App(): React.JSX.Element {
       // Absent → undefined → the runtime defaults to provider_parity. The
       // per-ensemble-participant selector is the sole runtime knob now.
       ollamaRunProfile:
-        typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
+        persistedOllamaRunProfile
     }
   }
 
@@ -6388,6 +6423,7 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return selection.grokReasoningEffort
     if (provider === 'muse') return selection.museReasoningEffort
     if (provider === 'mistral') return selection.mistralReasoningEffort
+    if (provider === 'ollama') return selection.ollamaReasoningEffort
     if (provider === 'cursor') return selection.cursorReasoningEffort
     return undefined
   }
@@ -6411,6 +6447,7 @@ function App(): React.JSX.Element {
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setMuseReasoningEffort(selection.museReasoningEffort)
     setMistralReasoningEffort(selection.mistralReasoningEffort)
+    setOllamaReasoningEffort(selection.ollamaReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
     setCursorFastMode(selection.cursorFastMode)
     setRuntimeProfileForChat(
@@ -6486,6 +6523,11 @@ function App(): React.JSX.Element {
               MUSE_DEFAULT_REASONING_EFFORT
           }
         : {}),
+      ...(provider === 'ollama'
+        ? {
+            reasoningEffort: selection.ollamaReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrokModelId(selection.selectedModelType)
@@ -6532,6 +6574,7 @@ function App(): React.JSX.Element {
     'grokReasoningEffort',
     'museReasoningEffort',
     'mistralReasoningEffort',
+    'ollamaReasoningEffort',
     'cursorReasoningEffort',
     'cursorFastMode',
     'runtimeProfileId',
@@ -7979,7 +8022,9 @@ function App(): React.JSX.Element {
             ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
                 (model) => model.id === nextModel
               )
-            : undefined
+            : provider === 'ollama'
+              ? getProviderModelOptions('ollama').find((model) => model.id === nextModel)
+              : undefined
       const normalizedSelection = normalizeProviderModelSelection(
         provider,
         nextModel,
@@ -8014,6 +8059,8 @@ function App(): React.JSX.Element {
           provider === 'muse'
             ? normalizedSelection.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
             : undefined,
+        ollamaReasoningEffort:
+          provider === 'ollama' ? normalizedSelection.reasoningEffort || '' : undefined,
         cursorReasoningEffort:
           provider === 'cursor' ? normalizedSelection.reasoningEffort || '' : undefined,
         cursorFastMode:
@@ -13194,6 +13241,9 @@ function App(): React.JSX.Element {
     ...(request.mistralReasoningEffort !== undefined
       ? { mistralReasoningEffort: request.mistralReasoningEffort }
       : {}),
+    ...(request.ollamaReasoningEffort !== undefined
+      ? { ollamaReasoningEffort: request.ollamaReasoningEffort }
+      : {}),
     ...(request.cursorReasoningEffort !== undefined
       ? { cursorReasoningEffort: request.cursorReasoningEffort }
       : {}),
@@ -13348,6 +13398,8 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.museReasoningEffort ?? request.museReasoningEffort,
       mistralReasoningEffort:
         queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
+      ollamaReasoningEffort:
+        queuedProviderSelection?.ollamaReasoningEffort ?? request.ollamaReasoningEffort,
       cursorReasoningEffort:
         queuedProviderSelection?.cursorReasoningEffort ?? request.cursorReasoningEffort,
       cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
@@ -13655,6 +13707,10 @@ function App(): React.JSX.Element {
           museReasoningEffort ||
           MUSE_DEFAULT_REASONING_EFFORT
         : museReasoningEffort
+    const requestOllamaReasoningEffort =
+      provider === 'ollama'
+        ? composerSelection?.ollamaReasoningEffort || ollamaReasoningEffort
+        : ollamaReasoningEffort
     const requestCursorReasoningEffort =
       provider === 'cursor'
         ? composerSelection?.cursorReasoningEffort || cursorReasoningEffort
@@ -13743,6 +13799,7 @@ function App(): React.JSX.Element {
       kimiThinkingEnabled: requestKimiThinkingEnabled,
       grokReasoningEffort: requestGrokReasoningEffort,
       museReasoningEffort: requestMuseReasoningEffort,
+      ollamaReasoningEffort: requestOllamaReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
       cursorFastMode: requestCursorFastMode,
       runtimeProfileId: getRuntimeProfileIdForChat(selectedChat, provider),
@@ -14397,6 +14454,7 @@ function App(): React.JSX.Element {
           grokReasoningEffort: request.grokReasoningEffort,
           museReasoningEffort: request.museReasoningEffort,
           mistralReasoningEffort: request.mistralReasoningEffort,
+          ollamaReasoningEffort: request.ollamaReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
           cursorFastMode: request.cursorFastMode,
           runtimeProfileId: request.runtimeProfileId,
@@ -17479,6 +17537,7 @@ function App(): React.JSX.Element {
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
       mistralReasoningEffort: request.mistralReasoningEffort,
+      ollamaReasoningEffort: request.ollamaReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
       cursorFastMode: request.cursorFastMode,
       runtimeProfileId: request.runtimeProfileId,
@@ -18430,6 +18489,7 @@ function App(): React.JSX.Element {
       grokReasoningEffort: selection.grokReasoningEffort,
       museReasoningEffort: selection.museReasoningEffort,
       mistralReasoningEffort: selection.mistralReasoningEffort,
+      ollamaReasoningEffort: selection.ollamaReasoningEffort,
       cursorReasoningEffort: selection.cursorReasoningEffort,
       cursorFastMode: selection.cursorFastMode,
       runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider),
@@ -22169,6 +22229,7 @@ function App(): React.JSX.Element {
     sideComposerSelection?.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideMuseReasoning =
     sideComposerSelection?.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+  const sideOllamaReasoning = sideComposerSelection?.ollamaReasoningEffort || ''
   const sideCursorReasoning =
     sideComposerSelection?.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideCursorFastMode = Boolean(sideComposerSelection?.cursorFastMode)
@@ -22213,6 +22274,20 @@ function App(): React.JSX.Element {
       ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
     }))
     sideComposerSelectedReasoning = sideKimiReasoning
+  } else if (sideComposerProvider === 'ollama') {
+    const modelOption = sideComposerModelOptionsRaw.find(
+      (model) => model.id === sideComposerSelectedModel
+    )
+    sideComposerReasoningOptions = getEnsembleReasoningOptions(
+      'ollama',
+      sideComposerSelectedModel,
+      modelOption
+    )
+    sideComposerSelectedReasoning = sideComposerReasoningOptions.some(
+      (option) => option.value === sideOllamaReasoning
+    )
+      ? sideOllamaReasoning
+      : sideComposerReasoningOptions.at(-1)?.value || ''
   } else if (
     sideComposerProvider === 'grok' &&
     isGrokReasoningModelId(sideComposerSelectedModel)
@@ -22415,6 +22490,13 @@ function App(): React.JSX.Element {
         metadataPatch.codexServiceTier = ''
       }
     }
+    if (sideComposerProvider === 'ollama') {
+      metadataPatch.ollamaReasoningEffort = getEnsembleReasoningOptions(
+        'ollama',
+        nextModel,
+        sideComposerModelOptionsRaw.find((model) => model.id === nextModel)
+      ).at(-1)?.value || ''
+    }
     if (sideComposerProvider === 'claude') {
       const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
         (model) => model.id === nextModel
@@ -22469,6 +22551,8 @@ function App(): React.JSX.Element {
       rememberSideChatComposerSelection({ grokReasoningEffort: value })
     } else if (sideComposerProvider === 'muse') {
       rememberSideChatComposerSelection({ museReasoningEffort: value })
+    } else if (sideComposerProvider === 'ollama') {
+      rememberSideChatComposerSelection({ ollamaReasoningEffort: value })
     } else if (sideComposerProvider === 'cursor') {
       rememberSideChatComposerSelection({ cursorReasoningEffort: value })
     }
@@ -29927,6 +30011,7 @@ function App(): React.JSX.Element {
         viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
       const viewerMistralReasoning =
         viewerSelection.mistralReasoningEffort || 'medium'
+      const viewerOllamaReasoning = viewerSelection.ollamaReasoningEffort || ''
       const viewerCursorReasoning =
         viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
@@ -30387,6 +30472,7 @@ function App(): React.JSX.Element {
         grokReasoningEffort: viewerGrokReasoning,
         museReasoningEffort: viewerMuseReasoning,
         mistralReasoningEffort: viewerMistralReasoning,
+        ollamaReasoningEffort: viewerOllamaReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
         cursorFastMode: viewerCursorFastMode,
         codexServiceTier: paneViewerSelection.codexServiceTier || '',
@@ -30514,6 +30600,7 @@ function App(): React.JSX.Element {
       setKimiFastMode: paneNoopSetter,
       setKimiReasoningEffort: paneNoopSetter,
       setMistralReasoningEffort: paneNoopSetter,
+      setOllamaReasoningEffort: paneNoopSetter,
       setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
         setMuseReasoningEffort: paneNoopSetter,
@@ -30714,6 +30801,7 @@ function App(): React.JSX.Element {
     grokReasoningEffort,
     museReasoningEffort,
     mistralReasoningEffort,
+    ollamaReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAreaRef,
@@ -30801,6 +30889,7 @@ function App(): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setMistralReasoningEffort,
+    setOllamaReasoningEffort,
     setCodexServiceTier,
     setCustomModel,
     setGrokReasoningEffort,

@@ -94,10 +94,11 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns ollama defaults: Qwen 3.5 model, default approval, no reasoning axis', () => {
+  it('returns Ollama defaults with its boolean thinking control enabled', () => {
     expect(getDefaultEnsembleParticipantConfig('ollama')).toEqual({
       model: 'qwen3.5:9b',
-      permissionPresetId: 'default'
+      permissionPresetId: 'default',
+      reasoningEffort: 'on'
     })
   })
 })
@@ -556,6 +557,28 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(resolved.thinkingEnabled).toBe(false)
   })
 
+  it('reflects a legacy GPT-OSS Local Scout profile until the user picks an effort', () => {
+    const legacy = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: undefined,
+        ollamaRunProfile: 'local_scout'
+      })
+    )
+    expect(legacy.reasoningEffort).toBe('medium')
+
+    const selected = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: 'low',
+        ollamaRunProfile: 'local_scout'
+      })
+    )
+    expect(selected.reasoningEffort).toBe('low')
+  })
+
   it('keeps kimi thinking ON even when stale metadata requests off', () => {
     const defaults = resolveEnsembleParticipantSettings(
       participant({ provider: 'kimi', id: 'ensemble-kimi' })
@@ -895,7 +918,26 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'north-mini-code-1.0:q4_K_M',
       'llama3.2:3b'
     ])
-    expect(ollama.reasoningOptions).toEqual([])
+    expect(ollama.reasoningOptions.map((option) => option.value)).toEqual(['off', 'on'])
+    expect(ollama.defaultReasoning).toBe('on')
+  })
+
+  it('distinguishes Ollama boolean thinking, GPT-OSS levels, unsupported, and live models', () => {
+    expect(getEnsembleReasoningOptions('ollama', 'ornith-1.5:35b').map((o) => o.value)).toEqual([
+      'off',
+      'on'
+    ])
+    expect(getEnsembleReasoningOptions('ollama', 'gpt-oss:20b').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
+    expect(getEnsembleReasoningOptions('ollama', 'gemma3:4b')).toEqual([])
+    expect(
+      getEnsembleReasoningOptions('ollama', 'custom-thinking:latest', {
+        capabilities: ['completion', 'thinking']
+      }).map((o) => o.value)
+    ).toEqual(['off', 'on'])
   })
 })
 

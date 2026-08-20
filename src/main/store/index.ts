@@ -1256,6 +1256,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     codexReasoningEffort: input.codexReasoningEffort,
     grokReasoningEffort: input.grokReasoningEffort,
     museReasoningEffort: input.museReasoningEffort,
+    ollamaReasoningEffort: input.ollamaReasoningEffort,
     cursorReasoningEffort: input.cursorReasoningEffort,
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
@@ -6695,6 +6696,8 @@ export class AppStore {
           derived.grokReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'muse') {
           derived.museReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'ollama') {
+          derived.ollamaReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'cursor' && isCursorGrokModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
         }
@@ -6784,6 +6787,7 @@ export class AppStore {
     claudeReasoningEffort?: string | null
     grokReasoningEffort?: string | null
     museReasoningEffort?: string | null
+    ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
     cursorFastMode?: boolean
   }): ChatRecord {
@@ -6838,6 +6842,9 @@ export class AppStore {
         : {}),
       ...(args.museReasoningEffort !== undefined
         ? { museReasoningEffort: args.museReasoningEffort }
+        : {}),
+      ...(args.ollamaReasoningEffort !== undefined
+        ? { ollamaReasoningEffort: args.ollamaReasoningEffort }
         : {}),
       ...(args.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: args.cursorReasoningEffort }

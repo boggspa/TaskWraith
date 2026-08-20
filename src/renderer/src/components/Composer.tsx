@@ -251,6 +251,7 @@ export interface ComposerProps {
   grokReasoningEffort: any
   museReasoningEffort: any
   mistralReasoningEffort: any
+  ollamaReasoningEffort: any
   cursorReasoningEffort: any
   cursorFastMode: any
   composerAboveBarStackAuraClass: any
@@ -506,6 +507,7 @@ export interface ComposerProps {
   setKimiFastMode: any
   setKimiReasoningEffort: any
   setMistralReasoningEffort: any
+  setOllamaReasoningEffort: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
   setPendingElevation: any
@@ -608,6 +610,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     codexServiceTier,
     grokReasoningEffort,
     museReasoningEffort,
+    ollamaReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAboveBarStackAuraClass,
@@ -825,6 +828,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setKimiFastMode,
     setKimiReasoningEffort,
     setMistralReasoningEffort,
+    setOllamaReasoningEffort,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setPendingElevation,
@@ -1133,6 +1137,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         ...(model.defaultReasoningEffort !== undefined
           ? { defaultReasoningEffort: model.defaultReasoningEffort }
           : {}),
+        ...(model.capabilities ? { capabilities: model.capabilities } : {}),
         ...(model.additionalSpeedTiers
           ? { additionalSpeedTiers: model.additionalSpeedTiers }
           : {}),
@@ -1205,7 +1210,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         }
       })
     }
-    return getEnsembleReasoningOptions(targetProvider, modelId)
+    return getEnsembleReasoningOptions(targetProvider, modelId, model)
   }
 
   const hasVisibleScheduledCountdown =
@@ -3774,6 +3779,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'string'
                                 ? soloPendingProviderMetadata.mistralReasoningEffort
                                 : mistralReasoningEffort
+                          const effectiveOllamaReasoning =
+                            ensembleResolved?.provider === 'ollama'
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.ollamaReasoningEffort ===
+                                    'string'
+                                ? soloPendingProviderMetadata.ollamaReasoningEffort
+                                : ollamaReasoningEffort
                           const effectiveCursorReasoning =
                             ensembleResolved?.provider === 'cursor'
                               ? ensembleResolved.reasoningEffort
@@ -3859,6 +3871,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               effectiveModelOptionsRaw
                             )
                             combinedSelectedReasoning = effectiveKimiReasoning
+                          } else if (effectiveProvider === 'ollama') {
+                            combinedReasoningOptions = reasoningOptionsForEffectiveModel(
+                              'ollama',
+                              effectiveSelectedModel,
+                              effectiveModelOptionsRaw
+                            )
+                            combinedSelectedReasoning = combinedReasoningOptions.some(
+                              (option) => option.value === effectiveOllamaReasoning
+                            )
+                              ? effectiveOllamaReasoning
+                              : combinedReasoningOptions.at(-1)?.value || ''
                           } else if (
                             effectiveProvider === 'grok' &&
                             isGrokReasoningModelId(effectiveSelectedModel)
@@ -4039,6 +4062,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 if (shouldUpdateLiveComposerState) setKimiFastMode(false)
                                 metadataPatch.kimiFastMode = false
                               }
+                            }
+                            if (effectiveProvider === 'ollama') {
+                              const nextReasoning = getEnsembleReasoningOptions(
+                                'ollama',
+                                nextModel,
+                                effectiveModelOptionsRaw.find((model) => model.id === nextModel)
+                              ).at(-1)?.value || ''
+                              if (shouldUpdateLiveComposerState) {
+                                setOllamaReasoningEffort(nextReasoning)
+                              }
+                              metadataPatch.ollamaReasoningEffort = nextReasoning
                             }
                             if (effectiveProvider === 'mistral' || effectiveProvider === 'pi') {
                               const mistralModelOption = effectiveModelOptionsRaw.find(
@@ -4246,6 +4280,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               rememberCurrentChatComposerSelection({
                                 mistralReasoningEffort: value
+                              })
+                            } else if (effectiveProvider === 'ollama') {
+                              if (shouldUpdateLiveComposerState) {
+                                setOllamaReasoningEffort(value)
+                              }
+                              rememberCurrentChatComposerSelection({
+                                ollamaReasoningEffort: value
                               })
                             } else if (effectiveProvider === 'grok') {
                               if (shouldUpdateLiveComposerState) {

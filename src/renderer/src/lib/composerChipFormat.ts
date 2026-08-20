@@ -48,6 +48,8 @@ export interface ComposerChipContext {
   museReasoningEffort?: string
   /** Mistral thinking effort token (off/low/medium/high/max). */
   mistralReasoningEffort?: string
+  /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
+  ollamaReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -354,6 +356,18 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     const effort = antigravityEffortForModelId(ctx.modelId)
     if (effort === 'on') return 'Thinking On'
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
+  }
+
+  if (provider === 'ollama') {
+    const value = String(ctx.ollamaReasoningEffort || '')
+      .trim()
+      .toLowerCase()
+    if (!value || value === 'off') return ''
+    if (value === 'on') return 'Thinking'
+    if (value === 'low') return 'Low'
+    if (value === 'medium') return 'Medium'
+    if (value === 'high') return 'High'
+    return ''
   }
 
   // Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels

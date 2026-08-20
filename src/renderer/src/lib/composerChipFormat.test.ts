@@ -157,6 +157,19 @@ describe('shortModelName', () => {
 })
 
 describe('reasoningDisplayLabel', () => {
+  it('uses Thinking for Ollama On and level labels for GPT-OSS', () => {
+    const base = {
+      provider: 'ollama' as const,
+      composerStyle: 'default' as const,
+      modelId: 'ornith-1.5:35b',
+      modelLabel: 'Ornith 1.5 (35B Param)'
+    }
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'on' })).toBe('Thinking')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'off' })).toBe('')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'low' })).toBe('Low')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'high' })).toBe('High')
+  })
+
   it('Codex xhigh becomes Extra High', () => {
     expect(
       reasoningDisplayLabel({

@@ -156,6 +156,11 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
           museReasoningEffort: plan.museReasoningEffort ?? null
         }
       : {}),
+    ...(resolution.provider === 'ollama'
+      ? {
+          reasoningEffort: plan.ollamaReasoningEffort ?? null
+        }
+      : {}),
     ...(resolution.provider === 'cursor'
       ? {
           reasoningEffort: isCursorGrokModelId(plan.selectedModelType)
@@ -263,7 +268,7 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
   const input = value as Record<string, unknown>
   const provider = typeof input.provider === 'string' ? input.provider : ''
   if (!PROVIDER_SET.has(provider as ProviderId)) return null
-  return {
+  const reroute: ProviderReroutePlan = {
     provider: provider as ProviderId,
     ...(sanitizeShortString(input.selectedModelType, 120)
       ? { selectedModelType: sanitizeShortString(input.selectedModelType, 120) }
@@ -330,6 +335,10 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
         : {}),
     ...(input.provider === 'kimi' ? { kimiThinkingEnabled: true } : {})
   }
+  const ollamaReasoningEffort = sanitizeShortString(input.ollamaReasoningEffort, 80)
+  if (input.ollamaReasoningEffort === null) reroute.ollamaReasoningEffort = null
+  else if (ollamaReasoningEffort) reroute.ollamaReasoningEffort = ollamaReasoningEffort
+  return reroute
 }
 
 function sanitizeIsoTimestamp(value: unknown): string | undefined {

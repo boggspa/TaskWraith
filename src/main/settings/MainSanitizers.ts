@@ -1162,6 +1162,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
       grokReasoningEffort: optionalString(input.grokReasoningEffort),
       museReasoningEffort: optionalString(input.museReasoningEffort),
+      ollamaReasoningEffort: optionalString(input.ollamaReasoningEffort),
       cursorReasoningEffort: optionalString(input.cursorReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,

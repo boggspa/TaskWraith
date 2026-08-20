@@ -662,7 +662,7 @@ function normalizeLadderEffort(effort: string): string {
  * rewriting those wire tokens onto other providers' catalogs.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
-  if (provider === 'kimi') {
+  if (provider === 'kimi' || provider === 'ollama') {
     const token = value.trim().toLowerCase()
     if (token === 'off') return 0
     if (token === 'on') return 1
@@ -1298,6 +1298,7 @@ export function CombinedModelPicker({
         claudeReasoningEffort,
         grokReasoningEffort,
         cursorReasoningEffort,
+        ollamaReasoningEffort: provider === 'ollama' ? selectedReasoning : undefined,
         mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,
@@ -1333,6 +1334,7 @@ export function CombinedModelPicker({
         claudeReasoningEffort,
         grokReasoningEffort,
         cursorReasoningEffort,
+        ollamaReasoningEffort: provider === 'ollama' ? selectedReasoning : undefined,
         mistralReasoningEffort: provider === 'mistral' ? selectedReasoning : undefined,
         kimiThinkingEnabled,
         kimiReasoningEffort,

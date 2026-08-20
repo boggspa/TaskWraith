@@ -86,7 +86,8 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
             id: 'local-scout',
             provider: 'ollama',
             role: 'Scout',
-            model: 'qwen3.5:9b'
+            model: 'qwen3.5:9b',
+            reasoningEffort: 'on'
           })
         ])
       )
@@ -99,7 +100,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'ollama',
       providerClass: 'alibaba',
       roleLabel: 'Scout',
-      modelBadge: 'Qwen 3.5 (9B Param)',
+      modelBadge: 'Qwen 3.5 (9B Param) Thinking',
       activity: 'working'
     })
   })

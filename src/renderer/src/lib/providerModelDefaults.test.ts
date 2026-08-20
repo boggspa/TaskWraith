@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
 import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
@@ -239,6 +240,18 @@ describe('Ollama provider model defaults', () => {
       'llama3.2:3b',
       'custom'
     ])
+  })
+
+  it('classifies every curated Ollama row without an unknown reasoning state', () => {
+    const classifications = OLLAMA_DEFAULT_MODELS.filter((model) => model.id !== 'custom').map(
+      (model) => [model.id, resolveOllamaReasoningSupport({ modelId: model.id }).kind] as const
+    )
+    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(23)
+    expect(classifications.filter(([, kind]) => kind === 'levels')).toEqual([
+      ['gpt-oss:20b', 'levels']
+    ])
+    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(10)
+    expect(classifications.filter(([, kind]) => kind === 'unknown')).toEqual([])
   })
 })
 

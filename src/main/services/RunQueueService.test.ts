@@ -600,6 +600,7 @@ describe('RunQueueService', () => {
         effectiveWorkspacePath: '/repo-worktrees/queued-feature',
         geminiAuthProfileId: 'gauth-1',
         codexReasoningEffort: 'minimal',
+        ollamaReasoningEffort: 'off',
         kimiFastMode: true,
         kimiThinkingEnabled: false,
         geminiWorktree: { enabled: true, name: 'feature' }
@@ -659,6 +660,7 @@ describe('RunQueueService', () => {
           effectiveWorkspacePath: '/repo-worktrees/queued-feature',
           geminiAuthProfileId: 'gauth-1',
           codexReasoningEffort: 'minimal',
+          ollamaReasoningEffort: 'off',
           kimiFastMode: true,
           kimiThinkingEnabled: false,
           geminiWorktree: { enabled: true, name: 'feature' }

@@ -93,12 +93,6 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
   const baseModelName = shortModelName(participant.provider, '', model)
   if (!baseModelName) return null
 
-  const brand =
-    participant.provider === 'ollama'
-      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
-      : null
-  if (brand?.modelLabel) return brand.modelLabel
-
   const reasoningSuffix = reasoningDisplayLabel({
     provider: participant.provider,
     composerStyle: 'default',
@@ -110,10 +104,19 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
       participant.provider === 'claude' ? participant.reasoningEffort : undefined,
     mistralReasoningEffort:
       participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
+    ollamaReasoningEffort:
+      participant.provider === 'ollama' ? participant.reasoningEffort : undefined,
     kimiReasoningEffort:
       participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
     kimiThinkingEnabled: participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
   })
+  const brand =
+    participant.provider === 'ollama'
+      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
+      : null
+  if (brand?.modelLabel) {
+    return reasoningSuffix ? `${brand.modelLabel} ${reasoningSuffix}` : brand.modelLabel
+  }
   return reasoningSuffix ? `${baseModelName} ${reasoningSuffix}` : baseModelName
 }
 

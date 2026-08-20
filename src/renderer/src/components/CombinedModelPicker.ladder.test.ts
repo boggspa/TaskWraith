@@ -29,12 +29,14 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('claude', 'Light')).toBe(1)
   })
 
-  it('maps Kimi fixed On plus K3 Low/High/Max onto the shared ladder', () => {
+  it('maps Kimi and Ollama boolean On plus level efforts onto the shared ladder', () => {
     expect(ladderIndexForOption('kimi', 'off')).toBe(0)
     expect(ladderIndexForOption('kimi', 'on')).toBe(1)
     expect(ladderIndexForOption('kimi', 'low')).toBe(1)
     expect(ladderIndexForOption('kimi', 'high')).toBe(3)
     expect(ladderIndexForOption('kimi', 'max')).toBe(5)
+    expect(ladderIndexForOption('ollama', 'off')).toBe(0)
+    expect(ladderIndexForOption('ollama', 'on')).toBe(1)
   })
 
   it('returns null for values off the ladder', () => {
@@ -184,7 +186,7 @@ describe('unavailable reasoning presentation', () => {
       ['cursor', 'unknown-cursor-model'],
       ['grok', 'grok-composer-2.5-fast'],
       ['gemini', 'gemini-3.1-pro'],
-      ['ollama', 'qwen3.5:9b']
+      ['ollama', 'gemma3:4b']
     ] as const) {
       expect(resolveReasoningLadderAvailability(provider, modelId, emptyLadder)).toMatchObject({
         mutable: false,
@@ -219,6 +221,21 @@ describe('unavailable reasoning presentation', () => {
       }
     })
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
+      mutable: true
+    })
+    const ollamaToggle = buildLadderModel('ollama', [
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On' }
+    ])
+    const gptOssLevels = buildLadderModel('ollama', [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' }
+    ])
+    expect(resolveReasoningLadderAvailability('ollama', 'ornith-1.5:35b', ollamaToggle)).toEqual({
+      mutable: true
+    })
+    expect(resolveReasoningLadderAvailability('ollama', 'gpt-oss:20b', gptOssLevels)).toEqual({
       mutable: true
     })
 
@@ -313,7 +330,7 @@ describe('unavailable reasoning presentation', () => {
       )
     }
 
-    const generic = renderUnavailable('ollama', 'qwen3.5:9b')
+    const generic = renderUnavailable('ollama', 'gemma3:4b')
     expect(generic).toContain('data-disabled="true"')
     expect(generic).toContain('aria-disabled="true"')
     expect(generic).toContain('tabindex="-1"')

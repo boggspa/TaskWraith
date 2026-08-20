@@ -170,7 +170,11 @@ export function ParticipantPickerCluster({
           value: variant.effort,
           label: variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
         })) ?? [])
-      : getEnsembleReasoningOptions(participant.provider, selectedModelId)
+      : getEnsembleReasoningOptions(
+          participant.provider,
+          selectedModelId,
+          modelOptions.find((option) => option.id === selectedModelId)
+        )
   const onSelectReasoning = (value: string): void => {
     if (participant.provider === 'antigravity') {
       const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)

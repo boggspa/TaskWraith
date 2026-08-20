@@ -391,7 +391,7 @@ export function getEnsembleAddReasoningOptions(
       }
     })
   }
-  return getEnsembleReasoningOptions(provider, model)
+  return getEnsembleReasoningOptions(provider, model, modelOption)
 }
 
 /**

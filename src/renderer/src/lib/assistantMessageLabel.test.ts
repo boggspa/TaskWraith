@@ -88,15 +88,21 @@ describe('formatAssistantMessageLabel', () => {
 
     expect(
       formatAssistantMessageLabel(
-        assistant({ providerModel: 'ornith-1.5:35b' }),
+        assistant({
+          providerModel: 'ornith-1.5:35b',
+          ensembleProvider: 'ollama',
+          ensembleModel: 'ornith-1.5:35b',
+          ensembleReasoningEffort: 'on'
+        }),
         'Ollama',
-        'ollama'
+        'ollama',
+        { isEnsembleChat: true }
       )
     ).toEqual({
       label: 'Deep Reinforce',
       provider: 'ollama',
       providerClass: 'deep-reinforce',
-      modelBadge: 'Ornith 1.5 (35B Param)'
+      modelBadge: 'Ornith 1.5 (35B Param) Thinking'
     })
   })
 

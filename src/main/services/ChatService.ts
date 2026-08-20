@@ -114,6 +114,7 @@ export interface CreateSideChatInput {
   claudeReasoningEffort?: string | null
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean
 }
@@ -370,6 +371,7 @@ export class ChatService {
       claudeReasoningEffort: optionalString(args?.claudeReasoningEffort),
       grokReasoningEffort: optionalString(args?.grokReasoningEffort),
       museReasoningEffort: optionalString(args?.museReasoningEffort),
+      ollamaReasoningEffort: optionalString(args?.ollamaReasoningEffort),
       cursorReasoningEffort: optionalString(args?.cursorReasoningEffort),
       ...(typeof args?.cursorFastMode === 'boolean'
         ? { cursorFastMode: args.cursorFastMode }

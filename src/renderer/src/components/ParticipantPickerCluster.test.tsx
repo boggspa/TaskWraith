@@ -312,6 +312,26 @@ describe('ParticipantPickerCluster', () => {
     expect(html).not.toContain('data-selected-reasoning="on"')
   })
 
+  it('surfaces an Ollama participant boolean thinking selection', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={participant({
+          provider: 'ollama',
+          model: 'ornith-1.5:35b',
+          reasoningEffort: 'on'
+        })}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="on"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">Thinking</span>')
+    expect(html).toContain('Ornith 1.5 (35B Param)')
+  })
+
   it('uses AntiGravity model variants as its selected reasoning tier', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster

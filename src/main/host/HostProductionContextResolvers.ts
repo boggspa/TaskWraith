@@ -219,6 +219,7 @@ function reasoningForProvider(
     grok: ['grokReasoningEffort', 'reasoningEffort'],
     mistral: ['mistralReasoningEffort', 'reasoningEffort'],
     muse: ['museReasoningEffort', 'reasoningEffort'],
+    ollama: ['ollamaReasoningEffort', 'reasoningEffort'],
     cursor: ['cursorReasoningEffort', 'reasoningEffort'],
     antigravity: ['geminiReasoningEffort', 'reasoningEffort'],
     gemini: ['geminiReasoningEffort', 'reasoningEffort']

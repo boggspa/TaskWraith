@@ -51,7 +51,8 @@ describe('ProviderRunPause', () => {
         reroute: {
           provider: 'ollama',
           selectedModelType: 'gpt-oss:20b',
-          approvalMode: 'plan'
+          approvalMode: 'plan',
+          ollamaReasoningEffort: 'low'
         }
       }
     })
@@ -80,6 +81,7 @@ describe('ProviderRunPause', () => {
     expect(routedPayload.provider).toBe('ollama')
     expect(routedPayload.providerReroute).toEqual(resolution.reroute)
     expect((routedPayload as { model?: string }).model).toBe('gpt-oss:20b')
+    expect((routedPayload as { reasoningEffort?: string }).reasoningEffort).toBe('low')
     expect(routedPayload.approvalMode).toBe('plan')
     expect(routedPayload.providerSessionId).toBeNull()
   })
