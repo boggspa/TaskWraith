@@ -36,9 +36,17 @@ import { contributionRulesForPreset } from '../src/main/collaboration/HumanContr
 import { HUMAN_COLLABORATOR_COMMENT_KIND } from '../src/main/collaboration/HumanCollaboratorMessages'
 import {
   PeopleToChannelMigrationFinalizationProductionRunner,
-  type PeopleToChannelMigrationFinalizationProductionRunnerDurablePublish
+  type PeopleToChannelMigrationFinalizationProductionRunnerDurablePublish,
+  type PeopleToChannelMigrationFinalizationProductionRunnerStage
 } from '../src/main/collaboration/PeopleToChannelMigrationFinalizationProductionRunner'
-import { startPeopleToChannelMigrationBootstrap } from '../src/main/collaboration/PeopleToChannelMigrationStartup'
+import {
+  degradePeopleToChannelMigrationStartup,
+  startPeopleToChannelMigrationBootstrap
+} from '../src/main/collaboration/PeopleToChannelMigrationStartup'
+import {
+  PeopleToChannelMigrationProductionRunner,
+  type PeopleToChannelMigrationProductionRunnerStage
+} from '../src/main/collaboration/PeopleToChannelMigrationProductionRunner'
 import type { TransportSocketFactory } from '../src/main/remote/RemoteTransportClient'
 import { EnsembleOrchestrator } from '../src/main/services/EnsembleOrchestrator'
 import type { ChatRecord } from '../src/main/store/types'
@@ -51,6 +59,36 @@ const CLIENT_MESSAGE_ID = 'channels-p6-contribution'
 const NOW_BASE = 1_800_000_000_000
 
 type CrashBoundary = 'migration_execution_publish' | 'finalization_execution_publish'
+type ProfileKind = 'membered' | 'empty'
+type InterruptedStartStage =
+  | PeopleToChannelMigrationProductionRunnerStage
+  | PeopleToChannelMigrationFinalizationProductionRunnerStage
+
+const ADDITIVE_START_STAGES = [
+  'execution_durable',
+  'recovery_prepared',
+  'channels_applied',
+  'cutover_applied'
+] as const satisfies readonly PeopleToChannelMigrationProductionRunnerStage[]
+
+const FINALIZATION_START_STAGES = [
+  'write_gate_quiesced',
+  'finalization_execution_durable',
+  'recovery_fenced',
+  'logs_durable',
+  'policies_durable',
+  'admission:terminal_escrow_durable',
+  'admission:terminal_metadata_durable',
+  'admission:superseded_invitations_retired',
+  'admissions_durable',
+  'legacy_retired',
+  'receipt_durable'
+] as const satisfies readonly PeopleToChannelMigrationFinalizationProductionRunnerStage[]
+
+const INTERRUPTED_START_STAGES = new Set<string>([
+  ...ADDITIVE_START_STAGES,
+  ...FINALIZATION_START_STAGES
+])
 
 interface ExternalSeat {
   shareId: string
@@ -129,6 +167,9 @@ function writeDurableJson(path: string, value: unknown): void {
 
 function peopleSource(memberIdentity: KeyPair): unknown {
   const memberKey = exportRawEd25519PublicKey(memberIdentity.publicKey).toString('base64')
+  const pendingMemberKey = exportRawEd25519PublicKey(generateIdentityKeyPair().publicKey).toString(
+    'base64'
+  )
   return {
     shares: [
       {
@@ -148,6 +189,15 @@ function peopleSource(memberIdentity: KeyPair): unknown {
             joinedAt: 150,
             seatOrder: 2,
             colorIndex: 5
+          },
+          {
+            collaboratorId: 'pending-collaborator-channels-p6-proof',
+            displayName: 'Pending P6 proof collaborator',
+            publicKeyId: pendingMemberKey,
+            status: 'pending',
+            seatOrder: 3,
+            colorIndex: 2,
+            seatDisabled: true
           }
         ],
         invites: [
@@ -159,6 +209,13 @@ function peopleSource(memberIdentity: KeyPair): unknown {
             consumedAt: 150,
             collaboratorId: COLLABORATOR_ID,
             roomId: 'p6-proof-room'
+          },
+          {
+            inviteId: 'open-p6-proof-invite',
+            tokenHash: 'open-p6-proof-token-hash',
+            createdAt: 200,
+            expiresAt: NOW_BASE + 60_000,
+            roomId: 'p6-proof-open-room'
           }
         ],
         idempotency: {},
@@ -168,6 +225,10 @@ function peopleSource(memberIdentity: KeyPair): unknown {
       }
     ]
   }
+}
+
+function emptyPeopleSource(): unknown {
+  return { shares: [] }
 }
 
 function missionChat(workspacePath: string): ChatRecord {
@@ -198,47 +259,72 @@ function loadHostIdentity(userDataPath: string): KeyPair {
   ).load()
 }
 
-function runner(args: {
+function inventoryChats() {
+  return [
+    {
+      appChatId: CHAT_ID,
+      title: 'Channels P6 crash recovery proof',
+      scope: 'global' as const,
+      chatKind: 'single' as const,
+      messages: [
+        {
+          id: 'legacy-p6-proof-message',
+          role: 'system' as const,
+          content: 'migrate this exact disposable P6 profile',
+          timestamp: new Date(200).toISOString(),
+          metadata: {
+            kind: HUMAN_COLLABORATOR_COMMENT_KIND,
+            sourceTrust: 'external_untrusted' as const,
+            shareId: SHARE_ID,
+            collaboratorId: COLLABORATOR_ID,
+            collaboratorDisplayName: 'P6 proof collaborator',
+            clientMessageId: 'legacy-p6-proof-client-message',
+            sequence: 1
+          }
+        }
+      ]
+    }
+  ]
+}
+
+function finalizationRunner(args: {
   userDataPath: string
   hostIdentity: KeyPair
   now: () => number
+  storage?: HumanCollaborationSafeStorage
   beforeDurablePublish?: (
     event: PeopleToChannelMigrationFinalizationProductionRunnerDurablePublish
   ) => void
+  afterStage?: (stage: PeopleToChannelMigrationFinalizationProductionRunnerStage) => void
 }): PeopleToChannelMigrationFinalizationProductionRunner {
   return new PeopleToChannelMigrationFinalizationProductionRunner({
+    userDataPath: args.userDataPath,
+    safeStorage: args.storage ?? safeStorage,
+    loadIdentity: () => args.hostIdentity,
+    hostDisplayName: 'P6 proof host',
+    listChats: inventoryChats,
+    listWorkflowChatIds: () => [],
+    now: args.now,
+    beforeDurablePublish: args.beforeDurablePublish,
+    afterStage: args.afterStage
+  })
+}
+
+function additiveRunner(args: {
+  userDataPath: string
+  hostIdentity: KeyPair
+  now: () => number
+  afterStage: (stage: PeopleToChannelMigrationProductionRunnerStage) => void
+}): PeopleToChannelMigrationProductionRunner {
+  return new PeopleToChannelMigrationProductionRunner({
     userDataPath: args.userDataPath,
     safeStorage,
     loadIdentity: () => args.hostIdentity,
     hostDisplayName: 'P6 proof host',
-    listChats: () => [
-      {
-        appChatId: CHAT_ID,
-        title: 'Channels P6 crash recovery proof',
-        scope: 'workspace',
-        chatKind: 'ensemble',
-        messages: [
-          {
-            id: 'legacy-p6-proof-message',
-            role: 'system',
-            content: 'migrate this exact disposable P6 profile',
-            timestamp: new Date(200).toISOString(),
-            metadata: {
-              kind: HUMAN_COLLABORATOR_COMMENT_KIND,
-              sourceTrust: 'external_untrusted',
-              shareId: SHARE_ID,
-              collaboratorId: COLLABORATOR_ID,
-              collaboratorDisplayName: 'P6 proof collaborator',
-              clientMessageId: 'legacy-p6-proof-client-message',
-              sequence: 1
-            }
-          }
-        ]
-      }
-    ],
+    listChats: inventoryChats,
     listWorkflowChatIds: () => [],
     now: args.now,
-    beforeDurablePublish: args.beforeDurablePublish
+    afterStage: args.afterStage
   })
 }
 
@@ -257,7 +343,7 @@ function launch(args: {
 } {
   let service: ChannelProductionService | null = null
   const started = startPeopleToChannelMigrationBootstrap({
-    runner: runner(args),
+    runner: finalizationRunner(args),
     createBootstrap: ({ migratedAdmissionAuthority }) => {
       service = createChannelProductionService({
         userDataPath: args.userDataPath,
@@ -287,13 +373,17 @@ function launch(args: {
   }
 }
 
-function externalSeats(service: ChannelProductionService): readonly ExternalSeat[] {
-  const resolution = new ChannelExternalSeatAuthority({
+function resolveChannelExternalSeats(service: ChannelProductionService) {
+  return new ChannelExternalSeatAuthority({
     channelStore: service.externalSeatChannelStore(),
     humanPolicyStore: service.externalSeatHumanPolicyStore(),
     runtime: service.externalSeatRuntimeAuthority(),
     legacy: { mode: 'channel_only' }
   }).resolve(CHAT_ID)
+}
+
+function externalSeats(service: ChannelProductionService): readonly ExternalSeat[] {
+  const resolution = resolveChannelExternalSeats(service)
   assertMission(resolution.state === 'ready', 'Channel seat authority was not ready')
   return resolution.seats.map((seat) => ({
     shareId: '',
@@ -370,6 +460,27 @@ function writeWindowInterlock(args: {
   }
 }
 
+function interruptedStartInterlock(
+  target: InterruptedStartStage
+): (stage: InterruptedStartStage) => void {
+  let reached = false
+  return (stage): void => {
+    if (reached || stage !== target) return
+    reached = true
+    writeSync(
+      1,
+      Buffer.from(
+        `${JSON.stringify({ status: 'startup_gate', stage: target, pid: process.pid })}\n`,
+        'utf8'
+      )
+    )
+    // Each matrix interruption is a real process death. The callback is only a
+    // deterministic rendezvous after the production runner reports its stage;
+    // it neither throws nor changes the durable state being tested.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)
+  }
+}
+
 async function seed(args: {
   workRoot: string
   userDataPath: string
@@ -377,6 +488,7 @@ async function seed(args: {
   queuePath: string
   chatPath: string
   now: () => number
+  profileKind: ProfileKind
 }): Promise<void> {
   assertMission(!existsSync(join(args.userDataPath, 'human-collaboration.json')), 'profile reused')
   mkdirSync(args.userDataPath, { recursive: true })
@@ -384,26 +496,35 @@ async function seed(args: {
   loadHostIdentity(args.userDataPath)
   writeDurableJson(
     join(args.userDataPath, 'human-collaboration.json'),
-    peopleSource(generateIdentityKeyPair())
+    args.profileKind === 'membered' ? peopleSource(generateIdentityKeyPair()) : emptyPeopleSource()
   )
   writeDurableJson(args.chatPath, missionChat(args.workspacePath))
 
-  const queue = new ExternalContributionQueueStore(args.queuePath, undefined, args.now)
-  const enqueued = queue.enqueue({
-    chatId: CHAT_ID,
-    shareId: SHARE_ID,
-    collaboratorId: COLLABORATOR_ID,
-    displayName: 'P6 proof collaborator',
-    clientMessageId: CLIENT_MESSAGE_ID,
-    sequence: 1,
-    body: 'survive two real process deaths and deliver once',
-    messageId: MESSAGE_ID,
-    now: args.now()
+  let awaitingMaterialisation = 0
+  if (args.profileKind === 'membered') {
+    const queue = new ExternalContributionQueueStore(args.queuePath, undefined, args.now)
+    const enqueued = queue.enqueue({
+      chatId: CHAT_ID,
+      shareId: SHARE_ID,
+      collaboratorId: COLLABORATOR_ID,
+      displayName: 'P6 proof collaborator',
+      clientMessageId: CLIENT_MESSAGE_ID,
+      sequence: 1,
+      body: 'survive two real process deaths and deliver once',
+      messageId: MESSAGE_ID,
+      now: args.now()
+    })
+    assertMission(enqueued.ok && enqueued.entry, 'contribution did not enqueue')
+    const approved = queue.approve(enqueued.entry.entryId, enqueued.entry.messageId, args.now())
+    assertMission(approved?.materialised === false, 'contribution did not await materialisation')
+    awaitingMaterialisation = 1
+  }
+  emit({
+    status: 'seeded',
+    profileKind: args.profileKind,
+    disposable: true,
+    awaitingMaterialisation
   })
-  assertMission(enqueued.ok && enqueued.entry, 'contribution did not enqueue')
-  const approved = queue.approve(enqueued.entry.entryId, enqueued.entry.messageId, args.now())
-  assertMission(approved?.materialised === false, 'contribution did not await materialisation')
-  emit({ status: 'seeded', profileKind: 'disposable', awaitingMaterialisation: 1 })
 }
 
 async function crash(args: {
@@ -420,6 +541,116 @@ async function crash(args: {
   })
   await active.stop()
   assertMission(false, `write window ${args.boundary} was not reached`)
+}
+
+async function interruptStart(args: {
+  stage: InterruptedStartStage
+  userDataPath: string
+  now: () => number
+}): Promise<void> {
+  const hostIdentity = loadHostIdentity(args.userDataPath)
+  if ((ADDITIVE_START_STAGES as readonly string[]).includes(args.stage)) {
+    additiveRunner({
+      userDataPath: args.userDataPath,
+      hostIdentity,
+      now: args.now,
+      afterStage: interruptedStartInterlock(args.stage) as (
+        stage: PeopleToChannelMigrationProductionRunnerStage
+      ) => void
+    }).runToSoak()
+  } else {
+    finalizationRunner({
+      userDataPath: args.userDataPath,
+      hostIdentity,
+      now: args.now,
+      afterStage: interruptedStartInterlock(args.stage) as (
+        stage: PeopleToChannelMigrationFinalizationProductionRunnerStage
+      ) => void
+    }).runToCompletion()
+  }
+  assertMission(false, `interrupted-start stage ${args.stage} was not reached`)
+}
+
+async function observeMatrix(args: {
+  profileKind: ProfileKind
+  userDataPath: string
+  now: () => number
+}): Promise<void> {
+  const active = launch({
+    userDataPath: args.userDataPath,
+    hostIdentity: loadHostIdentity(args.userDataPath),
+    now: args.now
+  })
+  const channels = active.service.listChannels()
+  const channel = channels.find((candidate) => candidate.chatId === CHAT_ID)
+  assertMission(channel, 'matrix recovery produced no Channel for its chat')
+  const resolution = resolveChannelExternalSeats(active.service)
+  const externalSeatIds =
+    resolution.state === 'ready' ? resolution.seats.map((seat) => seat.seatId) : null
+  const memberCount = active.service
+    .externalSeatChannelStore()
+    .listMembers(channel.channelId).length
+  const expectedSeatIds = args.profileKind === 'membered' ? [COLLABORATOR_ID] : []
+  const expectedMemberCount = args.profileKind === 'membered' ? 2 : 1
+  const assertions = {
+    migrationCommitted: active.migrationPhase === 'committed',
+    recoveryHealthy: active.service.status().recoveryBlockedChannelCount === 0,
+    exactlyOneChannel: channels.length === 1,
+    membershipExact: memberCount === expectedMemberCount,
+    externalSeatStateExact: JSON.stringify(externalSeatIds) === JSON.stringify(expectedSeatIds)
+  }
+  assertMission(Object.values(assertions).every(Boolean), 'matrix observation was inconsistent')
+  await active.stop()
+  emit({
+    status: 'observed',
+    profileKind: args.profileKind,
+    terminalPlanId: active.terminalPlanId,
+    channelCount: channels.length,
+    memberCount,
+    externalSeatIds,
+    assertions
+  })
+}
+
+async function observeBlockedStartup(args: {
+  userDataPath: string
+  now: () => number
+}): Promise<void> {
+  const unavailableStorage: HumanCollaborationSafeStorage = {
+    isEncryptionAvailable: () => false,
+    encryptString: () => {
+      throw new Error('unavailable storage must not encrypt')
+    },
+    decryptString: () => {
+      throw new Error('unavailable storage must not decrypt')
+    }
+  }
+  let bootstrapConstructed = false
+  try {
+    startPeopleToChannelMigrationBootstrap({
+      runner: finalizationRunner({
+        userDataPath: args.userDataPath,
+        hostIdentity: loadHostIdentity(args.userDataPath),
+        storage: unavailableStorage,
+        now: args.now
+      }),
+      createBootstrap: () => {
+        bootstrapConstructed = true
+        throw new Error('blocked startup constructed Channels')
+      }
+    })
+    assertMission(false, 'unavailable storage did not block startup')
+  } catch (error) {
+    assertMission(!bootstrapConstructed, 'blocked startup constructed Channel authority')
+    const degraded = degradePeopleToChannelMigrationStartup(error)
+    assertMission(degraded.legacyWriteGate.isQuiesced(), 'degraded People gate was writable')
+    emit({
+      status: 'blocked',
+      bootstrapConstructed,
+      externalSeatIds: null,
+      legacyWritesQuiesced: true
+    })
+  }
 }
 
 async function recover(args: {
@@ -501,12 +732,14 @@ async function main(): Promise<void> {
   const chatPath = join(userDataPath, 'channels-p6-mission-chat.json')
   const launchIndex = Number(process.env.CHANNELS_P6_LAUNCH_INDEX ?? 0)
   assertMission(Number.isSafeInteger(launchIndex) && launchIndex >= 0, 'launch index is invalid')
+  const profileKind = (process.env.CHANNELS_P6_PROFILE_KIND ?? 'membered') as ProfileKind
+  assertMission(profileKind === 'membered' || profileKind === 'empty', 'profile kind is invalid')
   let clock = NOW_BASE + launchIndex * 10_000
   const now = () => ++clock
   const command = process.argv[2]
 
   if (command === 'seed') {
-    await seed({ workRoot, userDataPath, workspacePath, queuePath, chatPath, now })
+    await seed({ workRoot, userDataPath, workspacePath, queuePath, chatPath, now, profileKind })
     return
   }
   if (command === 'crash') {
@@ -516,6 +749,23 @@ async function main(): Promise<void> {
       'crash boundary is invalid'
     )
     await crash({ boundary, workRoot, userDataPath, now })
+    return
+  }
+  if (command === 'interrupt') {
+    const stage = process.env.CHANNELS_P6_START_STAGE
+    assertMission(
+      stage && INTERRUPTED_START_STAGES.has(stage),
+      'interrupted-start stage is invalid'
+    )
+    await interruptStart({ stage: stage as InterruptedStartStage, userDataPath, now })
+    return
+  }
+  if (command === 'matrix-observe') {
+    await observeMatrix({ profileKind, userDataPath, now })
+    return
+  }
+  if (command === 'blocked-observe') {
+    await observeBlockedStartup({ userDataPath, now })
     return
   }
   if (command === 'recover') {

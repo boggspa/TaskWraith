@@ -22,6 +22,47 @@ const WRITE_BOUNDARIES = [
   { name: 'migration_execution_publish', operation: 'link' },
   { name: 'finalization_execution_publish', operation: 'rename' }
 ]
+const MEMBERED_START_STAGE_ORDER = [
+  'execution_durable',
+  'recovery_prepared',
+  'channels_applied',
+  'cutover_applied',
+  'write_gate_quiesced',
+  'finalization_execution_durable',
+  'recovery_fenced',
+  'logs_durable',
+  'policies_durable',
+  'admission:terminal_escrow_durable',
+  'admission:terminal_metadata_durable',
+  'admission:superseded_invitations_retired',
+  'admissions_durable',
+  'legacy_retired',
+  'receipt_durable'
+]
+const EMPTY_START_STAGE_ORDER = [
+  'execution_durable',
+  'recovery_prepared',
+  'channels_applied',
+  'cutover_applied',
+  'write_gate_quiesced',
+  'finalization_execution_durable',
+  'recovery_fenced',
+  'logs_durable',
+  'policies_durable',
+  'admissions_durable',
+  'receipt_durable'
+]
+const INTERRUPTED_START_STAGE_ORDERS = {
+  membered: MEMBERED_START_STAGE_ORDER,
+  empty: EMPTY_START_STAGE_ORDER
+}
+const INTERRUPTED_START_PERMUTATIONS = Object.fromEntries(
+  Object.entries(INTERRUPTED_START_STAGE_ORDERS).map(([profileKind, stages]) => [
+    profileKind,
+    stages.slice(0, -1).map((stage, index) => [stage, stages[index + 1]])
+  ])
+)
+const MATRIX_PROFILE_KINDS = ['membered', 'empty']
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -95,10 +136,10 @@ function parseWorkerJson(stdout, command) {
   }
 }
 
-function runWorker(workerBundle, workRoot, command, launchIndex) {
+function runWorker(workerBundle, workRoot, command, launchIndex, extraEnv = {}) {
   const result = spawnSync(process.execPath, [workerBundle, command], {
     cwd: ROOT,
-    env: workerEnv(workRoot, launchIndex),
+    env: workerEnv(workRoot, launchIndex, extraEnv),
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 8 * 1024 * 1024
@@ -187,11 +228,84 @@ function killAtWriteWindow(workerBundle, workRoot, boundary, launchIndex) {
   })
 }
 
+function killAtStartupStage(workerBundle, workRoot, stage, profileKind, launchIndex) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [workerBundle, 'interrupt'], {
+      cwd: ROOT,
+      env: workerEnv(workRoot, launchIndex, {
+        CHANNELS_P6_PROFILE_KIND: profileKind,
+        CHANNELS_P6_START_STAGE: stage
+      }),
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let stdout = ''
+    let stderr = ''
+    let receipt = null
+    let killRequested = false
+    let settled = false
+
+    const timeout = setTimeout(() => {
+      if (!killRequested) child.kill('SIGKILL')
+      finish(
+        new Error(`timed out waiting for interrupted-start stage ${stage}: ${stderr || stdout}`)
+      )
+    }, 30_000)
+
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (error) rejectPromise(error)
+      else resolvePromise(value)
+    }
+
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+      for (const line of stdout.split('\n').filter(Boolean)) {
+        let candidate
+        try {
+          candidate = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (candidate.status !== 'startup_gate' || receipt) continue
+        receipt = candidate
+        try {
+          assertProof(candidate.stage === stage, `interrupted-start stage ${stage} drifted`)
+          killRequested = child.kill('SIGKILL')
+          assertProof(killRequested, `interrupted-start stage ${stage} SIGKILL was not accepted`)
+        } catch (error) {
+          child.kill('SIGKILL')
+          finish(error)
+        }
+      }
+    })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('error', (error) => finish(error))
+    child.on('close', (code, signal) => {
+      if (settled) return
+      try {
+        assertProof(receipt, `worker exited before interrupted-start stage ${stage}: ${stderr}`)
+        assertProof(killRequested, `interrupted-start stage ${stage} was not killed by the parent`)
+        assertProof(code !== 0 || signal === 'SIGKILL', `${stage} exited cleanly`)
+        finish(null, { stage, terminationSignal: signal || 'forced', exitCode: code })
+      } catch (error) {
+        finish(error)
+      }
+    })
+  })
+}
+
 async function runCrashRecoveryMission(workRoot) {
   const workerBundle = bundleWorker(workRoot)
   const seeded = runWorker(workerBundle, workRoot, 'seed', 0)
   assertProof(seeded.status === 'seeded', 'profile seed did not complete')
-  assertProof(seeded.profileKind === 'disposable', 'worker did not own a disposable profile')
+  assertProof(seeded.profileKind === 'membered', 'worker did not seed the membered profile')
+  assertProof(seeded.disposable === true, 'worker did not own a disposable profile')
   assertProof(seeded.awaitingMaterialisation === 1, 'profile did not seed a real queue entry')
 
   const boundaries = []
@@ -242,6 +356,155 @@ async function runCrashRecoveryMission(workRoot) {
       relaunchCount: 4,
       boundaryCount: boundaries.length,
       boundaries,
+      assertionCount: Object.keys(assertions).length,
+      assertions
+    }
+  }
+}
+
+async function runInterruptedStartMatrix(workRoot) {
+  const workerBundle = bundleWorker(workRoot)
+  const cases = []
+  let processKillCount = 0
+  let lastEmptyCaseRoot = null
+
+  for (const profileKind of MATRIX_PROFILE_KINDS) {
+    const permutations = INTERRUPTED_START_PERMUTATIONS[profileKind]
+    for (let index = 0; index < permutations.length; index += 1) {
+      const stages = permutations[index]
+      const caseRoot = join(workRoot, `matrix-${profileKind}-${String(index + 1).padStart(2, '0')}`)
+      mkdirSync(caseRoot, { recursive: true })
+      const profileEnv = { CHANNELS_P6_PROFILE_KIND: profileKind }
+      const seeded = runWorker(workerBundle, caseRoot, 'seed', 0, profileEnv)
+      assertProof(seeded.status === 'seeded', `${profileKind} matrix profile did not seed`)
+      assertProof(seeded.disposable === true, `${profileKind} matrix profile was not disposable`)
+      assertProof(
+        seeded.awaitingMaterialisation === (profileKind === 'membered' ? 1 : 0),
+        `${profileKind} matrix seed shape drifted`
+      )
+
+      const kills = []
+      for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+        kills.push(
+          await killAtStartupStage(
+            workerBundle,
+            caseRoot,
+            stages[stageIndex],
+            profileKind,
+            stageIndex + 1
+          )
+        )
+        processKillCount += 1
+      }
+
+      let observed
+      let verified
+      try {
+        observed = runWorker(workerBundle, caseRoot, 'matrix-observe', 3, profileEnv)
+        verified = runWorker(workerBundle, caseRoot, 'matrix-observe', 4, profileEnv)
+      } catch (error) {
+        throw new Error(
+          `Channels P6 ${profileKind} matrix case ${stages.join(' -> ')} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+      const expectedSeatIds = profileKind === 'membered' ? ['collaborator-channels-p6-proof'] : []
+      const expectedMemberCount = profileKind === 'membered' ? 2 : 1
+      assertProof(observed.status === 'observed', `${profileKind} recovery did not observe`)
+      assertProof(verified.status === 'observed', `${profileKind} verification did not observe`)
+      assertProof(
+        JSON.stringify(observed.externalSeatIds) === JSON.stringify(expectedSeatIds),
+        `${profileKind} recovered to the wrong external-seat state after ${stages.join(' -> ')}`
+      )
+      assertProof(
+        observed.memberCount === expectedMemberCount,
+        `${profileKind} recovered to inconsistent membership after ${stages.join(' -> ')}`
+      )
+      assertProof(
+        JSON.stringify(verified.externalSeatIds) === JSON.stringify(observed.externalSeatIds) &&
+          verified.memberCount === observed.memberCount &&
+          verified.terminalPlanId === observed.terminalPlanId,
+        `${profileKind} changed on the verification relaunch after ${stages.join(' -> ')}`
+      )
+      assertProof(
+        Object.values(observed.assertions).every((value) => value === true) &&
+          Object.values(verified.assertions).every((value) => value === true),
+        `${profileKind} case contains a failed strict assertion`
+      )
+      cases.push({ profileKind, stages, kills, observed, verified })
+      if (profileKind === 'empty') lastEmptyCaseRoot = caseRoot
+    }
+  }
+
+  assertProof(lastEmptyCaseRoot, 'matrix did not produce a completed empty profile')
+  const blocked = runWorker(workerBundle, lastEmptyCaseRoot, 'blocked-observe', 5, {
+    CHANNELS_P6_PROFILE_KIND: 'empty'
+  })
+  const knownEmpty = cases.find((entry) => entry.profileKind === 'empty')?.observed
+  assertProof(Array.isArray(knownEmpty?.externalSeatIds), 'known-empty state was not enumerable')
+  assertProof(knownEmpty.externalSeatIds.length === 0, 'known-empty state was not empty')
+  assertProof(blocked.externalSeatIds === null, 'blocked state collapsed to known empty')
+
+  const memberedCases = cases.filter((entry) => entry.profileKind === 'membered')
+  const emptyCases = cases.filter((entry) => entry.profileKind === 'empty')
+  const assertions = {
+    workerOwnedEveryDisposableProfile: cases.every(
+      (entry) => entry.observed.profileKind === entry.profileKind
+    ),
+    matrixCoveredBothProfileKinds:
+      memberedCases.length === INTERRUPTED_START_PERMUTATIONS.membered.length &&
+      emptyCases.length === INTERRUPTED_START_PERMUTATIONS.empty.length,
+    everyTransitionRepeated: cases.every((entry) => entry.kills.length === 2),
+    parentKilledEveryInterruptedStart:
+      processKillCount === cases.length * 2 &&
+      cases.every((entry) => entry.kills.every((kill) => kill.terminationSignal)),
+    memberedMembershipExact: memberedCases.every(
+      (entry) =>
+        entry.observed.memberCount === 2 &&
+        JSON.stringify(entry.observed.externalSeatIds) ===
+          JSON.stringify(['collaborator-channels-p6-proof'])
+    ),
+    emptyMembershipExact: emptyCases.every(
+      (entry) => entry.observed.memberCount === 1 && entry.observed.externalSeatIds.length === 0
+    ),
+    knownEmptyRemainedAnArray: Array.isArray(knownEmpty.externalSeatIds),
+    cannotEnumerateRemainedNull: blocked.externalSeatIds === null,
+    blockedStartupConstructedNoAuthority:
+      blocked.bootstrapConstructed === false && blocked.legacyWritesQuiesced === true,
+    terminalAuthorityStableAcrossRelaunch: cases.every(
+      (entry) => entry.observed.terminalPlanId === entry.verified.terminalPlanId
+    ),
+    noInconsistentStateServed: cases.every(
+      (entry) =>
+        entry.observed.assertions.recoveryHealthy && entry.verified.assertions.recoveryHealthy
+    )
+  }
+  assertProof(Object.values(assertions).every(Boolean), 'interrupted-start matrix did not converge')
+  return {
+    workerBundleBytes: statSync(workerBundle).size,
+    workerBundleSha256: sha256(readFileSync(workerBundle)),
+    mission: {
+      status: 'passed',
+      profileKinds: MATRIX_PROFILE_KINDS,
+      stageCounts: Object.fromEntries(
+        Object.entries(INTERRUPTED_START_STAGE_ORDERS).map(([profileKind, stages]) => [
+          profileKind,
+          stages.length
+        ])
+      ),
+      permutationCounts: Object.fromEntries(
+        Object.entries(INTERRUPTED_START_PERMUTATIONS).map(([profileKind, permutations]) => [
+          profileKind,
+          permutations.length
+        ])
+      ),
+      permutationCount: cases.length,
+      caseCount: cases.length,
+      processKillCount,
+      cases,
+      knownEmpty: knownEmpty.externalSeatIds,
+      cannotEnumerate: blocked.externalSeatIds,
       assertionCount: Object.keys(assertions).length,
       assertions
     }
@@ -299,10 +562,13 @@ async function main() {
 }
 
 module.exports = {
+  INTERRUPTED_START_PERMUTATIONS,
+  INTERRUPTED_START_STAGE_ORDERS,
   WRITE_BOUNDARIES,
   bundleWorker,
   parseArgs,
   runCrashRecoveryMission,
+  runInterruptedStartMatrix,
   runWorker
 }
 

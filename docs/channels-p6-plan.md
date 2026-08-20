@@ -94,10 +94,30 @@ torn rename, or an unflushed directory entry can exist.
 - Cover more than one durable boundary; a crash that only ever lands in the same
   window proves that window, not the property.
 
-## P6-02 — The interrupted-start matrix, as an actual matrix
+## P6-02 — The interrupted-start matrix, as an actual matrix — PROVEN
 
-Currently evidenced at unit level only. The gate is the permutations, not the
-individual assertions.
+**Proven 2026-08-20 by
+`scripts/channels-p6-interrupted-start-proof.test.ts`.** The gate runs the
+production migration runners in separate OS processes and has the parent issue
+two `SIGKILL`s per case at adjacent startup transitions. It covers the complete
+reachable order for both profile shapes: 14 transition pairs across the
+15-stage membered path, and 10 transition pairs across the 11-stage empty path.
+That is 24 disposable profiles, 48 interrupted starts, a recovery launch and a
+second verification launch for every case.
+
+The two orders are deliberately not forced into one false matrix. A known-empty
+profile has no terminal admission escrow, admission metadata, superseded invite
+or legacy-retirement transition to perform; the first red run caught that
+distinction. Each reachable edge is now exercised for the profile that can
+reach it. Every recovered membered profile has exactly the owner plus the one
+active migrated member and resolves exactly one external seat. Every recovered
+empty profile has exactly its owner and resolves the strict empty array. A
+safeStorage-blocked launch of that same completed empty profile constructs no
+Channel authority and resolves to strict `null`. The test asserts `[]` and
+`null` separately and never accepts either as a substitute for the other.
+
+Before this gate it was evidenced at unit level only. The gate is the
+permutations, not the individual assertions.
 
 **Acceptance:**
 
