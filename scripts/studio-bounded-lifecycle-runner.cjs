@@ -562,10 +562,26 @@ async function assertNoVisibleSourceWindow(companion, probe = probeNativeWindowI
   }
 }
 
-async function exactMediaObservation(plan, target, name) {
-  const capture = await session.captureNative(plan, target, name)
-  const hud = session.ocrScreenshot(capture.path)
-  const assetMatch = session.hudContainsAsset(hud, target.asset.sha256)
+async function exactMediaObservation(plan, target, name, adapters = {}) {
+  // A newly presented AppKit workspace can finish restoring its screen and
+  // frame after WindowServer first exposes it. Refresh the exact window receipt
+  // for every bounded attempt; the UI driver still re-verifies pid, id, title,
+  // and bounds immediately before capture, so this tolerates only an observed
+  // AppKit layout transition rather than weakening target custody.
+  const window = await (adapters.waitForSourceWindow || session.waitForSourceWindow)(
+    target.companion
+  )
+  const currentTarget = { ...target, window }
+  const capture = await (adapters.captureNative || session.captureNative)(
+    plan,
+    currentTarget,
+    name
+  )
+  const hud = (adapters.ocrScreenshot || session.ocrScreenshot)(capture.path)
+  const assetMatch = (adapters.hudContainsAsset || session.hudContainsAsset)(
+    hud,
+    target.asset.sha256
+  )
   if (!assetMatch.matched || assetMatch.distance !== 0) {
     throw new Error(
       'Studio lifecycle capture does not show the exact generated asset: ' +
@@ -576,6 +592,7 @@ async function exactMediaObservation(plan, target, name) {
     capture,
     hud,
     assetMatch,
+    window,
     windowTitle: target.expectedWindowTitle
   }
 }
@@ -819,6 +836,7 @@ module.exports = {
   assertUnchangedJournalAcrossReplacement,
   armHydrationProbe,
   hydrationBreakpointDefinition,
+  exactMediaObservation,
   parseLifecycleCli,
   probeNativeWindowIncludingZero,
   processExists,

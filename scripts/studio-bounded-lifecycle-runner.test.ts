@@ -8,6 +8,7 @@ const {
   assertHydrationEvidence,
   assertNoVisibleSourceWindow,
   assertUnchangedJournalAcrossReplacement,
+  exactMediaObservation,
   parseLifecycleCli,
   probeNativeWindowIncludingZero,
   waitForExactMediaObservation
@@ -39,6 +40,12 @@ const {
       before: Array<Record<string, any>>,
       after: Array<Record<string, any>>
     ) => Record<string, any>
+    exactMediaObservation: (
+      plan: Record<string, any>,
+      target: Record<string, any>,
+      name: string,
+      adapters: Record<string, any>
+    ) => Promise<Record<string, any>>
     parseLifecycleCli: (argv: string[]) => Record<string, any>
     probeNativeWindowIncludingZero: (
       pid: number,
@@ -357,5 +364,33 @@ describe('bounded Studio lifecycle adjudication', () => {
       })
     ).resolves.toBe(observation)
     expect(attempts).toBe(3)
+  })
+
+  it('refreshes the exact AppKit window receipt on every media observation attempt', async () => {
+    const freshWindow = {
+      pid: 7_003,
+      visibleWindowCount: 1,
+      windows: [{ windowId: 42, title: 'TaskWraith Studio' }]
+    }
+    const observed = await exactMediaObservation(
+      {},
+      {
+        companion: { pid: 7_003 },
+        window: { windows: [{ windowId: 41, title: 'TaskWraith Studio' }] },
+        expectedWindowTitle: 'TaskWraith Studio',
+        asset: { sha256: assetId }
+      },
+      'after-reopen',
+      {
+        waitForSourceWindow: async () => freshWindow,
+        captureNative: async (_plan: unknown, target: Record<string, any>) => {
+          expect(target.window).toBe(freshWindow)
+          return { path: '/tmp/fresh-window.png' }
+        },
+        ocrScreenshot: () => ({ observations: [] }),
+        hudContainsAsset: () => ({ matched: true, distance: 0 })
+      }
+    )
+    expect(observed.window).toBe(freshWindow)
   })
 })
