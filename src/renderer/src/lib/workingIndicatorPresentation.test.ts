@@ -218,11 +218,120 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       modelId: null,
       providerLabel: 'Ensemble',
       provider: null,
-      providerClass: null,
+      // The row names the incoming seat, so it wears the incoming seat's hue.
+      // `provider` stays null: no adapter is running and nothing downstream may
+      // meter this interval against a seat.
+      providerClass: 'claude',
       roleLabel: null,
       modelBadge: null,
       activity: 'transitioning',
       statusLabel: 'Handing off to Reviewer'
+    })
+  })
+
+  it('resolves the handoff accent through the incoming seat display brand, not its runtime id', () => {
+    const chat = ensembleChat([
+      participant({ id: 'codex-builder', role: 'Builder' }),
+      participant({
+        id: 'local-reviewer',
+        provider: 'ollama',
+        role: 'Reviewer',
+        model: 'qwen3.5:9b'
+      })
+    ])
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'codex-builder',
+        sourceRunId: 'codex-run-1',
+        targetParticipantId: 'local-reviewer',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toMatchObject({
+      providerLabel: 'Ensemble',
+      provider: null,
+      providerClass: 'alibaba',
+      statusLabel: 'Handing off to Reviewer'
+    })
+  })
+
+  it('keeps the outgoing seat hue while a provider is still settling', () => {
+    const chat = ensembleChat([
+      participant({ id: 'mistral-builder', provider: 'mistral', role: 'Builder' }),
+      participant({ id: 'claude-reviewer', provider: 'claude', role: 'Reviewer' })
+    ])
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'settling-provider',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'mistral-builder',
+        sourceRunId: 'mistral-run-1',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toMatchObject({
+      providerLabel: 'Ensemble',
+      provider: null,
+      providerClass: 'mistral',
+      statusLabel: 'Finalizing turn'
+    })
+  })
+
+  it('keeps the outgoing seat hue for a handoff that has not picked a target yet', () => {
+    const chat = ensembleChat([
+      participant({ id: 'mistral-builder', provider: 'mistral', role: 'Builder' }),
+      participant({ id: 'claude-reviewer', provider: 'claude', role: 'Reviewer' })
+    ])
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'mistral-builder',
+        sourceRunId: 'mistral-run-1',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      }
+    }
+
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toMatchObject({
+      providerClass: 'mistral',
+      statusLabel: 'Preparing next turn'
+    })
+  })
+
+  it('falls back to the ensemble hue when neither transition seat is still on the roster', () => {
+    const chat = ensembleChat([participant({ id: 'codex-builder', role: 'Builder' })])
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      activeParticipantId: undefined,
+      turnTransition: {
+        phase: 'handoff',
+        runtimeInstanceId: 'runtime-1',
+        sourceParticipantId: 'retired-seat',
+        sourceRunId: 'retired-run-1',
+        targetParticipantId: 'also-retired-seat',
+        startedAt: '2026-07-01T00:00:01.000Z'
+      },
+      participants: []
+    }
+
+    // Never `null`: an absent hue class resolves `--message-working-accent` to
+    // the user-configurable APP accent, which is gray under graphite/obsidian
+    // and unrelated to the ensemble either way.
+    expect(deriveActiveEnsembleWorkingPresentation(chat)).toMatchObject({
+      providerLabel: 'Ensemble',
+      provider: null,
+      providerClass: 'ensemble',
+      statusLabel: 'Preparing next turn'
     })
   })
 

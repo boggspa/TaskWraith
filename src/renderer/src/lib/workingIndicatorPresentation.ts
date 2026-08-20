@@ -141,6 +141,34 @@ function activeParticipantId(chat: ChatRecord): string | undefined {
     ?.participantId
 }
 
+/**
+ * The hue an Ensemble working indicator wears when no seat owns the moment —
+ * either side of a turn transition failing to resolve here, and App's fallback
+ * for a round with no active participant at all.
+ *
+ * `--provider-ensemble-color` is the existing aggregate-roster token (sidebar
+ * ensemble rows already wear it). It exists so that "no seat owns this" is a
+ * STABLE colour: a null hue class leaves `--message-working-accent` inheriting
+ * `var(--accent)`, the user-configurable app accent — blue by default, gray
+ * under graphite/obsidian — which says nothing about the ensemble and changes
+ * with the theme.
+ *
+ * A hue class, never a `ProviderId`: callers keep `provider` null.
+ */
+export const ENSEMBLE_NEUTRAL_HUE_CLASS = 'ensemble'
+
+function participantHueClass(chat: ChatRecord, participantId: string | undefined): string | null {
+  if (!participantId) return null
+  const roundParticipant = roundParticipantForId(chat, participantId)
+  const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
+  const provider = roundParticipant?.provider || participant?.provider || null
+  if (!provider) return null
+  const model = modelDisplayForParticipant(provider, roundParticipant, participant)?.model || ''
+  // The same resolver the seat rows use, so a handoff to an Ollama-hosted Qwen
+  // wears Alibaba purple exactly as that seat's own working row is about to.
+  return resolveWorkingIndicatorProviderPresentation(provider, model).providerClass
+}
+
 function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentation | null {
   const round = chat.ensemble?.activeRound
   const transition = round?.turnTransition
@@ -156,6 +184,28 @@ function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentat
   // The wording lives in shared: the phone renders this same interval from the
   // projected label, and two copies of these three strings would drift.
   const statusLabel = ensembleTurnTransitionLabel(transition, target?.role)
+  // The accent, and only the accent, borrows a seat identity. `providerLabel`
+  // stays "Ensemble" and `provider` stays null because main owns this interval:
+  // no adapter is running, so nothing downstream may meter it against a seat.
+  //
+  // It borrows the seat the row NAMES — the incoming one — and falls back to the
+  // outgoing seat for the two phrasings that name nobody ("Finalizing turn",
+  // "Preparing next turn"), which is the seat still settling. A target implies
+  // `phase: 'handoff'` at every producer, so target-then-source needs no phase
+  // check of its own.
+  //
+  // Carrying no hue at all was the bug: `--message-working-accent` then fell
+  // through to `var(--accent)` — the user-configurable APP accent, blue by
+  // default and gray under graphite/obsidian — so the handoff colour was a
+  // property of the theme rather than of the ensemble. It also flipped with
+  // whether main had cleared `activeParticipantId` before stamping the
+  // transition, a race each adapter loses at a different moment, which is why
+  // some seats appeared to keep their accent across a handoff and others did
+  // not.
+  const providerClass =
+    participantHueClass(chat, transition.targetParticipantId) ??
+    participantHueClass(chat, transition.sourceParticipantId) ??
+    ENSEMBLE_NEUTRAL_HUE_CLASS
   return {
     participantId: null,
     runId: transition.sourceRunId,
@@ -163,7 +213,7 @@ function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentat
     modelId: null,
     providerLabel: 'Ensemble',
     provider: null,
-    providerClass: null,
+    providerClass,
     roleLabel: null,
     modelBadge: null,
     activity: 'transitioning',
