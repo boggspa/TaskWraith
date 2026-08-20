@@ -1000,6 +1000,42 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void pending
   })
 
+  it('carries an explicitly derived Simulator surface through grant lookup and response', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const registerGeminiTool = vi.fn((_approvalId: string, _info: Record<string, unknown>) => {
+      order.push('registerGeminiTool')
+    })
+    deps.getApprovalService = vi.fn(() => ({
+      registerGeminiTool,
+      registerMain: vi.fn()
+    })) as never
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'simulatorCanvas',
+      '/repo',
+      request({
+        preview: {
+          kind: 'tool',
+          toolName: 'simulator_tap',
+          surfaceId: 'simulator:DEVICE-1:com.example.App',
+          params: { udid: 'DEVICE-1', x: 0.5, y: 0.5 }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(vi.mocked(deps.permissionService.resolvePermission).mock.calls[0]?.[5]).toBe(
+      'simulator:DEVICE-1:com.example.App'
+    )
+    expect(registerGeminiTool.mock.calls[0]?.[1]).toMatchObject({
+      surfaceId: 'simulator:DEVICE-1:com.example.App'
+    })
+    void pending
+  })
+
   it('(i2) keeps canvas_fill typed values transient — the durable sinks never retain them', async () => {
     // The canvas preview passes the tool's raw args through as preview.params so
     // the human can see what is about to be typed. That payload is ALSO written

@@ -422,6 +422,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // is the one place that carries the tool's own args this far.
     const requestSurfaceId = ((): string | undefined => {
       const preview = isRecord(request.preview) ? request.preview : null
+      const declaredSurfaceId =
+        preview && typeof preview.surfaceId === 'string' ? preview.surfaceId.trim() : ''
+      if (declaredSurfaceId) return declaredSurfaceId
       const params = preview && isRecord(preview.params) ? preview.params : null
       const canvasId = params && typeof params.canvasId === 'string' ? params.canvasId.trim() : ''
       return canvasId || undefined

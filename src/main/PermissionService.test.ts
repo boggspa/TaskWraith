@@ -212,6 +212,51 @@ describe('PermissionService — surface-scoped canvas grants', () => {
       service.resolvePermission('gemini', 'shellCommands', '/repo', 'run-1', settings).decision
     ).toBe('allow')
   })
+
+  it('requires an exact Simulator surface even when the broad policy says allow', () => {
+    const { service } = harness()
+    const simulatorSettings = {
+      ...settings,
+      agenticServices: { ...settings.agenticServices, simulatorCanvas: 'allow' as const }
+    }
+    expect(
+      service.resolvePermission(
+        'gemini',
+        'simulatorCanvas',
+        '/repo',
+        'run-1',
+        simulatorSettings,
+        'simulator:DEVICE-1:com.example.App'
+      ).decision
+    ).toBe('ask')
+    service.addSessionGrant(
+      'gemini',
+      '/repo',
+      'simulatorCanvas',
+      'run-1',
+      'simulator:DEVICE-1:com.example.App'
+    )
+    expect(
+      service.resolvePermission(
+        'gemini',
+        'simulatorCanvas',
+        '/repo',
+        'run-1',
+        simulatorSettings,
+        'simulator:DEVICE-1:com.example.App'
+      ).decision
+    ).toBe('allow')
+  })
+
+  it('revokes the exact surface grant after navigation, takeover, or lease expiry', () => {
+    const { service, runManager } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-a')
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-a')).toBe(true)
+    expect(
+      service.removeSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-a')
+    ).toBe(true)
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-a')).toBe(false)
+  })
 })
 
 describe('PermissionService', () => {

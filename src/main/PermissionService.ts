@@ -65,7 +65,7 @@ function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
  * thing for a user to say once; it just has to mean that and only that.
  */
 function isSurfaceScopedService(service: AgenticServiceId | undefined): boolean {
-  return service === 'canvasInteraction'
+  return service === 'canvasInteraction' || service === 'simulatorCanvas'
 }
 
 export class PermissionService {
@@ -205,6 +205,21 @@ export class PermissionService {
     )
   }
 
+  removeSessionGrant(
+    provider: ProviderId,
+    workspacePath: string | undefined,
+    service: AgenticServiceId,
+    runId?: string,
+    surfaceId?: string
+  ): boolean {
+    if (runId && this.options.runManager.get(runId)) {
+      return this.options.runManager.removeSessionGrant(runId, service, surfaceId)
+    }
+    return this.options.sessionGrants.delete(
+      this.sessionGrantKey(provider, workspacePath, service, surfaceId)
+    )
+  }
+
   resolvePermission(
     provider: ProviderId,
     service: AgenticServiceId,
@@ -237,6 +252,10 @@ export class PermissionService {
     const decision =
       policy === 'deny'
         ? 'deny'
+        : isSurfaceScopedService(service)
+          ? sessionGrantAllowed
+            ? 'allow'
+            : 'ask'
         : workspaceGrantAllowed || sessionGrantAllowed
           ? 'allow'
           : resolveAgenticPermission(policy, false, false)

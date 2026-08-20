@@ -374,6 +374,19 @@ export class RunManager<TState = unknown> {
     )
   }
 
+  removeSessionGrant(
+    runId: string | undefined,
+    service: AgenticServiceId,
+    surfaceId?: string
+  ): boolean {
+    if (!runId) return false
+    const session = this.sessionsByRunId.get(runId)
+    if (!session) return false
+    return session.sessionGrants.delete(
+      sessionGrantKey(session.provider, session.workspacePath, service, surfaceId)
+    )
+  }
+
   /**
    * Reserve the first terminal meaning before abort/kill can synchronously emit
    * a competing provider exit. The session keeps its transport handles until
