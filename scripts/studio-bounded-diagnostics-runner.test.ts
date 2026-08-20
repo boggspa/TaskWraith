@@ -6,9 +6,12 @@ const {
   DIAGNOSTICS_MAX_IDENTITY_ENTRIES,
   DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
+  DIAGNOSTICS_READINESS_TIMEOUT_MS,
+  DIAGNOSTICS_SESSION_TIMEOUT_MS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   TRACKED_SESSION_DEPENDENCIES,
   assertDiagnostics,
+  boundedTimeoutMs,
   buildReferenceExtractCommand,
   describeFixtureContract,
   isPlayableSample,
@@ -22,6 +25,7 @@ const {
   pressPlaybackTransition,
   waitForPausedMediaReadiness,
   waitForFreshPlayableSample,
+  withBoundedDiagnosticsSession,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
@@ -920,6 +924,72 @@ describe('the serialized evidence schema, closed as a schema rather than by exam
 })
 
 describe('the runner carries tracked end-to-end apparatus', () => {
+  it('keeps readiness and the enclosing live session explicitly bounded', async () => {
+    expect(DIAGNOSTICS_READINESS_TIMEOUT_MS).toBe(90_000)
+    expect(DIAGNOSTICS_SESSION_TIMEOUT_MS).toBe(300_000)
+    expect(boundedTimeoutMs(undefined, 90_000, 'test timeout')).toBe(90_000)
+    expect(boundedTimeoutMs(12_000, 90_000, 'test timeout')).toBe(12_000)
+    expect(() => boundedTimeoutMs(90_001, 90_000, 'test timeout')).toThrow(
+      /no greater than 90000 ms/
+    )
+
+    let readinessTimeout: number | null = null
+    const readinessSentinel = { ready: true }
+    const readiness = await waitForPausedMediaReadiness(
+      {},
+      {},
+      {},
+      {
+        waitFor: async (
+          _label: string,
+          _probe: () => Promise<unknown>,
+          timeoutMs: number
+        ) => {
+          readinessTimeout = timeoutMs
+          return readinessSentinel
+        }
+      }
+    )
+    expect(readiness).toBe(readinessSentinel)
+    expect(readinessTimeout).toBe(DIAGNOSTICS_READINESS_TIMEOUT_MS)
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        {},
+        {},
+        { waitFor: async () => readinessSentinel },
+        { timeoutMs: DIAGNOSTICS_READINESS_TIMEOUT_MS + 1 }
+      )
+    ).rejects.toThrow(/readiness timeout.*no greater than 90000 ms/)
+
+    let sessionTimeout: number | null = null
+    const sessionResult = await withBoundedDiagnosticsSession(
+      { runtime: true },
+      {},
+      async () => 'bounded-session',
+      {
+        withIsolatedSession: async (
+          _runtime: unknown,
+          sessionOptions: Record<string, unknown>,
+          operation: (context: unknown) => Promise<unknown>
+        ) => {
+          sessionTimeout = sessionOptions.timeoutMs as number
+          return operation({})
+        }
+      }
+    )
+    expect(sessionResult).toBe('bounded-session')
+    expect(sessionTimeout).toBe(DIAGNOSTICS_SESSION_TIMEOUT_MS)
+    await expect(
+      withBoundedDiagnosticsSession(
+        {},
+        { timeoutMs: DIAGNOSTICS_SESSION_TIMEOUT_MS + 1 },
+        async () => null,
+        { withIsolatedSession: async () => null }
+      )
+    ).rejects.toThrow(/session timeout.*no greater than 300000 ms/)
+  })
+
   it('validates one exact background Playback AXPress receipt', async () => {
     const receipt = await pressPlaybackTransition(
       { artifactRoot: '/tmp/diagnostics-playback-test' },

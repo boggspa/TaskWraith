@@ -63,6 +63,16 @@ const repoRoot = path.resolve(__dirname, '..')
  * expectation is a tautology: shrink the band and the control shrinks silently.
  */
 const DIAGNOSTICS_PRESENTED_RATE_BOUNDS = { minimum: 20, maximum: 90 }
+const DIAGNOSTICS_READINESS_TIMEOUT_MS = 90_000
+const DIAGNOSTICS_SESSION_TIMEOUT_MS = 300_000
+
+function boundedTimeoutMs(value, ceiling, label) {
+  const timeoutMs = value ?? ceiling
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > ceiling) {
+    throw new Error(`${label} must be a positive integer no greater than ${ceiling} ms`)
+  }
+  return timeoutMs
+}
 
 /**
  * Every visible counter assertDiagnostics reports as evidence. Listed explicitly
@@ -997,11 +1007,34 @@ async function waitForPausedMediaReadiness(plan, target, windowBounds, adapters 
     }
     return { workspaceObservation, capture, hud, observed }
   }
-  return waitFor(
+  const waitForReadiness = adapters.waitFor || waitFor
+  return waitForReadiness(
     'paused exact Studio media readiness',
     observe,
-    options.timeoutMs ?? 30_000,
+    boundedTimeoutMs(
+      options.timeoutMs,
+      DIAGNOSTICS_READINESS_TIMEOUT_MS,
+      'bounded diagnostics readiness timeout'
+    ),
     options.intervalMs ?? 250
+  )
+}
+
+async function withBoundedDiagnosticsSession(runtime, options, operation, adapters = {}) {
+  const withIsolatedSession = adapters.withIsolatedSession || acceptanceSession.withIsolatedSession
+  return withIsolatedSession(
+    runtime,
+    {
+      phase: 'bounded-visible-diagnostics',
+      remoteDebuggingPort: options.remoteDebuggingPort || 9460,
+      mainInspectorPort: options.mainInspectorPort || 9860,
+      timeoutMs: boundedTimeoutMs(
+        options.timeoutMs,
+        DIAGNOSTICS_SESSION_TIMEOUT_MS,
+        'bounded diagnostics session timeout'
+      )
+    },
+    operation
   )
 }
 
@@ -1127,14 +1160,9 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
   )
   acceptanceSession.assertWindowServerSessionAvailable(-1, 'preflight')
   const startedAt = new Date().toISOString()
-  const result = await (adapters.withIsolatedSession || acceptanceSession.withIsolatedSession)(
+  const result = await withBoundedDiagnosticsSession(
     runtime,
-    {
-      phase: 'bounded-visible-diagnostics',
-      remoteDebuggingPort: options.remoteDebuggingPort || 9460,
-      mainInspectorPort: options.mainInspectorPort || 9860,
-      timeoutMs: options.timeoutMs || 210_000
-    },
+    options,
     async (context) => {
       const plan = { ...context.plan, artifactRoot }
       await sleep(options.hydrationSettleMilliseconds ?? 15_000)
@@ -1264,7 +1292,8 @@ async function runBoundedDiagnostics(options = {}, adapters = {}) {
         portOwnership: context.portOwnership,
         mainIdentity: context.mainIdentity
       }
-    }
+    },
+    adapters
   )
   const custodyAfter = acceptanceSession.assertAcceptanceCustody(inputs)
   const evidence = {
@@ -1318,6 +1347,8 @@ module.exports = {
   DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PLAYER_COUNT_BOUNDS,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
+  DIAGNOSTICS_READINESS_TIMEOUT_MS,
+  DIAGNOSTICS_SESSION_TIMEOUT_MS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
@@ -1325,6 +1356,7 @@ module.exports = {
   PTS_SELECTION_TOLERANCE_SECONDS,
   TRACKED_SESSION_DEPENDENCIES,
   assertDiagnostics,
+  boundedTimeoutMs,
   buildFramePtsCensusCommand,
   buildReferenceExtractCommand,
   describeFixtureContract,
@@ -1341,6 +1373,7 @@ module.exports = {
   RETRYABLE_SAMPLE_REASONS,
   waitForPausedMediaReadiness,
   waitForFreshPlayableSample,
+  withBoundedDiagnosticsSession,
   readSourceWorkspaceObservation,
   repoRoot,
   resolveExactSourcePts,
