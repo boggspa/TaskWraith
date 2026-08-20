@@ -2798,6 +2798,19 @@ declare global {
           meanMs: number
           sampling: boolean
         }
+        host: {
+          loadPerCpu1m: number | null
+          loadAverage1m: number | null
+          loadAverage5m: number | null
+          loadAverage15m: number | null
+          loadAverageReported: boolean
+          hostContended: boolean | null
+          cpuCount: number
+          processCpuPercent: number | null
+          processCpuWindowMs: number | null
+          processCpuUserMs: number
+          processCpuSystemMs: number
+        }
         sections: Record<string, unknown>
       } | null>
       getRunEventReplay: (runId: string) => Promise<RunEventReplay>
