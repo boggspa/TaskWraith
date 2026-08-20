@@ -120,6 +120,16 @@ function acceptanceOptions(root: string) {
   }
 }
 
+function captureWithState(capture: Record<string, any>, state: 'PLAY' | 'PAUSE') {
+  const observations = JSON.parse(capture.rawOcrText)
+  const stateObservation = observations.find((observation: Record<string, any>) =>
+    ['PLAY', 'PAUSE'].includes(observation.text)
+  )
+  stateObservation.text = state
+  const rawOcrText = JSON.stringify(observations)
+  return { ...capture, rawOcrText, rawOcrSha256: sha256Text(rawOcrText) }
+}
+
 function audioProbe(overrides: Record<string, any> = {}) {
   const durationSeconds = overrides.durationSeconds ?? 600
   const frameCount = overrides.frameCount ?? durationSeconds * 48_000
@@ -245,6 +255,28 @@ describe('Studio AV endurance acceptance orchestration', () => {
       plannedElapsedMs: 600_000,
       plannedAtMs: 610_000
     })
+  })
+
+  it('binds owner-supplied VFR media to its measured dynamic source census', async () => {
+    const root = freshRoot('dynamic-vfr-census')
+    const adapters = truthfulAdapters(root)
+    const requiredSamplePts = [...Array.from({ length: 20 }, (_, index) => index * 30), 599.966667]
+    const vfrValues = [...requiredSamplePts, 0.4, 1.125, 61.9, 302.333, 488.75].sort(
+      (left, right) => left - right
+    )
+    const rawCensus = `${vfrValues.map((value) => value.toFixed(6)).join('\n')}\n`
+    adapters.testOnlyReferenceAuthority.census = (
+      _sourceAsset: Record<string, any>,
+      command: Record<string, any>
+    ) => ({
+      command: [command.executable, ...command.args],
+      exitCode: 0,
+      stdout: rawCensus,
+      stderr: ''
+    })
+    const result = await runAvEnduranceAcceptance(acceptanceOptions(root), adapters)
+    expect(result.evidence.sourcePtsCensus.count).toBe(vfrValues.length)
+    expect(result.evidence.sourcePtsCensus.values).toEqual(vfrValues)
   })
 
   it('keeps the physical-audibility blocker and refuses synthetic timing as live proof', async () => {
@@ -550,6 +582,49 @@ describe('Studio AV endurance acceptance orchestration', () => {
     expect(result.evidence.resources.ioSurfaceCapacity).toBe(3)
     expect(result.evidence.verdict.status).toBe('red')
     expect(result.evidence.verdict.failures.join(' ')).toMatch(/capacity changed/i)
+  })
+
+  it('accepts only the final canonical sample as a truthful end-of-media PAUSE', async () => {
+    const terminalRoot = freshRoot('terminal-pause')
+    const terminalFixtures = createArtifactFixtures(terminalRoot)
+    const terminal = await runAvEnduranceAcceptance(
+      acceptanceOptions(terminalRoot),
+      truthfulAdapters(terminalRoot, (entry) =>
+        entry.index === 20
+          ? { capture: captureWithState(terminalFixtures[entry.index], 'PAUSE') }
+          : {}
+      )
+    )
+    expect(terminal.evidence.samples[20].hud.state).toBe('PAUSE')
+
+    const prematureRoot = freshRoot('premature-terminal-pause')
+    const prematureFixtures = createArtifactFixtures(prematureRoot)
+    const prematureCapture = captureWithState(prematureFixtures[20], 'PAUSE')
+    const prematureObservations = JSON.parse(prematureCapture.rawOcrText)
+    prematureObservations[0].text = '00:09:40:00'
+    prematureCapture.rawOcrText = JSON.stringify(prematureObservations)
+    prematureCapture.rawOcrSha256 = sha256Text(prematureCapture.rawOcrText)
+    await expect(
+      runAvEnduranceAcceptance(
+        acceptanceOptions(prematureRoot),
+        truthfulAdapters(prematureRoot, (entry) =>
+          entry.index === 20 ? { capture: prematureCapture } : {}
+        )
+      )
+    ).rejects.toThrow(/terminal PAUSE.*final decoded source frame/i)
+
+    const earlyRoot = freshRoot('early-pause')
+    const earlyFixtures = createArtifactFixtures(earlyRoot)
+    await expect(
+      runAvEnduranceAcceptance(
+        acceptanceOptions(earlyRoot),
+        truthfulAdapters(earlyRoot, (entry) =>
+          entry.index === 19
+            ? { capture: captureWithState(earlyFixtures[entry.index], 'PAUSE') }
+            : {}
+        )
+      )
+    ).rejects.toThrow(/playable HUD|transport-not-playing/i)
   })
 
   it('rejects a missing current or peak receipt during normalization', async () => {

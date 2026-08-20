@@ -24,10 +24,34 @@ const MAX_CAPTURE_BYTES = 64 * 1024 * 1024
 const MAX_OCR_BYTES = 4 * 1024 * 1024
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_CENSUS_BYTES = 32 * 1024 * 1024
+const MAX_SOURCE_FRAME_COUNT = 1_000_000
 const CLOCK_SOURCE = 'process-hrtime-bigint+date-now'
 const TEST_CLOCK_SOURCE = 'synthetic-test-only'
 const REFERENCE_SOURCE = 'runner-ffprobe+ffmpeg'
 const TEST_REFERENCE_SOURCE = 'synthetic-test-only'
+
+function sourcePtsCensusFailure(parsed) {
+  if (!isRecord(parsed) || !Array.isArray(parsed.values)) return 'parsed census is missing'
+  if (
+    !Number.isSafeInteger(parsed.count) ||
+    parsed.count !== parsed.values.length ||
+    parsed.count < SAMPLE_COUNT ||
+    parsed.count > MAX_SOURCE_FRAME_COUNT
+  ) {
+    return `frame count ${parsed.count} is outside ${SAMPLE_COUNT}..${MAX_SOURCE_FRAME_COUNT}`
+  }
+  if (parsed.values.some((value) => !isFiniteNumber(value) || value < 0)) {
+    return 'one or more source PTS values are invalid'
+  }
+  if (parsed.values.some((value, index) => index > 0 && value <= parsed.values[index - 1])) {
+    return 'source PTS values are not strictly advancing'
+  }
+  const span = parsed.values.at(-1) - parsed.values[0]
+  if (span < MIN_ELAPSED_SECONDS - 1) {
+    return `source PTS span ${span}s is under ${MIN_ELAPSED_SECONDS - 1}s`
+  }
+  return null
+}
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -240,14 +264,9 @@ function collectSourcePtsCensus(sourceAsset, authority) {
     throw new Error('Outcome 5 source PTS census is missing or oversized')
   }
   const parsed = diagnostics.parseFramePtsCensus(result.stdout)
-  const expectedCount = diagnostics.describeFixtureContract().expectedFrameCount
-  if (
-    parsed.count !== expectedCount ||
-    parsed.values.some((value, index) => index > 0 && value <= parsed.values[index - 1])
-  ) {
-    throw new Error(
-      `Outcome 5 source PTS census is not the canonical strictly advancing fixture: ${parsed.count}/${expectedCount}`
-    )
+  const censusFailure = sourcePtsCensusFailure(parsed)
+  if (censusFailure) {
+    throw new Error(`Outcome 5 source PTS census is invalid: ${censusFailure}`)
   }
   return {
     authority: authority.source,
@@ -281,13 +300,15 @@ function requireSourcePtsCensus(census, sourceAsset) {
     throw new Error('Outcome 5 source PTS census raw bytes are invalid')
   }
   const parsed = diagnostics.parseFramePtsCensus(census.rawText)
+  const censusFailure = sourcePtsCensusFailure(parsed)
   if (
-    census.count !== diagnostics.describeFixtureContract().expectedFrameCount ||
-    parsed.count !== census.count ||
-    !exactJsonEqual(parsed.values, census.values) ||
-    parsed.values.some((value, index) => index > 0 && value <= parsed.values[index - 1])
+    censusFailure ||
+    census.count !== parsed.count ||
+    !exactJsonEqual(parsed.values, census.values)
   ) {
-    throw new Error('Outcome 5 source PTS census values were forged or changed')
+    throw new Error(
+      `Outcome 5 source PTS census values were forged or changed${censusFailure ? `: ${censusFailure}` : ''}`
+    )
   }
   const executable = diagnostics.resolveMediaTool('ffprobe')
   const args = diagnostics.buildFramePtsCensusCommand(sourceAsset.path)
@@ -334,7 +355,12 @@ function parseBoundOcr(rawOcrText, rawOcrSha256, expectedAssetId, index) {
   const playable = diagnostics.isPlayableSample(hud, null, {
     maximumPtsSeconds: Number.MAX_SAFE_INTEGER
   })
-  if (!playable.valid) {
+  const terminalPause =
+    index === SAMPLE_COUNT - 1 &&
+    hud.state === 'PAUSE' &&
+    playable.reasons.length === 1 &&
+    playable.reasons[0] === 'transport-not-playing'
+  if (!playable.valid && !terminalPause) {
     throw new Error(
       `sample ${index} raw OCR has no exact playable HUD observation: ${playable.reasons.join(', ')}`
     )
@@ -588,7 +614,7 @@ function requireExactAssetObservation(hud, expectedAssetId, index) {
   if (
     !isFiniteNumber(hud.contentPtsSeconds) ||
     hud.contentPtsSeconds < 0 ||
-    hud.state !== 'PLAY' ||
+    (hud.state !== 'PLAY' && !(index === SAMPLE_COUNT - 1 && hud.state === 'PAUSE')) ||
     hud.assetMatch.matched !== true ||
     hud.assetMatch.distance !== 0 ||
     hud.assetMatch.assetId !== expectedAssetId ||
@@ -1007,6 +1033,9 @@ function validateAcceptanceEvidence(evidence) {
     )
     if (resolvedSourcePts !== sample.capture.referenceContentPtsSeconds) {
       throw new Error(`Outcome 5 sample ${i} reference PTS is not in the source census`)
+    }
+    if (sample.hud.state === 'PAUSE' && resolvedSourcePts !== parsedSourcePtsCensus.values.at(-1)) {
+      throw new Error(`Outcome 5 sample ${i} terminal PAUSE is not the final decoded source frame`)
     }
     const reboundTiming = normalizeTiming(sample.timing, evidence.clock, i)
     if (
