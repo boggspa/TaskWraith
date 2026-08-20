@@ -41,6 +41,7 @@ const {
   materializeIsolatedProviderGuards,
   materializeOwnedMedia,
   parseArgs,
+  parseResourceDetailExport,
   parseProcessTable,
   parseStudioTransportMutationText,
   readDetachedCoordinatorStatus,
@@ -203,6 +204,7 @@ const {
     byteLength: number
   }>
   parseArgs: (argv: string[]) => Record<string, any>
+  parseResourceDetailExport: (value: string) => Record<string, any>
   parseProcessTable: (
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
@@ -364,6 +366,7 @@ const validAvSyncPeakText =
 const validAvSyncCurrentText =
   'avc1 ts=30000 fd=1000 pf=1000 ap=1100 err=-100 errms=-3.333 ' +
   'win=1000000 winms=1.000 drawn=1 expl=explained'
+const validResourceDetailText = 'res1 dec=1 cap=3 surf=1 ids=0000002A'
 const validCoreAudioRouteHealthReceipt = {
   id: 42,
   name: 'Acceptance Output',
@@ -538,6 +541,26 @@ async function writeDetachedCompletionFixture(
 }
 
 describe('Studio acceptance harness', () => {
+  it('parses bounded resource detail schema and rejects overflow/malformed exports', () => {
+    expect(parseResourceDetailExport(validResourceDetailText)).toMatchObject({
+      ok: true,
+      schema: 'res1',
+      residentDecoderCount: 1,
+      ioSurfaceCapacity: 3,
+      liveIoSurfaceIds: [42]
+    })
+    expect(
+      parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002B')
+    ).toMatchObject({ ok: true, liveIoSurfaceIds: [42, 43] })
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=0 ids=-')).toMatchObject({ ok: true })
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=!').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=2A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=01 cap=3 surf=1 ids=0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002B,0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=0000002a').ok).toBe(false)
+  })
   it.runIf(process.platform === 'darwin')('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
     const parsed = parseArgs([
       '--launch',
@@ -3406,6 +3429,12 @@ describe('Studio acceptance harness', () => {
         '           request.inputDelivery == "background-observation-only"'
     )
     expect(driverSource).toContain('func exactAccessibilityPlaybackControl(')
+    expect(driverSource).toContain('let resourceDetailAccessibilityLabel = "Resource detail"')
+    expect(driverSource).toContain('resourceMatchCount')
+    expect(driverSource).toContain('resourceDetailValue')
+    expect(driverSource).toContain('resourceMatches.count >= 1')
+    expect(driverSource).toContain('resourceMatches.count <= 2')
+    expect(driverSource).toContain('resourceValues.allSatisfy({ $0 == resourceValues[0] })')
     expect(driverSource).toContain('kAXButtonRole')
     expect(driverSource).toContain('kAXPressAction')
     expect(driverSource).toContain(
@@ -3723,6 +3752,8 @@ describe('Studio acceptance harness', () => {
               action.type === 'read-transport-mutation' ? validTransportMutationText : null,
             avSyncPeakValue: action.type === 'read-av-sync' ? validAvSyncPeakText : null,
             avSyncCurrentValue: action.type === 'read-av-sync' ? validAvSyncCurrentText : null,
+            resourceMatchCount: action.type === 'read-av-sync' ? 1 : null,
+            resourceDetailValue: action.type === 'read-av-sync' ? validResourceDetailText : null,
             routeHealth:
               action.type === 'coreaudio-route-health' ? validCoreAudioRouteHealthReceipt : null,
             accessibilityAction: action.accessibilityAction ?? null,
@@ -3749,7 +3780,18 @@ describe('Studio acceptance harness', () => {
                     }
                   }
                 : null
-          }))
+          })).map((action: Record<string, any>) =>
+            action.type === 'read-av-sync'
+              ? {
+                  index: action.index,
+                  type: action.type,
+                  avSyncPeakValue: action.avSyncPeakValue,
+                  avSyncCurrentValue: action.avSyncCurrentValue,
+                  resourceMatchCount: action.resourceMatchCount,
+                  resourceDetailValue: action.resourceDetailValue
+                }
+              : action
+          )
         })}\n`,
         stderr: ''
       }
@@ -3845,7 +3887,9 @@ describe('Studio acceptance harness', () => {
         {
           type: 'read-av-sync',
           avSyncPeakValue: validAvSyncPeakText,
-          avSyncCurrentValue: validAvSyncCurrentText
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         },
         {
           type: 'coreaudio-route-health',
@@ -4019,6 +4063,22 @@ describe('Studio acceptance harness', () => {
       throw new Error('expected Studio measurement receipt failure')
     }
 
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 2,
+          resourceDetailValue: validResourceDetailText
+        }
+      )
+    ).resolves.toMatchObject({
+      actions: [{ type: 'read-av-sync', resourceMatchCount: 2 }]
+    })
+
     const peakInCurrentFailure = await captureFailure(
       run(
         { type: 'read-av-sync' },
@@ -4026,7 +4086,9 @@ describe('Studio acceptance harness', () => {
           index: 0,
           type: 'read-av-sync',
           avSyncPeakValue: validAvSyncPeakText,
-          avSyncCurrentValue: validAvSyncPeakText
+          avSyncCurrentValue: validAvSyncPeakText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         }
       )
     )
@@ -4047,8 +4109,65 @@ describe('Studio acceptance harness', () => {
         {
           index: 0,
           type: 'read-av-sync',
-          avSyncPeakValue: validAvSyncCurrentText,
+          avSyncPeakValue: validAvSyncPeakText,
           avSyncCurrentValue: validAvSyncCurrentText
+        }
+      )
+    ).rejects.toThrow(/missing or extra keys/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 3,
+          resourceDetailValue: validResourceDetailText
+        }
+      )
+    ).rejects.toThrow(/resource match count is invalid/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: 'res1 dec=1 cap=1 surf=1 ids=!'
+        }
+      )
+    ).rejects.toThrow(/resource detail receipt is invalid.*overflow/i)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText,
+          extra: true
+        }
+      )
+    ).rejects.toThrow(/missing or extra keys/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncCurrentText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         }
       )
     ).rejects.toThrow(/A\/V sync peak receipt is invalid.*av1/i)

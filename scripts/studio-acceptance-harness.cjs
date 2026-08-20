@@ -38,7 +38,8 @@ const {
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
 const {
   parseAvSyncCurrentExport,
-  parseAvSyncPeakExport
+  parseAvSyncPeakExport,
+  parseResourceDetailExport
 } = require('./studio-av-endurance-runner.cjs')
 const {
   buildMuxCommand,
@@ -152,7 +153,7 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    '10bc0737095f8cc1bdd095e8f43c2470056263bdd3eec896a57843a3f4f91e51',
+    '41b8b947e33e5477038a227c0a2f0684372ce0c7c93afc710a145837e2de0d79',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -4532,6 +4533,18 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       }
       if (action.type === 'read-av-sync') {
         failureEvidence.failureStage = 'av-sync-validation'
+        const avActionKeys = Object.keys(observed).sort()
+        const expectedAvActionKeys = [
+          'avSyncCurrentValue',
+          'avSyncPeakValue',
+          'index',
+          'resourceDetailValue',
+          'resourceMatchCount',
+          'type'
+        ]
+        if (JSON.stringify(avActionKeys) !== JSON.stringify(expectedAvActionKeys)) {
+          throw new Error('Studio UI driver A/V sync action receipt has missing or extra keys')
+        }
         const peak = parseAvSyncPeakExport(observed.avSyncPeakValue)
         if (!peak.ok) {
           throw new Error(
@@ -4541,6 +4554,17 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         const current = parseAvSyncCurrentExport(observed.avSyncCurrentValue)
         if (!current.ok) {
           throw new Error(`Studio UI driver A/V sync current receipt is invalid: ${current.reason}`)
+        }
+        if (
+          !Number.isSafeInteger(observed.resourceMatchCount) ||
+          observed.resourceMatchCount < 1 ||
+          observed.resourceMatchCount > 2
+        ) {
+          throw new Error('Studio UI driver A/V sync resource match count is invalid')
+        }
+        const resource = parseResourceDetailExport(observed.resourceDetailValue)
+        if (!resource.ok) {
+          throw new Error(`Studio UI driver resource detail receipt is invalid: ${resource.reason}`)
         }
       }
       if (action.type === 'coreaudio-route-health') {
@@ -6219,6 +6243,7 @@ module.exports = {
   compareStudioJourneyCaptures,
   resolveStudioWorkspaceWindow,
   validateStudioWorkspaceObservation,
+  parseResourceDetailExport,
   studioReviewHostCaptureRegion,
   studioSourceHostOverlayCaptureRegion,
   studioWorkspaceReviewPresented,

@@ -178,6 +178,7 @@ struct ActionReceipt: Codable {
     private enum CodingKeys: String, CodingKey {
         case index, type, key, screenshotPath, byteLength, xFraction, yFraction, audioProbe
         case routeHealth, avSyncPeakValue, avSyncCurrentValue
+        case resourceMatchCount, resourceDetailValue
         case playheadTicks, playheadToleranceTicks, playheadMaximumForwardAdvanceTicks
         case playheadStepFrames, playheadTicksBefore, observedPlayheadTicks
         case accessibilityLabel, accessibilityIdentifier, pairedAccessibilityIdentifier
@@ -199,6 +200,8 @@ struct ActionReceipt: Codable {
     let routeHealth: CoreAudioRouteHealthReceipt?
     let avSyncPeakValue: String?
     let avSyncCurrentValue: String?
+    let resourceMatchCount: Int?
+    let resourceDetailValue: String?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
     let playheadMaximumForwardAdvanceTicks: Int64?
@@ -232,6 +235,8 @@ struct ActionReceipt: Codable {
         routeHealth: CoreAudioRouteHealthReceipt? = nil,
         avSyncPeakValue: String? = nil,
         avSyncCurrentValue: String? = nil,
+        resourceMatchCount: Int? = nil,
+        resourceDetailValue: String? = nil,
         playheadTicks: Int64? = nil,
         playheadToleranceTicks: Int64? = nil,
         playheadMaximumForwardAdvanceTicks: Int64? = nil,
@@ -264,6 +269,8 @@ struct ActionReceipt: Codable {
         self.routeHealth = routeHealth
         self.avSyncPeakValue = avSyncPeakValue
         self.avSyncCurrentValue = avSyncCurrentValue
+        self.resourceMatchCount = resourceMatchCount
+        self.resourceDetailValue = resourceDetailValue
         self.playheadTicks = playheadTicks
         self.playheadToleranceTicks = playheadToleranceTicks
         self.playheadMaximumForwardAdvanceTicks = playheadMaximumForwardAdvanceTicks
@@ -299,6 +306,8 @@ struct ActionReceipt: Codable {
         try container.encodeIfPresent(routeHealth, forKey: .routeHealth)
         try container.encodeIfPresent(avSyncPeakValue, forKey: .avSyncPeakValue)
         try container.encodeIfPresent(avSyncCurrentValue, forKey: .avSyncCurrentValue)
+        try container.encodeIfPresent(resourceMatchCount, forKey: .resourceMatchCount)
+        try container.encodeIfPresent(resourceDetailValue, forKey: .resourceDetailValue)
         try container.encodeIfPresent(playheadTicks, forKey: .playheadTicks)
         try container.encodeIfPresent(playheadToleranceTicks, forKey: .playheadToleranceTicks)
         try container.encodeIfPresent(
@@ -744,12 +753,15 @@ func readAccessibilityTransportMutation(
 
 let avSyncPeakAccessibilityLabel = "A/V sync detail"
 let avSyncCurrentAccessibilityLabel = "A/V sync current detail"
+let resourceDetailAccessibilityLabel = "Resource detail"
 
 struct AvSyncAccessibilityRead {
     let peakMatchCount: Int
     let currentMatchCount: Int
     let peakValue: String
     let currentValue: String
+    let resourceMatchCount: Int
+    let resourceDetailValue: String
 }
 
 /// Reads retained peak and live current from one bounded traversal of one exact
@@ -759,6 +771,7 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
     var queue: [(AXUIElement, Int)] = [(window, 0)]
     var peakMatches: [AXUIElement] = []
     var currentMatches: [AXUIElement] = []
+    var resourceMatches: [AXUIElement] = []
     var visited = 0
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
@@ -772,6 +785,8 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
                 peakMatches.append(element)
             } else if label == avSyncCurrentAccessibilityLabel {
                 currentMatches.append(element)
+            } else if label == resourceDetailAccessibilityLabel {
+                resourceMatches.append(element)
             }
         }
         guard depth < 8 else { continue }
@@ -789,15 +804,23 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
             queue.append(contentsOf: children.map { ($0, depth + 1) })
         }
     }
+    let resourceValues = resourceMatches.compactMap({
+        stringAttribute(kAXValueAttribute, of: $0)
+    })
     guard visited < 512,
           peakMatches.count == 1,
           currentMatches.count == 1,
+          resourceMatches.count >= 1,
+          resourceMatches.count <= 2,
           let peak = peakMatches.first,
           let current = currentMatches.first,
           let peakValue = stringAttribute(kAXValueAttribute, of: peak),
           let currentValue = stringAttribute(kAXValueAttribute, of: current),
           peakValue.hasPrefix("av1 "),
-          currentValue.hasPrefix("avc1 ") else {
+          currentValue.hasPrefix("avc1 "),
+          resourceValues.count == resourceMatches.count,
+          resourceValues.allSatisfy({ $0 == resourceValues[0] }),
+          resourceValues[0].hasPrefix("res1 ") else {
         throw DriverFailure.refused(
             "exact peak and current A/V sync accessibility identities are unavailable"
         )
@@ -806,7 +829,9 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
         peakMatchCount: peakMatches.count,
         currentMatchCount: currentMatches.count,
         peakValue: peakValue,
-        currentValue: currentValue
+        currentValue: currentValue,
+        resourceMatchCount: resourceMatches.count,
+        resourceDetailValue: resourceValues[0]
     )
 }
 
@@ -2186,7 +2211,9 @@ do {
                     yFraction: nil,
                     audioProbe: nil,
                     avSyncPeakValue: observed.peakValue,
-                    avSyncCurrentValue: observed.currentValue
+                    avSyncCurrentValue: observed.currentValue,
+                    resourceMatchCount: observed.resourceMatchCount,
+                    resourceDetailValue: observed.resourceDetailValue
                 )
             )
         } else if action.type == "coreaudio-route-health",
