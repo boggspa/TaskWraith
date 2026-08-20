@@ -3530,6 +3530,7 @@ describe('Studio acceptance harness', () => {
       'AXUIElementPerformAction(playback, kAXPressAction as CFString) == .success'
     )
     expect(driverSource).toContain('accessibilityLabel == "Playback"')
+    expect(driverSource).toContain('!labeledMatches.contains(where: { CFEqual($0, element) })')
     expect(driverSource).toContain('playbackValueBefore == observedBefore')
     expect(driverSource).toContain('playbackValueAfter == observedAfter')
     const playbackPressStart = driverSource.indexOf('func pressAccessibilityPlayback(')

@@ -595,7 +595,9 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
             stringAttribute(kAXIdentifierAttribute, of: element) ??
             stringAttribute(kAXDescriptionAttribute, of: element) ??
             stringAttribute(kAXTitleAttribute, of: element)
-        if accessibilityLabel == "Playback" {
+        if accessibilityLabel == "Playback",
+            !labeledMatches.contains(where: { CFEqual($0, element) })
+        {
             labeledMatches.append(element)
         }
         guard depth < 8 else { continue }
