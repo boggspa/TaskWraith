@@ -710,6 +710,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'ornith-1.5:35b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Ornith 1.5 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'laguna-xs-2.1:q8_0',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,

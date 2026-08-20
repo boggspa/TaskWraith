@@ -161,6 +161,7 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^gemma3:4b(?:-|$)/, 'Gemma 3 (4B Param)'],
     [/^gemma4:12b(?:-|$)/, 'Gemma 4 (12B Param)'],
     [/^gemma4:31b-mlx(?:-|$)/, 'Gemma 4 (31B-MLX)'],
+    [/^ornith-1\.5:35b(?:-|$)/, 'Ornith 1.5 (35B Param)'],
     [/^ornith(?::(?:latest|9b))?(?:-|$)/, 'Ornith 1.0 (9B Param)'],
     [/^ornith:35b(?:-|$)/, 'Ornith 1.0 (35B Param)'],
     [/^lfm2\.5-thinking:1\.2b(?:-|$)/, 'LFM 2.5 Thinking (1.2B Param)'],

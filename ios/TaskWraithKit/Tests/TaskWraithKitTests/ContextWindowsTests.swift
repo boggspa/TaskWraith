@@ -15,6 +15,7 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith:latest") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ornith:35b") == 262_144)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "ornith-1.5:35b") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "laguna-xs-2.1:q8_0") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "qwen3.5:4b") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "qwen3.8:27b-mlx") == 262_144)

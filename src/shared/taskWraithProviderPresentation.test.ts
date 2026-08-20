@@ -68,6 +68,12 @@ describe('TaskWraith TUI provider presentation', () => {
     }
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(taskWraithModelLabel('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+    expect(taskWraithModelLabel('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'ornith-1.5:35b')).toMatchObject({
+      displayProvider: 'Deep Reinforce',
+      hueKey: 'deep-reinforce',
+      modelLabel: 'Ornith 1.5 (35B Param)'
+    })
     expect(taskWraithModelLabel('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')

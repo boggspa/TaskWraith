@@ -24,6 +24,8 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('ornith:9b')).toBe('ornith_9b')
     expect(resolveOllamaModelFamily('ornith:35b')).toBe('ornith_35b')
     expect(resolveOllamaModelFamily('ornith:35b-q4_K_M')).toBe('ornith_35b')
+    expect(resolveOllamaModelFamily('ornith-1.5:35b')).toBe('ornith_35b')
+    expect(resolveOllamaModelFamily('ornith-1.5:35b-q4_K_M')).toBe('ornith_35b')
     expect(resolveOllamaModelFamily('laguna-xs-2.1:q8_0')).toBe('laguna_xs_2_1')
     expect(resolveOllamaModelFamily('lfm2.5')).toBe('lfm2_5_8b')
     expect(resolveOllamaModelFamily('lfm2.5:8b')).toBe('lfm2_5_8b')

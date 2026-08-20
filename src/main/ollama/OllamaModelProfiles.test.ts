@@ -60,6 +60,10 @@ describe('ollamaModelFamilyPromptLines', () => {
     const lines = ollamaModelFamilyPromptLines('ornith:35b')
     expect(lines.join(' ')).toContain('agentic coding')
     expect(lines.join(' ')).toContain('verification gaps')
+
+    const ornith15 = ollamaModelFamilyPromptLines('ornith-1.5:35b')
+    expect(ornith15.join(' ')).toContain('Ornith 1.5 35B')
+    expect(ornith15.join(' ')).toContain('agentic coding')
   })
 
   it('adds LFM 2.5 long-context tool guidance', () => {

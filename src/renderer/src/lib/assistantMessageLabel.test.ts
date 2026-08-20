@@ -85,6 +85,19 @@ describe('formatAssistantMessageLabel', () => {
       providerClass: 'deep-reinforce',
       modelBadge: 'Ornith 1.0 (35B Param)'
     })
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'ornith-1.5:35b' }),
+        'Ollama',
+        'ollama'
+      )
+    ).toEqual({
+      label: 'Deep Reinforce',
+      provider: 'ollama',
+      providerClass: 'deep-reinforce',
+      modelBadge: 'Ornith 1.5 (35B Param)'
+    })
   })
 
   it('uses the Liquid brand for LFM through Ollama', () => {

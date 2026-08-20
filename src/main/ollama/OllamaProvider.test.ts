@@ -3515,6 +3515,8 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(humanizeOllamaModelId('ornith:35b')).toBe('Ornith 1.0 (35B Param)')
     expect(humanizeOllamaModelId('ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
+    expect(humanizeOllamaModelId('ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
+    expect(humanizeOllamaModelId('ornith-1.5:35b-q4_K_M')).toBe('Ornith 1.5 (35B Param)')
     expect(humanizeOllamaModelId('laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
     expect(humanizeOllamaModelId('gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:20b')).toBe('GPT OSS (20B Param)')

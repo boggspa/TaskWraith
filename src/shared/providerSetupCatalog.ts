@@ -113,6 +113,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
   {
+    id: 'ornith-1.5:35b',
+    label: 'Ornith 1.5 (35B Param)',
+    command: 'ollama run ornith-1.5:35b'
+  },
+  {
     id: 'laguna-xs-2.1:q8_0',
     label: 'Laguna XS 2.1 (33B-A3B Q8)',
     command: 'ollama run laguna-xs-2.1:q8_0'

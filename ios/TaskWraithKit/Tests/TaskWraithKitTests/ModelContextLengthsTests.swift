@@ -355,6 +355,16 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
+    @Test("ollama ornith-1.5:35b: 262_144 / 262k")
+    func ollamaOrnith15_35b() {
+        let groups = ModelContextLengths.buildGroups(includeOllama: true)
+        let row = groups.first { $0.provider == "ollama" }?
+            .models.first { $0.modelId == "ornith-1.5:35b" }
+        #expect(row?.label == "Ornith 1.5 (35B Param)")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
+    }
+
     @Test("ollama laguna-xs-2.1:q8_0: 262_144 / 262k")
     func ollamaLagunaXs21Q8() {
         let groups = ModelContextLengths.buildGroups(includeOllama: true)

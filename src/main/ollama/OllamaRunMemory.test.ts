@@ -106,6 +106,7 @@ describe('OllamaRunMemory', () => {
     const limits = resolveOllamaWorkingMemoryLimits('ornith:35b')
     expect(limits.toolResultMaxChars).toBeGreaterThanOrEqual(1000)
     expect(limits.workingMemoryMaxChars).toBeGreaterThan(10_000)
+    expect(resolveOllamaWorkingMemoryLimits('ornith-1.5:35b')).toEqual(limits)
     expect(resolveOllamaWorkingMemoryLimits('lfm2.5:8b').workingMemoryMaxChars).toBeGreaterThan(
       resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
     )

@@ -60,6 +60,7 @@ public enum OllamaDisplayBrands {
         "qwen3.8:27b-mlx": "Qwen 3.8 (27B-MLX)",
         "nemotron-3.5-lightning:30b-mlx": "Nemotron 3.5 Lightning (30B-MLX)",
         "muse-glimmer:30b-mlx": "Muse Glimmer (30B-MLX)",
+        "ornith-1.5:35b": "Ornith 1.5 (35B Param)",
     ]
 
     /// Curated brand table. Order mirrors the desktop picker ordering.

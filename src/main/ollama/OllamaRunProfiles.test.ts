@@ -37,6 +37,9 @@ describe('OllamaRunProfiles', () => {
 
   it('uses larger context caps for known high-context local coding models', () => {
     expect(resolveOllamaRunProfile('ornith:35b', 'provider_parity').contextCapTokens).toBe(262_144)
+    expect(resolveOllamaRunProfile('ornith-1.5:35b', 'provider_parity').contextCapTokens).toBe(
+      262_144
+    )
     expect(resolveOllamaRunProfile('qwen3.6:35b', 'provider_parity').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('qwen3.8:27b-mlx', 'provider_parity').contextCapTokens).toBe(
       262_144
@@ -153,6 +156,9 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
+    expect(
+      resolveOllamaThinkingLevel('ornith-1.5:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     // Live daemon capabilities, read 2026-07-30: devstral-small-2:24b and
     // ministral-3:14b advertise ["completion","vision","tools"] with NO

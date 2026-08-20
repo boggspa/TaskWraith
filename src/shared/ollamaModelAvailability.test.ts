@@ -21,6 +21,8 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('gpt-oss', ['openai/gpt-oss-20b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith', ['ornith:9b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith:35b', ['ornith:9b'])).toBe(false)
+    expect(isOllamaModelInstalled('ornith-1.5:35b', ['ornith-1.5:35b'])).toBe(true)
+    expect(isOllamaModelInstalled('ornith-1.5:35b', ['ornith:35b'])).toBe(false)
     expect(isOllamaModelInstalled('gemma3:4b', ['gemma3:latest'])).toBe(true)
     expect(isOllamaModelInstalled('gemma3', ['gemma3:4b'])).toBe(true)
     expect(

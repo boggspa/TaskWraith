@@ -160,6 +160,7 @@ public enum ContextWindows {
         "ornith:latest": 262_144,
         "ornith:9b": 262_144,
         "ornith:35b": 262_144,
+        "ornith-1.5:35b": 262_144,
         "laguna-xs-2.1:q8_0": 262_144,
         "gpt-oss": 131_072,
         "gpt-oss:20b": 131_072,

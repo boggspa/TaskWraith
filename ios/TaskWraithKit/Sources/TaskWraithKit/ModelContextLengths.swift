@@ -148,6 +148,7 @@ public enum ModelContextLengths {
                 (id: "gemma4:12b",         label: "Gemma 4 (12B Param)"),
                 (id: "ornith:9b",          label: "Ornith 1.0 (9B Param)"),
                 (id: "ornith:35b",         label: "Ornith 1.0 (35B Param)"),
+                (id: "ornith-1.5:35b",     label: "Ornith 1.5 (35B Param)"),
                 (id: "laguna-xs-2.1:q8_0", label: "Laguna XS 2.1 (33B-A3B Q8)"),
                 (id: "gpt-oss:20b",        label: "GPT OSS (20B Param)"),
                 (id: "lfm2.5-thinking:1.2b", label: "LFM 2.5 Thinking (1.2B Param)"),

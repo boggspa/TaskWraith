@@ -22,6 +22,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Deep Reinforce',
       providerClass: 'deep-reinforce'
     })
+    expect(resolveOllamaDisplayBrand('ornith-1.5:35b')).toMatchObject({
+      providerLabel: 'Deep Reinforce',
+      providerClass: 'deep-reinforce',
+      modelLabel: 'Ornith 1.5 (35B Param)'
+    })
     expect(resolveOllamaDisplayBrand('gemma4:12b', 'Gemma 4 (12B Param)')).toMatchObject({
       providerLabel: 'Google',
       providerClass: 'google'

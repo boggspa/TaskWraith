@@ -154,7 +154,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'ornith_35b':
       return [
-        'Model profile (Ornith 1.0 35B): agentic coding model; use its larger coding context for deeper review and focused implementation.',
+        `Model profile (${modelId.trim().toLowerCase().startsWith('ornith-1.5:') ? 'Ornith 1.5 35B' : 'Ornith 1.0 35B'}): agentic coding model; use its larger coding context for deeper review and focused implementation.`,
         'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
         'Stay local: work the task the user asked for rather than deferring it to another provider.'
       ]

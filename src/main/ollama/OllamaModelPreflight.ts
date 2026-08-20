@@ -163,6 +163,9 @@ export function resolveOllamaModelFamily(
     return 'ornith_9b'
   }
   if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) return 'ornith_35b'
+  if (key === 'ornith-1.5:35b' || key.startsWith('ornith-1.5:35b-')) {
+    return 'ornith_35b'
+  }
   if (key === 'laguna-xs-2.1:q8_0') return 'laguna_xs_2_1'
   if (
     key === 'gpt-oss' ||

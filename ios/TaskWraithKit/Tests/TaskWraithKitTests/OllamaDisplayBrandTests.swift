@@ -22,6 +22,12 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "ornith:35b", modelLabel: "Ornith 1.0 (35B Param)")?
                 .providerLabel == "Deep Reinforce")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "ornith-1.5:35b")?.providerLabel
+                == "Deep Reinforce")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "ornith-1.5:35b")?.modelLabel
+                == "Ornith 1.5 (35B Param)")
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "gemma4:12b")?.providerClass == "google")
         #expect(
             OllamaDisplayBrands.resolve(modelId: "granite4.1:30b")?.providerLabel == "IBM")

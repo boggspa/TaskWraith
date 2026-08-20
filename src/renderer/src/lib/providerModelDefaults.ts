@@ -460,6 +460,11 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
   },
   {
+    id: 'ornith-1.5:35b',
+    label: 'Ornith 1.5 (35B Param)',
+    description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding'
+  },
+  {
     id: 'laguna-xs-2.1:q8_0',
     label: 'Laguna XS 2.1 (33B-A3B Q8)',
     description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking'
