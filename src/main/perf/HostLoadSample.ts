@@ -15,6 +15,15 @@
  * only moment anyone reads this is from inside a snapshot that is trying to
  * measure a stall.
  *
+ * MEASURED 2026-08-20, and the reason this file gained a CPU reading: on a
+ * 10-core Mac13,1 a 1-minute load average of 12.9 sat beside 37% IDLE CPU while
+ * the disk ran 1350-1730 tps. macOS load counts threads blocked on I/O, so
+ * `loadPerCpu1m` above 1 does NOT establish CPU contention — and a boolean
+ * derived from load alone said "contended" about a host with a third of its CPU
+ * doing nothing. `hostContended` therefore reads CPU utilisation now, and
+ * `loadIsNotCpuBound` names the discrepancy directly so the next reader does
+ * not have to rediscover it.
+ *
  * CPU time is CUMULATIVE at the source — `process.cpuUsage()` counts from
  * launch — so one reading says nothing about the window that just stalled. The
  * sampler holds the previous reading and reports the RATE across the interval
@@ -41,14 +50,24 @@ const PLATFORMS_WITHOUT_LOAD_AVERAGE: ReadonlySet<NodeJS.Platform> = new Set(['w
 const MICROSECONDS_PER_MS = 1_000
 
 /**
- * Load-per-core at or above which the host is treated as contended.
- *
- * A heuristic starting point, not a measurement: 1.0 means the run queue was
- * as long as the machine is wide, so on average something was waiting for a
- * core the whole minute. `loadPerCpu1m` is the ground truth — read it rather
- * than the boolean whenever the answer matters.
+ * Load-per-core at or above which the run queue is longer than the machine is
+ * wide. NOT a CPU-contention threshold on macOS — see `loadIsNotCpuBound`.
  */
 export const HOST_CONTENDED_LOAD_PER_CPU = 1
+
+/**
+ * Machine-wide CPU utilisation at or above which cores are treated as
+ * contended. A heuristic starting point, not a measurement; `cpuBusyPercent`
+ * is the ground truth — read it rather than the boolean when the answer matters.
+ */
+export const HOST_CONTENDED_CPU_BUSY_PERCENT = 85
+
+/**
+ * CPU utilisation below which load is considered NOT explained by CPU demand.
+ * Deliberately well under the contended threshold: the gap between the two is
+ * an "unclear" band rather than a claim in either direction.
+ */
+export const LOAD_NOT_CPU_BOUND_CPU_BUSY_PERCENT = 70
 
 export interface HostLoadSnapshot {
   /**
@@ -63,8 +82,27 @@ export interface HostLoadSnapshot {
   loadAverage15m: number | null
   /** See `PLATFORMS_WITHOUT_LOAD_AVERAGE`. False means the fields above are unknown, not zero. */
   loadAverageReported: boolean
-  /** `loadPerCpu1m >= HOST_CONTENDED_LOAD_PER_CPU`; null when load is unreported. */
+  /**
+   * Machine-wide CPU busy across the interval since the previous sample, as a
+   * percentage of all cores (0-100), from `os.cpus()` tick deltas. Null on the
+   * first sample. THIS, not the load average, is the CPU-contention signal.
+   */
+  cpuBusyPercent: number | null
+  /**
+   * `cpuBusyPercent >= HOST_CONTENDED_CPU_BUSY_PERCENT` — are the CORES
+   * contended? Null until a second sample exists. Deliberately not derived from
+   * the load average; see the header.
+   */
   hostContended: boolean | null
+  /**
+   * Load says the run queue is long while the CPU says it is mostly idle — so
+   * the pressure is elsewhere (on this host, disk I/O). When true, CPU-priority
+   * levers such as nice(2) will not help; I/O-aware ones (macOS `taskpolicy -b`)
+   * or removing blocking I/O from the thread will. Null while either input is
+   * unknown, and false in the band between the two thresholds, which claims
+   * nothing.
+   */
+  loadIsNotCpuBound: boolean | null
   /** Cores available to this process, honouring cgroup quota and CPU affinity. */
   cpuCount: number
   /**
@@ -88,6 +126,10 @@ export interface HostLoadSampler {
 
 export interface HostLoadSamplerOptions {
   loadAverage?: () => number[]
+  /** Cumulative per-core tick counters; production uses `os.cpus()`. */
+  cpuTimes?: () => ReadonlyArray<{
+    times: { user: number; nice: number; sys: number; idle: number; irq: number }
+  }>
   cpuCount?: () => number
   cpuUsage?: () => NodeJS.CpuUsage
   now?: () => number
@@ -130,12 +172,14 @@ export function createHostLoadSampler(options: HostLoadSamplerOptions = {}): Hos
   const readLoadAverage = options.loadAverage ?? (() => os.loadavg())
   const readCpuCount = options.cpuCount ?? defaultCpuCount
   const readCpuUsage = options.cpuUsage ?? (() => process.cpuUsage())
+  const readCpuTimes = options.cpuTimes ?? (() => os.cpus())
   const now = options.now ?? (() => Date.now())
 
   const loadAverageReported = !PLATFORMS_WITHOUT_LOAD_AVERAGE.has(platform)
 
   let previousCpu: NodeJS.CpuUsage | null = null
   let previousCpuAt = 0
+  let previousHostTicks: { busy: number; total: number } | null = null
 
   const sample = (): HostLoadSnapshot => {
     const rawCpuCount = finiteOrNull(safely(readCpuCount, 1))
@@ -146,6 +190,39 @@ export function createHostLoadSampler(options: HostLoadSamplerOptions = {}): Hos
     const loadAverage5m = Array.isArray(rawLoad) ? finiteOrNull(rawLoad[1]) : null
     const loadAverage15m = Array.isArray(rawLoad) ? finiteOrNull(rawLoad[2]) : null
     const loadPerCpu1m = loadAverage1m === null ? null : round(loadAverage1m / cpuCount, 2)
+
+    // Machine-wide utilisation from cumulative tick counters. Summed across
+    // cores, so the result is a share of the WHOLE machine, not of one core.
+    const cores = safely(readCpuTimes, [] as ReturnType<typeof readCpuTimes>)
+    let hostTicks: { busy: number; total: number } | null = null
+    if (Array.isArray(cores) && cores.length > 0) {
+      let busy = 0
+      let total = 0
+      for (const core of cores) {
+        const t = core?.times
+        if (!t) continue
+        const idle = finiteOrNull(t.idle) ?? 0
+        const active =
+          (finiteOrNull(t.user) ?? 0) +
+          (finiteOrNull(t.nice) ?? 0) +
+          (finiteOrNull(t.sys) ?? 0) +
+          (finiteOrNull(t.irq) ?? 0)
+        busy += active
+        total += active + idle
+      }
+      if (total > 0) hostTicks = { busy, total }
+    }
+    let cpuBusyPercent: number | null = null
+    if (hostTicks && previousHostTicks) {
+      const totalDelta = hostTicks.total - previousHostTicks.total
+      const busyDelta = hostTicks.busy - previousHostTicks.busy
+      // A non-positive span means the counters did not advance (or wrapped);
+      // report nothing rather than a fabricated ratio.
+      if (totalDelta > 0 && busyDelta >= 0) {
+        cpuBusyPercent = round(Math.min(100, (busyDelta / totalDelta) * 100), 2)
+      }
+    }
+    if (hostTicks) previousHostTicks = hostTicks
 
     const cpu = safely(readCpuUsage, { user: 0, system: 0 })
     const cpuUserMicros = finiteOrNull(cpu.user) ?? 0
@@ -174,7 +251,14 @@ export function createHostLoadSampler(options: HostLoadSamplerOptions = {}): Hos
       loadAverage5m: loadAverage5m === null ? null : round(loadAverage5m, 2),
       loadAverage15m: loadAverage15m === null ? null : round(loadAverage15m, 2),
       loadAverageReported,
-      hostContended: loadPerCpu1m === null ? null : loadPerCpu1m >= HOST_CONTENDED_LOAD_PER_CPU,
+      cpuBusyPercent,
+      hostContended:
+        cpuBusyPercent === null ? null : cpuBusyPercent >= HOST_CONTENDED_CPU_BUSY_PERCENT,
+      loadIsNotCpuBound:
+        loadPerCpu1m === null || cpuBusyPercent === null
+          ? null
+          : loadPerCpu1m >= HOST_CONTENDED_LOAD_PER_CPU &&
+            cpuBusyPercent < LOAD_NOT_CPU_BOUND_CPU_BUSY_PERCENT,
       cpuCount,
       processCpuPercent,
       processCpuWindowMs,

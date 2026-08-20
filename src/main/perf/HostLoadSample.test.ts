@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createHostLoadSampler, HOST_CONTENDED_LOAD_PER_CPU } from './HostLoadSample'
 
+/** Cumulative tick counters for `n` cores carrying `busy`/`idle` ticks each. */
+function cores(n: number, busy: number, idle: number) {
+  return Array.from({ length: n }, () => ({
+    times: { user: busy, nice: 0, sys: 0, idle, irq: 0 }
+  }))
+}
+
 describe('createHostLoadSampler', () => {
   it('normalises the load average by usable cores', () => {
     const sampler = createHostLoadSampler({
@@ -17,7 +24,8 @@ describe('createHostLoadSampler', () => {
     expect(snapshot.loadAverage1m).toBe(12)
     expect(snapshot.loadPerCpu1m).toBe(1.5)
     expect(snapshot.loadAverageReported).toBe(true)
-    expect(snapshot.hostContended).toBe(true)
+    // hostContended is a CPU verdict now, and one sample cannot produce a rate.
+    expect(snapshot.hostContended).toBeNull()
   })
 
   it('reads an idle host as uncontended', () => {
@@ -33,7 +41,87 @@ describe('createHostLoadSampler', () => {
 
     expect(snapshot.loadPerCpu1m).toBe(0.2)
     expect(snapshot.loadPerCpu1m! < HOST_CONTENDED_LOAD_PER_CPU).toBe(true)
+  })
+
+  it('reads CPU utilisation from tick deltas, not from one absolute reading', () => {
+    let ticks = cores(4, 100, 900)
+    const sampler = createHostLoadSampler({
+      platform: 'darwin',
+      loadAverage: () => [1, 1, 1],
+      cpuCount: () => 4,
+      cpuTimes: () => ticks,
+      cpuUsage: () => ({ user: 0, system: 0 }),
+      now: () => 0
+    })
+
+    expect(sampler.sample().cpuBusyPercent).toBeNull()
+    // +300 busy, +100 idle per core across the interval => 75% of the machine.
+    ticks = cores(4, 400, 1000)
+    expect(sampler.sample().cpuBusyPercent).toBe(75)
+  })
+
+  it('calls a loaded-but-idle host UNCONTENDED and names the discrepancy', () => {
+    // The 2026-08-20 measurement: load 12.9 on 10 cores beside 37% idle CPU.
+    // Deriving contention from load alone reported a busy machine while a third
+    // of the CPU did nothing, and pointed the fix at CPU priority.
+    let ticks = cores(10, 1000, 1000)
+    const sampler = createHostLoadSampler({
+      platform: 'darwin',
+      loadAverage: () => [12.9, 15, 20],
+      cpuCount: () => 10,
+      cpuTimes: () => ticks,
+      cpuUsage: () => ({ user: 0, system: 0 }),
+      now: () => 0
+    })
+
+    sampler.sample()
+    ticks = cores(10, 1063, 1037)
+    const snapshot = sampler.sample()
+
+    expect(snapshot.loadPerCpu1m).toBe(1.29)
+    expect(snapshot.cpuBusyPercent).toBe(63)
     expect(snapshot.hostContended).toBe(false)
+    expect(snapshot.loadIsNotCpuBound).toBe(true)
+  })
+
+  it('calls a genuinely CPU-saturated host contended', () => {
+    let ticks = cores(10, 1000, 1000)
+    const sampler = createHostLoadSampler({
+      platform: 'darwin',
+      loadAverage: () => [14, 14, 14],
+      cpuCount: () => 10,
+      cpuTimes: () => ticks,
+      cpuUsage: () => ({ user: 0, system: 0 }),
+      now: () => 0
+    })
+
+    sampler.sample()
+    ticks = cores(10, 1097, 1003)
+    const snapshot = sampler.sample()
+
+    expect(snapshot.cpuBusyPercent).toBe(97)
+    expect(snapshot.hostContended).toBe(true)
+    // High load explained BY the CPU is not the I/O-pressure case.
+    expect(snapshot.loadIsNotCpuBound).toBe(false)
+  })
+
+  it('claims nothing in the band between the two thresholds', () => {
+    let ticks = cores(10, 1000, 1000)
+    const sampler = createHostLoadSampler({
+      platform: 'darwin',
+      loadAverage: () => [12, 12, 12],
+      cpuCount: () => 10,
+      cpuTimes: () => ticks,
+      cpuUsage: () => ({ user: 0, system: 0 }),
+      now: () => 0
+    })
+    sampler.sample()
+    ticks = cores(10, 1078, 1022)
+    const snapshot = sampler.sample()
+
+    expect(snapshot.cpuBusyPercent).toBe(78)
+    expect(snapshot.hostContended).toBe(false)
+    expect(snapshot.loadIsNotCpuBound).toBe(false)
   })
 
   it('reports no CPU rate on the first sample and the interval rate after', () => {
@@ -132,6 +220,9 @@ describe('createHostLoadSampler', () => {
       cpuUsage: () => {
         throw new Error('cpuUsage unavailable')
       },
+      cpuTimes: () => {
+        throw new Error('cpus unavailable')
+      },
       now: () => {
         throw new Error('clock unavailable')
       }
@@ -145,6 +236,9 @@ describe('createHostLoadSampler', () => {
     expect(snapshot.loadPerCpu1m).toBeNull()
     expect(snapshot.processCpuUserMs).toBe(0)
     expect(snapshot.processCpuPercent).toBeNull()
+    expect(snapshot.cpuBusyPercent).toBeNull()
+    expect(snapshot.hostContended).toBeNull()
+    expect(snapshot.loadIsNotCpuBound).toBeNull()
   })
 
   it('never divides by zero when the host reports no usable cores', () => {

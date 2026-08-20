@@ -2804,7 +2804,9 @@ declare global {
           loadAverage5m: number | null
           loadAverage15m: number | null
           loadAverageReported: boolean
+          cpuBusyPercent: number | null
           hostContended: boolean | null
+          loadIsNotCpuBound: boolean | null
           cpuCount: number
           processCpuPercent: number | null
           processCpuWindowMs: number | null
