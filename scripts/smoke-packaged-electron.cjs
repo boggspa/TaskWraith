@@ -44,6 +44,8 @@ async function main() {
   assertDir(resourcesDir, 'Electron resources directory')
   assertFile(appAsarPath, 'packaged app.asar')
   assertMaxFileSize(appAsarPath, 'packaged app.asar', maxAsarBytes)
+  const distributionMetadata = readPackagedDistributionMetadata(appAsarPath)
+  validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetadata)
   validatePackagedNotices(resourcesDir)
   console.log('packaged third-party notice coverage ok')
 
@@ -70,7 +72,7 @@ async function main() {
   if (packageTarget.platform === 'darwin') {
     validateMacPackageBinaries(packageRoot, resourcesDir, expectedMacArchs)
     validateMacElectronFrameworkSignature(packageRoot, resourcesDir)
-    validateMacAppPermissionMetadata(packageRoot)
+    validateMacAppPermissionMetadata(packageRoot, distributionMetadata)
     validateMacAppSignature(packageRoot)
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
@@ -641,11 +643,16 @@ function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
   console.log('validated Electron Framework code signature')
 }
 
-function validateMacAppPermissionMetadata(packageRoot) {
+function validateMacAppPermissionMetadata(packageRoot, distributionMetadata) {
   if (process.platform !== 'darwin') return
   const infoPlistPath = path.join(packageRoot, 'Contents', 'Info.plist')
   assertFile(infoPlistPath, 'packaged app Info.plist')
   const info = readPlistAsJson(infoPlistPath, 'packaged app Info.plist')
+  if (info.CFBundleIdentifier !== distributionMetadata.appId) {
+    fail(
+      `Packaged app CFBundleIdentifier ${String(info.CFBundleIdentifier)} does not match embedded ${distributionMetadata.series} identity ${distributionMetadata.appId}.`
+    )
+  }
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
     if (info[key] !== 'TaskWraith') {
       fail(`Packaged app Info.plist ${key} must be exactly TaskWraith.`)
@@ -666,6 +673,61 @@ function validateMacAppPermissionMetadata(packageRoot) {
     fail('Packaged app Info.plist must carry the TaskWraith local-network usage identity.')
   }
   console.log('validated packaged macOS permission metadata')
+}
+
+function readPackagedDistributionMetadata(appAsarPath, asarApi = require('@electron/asar')) {
+  let metadata
+  try {
+    metadata = JSON.parse(
+      Buffer.from(asarApi.extractFile(appAsarPath, 'package.json')).toString('utf8')
+    )
+  } catch (error) {
+    fail(
+      `Packaged distribution metadata is unreadable: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  const series = String(metadata.taskwraithDistributionIdentity || '').trim()
+  const appId = String(metadata.taskwraithAppId || '').trim()
+  const feed = String(metadata.taskwraithUpdateFeedChannel || '').trim()
+  const version = String(metadata.version || '').trim()
+  const validBeta = series === 'beta' && appId === 'com.chrisizatt.taskwraith' && feed === 'latest'
+  const validRelease =
+    series === 'release' && appId === 'com.taskwraith.desktop' && feed === 'release'
+  if (!validBeta && !validRelease) {
+    fail('Packaged app contains an unknown or mixed distribution identity/appId/update feed.')
+  }
+  if (!version) fail('Packaged app distribution metadata is missing its version.')
+  console.log(`validated packaged ${series} distribution identity (${appId}, ${feed} feed)`)
+  return { series, appId, stableUpdateChannel: feed, version }
+}
+
+function validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetadata) {
+  const payloadPath = path.join(resourcesDir, 'identity-handoff.json')
+  const required =
+    distributionMetadata.series === 'beta' && distributionMetadata.version === '1.9.9'
+  if (!required) {
+    if (fs.existsSync(payloadPath)) {
+      fail(
+        `Identity handoff payload must not ship in ${distributionMetadata.series} ${distributionMetadata.version}.`
+      )
+    }
+    return
+  }
+  assertFile(payloadPath, 'final-beta identity handoff payload')
+  let manifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(payloadPath, 'utf8'))
+  } catch (error) {
+    fail(
+      `Final-beta identity handoff payload is unreadable: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  const { validateManifest } = require('./identity-handoff-manifest.cjs')
+  const errors = validateManifest(manifest, { requirePrepared: true })
+  if (errors.length > 0) {
+    fail(`Final-beta identity handoff payload is invalid:\n${errors.join('\n')}`)
+  }
+  console.log('validated packaged final-beta identity handoff payload')
 }
 
 function validateMacAppSignature(packageRoot) {
@@ -1257,5 +1319,7 @@ module.exports = {
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
   describeMacSigningPosture,
-  readMacSigningIdentity
+  readMacSigningIdentity,
+  readPackagedDistributionMetadata,
+  validatePackagedIdentityHandoffPayload
 }

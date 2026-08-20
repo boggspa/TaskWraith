@@ -20,7 +20,9 @@ const {
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
   describeMacSigningPosture,
-  readMacSigningIdentity
+  readMacSigningIdentity,
+  readPackagedDistributionMetadata,
+  validatePackagedIdentityHandoffPayload
 }: {
   evaluateMacSigningIdentity: (output: string, exitCode: number | null) => MacSigningIdentity
   collectMacSigningPostureFailures: (options: {
@@ -30,6 +32,14 @@ const {
   }) => string[]
   describeMacSigningPosture: (identity: MacSigningIdentity) => string
   readMacSigningIdentity: (codePath: string) => MacSigningIdentity
+  readPackagedDistributionMetadata: (
+    appAsarPath: string,
+    asarApi: { extractFile: (asarPath: string, filePath: string) => Buffer }
+  ) => { series: string; appId: string; stableUpdateChannel: string; version: string }
+  validatePackagedIdentityHandoffPayload: (
+    resourcesDir: string,
+    metadata: { series: string; version: string }
+  ) => void
 } = require('./smoke-packaged-electron.cjs')
 
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
@@ -95,6 +105,58 @@ describe('packaged Electron to TUI smoke handoff', () => {
   it('exposes its signing helpers without executing the smoke run', () => {
     expect(typeof evaluateMacSigningIdentity).toBe('function')
     expect(typeof collectMacSigningPostureFailures).toBe('function')
+  })
+
+  it('accepts only coherent beta or Release identity metadata in app.asar', () => {
+    const extract = (metadata: Record<string, string>) => ({
+      extractFile: () => Buffer.from(JSON.stringify(metadata))
+    })
+    expect(
+      readPackagedDistributionMetadata(
+        '/tmp/app.asar',
+        extract({
+          taskwraithDistributionIdentity: 'beta',
+          taskwraithAppId: 'com.chrisizatt.taskwraith',
+          taskwraithUpdateFeedChannel: 'latest',
+          version: '1.9.8'
+        })
+      )
+    ).toEqual({
+      series: 'beta',
+      appId: 'com.chrisizatt.taskwraith',
+      stableUpdateChannel: 'latest',
+      version: '1.9.8'
+    })
+    expect(
+      readPackagedDistributionMetadata(
+        '/tmp/app.asar',
+        extract({
+          taskwraithDistributionIdentity: 'release',
+          taskwraithAppId: 'com.taskwraith.desktop',
+          taskwraithUpdateFeedChannel: 'release',
+          version: '0.1.0'
+        })
+      )
+    ).toEqual({
+      series: 'release',
+      appId: 'com.taskwraith.desktop',
+      stableUpdateChannel: 'release',
+      version: '0.1.0'
+    })
+  })
+
+  it('requires the payload only in 1.9.9 beta and excludes it from Release', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-package-handoff-'))
+    try {
+      expect(() =>
+        validatePackagedIdentityHandoffPayload(root, { series: 'release', version: '0.1.0' })
+      ).not.toThrow()
+      expect(() =>
+        validatePackagedIdentityHandoffPayload(root, { series: 'beta', version: '1.9.8' })
+      ).not.toThrow()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

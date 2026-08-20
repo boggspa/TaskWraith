@@ -16,8 +16,8 @@ function cleanArtifactName(value) {
   return withoutQuery.split('/').filter(Boolean).pop() || withoutQuery
 }
 
-function expectedChannel(version) {
-  return String(version).includes('-') ? 'beta' : 'latest'
+function expectedChannel(version, channelOverride) {
+  return channelOverride || (String(version).includes('-') ? 'beta' : 'latest')
 }
 
 function extractArtifactEntries(feedText) {
@@ -70,18 +70,14 @@ function extractArtifactEntries(feedText) {
 function validateLinuxUpdateFeedText(feedText, options = {}) {
   const fileName = options.fileName || 'Linux update feed'
   const expectedVersion = options.expectedVersion
+  const channel = expectedChannel(expectedVersion, options.expectedChannel)
   const version = parseFeedScalar(feedText.match(/(?:^|\n)version:\s*([^\n]+)/)?.[1])
   const entries = extractArtifactEntries(feedText)
   const errors = []
   const topLevel = entries.find((entry) => entry.source === 'path')
 
-  if (
-    expectedVersion &&
-    path.basename(fileName) !== `${expectedChannel(expectedVersion)}-linux.yml`
-  ) {
-    errors.push(
-      `${fileName}: feed filename does not match ${expectedChannel(expectedVersion)} channel.`
-    )
+  if (expectedVersion && path.basename(fileName) !== `${channel}-linux.yml`) {
+    errors.push(`${fileName}: feed filename does not match ${channel} channel.`)
   }
   if (!version) {
     errors.push(`${fileName}: missing version.`)
@@ -138,10 +134,11 @@ function validateFeedArtifactMetadata(feedPath, artifacts) {
   return errors
 }
 
-function validateLinuxUpdateFeedFile(filePath, expectedVersion) {
+function validateLinuxUpdateFeedFile(filePath, expectedVersion, expectedFeedChannel) {
   const result = validateLinuxUpdateFeedText(fs.readFileSync(filePath, 'utf8'), {
     fileName: path.basename(filePath),
-    expectedVersion
+    expectedVersion,
+    expectedChannel: expectedFeedChannel
   })
   const metadataErrors = validateFeedArtifactMetadata(filePath, result.artifacts)
   return {
@@ -167,8 +164,8 @@ function validateLinuxReleaseDirectory(distDir, version) {
   return errors
 }
 
-function resolveFeedFiles(targets, version) {
-  const channel = expectedChannel(version)
+function resolveFeedFiles(targets, version, channelOverride) {
+  const channel = expectedChannel(version, channelOverride)
   const files = []
   for (const target of targets) {
     const absolute = path.resolve(target)
@@ -198,9 +195,11 @@ function readPackageVersion(repoRoot) {
 }
 
 function runCli(argv = process.argv.slice(2), repoRoot = path.join(__dirname, '..')) {
-  const version = readPackageVersion(repoRoot)
-  const targets = argv.length > 0 ? argv : [path.join(repoRoot, 'dist')]
-  const files = resolveFeedFiles(targets, version)
+  const parsed = parseCliArgs(argv)
+  const version = parsed.version || readPackageVersion(repoRoot)
+  const channel = parsed.channel
+  const targets = parsed.targets.length > 0 ? parsed.targets : [path.join(repoRoot, 'dist')]
+  const files = resolveFeedFiles(targets, version, channel)
   const errors = targets.flatMap((target) => {
     const absolute = path.resolve(target)
     return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()
@@ -210,11 +209,11 @@ function runCli(argv = process.argv.slice(2), repoRoot = path.join(__dirname, '.
 
   if (files.length === 0) {
     errors.push(
-      `No ${expectedChannel(version)} Linux update feed found. Checked: ${targets.join(', ')}`
+      `No ${expectedChannel(version, channel)} Linux update feed found. Checked: ${targets.join(', ')}`
     )
   }
   for (const file of files) {
-    const result = validateLinuxUpdateFeedFile(file, version)
+    const result = validateLinuxUpdateFeedFile(file, version, channel)
     if (result.ok) {
       console.log(
         `[validate-linux-update-feed] ${path.basename(file)} ok (${result.artifacts
@@ -232,6 +231,22 @@ function runCli(argv = process.argv.slice(2), repoRoot = path.join(__dirname, '.
   return errors.length > 0 ? 1 : 0
 }
 
+function parseCliArgs(argv) {
+  const options = { targets: [] }
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg === '--version' || arg === '--channel') {
+      const value = argv[index + 1]
+      if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}`)
+      options[arg.slice(2)] = value
+      index += 1
+      continue
+    }
+    options.targets.push(arg)
+  }
+  return options
+}
+
 function safeReadDir(dirPath) {
   try {
     return fs.readdirSync(dirPath, { withFileTypes: true })
@@ -247,6 +262,7 @@ if (require.main === module) {
 module.exports = {
   expectedChannel,
   extractArtifactEntries,
+  parseCliArgs,
   resolveFeedFiles,
   runCli,
   validateFeedArtifactMetadata,

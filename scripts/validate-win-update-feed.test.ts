@@ -15,16 +15,25 @@ const {
   validateWindowsUpdateFeedText
 }: {
   classifyWindowsArtifact: (name: string | undefined) => 'arm64' | 'x64' | 'unknown'
-  expectedChannel: (version: string) => string
-  resolveFeedFiles: (targets: string[], version?: string) => string[]
-  validateWindowsReleaseDirectory: (distDir: string, version?: string) => string[]
+  expectedChannel: (version: string, channelOverride?: string) => string
+  resolveFeedFiles: (targets: string[], version?: string, channelOverride?: string) => string[]
+  validateWindowsReleaseDirectory: (
+    distDir: string,
+    version?: string,
+    channelOverride?: string
+  ) => string[]
   validateWindowsUpdateFeedFile: (filePath: string) => {
     ok: boolean
     errors: string[]
   }
   validateWindowsUpdateFeedText: (
     feedText: string,
-    options?: { fileName?: string; expectedArch?: string; expectedVersion?: string }
+    options?: {
+      fileName?: string
+      expectedArch?: string
+      expectedVersion?: string
+      expectedChannel?: string
+    }
   ) => {
     ok: boolean
     errors: string[]
@@ -188,5 +197,26 @@ sha512: example
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true })
     }
+  })
+
+  it('validates the public identity against arch-specific release feeds', () => {
+    const result = validateWindowsUpdateFeedText(
+      `
+version: 0.1.0
+files:
+  - url: TaskWraith-0.1.0-win-arm64-setup.exe
+    sha512: example
+    size: 123
+path: TaskWraith-0.1.0-win-arm64-setup.exe
+sha512: example
+`,
+      {
+        fileName: 'release-win-arm64.yml',
+        expectedVersion: '0.1.0',
+        expectedChannel: 'release'
+      }
+    )
+    expect(result.ok).toBe(true)
+    expect(expectedChannel('0.1.0', 'release')).toBe('release')
   })
 })

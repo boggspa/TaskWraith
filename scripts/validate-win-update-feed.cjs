@@ -6,12 +6,12 @@ const crypto = require('node:crypto')
 
 const WINDOWS_ARCHES = ['x64', 'arm64']
 
-function expectedChannel(version) {
-  return String(version).includes('-') ? 'beta' : 'latest'
+function expectedChannel(version, channelOverride) {
+  return channelOverride || (String(version).includes('-') ? 'beta' : 'latest')
 }
 
-function feedNamesForVersion(version) {
-  const channels = version ? [expectedChannel(version)] : ['latest', 'beta']
+function feedNamesForVersion(version, channelOverride) {
+  const channels = version ? [expectedChannel(version, channelOverride)] : ['latest', 'beta']
   return WINDOWS_ARCHES.flatMap((arch) => channels.map((channel) => `${channel}-win-${arch}.yml`))
 }
 
@@ -94,6 +94,7 @@ function validateWindowsUpdateFeedText(feedText, options = {}) {
   const fileName = options.fileName || 'windows update feed'
   const expectedArch = options.expectedArch || expectedArchFromFeedName(fileName)
   const expectedVersion = options.expectedVersion
+  const channel = expectedChannel(expectedVersion, options.expectedChannel)
   const version = parseFeedScalar(feedText.match(/(?:^|\n)version:\s*([^\n]+)/)?.[1])
   const entries = extractArtifactEntries(feedText)
   const errors = []
@@ -102,10 +103,10 @@ function validateWindowsUpdateFeedText(feedText, options = {}) {
   if (
     expectedVersion &&
     path.basename(fileName) !==
-      `${expectedChannel(expectedVersion)}-win-${expectedArch || 'unknown'}.yml`
+      `${channel}-win-${expectedArch || 'unknown'}.yml`
   ) {
     errors.push(
-      `${fileName}: feed filename does not match ${expectedChannel(expectedVersion)} channel and ${expectedArch || 'unknown'} architecture.`
+      `${fileName}: feed filename does not match ${channel} channel and ${expectedArch || 'unknown'} architecture.`
     )
   }
   if (!version) {
@@ -155,11 +156,12 @@ function validateWindowsUpdateFeedText(feedText, options = {}) {
   }
 }
 
-function validateWindowsUpdateFeedFile(filePath, expectedVersion) {
+function validateWindowsUpdateFeedFile(filePath, expectedVersion, expectedFeedChannel) {
   const text = fs.readFileSync(filePath, 'utf8')
   const result = validateWindowsUpdateFeedText(text, {
     fileName: path.basename(filePath),
-    expectedVersion
+    expectedVersion,
+    expectedChannel: expectedFeedChannel
   })
   const metadataErrors = validateFeedArtifactMetadata(filePath, result.artifacts)
   return {
@@ -195,7 +197,7 @@ function validateFeedArtifactMetadata(feedPath, artifacts) {
   return errors
 }
 
-function validateWindowsReleaseDirectory(distDir, version) {
+function validateWindowsReleaseDirectory(distDir, version, channelOverride) {
   const errors = []
   const installerNames = safeReadDir(distDir)
     .filter((entry) => entry.isFile() && /\.exe$/i.test(entry.name) && /setup/i.test(entry.name))
@@ -203,7 +205,7 @@ function validateWindowsReleaseDirectory(distDir, version) {
 
   for (const arch of WINDOWS_ARCHES) {
     if (version) {
-      const feedName = `${expectedChannel(version)}-win-${arch}.yml`
+      const feedName = `${expectedChannel(version, channelOverride)}-win-${arch}.yml`
       if (!fs.existsSync(path.join(distDir, feedName))) {
         errors.push(`${path.basename(distDir)}: missing Windows update feed ${feedName}.`)
       }
@@ -229,14 +231,14 @@ function validateWindowsReleaseDirectory(distDir, version) {
   return errors
 }
 
-function resolveFeedFiles(targets, version) {
+function resolveFeedFiles(targets, version, channelOverride) {
   const resolved = []
   for (const target of targets) {
     const absolute = path.resolve(target)
     if (!fs.existsSync(absolute)) continue
     const stat = fs.statSync(absolute)
     if (stat.isDirectory()) {
-      for (const feedName of feedNamesForVersion(version)) {
+      for (const feedName of feedNamesForVersion(version, channelOverride)) {
         const candidate = path.join(absolute, feedName)
         if (fs.existsSync(candidate)) resolved.push(candidate)
       }
@@ -251,13 +253,15 @@ function runCli(argv = process.argv.slice(2)) {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
   )
-  const version = packageJson.version
-  const targets = argv.length > 0 ? argv : ['dist']
-  const files = resolveFeedFiles(targets, version)
+  const parsed = parseCliArgs(argv)
+  const version = parsed.version || packageJson.version
+  const channel = parsed.channel
+  const targets = parsed.targets.length > 0 ? parsed.targets : ['dist']
+  const files = resolveFeedFiles(targets, version, channel)
   const directoryErrors = targets.flatMap((target) => {
     const absolute = path.resolve(target)
     return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()
-      ? validateWindowsReleaseDirectory(absolute, version)
+      ? validateWindowsReleaseDirectory(absolute, version, channel)
       : []
   })
   if (files.length === 0) {
@@ -272,7 +276,7 @@ function runCli(argv = process.argv.slice(2)) {
     console.error(`[validate-win-update-feed] ${error}`)
   }
   for (const file of files) {
-    const result = validateWindowsUpdateFeedFile(file, version)
+    const result = validateWindowsUpdateFeedFile(file, version, channel)
     if (result.ok) {
       console.log(
         `[validate-win-update-feed] ${path.basename(file)} ok (${result.artifacts
@@ -287,6 +291,22 @@ function runCli(argv = process.argv.slice(2)) {
     }
   }
   return failed ? 1 : 0
+}
+
+function parseCliArgs(argv) {
+  const options = { targets: [] }
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg === '--version' || arg === '--channel') {
+      const value = argv[index + 1]
+      if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}`)
+      options[arg.slice(2)] = value
+      index += 1
+      continue
+    }
+    options.targets.push(arg)
+  }
+  return options
 }
 
 function safeReadDir(dirPath) {
@@ -305,6 +325,7 @@ module.exports = {
   classifyWindowsArtifact,
   expectedChannel,
   extractArtifactEntries,
+  parseCliArgs,
   resolveFeedFiles,
   runCli,
   validateWindowsReleaseDirectory,

@@ -2,9 +2,26 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { generateThirdPartyNotices } = require('./third-party-notices.cjs')
+const {
+  distributionMetadataFromPackager,
+  installIdentityHandoffPayload
+} = require('./identity-handoff-payload.cjs')
 
 async function validateNativeModules(context) {
   const resourcesDir = resolveResourcesDir(context)
+  const distributionMetadata = distributionMetadataFromPackager(context)
+  const handoffPayload = installIdentityHandoffPayload({
+    resourcesDir,
+    payloadPath: process.env.TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD,
+    expectedBaseUrl: process.env.TASKWRAITH_HANDOFF_REHEARSAL_BASE_URL,
+    expectedSourceCommit: process.env.TASKWRAITH_IDENTITY_HANDOFF_SOURCE_COMMIT,
+    ...distributionMetadata
+  })
+  console.log(
+    handoffPayload.installed
+      ? `Installed final-beta identity handoff payload: ${handoffPayload.destination}`
+      : `Excluded identity handoff payload from ${distributionMetadata.distributionIdentity} ${distributionMetadata.version}`
+  )
   validateAppAsarSize(resourcesDir)
   const unpackedDir = path.join(resourcesDir, 'app.asar.unpacked')
   const platform = context.electronPlatformName || process.platform

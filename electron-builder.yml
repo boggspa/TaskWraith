@@ -1,5 +1,9 @@
 appId: com.chrisizatt.taskwraith
 productName: TaskWraith
+extraMetadata:
+  taskwraithDistributionIdentity: beta
+  taskwraithAppId: com.chrisizatt.taskwraith
+  taskwraithUpdateFeedChannel: latest
 directories:
   buildResources: build
 # TaskWraith's UI strings are app-authored; keep Electron's own Chromium
@@ -75,6 +79,9 @@ files:
   - '!docs/**'
   - '!tests/**'
   - '!scripts/**'
+  # The 1.9.9-only, hash-pinned identity payload is installed by afterPack.
+  # Excluding it from app.asar avoids a self-referential 0.1.0 artifact hash.
+  - '!resources/identity-handoff.json'
   # relay/src is statically imported into out/main at build time (bundled),
   # so the source tree itself is dead weight in the package.
   - '!relay/**'

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "handoffId": "taskwraith-1.9.9-to-0.1.0-v1",
+  "prepared": false,
+  "sourceCommit": null,
+  "source": {
+    "distributionIdentity": "beta",
+    "appId": "com.chrisizatt.taskwraith",
+    "version": "1.9.9",
+    "updateFeedChannel": "latest"
+  },
+  "target": {
+    "distributionIdentity": "release",
+    "appId": "com.taskwraith.desktop",
+    "version": "0.1.0",
+    "updateFeedChannel": "release"
+  },
+  "supportUrl": "https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0",
+  "artifacts": {}
+}
