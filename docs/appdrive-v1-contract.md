@@ -13,11 +13,11 @@ behavior callers and reviewers may rely on.
 
 ## 1. Shipped surfaces
 
-| Surface | V1 scope | Mutating verbs |
-| --- | --- | --- |
-| Web Canvas | TaskWraith Canvas Browser, including any HTTP(S) origin in its persistent browser profile | `click`, `fill`, allowlisted non-text `key`, `scroll`, `hover`, `select` |
-| Simulator Canvas | One exact Simulator UDID plus current app bundle when known | open, boot, install, launch, terminate, hardware button, rotate, normalized tap, type, scroll |
-| Managed native window | One live macOS window proved to belong to the current Run launch and selected through Screen Watch + View & Control consent | AX-ref-only `click` and `fill` |
+| Surface               | V1 scope                                                                                                                    | Mutating verbs                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Web Canvas            | TaskWraith Canvas Browser, including any HTTP(S) origin in its persistent browser profile                                   | `click`, `fill`, allowlisted non-text `key`, `scroll`, `hover`, `select`                      |
+| Simulator Canvas      | One exact Simulator UDID plus current app bundle when known                                                                 | open, boot, install, launch, terminate, hardware button, rotate, normalized tap, type, scroll |
+| Managed native window | One live macOS window proved to belong to the current Run launch and selected through Screen Watch + View & Control consent | AX-ref-only `click` and `fill`                                                                |
 
 Read operations do not consume action steps. Web observation includes snapshot,
 screenshot, inspect, network, console and bounded `wait_for`. Simulator

@@ -5,13 +5,13 @@
 The public debut is a one-way application-identity handoff, not a semver
 downgrade:
 
-| Boundary | Final beta | Public Release |
-| --- | --- | --- |
-| Version | `1.9.9` | `0.1.0` |
-| Desktop app id | `com.chrisizatt.taskwraith` | `com.taskwraith.desktop` |
-| Distribution identity | `beta` | `release` |
-| Stable feed | `latest` | `release` |
-| Product/profile name | `TaskWraith` | `TaskWraith` |
+| Boundary              | Final beta                  | Public Release           |
+| --------------------- | --------------------------- | ------------------------ |
+| Version               | `1.9.9`                     | `0.1.0`                  |
+| Desktop app id        | `com.chrisizatt.taskwraith` | `com.taskwraith.desktop` |
+| Distribution identity | `beta`                      | `release`                |
+| Stable feed           | `latest`                    | `release`                |
+| Product/profile name  | `TaskWraith`                | `TaskWraith`             |
 
 Keeping the product/profile name preserves the existing TaskWraith user-data
 root. The handoff does **not** copy, rewrite or schema-migrate chats, journals,
@@ -152,18 +152,18 @@ Every row uses disposable copies of production-shaped profiles and the exact
 signed/notarized candidate bytes. Record the candidate commit, artifact hashes,
 platform/architecture, source profile fixture and final receipt.
 
-| Case | Expected result |
-| --- | --- |
-| Fresh 0.1.0 install | No handoff state is invented; Release feed is active. |
-| Normal 1.9.9 handoff | Download → verified → installer → target launch → `complete`; profile digests stay unchanged. |
-| Interrupted download | Partial bytes and attempt count persist; a valid 206 response resumes at the exact offset. |
-| Relaunch before install | Cached bytes are re-hashed before the installer can open. |
-| Relaunch after installer open | 1.9.9 offers bounded reopen/repair; 0.1.0 completes the same receipt idempotently. |
-| Duplicate action | One in-flight download and one durable phase transition; no duplicate installer mutation. |
-| Unsupported platform/arch | No download or launch; visible support route and error code. |
-| Wrong source/target identity | Fail closed; no profile mutation and no installer launch. |
-| Size/hash/URL mismatch | Artifact rejected and never executed. |
-| Target launch with beta `nightly` selected | Setting becomes `stable`; updater requests only the Release feed. |
+| Case                                       | Expected result                                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Fresh 0.1.0 install                        | No handoff state is invented; Release feed is active.                                         |
+| Normal 1.9.9 handoff                       | Download → verified → installer → target launch → `complete`; profile digests stay unchanged. |
+| Interrupted download                       | Partial bytes and attempt count persist; a valid 206 response resumes at the exact offset.    |
+| Relaunch before install                    | Cached bytes are re-hashed before the installer can open.                                     |
+| Relaunch after installer open              | 1.9.9 offers bounded reopen/repair; 0.1.0 completes the same receipt idempotently.            |
+| Duplicate action                           | One in-flight download and one durable phase transition; no duplicate installer mutation.     |
+| Unsupported platform/arch                  | No download or launch; visible support route and error code.                                  |
+| Wrong source/target identity               | Fail closed; no profile mutation and no installer launch.                                     |
+| Size/hash/URL mismatch                     | Artifact rejected and never executed.                                                         |
+| Target launch with beta `nightly` selected | Setting becomes `stable`; updater requests only the Release feed.                             |
 
 For each supported platform, separately verify that the packaged metadata,
 actual bundle/application identity and generated feed agree. On macOS the

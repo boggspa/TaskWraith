@@ -18,18 +18,18 @@ the companion, and carries cost/receipt evidence end to end.
 Fill these fields before the live run. Do not overwrite an earlier candidate;
 append a new dated run if the artifact changes.
 
-| Field | Recorded value |
-| --- | --- |
-| App version | `1.9.6` |
-| Git commit | `UNKNOWN — the installed artifact carries no source-commit receipt; current checkout HEAD is not artifact evidence` |
-| Installer | `dist/TaskWraith-1.9.6-universal-mac.dmg` |
-| Installer SHA-256 | `06fc25f270632dc5b03060ad4676e6b3e528703a38584fa0790860d6f7ad1ccf` |
-| Build/signing posture | `Developer ID signed with hardened runtime and a stapled notarization ticket; package-contract smoke failed before live use` |
-| Host hardware / OS | `Mac13,1 / Apple M1 Max / macOS 26.0 (25A353)` |
-| iOS companion build / device | `Physical iPhone 15 Pro is paired and available; companion build/install and notification attention are not yet verified` |
-| Provider seats | `Not exercised — live dispatch deliberately stopped at the failed package prerequisite` |
-| Workspace | `Not selected — no workspace content was sent to a provider` |
-| Run date (UTC) | `2026-08-20 preflight only` |
+| Field                        | Recorded value                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| App version                  | `1.9.6`                                                                                                                      |
+| Git commit                   | `UNKNOWN — the installed artifact carries no source-commit receipt; current checkout HEAD is not artifact evidence`          |
+| Installer                    | `dist/TaskWraith-1.9.6-universal-mac.dmg`                                                                                    |
+| Installer SHA-256            | `06fc25f270632dc5b03060ad4676e6b3e528703a38584fa0790860d6f7ad1ccf`                                                           |
+| Build/signing posture        | `Developer ID signed with hardened runtime and a stapled notarization ticket; package-contract smoke failed before live use` |
+| Host hardware / OS           | `Mac13,1 / Apple M1 Max / macOS 26.0 (25A353)`                                                                               |
+| iOS companion build / device | `Physical iPhone 15 Pro is paired and available; companion build/install and notification attention are not yet verified`    |
+| Provider seats               | `Not exercised — live dispatch deliberately stopped at the failed package prerequisite`                                      |
+| Workspace                    | `Not selected — no workspace content was sent to a provider`                                                                 |
+| Run date (UTC)               | `2026-08-20 preflight only`                                                                                                  |
 
 ## Closure rule
 
@@ -38,15 +38,15 @@ pointer is durable (recording, redacted transcript/export, or test log). A
 `PARTIAL`, `BLOCKED`, or missing pointer keeps the record `OPEN`; static package
 smoke is necessary hygiene but never substitutes for a live row.
 
-| Row | Required live observation | Evidence to retain | Result |
-| --- | --- | --- | --- |
-| A | Create a multi-provider Ensemble with named roles and schedule a near-term run. The schedule is sealed and visible before the window closes. | Screenshot or redacted capture of schedule + sealed occurrence id | `TBD` |
-| B | Close the renderer window while the host Mac remains awake. Main-owned dispatch starts the scheduled round without renderer participation. | Timestamped host log and occurrence/round ids spanning close → dispatch | `TBD` |
-| C | Reopen the app (or inspect the permitted run projection) and show every lane's role, provider, permission posture, and provenance. | Redacted transcript/run projection with per-seat labels | `TBD` |
-| D | A reviewing seat returns a ranked verdict that cites peer findings; the round settles instead of becoming an unlabelled batch of solo outputs. | Final review card/transcript plus settled round id | `TBD` |
-| E | The native iOS companion receives attention for the completed round and opens the corresponding result. | Physical-device notification/attention capture and device/build details | `TBD` |
-| F | The opened result carries per-model token totals and projected cost, with provider/model identity intact. | Usage/cost capture tied to the same round id | `TBD` |
-| G | The same evidence package records the host ceiling: the awake Mac is local infrastructure, not an always-on cloud service. | Spoken or written disclosure in the recording/notes | `TBD` |
+| Row | Required live observation                                                                                                                      | Evidence to retain                                                      | Result |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------ |
+| A   | Create a multi-provider Ensemble with named roles and schedule a near-term run. The schedule is sealed and visible before the window closes.   | Screenshot or redacted capture of schedule + sealed occurrence id       | `TBD`  |
+| B   | Close the renderer window while the host Mac remains awake. Main-owned dispatch starts the scheduled round without renderer participation.     | Timestamped host log and occurrence/round ids spanning close → dispatch | `TBD`  |
+| C   | Reopen the app (or inspect the permitted run projection) and show every lane's role, provider, permission posture, and provenance.             | Redacted transcript/run projection with per-seat labels                 | `TBD`  |
+| D   | A reviewing seat returns a ranked verdict that cites peer findings; the round settles instead of becoming an unlabelled batch of solo outputs. | Final review card/transcript plus settled round id                      | `TBD`  |
+| E   | The native iOS companion receives attention for the completed round and opens the corresponding result.                                        | Physical-device notification/attention capture and device/build details | `TBD`  |
+| F   | The opened result carries per-model token totals and projected cost, with provider/model identity intact.                                      | Usage/cost capture tied to the same round id                            | `TBD`  |
+| G   | The same evidence package records the host ceiling: the awake Mac is local infrastructure, not an always-on cloud service.                     | Spoken or written disclosure in the recording/notes                     | `TBD`  |
 
 Rows A–F are the §9 gate. Row G is required for an honest public recording but
 does not turn local scheduling into a cloud-continuity claim.
@@ -97,14 +97,14 @@ it stopped before provider dispatch because the package prerequisite failed.
 
 ### Attempt 1 — blocked at package preflight
 
-| Field | Value |
-| --- | --- |
-| Candidate / commit | `TaskWraith-1.9.6-universal-mac.dmg` / source commit unknown |
-| Date (UTC) | `2026-08-20` |
-| Result | `BLOCKED — production package smoke rejected mixed/unknown distribution identity` |
-| Failed or missing rows | `A–F not attempted; G disclosure retained in the procedure` |
-| Evidence location | This record: signing, artifact hash, host/device preflight and exact smoke failure below |
-| Follow-up owner/date | Release maintainer — build a fresh signed candidate from the identity-handoff commits, then append Attempt 2 |
+| Field                  | Value                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Candidate / commit     | `TaskWraith-1.9.6-universal-mac.dmg` / source commit unknown                                                 |
+| Date (UTC)             | `2026-08-20`                                                                                                 |
+| Result                 | `BLOCKED — production package smoke rejected mixed/unknown distribution identity`                            |
+| Failed or missing rows | `A–F not attempted; G disclosure retained in the procedure`                                                  |
+| Evidence location      | This record: signing, artifact hash, host/device preflight and exact smoke failure below                     |
+| Follow-up owner/date   | Release maintainer — build a fresh signed candidate from the identity-handoff commits, then append Attempt 2 |
 
 #### Preflight evidence
 
