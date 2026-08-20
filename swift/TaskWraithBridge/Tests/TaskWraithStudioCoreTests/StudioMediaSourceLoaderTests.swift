@@ -479,7 +479,7 @@ final class StudioMediaSourceLoaderTests: XCTestCase {
 
         XCTAssertEqual(
             try XCTUnwrap(asset.visibleIdentityToken),
-            "FMM82KME32EE8228989A42H33NEKK34CM8M234FAMM39P2N32DCKAKN9878KA979"
+            "HNN92MNF32FF9229A9AC42K33PFMM34DN9N234HCNN3AX2P32EDMCMPA979MCA7A"
         )
         XCTAssertEqual(asset.visibleIdentityToken?.count, 64)
         XCTAssertNil(
