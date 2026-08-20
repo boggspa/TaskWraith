@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '0c956ab100f6e561e99ff6dc3a08fb4a8abdf3842dd816ccd888802c85d5c972',
+    'e2528bd3df82c421ae273b450d06cda19ffbf0e715280ff3d375751d816f2461',
   'scripts/studio-acceptance-ui-driver.swift':
     'c608e697e6c28abbccf663da3b402a495450434c5c5488c9278a939f0e07b32d',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -47,7 +47,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':
-    '1e8e54040fefb1f097a07d36470584c681b87c02198ddf3cb45fe43e5bd579b5'
+    '9d62485e7df55c812d09c61117162fdaa8ce58a26dfad53acc07da773f312d9f'
 })
 const ocrScriptPath = path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')
 const focusScriptPath = path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')

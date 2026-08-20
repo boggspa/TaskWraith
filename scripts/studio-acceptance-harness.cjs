@@ -161,7 +161,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
   'scripts/perf/electronChildSession.cjs':
-    '1e8e54040fefb1f097a07d36470584c681b87c02198ddf3cb45fe43e5bd579b5',
+    '9d62485e7df55c812d09c61117162fdaa8ce58a26dfad53acc07da773f312d9f',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
@@ -5609,7 +5609,10 @@ async function runStudioAcceptance(args, adapters = {}) {
   try {
     await (adapters.assertExactChildOwnsDebugPorts || assertExactChildOwnsDebugPorts)(
       session,
-      adapters.portOwnershipAdapters || {}
+      {
+        ...(adapters.portOwnershipAdapters || {}),
+        requireMainInspector: plan.spawnPlan.packaged !== true
+      }
     )
     renderer = await (adapters.attachRenderer || attachRendererCdpSession)({
       port: plan.spawnPlan.remoteDebuggingPort,

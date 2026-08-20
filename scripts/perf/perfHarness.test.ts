@@ -2042,6 +2042,20 @@ describe('T2 runner (no Electron launch)', () => {
     expect(calls.filter((p) => p === 9411).length).toBeGreaterThan(1)
     expect(calls.filter((p) => p === 9811).length).toBeGreaterThan(0)
 
+    const packagedCalls = []
+    const packaged = await assertExactChildOwnsDebugPorts(session, {
+      requireMainInspector: false,
+      listPortPids: async (port) => {
+        packagedCalls.push(port)
+        return [4242]
+      },
+      timeoutMs: 100,
+      initialDelayMs: 0,
+      sleep: async () => {}
+    })
+    expect(packaged.ok).toBe(true)
+    expect(packagedCalls).toEqual([9411])
+
     clock = 0
     await expect(
       assertExactChildOwnsDebugPorts(session, {

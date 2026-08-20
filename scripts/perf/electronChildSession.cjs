@@ -568,6 +568,7 @@ async function isPidInOwnedElectronTree(listenerPid, session, adapters = {}) {
  *   lsofPath?: string,
  *   psPath?: string,
  *   platform?: string
+ *   requireMainInspector?: boolean
  * }} [adapters]
  */
 async function assertExactChildOwnsDebugPorts(session, adapters = {}) {
@@ -599,15 +600,19 @@ async function assertExactChildOwnsDebugPorts(session, adapters = {}) {
       }))
   const now = adapters.now || (() => Date.now())
 
-  const ports = [session.remoteDebuggingPort, session.mainInspectorPort].filter((p) =>
-    Number.isInteger(p)
-  )
-  if (ports.length < 2) {
+  const requireMainInspector = adapters.requireMainInspector !== false
+  const ports = [
+    session.remoteDebuggingPort,
+    ...(requireMainInspector ? [session.mainInspectorPort] : [])
+  ].filter((p) => Number.isInteger(p))
+  if (ports.length < (requireMainInspector ? 2 : 1)) {
     throw new Error(
-      'Refuse attach: CDP and inspector ports required for exact-child ownership check'
+      requireMainInspector
+        ? 'Refuse attach: CDP and inspector ports required for exact-child ownership check'
+        : 'Refuse attach: CDP port required for exact-child ownership check'
     )
   }
-  if (ports[0] === ports[1]) {
+  if (ports.length > 1 && ports[0] === ports[1]) {
     throw new Error('Refuse attach: CDP and inspector ports must be distinct')
   }
 
@@ -670,7 +675,9 @@ async function assertExactChildOwnsDebugPorts(session, adapters = {}) {
         .map((port) => `${port}=[${(lastListeners[port] || []).join(',') || 'none'}]`)
         .join(' ')
       throw new Error(
-        `Refuse attach: timed out after ${elapsed}ms waiting for CDP+inspector listeners owned by Electron tree (pid=${session.pid}); last ${detail}`
+        `Refuse attach: timed out after ${elapsed}ms waiting for ${
+          requireMainInspector ? 'CDP+inspector listeners' : 'CDP listener'
+        } owned by Electron tree (pid=${session.pid}); last ${detail}`
       )
     }
 
