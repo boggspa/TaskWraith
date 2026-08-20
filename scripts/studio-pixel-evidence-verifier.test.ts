@@ -11,6 +11,7 @@ const {
   EXPECTED,
   compareWindowCaptureToReference,
   expectedValueSequence,
+  sourceHostWindowEdgeInsets,
   verifyStudioPixelEvidence
 } = require('./studio-pixel-evidence-verifier.cjs') as {
   DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS: number
@@ -33,6 +34,10 @@ const {
     }
   ) => Record<string, any>
   expectedValueSequence: () => number[]
+  sourceHostWindowEdgeInsets: (
+    sourceHostFrame: { x: number; y: number; width: number; height: number },
+    windowBounds: { x: number; y: number; width: number; height: number }
+  ) => { left: number; top: number; right: number; bottom: number }
   verifyStudioPixelEvidence: (
     evidence: Record<string, any>,
     driverSource: string,
@@ -559,6 +564,21 @@ describe('Studio pixel evidence verifier', () => {
     }
   })
 
+  it('excludes only the one-pixel window border where a Source host touches an edge', () => {
+    expect(
+      sourceHostWindowEdgeInsets(
+        { x: -1920, y: 413, width: 640, height: 375 },
+        { x: -2560, y: 356, width: 1280, height: 832 }
+      )
+    ).toEqual({ left: 0, top: 0, right: 1, bottom: 0 })
+    expect(
+      sourceHostWindowEdgeInsets(
+        { x: 10, y: 20, width: 100, height: 50 },
+        { x: 0, y: 0, width: 200, height: 100 }
+      )
+    ).toEqual({ left: 0, top: 0, right: 0, bottom: 0 })
+  })
+
   it('rounds finite fractional Retina host edges symmetrically to integer pixels', () => {
     const fixture = createVisualFixture(false, 2)
     try {
@@ -587,9 +607,10 @@ describe('Studio pixel evidence verifier', () => {
           captureX: 69,
           captureY: 116,
           videoWidth: 192,
-          videoHeight: 108,
-          hostPixelRect: { x: 69, y: 64, width: 192, height: 108 },
-          hostPixelEdges: { left: 69, top: 64, right: 261, bottom: 172 }
+          videoHeight: 107,
+          hostPixelRect: { x: 69, y: 64, width: 192, height: 107 },
+          hostPixelEdges: { left: 69, top: 64, right: 261, bottom: 171 },
+          windowEdgeInsets: { left: 0, top: 0, right: 0, bottom: 1 }
         }
       })
     } finally {
