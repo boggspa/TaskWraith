@@ -11,8 +11,8 @@ describe('debut composition proof record', () => {
     expect(proof).toContain('**Record status:** OPEN')
     expect(proof).toContain('on real hardware')
     expect(proof).toContain('The result is **PASS** only when every required row is `PASS`')
-    for (const row of ['| A |', '| B |', '| C |', '| D |', '| E |', '| F |', '| G |']) {
-      expect(proof).toContain(row)
+    for (const row of ['A', 'B', 'C', 'D', 'E', 'F', 'G']) {
+      expect(proof).toMatch(new RegExp(`^\\| ${row}\\s+\\|`, 'm'))
     }
     expect(proof).toContain('physical device, not only a simulator')
     expect(proof).toContain('TASKWRAITH_REQUIRE_PRODUCTION_SIGNING=1')
