@@ -45,6 +45,26 @@ describe('mergeChatUpdatedForRender', () => {
     expect(merged.messages).toHaveLength(1)
     expect(merged.messages[0].content).toBe('longer live answer')
   })
+
+  it('preserves a renderer-authored closeout outside the recent-run window', () => {
+    const incoming = chat([message('a', 'answer')])
+    const closeout: ChatMessage = {
+      id: 'closeout',
+      role: 'system',
+      content: '',
+      timestamp: '2',
+      metadata: { kind: 'taskWraithCloseout' }
+    }
+    const live = chat([...incoming.messages, closeout])
+    const merged = mergeChatUpdatedForRender(incoming, {
+      liveChat: live,
+      messagesChanged: false,
+      hasActiveRun: false,
+      hadRecentRun: false
+    })
+
+    expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout'])
+  })
 })
 
 describe('coalescePendingChatUpdateRender', () => {

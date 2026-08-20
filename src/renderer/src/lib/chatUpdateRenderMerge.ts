@@ -89,6 +89,23 @@ function mergeLiveMessages(
   return orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
 }
 
+function preserveLiveTaskWraithCloseouts(
+  chat: ChatRecord,
+  liveChat: ChatRecord | null | undefined
+): ChatRecord {
+  if (!liveChat || liveChat.messages.length === 0) return chat
+  const incomingIds = new Set(chat.messages.map((message) => message.id))
+  const missingCloseouts = liveChat.messages.filter(
+    (message) =>
+      message.role === 'system' &&
+      message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
+      !incomingIds.has(message.id)
+  )
+  return missingCloseouts.length > 0
+    ? { ...chat, messages: [...chat.messages, ...missingCloseouts] }
+    : chat
+}
+
 /**
  * Merge a main-owned chat update with renderer-only live content. This is
  * deliberately a separate frame-time operation: the IPC callback can accept
@@ -114,6 +131,12 @@ export function mergeChatUpdatedForRender(
       }
     }
   }
+
+  // A close-out is renderer-authored before its debounced save reaches main.
+  // Preserve that durable-intent row across every intervening main refresh,
+  // not only during the short active/recent-run merge window. Explicit chat
+  // clearing is handled before this merge is called.
+  merged = preserveLiveTaskWraithCloseouts(merged, liveChat)
 
   merged = preserveOptimisticEnsembleQueue(merged, liveChat)
   const pendingMarkerIds = options.pendingMarkerIds
