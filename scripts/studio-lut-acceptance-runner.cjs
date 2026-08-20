@@ -31,7 +31,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
-    '3eabfdd961ed08632c168424d09a4d8bc8bf00ffa06800010ada57af0dd61f13',
+    'fc73b8888c11816fbbf8b47216c4c9d1addf05f7ab74f11bd116c949a708cb44',
   'scripts/studio-hud-ocr.swift':
     'd3f1a7efc1189357252932518ed7d0b7ba799b19a3c68d9a32f134b076111a52',
   'scripts/studio-input-isolation-snapshot.swift':
