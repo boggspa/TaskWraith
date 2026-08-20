@@ -161,7 +161,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
   'scripts/perf/electronChildSession.cjs':
-    '49de84f79099488808cc7575c6169aa380d4fdfbb638df7518e6b5c5993f901c',
+    '1e8e54040fefb1f097a07d36470584c681b87c02198ddf3cb45fe43e5bd579b5',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
@@ -415,6 +415,7 @@ function parseArgs(argv) {
     generateSpeechFixture: false,
     mediaPath: null,
     mimeType: null,
+    packagedExecutablePath: null,
     remoteDebuggingPort: null,
     mainInspectorPort: null,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -435,6 +436,9 @@ function parseArgs(argv) {
     else if (argument === '--generate-speech-fixture') parsed.generateSpeechFixture = true
     else if (argument.startsWith('--media=')) parsed.mediaPath = argument.slice(8)
     else if (argument.startsWith('--mime=')) parsed.mimeType = argument.slice(7)
+    else if (argument.startsWith('--packaged-executable=')) {
+      parsed.packagedExecutablePath = argument.slice('--packaged-executable='.length)
+    }
     else if (argument.startsWith('--remote-debugging-port=')) {
       parsed.remoteDebuggingPort = Number(argument.slice(24))
     } else if (argument.startsWith('--main-inspector-port=')) {
@@ -499,6 +503,9 @@ function buildStudioAcceptancePlan(options = {}) {
       ? {}
       : { remoteDebuggingPort: options.remoteDebuggingPort }),
     ...(options.mainInspectorPort == null ? {} : { mainInspectorPort: options.mainInspectorPort }),
+    ...(options.packagedExecutablePath
+      ? { packagedExecutablePath: options.packagedExecutablePath }
+      : {}),
     ...(options.adapters ? { adapters: options.adapters } : {})
   })
   spawnPlan.env.TASKWRAITH_STUDIO_COMPANION = '1'
@@ -514,6 +521,9 @@ function buildStudioAcceptancePlan(options = {}) {
     home,
     transcriptTimeoutMs,
     profile,
+    packagedExecutablePath: options.packagedExecutablePath
+      ? path.resolve(options.packagedExecutablePath)
+      : null,
     spawnPlan,
     receiptPath,
     evidencePath,
@@ -582,6 +592,30 @@ function assertLaunchAuthorized(args, plan) {
   }
   if (!plan.spawnPlan.argv.includes('--use-mock-keychain')) {
     throw new Error('Refuse launch without disposable macOS mock keychain')
+  }
+  if (args.packagedExecutablePath !== null) {
+    const executable = path.resolve(String(args.packagedExecutablePath))
+    const relative = path.relative(plan.repoRoot, executable)
+    let stat = null
+    try {
+      stat = fs.statSync(executable)
+    } catch {
+      // The refusal below names the exact packaged precondition.
+    }
+    if (
+      !path.isAbsolute(args.packagedExecutablePath) ||
+      !relative ||
+      relative.startsWith('..') ||
+      path.isAbsolute(relative) ||
+      !executable.includes('.app' + path.sep + 'Contents' + path.sep + 'MacOS' + path.sep) ||
+      !stat?.isFile() ||
+      plan.spawnPlan.packaged !== true ||
+      plan.spawnPlan.electronBinary !== executable
+    ) {
+      throw new Error(
+        'Packaged Studio acceptance requires a regular worktree .app executable'
+      )
+    }
   }
   return { launch: true }
 }
@@ -866,7 +900,8 @@ async function measureStudioAcceptanceArtifacts(repoRoot) {
   const outEntries = await collectStudioAcceptanceCustodyEntries(
     repoRoot,
     'out',
-    (relativePath) => !isStudioAcceptanceCustodyNoise(relativePath)
+    (relativePath) =>
+      !isStudioAcceptanceCustodyNoise(relativePath) && !relativePath.startsWith('out/tui/')
   )
   const companionEntry = await measureStudioAcceptanceSelectedNativeProduct(
     repoRoot,
@@ -887,6 +922,84 @@ async function measureStudioAcceptanceArtifacts(repoRoot) {
     companionSha256: companionEntry.sha256,
     bridgeDaemonPath: bridgeEntry.path,
     bridgeDaemonSha256: bridgeEntry.sha256
+  }
+}
+
+async function measurePackagedStudioExecution(repoRoot, executablePath, adapters = {}) {
+  const root = path.resolve(repoRoot)
+  const executable = path.resolve(String(executablePath || ''))
+  const relativeExecutable = path.relative(root, executable)
+  const match = executable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/)
+  if (
+    !relativeExecutable ||
+    relativeExecutable.startsWith('..') ||
+    path.isAbsolute(relativeExecutable) ||
+    !match
+  ) {
+    throw new Error('packaged Studio executable escaped its worktree app bundle')
+  }
+  const appRoot = match[1]
+  const candidates = {
+    executable,
+    infoPlist: path.join(appRoot, 'Contents', 'Info.plist'),
+    appAsar: path.join(appRoot, 'Contents', 'Resources', 'app.asar'),
+    companion: path.join(
+      appRoot,
+      'Contents',
+      'Resources',
+      'studio',
+      'TaskWraith Studio.app',
+      'Contents',
+      'MacOS',
+      'TaskWraithStudioCompanion'
+    ),
+    bridgeDaemon: path.join(
+      appRoot,
+      'Contents',
+      'Resources',
+      'bridge',
+      'TaskWraithBridgeDaemon'
+    )
+  }
+  const files = {}
+  for (const [name, filePath] of Object.entries(candidates)) {
+    await assertSafeRegularFile(filePath, 'packaged Studio ' + name)
+    files[name] = {
+      path: path.relative(root, filePath).split(path.sep).join('/'),
+      sha256: await sha256Hex(filePath)
+    }
+  }
+  const runExec = adapters.execFile || defaultExecFile
+  await runExec('/usr/bin/codesign', ['--verify', '--deep', '--strict', appRoot], {
+    timeoutMs: 60_000
+  })
+  const speechUsage = await runExec(
+    '/usr/bin/plutil',
+    [
+      '-extract',
+      'NSSpeechRecognitionUsageDescription',
+      'raw',
+      '-o',
+      '-',
+      candidates.infoPlist
+    ],
+    { timeoutMs: 10_000 }
+  )
+  if (!String(speechUsage.stdout || '').trim()) {
+    throw new Error('packaged Studio app omits its Speech Recognition usage description')
+  }
+  return {
+    appRoot: path.relative(root, appRoot).split(path.sep).join('/'),
+    bundleIdentityDigest: sha256Text(JSON.stringify(files)),
+    files,
+    executablePath: files.executable.path,
+    executableSha256: files.executable.sha256,
+    companionPath: files.companion.path,
+    companionSha256: files.companion.sha256,
+    bridgeDaemonPath: files.bridgeDaemon.path,
+    bridgeDaemonSha256: files.bridgeDaemon.sha256,
+    speechUsageDescription: String(speechUsage.stdout).trim(),
+    codeSignatureVerified: true
   }
 }
 
@@ -1238,6 +1351,7 @@ const DETACHED_REQUEST_ARG_KEYS = new Set([
   'generateSpeechFixture',
   'mediaPath',
   'mimeType',
+  'packagedExecutablePath',
   'remoteDebuggingPort',
   'mainInspectorPort',
   'timeoutMs',
@@ -1376,6 +1490,7 @@ function launchDetachedCoordinator(args, adapters = {}) {
     transcriptTimeoutMs: args.transcriptTimeoutMs,
     remoteDebuggingPort: args.remoteDebuggingPort,
     mainInspectorPort: args.mainInspectorPort,
+    packagedExecutablePath: args.packagedExecutablePath,
     ...(adapters.planOptions || {})
   })
   try {
@@ -2055,7 +2170,8 @@ async function runDetachedCoordinatorProcess() {
       instanceId: request.args.instanceId,
       transcriptTimeoutMs: request.args.transcriptTimeoutMs,
       remoteDebuggingPort: request.args.remoteDebuggingPort,
-      mainInspectorPort: request.args.mainInspectorPort
+      mainInspectorPort: request.args.mainInspectorPort,
+      packagedExecutablePath: request.args.packagedExecutablePath
     })
     assertDetachedLaunchAuthorized(request.args, plan)
   }
@@ -5371,6 +5487,7 @@ async function runStudioAcceptance(args, adapters = {}) {
     transcriptTimeoutMs: args.transcriptTimeoutMs,
     remoteDebuggingPort: args.remoteDebuggingPort,
     mainInspectorPort: args.mainInspectorPort,
+    packagedExecutablePath: args.packagedExecutablePath,
     ...(adapters.planOptions || {})
   })
   const authorization = assertLaunchAuthorized(args, plan)
@@ -5456,6 +5573,15 @@ async function runStudioAcceptance(args, adapters = {}) {
       expected: custodyExpected
     }
   )
+  const measurePackaged =
+    adapters.measurePackagedExecution || measurePackagedStudioExecution
+  const packagedExecutionBefore = plan.packagedExecutablePath
+    ? await measurePackaged(
+        plan.repoRoot,
+        plan.packagedExecutablePath,
+        adapters.packagedExecutionAdapters || {}
+      )
+    : null
 
   const spec = {
     kind: 'electron',
@@ -5495,7 +5621,11 @@ async function runStudioAcceptance(args, adapters = {}) {
       session.pid,
       adapters.processAdapters || {}
     )
-    companionCustody = assertStudioCompanionMatchesCustody(companion, custodyBefore, plan.repoRoot)
+    companionCustody = assertStudioCompanionMatchesCustody(
+      companion,
+      packagedExecutionBefore || custodyBefore,
+      plan.repoRoot
+    )
     window = await (adapters.probeWindow || probeNativeWindow)(
       companion.pid,
       adapters.windowAdapters || {}
@@ -5535,6 +5665,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       custodyFixture,
       custodySource,
       custodyBefore,
+      packagedExecutionBefore,
       companionCustody,
       providerGuards,
       openResult,
@@ -5588,10 +5719,30 @@ async function runStudioAcceptance(args, adapters = {}) {
   } catch (error) {
     custodyError = error
   }
+  let packagedExecutionAfter = null
+  let packagedExecutionError = null
+  if (packagedExecutionBefore) {
+    try {
+      packagedExecutionAfter = await measurePackaged(
+        plan.repoRoot,
+        plan.packagedExecutablePath,
+        adapters.packagedExecutionAdapters || {}
+      )
+      if (JSON.stringify(packagedExecutionAfter) !== JSON.stringify(packagedExecutionBefore)) {
+        throw new Error('packaged Studio execution custody changed during the run')
+      }
+    } catch (error) {
+      packagedExecutionError = error
+    }
+  }
 
-  const failures = [acceptanceError, rendererCloseError, watchdogError, custodyError].filter(
-    Boolean
-  )
+  const failures = [
+    acceptanceError,
+    rendererCloseError,
+    watchdogError,
+    custodyError,
+    packagedExecutionError
+  ].filter(Boolean)
   let failureEvidenceWriteError = null
   if (failures.length > 0) {
     try {
@@ -5615,6 +5766,8 @@ async function runStudioAcceptance(args, adapters = {}) {
         custodySource,
         custodyBefore,
         custodyAfter,
+        packagedExecutionBefore,
+        packagedExecutionAfter,
         companionCustody,
         providerGuards,
         openResult,
@@ -5659,7 +5812,12 @@ async function runStudioAcceptance(args, adapters = {}) {
     )
   }
 
-  const completedEvidence = { ...evidence, watchdogTerminal, custodyAfter }
+  const completedEvidence = {
+    ...evidence,
+    watchdogTerminal,
+    custodyAfter,
+    packagedExecutionAfter
+  }
   await (adapters.writeEvidence || writeEvidence)(plan, completedEvidence)
   return { launched: true, plan, evidence: completedEvidence }
 }
@@ -5759,6 +5917,7 @@ Optional:
   --detach (requires --launch and an explicit unique --instance-id)
   --detached-status --instance-id=<id> --detached-token=<token>
   --instance-id=<unique 2-16 char id>
+  --packaged-executable=/absolute/worktree/path/to/App.app/Contents/MacOS/executable
   --remote-debugging-port=<port>
   --main-inspector-port=<port>
   --timeout-ms=<30000..1800000>
@@ -5836,6 +5995,7 @@ module.exports = {
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
   measureStudioAcceptanceArtifacts,
+  measurePackagedStudioExecution,
   assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,

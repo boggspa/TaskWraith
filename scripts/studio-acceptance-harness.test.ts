@@ -18,6 +18,7 @@ const {
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
   measureStudioAcceptanceArtifacts,
+  measurePackagedStudioExecution,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
@@ -81,6 +82,11 @@ const {
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
   measureStudioAcceptanceArtifacts: (repoRoot: string) => Promise<Record<string, any>>
+  measurePackagedStudioExecution: (
+    repoRoot: string,
+    executablePath: string,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
     args: Record<string, any>,
@@ -1634,6 +1640,38 @@ describe('Studio acceptance harness', () => {
     })
     expect(plan.transcriptTimeoutMs).toBe(720_000)
   })
+
+  it.runIf(process.platform === 'darwin')(
+    'launches an explicit worktree packaged executable without a dev entry argument',
+    async () => {
+      const root = await temporaryRoot('studio-packaged-plan-')
+      const packagedExecutablePath = path.join(
+        root,
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+      )
+      await fsPromises.mkdir(path.dirname(packagedExecutablePath), { recursive: true })
+      await fsPromises.writeFile(packagedExecutablePath, 'packaged')
+      const args = parseArgs([
+        '--launch',
+        '--i-accept-studio-isolated-launch',
+        '--owner-confirms-existing-orphans-cleared',
+        '--generate-speech-fixture',
+        '--packaged-executable=' + packagedExecutablePath
+      ])
+      const plan = buildStudioAcceptancePlan({
+        instanceId: 'studioPkg01',
+        repoRoot: root,
+        home: path.join(root, '.local-only/studio/home'),
+        platform: 'darwin',
+        packagedExecutablePath
+      })
+
+      expect(assertLaunchAuthorized(args, plan)).toEqual({ launch: true })
+      expect(plan.spawnPlan.packaged).toBe(true)
+      expect(plan.spawnPlan.electronBinary).toBe(packagedExecutablePath)
+      expect(plan.spawnPlan.argv).not.toContain('.')
+    }
+  )
 
   it.runIf(process.platform === 'darwin')('accepts only one bounded media source for a real launch', () => {
     const plan = buildStudioAcceptancePlan({
@@ -5091,8 +5129,57 @@ describe('Studio acceptance harness', () => {
 
     const beforeFinderMetadata = await measureStudioAcceptanceArtifacts(root)
     await fsPromises.writeFile(path.join(root, 'out/.DS_Store'), 'finder metadata')
+    await fsPromises.mkdir(path.join(root, 'out/tui'), { recursive: true })
+    await fsPromises.writeFile(path.join(root, 'out/tui/cli.js'), 'unrelated TUI output')
     const afterFinderMetadata = await measureStudioAcceptanceArtifacts(root)
     expect(afterFinderMetadata).toEqual(beforeFinderMetadata)
+  })
+
+  it('pins the signed packaged executable, app.asar, native children, and Speech usage', async () => {
+    const root = await temporaryRoot('studio-packaged-custody-')
+    const appRoot = path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app')
+    const executablePath = path.join(appRoot, 'Contents/MacOS/TaskWraith Debug')
+    const files = {
+      [executablePath]: 'packaged executable',
+      [path.join(appRoot, 'Contents/Info.plist')]: 'plist',
+      [path.join(appRoot, 'Contents/Resources/app.asar')]: 'asar',
+      [path.join(
+        appRoot,
+        'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+      )]: 'companion',
+      [path.join(appRoot, 'Contents/Resources/bridge/TaskWraithBridgeDaemon')]: 'bridge'
+    }
+    for (const [filePath, contents] of Object.entries(files)) {
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
+      await fsPromises.writeFile(filePath, contents)
+    }
+    const execFile = vi.fn(async (command: string) => ({
+      stdout:
+        command === '/usr/bin/plutil'
+          ? 'TaskWraith transcribes selected media entirely on-device.\n'
+          : '',
+      stderr: ''
+    }))
+
+    const before = await measurePackagedStudioExecution(root, executablePath, { execFile })
+    expect(before).toMatchObject({
+      executablePath: 'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug',
+      companionPath:
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion',
+      bridgeDaemonPath:
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/bridge/TaskWraithBridgeDaemon',
+      codeSignatureVerified: true
+    })
+    expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(execFile).toHaveBeenCalledWith(
+      '/usr/bin/codesign',
+      ['--verify', '--deep', '--strict', appRoot],
+      { timeoutMs: 60_000 }
+    )
+
+    await fsPromises.writeFile(path.join(appRoot, 'Contents/Resources/app.asar'), 'changed')
+    const after = await measurePackagedStudioExecution(root, executablePath, { execFile })
+    expect(after.bundleIdentityDigest).not.toBe(before.bundleIdentityDigest)
   })
 
   it('measures the pinned live-build source and support custody from the workspace', async () => {

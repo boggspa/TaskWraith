@@ -81,7 +81,10 @@ const {
   }
   parseCli: (argv: string[]) => Record<string, any>
   resolveArtifactRoot: (candidate: string, acceptanceRoot?: string) => string
-  treeDigest: (directory: string) => { fileCount: number; digest: string }
+  treeDigest: (
+    directory: string,
+    options?: { excludeTui?: boolean }
+  ) => { fileCount: number; digest: string }
   validateClearedState: (
     state: Record<string, any>,
     operation: Record<string, any>,
@@ -349,7 +352,9 @@ describe('studio LUT acceptance runner contract', () => {
     await fsPromises.writeFile(path.join(directory, 'product.js'), 'product')
     const before = treeDigest(directory)
     await fsPromises.writeFile(path.join(directory, '.DS_Store'), 'finder metadata')
-    expect(treeDigest(directory)).toEqual(before)
+    await fsPromises.mkdir(path.join(directory, 'tui'))
+    await fsPromises.writeFile(path.join(directory, 'tui/cli.js'), 'unrelated TUI output')
+    expect(treeDigest(directory, { excludeTui: true })).toEqual(before)
   })
 
   it('passes matching pins with foreign tracked dirt and seals its hashes into evidence', async () => {

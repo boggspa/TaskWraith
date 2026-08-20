@@ -93,6 +93,7 @@ function resolveElectronBinary(options = {}) {
  * @param {string} [options.fxPosture]
  * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID + HOME
  * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
+ * @param {string} [options.packagedExecutablePath] — signed packaged app executable; omits the dev entry argv
  * @param {NodeJS.Platform} [options.platform=process.platform]
  * @param {{ resolveElectronPath?: Function, requireElectron?: Function }} [options.adapters]
  */
@@ -135,22 +136,27 @@ function buildElectronSpawnPlan(options) {
   }
 
   let electronBinary = null
-  try {
-    electronBinary = resolveElectronBinary({
-      repoRoot: options.repoRoot || base.repoRoot,
-      adapters: options.adapters
-    })
-  } catch {
-    // Plan-only paths may lack Electron; spawnExactElectronChild resolves fail-closed.
-    electronBinary = null
+  const packaged = typeof options.packagedExecutablePath === 'string'
+  if (packaged) {
+    electronBinary = path.resolve(options.packagedExecutablePath)
+  } else {
+    try {
+      electronBinary = resolveElectronBinary({
+        repoRoot: options.repoRoot || base.repoRoot,
+        adapters: options.adapters
+      })
+    } catch {
+      // Plan-only paths may lack Electron; spawnExactElectronChild resolves fail-closed.
+      electronBinary = null
+    }
   }
-  const entry = base.electronEntry || '.'
+  const entry = packaged ? null : base.electronEntry || '.'
   const platform = options.platform || process.platform
   const usesMockKeychain = platform === 'darwin'
   // Direct Electron argv (binary is the spawn command — never `npx`).
   const argv = [
     ...(usesMockKeychain ? ['--use-mock-keychain'] : []),
-    entry,
+    ...(entry ? [entry] : []),
     `--remote-debugging-port=${base.remoteDebuggingPort}`,
     `--inspect=${mainInspectorPort}`
   ]
@@ -161,7 +167,7 @@ function buildElectronSpawnPlan(options) {
     'IOS_REMOTE_TRUE=0',
     ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
     ...(env.CFFIXED_USER_HOME ? [`CFFIXED_USER_HOME=${shellQuote(env.CFFIXED_USER_HOME)}`] : []),
-    `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''} ${shellQuote(entry)} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
+    `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''}${entry ? ` ${shellQuote(entry)}` : ''} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 
   return {
@@ -170,6 +176,7 @@ function buildElectronSpawnPlan(options) {
     env,
     argv,
     electronBinary,
+    packaged,
     spawnCommand: electronBinary || binaryForShell,
     shellCommand,
     home: base.home || null,

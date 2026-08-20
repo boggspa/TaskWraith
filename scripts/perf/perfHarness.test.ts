@@ -1301,6 +1301,25 @@ describe('T2 runner (no Electron launch)', () => {
     expect(plan.safety.disposableMockKeychain).toBe(true)
   })
 
+  it('launches a packaged executable directly without the unpackaged entry argument', () => {
+    const packagedExecutablePath =
+      '/virtual/repo/dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+    const plan = buildElectronSpawnPlan({
+      instanceId: 'studioPackaged01',
+      repoRoot: '/virtual/repo',
+      platform: 'darwin',
+      packagedExecutablePath
+    })
+
+    expect(plan.packaged).toBe(true)
+    expect(plan.spawnCommand).toBe(packagedExecutablePath)
+    expect(plan.argv).toContain('--use-mock-keychain')
+    expect(plan.argv).not.toContain('.')
+    expect(plan.argv.some((argument) => argument.startsWith('--remote-debugging-port='))).toBe(true)
+    expect(plan.argv.some((argument) => argument.startsWith('--inspect='))).toBe(true)
+    expect(plan.shellCommand).toContain(packagedExecutablePath)
+  })
+
   it('binds macOS CoreFoundation appData to the exact isolated HOME', () => {
     const home = path.resolve('/virtual/repo/perf-homes/perfT2MacHome')
     const plan = buildElectronSpawnPlan({

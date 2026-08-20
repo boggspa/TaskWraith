@@ -23,7 +23,7 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '0ba19090b67b494549f7a7c9d66fc4fcc735db82e98b210e181af66a80fd236a',
+    '45f0a4f8d19a9ad685ef768ce184b29e890688625e8d6a26c2c292bc5e95158f',
   'scripts/studio-acceptance-ui-driver.swift':
     'c608e697e6c28abbccf663da3b402a495450434c5c5488c9278a939f0e07b32d',
   'scripts/studio-acceptance-watchdog.cjs':
@@ -47,7 +47,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':
-    '49de84f79099488808cc7575c6169aa380d4fdfbb638df7518e6b5c5993f901c'
+    '1e8e54040fefb1f097a07d36470584c681b87c02198ddf3cb45fe43e5bd579b5'
 })
 const ocrScriptPath = path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')
 const focusScriptPath = path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')
@@ -486,9 +486,13 @@ function collectRegularFiles(directory) {
   return files.sort()
 }
 
-function treeDigest(directory) {
+function treeDigest(directory, options = {}) {
   const entries = collectRegularFiles(directory)
     .filter((filePath) => path.basename(filePath) !== '.DS_Store')
+    .filter((filePath) => {
+      if (options.excludeTui !== true) return true
+      return !path.relative(directory, filePath).split(path.sep).join('/').startsWith('tui/')
+    })
     .map((filePath) => ({
       path: path.relative(repoRoot, filePath),
       sha256: sha256File(filePath)
@@ -657,7 +661,7 @@ function assertCustody(inputs = null) {
   ]).stdout
   const trackedDirt = classifyTrackedDirt(trackedStatus)
   const sources = treeDigest(path.join(repoRoot, 'swift', 'TaskWraithBridge', 'Sources'))
-  const out = treeDigest(path.join(repoRoot, 'out'))
+  const out = treeDigest(path.join(repoRoot, 'out'), { excludeTui: true })
   const support = Object.fromEntries(
     Object.entries(expectedSupportHashes).map(([relativePath]) => [
       relativePath,
