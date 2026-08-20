@@ -54,6 +54,11 @@ final class StudioViewerDeckChrome: NSStackView {
   private let timelineButton: NSButton
   private let currentButton: NSButton
   private let proposedButton: NSButton
+  private let routeGroup: NSStackView
+  private let reviewGroup: NSStackView
+  private let deckTitleLabel: NSTextField
+
+  var deckTitleText: String { deckTitleLabel.stringValue }
 
   override init(frame frameRect: NSRect) {
     sourceButton = Self.makeButton(
@@ -76,6 +81,9 @@ final class StudioViewerDeckChrome: NSStackView {
       label: "Proposed",
       role: .radioButton
     )
+    routeGroup = NSStackView(views: [sourceButton, timelineButton])
+    reviewGroup = NSStackView(views: [currentButton, proposedButton])
+    deckTitleLabel = NSTextField(labelWithString: "VIEWER")
 
     super.init(frame: frameRect)
 
@@ -84,13 +92,68 @@ final class StudioViewerDeckChrome: NSStackView {
     setAccessibilityRole(.group)
     setAccessibilityLabel("Viewer deck controls")
     orientation = .horizontal
-    distribution = .fillEqually
-    spacing = 4
-    edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
-    addArrangedSubview(sourceButton)
-    addArrangedSubview(timelineButton)
-    addArrangedSubview(currentButton)
-    addArrangedSubview(proposedButton)
+    alignment = .centerY
+    distribution = .fill
+    spacing = 8
+    edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 5, right: 8)
+    wantsLayer = true
+    layer?.backgroundColor = StudioWorkspacePalette.raised.cgColor
+
+    for (group, identifier) in [
+      (routeGroup, "studio.workspace.viewer-deck.routes"),
+      (reviewGroup, "studio.workspace.viewer-deck.comparison"),
+    ] {
+      group.identifier = NSUserInterfaceItemIdentifier(identifier)
+      group.orientation = .horizontal
+      group.alignment = .centerY
+      group.distribution = .fill
+      group.spacing = 2
+      group.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+      group.wantsLayer = true
+      group.layer?.backgroundColor = StudioWorkspacePalette.canvas.cgColor
+      group.layer?.borderColor = StudioWorkspacePalette.divider.cgColor
+      group.layer?.borderWidth = 1
+      group.layer?.cornerRadius = 6
+      group.setContentHuggingPriority(.required, for: .horizontal)
+      group.setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    addArrangedSubview(routeGroup)
+    addArrangedSubview(spacer)
+    addArrangedSubview(reviewGroup)
+
+    deckTitleLabel.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)
+    deckTitleLabel.textColor = StudioWorkspacePalette.mutedText
+    deckTitleLabel.alignment = .center
+    deckTitleLabel.setAccessibilityElement(false)
+    deckTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(deckTitleLabel)
+
+    let divider = NSView()
+    divider.wantsLayer = true
+    divider.layer?.backgroundColor = StudioWorkspacePalette.divider.cgColor
+    divider.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(divider)
+
+    NSLayoutConstraint.activate([
+      sourceButton.widthAnchor.constraint(equalToConstant: 70),
+      timelineButton.widthAnchor.constraint(equalToConstant: 76),
+      currentButton.widthAnchor.constraint(equalToConstant: 70),
+      proposedButton.widthAnchor.constraint(equalToConstant: 78),
+      sourceButton.heightAnchor.constraint(equalToConstant: 24),
+      timelineButton.heightAnchor.constraint(equalToConstant: 24),
+      currentButton.heightAnchor.constraint(equalToConstant: 24),
+      proposedButton.heightAnchor.constraint(equalToConstant: 24),
+      deckTitleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+      deckTitleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+      divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+      divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+      divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+      divider.heightAnchor.constraint(equalToConstant: 1),
+    ])
 
     sourceButton.target = self
     sourceButton.action = #selector(sourcePressed)
@@ -109,9 +172,18 @@ final class StudioViewerDeckChrome: NSStackView {
   }
 
   func button(identifier: String) -> NSButton? {
-    arrangedSubviews
-      .compactMap { $0 as? NSButton }
-      .first { $0.identifier?.rawValue == identifier }
+    func find(in view: NSView) -> NSButton? {
+      if let button = view as? NSButton,
+        button.identifier?.rawValue == identifier
+      {
+        return button
+      }
+      for child in view.subviews {
+        if let match = find(in: child) { return match }
+      }
+      return nil
+    }
+    return find(in: self)
   }
 
   func update(
@@ -141,6 +213,26 @@ final class StudioViewerDeckChrome: NSStackView {
     button.state = selected ? .on : .off
     button.setAccessibilityValue(
       unavailable ? "unavailable" : (selected ? "selected" : "not selected"))
+    button.alphaValue = 1
+    button.layer?.backgroundColor =
+      selected
+      ? StudioWorkspacePalette.accentSoft.cgColor
+      : NSColor.clear.cgColor
+    button.layer?.borderColor =
+      selected
+      ? StudioWorkspacePalette.accent.cgColor
+      : NSColor.clear.cgColor
+    button.layer?.borderWidth = selected ? 1 : 0
+    button.attributedTitle = NSAttributedString(
+      string: button.title,
+      attributes: [
+        .font: NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .medium),
+        .foregroundColor:
+          unavailable
+          ? StudioWorkspacePalette.mutedText
+          : StudioWorkspacePalette.primaryText,
+      ]
+    )
   }
 
   private static func makeButton(
@@ -156,6 +248,8 @@ final class StudioViewerDeckChrome: NSStackView {
     button.setAccessibilityRole(role)
     button.setAccessibilityLabel(label)
     button.isBordered = false
+    button.wantsLayer = true
+    button.layer?.cornerRadius = 4
     button.state = .off
     return button
   }
