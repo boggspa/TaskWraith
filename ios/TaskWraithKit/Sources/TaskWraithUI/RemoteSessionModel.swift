@@ -926,11 +926,25 @@ public final class RemoteSessionModel: ObservableObject {
 
     private func registerWithProjectPushGatewaysIfReady() {
         guard identitySeed.count == 32, let token = pushGatewayApnsToken else { return }
-        let targets = pairingStore.list().compactMap { host -> (String, String)? in
-            guard let rawUrl = host.pushGatewayUrl?.trimmingCharacters(
-                in: .whitespacesAndNewlines), !rawUrl.isEmpty
-            else { return nil }
-            return (rawUrl, host.macIdentityPubKey)
+        let targets = pairingStore.list().compactMap { host -> ([String], String)? in
+            let advertised = host.pushGatewayUrl?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            let candidates: [String]
+            if let advertised, !advertised.isEmpty {
+                candidates = [advertised]
+            } else {
+                // P4 shipped before Macs could advertise a dedicated gateway
+                // in the authenticated token ack. The design's original shape
+                // put /v1/apns/* on the paired relay itself, so try every
+                // already-pinned relay door for compatibility. The client
+                // still rejects unsafe public cleartext endpoints.
+                candidates = RelayCandidates.ordered(
+                    from: host.relayUrls,
+                    fallback: host.relayUrl,
+                    preferRemoteFirst: true)
+            }
+            guard !candidates.isEmpty else { return nil }
+            return (candidates, host.macIdentityPubKey)
         }
         pushGatewayRegistrationTask?.cancel()
         guard !targets.isEmpty else {
@@ -943,20 +957,26 @@ public final class RemoteSessionModel: ObservableObject {
         let enabled = notifyFinishedTurns
         pushGatewayRegistrationTask = Task { @MainActor [weak self] in
             var registered = 0
-            for (gatewayUrl, macIdentityPubKey) in targets {
+            for (gatewayUrls, macIdentityPubKey) in targets {
                 guard !Task.isCancelled else { return }
-                do {
-                    _ = try await client.register(
-                        gatewayUrl: gatewayUrl,
-                        macIdentityPubKey: macIdentityPubKey,
-                        identitySeed: seed,
-                        deviceTokenHex: token.hex,
-                        env: token.env,
-                        notifyFinishedTurns: enabled)
+                var hostRegistered = false
+                for gatewayUrl in gatewayUrls {
+                    do {
+                        _ = try await client.register(
+                            gatewayUrl: gatewayUrl,
+                            macIdentityPubKey: macIdentityPubKey,
+                            identitySeed: seed,
+                            deviceTokenHex: token.hex,
+                            env: token.env,
+                            notifyFinishedTurns: enabled)
+                        hostRegistered = true
+                        break
+                    } catch {
+                        // Try the next authenticated relay door for this host.
+                    }
+                }
+                if hostRegistered {
                     registered += 1
-                } catch {
-                    // Continue: one stale/offline host must not prevent another
-                    // paired host from receiving its signed registration.
                 }
             }
             guard !Task.isCancelled, let self else { return }
@@ -974,21 +994,37 @@ public final class RemoteSessionModel: ObservableObject {
 
     private func deregisterFromProjectPushGateways(_ hosts: [PairedHostRecord]) {
         guard identitySeed.count == 32 else { return }
-        let targets = hosts.compactMap { host -> (String, String)? in
-            guard let rawUrl = host.pushGatewayUrl?.trimmingCharacters(
-                in: .whitespacesAndNewlines), !rawUrl.isEmpty
-            else { return nil }
-            return (rawUrl, host.macIdentityPubKey)
+        let targets = hosts.compactMap { host -> ([String], String)? in
+            let advertised = host.pushGatewayUrl?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            let candidates: [String]
+            if let advertised, !advertised.isEmpty {
+                candidates = [advertised]
+            } else {
+                candidates = RelayCandidates.ordered(
+                    from: host.relayUrls,
+                    fallback: host.relayUrl,
+                    preferRemoteFirst: true)
+            }
+            guard !candidates.isEmpty else { return nil }
+            return (candidates, host.macIdentityPubKey)
         }
         guard !targets.isEmpty else { return }
         let client = pushGatewayClient
         let seed = identitySeed
         Task {
-            for (gatewayUrl, macIdentityPubKey) in targets {
-                _ = try? await client.deregister(
-                    gatewayUrl: gatewayUrl,
-                    macIdentityPubKey: macIdentityPubKey,
-                    identitySeed: seed)
+            for (gatewayUrls, macIdentityPubKey) in targets {
+                for gatewayUrl in gatewayUrls {
+                    do {
+                        _ = try await client.deregister(
+                            gatewayUrl: gatewayUrl,
+                            macIdentityPubKey: macIdentityPubKey,
+                            identitySeed: seed)
+                        break
+                    } catch {
+                        // Best-effort cleanup walks the remaining pinned doors.
+                    }
+                }
             }
         }
     }

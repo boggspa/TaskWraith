@@ -71,6 +71,36 @@ struct PushGatewayRegistrationModelTests {
         #expect(model.completionPushGatewayStatus == .directOnly)
     }
 
+    @Test("older hosts use their authenticated relay doors as the gateway")
+    func pairedRelayFallback() async throws {
+        let pairingDefaults = freshDefaults("legacy-pairing")
+        let pairingStore = UserDefaultsPairedHostStore(defaults: pairingDefaults)
+        pairingStore.upsert(
+            PairedHostRecord(
+                relayUrl: "ws://192.168.0.10:8787",
+                macIdentityPubKey: Data(repeating: 8, count: 32).base64EncodedString(),
+                macDisplayName: "Older Mac",
+                relayUrls: [
+                    "ws://192.168.0.10:8787",
+                    "wss://paired-relay.taskwraith.example",
+                ]))
+        let recorder = PushGatewayModelRequestRecorder()
+        let model = RemoteSessionModel(
+            identityStore: PushGatewayStaticIdentitySeed(),
+            pairingStore: pairingStore,
+            pushGatewayClient: PushGatewayRegistrationClient(
+                sendRequest: { request in await recorder.send(request) },
+                nowMs: { 1_700_000_000_000 },
+                nonce: { Data(repeating: 3, count: 16) }),
+            pushGatewayDefaults: freshDefaults("legacy-preference"))
+
+        model.handleApnsToken(String(repeating: "cd", count: 32), env: "sandbox")
+        try await waitForRequestCount(1, recorder: recorder)
+        let request = try #require(await recorder.recorded().first)
+        #expect(request.url?.absoluteString == "https://paired-relay.taskwraith.example/v1/apns/register")
+        #expect(model.completionPushGatewayStatus == .registered(hosts: 1))
+    }
+
     @Test("authenticated token acknowledgements decode the gateway advertisement")
     func gatewayAckDecode() throws {
         let ack = try JSONDecoder().decode(
