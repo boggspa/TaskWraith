@@ -811,10 +811,13 @@ function evaluatePureRedCapture({
   capturePath,
   referencePath,
   windowBounds,
-  hudOverlayHeight = DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
+  hudOverlayHeight = DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS,
+  sourceHostFrame,
+  compareWindowCaptureToReference: comparatorFn = compareWindowCaptureToReference
 }) {
-  const comparator = compareWindowCaptureToReference(capturePath, referencePath, windowBounds, {
-    hudOverlayHeight
+  const comparator = comparatorFn(capturePath, referencePath, windowBounds, {
+    hudOverlayHeight,
+    sourceHostFrame
   })
   const absolute = absoluteRedMetrics(capturePath, comparator.registration)
   return {
@@ -822,6 +825,41 @@ function evaluatePureRedCapture({
     comparator,
     absolute
   }
+}
+
+function requiredSampleSourceHostFrame(sample, label) {
+  invariant(
+    sample?.workspaceObservation?.sourceHostFrame,
+    `${label} sample is missing its exact Source host frame`
+  )
+  return sample.workspaceObservation.sourceHostFrame
+}
+
+function compareDecodedSample(sample, referencePath, windowBounds, label, comparator = compareWindowCaptureToReference) {
+  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
+  return comparator(
+    sample.capture.path,
+    referencePath,
+    windowBounds,
+    { sourceHostFrame }
+  )
+}
+
+function evaluatePureRedSample(
+  sample,
+  referencePath,
+  windowBounds,
+  label,
+  options = {}
+) {
+  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
+  return evaluatePureRedCapture({
+    capturePath: sample.capture.path,
+    referencePath,
+    windowBounds,
+    sourceHostFrame,
+    compareWindowCaptureToReference: options.compareWindowCaptureToReference
+  })
 }
 
 function validateInvalidReplacement({
@@ -1307,19 +1345,10 @@ async function captureGuarded(plan, target, name) {
   }
 }
 
-function ocrScreenshot(screenshotPath) {
-  const result = runExact('/usr/bin/swift', [ocrScriptPath, screenshotPath], {
-    timeout: 30_000,
-    maxBuffer: 4 * 1024 * 1024
-  })
-  const observations = JSON.parse(result.stdout)
-  invariant(Array.isArray(observations), 'HUD OCR helper did not return an array')
-  const texts = observations.map((entry) => entry.text)
-  const joined = texts.join(' | ')
-  // Prefer the frame-based HUD timecode HH:MM:SS:FF; the decimal form
-  // HH:MM:SS.mmm is a legacy fallback. The naive HH:MM:SS-only pattern
-  // misreads "00:00:19:20" as 00:19:20 (1160 s), so require the fourth
-  // component explicitly when it is present.
+function parseHudObservations(observations) {
+  invariant(Array.isArray(observations), 'HUD OCR observations must be an array')
+  const texts = observations.map((entry) => entry?.text)
+  const joined = texts.filter((text) => typeof text === 'string').join(' | ')
   const frameTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2}):(\d{2})\b/)
   const decimalTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2})\.(\d{3})\b/)
   let contentPtsSeconds = null
@@ -1337,16 +1366,33 @@ function ocrScreenshot(screenshotPath) {
       Number(decimalTimecode[3]) +
       Number(decimalTimecode[4]) / 1_000
   }
-  const state = joined.match(/\b(PLAY|PAUSE)\b/i)
+  const stateTokens = texts
+    .filter((text) => typeof text === 'string')
+    .map((text) => text.trim())
+    .filter((text) => text === 'PLAY' || text === 'PAUSE')
+  return {
+    texts,
+    parsed: {
+      contentPtsSeconds,
+      state: stateTokens.length === 1 ? stateTokens[0] : null
+    }
+  }
+}
+
+function ocrScreenshot(screenshotPath) {
+  const result = runExact('/usr/bin/swift', [ocrScriptPath, screenshotPath], {
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024
+  })
+  const observations = JSON.parse(result.stdout)
+  invariant(Array.isArray(observations), 'HUD OCR helper did not return an array')
+  const parsed = parseHudObservations(observations)
   return {
     command: result.command,
     stdoutSha256: sha256Bytes(result.stdout),
     observations,
-    texts,
-    parsed: {
-      contentPtsSeconds,
-      state: state?.[1]?.toUpperCase() || null
-    }
+    texts: parsed.texts,
+    parsed: parsed.parsed
   }
 }
 
@@ -1474,7 +1520,111 @@ function matchHudAssetIdentity(hud, assetId) {
   }
 }
 
-async function capturePlayable(plan, target, name) {
+async function readSourceWorkspaceObservation(plan, target, runDriver = harness.runStudioUiDriver) {
+  const bounds = windowBounds(target.window)
+  const receipt = await runDriver(plan, target, [{ type: 'read-workspace' }])
+  const actions = Array.isArray(receipt?.actions)
+    ? receipt.actions.filter((action) => action?.type === 'read-workspace')
+    : []
+  invariant(
+    receipt?.inputDelivery === 'background-observation-only' && actions.length === 1,
+    'LUT workspace read did not return one exact background action'
+  )
+  const workspace = harness.validateStudioWorkspaceObservation(actions[0].workspace, bounds)
+  invariant(
+    workspace.sourceRoute?.value === 'selected' &&
+      workspace.sourceHost?.visible === true &&
+      workspace.sourceHost?.frame,
+    'LUT checkpoint requires Source selected and visibly presented'
+  )
+  return { receipt, workspace, sourceHostFrame: workspace.sourceHost.frame }
+}
+
+async function pressPlaybackTransition(plan, target, before, after, runDriver = harness.runStudioUiDriver) {
+  invariant(
+    (before === 'paused' && after === 'playing') ||
+      (before === 'playing' && after === 'paused'),
+    'LUT Playback transition is not exact'
+  )
+  const receipt = await runDriver(
+    plan,
+    target,
+    [{ type: 'press-playback', playbackValueBefore: before, playbackValueAfter: after }]
+  )
+  const action = Array.isArray(receipt?.actions) ? receipt.actions[0] : null
+  const expectedKeys = [
+    'accessibilityAction',
+    'accessibilityLabel',
+    'index',
+    'playbackValueAfter',
+    'playbackValueBefore',
+    'type'
+  ]
+  invariant(
+    receipt?.inputDelivery === 'background-observation-only' &&
+      receipt.actions.length === 1 &&
+      JSON.stringify(Object.keys(action || {}).sort()) === JSON.stringify(expectedKeys) &&
+      action.index === 0 &&
+      action.type === 'press-playback' &&
+      action.accessibilityLabel === 'Playback' &&
+      action.accessibilityAction === 'AXPress' &&
+      action.playbackValueBefore === before &&
+      action.playbackValueAfter === after,
+    'LUT Playback receipt is forged or malformed'
+  )
+  return receipt
+}
+
+async function waitForPausedMediaReadiness(
+  plan,
+  target,
+  prefix,
+  runDriver = harness.runStudioUiDriver,
+  adapters = {}
+) {
+  const attempts = []
+  for (let index = 0; index < 60; index += 1) {
+    const workspaceObservation = await readSourceWorkspaceObservation(plan, target, runDriver)
+    const capture = await (adapters.captureGuarded || captureGuarded)(
+      plan,
+      target,
+      `${prefix}-readiness-${String(index).padStart(2, '0')}`
+    )
+    invariant(
+      capture.transportMutationBracket?.ok === true,
+      'LUT readiness transport-mutation bracket is not complete'
+    )
+    const hud = (adapters.ocrScreenshot || ocrScreenshot)(capture.path)
+    const assetMatch = (adapters.matchHudAssetIdentity || matchHudAssetIdentity)(
+      hud,
+      target.asset.sha256
+    )
+    const durationTicks = capture.transportMutationBracket.after?.parsedValue?.afterDurationTicks
+    const reasons = []
+    if (hud.parsed.state !== 'PAUSE') reasons.push('transport-not-paused')
+    if (!Number.isFinite(hud.parsed.contentPtsSeconds)) reasons.push('playhead-unreadable')
+    if (!assetMatch.matched || assetMatch.distance !== 0) reasons.push('asset-identity-mismatch')
+    if (typeof durationTicks !== 'string' || !/^[1-9]\d*$/.test(durationTicks)) {
+      reasons.push('transport-duration-unreadable-or-zero')
+    }
+    attempts.push({
+      index,
+      reasons,
+      parsed: hud.parsed,
+      assetMatch,
+      durationTicks,
+      capturePath: capture.path,
+      sourceHostFrame: workspaceObservation.sourceHostFrame
+    })
+    if (reasons.length === 0) {
+      return { attempts, workspaceObservation, capture, hud, assetMatch }
+    }
+    await sleep(500)
+  }
+  throw new Error('LUT paused media readiness timed out: ' + JSON.stringify(attempts))
+}
+
+async function capturePlayable(plan, target, name, workspaceObservation) {
   const capture = await captureGuarded(plan, target, name)
   const hud = ocrScreenshot(capture.path)
   const assetMatch = matchHudAssetIdentity(hud, target.asset.sha256)
@@ -1487,7 +1637,7 @@ async function capturePlayable(plan, target, name) {
       assetMatch
     })}`
   )
-  return { capture, hud, assetMatch }
+  return { capture, hud, assetMatch, workspaceObservation }
 }
 
 async function waitForStablePlayable(plan, target, prefix) {
@@ -1495,10 +1645,12 @@ async function waitForStablePlayable(plan, target, prefix) {
   let consecutive = []
   for (let index = 0; index < 8; index += 1) {
     try {
+      const workspaceObservation = await readSourceWorkspaceObservation(plan, target)
       const sample = await capturePlayable(
         plan,
         target,
-        `${prefix}-${String(index).padStart(2, '0')}`
+        `${prefix}-${String(index).padStart(2, '0')}`,
+        workspaceObservation
       )
       attempts.push({ index, sample })
       const prior = consecutive.at(-1)?.hud?.parsed?.contentPtsSeconds
@@ -1863,16 +2015,37 @@ async function phaseOne(runtime, syntheticRedReference) {
       expectedWindowTitle: 'TaskWraith Studio',
       asset: runtime.asset
     }
+    const readiness = await waitForPausedMediaReadiness(
+      context.plan,
+      target,
+      'phase1',
+      harness.runStudioUiDriver
+    )
+    const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
+    const playbackStart = await pressPlaybackTransition(
+      context.plan,
+      target,
+      'paused',
+      'playing'
+    )
+    const playbackStartFocus = focusSnapshot(context.companion.pid)
+    const playbackStartIsolation = assertFocusIsolation(
+      focusBeforePlaybackStart,
+      playbackStartFocus,
+      context.companion.pid,
+      'phase1-playback-start'
+    )
     const neutral = await waitForStablePlayable(context.plan, target, 'phase1-neutral')
     const neutralReference = generateDecodedReference(
       neutral.final.hud.parsed.contentPtsSeconds,
       path.join(runtime.artifactRoot, 'phase1-neutral-reference.png'),
       runtime.inputs.fixturePath
     )
-    const neutralPixels = compareWindowCaptureToReference(
-      neutral.final.capture.path,
+    const neutralPixels = compareDecodedSample(
+      neutral.final,
       neutralReference.path,
-      windowBounds(sourceWindow)
+      windowBounds(sourceWindow),
+      'neutral'
     )
     invariant(
       neutralPixels.clean,
@@ -1921,11 +2094,12 @@ async function phaseOne(runtime, syntheticRedReference) {
     await sleep(500)
     const activeIdentitySeries = await waitForStablePlayable(context.plan, target, 'phase1-active')
     const active = activeIdentitySeries.final
-    const activePixels = evaluatePureRedCapture({
-      capturePath: active.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const activePixels = evaluatePureRedSample(
+      active,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'active'
+    )
     invariant(
       activePixels.clean,
       `active LUT frame was not pure red: ${JSON.stringify({
@@ -1973,12 +2147,27 @@ async function phaseOne(runtime, syntheticRedReference) {
       'phase1-invalid-retained'
     )
     const invalidActive = invalidActiveIdentitySeries.final
-    const invalidPixels = evaluatePureRedCapture({
-      capturePath: invalidActive.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const invalidPixels = evaluatePureRedSample(
+      invalidActive,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'invalid-retained'
+    )
     invariant(invalidPixels.clean, 'invalid replacement changed the red video plane')
+    const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
+    const playbackStop = await pressPlaybackTransition(
+      context.plan,
+      target,
+      'playing',
+      'paused'
+    )
+    const playbackStopFocus = focusSnapshot(context.companion.pid)
+    const playbackStopIsolation = assertFocusIsolation(
+      focusBeforePlaybackStop,
+      playbackStopFocus,
+      context.companion.pid,
+      'phase1-playback-stop'
+    )
     const focusAfter = focusSnapshot(context.companion.pid)
     const phaseIsolation = assertFocusIsolation(
       focusBefore,
@@ -2010,6 +2199,12 @@ async function phaseOne(runtime, syntheticRedReference) {
       invalidActiveIdentitySeries,
       invalidActive,
       invalidPixels,
+      readiness,
+      playback: {
+        start: playbackStart,
+        stop: playbackStop,
+        focusIsolation: { start: playbackStartIsolation, stop: playbackStopIsolation }
+      },
       phaseIsolation,
       companionIdentity: context.companionIdentity,
       portOwnership: context.portOwnership,
@@ -2047,17 +2242,38 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       expectedWindowTitle: 'TaskWraith Studio',
       asset: runtime.asset
     }
+    const readiness = await waitForPausedMediaReadiness(
+      context.plan,
+      target,
+      'phase2',
+      harness.runStudioUiDriver
+    )
+    const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
+    const playbackStart = await pressPlaybackTransition(
+      context.plan,
+      target,
+      'paused',
+      'playing'
+    )
+    const playbackStartFocus = focusSnapshot(context.companion.pid)
+    const playbackStartIsolation = assertFocusIsolation(
+      focusBeforePlaybackStart,
+      playbackStartFocus,
+      context.companion.pid,
+      'phase2-playback-start'
+    )
     const replayActiveIdentitySeries = await waitForStablePlayable(
       context.plan,
       target,
       'phase2-replay-active'
     )
     const replayActive = replayActiveIdentitySeries.final
-    const replayPixels = evaluatePureRedCapture({
-      capturePath: replayActive.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const replayPixels = evaluatePureRedSample(
+      replayActive,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'replay-active'
+    )
     invariant(replayPixels.clean, 'restart replay did not preserve the pure-red video plane')
 
     const journalBeforeClear = await harness.readStudioJournalOperations(context.plan)
@@ -2086,14 +2302,29 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       path.join(runtime.artifactRoot, 'phase2-cleared-reference.png'),
       runtime.inputs.fixturePath
     )
-    const clearedPixels = compareWindowCaptureToReference(
-      cleared.final.capture.path,
+    const clearedPixels = compareDecodedSample(
+      cleared.final,
       clearedReference.path,
-      windowBounds(sourceWindow)
+      windowBounds(sourceWindow),
+      'cleared'
     )
     invariant(
       clearedPixels.clean,
       `cleared exact-frame comparison failed: ${JSON.stringify(clearedPixels.metrics)}`
+    )
+    const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
+    const playbackStop = await pressPlaybackTransition(
+      context.plan,
+      target,
+      'playing',
+      'paused'
+    )
+    const playbackStopFocus = focusSnapshot(context.companion.pid)
+    const playbackStopIsolation = assertFocusIsolation(
+      focusBeforePlaybackStop,
+      playbackStopFocus,
+      context.companion.pid,
+      'phase2-playback-stop'
     )
     const focusAfter = focusSnapshot(context.companion.pid)
     const phaseIsolation = assertFocusIsolation(
@@ -2120,6 +2351,12 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       cleared,
       clearedReference,
       clearedPixels,
+      readiness,
+      playback: {
+        start: playbackStart,
+        stop: playbackStop,
+        focusIsolation: { start: playbackStartIsolation, stop: playbackStopIsolation }
+      },
       phaseIsolation,
       companionIdentity: context.companionIdentity,
       portOwnership: context.portOwnership,
@@ -2382,13 +2619,20 @@ module.exports = {
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  evaluatePureRedSample,
   exactCompanionProcess,
   focusSnapshot,
   hudAssetIdentityToken,
   invokeStudioOpen,
   materializePortableInputs,
   matchHudAssetIdentity,
+  compareDecodedSample,
+  requiredSampleSourceHostFrame,
   ocrScreenshot,
+  parseHudObservations,
+  pressPlaybackTransition,
+  readSourceWorkspaceObservation,
+  waitForPausedMediaReadiness,
   openMediaPane,
   parseCli,
   resolveArtifactRoot,

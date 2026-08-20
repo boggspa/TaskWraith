@@ -20,10 +20,16 @@ const {
   classifyTrackedDirt,
   createSyntheticRedReference,
   custodyMatches,
+  compareDecodedSample,
   evaluatePureRedCapture,
+  evaluatePureRedSample,
   hudAssetIdentityToken,
   materializePortableInputs,
   matchHudAssetIdentity,
+  parseHudObservations,
+  pressPlaybackTransition,
+  readSourceWorkspaceObservation,
+  waitForPausedMediaReadiness,
   parseCli,
   resolveArtifactRoot,
   treeDigest,
@@ -58,11 +64,26 @@ const {
     height: number
   }) => Record<string, any>
   custodyMatches: (actual: Record<string, any>, expected: Record<string, any>) => boolean
+  compareDecodedSample: (
+    sample: Record<string, any>,
+    referencePath: string,
+    bounds: Record<string, number>,
+    label: string,
+    comparator?: (...args: any[]) => Record<string, any>
+  ) => Record<string, any>
+  evaluatePureRedSample: (
+    sample: Record<string, any>,
+    referencePath: string,
+    bounds: Record<string, number>,
+    label: string,
+    options?: Record<string, any>
+  ) => Record<string, any>
   evaluatePureRedCapture: (options: {
     capturePath: string
     referencePath: string
     windowBounds: { width: number; height: number }
     hudOverlayHeight?: number
+    sourceHostFrame?: { x: number; y: number; width: number; height: number }
   }) => Record<string, any>
   hudAssetIdentityToken: (assetId: string) => string
   materializePortableInputs: (
@@ -81,6 +102,25 @@ const {
     distance: number
     threshold: number
   }
+  parseHudObservations: (observations: Array<{ text: string }>) => Record<string, any>
+  pressPlaybackTransition: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    before: string,
+    after: string,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
+  readSourceWorkspaceObservation: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
+  waitForPausedMediaReadiness: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    prefix: string,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
   parseCli: (argv: string[]) => Record<string, any>
   resolveArtifactRoot: (candidate: string, acceptanceRoot?: string) => string
   treeDigest: (
@@ -177,6 +217,49 @@ function transportMutationReceipt(
         accessibilityValue
       }
     ]
+  }
+}
+
+function workspaceReceipt(
+  sourceVisible = true,
+  sourceSelected = true,
+  sourceFrame = { x: 0, y: 30, width: 640, height: 360 }
+): Record<string, any> {
+  const element = (
+    identifier: string,
+    visible: boolean,
+    role: string | null,
+    value: string | null,
+    enabled: boolean | null,
+    frame: Record<string, number> | null
+  ) => ({ identifier, visible, role, value, enabled, frame })
+  return {
+    inputDelivery: 'background-observation-only',
+    actions: [{
+      index: 0,
+      type: 'read-workspace',
+      workspace: {
+        elements: [
+          element('studio.workspace.root', true, 'AXGroup', null, null, {
+            x: 0, y: 0, width: 640, height: 400
+          }),
+          element('studio.workspace.route.source', true, 'AXCheckBox', sourceSelected ? 'selected' : 'not selected', true, {
+            x: 4, y: 4, width: 40, height: 20
+          }),
+          element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+            x: 48, y: 4, width: 48, height: 20
+          }),
+          element('studio.workspace.viewer.source', sourceVisible, sourceVisible ? 'AXGroup' : null, null, null, sourceVisible ? sourceFrame : null),
+          element('studio.workspace.viewer.timeline', false, null, null, null, null),
+          element('studio.workspace.review-version.current', true, 'AXRadioButton', 'unavailable', false, {
+            x: 100, y: 4, width: 60, height: 20
+          }),
+          element('studio.workspace.review-version.proposed', true, 'AXRadioButton', 'unavailable', false, {
+            x: 164, y: 4, width: 80, height: 20
+          })
+        ]
+      }
+    }]
   }
 }
 
@@ -314,6 +397,95 @@ afterEach(async () => {
 })
 
 describe('studio LUT acceptance runner contract', () => {
+  it('parses transport only from one exact PLAY or PAUSE observation token', () => {
+    expect(parseHudObservations([{ text: 'play 2' }]).parsed.state).toBeNull()
+    expect(parseHudObservations([{ text: 'PLAY' }, { text: 'PAUSE' }]).parsed.state).toBeNull()
+    expect(parseHudObservations([{ text: 'PLAY' }]).parsed.state).toBe('PLAY')
+  })
+
+  it('requires an exact visible Source workspace for checkpoints', async () => {
+    const target = { window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } }
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt(false))
+    ).rejects.toThrow(/Source selected and visibly presented/)
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt(true, false))
+    ).rejects.toThrow(/Source selected and visibly presented/)
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt())
+    ).resolves.toMatchObject({ sourceHostFrame: { width: 640, height: 360 } })
+  })
+
+  it('rejects a forged Playback receipt and preserves exact transition identity', async () => {
+    const target = { window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } }
+    await expect(
+      pressPlaybackTransition({}, target, 'paused', 'playing', async () => ({
+        inputDelivery: 'background-observation-only',
+        actions: [{ index: 0, type: 'press-playback', accessibilityLabel: 'Playback', accessibilityAction: 'AXPress', playbackValueBefore: 'paused', playbackValueAfter: 'playing', forged: true }]
+      }))
+    ).rejects.toThrow(/forged or malformed/)
+  })
+
+  it('waits through a paused readiness race before accepting playback', async () => {
+    let attempts = 0
+    const target = {
+      asset: { sha256: 'asset' },
+      window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] }
+    }
+    const result = await waitForPausedMediaReadiness(
+      {},
+      target,
+      'readiness-test',
+      async () => workspaceReceipt(),
+      {
+        captureGuarded: async () => {
+          attempts += 1
+          return {
+            path: `/tmp/readiness-${attempts}.png`,
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: attempts === 1 ? '0' : '6000' } }
+            }
+          }
+        },
+        ocrScreenshot: () => ({
+          observations: [{ text: attempts === 1 ? 'No media' : 'PAUSE' }],
+          parsed: { state: attempts === 1 ? null : 'PAUSE', contentPtsSeconds: 0 }
+        }),
+        matchHudAssetIdentity: () => ({ matched: attempts > 1, distance: attempts > 1 ? 0 : 1 })
+      }
+    )
+    expect(attempts).toBe(2)
+    expect(result.assetMatch.distance).toBe(0)
+    expect(result.capture.path).toContain('readiness-2')
+  })
+
+  it.each([
+    ['malformed workspace', async () => ({ actions: [] })],
+    ['capture error', async () => { throw new Error('capture failed') }]
+  ])('fails immediately on %s during readiness', async (_label, readOrThrow) => {
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        { asset: { sha256: 'asset' }, window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } },
+        'readiness-error',
+        readOrThrow,
+        { captureGuarded: async () => ({}) }
+      )
+    ).rejects.toThrow(/workspace read|capture failed|one exact background action/i)
+  })
+
+  it('fails immediately when the readiness transport bracket is not complete', async () => {
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        { asset: { sha256: 'asset' }, window: { windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }] } },
+        'readiness-bracket',
+        async () => workspaceReceipt(),
+        { captureGuarded: async () => ({ transportMutationBracket: { ok: false } }) }
+      )
+    ).rejects.toThrow(/bracket is not complete/)
+  })
   it('derives media and LUT inputs inside the fresh artifact root', async () => {
     const directory = await temporaryDirectory()
     const calls: string[][] = []
@@ -988,6 +1160,39 @@ describe('studio LUT acceptance runner contract', () => {
       videoHeight: 180
     })
     expect(result.absolute.redDominantFraction).toBe(1)
+  })
+
+  it('propagates each checkpoint Source host frame into decoded and pure-red comparators', async () => {
+    const directory = await temporaryDirectory()
+    const capturePath = path.join(directory, 'checkpoint.png')
+    writeCapture(capturePath, 'pure-red')
+    const sample = {
+      capture: { path: capturePath },
+      workspaceObservation: { sourceHostFrame: { x: 12, y: 34, width: 320, height: 180 } }
+    }
+    const seen: Record<string, any>[] = []
+    const comparator = (_capture: string, _reference: string, _bounds: Record<string, number>, options: Record<string, any>) => {
+      seen.push(options)
+      return {
+        clean: true,
+        registration: { captureX: 0, captureY: 0, videoWidth: 1, videoHeight: 1 },
+        metrics: {},
+        thresholds: {}
+      }
+    }
+    compareDecodedSample(sample, '/tmp/reference.png', { width: 320, height: 210 }, 'neutral', comparator)
+    const pure = evaluatePureRedSample(
+      sample,
+      '/tmp/reference.png',
+      { width: 320, height: 210 },
+      'active',
+      { compareWindowCaptureToReference: comparator }
+    )
+    expect(pure.comparator.clean).toBe(true)
+    expect(seen).toEqual([
+      { sourceHostFrame: sample.workspaceObservation.sourceHostFrame },
+      { sourceHostFrame: sample.workspaceObservation.sourceHostFrame, hudOverlayHeight: 118 }
+    ])
   })
 
   it('accepts a pure-red material plane through the real comparator and absolute gate', async () => {
