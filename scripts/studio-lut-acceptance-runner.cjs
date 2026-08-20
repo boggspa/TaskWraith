@@ -43,7 +43,7 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-bounded-diagnostics-runner.cjs':
     'd0ec6d3c79830a2f2248f409434a00c1ba69ddfaa1679d4e5579c944d19fe03b',
   'scripts/studio-bounded-lifecycle-runner.cjs':
-    '862592264d41ee5fcffa396960bf85561091aaa33dedf364d91fa3cd1954ffa7',
+    '73756d331714f6285f713c73e16742cc3ff60b91d37c8178d0ebdf2b784a152f',
   'scripts/perf/cdpWebSocketSession.cjs':
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
   'scripts/perf/electronChildSession.cjs':

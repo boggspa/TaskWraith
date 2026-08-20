@@ -21,6 +21,21 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+function collectRegularFiles(directory) {
+  const pending = [directory]
+  const files = []
+  while (pending.length > 0) {
+    const current = pending.pop()
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name)
+      if (entry.isDirectory()) pending.push(entryPath)
+      else if (entry.isFile()) files.push(entryPath)
+      else throw new Error('bounded lifecycle hydration source is not regular: ' + entryPath)
+    }
+  }
+  return files.sort()
+}
+
 async function waitFor(label, probe, timeoutMs = 45_000, intervalMs = 100) {
   const deadline = Date.now() + timeoutMs
   let lastError = null
@@ -38,6 +53,231 @@ async function waitFor(label, probe, timeoutMs = 45_000, intervalMs = 100) {
       ' timed out' +
       (lastError ? ': ' + (lastError instanceof Error ? lastError.message : String(lastError)) : '')
   )
+}
+
+function hydrationBreakpointDefinition() {
+  const bundles = collectRegularFiles(path.join(session.repoRoot, 'out', 'main')).filter(
+    (filePath) => {
+      if (!filePath.endsWith('.js')) return false
+      const source = fs.readFileSync(filePath, 'utf8')
+      return (
+        source.includes('const hydratedRevision = extractHydrationRevision(value, response);') &&
+        source.includes('this.emit({ type: "hydration_served", revision: hydratedRevision });')
+      )
+    }
+  )
+  if (bundles.length !== 1) {
+    throw new Error('could not identify one exact hydration bundle: ' + JSON.stringify(bundles))
+  }
+  const bundlePath = bundles[0]
+  const lines = fs.readFileSync(bundlePath, 'utf8').split(/\r?\n/)
+  const methodLine = lines.findIndex((line) => line.trim() === 'if (hydratedRevision !== null) {')
+  const eventLine = lines.findIndex(
+    (line) => line.trim() === 'this.emit({ type: "hydration_served", revision: hydratedRevision });'
+  )
+  if (methodLine < 0 || eventLine < 0 || eventLine <= methodLine) {
+    throw new Error(
+      'hydration breakpoint statements were not unique: ' +
+        JSON.stringify({ bundlePath, methodLine, eventLine })
+    )
+  }
+  return {
+    bundlePath,
+    bundleSha256: session.sha256File(bundlePath),
+    urlRegex:
+      bundlePath
+        .split(path.sep)
+        .at(-1)
+        .replace(/[.*+?^$()|[\]\\]/g, '\\$&') + '$',
+    methodLine,
+    eventLine
+  }
+}
+
+async function armHydrationProbe(mainInspector) {
+  const definition = hydrationBreakpointDefinition()
+  const hits = []
+  let probeError = null
+  let pending = Promise.resolve()
+  const removeListener = mainInspector.on('Debugger.paused', (params) => {
+    pending = pending
+      .then(async () => {
+        const frame = params?.callFrames?.[0]
+        if (!frame?.callFrameId) {
+          throw new Error('hydration breakpoint paused without a call frame')
+        }
+        const evaluated = await mainInspector.post('Debugger.evaluateOnCallFrame', {
+          callFrameId: frame.callFrameId,
+          expression: `(() => {
+            const result = response && typeof response === 'object' ? response.result : null;
+            const document =
+              result && typeof result === 'object' && result.document &&
+              typeof result.document === 'object' ? result.document : null;
+            return {
+              method: value && typeof value === 'object' ? value.method ?? null : null,
+              requestId: value && typeof value === 'object' ? value.id ?? null : null,
+              responseId: response && typeof response === 'object' ? response.id ?? null : null,
+              responseRevision: result && typeof result === 'object' ? result.revision ?? null : null,
+              hydrationRevision: typeof hydratedRevision === 'number' ? hydratedRevision : null,
+              childPid: child?.pid ?? null,
+              supervisorStatus: this.status(),
+              hydratedChildMatches: this.hydratedChild === child,
+              document: document
+                ? {
+                    formatVersion: document.formatVersion,
+                    assets: (document.assets || []).map((asset) => ({
+                      assetId: asset.assetId,
+                      path: asset.path,
+                      mediaKind: asset.mediaKind
+                    }))
+                  }
+                : null
+            };
+          })()`,
+          returnByValue: true
+        })
+        if (evaluated?.exceptionDetails) {
+          throw new Error(
+            'hydration breakpoint evaluation failed: ' + JSON.stringify(evaluated.exceptionDetails)
+          )
+        }
+        hits.push({
+          recordedAt: new Date().toISOString(),
+          breakpointLine: frame.location?.lineNumber ?? null,
+          kind:
+            frame.location?.lineNumber === definition.eventLine
+              ? 'hydration-served-event'
+              : 'request-response',
+          ...evaluated?.result?.value
+        })
+      })
+      .catch((error) => {
+        probeError = error
+      })
+      .finally(async () => {
+        await mainInspector.post('Debugger.resume').catch((error) => {
+          probeError ||= error
+        })
+      })
+  })
+
+  await mainInspector.post('Debugger.enable')
+  const methodBreakpoint = await mainInspector.post('Debugger.setBreakpointByUrl', {
+    lineNumber: definition.methodLine,
+    urlRegex: definition.urlRegex
+  })
+  const eventBreakpoint = await mainInspector.post('Debugger.setBreakpointByUrl', {
+    lineNumber: definition.eventLine,
+    urlRegex: definition.urlRegex
+  })
+  if (
+    !methodBreakpoint?.breakpointId ||
+    !eventBreakpoint?.breakpointId ||
+    !methodBreakpoint.locations?.length ||
+    !eventBreakpoint.locations?.length
+  ) {
+    removeListener()
+    await mainInspector.post('Debugger.disable').catch(() => {})
+    throw new Error(
+      'hydration breakpoints did not bind to the production bundle: ' +
+        JSON.stringify({ definition, methodBreakpoint, eventBreakpoint })
+    )
+  }
+
+  return {
+    definition: {
+      ...definition,
+      methodBreakpointId: methodBreakpoint.breakpointId,
+      methodLocations: methodBreakpoint.locations,
+      eventBreakpointId: eventBreakpoint.breakpointId,
+      eventLocations: eventBreakpoint.locations
+    },
+    async waitForHydration(expectedPid, expectedRevision) {
+      const observed = await waitFor(
+        'replacement hello -> getDocument -> hydration_served',
+        async () => {
+          if (probeError) throw probeError
+          const relevant = hits.filter((hit) => hit.childPid === expectedPid)
+          const helloIndex = relevant.findIndex(
+            (hit) => hit.kind === 'request-response' && hit.method === 'studio/hello'
+          )
+          const documentIndex = relevant.findIndex(
+            (hit) => hit.kind === 'request-response' && hit.method === 'studio/getDocument'
+          )
+          const eventIndex = relevant.findIndex(
+            (hit) =>
+              hit.kind === 'hydration-served-event' && hit.method === 'studio/getDocument'
+          )
+          const event = eventIndex < 0 ? null : relevant[eventIndex]
+          if (
+            helloIndex < 0 ||
+            documentIndex <= helloIndex ||
+            eventIndex <= documentIndex ||
+            event?.hydrationRevision !== expectedRevision ||
+            event?.responseRevision !== expectedRevision ||
+            event?.hydratedChildMatches !== true ||
+            event?.supervisorStatus?.pid !== expectedPid ||
+            !event?.document
+          ) {
+            return null
+          }
+          return {
+            expectedPid,
+            expectedRevision,
+            helloIndex,
+            documentIndex,
+            eventIndex,
+            relevantHits: relevant,
+            hydratedDocument: event.document
+          }
+        },
+        30_000,
+        50
+      )
+      await pending
+      return observed
+    },
+    async close() {
+      await pending
+      removeListener()
+      await mainInspector
+        .post('Debugger.removeBreakpoint', { breakpointId: methodBreakpoint.breakpointId })
+        .catch(() => {})
+      await mainInspector
+        .post('Debugger.removeBreakpoint', { breakpointId: eventBreakpoint.breakpointId })
+        .catch(() => {})
+      await mainInspector.post('Debugger.disable').catch(() => {})
+      if (probeError) throw probeError
+    }
+  }
+}
+
+function assertHydrationEvidence(hydration, expectedPid, expectedRevision, asset) {
+  if (
+    hydration?.expectedPid !== expectedPid ||
+    hydration?.expectedRevision !== expectedRevision ||
+    !Number.isSafeInteger(hydration.helloIndex) ||
+    !Number.isSafeInteger(hydration.documentIndex) ||
+    !Number.isSafeInteger(hydration.eventIndex) ||
+    hydration.documentIndex <= hydration.helloIndex ||
+    hydration.eventIndex <= hydration.documentIndex ||
+    !hydration.hydratedDocument
+  ) {
+    throw new Error('Studio lifecycle hydration sequence is not exact for the replacement child')
+  }
+  const hydratedAsset = Array.isArray(hydration.hydratedDocument.assets)
+    ? hydration.hydratedDocument.assets.find((candidate) => candidate?.assetId === asset.sha256)
+    : null
+  if (
+    !hydratedAsset ||
+    path.resolve(String(hydratedAsset.path || '')) !== path.resolve(asset.assetPath)
+  ) {
+    throw new Error(
+      'Studio lifecycle replacement hydration omitted the exact asset: ' +
+        JSON.stringify(hydration.hydratedDocument.assets)
+    )
+  }
+  return { ...hydration, hydratedAsset }
 }
 
 function processExists(pid) {
@@ -127,6 +367,78 @@ function adjudicateLifecycleEvidence(evidence) {
   if (evidence.focus?.ok !== true) {
     throw new Error('Studio lifecycle focus handoff is not proven')
   }
+  const expectedAssetPath = path.resolve(String(evidence.expectedAssetPath || ''))
+  const hiddenReplacement = evidence.hiddenReplacement
+  const hiddenWindows = hiddenReplacement?.windowProbe?.windows
+  const hiddenJournal = hiddenReplacement?.journal
+  const hydration = hiddenReplacement?.hydration
+  const relevantHydrationHits = Array.isArray(hydration?.relevantHits)
+    ? hydration.relevantHits.filter((hit) => hit?.childPid === after.process.pid)
+    : []
+  const helloIndex = relevantHydrationHits.findIndex(
+    (hit) => hit?.kind === 'request-response' && hit?.method === 'studio/hello'
+  )
+  const documentIndex = relevantHydrationHits.findIndex(
+    (hit) => hit?.kind === 'request-response' && hit?.method === 'studio/getDocument'
+  )
+  const eventIndex = relevantHydrationHits.findIndex(
+    (hit) =>
+      hit?.kind === 'hydration-served-event' && hit?.method === 'studio/getDocument'
+  )
+  const hydrationEvent = eventIndex < 0 ? null : relevantHydrationHits[eventIndex]
+  const hydratedDocument = hydrationEvent?.document
+  const hydratedAsset = Array.isArray(hydratedDocument?.assets)
+    ? hydratedDocument.assets.find(
+        (candidate) => candidate?.assetId === evidence.expectedAssetId
+      )
+    : null
+  if (
+    typeof evidence.expectedAssetPath !== 'string' ||
+    !evidence.expectedAssetPath ||
+    expectedAssetPath === path.parse(expectedAssetPath).root ||
+    !Array.isArray(hiddenWindows) ||
+    hiddenReplacement.windowProbe.pid !== after.process.pid ||
+    hiddenReplacement.windowProbe.visibleWindowCount !== 0 ||
+    hiddenWindows.length !== 0 ||
+    !hiddenJournal ||
+    hiddenJournal.beforeCount !== before.journalCount ||
+    hiddenJournal.afterCount !== before.journalCount ||
+    hiddenJournal.beforeDigest !== before.journalDigest ||
+    hiddenJournal.afterDigest !== before.journalDigest ||
+    helloIndex < 0 ||
+    documentIndex <= helloIndex ||
+    eventIndex <= documentIndex ||
+    hydrationEvent?.hydrationRevision !== before.journalLastRevision ||
+    hydrationEvent?.responseRevision !== before.journalLastRevision ||
+    hydrationEvent?.hydratedChildMatches !== true ||
+    hydrationEvent?.supervisorStatus?.pid !== after.process.pid ||
+    !hydratedDocument ||
+    !hydratedAsset ||
+    path.resolve(String(hydratedAsset.path || '')) !== expectedAssetPath
+  ) {
+    throw new Error('Studio lifecycle did not prove invisible replacement hydration')
+  }
+  const explicitJournalDelta = evidence.explicitPresentation?.journalDelta
+  const appendedEntries = explicitJournalDelta?.appendedEntries
+  const appendedEntry = Array.isArray(appendedEntries) && appendedEntries.length === 1
+    ? appendedEntries[0]
+    : null
+  if (
+    !explicitJournalDelta ||
+    !Array.isArray(appendedEntries) ||
+    appendedEntries.length !== 1 ||
+    explicitJournalDelta.beforeCount !== before.journalCount ||
+    explicitJournalDelta.afterCount !== after.journalCount ||
+    explicitJournalDelta.beforeDigest !== before.journalDigest ||
+    explicitJournalDelta.afterDigest !== after.journalDigest ||
+    after.journalCount !== before.journalCount + appendedEntries.length ||
+    before.journalDigest !== after.journalPrefixDigest ||
+    appendedEntry?.op?.type !== 'open_media' ||
+    appendedEntry.op.asset?.assetId !== evidence.expectedAssetId ||
+    path.resolve(String(appendedEntry.op.asset?.path || '')) !== expectedAssetPath
+  ) {
+    throw new Error('Studio lifecycle explicit reopen journal delta is not one exact same-asset open_media')
+  }
   return {
     ok: true,
     electronPid: evidence.electronPid,
@@ -136,6 +448,8 @@ function adjudicateLifecycleEvidence(evidence) {
     oldProcessDisappeared: true,
     expectedAssetId: evidence.expectedAssetId,
     journalLastRevision: after.journalLastRevision,
+    sourceWindowPresentedBeforeExplicitOpen: false,
+    explicitOpenJournalDelta: explicitJournalDelta,
     focus: evidence.focus
   }
 }
@@ -153,6 +467,98 @@ function journalBoundary(entries, prefixCount = entries.length) {
       .createHash('sha256')
       .update(JSON.stringify(entries.slice(0, prefixCount)))
       .digest('hex')
+  }
+}
+
+function assertUnchangedJournalAcrossReplacement(before, after) {
+  const beforeBoundary = journalBoundary(before)
+  const afterBoundary = journalBoundary(after)
+  if (
+    beforeBoundary.journalCount !== afterBoundary.journalCount ||
+    beforeBoundary.journalDigest !== afterBoundary.journalDigest
+  ) {
+    throw new Error(
+      'Studio lifecycle hidden replacement changed the durable journal: ' +
+        JSON.stringify({ before: beforeBoundary, after: afterBoundary })
+    )
+  }
+  return {
+    beforeCount: beforeBoundary.journalCount,
+    afterCount: afterBoundary.journalCount,
+    beforeDigest: beforeBoundary.journalDigest,
+    afterDigest: afterBoundary.journalDigest,
+    journalUnchangedAcrossReplacement: true
+  }
+}
+
+function assertExplicitOpenJournalDelta(before, after, asset) {
+  const beforeBoundary = journalBoundary(before)
+  const afterBoundary = journalBoundary(after, before.length)
+  const appended = after.slice(before.length)
+  const entry = appended.length === 1 ? appended[0] : null
+  const sameAssetOpenMedia = Boolean(
+    entry?.op?.type === 'open_media' &&
+      entry.op.asset?.assetId === asset.sha256 &&
+      path.resolve(String(entry.op.asset?.path || '')) === path.resolve(asset.assetPath)
+  )
+  if (appended.length !== 1 || !sameAssetOpenMedia) {
+    throw new Error(
+      'Studio lifecycle explicit reopen must append exactly one same-asset open_media: ' +
+        JSON.stringify({ before: beforeBoundary, after: afterBoundary, appended })
+    )
+  }
+  return {
+    beforeCount: beforeBoundary.journalCount,
+    afterCount: afterBoundary.journalCount,
+    appendedCount: appended.length,
+    beforeDigest: beforeBoundary.journalDigest,
+    afterDigest: afterBoundary.journalDigest,
+    assetId: asset.sha256,
+    sameAssetOpenMedia: true,
+    appendedEntries: appended
+  }
+}
+
+function probeNativeWindowIncludingZero(pid, run = session.runExact) {
+  const result = run(
+    '/usr/bin/swift',
+    [path.join(session.repoRoot, 'scripts', 'studio-acceptance-window-probe.swift'), String(pid)],
+    { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 }
+  )
+  const observed = JSON.parse(result.stdout)
+  if (
+    observed?.pid !== pid ||
+    !Number.isSafeInteger(observed?.visibleWindowCount) ||
+    observed.visibleWindowCount < 0 ||
+    !Array.isArray(observed.windows) ||
+    observed.windows.length !== observed.visibleWindowCount
+  ) {
+    throw new Error('Studio lifecycle raw window probe returned invalid data')
+  }
+  return observed
+}
+
+async function assertNoVisibleSourceWindow(companion, probe = probeNativeWindowIncludingZero) {
+  try {
+    const observed = await probe(companion.pid)
+    const sourceWindows = Array.isArray(observed?.windows)
+      ? observed.windows.filter((entry) => entry?.title === 'TaskWraith Studio')
+      : []
+    if (sourceWindows.length > 0) {
+      throw new Error(
+        'Studio lifecycle replacement presented a Source window before explicit reopen: ' +
+          JSON.stringify(sourceWindows)
+      )
+    }
+    return { sourceWindowPresentedBeforeExplicitOpen: false, observed }
+  } catch (error) {
+    if (error instanceof Error && /No on-screen native Studio window/.test(error.message)) {
+      return {
+        sourceWindowPresentedBeforeExplicitOpen: false,
+        observed: { pid: companion.pid, visibleWindowCount: 0, windows: [] }
+      }
+    }
+    throw error
   }
 }
 
@@ -240,6 +646,10 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         asset: runtime.asset
       }
       const beforeJournal = await harness.readStudioJournalOperations(plan)
+      const expectedHydratedRevision = beforeJournal.at(-1)?.revision
+      if (!Number.isSafeInteger(expectedHydratedRevision) || expectedHydratedRevision < 1) {
+        throw new Error('Studio lifecycle journal has no exact pre-replacement revision')
+      }
       const beforeFocus = session.focusSnapshot(context.companion.pid)
       const beforeMedia = await waitForExactMediaObservation(
         plan,
@@ -251,14 +661,44 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         throw new Error('original Companion is not the exact Electron child')
       }
 
-      const kill = adapters.kill || process.kill
-      kill(context.companion.pid, 'SIGKILL')
-      await waitFor('old Studio Companion disappearance', () =>
-        processExists(context.companion.pid) ? null : true
+      const hydrationProbe = await (adapters.armHydrationProbe || armHydrationProbe)(
+        context.mainInspector
       )
-      const replacement = await (
-        adapters.waitForReplacementCompanion || waitForReplacementCompanion
-      )(context.session.pid, context.session.pgid, context.companion.pid)
+      const kill = adapters.kill || process.kill
+      let replacement
+      let hydrationEvidence
+      try {
+        kill(context.companion.pid, 'SIGKILL')
+        await waitFor('old Studio Companion disappearance', () =>
+          processExists(context.companion.pid) ? null : true
+        )
+        replacement = await (
+          adapters.waitForReplacementCompanion || waitForReplacementCompanion
+        )(context.session.pid, context.session.pgid, context.companion.pid)
+        hydrationEvidence = await hydrationProbe.waitForHydration(
+          replacement.candidate.pid,
+          expectedHydratedRevision
+        )
+      } finally {
+        await hydrationProbe.close()
+      }
+      hydrationEvidence = assertHydrationEvidence(
+        { ...hydrationEvidence, breakpointDefinition: hydrationProbe.definition },
+        replacement.candidate.pid,
+        expectedHydratedRevision,
+        runtime.asset
+      )
+      const hiddenWindow = await assertNoVisibleSourceWindow(
+        replacement.candidate,
+        adapters.probeNativeWindow || probeNativeWindowIncludingZero
+      )
+      const hiddenJournal = await harness.readStudioJournalOperations(plan)
+      const hiddenJournalEvidence = assertUnchangedJournalAcrossReplacement(
+        beforeJournal,
+        hiddenJournal
+      )
+      const focusBeforeExplicitOpen = session.focusSnapshot(replacement.candidate.pid)
+      const explicitOpen = await session.invokeStudioOpen(context.renderer, runtime.asset)
       const afterWindow = await session.waitForSourceWindow(replacement.candidate)
       const afterTarget = {
         companion: replacement.candidate,
@@ -269,7 +709,17 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
       }
       const afterMedia = await waitForExactMediaObservation(plan, afterTarget, 'lifecycle-after')
       const afterJournal = await harness.readStudioJournalOperations(plan)
+      const explicitJournalDelta = assertExplicitOpenJournalDelta(
+        hiddenJournal,
+        afterJournal,
+        runtime.asset
+      )
       const afterFocus = session.focusSnapshot(replacement.candidate.pid)
+      const explicitOpenFocus = session.assertSourceWindowFocusIsolation(
+        focusBeforeExplicitOpen,
+        afterFocus,
+        replacement.candidate.pid
+      )
       const focus = assertFocusHandoff(
         beforeFocus,
         afterFocus,
@@ -280,6 +730,7 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
         electronPid: context.session.pid,
         electronPgid: context.session.pgid,
         expectedAssetId: runtime.asset.sha256,
+        expectedAssetPath: runtime.asset.assetPath,
         oldProcessDisappeared: !processExists(context.companion.pid),
         focus,
         before: {
@@ -291,11 +742,26 @@ async function runBoundedLifecycle(options = {}, adapters = {}) {
           process: replacement.process,
           ...journalBoundary(afterJournal, beforeJournal.length),
           ...afterMedia
+        },
+        hiddenReplacement: {
+          hydration: hydrationEvidence,
+          windowProbe: hiddenWindow.observed,
+          sourceWindowPresentedBeforeExplicitOpen:
+            hiddenWindow.sourceWindowPresentedBeforeExplicitOpen,
+          journalUnchangedAcrossReplacement:
+            hiddenJournalEvidence.journalUnchangedAcrossReplacement,
+          journal: hiddenJournalEvidence
+        },
+        explicitPresentation: {
+          productionAction: 'studio:open',
+          journalDelta: explicitJournalDelta,
+          focus: explicitOpenFocus
         }
       }
       const verdict = adjudicateLifecycleEvidence(rawEvidence)
       return {
         openResult,
+        explicitOpen,
         rawEvidence,
         verdict,
         portOwnership: context.portOwnership,
@@ -346,8 +812,15 @@ function parseLifecycleCli(argv) {
 
 module.exports = {
   adjudicateLifecycleEvidence,
+  assertExplicitOpenJournalDelta,
   assertFocusHandoff,
+  assertHydrationEvidence,
+  assertNoVisibleSourceWindow,
+  assertUnchangedJournalAcrossReplacement,
+  armHydrationProbe,
+  hydrationBreakpointDefinition,
   parseLifecycleCli,
+  probeNativeWindowIncludingZero,
   processExists,
   runBoundedLifecycle,
   waitForExactMediaObservation
