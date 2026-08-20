@@ -2,6 +2,7 @@
 'use strict'
 
 const crypto = require('node:crypto')
+const childProcess = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -115,7 +116,34 @@ function selectedPhone(pairing, requestedPairId) {
   return selected
 }
 
-async function runElectronTrigger(env = process.env) {
+function decryptSafeStorageString(encryptedBase64, password) {
+  const encrypted = Buffer.from(encryptedBase64, 'base64')
+  if (encrypted.length <= 3 || encrypted.subarray(0, 3).toString('ascii') !== 'v10') {
+    throw new Error('P7 identity is not a supported macOS safeStorage value')
+  }
+  const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1')
+  const decipher = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20))
+  return Buffer.concat([decipher.update(encrypted.subarray(3)), decipher.final()]).toString('utf8')
+}
+
+function readTaskWraithSafeStoragePassword() {
+  // The Keychain may ask the signed-in user to approve this one read. Keep the
+  // password in this process only: never print it, put it in argv/env, or write
+  // it into the P7 evidence directory.
+  return childProcess
+    .execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-w', '-a', 'TaskWraith', '-s', 'TaskWraith Safe Storage'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }
+    )
+    .trimEnd()
+}
+
+async function runMacTrigger(env = process.env) {
+  const phase = (label) => {
+    if (env.TASKWRAITH_P7_VERBOSE === '1') process.stderr.write(`[p7] ${label}\n`)
+  }
+  phase('starting')
   if (env.TASKWRAITH_P7_CONFIRMED !== '1') {
     throw new Error('P7 trigger requires TASKWRAITH_P7_CONFIRMED=1')
   }
@@ -128,15 +156,12 @@ async function runElectronTrigger(env = process.env) {
     throw new Error('P7 sending profile still contains owner APNs credentials')
   }
 
-  const { app, safeStorage } = require('electron')
-  await app.whenReady()
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('P7 cannot decrypt the Mac identity while safeStorage is unavailable')
-  }
   const persistedIdentity = loadJson(identityPath)
-  const privateDerBase64 = safeStorage.decryptString(
-    Buffer.from(persistedIdentity.encryptedKey, 'base64')
+  const privateDerBase64 = decryptSafeStorageString(
+    persistedIdentity.encryptedKey,
+    readTaskWraithSafeStoragePassword()
   )
+  phase('identity decrypted')
   const privateKey = crypto.createPrivateKey({
     key: Buffer.from(privateDerBase64, 'base64'),
     format: 'der',
@@ -160,6 +185,7 @@ async function runElectronTrigger(env = process.env) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(trigger)
   })
+  phase('gateway responded')
   const responseBody = await response.json().catch(() => ({}))
   const receipt = {
     schemaVersion: 1,
@@ -173,33 +199,27 @@ async function runElectronTrigger(env = process.env) {
     issuedAt: trigger.issuedAt
   }
   process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`)
-  app.quit()
   if (!receipt.accepted) process.exitCode = 1
   return receipt
 }
 
 module.exports = {
   buildTrigger,
+  decryptSafeStorageString,
   explicitUserDataPath,
   ownerApnsConfigured,
   pairIdFromIdentityPubKey,
   relayHttpBase,
-  runElectronTrigger,
+  runMacTrigger,
   sharedApnsCollapseId,
   triggerSigningString
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : ''
-if (require.main === module || invokedPath === __filename) {
-  runElectronTrigger().catch((error) => {
+if (require.main === module) {
+  runMacTrigger().catch((error) => {
     process.stderr.write(
       `P7 trigger failed: ${error instanceof Error ? error.message : String(error)}\n`
     )
-    try {
-      require('electron').app.quit()
-    } catch {
-      // Plain Node invocation reaches here; the error above is sufficient.
-    }
     process.exitCode = 1
   })
 }

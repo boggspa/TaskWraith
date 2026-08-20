@@ -16,6 +16,7 @@ const triggerHarness = require('./push-p7-trigger.cjs') as {
       nonce: string
     }
   ) => Record<string, unknown>
+  decryptSafeStorageString: (encryptedBase64: string, password: string) => string
   explicitUserDataPath: (raw: string | undefined) => string
   ownerApnsConfigured: (settings: unknown) => boolean
   pairIdFromIdentityPubKey: (key: string) => string
@@ -85,5 +86,23 @@ describe('push P7 trigger harness', () => {
     expect(triggerHarness.explicitUserDataPath('/tmp/taskwraith-p7-sender')).toBe(
       '/tmp/taskwraith-p7-sender'
     )
+  })
+
+  it('decrypts Chromium macOS safeStorage v10 values without persisting the key', () => {
+    const password = 'test-safe-storage-password'
+    const plaintext = Buffer.from('cHJpdmF0ZS1kZXItYmFzZTY0', 'utf8')
+    const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1')
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20))
+    const encrypted = Buffer.concat([
+      Buffer.from('v10'),
+      cipher.update(plaintext),
+      cipher.final()
+    ]).toString('base64')
+    expect(triggerHarness.decryptSafeStorageString(encrypted, password)).toBe(
+      plaintext.toString('utf8')
+    )
+    expect(() =>
+      triggerHarness.decryptSafeStorageString(Buffer.from('bad').toString('base64'), password)
+    ).toThrow(/supported macOS safeStorage/)
   })
 })
