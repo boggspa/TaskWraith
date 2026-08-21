@@ -2112,6 +2112,7 @@ import {
   settleStaleChatRun,
   type ChatRunTerminalSeal
 } from './ChatRunReconciler'
+import { withLiveChatRunStatus } from './ChatRunLiveStatus'
 import {
   buildBridgeRunFailureMetadata,
   describeUnexplainedBridgeRunFailure
@@ -7930,6 +7931,20 @@ function persistRunPermissionPostureOnChatRun(session: {
   broadcastChatUpdated(updated)
 }
 
+function persistChatRunRunningFromSession(session: {
+  runId: string
+  appChatId?: string
+  status?: string
+}): void {
+  if (!session.appChatId || session.status !== 'running') return
+  const chat = AppStore.getChat(session.appChatId)
+  if (!chat) return
+  const updated = withLiveChatRunStatus(chat, session.runId, session.status)
+  if (!updated) return
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+}
+
 /**
  * Seal a SOLO Codex run's persisted `ChatRun` at turn completion.
  *
@@ -8993,6 +9008,7 @@ runManager.onChange((event) => {
   // Graph ledger correlation must commit before the generic queue projection
   // can copy any RunManager fields into the persisted row.
   persistRunPermissionPostureOnChatRun(event.session)
+  persistChatRunRunningFromSession(event.session)
   persistRunSessionQueueState(event.session)
   expireRunScopedApprovalLedger(event.session)
   getRunRepository().appendLifecycleEvent(event.type, event.session)
