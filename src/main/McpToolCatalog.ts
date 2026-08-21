@@ -722,7 +722,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     },
     {
       name: 'git_commit',
-      description: 'Create a git commit in the active workspace with the supplied message.',
+      description:
+        'Commit one verified logical slice without consuming the shared Git index. ' +
+        'Use mode="pathspec" when you own the complete working-tree content of every declared tracked path. ' +
+        'Use mode="private_index" with an isolated patch when committing only selected hunks or adding new files. ' +
+        'A message-only/bare commit is refused. The result includes the commit SHA and exact committed paths.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -731,8 +735,30 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
-        properties: { message: { type: 'string' } },
-        required: ['message']
+        additionalProperties: false,
+        properties: {
+          message: { type: 'string', minLength: 1, maxLength: 10000 },
+          mode: {
+            type: 'string',
+            enum: ['pathspec', 'private_index'],
+            description:
+              'pathspec commits complete owned tracked paths; private_index commits exactly the supplied patch through an isolated index.'
+          },
+          paths: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 200,
+            items: { type: 'string', minLength: 1 },
+            description:
+              'Exact workspace-relative files or bounded directories owned by this logical slice.'
+          },
+          patch: {
+            type: 'string',
+            description:
+              'Required only for private_index mode. Unified Git patch containing exactly this slice, including binary or new-file records when needed.'
+          }
+        },
+        required: ['message', 'mode', 'paths']
       }
     },
     {

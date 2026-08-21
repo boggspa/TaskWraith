@@ -1070,6 +1070,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       // Verify step degrades gracefully when the repo has no configured task.
       expect(result.contextualPrompt).toContain('Say when no check exists')
       expect(result.contextualPrompt).toContain('never claim unrun checks passed')
+      expect(result.contextualPrompt).toContain('Land every verified filesystem-changing logical slice')
+      expect(result.contextualPrompt).toContain('mode="pathspec"')
+      expect(result.contextualPrompt).toContain('mode="private_index"')
+      expect(result.contextualPrompt).toContain('Never make a bare shared-index commit')
     }
   })
 
@@ -1086,6 +1090,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Claude'
     })
     expect(planRun.contextualPrompt).not.toContain('Read existing files with read_file')
+    expect(planRun.contextualPrompt).not.toContain('bare shared-index commit')
 
     const globalRun = composeRunPrompt({
       instructionContext: null,
@@ -1099,6 +1104,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Claude'
     })
     expect(globalRun.contextualPrompt).not.toContain('Read existing files with read_file')
+    expect(globalRun.contextualPrompt).not.toContain('bare shared-index commit')
   })
 
   it('applies compact Ollama context budget and scout workflow hint', () => {

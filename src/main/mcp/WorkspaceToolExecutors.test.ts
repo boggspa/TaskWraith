@@ -12,6 +12,7 @@ import {
   executeFindFiles,
   executeGetDiagnostics,
   executeGitBlame,
+  executeGitCommit,
   executeGitCreatePr,
   executeGithubCiStatus,
   executeGitLog,
@@ -250,6 +251,125 @@ describe('executeRunTask', () => {
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
+  })
+})
+
+describe('executeGitCommit slices', () => {
+  const workspace = resolve('/tmp/taskwraith-git-commit')
+  const context = {
+    scope: 'workspace' as const,
+    cwd: workspace,
+    workspacePath: workspace,
+    assertMutationAuthorized: () => {},
+    assertMutationStillLive: () => {}
+  }
+
+  it('uses an explicit --only pathspec and ignores the shared index', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads === 1 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('[main slice-head] commit\n')
+    })
+
+    const result = await executeGitCommit(
+      deps,
+      { message: 'feat: commit one file', mode: 'pathspec', paths: ['src/a.ts'] },
+      workspace,
+      context
+    )
+
+    expect(calls.some((call) => call.command[1] === 'add')).toBe(false)
+    expect(calls.find((call) => call.command[1] === 'commit')?.command).toEqual([
+      'git',
+      'commit',
+      '--only',
+      '-m',
+      'feat: commit one file',
+      '--',
+      resolve(workspace, 'src/a.ts')
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'pathspec',
+      commit: 'slice-head',
+      paths: ['src/a.ts']
+    })
+  })
+
+  it('builds selected hunks in a private index and resyncs only committed paths', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads < 3 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff' && argv.includes('--cached')) return commandResult('src/a.ts\0')
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('')
+    })
+
+    const result = await executeGitCommit(
+      deps,
+      {
+        message: 'fix: commit selected hunk',
+        mode: 'private_index',
+        paths: ['src/a.ts'],
+        patch: [
+          'diff --git a/src/a.ts b/src/a.ts',
+          'index 1111111..2222222 100644',
+          '--- a/src/a.ts',
+          '+++ b/src/a.ts',
+          '@@ -1 +1 @@',
+          '-old',
+          '+new',
+          ''
+        ].join('\n')
+      },
+      workspace,
+      context
+    )
+
+    const privateCalls = calls.filter((call) =>
+      ['read-tree', 'apply', 'diff', 'commit'].includes(call.command[1])
+    )
+    expect(privateCalls).not.toHaveLength(0)
+    for (const call of privateCalls) {
+      expect(call.options).toMatchObject({
+        environment: { GIT_INDEX_FILE: expect.stringContaining('taskwraith-git-commit-') }
+      })
+    }
+    const reset = calls.find((call) => call.command[1] === 'reset')
+    expect(reset?.command).toEqual([
+      'git',
+      'reset',
+      '-q',
+      'HEAD',
+      '--',
+      expect.stringContaining('taskwraith-git-commit/src/a.ts')
+    ])
+    expect(reset?.options).toBe(30_000)
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'private_index',
+      commit: 'slice-head',
+      paths: ['src/a.ts']
+    })
   })
 })
 

@@ -179,7 +179,11 @@ export function resolveContextBudget(
 // Bumped v8 -> v9 so pre-v13 gateway seats stop being taught `delegate_wave`
 // (birth-direct on v13+ only; not discoverable via capability_search on older
 // profiles). Fresh/resumed v13 seats keep the wave teaching.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v9'
+//
+// Bumped v9 -> v10 so every resumed write-capable seat receives the commit-slice
+// contract: a logical filesystem slice lands through exact pathspecs or an
+// isolated private index, never through the shared index.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v10'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -335,7 +339,8 @@ export const TASKWRAITH_ANTIGRAVITY_ASK_STEER_NOTE = [
  */
 const CLOUD_EDIT_DISCIPLINE_NOTE = [
   'Read existing files with read_file before editing them; a genuinely new file may be created with write_file.',
-  'After code changes, use get_diagnostics and any relevant run_task, then report test_result_summary. Say when no check exists; never claim unrun checks passed.'
+  'After code changes, use get_diagnostics and any relevant run_task, then report test_result_summary. Say when no check exists; never claim unrun checks passed.',
+  'Land every verified filesystem-changing logical slice before starting the next one. Call git_commit with mode="pathspec" and exact paths only when you own each complete tracked file; use mode="private_index" with an isolated patch for selected hunks or new files. Never make a bare shared-index commit.'
 ].join('\n')
 
 const DELEGATION_INTENT_PATTERN =

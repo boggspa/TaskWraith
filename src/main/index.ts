@@ -4054,6 +4054,8 @@ function packageScriptsForCwd(cwd: string): Record<string, unknown> | null {
 interface HostCommandRunOptions {
   timeoutMs?: number
   releaseApproval?: ReleaseCommandCheckOptions
+  /** Internal-only additions constructed by a governed host executor. */
+  environment?: Readonly<Record<string, string>>
 }
 
 type HostCommandRunArgument = number | HostCommandRunOptions
@@ -14511,6 +14513,7 @@ function runHostCommand(
     const startedAt = Date.now()
     const timeoutMs = typeof options === 'number' ? options : (options.timeoutMs ?? 600_000)
     const releaseApproval = typeof options === 'number' ? undefined : options.releaseApproval
+    const commandEnvironment = typeof options === 'number' ? undefined : options.environment
     const projectionScope = hostCommandProjectionContext.getStore()
     const operationSource = projectionScope?.source ?? 'internal-host-command'
     const historyOperation = hostCommandOperations.register(
@@ -14598,7 +14601,10 @@ function runHostCommand(
           shell: false,
           detached: detachSpawns,
           windowsHide: true,
-          env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, binary)
+          env: createCliEnv(
+            { FORCE_COLOR: '0', NO_COLOR: '1', ...(commandEnvironment || {}) },
+            binary
+          )
         })
       } else {
         const shellCommand =
@@ -14612,7 +14618,10 @@ function runHostCommand(
           shell: false,
           detached: detachSpawns,
           windowsHide: true,
-          env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, shellCommand)
+          env: createCliEnv(
+            { FORCE_COLOR: '0', NO_COLOR: '1', ...(commandEnvironment || {}) },
+            shellCommand
+          )
         })
       }
     } catch (error) {

@@ -52,6 +52,14 @@ import type {
   ExternalPublishReceiptWriter
 } from '../ExternalPublishReceiptLedger'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
+import {
+  assertCommittedPathsCovered,
+  nulSeparatedPaths,
+  parseGitCommitSliceRequest,
+  repoRelativePaths,
+  resolveGitReportedPaths,
+  type GitCommitSliceMode
+} from './GitCommitSlice'
 
 export interface HostCommandResult {
   stdout: string
@@ -65,6 +73,8 @@ export interface HostCommandResult {
 export interface HostCommandRunOptions {
   timeoutMs?: number
   releaseApproval?: ReleaseCommandCheckOptions
+  /** Internal-only environment additions constructed by a governed executor. */
+  environment?: Readonly<Record<string, string>>
 }
 
 export type HostCommandRunArgument = number | HostCommandRunOptions
@@ -328,7 +338,11 @@ export interface WorkspaceToolExecutors {
     context: WorkspaceToolContext,
     cwd: string
   ) => Promise<unknown>
-  executeGitCommit: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGitCommit: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
   executeGitPush: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGitCreatePr: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGithubCiStatus: (args: Record<string, any>, cwd: string) => Promise<unknown>
@@ -554,7 +568,7 @@ export function createWorkspaceToolExecutors(
     executeGitShow: (args, context, cwd) => executeGitShow(deps, args, context, cwd),
     executeGitBlame: (args, context, cwd) => executeGitBlame(deps, args, context, cwd),
     executeGitStage: (args, context, cwd) => executeGitStage(deps, args, context, cwd),
-    executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
+    executeGitCommit: (args, context, cwd) => executeGitCommit(deps, args, cwd, context),
     executeGitPush: (args, cwd) => executeGitPush(deps, args, cwd),
     executeGitCreatePr: (args, cwd) => executeGitCreatePr(deps, args, cwd),
     executeGithubCiStatus: (args, cwd) => executeGithubCiStatus(deps, args, cwd),
@@ -1333,18 +1347,224 @@ export async function executeGitCommit(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
   cwd: string,
-  context?: WorkspaceToolContext
+  context: WorkspaceToolContext
 ) {
-  const message = requireNonEmptyString(args.message, 'Commit message')
-  const gitArgs = ['git', 'commit', '-m', message]
-  await context?.assertMutationAuthorized?.()
-  const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
+  const request = parseGitCommitSliceRequest(args)
+  const declaredAbsolutePaths = request.paths.map((path) => resolveMcpScopedPath(context, path))
+  await context.assertMutationAuthorized?.()
+
+  const baseHeadResult = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+  if (hostCommandFailed(baseHeadResult)) {
+    return failedGitCommitSlice(request.mode, 'read_head', baseHeadResult)
+  }
+  const baseHead = baseHeadResult.stdout.trim()
+  const repoRootResult = await runCommandArgs(
+    deps,
+    ['git', 'rev-parse', '--show-toplevel'],
+    cwd,
+    30_000
+  )
+  if (hostCommandFailed(repoRootResult)) {
+    return failedGitCommitSlice(request.mode, 'resolve_repository', repoRootResult)
+  }
+  const repoRoot = await canonicalizeCommitSlicePath(resolve(repoRootResult.stdout.trim()))
+  const declaredCoveragePaths = await Promise.all(
+    declaredAbsolutePaths.map((path) => canonicalizeCommitSlicePath(path))
+  )
+
+  if (request.mode === 'pathspec') {
+    context.assertMutationStillLive?.()
+    const result = await runCommandArgs(
+      deps,
+      ['git', 'commit', '--only', '-m', request.message, '--', ...declaredAbsolutePaths],
+      cwd,
+      60_000
+    )
+    if (hostCommandFailed(result)) return failedGitCommitSlice(request.mode, 'commit', result)
+    return successfulGitCommitSlice(
+      deps,
+      request.mode,
+      cwd,
+      repoRoot,
+      declaredCoveragePaths,
+      result
+    )
+  }
+
+  const tempRoot = await fs.mkdtemp(join(deps.host.getTempDir(), 'taskwraith-git-commit-'))
+  const privateIndexPath = join(tempRoot, 'index')
+  const patchPath = join(tempRoot, 'slice.patch')
+  const environment = { GIT_INDEX_FILE: privateIndexPath }
+  try {
+    await fs.writeFile(patchPath, request.patch!, { encoding: 'utf8', mode: 0o600 })
+    const readTree = await runCommandArgs(
+      deps,
+      ['git', 'read-tree', baseHead],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(readTree)) {
+      return failedGitCommitSlice(request.mode, 'prepare_private_index', readTree)
+    }
+    const check = await runCommandArgs(
+      deps,
+      ['git', 'apply', '--cached', '--check', '--binary', '--', patchPath],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(check)) {
+      return failedGitCommitSlice(request.mode, 'check_patch', check)
+    }
+    context.assertMutationStillLive?.()
+    const apply = await runCommandArgs(
+      deps,
+      ['git', 'apply', '--cached', '--binary', '--', patchPath],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(apply)) {
+      return failedGitCommitSlice(request.mode, 'apply_patch', apply)
+    }
+    const privateNames = await runCommandArgs(
+      deps,
+      ['git', 'diff', '--cached', '--name-only', '-z', '--'],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(privateNames)) {
+      return failedGitCommitSlice(request.mode, 'inspect_private_index', privateNames)
+    }
+    const actualAbsolutePaths = resolveGitReportedPaths(
+      repoRoot,
+      nulSeparatedPaths(privateNames.stdout)
+    )
+    assertCommittedPathsCovered(declaredCoveragePaths, actualAbsolutePaths)
+
+    const currentHead = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+    if (hostCommandFailed(currentHead)) {
+      return failedGitCommitSlice(request.mode, 'recheck_head', currentHead)
+    }
+    if (currentHead.stdout.trim() !== baseHead) {
+      throw new Error('Repository HEAD changed while the private commit slice was being prepared.')
+    }
+
+    context.assertMutationStillLive?.()
+    const commit = await runCommandArgs(
+      deps,
+      ['git', 'commit', '-m', request.message],
+      cwd,
+      60_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(commit)) return failedGitCommitSlice(request.mode, 'commit', commit)
+
+    // A private index advances HEAD without updating the shared index. Reset
+    // only the paths that this slice actually committed; unrelated staged work
+    // remains byte-for-byte owned by its original session.
+    const resync = await runCommandArgs(
+      deps,
+      ['git', 'reset', '-q', 'HEAD', '--', ...actualAbsolutePaths],
+      cwd,
+      30_000
+    )
+    if (hostCommandFailed(resync)) {
+      return failedGitCommitSlice(request.mode, 'resync_shared_index', resync, {
+        committed: true
+      })
+    }
+    return successfulGitCommitSlice(
+      deps,
+      request.mode,
+      cwd,
+      repoRoot,
+      declaredCoveragePaths,
+      commit
+    )
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function canonicalizeCommitSlicePath(path: string): Promise<string> {
+  const missingSegments: string[] = []
+  let cursor = resolve(path)
+  while (true) {
+    try {
+      return resolve(await fs.realpath(cursor), ...missingSegments)
+    } catch (error) {
+      if (!isNodeErrnoException(error) || error.code !== 'ENOENT') throw error
+      const parent = dirname(cursor)
+      if (parent === cursor) throw error
+      missingSegments.unshift(basename(cursor))
+      cursor = parent
+    }
+  }
+}
+
+function hostCommandFailed(result: HostCommandResult): boolean {
+  return Boolean(
+    result.error || result.timedOut || result.exitCode === null || result.exitCode !== 0
+  )
+}
+
+function failedGitCommitSlice(
+  mode: GitCommitSliceMode,
+  stage: string,
+  result: HostCommandResult,
+  extra: Record<string, unknown> = {}
+) {
   return {
-    command: ['git', 'commit', '-m', '[message]'],
+    ok: false,
+    mode,
+    stage,
+    ...extra,
+    command: ['git', 'commit', '[slice]'],
     exitCode: result.exitCode,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: result.stderr || result.error || '',
     timedOut: result.timedOut
+  }
+}
+
+async function successfulGitCommitSlice(
+  deps: WorkspaceToolExecutorDependencies,
+  mode: GitCommitSliceMode,
+  cwd: string,
+  repoRoot: string,
+  declaredAbsolutePaths: readonly string[],
+  commitResult: HostCommandResult
+) {
+  const head = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+  if (hostCommandFailed(head)) return failedGitCommitSlice(mode, 'read_committed_head', head)
+  const commit = head.stdout.trim()
+  const names = await runCommandArgs(
+    deps,
+    ['git', 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', commit],
+    cwd,
+    30_000
+  )
+  if (hostCommandFailed(names)) return failedGitCommitSlice(mode, 'inspect_commit', names)
+  const actualAbsolutePaths = resolveGitReportedPaths(repoRoot, nulSeparatedPaths(names.stdout))
+  assertCommittedPathsCovered(declaredAbsolutePaths, actualAbsolutePaths)
+  return {
+    ok: true,
+    mode,
+    commit,
+    paths: repoRelativePaths(repoRoot, actualAbsolutePaths),
+    command: ['git', 'commit', '[slice]'],
+    exitCode: commitResult.exitCode,
+    stdout: commitResult.stdout,
+    stderr: commitResult.stderr,
+    timedOut: commitResult.timedOut
   }
 }
 
@@ -3343,12 +3563,13 @@ async function runCommandArgs(
   command: string[],
   cwd: string,
   timeoutMs = 600_000,
-  releaseApproval?: ReleaseCommandCheckOptions
+  releaseApproval?: ReleaseCommandCheckOptions,
+  environment?: Readonly<Record<string, string>>
 ): Promise<HostCommandResult> {
   return deps.host.runHostCommand(
     command,
     cwd,
-    releaseApproval ? { timeoutMs, releaseApproval } : timeoutMs
+    releaseApproval || environment ? { timeoutMs, releaseApproval, environment } : timeoutMs
   )
 }
 
