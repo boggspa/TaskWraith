@@ -3,12 +3,15 @@ import { anchorPendingAgentQuestionMarkers } from './agentQuestionMarkerAnchor'
 import { shouldPreferLiveAssistantContent } from './chatUpdatedAssistantMerge'
 import { preserveOptimisticEnsembleQueue } from './queuedMessageRows'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
+import type { ChatUpdateRenderReceipt } from './chatUpdateRenderReceipt'
 
 export interface PendingChatUpdateRender {
   chat: ChatRecord
   messagesChanged: boolean
   hasActiveRun: boolean
   hadRecentRun: boolean
+  /** Latest transport-accepted delivery awaiting a non-gating render receipt. */
+  renderReceipt?: ChatUpdateRenderReceipt
 }
 
 /**

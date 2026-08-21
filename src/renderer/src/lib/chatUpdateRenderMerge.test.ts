@@ -108,4 +108,33 @@ describe('coalescePendingChatUpdateRender', () => {
     expect(merged.title).toBe('Newest metadata')
     expect(merged.messages.map((entry) => entry.id)).toEqual(['a', 'closeout'])
   })
+
+  it('retains only the newest non-gating render receipt for a coalesced chat', () => {
+    const first = coalescePendingChatUpdateRender(undefined, {
+      chat: chat([message('a', 'one')]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false,
+      renderReceipt: {
+        chatId: 'chat-merge',
+        deliveryId: 'delivery-1',
+        revision: 1,
+        rendererEpoch: 'renderer-a'
+      }
+    })
+    const pending = coalescePendingChatUpdateRender(first, {
+      chat: chat([message('a', 'two')]),
+      messagesChanged: true,
+      hasActiveRun: true,
+      hadRecentRun: false,
+      renderReceipt: {
+        chatId: 'chat-merge',
+        deliveryId: 'delivery-2',
+        revision: 2,
+        rendererEpoch: 'renderer-a'
+      }
+    })
+
+    expect(pending.renderReceipt?.deliveryId).toBe('delivery-2')
+  })
 })

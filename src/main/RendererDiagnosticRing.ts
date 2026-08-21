@@ -321,6 +321,8 @@ export class RendererDiagnosticRecorder {
         mainInFlight: boundedNonNegativeInteger(targetStats?.inFlight),
         mainPending: boundedNonNegativeInteger(targetStats?.pending),
         mainInFlightAgeMs: boundedNonNegativeInteger(targetStats?.inFlightAgeMs),
+        mainRenderPending: boundedNonNegativeInteger(targetStats?.renderPending),
+        mainRenderReceiptAgeMs: boundedNonNegativeInteger(targetStats?.renderReceiptAgeMs),
         mainRetainedMessages: boundedNonNegativeInteger(targetStats?.retainedMessages),
         mainRetainedBytes: boundedNonNegativeInteger(targetStats?.retainedBaselineBytes)
       },

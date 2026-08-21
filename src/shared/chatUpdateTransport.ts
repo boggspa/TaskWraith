@@ -41,6 +41,14 @@ export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
   chatId: string
   persistenceRevision: number
   retainedBytes: number
+  /**
+   * A compact transcript operation-chain digest. A snapshot roots it in the
+   * exact message content; each accepted patch advances it from the previous
+   * digest and its precise operations. It lets both sides reject an ACKed
+   * patch that was applied from the wrong transcript base without re-hashing
+   * a large transcript on every streaming save.
+   */
+  transcriptHash?: string
 }
 
 /**
@@ -52,6 +60,8 @@ export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
  */
 export interface ChatUpdateProducerDelta extends ChatUpdateProducerState {
   basePersistenceRevision: number
+  /** Transcript digest before this exact producer-authored delta. */
+  baseTranscriptHash?: string
   recordMask: string[]
   recordDelta: Partial<ChatUpdateRecord>
   recordCleared?: string[]
@@ -89,9 +99,12 @@ export interface ChatUpdateSnapshotDelivery {
   chatId: string
   revision: number
   chat: ChatRecord
+  /** Main-side generation for this WebContents; echoed by a modern ACK. */
+  deliveryEpoch?: number
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  transcriptHash?: string
 }
 
 /** v1 patch: full non-message record (legacy clients / default emit). */
@@ -104,6 +117,9 @@ export interface ChatUpdatePatchDeliveryV1 {
   revision: number
   record: ChatUpdateRecord
   messages: ChatUpdateMessageSplice
+  deliveryEpoch?: number
+  baseTranscriptHash?: string
+  transcriptHash?: string
 }
 
 /**
@@ -119,6 +135,7 @@ export interface ChatUpdatePatchDeliveryV2 {
   chatId: string
   baseRevision: number
   revision: number
+  deliveryEpoch?: number
   /** Keys whose values changed (set or cleared). */
   recordMask: string[]
   /** Changed top-level fields only (never a full Omit<ChatRecord, messages>). */
@@ -131,6 +148,8 @@ export interface ChatUpdatePatchDeliveryV2 {
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  baseTranscriptHash?: string
+  transcriptHash?: string
 }
 
 export type ChatUpdatePatchDelivery = ChatUpdatePatchDeliveryV1 | ChatUpdatePatchDeliveryV2
@@ -143,6 +162,16 @@ export interface ChatUpdateAck {
   /** Optional T6c-forward fields; ignored by v1 ACK consumers. */
   revision?: number
   recordHash?: string
+  /** Operation-chain digest of the renderer baseline that accepted this delivery. */
+  transcriptHash?: string
+  /** Echo of the coordinator's target generation; rejects reload-era ACKs. */
+  deliveryEpoch?: number
+  /** Fresh opaque id created once per renderer document. */
+  rendererEpoch?: string
+  /** `accepted` releases transport backpressure; `rendered` is telemetry only. */
+  phase?: 'accepted' | 'rendered'
+  /** Required only for non-gating `rendered` receipts. */
+  chatId?: string
 }
 
 export interface ChatUpdateBaseline {
@@ -151,6 +180,7 @@ export interface ChatUpdateBaseline {
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  transcriptHash?: string
 }
 
 /**
@@ -161,6 +191,7 @@ export interface ChatUpdateBaseline {
 export interface CompactChatUpdateBaseline {
   revision: number
   recordHash: string
+  transcriptHash?: string
   ensembleRevision?: number
   runsRevision?: number
   /** Cheap retained-byte estimate for statsForTarget meters. */
@@ -228,22 +259,36 @@ export function composeChatUpdateProducerDeltas(
     recordDelta[key] = value
     recordCleared.delete(key)
   }
+  const transcriptOps =
+    first.transcriptOps === null || second.transcriptOps === null
+      ? null
+      : [...first.transcriptOps, ...second.transcriptOps]
+  // A composed wire patch is applied once, not as two renderer deliveries.
+  // Re-root its digest in the composed operation payload so the receiver
+  // derives the identical chain value in one step.
+  const transcriptHash =
+    transcriptOps && first.baseTranscriptHash
+      ? advanceChatTranscriptHash(first.baseTranscriptHash, {
+          kind: 'ops',
+          persistenceRevision: second.persistenceRevision,
+          operations: transcriptOps
+        })
+      : second.transcriptHash
 
   return {
     chatId: first.chatId,
     basePersistenceRevision: first.basePersistenceRevision,
+    baseTranscriptHash: first.baseTranscriptHash,
     persistenceRevision: second.persistenceRevision,
     recordMask,
     recordDelta: recordDelta as Partial<ChatUpdateRecord>,
     ...(recordCleared.size > 0 ? { recordCleared: [...recordCleared] } : {}),
-    transcriptOps:
-      first.transcriptOps === null || second.transcriptOps === null
-        ? null
-        : [...first.transcriptOps, ...second.transcriptOps],
+    transcriptOps,
     changedMessageCount: first.changedMessageCount + second.changedMessageCount,
     ensembleRevision: second.ensembleRevision,
     runsRevision: second.runsRevision,
     recordHash: second.recordHash,
+    ...(transcriptHash ? { transcriptHash } : {}),
     retainedBytes: second.retainedBytes
   }
 }
@@ -299,12 +344,61 @@ function stableStringify(value: unknown): string {
 }
 
 function fnv1aHex(text: string): string {
-  let hash = 0x811c9dc5
+  return fnv1aHexFromSeed(text, 0x811c9dc5)
+}
+
+function fnv1aHexFromSeed(text: string, seed: number): string {
+  return (fnv1aUpdate(seed, text) >>> 0).toString(16).padStart(8, '0')
+}
+
+function fnv1aUpdate(seed: number, text: string): number {
+  let hash = seed
   for (let index = 0; index < text.length; index += 1) {
     hash ^= text.charCodeAt(index)
     hash = Math.imul(hash, 0x01000193)
   }
-  return (hash >>> 0).toString(16).padStart(8, '0')
+  return hash >>> 0
+}
+
+/**
+ * Hash the stable JSON shape without constructing a transcript-sized string.
+ * Snapshot repair already crosses the full record boundary; this keeps its
+ * integrity proof streaming so it never adds a second giant allocation.
+ */
+function stableTranscriptDigest(value: unknown): string {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  const write = (text: string): void => {
+    first = fnv1aUpdate(first, text)
+    second = fnv1aUpdate(second, text)
+  }
+  const visit = (entry: unknown): void => {
+    if (entry === null || typeof entry !== 'object') {
+      write(JSON.stringify(entry) ?? 'undefined')
+      return
+    }
+    if (Array.isArray(entry)) {
+      write('[')
+      for (let index = 0; index < entry.length; index += 1) {
+        if (index > 0) write(',')
+        visit(entry[index])
+      }
+      write(']')
+      return
+    }
+    const record = entry as Record<string, unknown>
+    const keys = Object.keys(record).sort()
+    write('{')
+    for (let index = 0; index < keys.length; index += 1) {
+      if (index > 0) write(',')
+      const key = keys[index]
+      write(`${JSON.stringify(key)}:`)
+      visit(record[key])
+    }
+    write('}')
+  }
+  visit(value)
+  return `${first.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}`
 }
 
 function fingerprintNumber(value: unknown): number {
@@ -321,6 +415,37 @@ export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevision
 }
 
 /**
+ * Compact, deterministic root for a snapshot's exact message list.
+ *
+ * This intentionally runs only for a snapshot/seed. Streaming patches advance
+ * from this root with {@link advanceChatTranscriptHash}, so a 20k-message
+ * transcript never needs a full re-hash at every token boundary.
+ */
+export function computeChatTranscriptHash(messages: readonly ChatMessage[]): string {
+  return stableTranscriptDigest(messages)
+}
+
+export type ChatTranscriptHashOperation =
+  | { kind: 'ops'; persistenceRevision: number; operations: readonly ChatTranscriptOp[] }
+  | { kind: 'splice'; persistenceRevision: number; splice: ChatUpdateMessageSplice }
+
+/**
+ * Advances a transcript's delivery-integrity chain.
+ *
+ * The result is deliberately a chain digest rather than another full-content
+ * scan: both producer and renderer derive it from the same acknowledged base,
+ * target revision, and exact wire operation. A bad base, tampered operation,
+ * duplicate, or out-of-order patch therefore nacks into the ordinary snapshot
+ * recovery path without putting transcript-sized work on the hot ACK path.
+ */
+export function advanceChatTranscriptHash(
+  baseHash: string,
+  operation: ChatTranscriptHashOperation
+): string {
+  return stableTranscriptDigest([baseHash, 'transcript', operation])
+}
+
+/**
  * ACK/apply fingerprint of the chat the renderer actually holds.
  *
  * Producer `recordHash` on the wire is a rolling op-hash. Copying that onto
@@ -328,14 +453,19 @@ export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevision
  * This is the content hash of the non-message record (runs/ensemble/chrome),
  * which is cheap and is what main now compares.
  */
-export function appliedChatUpdateBaseline(revision: number, chat: ChatRecord): ChatUpdateBaseline {
+export function appliedChatUpdateBaseline(
+  revision: number,
+  chat: ChatRecord,
+  transcriptHash?: string
+): ChatUpdateBaseline {
   const sub = computeChatSubRevisions(chat)
   return {
     revision,
     chat,
     ensembleRevision: sub.ensembleRevision,
     runsRevision: sub.runsRevision,
-    recordHash: sub.recordHash
+    recordHash: sub.recordHash,
+    ...(transcriptHash ? { transcriptHash } : {})
   }
 }
 
@@ -550,6 +680,41 @@ function applyMessageSplice(
   ]
 }
 
+function nextTranscriptHashForPatch(
+  baseline: ChatUpdateBaseline,
+  delivery: Pick<ChatUpdatePatchDelivery, 'baseTranscriptHash' | 'transcriptHash' | 'revision'>,
+  operation: ChatTranscriptHashOperation
+): string | undefined | null {
+  const baseHash = baseline.transcriptHash
+  if (delivery.baseTranscriptHash !== undefined) {
+    if (!baseHash || delivery.baseTranscriptHash !== baseHash) return null
+  }
+  if (!baseHash) {
+    // A legacy baseline has no trustworthy chain root. Do not accept a claimed
+    // new digest without its matching base; the ordinary NACK path requests a
+    // one-shot snapshot that establishes one.
+    return delivery.transcriptHash === undefined ? undefined : null
+  }
+  const nextHash = advanceChatTranscriptHash(baseHash, operation)
+  return delivery.transcriptHash && delivery.transcriptHash !== nextHash ? null : nextHash
+}
+
+function transcriptHashFieldsForPatch(
+  baseline: ChatUpdateBaseline,
+  operation: ChatTranscriptHashOperation,
+  preferredHash?: string,
+  preferredBaseHash?: string
+): Pick<ChatUpdatePatchDeliveryV2, 'baseTranscriptHash' | 'transcriptHash'> {
+  const baseTranscriptHash = baseline.transcriptHash
+  if (!baseTranscriptHash) return {}
+  const derivedHash = advanceChatTranscriptHash(baseTranscriptHash, operation)
+  const transcriptHash =
+    preferredHash && preferredBaseHash === baseTranscriptHash && preferredHash === derivedHash
+      ? preferredHash
+      : derivedHash
+  return { baseTranscriptHash, transcriptHash }
+}
+
 function resolveEmitProtocolVersion(
   requested?: ChatUpdateProtocolVersion
 ): ChatUpdateProtocolVersion {
@@ -620,6 +785,10 @@ export function buildChatUpdateDelivery(input: {
     chatId: chat.appChatId,
     revision,
     chat,
+    // A snapshot is the only place the hot path deliberately scans the whole
+    // transcript: it establishes a fresh exact root after a reload, NACK, or
+    // discontinuity.
+    transcriptHash: computeChatTranscriptHash(chat.messages),
     ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
   })
 
@@ -634,6 +803,11 @@ export function buildChatUpdateDelivery(input: {
     const messages = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
     const replacedRows = messages.deleteCount + messages.items.length
     if (replacedRows > replacementLimit) return snapshot()
+    const transcript = transcriptHashFieldsForPatch(baseline, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(chat),
+      splice: messages
+    })
     return {
       protocolVersion: CHAT_UPDATE_PROTOCOL_V1,
       kind: 'patch',
@@ -642,7 +816,8 @@ export function buildChatUpdateDelivery(input: {
       baseRevision: baseline.revision,
       revision,
       record: chatRecordWithoutMessages(chat),
-      messages
+      messages,
+      ...transcript
     }
   }
 
@@ -677,6 +852,11 @@ export function buildChatUpdateDelivery(input: {
       chatRecordWithoutMessages(baseline.chat),
       chatRecordWithoutMessages(chat)
     )
+    const transcript = transcriptHashFieldsForPatch(baseline, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(chat),
+      splice: recovered
+    })
     return {
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
       kind: 'patch',
@@ -688,10 +868,21 @@ export function buildChatUpdateDelivery(input: {
       recordDelta: record.recordDelta,
       ...(record.recordCleared.length ? { recordCleared: record.recordCleared } : {}),
       messages: recovered,
-      ...sub
+      ...sub,
+      ...transcript
     }
   }
 
+  const transcript = transcriptHashFieldsForPatch(
+    baseline,
+    {
+      kind: 'ops',
+      persistenceRevision: producerDelta.persistenceRevision,
+      operations: producerDelta.transcriptOps
+    },
+    producerDelta.transcriptHash,
+    producerDelta.baseTranscriptHash
+  )
   const patch: ChatUpdatePatchDeliveryV2 = {
     protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
     kind: 'patch',
@@ -703,7 +894,8 @@ export function buildChatUpdateDelivery(input: {
     recordDelta: producerDelta.recordDelta,
     ...(producerDelta.recordCleared?.length ? { recordCleared: producerDelta.recordCleared } : {}),
     transcriptOps: producerDelta.transcriptOps,
-    ...sub
+    ...sub,
+    ...transcript
   }
   return patch
 }
@@ -716,9 +908,13 @@ export function applyChatUpdateDelivery(
     if (delivery.chat.appChatId !== delivery.chatId) {
       return { ok: false, reason: 'Snapshot chat id does not match its envelope.' }
     }
+    const transcriptHash = computeChatTranscriptHash(delivery.chat.messages)
+    if (delivery.transcriptHash && delivery.transcriptHash !== transcriptHash) {
+      return { ok: false, reason: 'Snapshot transcript hash does not match its messages.' }
+    }
     return {
       ok: true,
-      baseline: appliedChatUpdateBaseline(delivery.revision, delivery.chat)
+      baseline: appliedChatUpdateBaseline(delivery.revision, delivery.chat, transcriptHash)
     }
   }
 
@@ -736,12 +932,24 @@ export function applyChatUpdateDelivery(
     }
     const spliced = applyMessageSplice(baseline.chat.messages, delivery.messages)
     if (!spliced) return { ok: false, reason: 'Patch message splice is invalid.' }
+    const transcriptHash = nextTranscriptHashForPatch(baseline, delivery, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(delivery.record),
+      splice: delivery.messages
+    })
+    if (transcriptHash === null) {
+      return { ok: false, reason: 'Patch transcript hash does not match its baseline.' }
+    }
     return {
       ok: true,
-      baseline: appliedChatUpdateBaseline(delivery.revision, {
-        ...delivery.record,
-        messages: spliced
-      })
+      baseline: appliedChatUpdateBaseline(
+        delivery.revision,
+        {
+          ...delivery.record,
+          messages: spliced
+        },
+        transcriptHash
+      )
     }
   }
 
@@ -755,20 +963,35 @@ export function applyChatUpdateDelivery(
   }
 
   let messages: ChatMessage[] | null = null
+  let transcriptOperation: ChatTranscriptHashOperation | null = null
   if (delivery.transcriptOps !== undefined) {
     messages = applyChatTranscriptOps(baseline.chat.messages, delivery.transcriptOps)
     if (!messages) return { ok: false, reason: 'Patch transcript ops are invalid.' }
+    transcriptOperation = {
+      kind: 'ops',
+      persistenceRevision: persistenceRevision(record),
+      operations: delivery.transcriptOps
+    }
   } else if (delivery.messages) {
     messages = applyMessageSplice(baseline.chat.messages, delivery.messages)
     if (!messages) return { ok: false, reason: 'Patch message splice is invalid.' }
+    transcriptOperation = {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(record),
+      splice: delivery.messages
+    }
   } else {
     return { ok: false, reason: 'Patch has neither transcript ops nor a message splice.' }
   }
 
+  const transcriptHash = nextTranscriptHashForPatch(baseline, delivery, transcriptOperation)
+  if (transcriptHash === null) {
+    return { ok: false, reason: 'Patch transcript hash does not match its baseline.' }
+  }
   const chat = { ...record, messages }
   return {
     ok: true,
-    baseline: appliedChatUpdateBaseline(delivery.revision, chat)
+    baseline: appliedChatUpdateBaseline(delivery.revision, chat, transcriptHash)
   }
 }
 
@@ -809,6 +1032,29 @@ export function normalizeChatUpdateAck(value: unknown): ChatUpdateAck | null {
   }
   if (typeof candidate.recordHash === 'string' && candidate.recordHash.length <= 64) {
     ack.recordHash = candidate.recordHash
+  }
+  if (typeof candidate.transcriptHash === 'string' && candidate.transcriptHash.length <= 64) {
+    ack.transcriptHash = candidate.transcriptHash
+  }
+  if (Number.isSafeInteger(candidate.deliveryEpoch) && (candidate.deliveryEpoch ?? -1) >= 0) {
+    ack.deliveryEpoch = candidate.deliveryEpoch
+  }
+  if (
+    typeof candidate.rendererEpoch === 'string' &&
+    candidate.rendererEpoch.length > 0 &&
+    candidate.rendererEpoch.length <= 160
+  ) {
+    ack.rendererEpoch = candidate.rendererEpoch
+  }
+  if (candidate.phase === 'accepted' || candidate.phase === 'rendered') {
+    ack.phase = candidate.phase
+  }
+  if (
+    typeof candidate.chatId === 'string' &&
+    candidate.chatId.length > 0 &&
+    candidate.chatId.length <= 160
+  ) {
+    ack.chatId = candidate.chatId
   }
   return ack
 }

@@ -45,6 +45,10 @@ export interface RendererDiagnosticChatUpdateCounters {
   mainPending: number
   /** Oldest in-flight chat-update ACK wait in ms. 0 when idle. */
   mainInFlightAgeMs: number
+  /** Accepted chat updates awaiting a non-gating render receipt. */
+  mainRenderPending: number
+  /** Oldest accepted update without a render receipt in ms. */
+  mainRenderReceiptAgeMs: number
   mainRetainedMessages: number
   mainRetainedBytes: number
 }

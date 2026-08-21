@@ -60,6 +60,12 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/
 import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
 import { buildChatUpdateAck } from './lib/chatUpdateAck'
 import {
+  buildChatUpdateRenderedAck,
+  createChatUpdateRenderReceipt,
+  createRendererChatUpdateEpoch,
+  type ChatUpdateRenderReceipt
+} from './lib/chatUpdateRenderReceipt'
+import {
   RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS,
   type RendererChatUpdateClientCounters
 } from '../../shared/rendererDiagnostics'
@@ -1059,6 +1065,8 @@ interface WorkspaceBoardCaptureInput {
 }
 
 const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
+/** Fresh per-document identity; used only to reject stale ACKs after reload. */
+const RENDERER_CHAT_UPDATE_EPOCH = createRendererChatUpdateEpoch()
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
 
 function streamFlushItemKey(runId: string, itemId?: string): string {
@@ -3789,6 +3797,7 @@ function App(): React.JSX.Element {
   // never clobbers in-flight content (see lib/reconcileChatRefMap + its tests).
   const pendingChatFlushRef = useRef<Set<string>>(new Set())
   const pendingMainChatUpdatesRef = useRef<Map<string, PendingChatUpdateRender>>(new Map())
+  const pendingChatRenderReceiptsRef = useRef<Map<string, ChatUpdateRenderReceipt>>(new Map())
   const chatFlushRafRef = useRef<number | null>(null)
   const chatFlushDeadlineRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
@@ -5639,7 +5648,14 @@ function App(): React.JSX.Element {
         })
         byId.set(chatId, updated)
       }
-      if (updated) transcriptStore.ingest(updated)
+      if (updated) {
+        transcriptStore.ingest(updated)
+        if (pendingMainUpdate?.renderReceipt) {
+          // Keep only the newest accepted delivery per chat. This receipt is
+          // observational: it never controls main's transport backpressure.
+          pendingChatRenderReceiptsRef.current.set(chatId, pendingMainUpdate.renderReceipt)
+        }
+      }
     }
     setChats((prev) => {
       let changed = false
@@ -5756,12 +5772,26 @@ function App(): React.JSX.Element {
     [flushCoalescedChats]
   )
 
+  // `accepted` ACKs free main's one-slot transport queue immediately. This
+  // later receipt is deliberately observational: React may be throttled or a
+  // window may be hidden, but neither condition may stall a transcript lane.
+  useEffect(() => {
+    const receipts = pendingChatRenderReceiptsRef.current
+    if (receipts.size === 0) return
+    pendingChatRenderReceiptsRef.current = new Map()
+    if (typeof window.api.ackChatUpdated !== 'function') return
+    for (const receipt of receipts.values()) {
+      window.api.ackChatUpdated(buildChatUpdateRenderedAck(receipt))
+    }
+  })
+
   // On unmount, drop any scheduled flush so it can't fire into a torn-down tree.
   // The 200ms saveChat debounce already persists the latest ref content.
   useEffect(() => {
     return () => {
       summaryChatUpdateQueueRef.current.clear()
       pendingMainChatUpdatesRef.current.clear()
+      pendingChatRenderReceiptsRef.current.clear()
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
@@ -12643,8 +12673,11 @@ function App(): React.JSX.Element {
                 buildChatUpdateAck({
                   delivery,
                   applied: wasApplied,
+                  phase: 'accepted',
+                  rendererEpoch: RENDERER_CHAT_UPDATE_EPOCH,
                   appliedChat: appliedBaseline?.chat,
-                  appliedRecordHash: appliedBaseline?.recordHash
+                  appliedRecordHash: appliedBaseline?.recordHash,
+                  appliedTranscriptHash: appliedBaseline?.transcriptHash
                 })
               )
               diagnosticCounters.acksSent += 1
@@ -12674,6 +12707,20 @@ function App(): React.JSX.Element {
             pendingMainChatUpdatesRef.current.delete(chat.appChatId)
             pendingChatFlushRef.current.delete(chat.appChatId)
             acknowledge(true, applied.baseline)
+            // The chat was explicitly cleared, so no React row will commit.
+            // Close the observational receipt immediately rather than leaving
+            // diagnostics to report a permanently pending invisible render.
+            if (typeof window.api.ackChatUpdated === 'function') {
+              window.api.ackChatUpdated(
+                buildChatUpdateRenderedAck(
+                  createChatUpdateRenderReceipt(
+                    delivery,
+                    applied.baseline,
+                    RENDERER_CHAT_UPDATE_EPOCH
+                  )
+                )
+              )
+            }
             return
           }
           const hasActiveRun = (() => {
@@ -12702,7 +12749,12 @@ function App(): React.JSX.Element {
               chat,
               messagesChanged: previousBaseline?.chat.messages !== chat.messages,
               hasActiveRun,
-              hadRecentRun
+              hadRecentRun,
+              renderReceipt: createChatUpdateRenderReceipt(
+                delivery,
+                applied.baseline,
+                RENDERER_CHAT_UPDATE_EPOCH
+              )
             })
           )
           scheduleCoalescedChatFlush(chat.appChatId)

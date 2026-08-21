@@ -28,17 +28,34 @@ interface PendingChatUpdate {
   chat: ChatRecord
   producer?: ChatUpdateProducerEnvelope
   retainedBytes: number
+  priority: ChatUpdateDeliveryPriority
 }
 
 interface InFlightChatUpdate extends PendingChatUpdate {
   deliveryId: string
+  deliveryEpoch: number
   recordHash: string
   compactBaseline: CompactChatUpdateBaseline
+}
+
+type ChatUpdateDeliveryPriority = 'normal' | 'urgent'
+
+interface AcceptedChatUpdateReceipt {
+  deliveryId: string
+  deliveryEpoch: number
+  revision: number
+  acceptedAtMs: number
+  rendererEpoch?: string
+  recordHash: string
+  transcriptHash?: string
+  renderedAtMs?: number
 }
 
 interface TargetChatState {
   target: ChatUpdateDeliveryTarget
   chatId: string
+  /** Incremented whenever this WebContents reloads or is discarded. */
+  deliveryEpoch: number
   nextRevision: number
   /**
    * Compact ACK baseline (hash + generation). Never holds a ChatRecord —
@@ -71,6 +88,10 @@ interface TargetChatState {
   consecutiveRejects: number
   lastSentAt: number
   lastTouchedAt: number
+  /** Latest accepted receipt; render receipts are telemetry and never gate send. */
+  lastAccepted?: AcceptedChatUpdateReceipt
+  /** Bound to the renderer document that successfully accepted the baseline. */
+  rendererEpoch?: string
 }
 
 export interface ChatUpdateDeliveryStats {
@@ -82,6 +103,10 @@ export interface ChatUpdateDeliveryStats {
   retainedBaselineBytes: number
   /** Oldest in-flight delivery age in ms. 0 when nothing is in flight. */
   inFlightAgeMs: number
+  /** Accepted deliveries awaiting a non-gating React render receipt. */
+  renderPending: number
+  /** Age of the oldest non-rendered accepted receipt. 0 when none are pending. */
+  renderReceiptAgeMs: number
 }
 
 /**
@@ -182,8 +207,25 @@ function toPatchBaseline(
     chat: baselineChat,
     ensembleRevision: acknowledged.ensembleRevision,
     runsRevision: acknowledged.runsRevision,
-    recordHash: acknowledged.recordHash
+    recordHash: acknowledged.recordHash,
+    transcriptHash: acknowledged.transcriptHash
   }
+}
+
+function priorityForChatUpdate(chat: ChatRecord): ChatUpdateDeliveryPriority {
+  const roundStatus = chat.ensemble?.activeRound?.status
+  if (roundStatus === 'completed' || roundStatus === 'failed' || roundStatus === 'cancelled') {
+    return 'urgent'
+  }
+  const latestRun = chat.runs[chat.runs.length - 1]
+  const runStatus = latestRun?.status
+  return runStatus === 'success' ||
+    runStatus === 'success_with_warnings' ||
+    runStatus === 'completed' ||
+    runStatus === 'failed' ||
+    runStatus === 'cancelled'
+    ? 'urgent'
+    : 'normal'
 }
 
 /**
@@ -198,6 +240,8 @@ function toPatchBaseline(
 export class ChatUpdateDeliveryCoordinator {
   private readonly statesByTarget = new Map<number, Map<string, TargetChatState>>()
   private readonly deliveryIndex = new Map<string, { targetId: number; chatId: string }>()
+  /** Persists across clearTarget so an old renderer document cannot ACK a new one. */
+  private readonly deliveryEpochByTarget = new Map<number, number>()
   private readonly minDeliveryIntervalMs: number
   private readonly ackTimeoutMs: number
   private readonly maxTrackedChatsPerTarget: number
@@ -236,6 +280,7 @@ export class ChatUpdateDeliveryCoordinator {
       state = {
         target,
         chatId: chat.appChatId,
+        deliveryEpoch: this.deliveryEpochForTarget(target.id),
         nextRevision: 0,
         consecutiveRejects: 0,
         lastSentAt: Number.NEGATIVE_INFINITY,
@@ -245,6 +290,7 @@ export class ChatUpdateDeliveryCoordinator {
     }
     state.target = target
     state.lastTouchedAt = this.now()
+    const priority = priorityForChatUpdate(chat)
     const producer = chatUpdateProducerEnvelopeFor(chat)
     // A producer that saves, awaits, then broadcasts (the delegate-wave return
     // path awaits a fleet-worktree settle between the two) can rebroadcast an
@@ -292,6 +338,8 @@ export class ChatUpdateDeliveryCoordinator {
         revision: state.nextRevision,
         chat,
         retainedBytes,
+        priority:
+          state.pending.priority === 'urgent' || priority === 'urgent' ? 'urgent' : priority,
         ...(producer ? { producer: { state: producer.state, delta: composedDelta } } : {})
       }
     } else {
@@ -299,20 +347,47 @@ export class ChatUpdateDeliveryCoordinator {
         revision: state.nextRevision,
         chat,
         retainedBytes,
+        priority,
         ...(producer ? { producer } : {})
       }
+    }
+    // A normal cadence timer may already be armed when a terminal/error update
+    // arrives. Cancel it so urgency takes effect immediately once the current
+    // one-slot in-flight boundary permits a send.
+    if (state.pending.priority === 'urgent' && state.timer) {
+      this.clearTimer(state.timer)
+      state.timer = undefined
     }
     this.maybeSend(state)
     this.pruneTarget(target.id)
   }
 
   acknowledge(targetId: number, ack: ChatUpdateAck): boolean {
+    if (ack.phase === 'rendered') return this.acknowledgeRendered(targetId, ack)
     const indexed = this.deliveryIndex.get(ack.deliveryId)
-    if (!indexed || indexed.targetId !== targetId) return false
+    if (!indexed) return this.acknowledgeDuplicateAccepted(targetId, ack)
+    if (indexed.targetId !== targetId) return false
     const states = this.statesByTarget.get(targetId)
     const state = states?.get(indexed.chatId)
     const inFlight = state?.inFlight
     if (!state || !inFlight || inFlight.deliveryId !== ack.deliveryId) return false
+
+    const now = this.now()
+    const revisionMismatch = typeof ack.revision === 'number' && ack.revision !== inFlight.revision
+    const recordHashMismatch =
+      typeof ack.recordHash === 'string' &&
+      ack.recordHash.length > 0 &&
+      ack.recordHash !== inFlight.recordHash
+    const transcriptHashMismatch =
+      typeof ack.transcriptHash === 'string' &&
+      ack.transcriptHash.length > 0 &&
+      ack.transcriptHash !== inFlight.compactBaseline.transcriptHash
+    const deliveryEpochMismatch =
+      ack.deliveryEpoch !== undefined && ack.deliveryEpoch !== inFlight.deliveryEpoch
+    const rendererEpochMismatch =
+      Boolean(state.rendererEpoch) &&
+      Boolean(ack.rendererEpoch) &&
+      state.rendererEpoch !== ack.rendererEpoch
 
     this.deliveryIndex.delete(ack.deliveryId)
     if (state.ackTimer) {
@@ -320,14 +395,14 @@ export class ChatUpdateDeliveryCoordinator {
       state.ackTimer = undefined
     }
     state.inFlight = undefined
-    state.lastTouchedAt = this.now()
-
-    const revisionMismatch = typeof ack.revision === 'number' && ack.revision !== inFlight.revision
-    const hashMismatch =
-      typeof ack.recordHash === 'string' &&
-      ack.recordHash.length > 0 &&
-      ack.recordHash !== inFlight.recordHash
-    const applied = ack.applied === true && !revisionMismatch && !hashMismatch
+    state.lastTouchedAt = now
+    const applied =
+      ack.applied === true &&
+      !revisionMismatch &&
+      !recordHashMismatch &&
+      !transcriptHashMismatch &&
+      !deliveryEpochMismatch &&
+      !rendererEpochMismatch
 
     if (applied) {
       // Compact fingerprint only — the full chat is kept in baselineChat for
@@ -344,6 +419,18 @@ export class ChatUpdateDeliveryCoordinator {
         Number.isSafeInteger(ackedRevision) && (ackedRevision ?? -1) >= 0
           ? ackedRevision
           : undefined
+      if (ack.rendererEpoch) state.rendererEpoch = ack.rendererEpoch
+      state.lastAccepted = {
+        deliveryId: inFlight.deliveryId,
+        deliveryEpoch: inFlight.deliveryEpoch,
+        revision: inFlight.revision,
+        acceptedAtMs: now,
+        recordHash: inFlight.recordHash,
+        ...(ack.rendererEpoch ? { rendererEpoch: ack.rendererEpoch } : {}),
+        ...(inFlight.compactBaseline.transcriptHash
+          ? { transcriptHash: inFlight.compactBaseline.transcriptHash }
+          : {})
+      }
       state.consecutiveRejects = 0
     } else {
       // Degradation: the renderer could not apply the patch (or the revision /
@@ -353,6 +440,10 @@ export class ChatUpdateDeliveryCoordinator {
       state.acknowledged = undefined
       state.baselineChat = undefined
       state.baselineRevision = undefined
+      state.lastAccepted = undefined
+      // A changed renderer document must begin from a snapshot, but retain
+      // its epoch so that snapshot's ACK becomes the new trusted baseline.
+      if (rendererEpochMismatch && ack.rendererEpoch) state.rendererEpoch = ack.rendererEpoch
       state.consecutiveRejects += 1
       // One immediate snapshot retry repairs a missing/stale renderer base.
       // If that snapshot is also rejected, wait for a future producer update
@@ -362,7 +453,8 @@ export class ChatUpdateDeliveryCoordinator {
           revision: inFlight.revision,
           chat: inFlight.chat,
           producer: inFlight.producer,
-          retainedBytes: inFlight.retainedBytes
+          retainedBytes: inFlight.retainedBytes,
+          priority: inFlight.priority
         }
       }
     }
@@ -372,10 +464,69 @@ export class ChatUpdateDeliveryCoordinator {
   }
 
   clearTarget(targetId: number): void {
+    this.deliveryEpochByTarget.set(targetId, this.deliveryEpochForTarget(targetId) + 1)
     const states = this.statesByTarget.get(targetId)
     if (!states) return
     for (const state of states.values()) this.disposeState(state)
     this.statesByTarget.delete(targetId)
+  }
+
+  private acknowledgeRendered(targetId: number, ack: ChatUpdateAck): boolean {
+    if (!ack.applied || !ack.chatId) return false
+    const state = this.statesByTarget.get(targetId)?.get(ack.chatId)
+    const accepted = state?.lastAccepted
+    if (!state || !accepted || accepted.deliveryId !== ack.deliveryId) return false
+    if (ack.deliveryEpoch !== undefined && ack.deliveryEpoch !== accepted.deliveryEpoch) {
+      return false
+    }
+    if (ack.revision !== undefined && ack.revision !== accepted.revision) return false
+    if (
+      accepted.rendererEpoch &&
+      ack.rendererEpoch &&
+      accepted.rendererEpoch !== ack.rendererEpoch
+    ) {
+      return false
+    }
+    if (ack.recordHash && ack.recordHash !== accepted.recordHash) {
+      return false
+    }
+    if (
+      accepted.transcriptHash &&
+      ack.transcriptHash &&
+      accepted.transcriptHash !== ack.transcriptHash
+    ) {
+      return false
+    }
+    accepted.renderedAtMs = this.now()
+    state.lastTouchedAt = accepted.renderedAtMs
+    return true
+  }
+
+  /** A same-document duplicate accepted ACK is harmless and should be idempotent. */
+  private acknowledgeDuplicateAccepted(targetId: number, ack: ChatUpdateAck): boolean {
+    if (!ack.applied || !ack.chatId) return false
+    const accepted = this.statesByTarget.get(targetId)?.get(ack.chatId)?.lastAccepted
+    if (!accepted || accepted.deliveryId !== ack.deliveryId) return false
+    if (ack.deliveryEpoch !== undefined && ack.deliveryEpoch !== accepted.deliveryEpoch) {
+      return false
+    }
+    if (ack.revision !== undefined && ack.revision !== accepted.revision) return false
+    if (
+      accepted.rendererEpoch &&
+      ack.rendererEpoch &&
+      accepted.rendererEpoch !== ack.rendererEpoch
+    ) {
+      return false
+    }
+    if (ack.recordHash && ack.recordHash !== accepted.recordHash) return false
+    if (
+      accepted.transcriptHash &&
+      ack.transcriptHash &&
+      accepted.transcriptHash !== ack.transcriptHash
+    ) {
+      return false
+    }
+    return true
   }
 
   /** Cumulative delivery mix for the whole coordinator. Cheap enough to read
@@ -393,7 +544,9 @@ export class ChatUpdateDeliveryCoordinator {
         pending: 0,
         retainedMessages: 0,
         retainedBaselineBytes: 0,
-        inFlightAgeMs: 0
+        inFlightAgeMs: 0,
+        renderPending: 0,
+        renderReceiptAgeMs: 0
       }
     }
     let inFlight = 0
@@ -401,6 +554,8 @@ export class ChatUpdateDeliveryCoordinator {
     let retainedMessages = 0
     let retainedBaselineBytes = 0
     let inFlightAgeMs = 0
+    let renderPending = 0
+    let renderReceiptAgeMs = 0
     const now = this.now()
     for (const state of states.values()) {
       if (state.inFlight) {
@@ -424,6 +579,13 @@ export class ChatUpdateDeliveryCoordinator {
         // full-chat estimate (that chat is no longer retained on main).
         retainedBaselineBytes += 64
       }
+      if (state.lastAccepted && state.lastAccepted.renderedAtMs === undefined) {
+        renderPending += 1
+        renderReceiptAgeMs = Math.max(
+          renderReceiptAgeMs,
+          Math.max(0, now - state.lastAccepted.acceptedAtMs)
+        )
+      }
     }
     return {
       trackedChats: states.size,
@@ -431,7 +593,9 @@ export class ChatUpdateDeliveryCoordinator {
       pending,
       retainedMessages,
       retainedBaselineBytes,
-      inFlightAgeMs
+      inFlightAgeMs,
+      renderPending,
+      renderReceiptAgeMs
     }
   }
 
@@ -442,7 +606,11 @@ export class ChatUpdateDeliveryCoordinator {
       return
     }
     const elapsed = this.now() - state.lastSentAt
-    const delay = Math.max(0, this.minDeliveryIntervalMs - elapsed)
+    // Terminal/error state must never sit behind the normal 10 Hz stream
+    // cadence. It still keeps the same one-in-flight bound, so urgency cannot
+    // fan a slow renderer into an unbounded queue.
+    const delay =
+      state.pending.priority === 'urgent' ? 0 : Math.max(0, this.minDeliveryIntervalMs - elapsed)
     if (delay > 0) {
       state.timer = this.setTimer(() => {
         state.timer = undefined
@@ -474,9 +642,14 @@ export class ChatUpdateDeliveryCoordinator {
       protocolVersion: this.emitProtocolVersion,
       diagnostics
     })
+    const epochDelivery: ChatUpdateDelivery = {
+      ...delivery,
+      deliveryEpoch: state.deliveryEpoch
+    }
     const deliveryEnsembleRevision =
-      'ensembleRevision' in delivery ? delivery.ensembleRevision : undefined
-    const deliveryRunsRevision = 'runsRevision' in delivery ? delivery.runsRevision : undefined
+      'ensembleRevision' in epochDelivery ? epochDelivery.ensembleRevision : undefined
+    const deliveryRunsRevision =
+      'runsRevision' in epochDelivery ? epochDelivery.runsRevision : undefined
     // ACK fingerprint is the SENT chat's content hash, never the producer
     // rolling op-hash on the wire. Echoing that roll made every ACK match.
     const contentSub = computeChatSubRevisions(next.chat)
@@ -484,15 +657,22 @@ export class ChatUpdateDeliveryCoordinator {
     const compactBaseline: CompactChatUpdateBaseline = {
       revision: next.revision,
       recordHash,
+      ...(epochDelivery.transcriptHash ? { transcriptHash: epochDelivery.transcriptHash } : {}),
       ensembleRevision: deliveryEnsembleRevision ?? contentSub.ensembleRevision,
       runsRevision: deliveryRunsRevision ?? contentSub.runsRevision,
       retainedBytes: next.retainedBytes
     }
-    if (delivery.kind === 'snapshot') this.counters.snapshots += 1
+    if (epochDelivery.kind === 'snapshot') this.counters.snapshots += 1
     else this.counters.patches += 1
     if (diagnostics.producerDeltaMissing) this.counters.producerDeltaMissing += 1
     if (diagnostics.spliceRecovery) this.counters.spliceRecoveries += 1
-    state.inFlight = { ...next, deliveryId, recordHash, compactBaseline }
+    state.inFlight = {
+      ...next,
+      deliveryId,
+      deliveryEpoch: state.deliveryEpoch,
+      recordHash,
+      compactBaseline
+    }
     // Drop the patch-base chat once the next full payload is in flight so we
     // never retain acknowledged+baselineChat+inFlight+pending as three+ fulls.
     state.baselineChat = undefined
@@ -500,7 +680,7 @@ export class ChatUpdateDeliveryCoordinator {
     state.lastTouchedAt = state.lastSentAt
     this.deliveryIndex.set(deliveryId, { targetId: state.target.id, chatId: state.chatId })
     try {
-      state.target.send(CHAT_UPDATE_CHANNEL, delivery)
+      state.target.send(CHAT_UPDATE_CHANNEL, epochDelivery)
       if (this.ackTimeoutMs > 0) {
         state.ackTimer = this.setTimer(() => {
           state.ackTimer = undefined
@@ -513,6 +693,18 @@ export class ChatUpdateDeliveryCoordinator {
           state.acknowledged = undefined
           state.baselineChat = undefined
           state.baselineRevision = undefined
+          state.lastAccepted = undefined
+          state.consecutiveRejects += 1
+          if (state.consecutiveRejects === 1 && !state.pending) {
+            state.pending = {
+              revision: state.nextRevision + 1,
+              chat: next.chat,
+              producer: next.producer,
+              retainedBytes: next.retainedBytes,
+              priority: next.priority
+            }
+            state.nextRevision += 1
+          }
           state.lastTouchedAt = this.now()
           this.maybeSend(state)
           this.pruneTarget(state.target.id)
@@ -545,5 +737,11 @@ export class ChatUpdateDeliveryCoordinator {
     state.baselineChat = undefined
     state.acknowledged = undefined
     state.baselineRevision = undefined
+    state.lastAccepted = undefined
+    state.rendererEpoch = undefined
+  }
+
+  private deliveryEpochForTarget(targetId: number): number {
+    return this.deliveryEpochByTarget.get(targetId) ?? 1
   }
 }

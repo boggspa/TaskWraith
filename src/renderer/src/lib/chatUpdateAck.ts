@@ -4,14 +4,23 @@ import type { ChatRecord } from '../../../main/store/types'
 
 export interface BuildChatUpdateAckInput {
   delivery: Pick<ChatUpdateDelivery, 'deliveryId' | 'revision'> & {
+    chatId?: string
     recordHash?: string
+    transcriptHash?: string
+    deliveryEpoch?: number
     chat?: ChatRecord
   }
   applied: boolean
+  /** `accepted` releases main's bounded queue; `rendered` is telemetry only. */
+  phase?: ChatUpdateAck['phase']
+  /** Opaque renderer-document id, stable only for the current page lifetime. */
+  rendererEpoch?: string
   /** Chat the renderer actually applied. Preferred hash source. */
   appliedChat?: ChatRecord
   /** Content hash of that applied chat; must not be the delivery's producer roll. */
   appliedRecordHash?: string
+  /** Operation-chain transcript digest from the actual applied baseline. */
+  appliedTranscriptHash?: string
 }
 
 /**
@@ -27,11 +36,18 @@ export function buildChatUpdateAck(input: BuildChatUpdateAckInput): ChatUpdateAc
   const { delivery, applied } = input
   const ack: ChatUpdateAck = {
     deliveryId: delivery.deliveryId,
-    applied
+    applied,
+    ...(input.phase ? { phase: input.phase } : {}),
+    ...(delivery.chatId ? { chatId: delivery.chatId } : {}),
+    ...(delivery.deliveryEpoch !== undefined ? { deliveryEpoch: delivery.deliveryEpoch } : {}),
+    ...(input.rendererEpoch ? { rendererEpoch: input.rendererEpoch } : {})
   }
   if (!applied) return ack
 
   ack.revision = delivery.revision
+  if (typeof input.appliedTranscriptHash === 'string' && input.appliedTranscriptHash.length > 0) {
+    ack.transcriptHash = input.appliedTranscriptHash
+  }
   if (typeof input.appliedRecordHash === 'string' && input.appliedRecordHash.length > 0) {
     ack.recordHash = input.appliedRecordHash
     return ack

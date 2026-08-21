@@ -1,5 +1,7 @@
 import {
+  advanceChatTranscriptHash,
   computeChatSubRevisions,
+  computeChatTranscriptHash,
   estimateChatMessageBytes,
   estimateChatRecordBytes,
   type ChatUpdateProducerDelta,
@@ -130,6 +132,7 @@ export class ChatUpdateProjectionTracker {
       chatId: chat.appChatId,
       persistenceRevision: persistenceRevision(chat),
       retainedBytes: estimateChatRecordBytes(chat),
+      transcriptHash: computeChatTranscriptHash(chat.messages),
       ...sub
     }
     this.projections.set(chat.appChatId, {
@@ -164,8 +167,17 @@ export class ChatUpdateProjectionTracker {
     }
     if (!tracked) throw new Error(`Chat update projection seed failed for ${after.appChatId}`)
 
+    // A non-expressible transcript edit must be sent through the regular
+    // snapshot/recovery path. Re-root the digest from the exact saved content
+    // instead of pretending an opaque mutation is a safe chain link.
+    if (derived.transcriptOps === null) {
+      return { state: this.seed(after), delta: null }
+    }
+
     try {
       const priorState = tracked.state
+      const priorTranscriptHash =
+        priorState.transcriptHash ?? computeChatTranscriptHash(before.messages)
       this.applyMutation(tracked, derived)
       if (
         tracked.messageIds.length !== after.messages.length ||
@@ -205,7 +217,12 @@ export class ChatUpdateProjectionTracker {
         ensembleRevision:
           ensembleOperations.length > 0
             ? hashNumber(priorState.ensembleRevision, 'ensemble', ensembleOperations)
-            : priorState.ensembleRevision
+            : priorState.ensembleRevision,
+        transcriptHash: advanceChatTranscriptHash(priorTranscriptHash, {
+          kind: 'ops',
+          persistenceRevision: derived.batch.revision,
+          operations: derived.transcriptOps
+        })
       }
       tracked.state = state
       tracked.lastTouched = this.now()
@@ -213,6 +230,7 @@ export class ChatUpdateProjectionTracker {
       const delta: ChatUpdateProducerDelta = {
         ...state,
         basePersistenceRevision: derived.batch.baseRevision,
+        baseTranscriptHash: priorTranscriptHash,
         ...record,
         transcriptOps: derived.transcriptOps,
         changedMessageCount: derived.changedMessageCount

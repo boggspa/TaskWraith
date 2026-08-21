@@ -49,6 +49,8 @@ function sample(index: number): RendererDiagnosticSample {
       mainInFlight: 0,
       mainPending: 0,
       mainInFlightAgeMs: 0,
+      mainRenderPending: 0,
+      mainRenderReceiptAgeMs: 0,
       mainRetainedMessages: 0,
       mainRetainedBytes: 0
     }
@@ -125,7 +127,9 @@ describe('RendererDiagnosticRing', () => {
         pending: 1,
         retainedMessages: 90,
         retainedBaselineBytes: 4_096,
-        inFlightAgeMs: 400
+        inFlightAgeMs: 400,
+        renderPending: 1,
+        renderReceiptAgeMs: 80
       }),
       getChatUpdateProtocolCounters: () => ({
         snapshots: 3,
@@ -175,6 +179,8 @@ describe('RendererDiagnosticRing', () => {
         mainProducerDeltaMissing: 4,
         mainSpliceRecoveries: 4,
         mainInFlightAgeMs: 400,
+        mainRenderPending: 1,
+        mainRenderReceiptAgeMs: 80,
         mainRetainedBytes: 4_096
       }
     })

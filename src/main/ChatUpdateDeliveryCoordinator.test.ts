@@ -346,6 +346,193 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
     expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(0)
   })
+
+  it('forces a snapshot when a new renderer document ACKs a patch from the prior epoch', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, chat(1, ['seed']))
+    const seed = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: seed.deliveryId,
+        deliveryEpoch: seed.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+
+    coordinator.enqueue(sink, chat(2, ['seed', 'next']))
+    const patch = sink.deliveries[1]
+    expect(patch.kind).toBe('patch')
+    // A reload can receive a patch with a stale renderer baseline. Treat the
+    // first ACK from its new epoch as a NACK and repair with one snapshot.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: patch.deliveryId,
+        deliveryEpoch: patch.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-b'
+      })
+    ).toBe(true)
+    expect(sink.deliveries).toHaveLength(3)
+    const recovery = sink.deliveries[2]
+    expect(recovery.kind).toBe('snapshot')
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: recovery.deliveryId,
+        deliveryEpoch: recovery.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-b'
+      })
+    ).toBe(true)
+    // An old async ACK cannot reopen or mutate the new baseline.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: seed.deliveryId,
+        deliveryEpoch: seed.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(false)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
+  it('increments the delivery epoch when a target reloads and rejects its old ACKs', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, chat(1, ['before reload']))
+    const beforeReload = sink.deliveries[0]
+    coordinator.clearTarget(sink.id)
+
+    coordinator.enqueue(sink, chat(2, ['after reload']))
+    const afterReload = sink.deliveries[1]
+    expect(afterReload.deliveryEpoch).toBeGreaterThan(beforeReload.deliveryEpoch ?? 0)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: beforeReload.deliveryId,
+        deliveryEpoch: beforeReload.deliveryEpoch,
+        applied: true,
+        chatId: beforeReload.chatId,
+        rendererEpoch: 'old-document'
+      })
+    ).toBe(false)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: afterReload.deliveryId,
+        deliveryEpoch: afterReload.deliveryEpoch,
+        applied: true,
+        chatId: afterReload.chatId,
+        rendererEpoch: 'new-document'
+      })
+    ).toBe(true)
+  })
+
+  it('records a render receipt without making rendering another transport gate', () => {
+    let now = 5_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const delivery = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ renderPending: 1 })
+    now += 75
+    expect(coordinator.statsForTarget(sink.id).renderReceiptAgeMs).toBe(75)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a',
+        recordHash: 'wrong-record'
+      })
+    ).toBe(false)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ renderPending: 0 })
+    // Render receipts are idempotent and do not enqueue or block anything.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+  })
+
+  it('bypasses stream cadence for a terminal chat update without widening the queue', () => {
+    let now = 10_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 1_000,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['streaming']))
+    const first = sink.deliveries[0]
+    coordinator.acknowledge(sink.id, { deliveryId: first.deliveryId, applied: true })
+
+    // This normal update arms the 1 s cadence timer.
+    coordinator.enqueue(sink, chat(2, ['streaming', 'ordinary progress']))
+    expect(sink.deliveries).toHaveLength(1)
+    coordinator.enqueue(sink, {
+      ...chat(3, ['streaming', 'ordinary progress', 'terminal']),
+      runs: [{ runId: 'r1', startedAt: '2026-08-21T15:00:00.000Z', status: 'completed' }]
+    })
+    expect(sink.deliveries).toHaveLength(2)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, pending: 0 })
+    now += 1
+  })
+
+  it('retries one timed-out delivery as a snapshot even when no newer update is queued', () => {
+    vi.useFakeTimers()
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(2)
+    vi.useRealTimers()
+  })
 })
 
 describe('default emit protocol', () => {
@@ -469,6 +656,69 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     // And the healed chain still rides the patch protocol — an out-of-order
     // burst must not degrade the multi-MB parent chat to snapshot deliveries.
     expect(second.kind).toBe('patch')
+  })
+
+  it('converges seven reversed fan-out returns into one bounded delivery chain', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const records = projectSequence(
+      chat(1, ['prompt']),
+      ...Array.from({ length: 7 }, (_, index) =>
+        chat(index + 2, [
+          'prompt',
+          ...Array.from({ length: index + 1 }, (_, lane) => `lane return ${lane + 1}`)
+        ])
+      )
+    )
+    const seed = records[0]
+    const returns = records.slice(1)
+
+    coordinator.enqueue(sink, seed)
+    // All seven lanes complete while the seed snapshot awaits its synchronous
+    // transport receipt, but arrive in the worst causal order.
+    for (const returned of [...returns].reverse()) coordinator.enqueue(sink, returned)
+    expect(sink.deliveries).toHaveLength(1)
+
+    const seedApplied = applyChatUpdateDelivery(sink.deliveries[0])
+    if (!seedApplied.ok) throw new Error(seedApplied.reason)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      deliveryEpoch: sink.deliveries[0].deliveryEpoch,
+      applied: true,
+      revision: seedApplied.baseline.revision,
+      recordHash: seedApplied.baseline.recordHash,
+      transcriptHash: seedApplied.baseline.transcriptHash,
+      rendererEpoch: 'renderer-a'
+    })
+
+    expect(sink.deliveries).toHaveLength(2)
+    const allReturns = applyChatUpdateDelivery(sink.deliveries[1], seedApplied.baseline)
+    if (!allReturns.ok) throw new Error(allReturns.reason)
+    expect(allReturns.baseline.chat.messages.map((entry) => entry.content)).toEqual([
+      'prompt',
+      'lane return 1',
+      'lane return 2',
+      'lane return 3',
+      'lane return 4',
+      'lane return 5',
+      'lane return 6',
+      'lane return 7'
+    ])
+    expect(sink.deliveries[1].kind).toBe('patch')
+
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[1].deliveryId,
+      deliveryEpoch: sink.deliveries[1].deliveryEpoch,
+      applied: true,
+      revision: allReturns.baseline.revision,
+      recordHash: allReturns.baseline.recordHash,
+      transcriptHash: allReturns.baseline.transcriptHash,
+      rendererEpoch: 'renderer-a'
+    })
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
   })
 
   it('delivers the next reply after a save mutated the retained baseline record', () => {

@@ -77,4 +77,32 @@ describe('buildChatUpdateAck', () => {
       recordHash: 'applied-hash'
     })
   })
+
+  it('echoes delivery and renderer epochs with the applied transcript digest', () => {
+    expect(
+      buildChatUpdateAck({
+        delivery: {
+          deliveryId: 'd5',
+          revision: 9,
+          chatId: 'chat-1',
+          deliveryEpoch: 12
+        },
+        applied: true,
+        phase: 'accepted',
+        rendererEpoch: 'renderer-1',
+        appliedRecordHash: 'record-1',
+        appliedTranscriptHash: 'transcript-1'
+      })
+    ).toEqual({
+      deliveryId: 'd5',
+      applied: true,
+      phase: 'accepted',
+      chatId: 'chat-1',
+      deliveryEpoch: 12,
+      rendererEpoch: 'renderer-1',
+      revision: 9,
+      recordHash: 'record-1',
+      transcriptHash: 'transcript-1'
+    })
+  })
 })

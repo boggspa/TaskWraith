@@ -118,6 +118,72 @@ describe('chat update transport', () => {
     expect(applied.baseline.recordHash).not.toBe('deadbeef')
   })
 
+  it('nacks a patch whose transcript integrity chain does not match its accepted base', () => {
+    const first = chat(1, [message('a', 'A')])
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'digest-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    expect(seeded.ok).toBe(true)
+    if (!seeded.ok) throw new Error(seeded.reason)
+
+    const next = chat(2, [message('a', 'A'), message('b', 'B')])
+    const patch = buildChatUpdateDelivery({
+      deliveryId: 'digest-patch',
+      revision: 2,
+      chat: next,
+      baseline: seeded.baseline,
+      producerDelta: producerDelta(first, next),
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(patch.kind).toBe('patch')
+    if (patch.kind !== 'patch' || patch.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(patch.baseTranscriptHash).toBe(seeded.baseline.transcriptHash)
+    expect(patch.transcriptHash).toBeTruthy()
+    expect(
+      applyChatUpdateDelivery({ ...patch, transcriptHash: 'deadbeef' }, seeded.baseline)
+    ).toEqual({ ok: false, reason: 'Patch transcript hash does not match its baseline.' })
+    expect(applyChatUpdateDelivery(patch, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
+  })
+
+  it.each([CHAT_UPDATE_PROTOCOL_V1, CHAT_UPDATE_PROTOCOL_V2])(
+    'carries the transcript chain through a %i snapshot-to-patch recovery path',
+    (protocolVersion) => {
+      const first = chat(1, [message('a', 'A')])
+      const snapshot = buildChatUpdateDelivery({
+        deliveryId: `chain-seed-${protocolVersion}`,
+        revision: 1,
+        chat: first,
+        protocolVersion
+      })
+      const seeded = applyChatUpdateDelivery(snapshot)
+      if (!seeded.ok) throw new Error(seeded.reason)
+
+      const next = chat(2, [message('a', 'A'), message('b', 'B')])
+      const patch = buildChatUpdateDelivery({
+        deliveryId: `chain-patch-${protocolVersion}`,
+        revision: 2,
+        chat: next,
+        baseline: seeded.baseline,
+        producerDelta: producerDelta(first, next),
+        protocolVersion
+      })
+      expect(patch.kind).toBe('patch')
+      expect(applyChatUpdateDelivery(patch, seeded.baseline)).toMatchObject({
+        ok: true,
+        baseline: { chat: next }
+      })
+    }
+  )
+
   it('rejects a patch against the wrong baseline so the sender can resync with a snapshot', () => {
     const first = chat(1, [message('a', 'A')])
     const next = chat(2, [message('a', 'B')])
@@ -185,13 +251,23 @@ describe('chat update transport', () => {
         deliveryId: 'delivery-1',
         applied: true,
         revision: 9,
-        recordHash: 'deadbeef'
+        recordHash: 'deadbeef',
+        transcriptHash: 'feedbeef',
+        deliveryEpoch: 4,
+        rendererEpoch: 'renderer-epoch',
+        phase: 'rendered',
+        chatId: 'chat-1'
       })
     ).toEqual({
       deliveryId: 'delivery-1',
       applied: true,
       revision: 9,
-      recordHash: 'deadbeef'
+      recordHash: 'deadbeef',
+      transcriptHash: 'feedbeef',
+      deliveryEpoch: 4,
+      rendererEpoch: 'renderer-epoch',
+      phase: 'rendered',
+      chatId: 'chat-1'
     })
   })
 
@@ -384,7 +460,6 @@ describe('chat update transport', () => {
   })
 
   it('owes a snapshot only when there is no baseline to recover the change from', () => {
-    const first = chat(1, [message('a', 'A')])
     const next = chat(2, [message('a', 'B')])
 
     // No baseline: nothing to diff against, so the whole record is genuinely owed.
