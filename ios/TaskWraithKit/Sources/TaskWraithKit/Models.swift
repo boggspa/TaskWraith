@@ -1780,6 +1780,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         /// payload shape on the Mac). Absent on older Macs — the plain
         /// sentence in `preview` keeps rendering there.
         public let seatRoster: TWSeatRosterPayload?
+        /// User-added participant mid-round (mutually exclusive with `seatChange`
+        /// and `seatRoster` by payload shape on the Mac). Absent on older Macs
+        /// — the plain sentence in `preview` keeps rendering there.
+        public let seatParticipantAdded: TWSeatParticipantAddedPayload?
         /// ask_user_question prompt anchored to this (asking) row — drives the
         /// inline question card. `promptId` === the registry questionId, so the
         /// inline card resolves the same parked tool the top banner does.

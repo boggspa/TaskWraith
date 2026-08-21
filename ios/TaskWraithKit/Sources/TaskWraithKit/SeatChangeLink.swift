@@ -221,6 +221,45 @@ public struct TWSeatRosterPayload: Codable, Sendable, Equatable {
     }
 }
 
+/// User-added participant mid-round (desktop SeatParticipantAddedRow parity):
+/// a single seat with no before side, rendered as a first-class strip. Wholly
+/// tolerant decode: a malformed payload yields nil fields and the row falls
+/// back to its plain sentence, never a thrown row.
+public struct TWSeatParticipantAddedPayload: Codable, Sendable, Equatable {
+    public let participantId: String?
+    /// Human seat label at emit time (role or provider).
+    public let label: String?
+    /// The newly added seat, captured at the moment it joined the roster.
+    public let seat: TWSeatChangeState?
+    /// ISO timestamp of the LATEST coalesced adjustment.
+    public let appliedAt: String?
+
+    public init(participantId: String?, label: String?, seat: TWSeatChangeState?, appliedAt: String?) {
+        self.participantId = participantId
+        self.label = label
+        self.seat = seat
+        self.appliedAt = appliedAt
+    }
+
+    private enum CodingKeys: String, CodingKey { case participantId, label, seat, appliedAt }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        participantId = (try? container.decodeIfPresent(String.self, forKey: .participantId)) ?? nil
+        label = (try? container.decodeIfPresent(String.self, forKey: .label)) ?? nil
+        seat = (try? container.decodeIfPresent(TWSeatChangeState.self, forKey: .seat)) ?? nil
+        appliedAt = (try? container.decodeIfPresent(String.self, forKey: .appliedAt)) ?? nil
+    }
+
+    /// The seat as a renderable link, or nil when the payload carries no seat
+    /// worth drawing. There is no before side — the seat did not exist a
+    /// moment ago — so both link sides point to the same added seat.
+    public var renderableLink: TWSeatChangeLink? {
+        guard let seat, !seat.provider.isEmpty else { return nil }
+        return TWSeatChangeLink(participantId: participantId ?? "", before: seat, after: seat)
+    }
+}
+
 public enum TWSeatChangeLinkCodec {
     public static let prefix = "ensemble-seat://"
 

@@ -66,7 +66,7 @@ private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
         || row.subThreadReturn != nil || row.subThreadDelegation != nil
         || row.fanoutResult != nil || row.runFailure != nil || row.seatChange != nil
-        || row.seatRoster != nil
+        || row.seatRoster != nil || row.seatParticipantAdded != nil
         || row.peopleContribution != nil || row.threadMessage != nil
         || row.guestReply != nil
 }

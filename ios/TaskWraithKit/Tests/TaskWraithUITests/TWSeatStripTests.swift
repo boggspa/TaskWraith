@@ -321,4 +321,56 @@ struct TWSeatStripTests {
     @Test func aRosterRowNeverFoldsIntoASystemNoticeSummary() {
         #expect(twIsPlainSystemNoticeRow(rosterRow()) == false)
     }
+
+    // MARK: - User-added participant
+
+    private func addedRow() -> RemoteThreadSnapshot.Row {
+        let object: [String: Any] = [
+            "id": "added-1", "role": "system", "kind": "system",
+            "preview": "Participant Added worker added to the live roster.",
+            "seatParticipantAdded": [
+                "participantId": "p-added",
+                "label": "Added worker",
+                "appliedAt": "2026-08-05T12:00:00.000Z",
+                "seat": [
+                    "provider": "kimi", "model": "kimi-k2.7-code",
+                    "role": "Added worker", "seatNumber": 3,
+                    "permissionPresetId": "read_only"
+                ]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return try! JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+    }
+
+    @Test func aProjectedAddedParticipantDecodesAsASingleSeatLink() {
+        let row = addedRow()
+        let link = row.seatParticipantAdded?.renderableLink
+        #expect(link?.participantId == "p-added")
+        #expect(link?.before.provider == "kimi")
+        #expect(link?.after.provider == "kimi")
+        #expect(link?.before.role == "Added worker")
+        #expect(twSeatStripSide(link!.after).permissionLabel == "Ask")
+    }
+
+    /// The added strip is the only thing saying WHICH participant joined;
+    /// folded, the row reads "System · Participant Added worker added..."
+    /// and the seat vanishes. Same rule as the change strip.
+    @Test func anAddedParticipantRowNeverFoldsIntoASystemNoticeSummary() {
+        #expect(twIsPlainSystemNoticeRow(addedRow()) == false)
+    }
+
+    @Test func anAddedParticipantPayloadStandsDownWithoutAResolvableSeat() {
+        let object: [String: Any] = [
+            "id": "added-bad", "role": "system", "kind": "system",
+            "preview": "Participant added.",
+            "seatParticipantAdded": [
+                "participantId": "p-bad",
+                "seat": ["model": "kimi-k2.7-code"]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        let row = try! JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+        #expect(row.seatParticipantAdded?.renderableLink == nil)
+    }
 }

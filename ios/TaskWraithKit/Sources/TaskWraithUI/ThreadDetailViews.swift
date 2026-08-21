@@ -4596,7 +4596,7 @@ struct ThreadRowView: View, Equatable {
         (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
             && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
             && !hasRunFailureCard && !hasTrustAwareCard && !hasSubThreadReturnCard
-            && !hasAgentInvocationCard && !hasSeatChangeCard
+            && !hasAgentInvocationCard && !hasSeatPresentationCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -4649,6 +4649,17 @@ struct ThreadRowView: View, Equatable {
     /// stack replaces the plain sentence. Empty renderable seats fall back to
     /// the sentence, exactly like an older Mac that projected nothing.
     private var hasSeatRosterCard: Bool { row.seatRoster?.renderableSeats.isEmpty == false }
+    /// User-added participant mid-round — same ownership rule as the change
+    /// strip. A missing or blank seat falls back to the sentence.
+    private var seatParticipantAddedLink: TWSeatChangeLink? { row.seatParticipantAdded?.renderableLink }
+    private var hasSeatParticipantAddedCard: Bool { seatParticipantAddedLink != nil }
+    /// Every first-class seat presentation owns the carrier row: no generic
+    /// System label, fallback sentence, or expansion affordance renders beside
+    /// it. Keep the shared gate centralized so a new seat variant cannot stand
+    /// down in one branch and leak through another.
+    private var hasSeatPresentationCard: Bool {
+        hasSeatChangeCard || hasSeatRosterCard || hasSeatParticipantAddedCard
+    }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
         ContextCompactionSummaryCard.matches(
@@ -4701,12 +4712,12 @@ struct ThreadRowView: View, Equatable {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
                     || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard
-                    || hasDelegationLifecycleCard || hasSeatChangeCard || hasSeatRosterCard)
+                    || hasDelegationLifecycleCard || hasSeatPresentationCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
-                    && !hasSeatChangeCard && !hasSeatRosterCard
+                    && !hasSeatPresentationCard
                 {
                     HStack(spacing: 4) {
                         HStack(spacing: 0) {
@@ -4775,6 +4786,12 @@ struct ThreadRowView: View, Equatable {
                     TWSeatRosterStack(
                         roster: roster,
                         timestamp: roster.appliedAt ?? row.timestamp)
+                } else if let seatParticipantAddedLink {
+                    TWSeatStrip(
+                        link: seatParticipantAddedLink,
+                        showsChair: true,
+                        timestamp: row.seatParticipantAdded?.appliedAt ?? row.timestamp,
+                        addedNote: true)
                 } else if hasContextCompactionCard {
                     ContextCompactionSummaryCard(
                         preview: row.preview ?? "", phase: row.contextCompaction?.phase)
@@ -4923,7 +4940,7 @@ struct ThreadRowView: View, Equatable {
                 }
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
-                    && !hasTrustAwareCard && !hasSeatChangeCard,
+                    && !hasTrustAwareCard && !hasSeatPresentationCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {

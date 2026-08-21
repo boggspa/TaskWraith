@@ -161,6 +161,9 @@ struct TWSeatStrip: View {
     /// Final round-participation state for a toggle-only change. Kept outside
     /// the seat link because close-out cells are records, not toggle events.
     var enabledChangedTo: Bool? = nil
+    /// Participant-added row marker — renders "(Added)" as static chrome
+    /// (no roll gating), desktop parity.
+    var addedNote: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsAfter = false
@@ -176,6 +179,7 @@ struct TWSeatStrip: View {
 
     private var spokenLabel: String {
         var parts = [twSeatStripAccessibilityLabel(before: before, after: after)]
+        if addedNote { parts.append("Added") }
         if briefUpdated { parts.append("Brief updated") }
         if let enabledChangedTo { parts.append(enabledChangedTo ? "Enabled" : "Disabled") }
         return parts.joined(separator: ". ")
@@ -214,6 +218,12 @@ struct TWSeatStrip: View {
                             .minimumScaleFactor(0.75)
                             .contentTransition(reduceMotion ? .identity : .opacity)
                     }
+                }
+                if addedNote {
+                    Text("(Added)")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .lineLimit(1)
                 }
                 if briefUpdated && showsAfter {
                     Text("(Brief updated)")
