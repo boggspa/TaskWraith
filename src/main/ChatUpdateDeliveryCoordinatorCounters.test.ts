@@ -225,7 +225,6 @@ describe('ChatUpdateDeliveryCoordinator protocol counters', () => {
   })
 
   it('returns a copy of the reason map so callers cannot mutate internal tallies', () => {
-    const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 0,
       emitProtocolVersion: 2
