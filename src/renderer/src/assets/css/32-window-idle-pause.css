@@ -17,6 +17,41 @@
   animation-play-state: paused !important;
 }
 
+/*
+ * Content reveals must finish. A paused animation rests on its 0% keyframe,
+ * and every animation listed below OPENS INVISIBLE (opacity: 0, or height: 0
+ * for the fan-out lane), so pausing one does not dim the element — it removes
+ * it for as long as the window stays unfocused.
+ *
+ * `.message-group` is every transcript row, and the transcript replays its
+ * entrance on re-mount (index-keyed rows + virtualization). The blanket pause
+ * therefore held whole conversations invisible while the user worked in
+ * another window: rows arrived, ACKed, and laid out at opacity 0. That reads
+ * as "the thread stopped delivering", and focusing the window "fixed" it —
+ * the transport was healthy the entire time.
+ *
+ * Everything here is one-shot and short (120–460ms): each runs once, lands on
+ * its 100% frame and stops, so none of it composites while idle. The ambient
+ * work the pause exists for — sky FX, shimmer, glow, rim chases, and every
+ * DESCENDANT of these elements — still matches the blanket rule above.
+ *
+ * Guarded by styles/windowIdlePauseCss.test.ts: a new entrance animation whose
+ * first keyframe is invisible belongs on this list.
+ */
+.is-window-idle .message-group,
+.is-window-idle .transcript-message-block.is-stack-collapsing > *,
+.is-window-idle .transcript-message-block.is-super-lead-entering > *,
+.is-window-idle .seat-change-message.is-fresh .seat-change-row,
+.is-window-idle .ensemble-above-row-entering,
+.is-window-idle
+  .ensemble-fanout-result-card.is-working
+  .ensemble-fanout-result-viewport.is-collapsed
+  > .live-activity-viewport-scroll,
+.is-window-idle .chat-context-application-pill,
+.is-window-idle .transcript-jump-to-latest-pill {
+  animation-play-state: running !important;
+}
+
 /* A timed approval is an interaction surface, not ambient motion. Its finite
  * entrance animation starts at opacity: 0, so pausing its first frame makes
  * the request invisible while the main-process auto-deny clock keeps running.
