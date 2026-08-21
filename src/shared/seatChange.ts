@@ -172,7 +172,7 @@ export function isSeatParticipantAddedPayload(
   payload: SeatChangeRowPayload | undefined
 ): payload is SeatParticipantAddedPayload {
   if (!payload || typeof payload !== 'object') return false
-  const candidate = payload as Record<string, unknown>
+  const candidate = payload as unknown as Record<string, unknown>
   return (
     'seat' in candidate &&
     typeof candidate.seat === 'object' &&
@@ -212,11 +212,14 @@ export function coalesceSeatChangeMessages<T extends SeatChangeCarrierMessage>(
 ): SeatChangeCoalesceResult<T> {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index]?.metadata?.seatChange
-    // Roster rows share this carrier and must be stepped over explicitly. They
-    // already fell through the id comparison below (a roster payload has no
-    // participantId), but only by accident — naming the case is what stops a
-    // later `participantId` on the roster variant from silently eating one.
-    if (!candidate || isSeatRosterPayload(candidate)) continue
+    // Roster and participant-added rows share this carrier and must be stepped
+    // over explicitly. They already fell through the id comparison below (a
+    // roster payload has no participantId, an added payload has no `before`),
+    // but only by accident — naming the case is what stops a later
+    // `participantId` on the roster variant from silently eating one.
+    if (!candidate || isSeatRosterPayload(candidate) || isSeatParticipantAddedPayload(candidate)) {
+      continue
+    }
     if (candidate.participantId !== next.participantId) continue
     const appliedAtMs = Date.parse(candidate.appliedAt ?? '')
     if (!Number.isFinite(appliedAtMs) || nowMs - appliedAtMs > SEAT_CHANGE_COALESCE_WINDOW_MS) {

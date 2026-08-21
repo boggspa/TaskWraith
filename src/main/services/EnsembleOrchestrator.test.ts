@@ -30,7 +30,7 @@ import type {
 } from '../store/types'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
-import { isSeatRosterPayload } from '../../shared/seatChange'
+import { isSeatParticipantAddedPayload, isSeatRosterPayload } from '../../shared/seatChange'
 import {
   buildEnsembleDynamicStateSnapshot,
   computeEnsemblePromptShellStamp
@@ -10957,7 +10957,10 @@ Next action:
       const payload = harness.chat.messages
         .filter((message) => message.metadata?.seatChange?.participantId === 'codex')
         .at(-1)?.metadata?.seatChange
-      return isSeatRosterPayload(payload) ? undefined : payload
+      if (!payload || isSeatRosterPayload(payload) || isSeatParticipantAddedPayload(payload)) {
+        return undefined
+      }
+      return payload
     }
 
     const disabled = await harness.orchestrator.requestParticipantSeatChange({
@@ -11023,7 +11026,10 @@ Next action:
       const payload = harness.chat.messages
         .filter((message) => message.metadata?.seatChange?.participantId === 'codex')
         .at(-1)?.metadata?.seatChange
-      return isSeatRosterPayload(payload) ? undefined : payload
+      if (!payload || isSeatRosterPayload(payload) || isSeatParticipantAddedPayload(payload)) {
+        return undefined
+      }
+      return payload
     }
 
     // Brief only: provider, model, role, tier, grants and stage all hold, so
