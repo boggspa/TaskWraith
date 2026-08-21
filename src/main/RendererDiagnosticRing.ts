@@ -317,6 +317,12 @@ export class RendererDiagnosticRecorder {
         mainBaselineDrops: boundedNonNegativeInteger(protocolCounters?.baselineDrops),
         mainProducerDeltaMissing: boundedNonNegativeInteger(protocolCounters?.producerDeltaMissing),
         mainSpliceRecoveries: boundedNonNegativeInteger(protocolCounters?.spliceRecoveries),
+        mainStaleEnqueueDrops: boundedNonNegativeInteger(protocolCounters?.staleEnqueueDrops),
+        mainAckRejections: boundedNonNegativeInteger(protocolCounters?.ackRejections),
+        ...(protocolCounters?.ackRejectReasons &&
+        Object.keys(protocolCounters.ackRejectReasons).length > 0
+          ? { mainAckRejectReasons: { ...protocolCounters.ackRejectReasons } }
+          : {}),
         mainTrackedChats: boundedNonNegativeInteger(targetStats?.trackedChats),
         mainInFlight: boundedNonNegativeInteger(targetStats?.inFlight),
         mainPending: boundedNonNegativeInteger(targetStats?.pending),

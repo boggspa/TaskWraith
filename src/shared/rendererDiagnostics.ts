@@ -40,6 +40,16 @@ export interface RendererDiagnosticChatUpdateCounters {
   mainProducerDeltaMissing: number
   /** Deliveries the transport recovered by diffing the baseline instead of sending the record. */
   mainSpliceRecoveries: number
+  /**
+   * Broadcasts discarded by the coordinator's enqueue staleness guard. Sustained
+   * increments during a live run are the "frozen transcript, healthy counters"
+   * signature.
+   */
+  mainStaleEnqueueDrops: number
+  /** Accepted deliveries whose ACK was rejected or timed out. */
+  mainAckRejections: number
+  /** Optional per-reason breakdown of {@link mainAckRejections}. */
+  mainAckRejectReasons?: Record<string, number>
   mainTrackedChats: number
   mainInFlight: number
   mainPending: number

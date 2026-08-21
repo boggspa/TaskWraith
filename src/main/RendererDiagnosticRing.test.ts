@@ -45,6 +45,8 @@ function sample(index: number): RendererDiagnosticSample {
       mainBaselineDrops: 0,
       mainProducerDeltaMissing: 0,
       mainSpliceRecoveries: 0,
+      mainStaleEnqueueDrops: 0,
+      mainAckRejections: 0,
       mainTrackedChats: 0,
       mainInFlight: 0,
       mainPending: 0,
@@ -136,7 +138,10 @@ describe('RendererDiagnosticRing', () => {
         patches: 12,
         baselineDrops: 1,
         producerDeltaMissing: 4,
-        spliceRecoveries: 4
+        spliceRecoveries: 4,
+        staleEnqueueDrops: 2,
+        ackRejections: 1,
+        ackRejectReasons: { revisionMismatch: 1 }
       })
     })
     const target: RendererDiagnosticTarget = {
@@ -178,6 +183,9 @@ describe('RendererDiagnosticRing', () => {
         // patch stream on mainPatches alone; these carry the cause to triage.
         mainProducerDeltaMissing: 4,
         mainSpliceRecoveries: 4,
+        mainStaleEnqueueDrops: 2,
+        mainAckRejections: 1,
+        mainAckRejectReasons: { revisionMismatch: 1 },
         mainInFlightAgeMs: 400,
         mainRenderPending: 1,
         mainRenderReceiptAgeMs: 80,
