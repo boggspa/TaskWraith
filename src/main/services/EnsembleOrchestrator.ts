@@ -72,6 +72,10 @@ import {
   shouldAttemptFinalSynthesis
 } from '../EnsembleSynthesisLifecycle'
 import { currentEnsembleRuntimeInstanceId } from '../EnsembleRuntimeIdentity'
+import {
+  decideEnsembleGoalLifecycle,
+  ensembleGoalCompletionReadiness
+} from '../EnsembleGoalCompletionPolicy'
 import type {
   ActiveGoal,
   ActiveGoalStatus,
@@ -1322,6 +1326,7 @@ export interface EnsembleBossmanControlInput {
   verdict?: 'passed' | 'failed'
   pollId?: string
   budgetId?: string
+  planSummary?: string
   goal?: string
   goalStatus?: ActiveGoalStatus
   status?: ActiveGoalStatus
@@ -1419,6 +1424,7 @@ export interface EnsembleBossmanControlResult {
     | 'wakeup_failed'
     | 'budget_exhausted'
     | 'review_gate_blocked'
+    | 'assignment_incomplete'
     | 'review_gate_not_found'
     | 'not_gate_reviewer'
     | 'invalid_verdict'
@@ -9485,19 +9491,24 @@ export class EnsembleOrchestrator {
           error: 'missing_required_field'
         }
       }
-      if (status === 'completed') {
-        const blockingGates = this.activeBossmanReviewGateBlocks(chat)
-        if (blockingGates.length > 0) {
-          const message = `${authorityLabel} goal completion blocked by review gate(s): ${blockingGates.join('; ')}.`
-          this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
-          return {
-            ok: false,
-            tool: 'ensemble_bossman_control',
-            action,
-            roundId: runtime.roundId,
-            message,
-            error: 'review_gate_blocked'
-          }
+      const lifecycleDecision = decideEnsembleGoalLifecycle({
+        chat,
+        participantId: caller.id,
+        status
+      })
+      if (!lifecycleDecision.allowed) {
+        const message = `${authorityLabel} ${lifecycleDecision.message || 'cannot update the root Goal lifecycle.'}`
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message,
+          error:
+            lifecycleDecision.code === 'review_gates'
+              ? 'review_gate_blocked'
+              : 'assignment_incomplete'
         }
       }
       const nextGoal = updateActiveGoalLifecycle(
@@ -9658,6 +9669,7 @@ export class EnsembleOrchestrator {
       if (!participant) return this.invalidBossmanTarget(action, runtime.roundId)
       const assignment = {
         id: input.assignmentId || this.nextBossmanControlId('assign'),
+        goalId: this.deps.getChat(runtime.chatId)?.activeGoal?.id,
         participantId: participant.id,
         objective,
         acceptanceCriteria: normalizeBossmanText(input.acceptanceCriteria, 1000) || undefined,
@@ -9701,11 +9713,21 @@ export class EnsembleOrchestrator {
     }
 
     if (action === 'set_round_plan') {
-      const goal = normalizeBossmanText(input.goal || input.objective || input.prompt, 1200)
-      if (!goal)
-        return this.missingBossmanField(action, runtime.roundId, 'set_round_plan requires goal.')
+      const planSummary = normalizeBossmanText(
+        input.planSummary || input.objective || input.prompt || input.goal,
+        1200
+      )
+      if (!planSummary)
+        return this.missingBossmanField(
+          action,
+          runtime.roundId,
+          'set_round_plan requires planSummary.'
+        )
       const plan = {
-        goal,
+        planSummary,
+        // Persistence compatibility for older desktop/iOS readers. New tool
+        // schemas never advertise this field as the execution-plan input.
+        goal: planSummary,
         phase: normalizeBossmanText(input.phase, 240) || undefined,
         ownerParticipantIds: participantIds.length ? participantIds : undefined,
         blockers: normalizeBossmanTextArray(input.blockers, 8, 240),
@@ -9718,7 +9740,7 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        `${authorityLabel} set the round plan: ${goal}`
+        `${authorityLabel} set the execution plan: ${planSummary}`
       )
       // The `goal` field name makes this action read like the goal-setter
       // (live incident 2026-08-18: both Boss and Captain used it to "create"
@@ -11115,11 +11137,13 @@ export class EnsembleOrchestrator {
       activeGoal!.status === 'active' &&
       poll.roundId === currentRoundId
     const gateBlocks = this.activeBossmanReviewGateBlocks(chat)
+    const completionReadiness = ensembleGoalCompletionReadiness(chat)
 
     let resolution: EnsembleBossmanPollResolution
     if (vetoVote) resolution = 'vetoed'
     else if (!goalFresh) resolution = 'stale'
-    else if (gateBlocks.length > 0) resolution = 'gate_blocked'
+    else if (completionReadiness.code === 'open_assignments') resolution = 'assignment_blocked'
+    else if (completionReadiness.code === 'review_gates') resolution = 'gate_blocked'
     else if (participantVotes.length < floor) resolution = 'failed_floor'
     else if (denominator === 0 || completeVotes < quorumThreshold) resolution = 'failed_quorum'
     else resolution = 'passed'
@@ -11189,6 +11213,8 @@ export class EnsembleOrchestrator {
             ? `vetoed by ${vetoVote?.voterLabel || 'Boss/Captain'} — goal stays active.`
             : resolution === 'stale'
               ? 'active goal changed or is no longer active — resolution no-op.'
+              : resolution === 'assignment_blocked'
+                ? `${completionReadiness.message || 'blocked by open assignments'} — goal stays active.`
               : resolution === 'gate_blocked'
                 ? `blocked by review gate(s): ${gateBlocks.join('; ')} — goal stays active.`
                 : resolution === 'failed_floor'

@@ -8647,7 +8647,7 @@ Next action:
     await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
       action: 'set_round_plan',
       roundId: harness.chat.ensemble?.activeRound?.roundId,
-      goal: 'Ship the control primitives',
+      planSummary: 'Ship the control primitives',
       phase: 'implementation',
       participantIds: ['codex'],
       doneCriteria: 'Tests prove state and routing.'
@@ -8684,6 +8684,9 @@ Next action:
     expect(harness.chat.ensemble?.bossmanControlState?.roundPlan?.goal).toBe(
       'Ship the control primitives'
     )
+    expect(harness.chat.ensemble?.bossmanControlState?.roundPlan?.planSummary).toBe(
+      'Ship the control primitives'
+    )
     expect(harness.chat.ensemble?.bossmanControlState?.assignments?.[0]).toMatchObject({
       participantId: 'codex',
       objective: 'Implement the worker-owned slice.'
@@ -8706,7 +8709,9 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].prompt).toContain('Boss/Captain control state:')
-    expect(harness.dispatched[1].prompt).toContain('Plan: Ship the control primitives')
+    expect(harness.dispatched[1].prompt).toContain(
+      'Execution plan: Ship the control primitives'
+    )
     expect(harness.dispatched[1].prompt).toContain('Assignments:')
     expect(harness.dispatched[1].prompt).toContain('Implement the worker-owned slice.')
     expect(harness.dispatched[1].prompt).toContain('Decisions:')

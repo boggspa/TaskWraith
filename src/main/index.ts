@@ -726,7 +726,10 @@ import { drainPendingSteerTextFromSession } from './steering/BrokerSteerTranspor
 import { midTurnSteerEnabled } from './steering/SteeringFeatureGate'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
-import { gateBlocksActiveGoal } from './ReviewGateScope'
+import {
+  decideEnsembleGoalLifecycle,
+  latestGoalAssignmentForParticipant
+} from './EnsembleGoalCompletionPolicy'
 import { applyVerifiedFailoverReroutePosture } from './RerouteFailoverPosture'
 import {
   buildVerifiedSameProviderRetryPayload,
@@ -39438,37 +39441,45 @@ async function executeGeminiMcpTool(
             tool: toolName,
             error: 'Blocking an active goal requires a concrete reason.'
           })
-        } else if (
-          lifecycleStatus === 'completed' &&
-          // C2 — goal-scoped via the SHARED predicate (imported, NOT re-inlined —
-          // this is the index goal_complete twin the C1/C2 twin-drift lesson warns
-          // about). A gate for a different/older goal no longer blocks completion.
-          chat.ensemble?.bossmanControlState?.reviewGates?.some((gate) =>
-            gateBlocksActiveGoal(gate, goal)
-          )
-        ) {
-          const blockingGates = chat.ensemble.bossmanControlState.reviewGates
-            .filter((gate) => gateBlocksActiveGoal(gate, goal))
-            .map((gate) => `${gate.id}: ${gate.scope} [${gate.status}]`)
-          toolIsError = true
-          text = mcpJson({
-            ok: false,
-            tool: toolName,
-            error: `Goal completion blocked by review gate(s): ${blockingGates.join('; ')}.`
-          })
         } else {
-          const nextGoal = updateActiveGoalLifecycle(goal, lifecycleStatus, reason)
-          const updatedChat: ChatRecord = {
-            ...chat,
-            activeGoal: nextGoal,
-            updatedAt: Date.now()
+          const ensembleParticipantId = chat.ensemble
+            ? ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId)
+            : undefined
+          const lifecycleDecision = chat.ensemble
+            ? ensembleParticipantId
+              ? decideEnsembleGoalLifecycle({
+                  chat,
+                  participantId: ensembleParticipantId,
+                  status: lifecycleStatus
+                })
+              : {
+                  allowed: false,
+                  authority: 'assignment' as const,
+                  message:
+                    'TaskWraith could not prove this Ensemble caller owns root Goal completion authority.'
+                }
+            : { allowed: true, authority: 'root' as const }
+          if (!lifecycleDecision.allowed) {
+            toolIsError = true
+            text = mcpJson({
+              ok: false,
+              tool: toolName,
+              error: lifecycleDecision.message || 'Root Goal lifecycle authority is required.'
+            })
+          } else {
+            const nextGoal = updateActiveGoalLifecycle(goal, lifecycleStatus, reason)
+            const updatedChat: ChatRecord = {
+              ...chat,
+              activeGoal: nextGoal,
+              updatedAt: Date.now()
+            }
+            saveAndBroadcastChat(updatedChat)
+            text = mcpJson({
+              ok: true,
+              tool: toolName,
+              goal: nextGoal
+            })
           }
-          saveAndBroadcastChat(updatedChat)
-          text = mcpJson({
-            ok: true,
-            tool: toolName,
-            goal: nextGoal
-          })
         }
       }
     } else if (toolName === 'todo_write') {
@@ -39510,11 +39521,19 @@ async function executeGeminiMcpTool(
         } else {
           const laneId =
             ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || TODO_SOLO_LANE
+          const assignmentId =
+            laneId === TODO_SOLO_LANE
+              ? undefined
+              : latestGoalAssignmentForParticipant(freshChat, laneId)?.id
           const nextByLane = applyLaneTodoWrite(
             freshChat.chatTodos,
             laneId,
             validated.todos,
-            validated.merge
+            validated.merge,
+            {
+              goalId: freshChat.activeGoal?.id,
+              assignmentId
+            }
           )
           const updatedChat: ChatRecord = {
             ...freshChat,
@@ -39527,6 +39546,8 @@ async function executeGeminiMcpTool(
             tool: 'todo_write',
             merge: validated.merge,
             lane: laneId,
+            goalId: freshChat.activeGoal?.id,
+            ...(assignmentId ? { assignmentId } : {}),
             todos: nextByLane[laneId],
             ...(todoFollowupHint ? { guidance: todoFollowupHint } : {})
           })

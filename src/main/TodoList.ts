@@ -10,6 +10,10 @@ export interface TodoItem {
   id: string
   content: string
   status: TodoStatus
+  /** Host-bound root Goal identity. Never inferred from checklist completion. */
+  goalId?: string
+  /** Host-bound Ensemble assignment identity when this is a seat-local substep. */
+  assignmentId?: string
 }
 
 /** Lane key for solo + guest chats; ensemble lanes use the participantId. */
@@ -76,7 +80,13 @@ function normalizeTodoRecord(raw: unknown, index: number): TodoItem | null {
   return {
     id: id || `todo-${index + 1}`,
     content,
-    status: normalizeTodoStatus(record.status ?? record.state)
+    status: normalizeTodoStatus(record.status ?? record.state),
+    ...(typeof record.goalId === 'string' && record.goalId.trim()
+      ? { goalId: record.goalId.trim() }
+      : {}),
+    ...(typeof record.assignmentId === 'string' && record.assignmentId.trim()
+      ? { assignmentId: record.assignmentId.trim() }
+      : {})
   }
 }
 
@@ -172,11 +182,24 @@ export function applyLaneTodoWrite(
   priorByLane: Readonly<Record<string, TodoItem[]>> | undefined,
   laneId: string,
   batch: readonly TodoItem[],
-  merge: boolean
+  merge: boolean,
+  scope?: { goalId?: string; assignmentId?: string }
 ): Record<string, TodoItem[]> {
   const lane = laneId || TODO_SOLO_LANE
-  const prior = priorByLane?.[lane] ?? []
-  return { ...(priorByLane ?? {}), [lane]: applyTodoWrite(prior, batch, merge) }
+  const goalId = scope?.goalId?.trim()
+  const assignmentId = scope?.assignmentId?.trim()
+  const prior = (priorByLane?.[lane] ?? []).filter(
+    (item) => !goalId || item.goalId === goalId
+  )
+  const scopedBatch = batch.map((item) => ({
+    ...item,
+    ...(goalId ? { goalId } : {}),
+    ...(assignmentId ? { assignmentId } : {})
+  }))
+  return {
+    ...(priorByLane ?? {}),
+    [lane]: applyTodoWrite(prior, scopedBatch, merge)
+  }
 }
 
 export function computeMergedTodosByActivityId(

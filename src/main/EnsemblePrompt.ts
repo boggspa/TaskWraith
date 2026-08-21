@@ -80,11 +80,12 @@ import {
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
+import { resolveActiveGoalForEnsemble, shouldInjectActiveGoal } from './GoalState'
+import { buildAgentWorkContract } from './AgentWorkContract'
 import {
-  formatActiveGoalPromptBlock,
-  resolveActiveGoalForEnsemble,
-  shouldInjectActiveGoal
-} from './GoalState'
+  ensembleGoalAuthorityForParticipant,
+  latestGoalAssignmentForParticipant
+} from './EnsembleGoalCompletionPolicy'
 import { gateBlocksActiveGoal } from './ReviewGateScope'
 import {
   conversationCompactionEligibleMessageIds,
@@ -446,6 +447,7 @@ function formatRoleBoundaryContract(
   const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
   const roleText = `${selfRole} / ${providerLabel(participant.provider)}`
   const isCaptain = isConfiguredCaptain(config, participant.id)
+  const isBoss = normalizeEnsembleAuthority(config).bossmanParticipantId === participant.id
   const lines = [
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
@@ -471,7 +473,9 @@ function formatRoleBoundaryContract(
     lines.push(
       isCaptain
         ? '- Review/Recon/Scout stage rule: fulfill the scheduled investigation or review, then report findings, evidence, risks, and acceptance criteria. Captain authority is additive: retain your listed Captain powers and this stage instead of becoming an advisory-only coordinator or abandoning the stage work.'
-        : '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
+        : isBoss
+          ? '- Review/Recon/Scout Boss rule: fulfill the scheduled investigation or review while retaining root orchestration authority. Complete the root Goal only after every required assignment and gate is finished and independently verified.'
+          : '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
@@ -749,8 +753,9 @@ function formatBossmanControlStanza(
   }
   const lines: string[] = []
   if (state.roundPlan) {
+    const planSummary = state.roundPlan.planSummary || state.roundPlan.goal
     lines.push(
-      `Plan: ${sanitizeText(state.roundPlan.goal)}`,
+      `Execution plan: ${sanitizeText(planSummary)}`,
       ...(state.roundPlan.phase ? [`Phase: ${sanitizeText(state.roundPlan.phase)}`] : []),
       ...(state.roundPlan.ownerParticipantIds?.length
         ? [`Owners: ${state.roundPlan.ownerParticipantIds.map(participantName).join(', ')}`]
@@ -886,6 +891,20 @@ function formatBossmanControlStanza(
   return ['Boss/Captain control state:', ...lines].join('\n')
 }
 
+function formatEnsembleGoalState(goal: ActiveGoal): string {
+  return [
+    '<taskwraith_active_goal_state>',
+    `Goal id: ${goal.id}`,
+    `Status: ${goal.status}`,
+    ...(goal.specification?.sourceMessageId
+      ? [`Exact untruncated source: user message ${goal.specification.sourceMessageId}`]
+      : []),
+    'Expected outcome:',
+    goal.objective,
+    '</taskwraith_active_goal_state>'
+  ].join('\n')
+}
+
 /**
  * The prompt roster may be mention-reordered for a particular round. Dynamic
  * state must never inherit that incidental ordering: the same persisted state
@@ -957,7 +976,7 @@ export function buildEnsembleDynamicStateSnapshot(
   // watch it succeed without touching the thread goal, and conclude goal
   // creation is user-only — the 2026-08-18 ChipTown stall.
   const activeGoalSlot = shouldInjectActiveGoal(activeGoal)
-    ? ['Active goal:', formatActiveGoalPromptBlock(activeGoal)].join('\n')
+    ? ['Active root Goal:', formatEnsembleGoalState(activeGoal)].join('\n')
     : 'Active goal: <none — a Boss/Captain seat may create one via ensemble_control action "set_goal"; set_round_plan does not create it>'
   const bossmanSlot =
     formatBossmanControlStanza(config, stableParticipants, chat.activeGoal) ||
@@ -1272,6 +1291,27 @@ export function buildEnsembleParticipantPromptProjection(
     totalParticipants,
     bossDrivenWriteAllocation
   )
+  const rootGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
+  const goalAssignment = latestGoalAssignmentForParticipant(input.chat, input.participant.id)
+  const completionAuthority = ensembleGoalAuthorityForParticipant(
+    input.config,
+    input.participant.id
+  )
+  const canCompleteRootGoal = completionAuthority === 'root'
+  const workContract = buildAgentWorkContract({
+    activeGoal: rootGoal,
+    completionAuthority,
+    ...(goalAssignment
+      ? {
+          assignment: {
+            id: goalAssignment.id,
+            objective: goalAssignment.objective,
+            acceptanceCriteria: goalAssignment.acceptanceCriteria,
+            status: goalAssignment.status
+          }
+        }
+      : {})
+  })
   const advisoryTurnBoundary = formatAdvisoryTurnBoundary(
     input.config,
     input.participant,
@@ -1365,7 +1405,7 @@ export function buildEnsembleParticipantPromptProjection(
         : undefined
     const compactRoundPolicy =
       orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
+        ? `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
         : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
@@ -1389,7 +1429,9 @@ export function buildEnsembleParticipantPromptProjection(
         turnBoundary: advisoryTurnBoundary || undefined,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
-        dynamicState: includeDynamicState ? dynamicStateSnapshot.block : undefined,
+        dynamicState: includeDynamicState
+          ? `${workContract}\n\n${dynamicStateSnapshot.block}`
+          : workContract,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
         scoutBriefs,
@@ -1428,7 +1470,7 @@ export function buildEnsembleParticipantPromptProjection(
         : undefined
     const compactRoundPolicy =
       orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
+        ? `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
         : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
@@ -1450,7 +1492,7 @@ export function buildEnsembleParticipantPromptProjection(
         turnBoundary: advisoryTurnBoundary || undefined,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
-        dynamicState: dynamicStateSnapshot.block,
+        dynamicState: `${workContract}\n\n${dynamicStateSnapshot.block}`,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
         scoutBriefs,
@@ -1514,6 +1556,8 @@ export function buildEnsembleParticipantPromptProjection(
         : input.participant.stageRole
           ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
           : []),
+      '',
+      workContract,
       ...(includeDynamicState ? ['', dynamicStateSnapshot.block] : []),
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
@@ -1589,7 +1633,9 @@ export function buildEnsembleParticipantPromptProjection(
         ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
             advisoryTurnBoundary
               ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
-              : 'To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.'
+              : canCompleteRootGoal
+                ? 'To END the round, finish and verify every required assignment/gate, then mark the root Goal complete when that lifecycle tool is listed — restating "done" WITHOUT completing the Goal just loops another pass.'
+                : 'Finish and verify only your seat-owned contribution, update/report its status, and hand evidence to the Boss/Captain. Do not call a root Goal lifecycle tool.'
           }`
         : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
     }`,
@@ -1606,6 +1652,8 @@ export function buildEnsembleParticipantPromptProjection(
     // dynamic state and ship only in full briefings — slim resumed turns
     // re-brief automatically when the digest changes the stamp.
     ...(userInstructionsBlock ? ['', userInstructionsBlock] : []),
+    '',
+    workContract,
     '',
     dynamicStateSnapshot.block,
     // Tree-derived churn sits immediately after the dynamic state block: both
@@ -1693,13 +1741,15 @@ export function buildEnsembleParticipantPromptProjection(
     '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
     '- At most 3 fan-outs may be in flight at once. A fourth dispatch is refused until you ensemble_await one of the open ones and read it with ensemble_lane_result — so plan a fan-out and its join together rather than firing several and collecting them later. This bounds concurrent fan-out CALLS, never the number of participants in one: a single fan-out may carry the whole roster, so never drop seats to get past the refusal.',
     '- Verification is evidence only when it is independent. Never dispatch a verify/review lane to the seat whose claim it is checking, and never count a seat confirming its own work — including yourself — as verification: route the check to a reviewer-stage seat or an uninvolved peer. If a brief asks you to check work you yourself produced, do the check rather than bounce it, but label the result self-review so the router knows an independent pass is still owed.',
-    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
+    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={planSummary:"Review the implementation."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). `planSummary` is execution strategy toward the existing root Goal; it never creates or replaces that Goal. Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
     '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
     '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may use the listed roster tools to inspect and import a task-specific TaskWraith roster export. If those tools are absent, propose the roster in visible text; do not invent a roster-management tool.',
     '- When blackboard_post/read or ensemble_poll_response are listed, use them only for durable shared facts, decisions, risks, do-not-repeat notes, and polls — not conversational side messages. If those tools are absent, place concise durable findings in your response for the later participants instead.',
     advisoryTurnBoundary
       ? '- In Continuous mode, finish this advisory turn by reporting your evidence and routing the appropriate action owner. Do not use a goal-completion tool unless fallback takeover is available or the user/Lead/Boss explicitly assigned completion to you.'
-      : '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',
+      : canCompleteRootGoal
+        ? '- In Continuous mode the round auto-continues until the root Goal is complete or the hop budget runs out. Complete it only after every required assignment and review gate is finished and verified.'
+        : '- In Continuous mode, finish only your assignment/review contribution and hand evidence to the Boss/Captain. Local todo completion never authorizes root Goal completion.',
     permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble

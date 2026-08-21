@@ -653,9 +653,10 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1'
     })
 
-    expect(prompt).toContain('<taskwraith_active_goal>')
+    expect(prompt).toContain('<taskwraith_work_contract>')
+    expect(prompt).toContain('<taskwraith_active_goal_state>')
     expect(prompt).toContain('Keep participants inside their assigned roles.')
-    expect(prompt).toContain('Do not replace, clear, or silently reinterpret the objective')
+    expect(prompt).toContain('Goal = the user-owned prompt, expected outcome')
   })
 
   it('treats provider-native stored goals as TaskWraith-steered inside ensemble prompts', () => {
@@ -679,8 +680,8 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1'
     })
 
-    expect(prompt).toContain('<taskwraith_active_goal>')
-    expect(prompt).toContain('Provider mode: Guided by TaskWraith')
+    expect(prompt).toContain('<taskwraith_work_contract>')
+    expect(prompt).toContain('<taskwraith_active_goal_state>')
     expect(prompt).toContain('Keep the ensemble participants aligned.')
     expect(prompt).not.toContain('Native Grok goal')
   })
@@ -2944,7 +2945,7 @@ describe('advisory seat soft boundary', () => {
     expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
   })
 
-  it('leaves the ordinary worker completion guidance unchanged', () => {
+  it('limits ordinary workers to their assignment contribution', () => {
     const config = withActiveRoundStatuses(
       { ...ensemble, orchestrationMode: 'continuous' },
       { claude: 'answered', codex: 'running', gemini: 'answered' }
@@ -2959,10 +2960,9 @@ describe('advisory seat soft boundary', () => {
     })
 
     expect(prompt).not.toContain('Advisory turn boundary')
-    expect(prompt).toContain('To END the round, finish the work')
-    expect(prompt).toContain(
-      'when the work is genuinely finished, use a listed goal-completion tool'
-    )
+    expect(prompt).toContain('You own only the assigned contribution')
+    expect(prompt).toContain('Do not call a root Goal lifecycle tool')
+    expect(prompt).toContain('Local todo completion never authorizes root Goal completion')
   })
 })
 

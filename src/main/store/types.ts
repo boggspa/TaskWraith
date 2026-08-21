@@ -1641,6 +1641,9 @@ export type EnsembleBossmanAssignmentStatus =
 
 export interface EnsembleBossmanWorkAssignment {
   id: string
+  /** Root Goal this step advances. Legacy assignments omit it and are treated
+   * as belonging to the currently active Goal until explicitly superseded. */
+  goalId?: string
   participantId: string
   objective: string
   acceptanceCriteria?: string
@@ -1653,6 +1656,9 @@ export interface EnsembleBossmanWorkAssignment {
 }
 
 export interface EnsembleBossmanRoundPlan {
+  /** Agent-facing execution strategy. `goal` remains a persistence alias only. */
+  planSummary?: string
+  /** @deprecated Compatibility alias for pre-work-contract records. */
   goal: string
   phase?: string
   ownerParticipantIds?: string[]
@@ -1760,6 +1766,7 @@ export type EnsembleBossmanPollResolution =
   | 'failed_floor'
   | 'vetoed'
   | 'stale'
+  | 'assignment_blocked'
   | 'gate_blocked'
 
 export interface EnsembleBossmanPoll {

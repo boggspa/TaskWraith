@@ -2865,8 +2865,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           budgetId: { type: 'string' },
           goal: {
             type: 'string',
+            description: 'For set_goal only: the TaskWraith root Goal objective.'
+          },
+          planSummary: {
+            type: 'string',
             description:
-              'For set_round_plan: active strategy goal. For set_goal: TaskWraith goal objective.'
+              'For set_round_plan: execution strategy toward the existing root Goal. This never creates, replaces, or completes the Goal.'
           },
           goalStatus: {
             type: 'string',
@@ -3542,6 +3546,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Each todo needs a stable `id`, human-readable `content`, and `status` (`pending`, `in_progress`, `completed`, or `cancelled`). ' +
         'Keep exactly one item `in_progress` when actively working. ' +
         'When follow-up work appears after earlier steps complete, call this again with `merge: true` and add new `pending`/`in_progress` items instead of leaving the checklist all-complete. ' +
+        'TaskWraith binds each item to the current root Goal and, in an Ensemble, the caller\'s current assignment. Completing every item completes only that plan/assignment contribution; it never completes or blocks the root Goal. ' +
         'Set `merge: true` to patch existing steps by `id`; omit or set `merge: false` to replace the whole list. ' +
         'Prefer this over prose bullet lists when executing a plan with 3+ steps.',
       annotations: {

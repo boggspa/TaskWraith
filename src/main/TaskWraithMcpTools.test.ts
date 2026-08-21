@@ -19,7 +19,11 @@ describe('TaskWraith MCP tool registry', () => {
     )
     expect(bossmanControl).toBeDefined()
     const inputSchema = bossmanControl!.inputSchema as {
-      properties?: { action?: { enum?: string[] } }
+      properties?: {
+        action?: { enum?: string[] }
+        goal?: { description?: string }
+        planSummary?: { description?: string }
+      }
     }
     const actionEnum = inputSchema.properties?.action?.enum
 
@@ -43,6 +47,10 @@ describe('TaskWraith MCP tool registry', () => {
         'ensemble_scheduled_wakeup',
         'check_quota_resets'
       ])
+    )
+    expect(inputSchema.properties?.goal?.description).toContain('set_goal only')
+    expect(inputSchema.properties?.planSummary?.description).toContain(
+      'never creates, replaces, or completes the Goal'
     )
     expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_poll_response')
   })
@@ -121,15 +129,21 @@ describe('TaskWraith MCP tool registry', () => {
     expect(
       normalizePortableEnsembleControlArguments('ensemble_control', {
         action: 'set_round_plan',
-        params: { goal: 'Review.' }
+        params: { planSummary: 'Review.' }
       })
-    ).toEqual({ action: 'set_round_plan', goal: 'Review.' })
+    ).toEqual({ action: 'set_round_plan', planSummary: 'Review.' })
     expect(
       normalizePortableEnsembleControlArguments('ensemble_control', {
         action: 'select_participants',
         params: { participantRoles: ['Reviewer'] }
       })
     ).toEqual({ action: 'select_participants', participantRoles: ['Reviewer'] })
+  })
+
+  it('defines todos as Goal-scoped contribution steps rather than root completion', () => {
+    const todo = createTaskWraithMcpToolDefinitions().find((tool) => tool.name === 'todo_write')
+    expect(todo?.description).toContain('binds each item to the current root Goal')
+    expect(todo?.description).toContain('never completes or blocks the root Goal')
   })
 
   it('advertises the richer Canvas control verbs with bounded public schemas', () => {
