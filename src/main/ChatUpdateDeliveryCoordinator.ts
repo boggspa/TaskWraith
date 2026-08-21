@@ -80,6 +80,8 @@ export interface ChatUpdateDeliveryStats {
   retainedMessages: number
   /** Sum of retained baseline/in-flight/pending chat byte estimates. */
   retainedBaselineBytes: number
+  /** Oldest in-flight delivery age in ms. 0 when nothing is in flight. */
+  inFlightAgeMs: number
 }
 
 /**
@@ -390,18 +392,24 @@ export class ChatUpdateDeliveryCoordinator {
         inFlight: 0,
         pending: 0,
         retainedMessages: 0,
-        retainedBaselineBytes: 0
+        retainedBaselineBytes: 0,
+        inFlightAgeMs: 0
       }
     }
     let inFlight = 0
     let pending = 0
     let retainedMessages = 0
     let retainedBaselineBytes = 0
+    let inFlightAgeMs = 0
+    const now = this.now()
     for (const state of states.values()) {
       if (state.inFlight) {
         inFlight += 1
         retainedMessages += state.inFlight.chat.messages.length
         retainedBaselineBytes += state.inFlight.compactBaseline.retainedBytes
+        if (Number.isFinite(state.lastSentAt)) {
+          inFlightAgeMs = Math.max(inFlightAgeMs, Math.max(0, now - state.lastSentAt))
+        }
       }
       if (state.pending) {
         pending += 1
@@ -422,7 +430,8 @@ export class ChatUpdateDeliveryCoordinator {
       inFlight,
       pending,
       retainedMessages,
-      retainedBaselineBytes
+      retainedBaselineBytes,
+      inFlightAgeMs
     }
   }
 
@@ -465,23 +474,18 @@ export class ChatUpdateDeliveryCoordinator {
       protocolVersion: this.emitProtocolVersion,
       diagnostics
     })
-    const deliveryRecordHash = 'recordHash' in delivery ? delivery.recordHash : undefined
     const deliveryEnsembleRevision =
       'ensembleRevision' in delivery ? delivery.ensembleRevision : undefined
     const deliveryRunsRevision = 'runsRevision' in delivery ? delivery.runsRevision : undefined
-    const fallbackSubRevisions =
-      delivery.protocolVersion === CHAT_UPDATE_PROTOCOL_V1 ||
-      deliveryRecordHash === undefined ||
-      deliveryEnsembleRevision === undefined ||
-      deliveryRunsRevision === undefined
-        ? computeChatSubRevisions(next.chat)
-        : undefined
-    const recordHash = deliveryRecordHash ?? fallbackSubRevisions!.recordHash
+    // ACK fingerprint is the SENT chat's content hash, never the producer
+    // rolling op-hash on the wire. Echoing that roll made every ACK match.
+    const contentSub = computeChatSubRevisions(next.chat)
+    const recordHash = contentSub.recordHash
     const compactBaseline: CompactChatUpdateBaseline = {
       revision: next.revision,
       recordHash,
-      ensembleRevision: deliveryEnsembleRevision ?? fallbackSubRevisions!.ensembleRevision,
-      runsRevision: deliveryRunsRevision ?? fallbackSubRevisions!.runsRevision,
+      ensembleRevision: deliveryEnsembleRevision ?? contentSub.ensembleRevision,
+      runsRevision: deliveryRunsRevision ?? contentSub.runsRevision,
       retainedBytes: next.retainedBytes
     }
     if (delivery.kind === 'snapshot') this.counters.snapshots += 1

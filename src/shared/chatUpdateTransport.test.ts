@@ -91,7 +91,31 @@ describe('chat update transport', () => {
     expect(delivery.kind).toBe('patch')
     expect(delivery.protocolVersion).toBe(CHAT_UPDATE_PROTOCOL_V1)
     const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
-    expect(applied).toEqual({ ok: true, baseline: { revision: 2, chat: next } })
+    expect(applied).toMatchObject({ ok: true, baseline: { revision: 2, chat: next } })
+    if (!applied.ok) throw new Error('apply failed')
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+  })
+
+  it('fingerprints the applied chat instead of echoing the delivery hash', () => {
+    const first = chat(1, [message('a', 'A')])
+    const next = chat(2, [message('a', 'A'), message('b', 'B')])
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'echo',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    const lied = { ...delivery, recordHash: 'deadbeef' }
+    const applied = applyChatUpdateDelivery(lied, { revision: 1, chat: first })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error('apply failed')
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+    expect(applied.baseline.recordHash).not.toBe('deadbeef')
   })
 
   it('rejects a patch against the wrong baseline so the sender can resync with a snapshot', () => {
@@ -143,7 +167,7 @@ describe('chat update transport', () => {
 
     expect(delivery.kind).toBe('patch')
     expect(JSON.stringify(delivery).length).toBeLessThan(JSON.stringify(next).length * 0.02)
-    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toEqual({
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
       ok: true,
       baseline: { revision: 2, chat: next }
     })

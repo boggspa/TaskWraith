@@ -48,6 +48,7 @@ function sample(index: number): RendererDiagnosticSample {
       mainTrackedChats: 0,
       mainInFlight: 0,
       mainPending: 0,
+      mainInFlightAgeMs: 0,
       mainRetainedMessages: 0,
       mainRetainedBytes: 0
     }
@@ -123,7 +124,8 @@ describe('RendererDiagnosticRing', () => {
         inFlight: 1,
         pending: 1,
         retainedMessages: 90,
-        retainedBaselineBytes: 4_096
+        retainedBaselineBytes: 4_096,
+        inFlightAgeMs: 400
       }),
       getChatUpdateProtocolCounters: () => ({
         snapshots: 3,
@@ -172,6 +174,7 @@ describe('RendererDiagnosticRing', () => {
         // patch stream on mainPatches alone; these carry the cause to triage.
         mainProducerDeltaMissing: 4,
         mainSpliceRecoveries: 4,
+        mainInFlightAgeMs: 400,
         mainRetainedBytes: 4_096
       }
     })

@@ -315,13 +315,12 @@ export class RendererDiagnosticRecorder {
         mainSnapshots: boundedNonNegativeInteger(protocolCounters?.snapshots),
         mainPatches: boundedNonNegativeInteger(protocolCounters?.patches),
         mainBaselineDrops: boundedNonNegativeInteger(protocolCounters?.baselineDrops),
-        mainProducerDeltaMissing: boundedNonNegativeInteger(
-          protocolCounters?.producerDeltaMissing
-        ),
+        mainProducerDeltaMissing: boundedNonNegativeInteger(protocolCounters?.producerDeltaMissing),
         mainSpliceRecoveries: boundedNonNegativeInteger(protocolCounters?.spliceRecoveries),
         mainTrackedChats: boundedNonNegativeInteger(targetStats?.trackedChats),
         mainInFlight: boundedNonNegativeInteger(targetStats?.inFlight),
         mainPending: boundedNonNegativeInteger(targetStats?.pending),
+        mainInFlightAgeMs: boundedNonNegativeInteger(targetStats?.inFlightAgeMs),
         mainRetainedMessages: boundedNonNegativeInteger(targetStats?.retainedMessages),
         mainRetainedBytes: boundedNonNegativeInteger(targetStats?.retainedBaselineBytes)
       },

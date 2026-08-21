@@ -43,6 +43,8 @@ export interface RendererDiagnosticChatUpdateCounters {
   mainTrackedChats: number
   mainInFlight: number
   mainPending: number
+  /** Oldest in-flight chat-update ACK wait in ms. 0 when idle. */
+  mainInFlightAgeMs: number
   mainRetainedMessages: number
   mainRetainedBytes: number
 }

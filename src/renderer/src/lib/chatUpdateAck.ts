@@ -8,8 +8,9 @@ export interface BuildChatUpdateAckInput {
     chat?: ChatRecord
   }
   applied: boolean
-  /** Preferred hash source after a successful apply; falls back to delivery. */
+  /** Chat the renderer actually applied. Preferred hash source. */
   appliedChat?: ChatRecord
+  /** Content hash of that applied chat; must not be the delivery's producer roll. */
   appliedRecordHash?: string
 }
 
@@ -17,6 +18,10 @@ export interface BuildChatUpdateAckInput {
  * Builds the renderer → main chat-update ACK. Always includes deliveryId +
  * applied; on success also carries revision + recordHash so main can keep a
  * compact hash+generation baseline without retaining a third full ChatRecord.
+ *
+ * Never echo `delivery.recordHash`. That value is the producer's rolling
+ * op-hash; copying it made every ACK match even when apply diverged
+ * (measured 2026-08-21: recv==ack while React kept a 2-message list).
  */
 export function buildChatUpdateAck(input: BuildChatUpdateAckInput): ChatUpdateAck {
   const { delivery, applied } = input
@@ -29,10 +34,6 @@ export function buildChatUpdateAck(input: BuildChatUpdateAckInput): ChatUpdateAc
   ack.revision = delivery.revision
   if (typeof input.appliedRecordHash === 'string' && input.appliedRecordHash.length > 0) {
     ack.recordHash = input.appliedRecordHash
-    return ack
-  }
-  if (typeof delivery.recordHash === 'string' && delivery.recordHash.length > 0) {
-    ack.recordHash = delivery.recordHash
     return ack
   }
   const chat = input.appliedChat ?? delivery.chat

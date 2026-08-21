@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord } from './store/types'
 import {
   applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
+  computeChatSubRevisions,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
@@ -105,7 +106,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
 
     const patch = sink.deliveries[1]
     const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
-    expect(patched).toEqual({
+    expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
     })
@@ -292,6 +293,59 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('snapshot')
   })
+
+  it('nacks when the ACK content hash does not match the sent chat', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const deliveryId = sink.deliveries[0].deliveryId
+
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId,
+        applied: true,
+        recordHash: 'deadbeef'
+      })
+    ).toBe(true)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
+  it('accepts an ACK whose content hash matches the sent chat', () => {
+    const sink = target()
+    const first = chat(1, ['one'])
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, first)
+    const deliveryId = sink.deliveries[0].deliveryId
+
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId,
+        applied: true,
+        recordHash: computeChatSubRevisions(first).recordHash
+      })
+    ).toBe(true)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
+  it('reports how long the in-flight delivery has been waiting for an ACK', () => {
+    let now = 5_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, inFlightAgeMs: 0 })
+    now = 5_400
+    expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(400)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      applied: true
+    })
+    expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(0)
+  })
 })
 
 describe('default emit protocol', () => {
@@ -450,5 +504,4 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
       'the answer is 42'
     )
   })
-
 })

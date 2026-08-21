@@ -320,6 +320,25 @@ export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevision
   }
 }
 
+/**
+ * ACK/apply fingerprint of the chat the renderer actually holds.
+ *
+ * Producer `recordHash` on the wire is a rolling op-hash. Copying that onto
+ * the applied baseline made every ACK match even when apply diverged.
+ * This is the content hash of the non-message record (runs/ensemble/chrome),
+ * which is cheap and is what main now compares.
+ */
+export function appliedChatUpdateBaseline(revision: number, chat: ChatRecord): ChatUpdateBaseline {
+  const sub = computeChatSubRevisions(chat)
+  return {
+    revision,
+    chat,
+    ensembleRevision: sub.ensembleRevision,
+    runsRevision: sub.runsRevision,
+    recordHash: sub.recordHash
+  }
+}
+
 export function buildChatUpdateMessageSplice(
   previous: readonly ChatMessage[],
   next: readonly ChatMessage[]
@@ -697,20 +716,10 @@ export function applyChatUpdateDelivery(
     if (delivery.chat.appChatId !== delivery.chatId) {
       return { ok: false, reason: 'Snapshot chat id does not match its envelope.' }
     }
-    const nextBaseline: ChatUpdateBaseline = {
-      revision: delivery.revision,
-      chat: delivery.chat
+    return {
+      ok: true,
+      baseline: appliedChatUpdateBaseline(delivery.revision, delivery.chat)
     }
-    if (delivery.ensembleRevision !== undefined) {
-      nextBaseline.ensembleRevision = delivery.ensembleRevision
-    }
-    if (delivery.runsRevision !== undefined) {
-      nextBaseline.runsRevision = delivery.runsRevision
-    }
-    if (delivery.recordHash !== undefined) {
-      nextBaseline.recordHash = delivery.recordHash
-    }
-    return { ok: true, baseline: nextBaseline }
   }
 
   if (!baseline) return { ok: false, reason: 'Patch has no renderer baseline.' }
@@ -729,10 +738,10 @@ export function applyChatUpdateDelivery(
     if (!spliced) return { ok: false, reason: 'Patch message splice is invalid.' }
     return {
       ok: true,
-      baseline: {
-        revision: delivery.revision,
-        chat: { ...delivery.record, messages: spliced }
-      }
+      baseline: appliedChatUpdateBaseline(delivery.revision, {
+        ...delivery.record,
+        messages: spliced
+      })
     }
   }
 
@@ -759,13 +768,7 @@ export function applyChatUpdateDelivery(
   const chat = { ...record, messages }
   return {
     ok: true,
-    baseline: {
-      revision: delivery.revision,
-      chat,
-      ensembleRevision: delivery.ensembleRevision,
-      runsRevision: delivery.runsRevision,
-      recordHash: delivery.recordHash
-    }
+    baseline: appliedChatUpdateBaseline(delivery.revision, chat)
   }
 }
 
